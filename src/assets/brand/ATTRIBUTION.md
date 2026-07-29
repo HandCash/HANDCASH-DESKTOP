@@ -1,6 +1,6 @@
 # HandCash brand assets
 
-Imported from official HandCash public surfaces for local UI use:
+Imported from HandCash public surfaces for this official HandCash Desktop UI:
 
 | File | Source |
 |------|--------|
@@ -12,4 +12,4 @@ Imported from official HandCash public surfaces for local UI use:
 | `apple.svg` / `play.svg` / `*_button.svg` | https://handcash.io/images/ |
 | `*.svg` marks/wordmark | Vector recreations of the HandCash mark for theming |
 
-Not an official HandCash product distribution — brand marks remain HandCash property.
+Brand marks are HandCash property and used here as part of the official HandCash Desktop app.

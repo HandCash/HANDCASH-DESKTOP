@@ -552,7 +552,7 @@ input {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: center;
 }
 
 .wallet-balance {
@@ -564,12 +564,12 @@ input {
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: left;
+  text-align: center;
   cursor: pointer;
   display: flex;
   flex-direction: row;
   align-items: baseline;
-  justify-content: flex-start;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 8px 10px;
 }
@@ -1854,6 +1854,14 @@ a.history-row-link:hover .history-tx-hint {
 .history-when {
   color: var(--hc-muted);
   font-size: 0.72rem;
+  white-space: nowrap;
+}
+
+.history-amount-block {
+  display: grid;
+  justify-items: end;
+  gap: 2px;
+  min-width: 0;
 }
 
 .history-amount {
@@ -1862,6 +1870,11 @@ a.history-row-link:hover .history-tx-hint {
   font-size: 0.88rem;
   white-space: nowrap;
   color: var(--hc-text);
+  text-align: right;
+}
+
+.history-amount-block .history-when {
+  text-align: right;
 }
 
 .connected-panel-head {

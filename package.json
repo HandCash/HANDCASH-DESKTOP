@@ -1,7 +1,7 @@
 {
   "name": "handcash-brc100",
   "version": "1.0.0",
-  "description": "HandCash-themed BRC-100 desktop wallet — Exodus-style deployable, based on BSVA open standards",
+  "description": "Official HandCash Desktop wallet — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
   "author": "HandCash BRC100",
@@ -132,8 +132,8 @@
       "category": "Finance",
       "maintainer": "HandCash BRC100 <devs@handcash.io>",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
-      "synopsis": "HandCash-themed BRC-100 desktop wallet",
-      "description": "Self-custodial BRC-100 wallet with HandCash branding and local app bridge.",
+      "synopsis": "Official HandCash Desktop wallet",
+      "description": "Official HandCash Desktop — self-custodial BRC-100 wallet with local app bridge.",
       "executableName": "HandCash"
     }
   }

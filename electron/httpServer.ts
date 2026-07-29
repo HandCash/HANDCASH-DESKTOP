@@ -104,7 +104,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
       babbage: {
         trust: {
           name: 'HandCash',
-          note: 'HandCash-themed BRC-100 wallet — keys stay on your machine',
+          note: 'Official HandCash Desktop — keys stay on your machine',
           icon: 'https://localhost:2121/favicon.ico',
           publicKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
         },

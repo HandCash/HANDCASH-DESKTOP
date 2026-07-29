@@ -1,6 +1,6 @@
 /**
- * HandCash brand assets sourced from handcash.io + HandCash Connect SDK Cloudinary.
- * Prefer the official PNG marks for pixel fidelity; SVGs are vector recreations for theming.
+ * HandCash brand assets for official HandCash Desktop (sourced from handcash.io + Connect SDK).
+ * Prefer PNG marks for pixel fidelity; SVGs are vector recreations for theming.
  */
 import markGreenPng from './handcash-mark-green.png'
 import markDarkPng from './handcash-mark-dark.png'

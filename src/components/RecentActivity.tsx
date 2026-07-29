@@ -32,13 +32,27 @@ import { openPaymentDetails } from '../wallet/navStore'
 import type { Chain } from '../wallet/vault'
 
 function formatWhen(at: number): string {
-  const d = new Date(at)
-  const now = Date.now()
-  const diff = now - at
-  if (diff < 60_000) return 'Just now'
-  if (diff < 60 * 60_000) return `${Math.floor(diff / 60_000)}m ago`
-  if (diff < 24 * 60 * 60_000) return `${Math.floor(diff / (60 * 60_000))}h ago`
-  return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+  const diff = Math.max(0, Date.now() - at)
+  const minutes = Math.floor(diff / 60_000)
+  if (minutes < 1) return 'Just now'
+  if (minutes === 1) return '1 minute ago'
+  if (minutes < 60) return `${minutes} minutes ago`
+
+  const hours = Math.floor(minutes / 60)
+  if (hours === 1) return '1 hour ago'
+  if (hours < 24) return `${hours} hours ago`
+
+  const days = Math.floor(hours / 24)
+  if (days === 1) return '1 day ago'
+  if (days < 30) return `${days} days ago`
+
+  const months = Math.floor(days / 30)
+  if (months === 1) return '1 month ago'
+  if (months < 12) return `${months} months ago`
+
+  const years = Math.floor(days / 365)
+  if (years === 1) return '1 year ago'
+  return `${years} years ago`
 }
 
 function entryTitle(entry: ActivityEntry): string {
@@ -93,11 +107,13 @@ function HistoryRow({
         </div>
         <div className="history-body">
           <strong className="history-title">{entryTitle(entry)}</strong>
+        </div>
+        <div className="history-amount-block">
+          <span className="history-amount" title={amountLabel}>
+            {signed}
+          </span>
           <span className="history-when">{formatWhen(entry.at)}</span>
         </div>
-        <span className="history-amount" title={amountLabel}>
-          {signed}
-        </span>
       </button>
     </li>
   )
