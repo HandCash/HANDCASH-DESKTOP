@@ -1,6 +1,8 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
+import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import { ReceiveIcon, SendIcon } from './icons'
+import { SkeletonHistoryRow } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   listRecentActivity,
@@ -9,12 +11,24 @@ import {
   type ActivityEntry,
 } from '../wallet/appActivity'
 import {
-  formatUsdFromSats,
+  DEFAULT_PAYMENT_FILTERS,
+  filterPaymentActivity,
+  listPaymentOriginOptions,
+  type PaymentFilters,
+  type PaymentOriginOption,
+} from '../wallet/paymentFilters'
+import {
+  formatPrimaryFromSats,
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from '../wallet/fx'
-import { getActiveWallet } from '../wallet/session'
-import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
+import {
+  getDisplayCurrency,
+  subscribeDisplayCurrency,
+  type DisplayCurrency,
+} from '../wallet/displayCurrency'
+import { subscribeConnectedApps } from '../wallet/permissions'
+import { openPaymentDetails } from '../wallet/navStore'
 import type { Chain } from '../wallet/vault'
 
 function formatWhen(at: number): string {
@@ -38,111 +52,149 @@ function entryTitle(entry: ActivityEntry): string {
 
 function HistoryRow({
   entry,
+  currency,
   usdPerBsv,
-  chain,
 }: {
   entry: ActivityEntry
+  currency: DisplayCurrency
   usdPerBsv: number | null
-  chain: Chain
 }) {
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
+  const [ready, setReady] = useState(isWallet)
   const spent = entry.kind === 'spent'
-  const amountLabel = formatUsdFromSats(entry.sats, usdPerBsv)
+  const amountLabel = formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed =
-    usdPerBsv == null ? '—' : spent ? `−${amountLabel}` : `+${amountLabel}`
-  const href = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid, chain) : null
-
-  const inner = (
-    <>
-      <div className={`history-icon ${spent ? 'history-icon-out' : 'history-icon-in'}`}>
-        {isWallet ? (
-          spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
-        ) : (
-          <AppAvatar origin={entry.origin} name={appDisplayName(entry.origin)} size="sm" />
-        )}
-      </div>
-      <div className="history-body">
-        <strong className="history-title">{entryTitle(entry)}</strong>
-        <span className="history-when">{formatWhen(entry.at)}</span>
-      </div>
-      <span className={`history-amount ${spent ? 'history-out' : 'history-in'}`} title={amountLabel}>
-        {signed}
-      </span>
-    </>
-  )
-
-  if (href) {
-    return (
-      <li>
-        <a
-          className="history-row history-row-link"
-          href={href}
-          target="_blank"
-          rel="noreferrer"
-          title="Open in WhatsOnChain"
-        >
-          {inner}
-        </a>
-      </li>
-    )
-  }
+    currency === 'usd' && usdPerBsv == null
+      ? '—'
+      : spent
+        ? `−${amountLabel}`
+        : `+${amountLabel}`
 
   return (
-    <li>
-      <div className="history-row">{inner}</div>
+    <li data-ready={ready ? true : undefined}>
+      {!ready ? <SkeletonHistoryRow /> : null}
+      <button
+        type="button"
+        className={ready ? 'history-row history-row-btn' : 'media-preload'}
+        tabIndex={ready ? 0 : -1}
+        onClick={() => openPaymentDetails(entry.id)}
+      >
+        <div className="history-icon">
+          {isWallet ? (
+            spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
+          ) : (
+            <AppAvatar
+              origin={entry.origin}
+              name={appDisplayName(entry.origin)}
+              size="sm"
+              onReady={() => setReady(true)}
+            />
+          )}
+        </div>
+        <div className="history-body">
+          <strong className="history-title">{entryTitle(entry)}</strong>
+          <span className="history-when">{formatWhen(entry.at)}</span>
+        </div>
+        <span className="history-amount" title={amountLabel}>
+          {signed}
+        </span>
+      </button>
     </li>
   )
 }
 
 type FeedProps = {
   chain?: Chain
-  /** How many newest entries to show. */
   limit?: number
   title?: string
-  /** When true, render without outer panel chrome (for tab bodies). */
   embedded?: boolean
   emptyLabel?: string
   showCount?: boolean
+  showFilters?: boolean
 }
 
 function useActivityFeed(limit: number) {
   const [entries, setEntries] = useState<ActivityEntry[]>(() => listRecentActivity(limit))
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
+  const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [origins, setOrigins] = useState<PaymentOriginOption[]>(() => listPaymentOriginOptions(limit))
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
-  useEffect(
-    () =>
-      subscribeAppActivity(() => {
-        setEntries(listRecentActivity(limit))
-      }),
-    [limit],
-  )
+  useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => {
+    const refresh = () => {
+      setEntries(listRecentActivity(limit))
+      setOrigins(listPaymentOriginOptions(limit))
+    }
+    const unsubActivity = subscribeAppActivity(refresh)
+    const unsubApps = subscribeConnectedApps(refresh)
+    return () => {
+      unsubActivity()
+      unsubApps()
+    }
+  }, [limit])
 
-  return { entries, usdPerBsv }
+  return { entries, usdPerBsv, currency, origins }
+}
+
+function useScrollReveal(ref: RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const el = ref.current
+    if (!el) return
+    let timer = 0
+    const onScroll = () => {
+      el.classList.add('is-scrolling')
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => {
+        el.classList.remove('is-scrolling')
+      }, 700)
+    }
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => {
+      el.removeEventListener('scroll', onScroll)
+      window.clearTimeout(timer)
+    }
+  }, [ref])
 }
 
 export function ActivityFeed({
-  chain,
   limit = 40,
   title = 'Recent activity',
   embedded = false,
-  emptyLabel = 'No payments yet',
+  emptyLabel = 'No activity yet',
   showCount = true,
+  showFilters = false,
 }: FeedProps) {
-  const { entries, usdPerBsv } = useActivityFeed(limit)
-  const resolvedChain = chain ?? getActiveWallet()?.chain ?? 'main'
+  const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
+  const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
+  const listRef = useRef<HTMLUListElement>(null)
+  useScrollReveal(listRef)
+
+  const filtered = useMemo(
+    () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
+    [entries, filters, showFilters],
+  )
+
+  // Drop a selected app filter if that origin disappears.
+  useEffect(() => {
+    if (filters.origin === 'all') return
+    if (origins.some((o) => o.id === filters.origin)) return
+    setFilters((prev) => ({ ...prev, origin: 'all' }))
+  }, [origins, filters.origin])
 
   const body =
-    entries.length === 0 ? (
-      <p className="connected-empty-line">{emptyLabel}</p>
+    filtered.length === 0 ? (
+      <p className="connected-empty-line">
+        {entries.length === 0 ? emptyLabel : 'No activity matches these filters'}
+      </p>
     ) : (
-      <ul className="history-list">
-        {entries.map((entry) => (
+      <ul className="history-list" ref={listRef}>
+        {filtered.map((entry) => (
           <HistoryRow
             key={entry.id}
             entry={entry}
+            currency={currency}
             usdPerBsv={usdPerBsv}
-            chain={resolvedChain}
           />
         ))}
       </ul>
@@ -151,15 +203,23 @@ export function ActivityFeed({
   const head = (
     <div className="connected-panel-head">
       <h2>{title}</h2>
-      {showCount ? <span className="connected-count">{entries.length}</span> : null}
+      {showCount ? <span className="connected-count">{filtered.length}</span> : null}
     </div>
   )
 
+  const filtersPanel = showFilters ? (
+    <PaymentFiltersPanel value={filters} origins={origins} onChange={setFilters} />
+  ) : null
+
   if (embedded) {
     return (
-      <div className="history-embedded" data-aeon-scope="activity-feed">
+      <div
+        className={showFilters ? 'history-embedded history-with-filters' : 'history-embedded'}
+        data-aeon-scope="activity-feed"
+      >
         {head}
         {body}
+        {filtersPanel}
       </div>
     )
   }
@@ -168,6 +228,7 @@ export function ActivityFeed({
     <section className="history-panel panel" data-aeon-scope="recent-activity">
       {head}
       {body}
+      {filtersPanel}
     </section>
   )
 }
@@ -177,16 +238,17 @@ export function RecentActivityPanel({ chain }: { chain?: Chain }) {
   return <ActivityFeed chain={chain} title="Recent activity" limit={40} />
 }
 
-/** Full payments tab. */
+/** Full activity tab. */
 export function TransactionsPanel({ chain }: { chain?: Chain }) {
   return (
     <ActivityFeed
       chain={chain}
-      title="Payments"
+      title="Activity"
       limit={200}
       embedded
-      emptyLabel="No payments yet"
+      emptyLabel="No activity yet"
       showCount={false}
+      showFilters
     />
   )
 }

@@ -1,9 +1,11 @@
+import { useEffect, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import type { PendingPermission } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
 import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
+import { SkeletonLine } from './Skeleton'
 
 type Props = {
   pending: PendingPermission | null
@@ -11,36 +13,66 @@ type Props = {
   onDeny: () => void
 }
 
-export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
-  if (!pending) return null
-
+function ConnectPermissionBody({
+  pending,
+  onAllow,
+  onDeny,
+}: {
+  pending: PendingPermission
+  onAllow: () => void
+  onDeny: () => void
+}) {
+  const [iconReady, setIconReady] = useState(false)
   const name = appDisplayName(pending.origin)
   const home = appHomepage(pending.origin)
 
-  return (
-    <ModalPortal>
-      <div
-        className="modal-backdrop permission-backdrop"
-        data-aeon-scope="dialog"
-        data-aeon-state={stateToAttr('pending')}
-        role="presentation"
-      >
-        <div
-          className="panel modal permission-modal connect-permission-modal"
-          data-aeon-part="content"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="connect-permission-title"
-        >
-          <div className="connect-app-hero">
-            <AppAvatar origin={pending.origin} name={name} size="lg" />
-            <div>
-              <p className="permission-eyebrow">HandCash Connect</p>
-              <h2 id="connect-permission-title">Connect {name}?</h2>
-              <p className="connect-app-host mono">{pending.origin}</p>
-            </div>
-          </div>
+  useEffect(() => {
+    setIconReady(false)
+  }, [pending.origin, pending.id])
 
+  return (
+    <div
+      className="panel modal permission-modal connect-permission-modal"
+      data-aeon-part="content"
+      data-aeon-state={iconReady ? undefined : 'loading'}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="connect-permission-title"
+    >
+      <div className="connect-app-hero">
+        <AppAvatar
+          origin={pending.origin}
+          name={name}
+          size="lg"
+          onReady={() => setIconReady(true)}
+        />
+        {iconReady ? (
+          <div>
+            <p className="permission-eyebrow">HandCash Connect</p>
+            <h2 id="connect-permission-title">Connect {name}?</h2>
+            <p className="connect-app-host mono">{pending.origin}</p>
+          </div>
+        ) : (
+          <div>
+            <SkeletonLine width="36%" height={10} />
+            <SkeletonLine width="70%" height={18} />
+            <SkeletonLine width="55%" height={10} />
+          </div>
+        )}
+      </div>
+
+      {!iconReady ? (
+        <div className="app-details-section">
+          <SkeletonLine width="90%" height={12} />
+          <SkeletonLine width="75%" height={12} />
+          <div className="permission-chips" style={{ marginTop: 14 }}>
+            <SkeletonLine width={88} height={28} />
+            <SkeletonLine width={72} height={28} />
+            <SkeletonLine width={96} height={28} />
+          </div>
+        </div>
+      ) : (
+        <>
           <p className="lede">
             <strong>{name}</strong> wants to connect to your HandCash wallet.
             {home ? (
@@ -81,7 +113,24 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
               Authorize
             </button>
           </div>
-        </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
+  if (!pending) return null
+
+  return (
+    <ModalPortal>
+      <div
+        className="modal-backdrop permission-backdrop"
+        data-aeon-scope="dialog"
+        data-aeon-state={stateToAttr('pending')}
+        role="presentation"
+      >
+        <ConnectPermissionBody pending={pending} onAllow={onAllow} onDeny={onDeny} />
       </div>
     </ModalPortal>
   )

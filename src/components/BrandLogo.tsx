@@ -1,4 +1,5 @@
 import { handcashBrand, type HandCashMarkVariant } from '../assets/brand'
+import { DeferredImage } from './DeferredImage'
 
 type Props = {
   variant?: HandCashMarkVariant
@@ -22,13 +23,17 @@ export function BrandLogo({
 }: Props) {
   return (
     <div className={`brand ${className}`.trim()} data-aeon-scope="identity" data-aeon-part="root">
-      <img
+      <DeferredImage
         className="brand-logo-mark"
         src={markSrc[variant]}
         width={size}
         height={size}
         alt="HandCash"
         draggable={false}
+        skeletonWidth={size}
+        skeletonHeight={size}
+        skeletonRadius={8}
+        skeletonClassName="brand-logo-skeleton"
       />
       {showWordmark && (
         <div>

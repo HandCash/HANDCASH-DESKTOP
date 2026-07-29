@@ -130,9 +130,6 @@ export function App() {
             profile={snapshot.context.profile}
             balanceSats={snapshot.context.balanceSats}
             error={snapshot.context.error}
-            sending={snapshot.matches('sending')}
-            onOpenSend={() => send({ type: 'OPEN_SEND' })}
-            onCloseSend={() => send({ type: 'CLOSE_SEND' })}
             onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
             onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
             onLock={() => {

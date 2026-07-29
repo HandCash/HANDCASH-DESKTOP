@@ -10,9 +10,6 @@ release/
 *.local
 .vite/
 out/
-.cursor/
-
-# Accidental compiled Electron copies at repo root (sources live in electron/)
+/httpServer.js
 /main.js
 /preload.js
-/httpServer.js

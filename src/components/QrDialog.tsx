@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { stateToAttr } from '@aeon-ui/core'
 import { ModalPortal } from './ModalPortal'
+import { DeferredImage } from './DeferredImage'
+import { SkeletonQr } from './Skeleton'
 
 type Props = {
   label: string
@@ -89,11 +91,24 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
           <h2>{title}</h2>
           <p className="qr-subtitle">{hint}</p>
 
-          {status === 'loading' && <p className="lede">Generating QR…</p>}
+          {status === 'loading' && (
+            <div className="qr-frame" data-aeon-part="media">
+              <SkeletonQr size={240} />
+            </div>
+          )}
           {status === 'failure' && <p className="error">{error}</p>}
           {status === 'success' && dataUrl && (
             <div className="qr-frame" data-aeon-part="media">
-              <img src={dataUrl} alt={`${title} QR code`} width={240} height={240} />
+              <DeferredImage
+                src={dataUrl}
+                alt={`${title} QR code`}
+                width={240}
+                height={240}
+                skeletonWidth={240}
+                skeletonHeight={240}
+                skeletonRadius={4}
+                skeletonClassName="skeleton-qr"
+              />
             </div>
           )}
 

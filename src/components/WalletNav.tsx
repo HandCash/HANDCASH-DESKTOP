@@ -1,98 +1,187 @@
-import { useState, type ComponentType, type SVGProps } from 'react'
-import { Tabs } from '@aeon-ui/react'
+import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
 import type { ConnectedApp } from '../wallet/permissions'
+import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
+import {
+  clearNavChild,
+  getNavState,
+  openAppDetails,
+  openNavChild,
+  setNavSection,
+  subscribeNav,
+  type NavSection,
+  type NavState,
+} from '../wallet/navStore'
 import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
 import { IdentityPanel } from './IdentityPanel'
+import { InventoryPanel } from './InventoryPanel'
 import { TransactionsPanel } from './RecentActivity'
+import { AppDetailsPanel } from './AppDetailsPanel'
+import { PermissionDetailsPanel } from './PermissionDetailsPanel'
+import { SendPanel } from './SendPanel'
+import { ReceivePanel } from './ReceivePanel'
+import { PaymentDetailsPanel } from './PaymentDetailsPanel'
+import { NavBreadcrumb } from './NavBreadcrumb'
 import {
+  ActivityIcon,
   AppsIcon,
   FriendsIcon,
   IdentityIcon,
   InventoryIcon,
-  TransactionsIcon,
 } from './icons'
-
-type Section = 'apps' | 'payments' | 'inventory' | 'friends' | 'identity'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
 type Props = {
   profile: WalletProfile
   apps: ConnectedApp[]
+  balanceSats: number
   onRevoke: (origin: string) => void
+  onSent: (balanceSats: number) => void
+  onFail: (error: string) => void
 }
 
 const SECTIONS: {
-  value: Section
+  value: NavSection
   label: string
   Icon: ComponentType<IconProps>
 }[] = [
+  { value: 'activity', label: 'Activity', Icon: ActivityIcon },
   { value: 'apps', label: 'Apps', Icon: AppsIcon },
-  { value: 'payments', label: 'Payments', Icon: TransactionsIcon },
   { value: 'inventory', label: 'Inventory', Icon: InventoryIcon },
   { value: 'friends', label: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', Icon: IdentityIcon },
 ]
 
-export function WalletNav({ profile, apps, onRevoke }: Props) {
-  const [section, setSection] = useState<Section>('apps')
+function sectionLabel(section: NavSection): string {
+  return SECTIONS.find((s) => s.value === section)?.label ?? section
+}
+
+export function WalletNav({
+  profile,
+  apps,
+  balanceSats,
+  onRevoke,
+  onSent,
+  onFail,
+}: Props) {
+  const [nav, setNav] = useState<NavState>(() => getNavState())
+
+  useEffect(() => subscribeNav(setNav), [])
+
+  const child = nav.child
+  const aeonState = child ? `${nav.section}.${child.type}` : nav.section
+
+  const crumbs = (() => {
+    const root = {
+      label: sectionLabel(nav.section),
+      onClick: () => clearNavChild(),
+    }
+    if (!child) return [{ label: root.label }]
+    if (child.type === 'app') {
+      const app = apps.find((a) => a.origin === child.origin)
+      return [root, { label: app?.name || appDisplayName(child.origin) }]
+    }
+    if (child.type === 'permission') {
+      const app = apps.find((a) => a.origin === child.origin)
+      const scope = getPermissionScope(child.scopeId)
+      return [
+        root,
+        {
+          label: app?.name || appDisplayName(child.origin),
+          onClick: () => {
+            const found = apps.find((a) => a.origin === child.origin)
+            if (found) openAppDetails(found)
+            else openNavChild('apps', { type: 'app', origin: child.origin })
+          },
+        },
+        { label: scope?.label ?? 'Permission' },
+      ]
+    }
+    if (child.type === 'send') return [root, { label: 'Send' }]
+    if (child.type === 'receive') return [root, { label: 'Receive' }]
+    return [root, { label: 'Payment' }]
+  })()
+
+  const selectSection = (next: NavSection) => {
+    if (next !== nav.section) setNavSection(next)
+    else clearNavChild()
+  }
 
   return (
     <section
       className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
-      data-aeon-state={stateToAttr(section)}
+      data-aeon-state={stateToAttr(aeonState)}
     >
-      <Tabs.Root
-        className="wallet-nav"
-        defaultValue="apps"
-        onValueChange={(value) => {
-          if (SECTIONS.some((s) => s.value === value)) {
-            setSection(value as Section)
-          }
-        }}
-      >
+      <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          <Tabs.Content value="apps" className="wallet-nav-panel">
-            <ConnectedAppsPanel apps={apps} onRevoke={onRevoke} />
-          </Tabs.Content>
-          <Tabs.Content value="payments" className="wallet-nav-panel">
-            <TransactionsPanel chain={profile.chain} />
-          </Tabs.Content>
-          <Tabs.Content value="inventory" className="wallet-nav-panel">
-            <div className="nav-section-body">
-              <div className="connected-panel-head">
-                <h2>Inventory</h2>
-              </div>
-              <p className="connected-empty-line">No items yet</p>
+          {child ? (
+            <div className="wallet-nav-panel nav-child-stage">
+              <NavBreadcrumb crumbs={crumbs} />
+              {child.type === 'app' && (() => {
+                const app = apps.find((a) => a.origin === child.origin)
+                if (!app) return <p className="connected-empty-line">App not found</p>
+                return (
+                  <AppDetailsPanel
+                    app={app}
+                    onRevoke={onRevoke}
+                    onDone={() => clearNavChild()}
+                  />
+                )
+              })()}
+              {child.type === 'permission' && (
+                <PermissionDetailsPanel origin={child.origin} scopeId={child.scopeId} />
+              )}
+              {child.type === 'send' && (
+                <SendPanel
+                  chain={profile.chain}
+                  balanceSats={balanceSats}
+                  onSent={onSent}
+                  onFail={onFail}
+                  onClose={() => clearNavChild()}
+                />
+              )}
+              {child.type === 'receive' && <ReceivePanel value={profile.address} />}
+              {child.type === 'payment' && (
+                <PaymentDetailsPanel entryId={child.entryId} chain={profile.chain} />
+              )}
             </div>
-          </Tabs.Content>
-          <Tabs.Content value="friends" className="wallet-nav-panel">
-            <FriendsPanel chain={profile.chain} />
-          </Tabs.Content>
-          <Tabs.Content value="identity" className="wallet-nav-panel">
-            <IdentityPanel profile={profile} />
-          </Tabs.Content>
+          ) : (
+            <div className="wallet-nav-panel">
+              {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
+              {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
+              {nav.section === 'inventory' && <InventoryPanel />}
+              {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
+              {nav.section === 'identity' && <IdentityPanel profile={profile} />}
+            </div>
+          )}
         </div>
 
-        <Tabs.List className="wallet-nav-bar">
-          {SECTIONS.map(({ value, label, Icon }) => (
-            <Tabs.Trigger
-              key={value}
-              value={value}
-              className="wallet-nav-tab"
-              aria-label={label}
-              title={label}
-            >
-              <Icon size={18} />
-              <span className="wallet-nav-tab-label">{label}</span>
-            </Tabs.Trigger>
-          ))}
-        </Tabs.List>
-      </Tabs.Root>
+        <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
+          {SECTIONS.map(({ value, label, Icon }) => {
+            const selected = nav.section === value
+            return (
+              <button
+                key={value}
+                type="button"
+                role="tab"
+                className="wallet-nav-tab"
+                aria-label={label}
+                aria-selected={selected}
+                title={label}
+                data-selected={selected ? '' : undefined}
+                onClick={() => selectSection(value)}
+              >
+                <Icon size={18} />
+                <span className="wallet-nav-tab-label">{label}</span>
+              </button>
+            )
+          })}
+        </div>
+      </div>
     </section>
   )
 }

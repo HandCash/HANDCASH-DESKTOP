@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import type { WalletProfile } from '../machines/appMachine'
+import { DeferredImage } from './DeferredImage'
+import { SkeletonQr } from './Skeleton'
 
 type Props = {
   profile: WalletProfile
@@ -50,12 +52,22 @@ export function IdentityPanel({ profile }: Props) {
       <div className="identity-layout">
         <div className="identity-qr" data-aeon-part="media">
           {error ? <p className="error">{error}</p> : null}
-          {!error && !dataUrl ? <p className="lede">Generating QR…</p> : null}
-          {dataUrl ? (
-            <div className="identity-qr-frame">
-              <img src={dataUrl} alt="Identity key QR code" width={180} height={180} />
-            </div>
-          ) : null}
+          <div className="identity-qr-frame">
+            {dataUrl ? (
+              <DeferredImage
+                src={dataUrl}
+                alt="Identity key QR code"
+                width={180}
+                height={180}
+                skeletonWidth={180}
+                skeletonHeight={180}
+                skeletonRadius={4}
+                skeletonClassName="skeleton-qr"
+              />
+            ) : !error ? (
+              <SkeletonQr size={180} />
+            ) : null}
+          </div>
           <p className="identity-qr-hint">Scan to share this identity key</p>
         </div>
 

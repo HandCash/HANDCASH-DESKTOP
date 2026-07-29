@@ -3,6 +3,8 @@ import { Accordion } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import bsvLogoClassic from '../assets/brand/bsv-logo-classic.png'
+import { Skeleton, SkeletonLine } from './Skeleton'
+import { DeferredImage } from './DeferredImage'
 import {
   OFFICIAL_URL,
   formatPct,
@@ -55,7 +57,12 @@ export function WhatIsBsvPanel() {
   const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket())
   const [openSections, setOpenSections] = useState<string[]>([])
   const [classicLogo, setClassicLogo] = useState(false)
+  const [logoReady, setLogoReady] = useState(false)
   const logoTaps = useRef({ count: 0, timer: 0 })
+
+  useEffect(() => {
+    setLogoReady(false)
+  }, [classicLogo])
 
   useEffect(() => {
     const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket()))
@@ -86,6 +93,7 @@ export function WhatIsBsvPanel() {
   const up24 = (change24 ?? 0) >= 0
   const aboutOpen = openSections.includes('about')
   const logoSrc = classicLogo ? bsvLogoClassic : bsvLogo
+  const marketReady = Boolean(stats)
 
   return (
     <aside className="panel what-is-bsv" data-aeon-scope="what-is-bsv">
@@ -97,17 +105,42 @@ export function WhatIsBsvPanel() {
           aria-label={classicLogo ? 'Bitcoin SV classic logo' : 'Bitcoin SV logo'}
           title="Bitcoin SV"
         >
-          <img className="bsv-logo" src={logoSrc} alt="" width={44} height={44} draggable={false} />
+          <DeferredImage
+            className="bsv-logo"
+            src={logoSrc}
+            alt=""
+            width={44}
+            height={44}
+            draggable={false}
+            skeletonWidth={44}
+            skeletonHeight={44}
+            skeletonRadius={12}
+            skeletonClassName="bsv-logo-skeleton"
+            onReady={() => setLogoReady(true)}
+          />
         </button>
         <div className="bsv-asset-text">
-          <strong>Bitcoin SV (BSV)</strong>
-          <span className={`bsv-change ${up24 ? 'is-up' : 'is-down'}`}>
-            {formatPct(change24)} · 24h
-          </span>
+          {logoReady && marketReady ? (
+            <>
+              <strong>Bitcoin SV (BSV)</strong>
+              <span className={`bsv-change ${up24 ? 'is-up' : 'is-down'}`}>
+                {formatPct(change24)} · 24h
+              </span>
+            </>
+          ) : (
+            <>
+              <SkeletonLine width="70%" height={14} />
+              <SkeletonLine width="45%" height={11} />
+            </>
+          )}
         </div>
       </div>
 
-      <strong className="bsv-price">{formatPriceUsd(stats?.priceUsd ?? null)}</strong>
+      {marketReady ? (
+        <strong className="bsv-price">{formatPriceUsd(stats?.priceUsd ?? null)}</strong>
+      ) : (
+        <Skeleton className="bsv-price-skeleton" width="40%" height={28} radius={8} />
+      )}
 
       <div
         className="bsv-stage"
@@ -115,7 +148,11 @@ export function WhatIsBsvPanel() {
         data-aeon-state={stateToAttr(aboutOpen ? 'about' : 'chart')}
       >
         <div className="bsv-stage-panel bsv-stage-chart" aria-hidden={aboutOpen}>
-          <Sparkline values={stats?.sparkline ?? []} up={up24} />
+          {marketReady ? (
+            <Sparkline values={stats?.sparkline ?? []} up={up24} />
+          ) : (
+            <div className="bsv-spark bsv-spark-empty" aria-hidden />
+          )}
         </div>
         <div className="bsv-stage-panel bsv-stage-about" aria-hidden={!aboutOpen}>
           <p className="what-is-bsv-lede">

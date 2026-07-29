@@ -1,7 +1,10 @@
 export type AppPermissionScope = {
   id: string
   label: string
+  /** One-line summary shown on chips and detail header. */
   description: string
+  /** Short bullets for the detail subcontext. */
+  allows: string[]
 }
 
 /** High-level scopes shown on connect — mirrors HandCash Connect language. */
@@ -9,24 +12,40 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
   {
     id: 'public-profile',
     label: 'Public profile',
-    description: 'See your public identity key',
+    description: 'Read your public identity key. Cannot unlock or spend.',
+    allows: ['Identity key', 'Public recognition in the app'],
   },
   {
     id: 'pay',
     label: 'Pay',
-    description: 'Request payments — you approve each one',
+    description: 'Request payments. You approve each one unless auto-pay is on.',
+    allows: ['Payment requests', 'Amounts shown for confirmation'],
   },
   {
     id: 'wallet',
     label: 'Wallet activity',
-    description: 'See balance and transaction activity',
+    description: 'Read balance and activity. Does not approve payments.',
+    allows: ['Balance & status', 'Related activity'],
   },
   {
     id: 'encrypt',
     label: 'Encrypt & decrypt',
-    description: 'Secure data with your wallet keys',
+    description: 'Encrypt or decrypt with keys for this app. Plaintext stays in the wallet.',
+    allows: ['Encrypt for this app', 'Decrypt for this app'],
   },
 ]
+
+export const AUTO_PAY_SCOPE: AppPermissionScope = {
+  id: 'auto-pay',
+  label: 'Auto-pay',
+  description: 'Auto-approve matching payments within your limits. Turn off anytime.',
+  allows: ['Payments under your max', 'Within your time window'],
+}
+
+export function getPermissionScope(scopeId: string): AppPermissionScope | null {
+  if (scopeId === AUTO_PAY_SCOPE.id) return AUTO_PAY_SCOPE
+  return CONNECT_SCOPES.find((s) => s.id === scopeId) ?? null
+}
 
 export function normalizeAppHost(origin: string | undefined): string {
   if (!origin || !origin.trim()) return 'unknown-app'

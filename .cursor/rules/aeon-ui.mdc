@@ -1,0 +1,26 @@
+---
+description: Prefer Aeon UI for interactive surfaces
+globs: ["**/*.tsx", "**/*.ts"]
+alwaysApply: true
+---
+
+# Aeon UI
+
+Prefer Aeon primitives from `aeon-ui-engine`. **Build state machines first; UI reflects those machines** (`UI = f(state)`). Do not invent parallel boolean flags for the same concern.
+
+## Rules
+
+1. Name the charts (states + events) before writing JSX.
+2. Compose from documented parts only — every interactive surface projects a machine snapshot or documented status prop onto `data-aeon-state`.
+3. Prefer compound roots: Field, Button, Async, Dialog, Identity, ProfileHeader, …
+4. Keep loading, empty, success, and failure as explicit states (totality).
+5. Primitives stay universal — compose niche products; do not invent niche components.
+
+## Install
+
+```bash
+npx aeon-ui init
+npm install aeon-ui-engine react react-dom xstate @xstate/react
+```
+
+Import `@aeon-ui/panda/styles.css` and `@aeon-ui/panda/theme-runtime.css`. For Vite, wire `aeonUiViteAliases()` and `aeonUiOptimizeDeps()` from `aeon-ui-engine/vite`.

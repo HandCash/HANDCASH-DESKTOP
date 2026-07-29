@@ -86,6 +86,15 @@ export function TransactionsIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `timeline` */
+export function ActivityIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M23 8c0 1.1-.9 2-2 2-.18 0-.35-.02-.51-.07l-3.56 3.55c.05.16.07.33.07.51 0 1.1-.9 2-2 2s-2-.9-2-2c0-.18.02-.36.07-.51l-2.55-2.55c-.16.05-.34.07-.52.07s-.36-.02-.52-.07l-4.55 4.56c.05.16.07.33.07.51 0 1.1-.9 2-2 2s-2-.9-2-2 .9-2 2-2c.18 0 .35.02.51.07l4.56-4.55C8.02 9.36 8 9.18 8 9c0-1.1.9-2 2-2s2 .9 2 2c0 .18-.02.36-.07.51l2.55 2.55c.16-.05.34-.07.52-.07s.36.02.52.07l3.55-3.56C19.02 8.35 19 8.18 19 8c0-1.1.9-2 2-2s2 .9 2 2z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `inventory_2` */
 export function InventoryIcon(props: IconProps) {
   return (
@@ -160,11 +169,29 @@ export function WalletScopeIcon(props: IconProps) {
   )
 }
 
-/** Material Icons — `launch` */
+/** Material Icons — `rocket` (filled) */
 export function LaunchIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M19 19H5V5h7V3H5c-1.11 0-2 .9-2 2v14c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2v-7h-2v7zM14 3v2h3.59l-9.83 9.83 1.41 1.41L19 6.41V10h2V3h-7z" />
+      <path d="M12 2.5s4.5 2.04 4.5 10.5c0 2.49-1.04 5.57-1.6 7H9.1c-.56-1.43-1.6-4.51-1.6-7C7.5 4.54 12 2.5 12 2.5zm2 8.5c0-1.1-.9-2-2-2s-2 .9-2 2 .9 2 2 2 2-.9 2-2zm-6.31 9.52c-.48-1.23-1.52-4.17-1.67-6.87l-1.13.75c-.56.38-.89 1-.89 1.67V22l3.69-1.48zM20 22v-5.93c0-.67-.33-1.29-.89-1.66l-1.13-.75c-.15 2.69-1.2 5.64-1.67 6.87L20 22z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `view_list` */
+export function ViewListIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 14h4v-4H3v4zm0 5h4v-4H3v4zM3 9h4V5H3v4zm5 5h13v-4H8v4zm0 5h13v-4H8v4zM8 5v4h13V5H8z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `grid_view` */
+export function ViewGridIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M3 3v8h8V3H3zm6 6H5V5h4v4zm-6 4v8h8v-8H3zm6 6H5v-4h4v4zm4-16v8h8V3h-8zm6 6h-4V5h4v4zm-6 4v8h8v-8h-8zm6 6h-4v-4h4v4z" />
     </Icon>
   )
 }

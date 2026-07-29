@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import { stateToAttr } from '@aeon-ui/core'
 import { AppAvatar } from './AppAvatar'
-import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
 import { LaunchIcon } from './icons'
+import { SkeletonLine } from './Skeleton'
 import type { ConnectedApp } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import {
@@ -12,101 +11,117 @@ import {
   type AppMoneySummary,
 } from '../wallet/appActivity'
 import {
-  formatUsdFromSats,
+  formatPrimaryFromSats,
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from '../wallet/fx'
+import {
+  getDisplayCurrency,
+  subscribeDisplayCurrency,
+  type DisplayCurrency,
+} from '../wallet/displayCurrency'
 import {
   clearAutoPaySettings,
   getAutoPaySettings,
   subscribeAutoPay,
   type AutoPaySettings,
 } from '../wallet/autoPay'
+import { openPermissionDetails } from '../wallet/navStore'
 
 type Props = {
-  app: ConnectedApp | null
-  onClose: () => void
+  app: ConnectedApp
   onRevoke: (origin: string) => void
+  onDone: () => void
 }
 
-export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
+export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
-  const [money, setMoney] = useState<AppMoneySummary>(() =>
-    app ? getAppMoneySummary(app.origin) : { spent24h: 0, earned24h: 0, spentAll: 0, earnedAll: 0 },
-  )
+  const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [money, setMoney] = useState<AppMoneySummary>(() => getAppMoneySummary(app.origin))
   const [autoPay, setAutoPay] = useState<AutoPaySettings | null>(() =>
-    app ? getAutoPaySettings(app.origin) : null,
+    getAutoPaySettings(app.origin),
   )
-
-  useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
+  const [iconReady, setIconReady] = useState(false)
 
   useEffect(() => {
-    if (!app) return
+    setIconReady(false)
+  }, [app.origin])
+
+  useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
+  useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+
+  useEffect(() => {
     const refresh = () => setMoney(getAppMoneySummary(app.origin))
     refresh()
     return subscribeAppActivity(refresh)
-  }, [app])
+  }, [app.origin])
 
   useEffect(() => {
-    if (!app) return
     const refresh = () => setAutoPay(getAutoPaySettings(app.origin))
     refresh()
     return subscribeAutoPay(refresh)
-  }, [app])
-
-  if (!app) return null
+  }, [app.origin])
 
   const name = app.name || appDisplayName(app.origin)
   const home = appHomepage(app.origin)
 
   return (
-    <ModalPortal>
-      <div
-        className="modal-backdrop"
-        data-aeon-scope="dialog"
-        data-aeon-state={stateToAttr('open')}
-        onClick={onClose}
-        role="presentation"
-      >
-        <div
-          className="panel modal app-details-modal"
-          data-aeon-part="content"
-          onClick={(e) => e.stopPropagation()}
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="app-details-title"
-        >
-          <div className="app-details-head">
-            <AppAvatar origin={app.origin} name={name} size="md" />
-            <div className="app-details-head-text">
-              <h2 id="app-details-title">{name}</h2>
-              {home ? (
-                <a className="mono app-details-host" href={home} target="_blank" rel="noreferrer">
-                  {app.origin}
-                </a>
-              ) : (
-                <span className="mono app-details-host">{app.origin}</span>
-              )}
-            </div>
+    <div
+      className="nav-child-panel app-details-inline"
+      data-aeon-scope="app-details"
+      data-aeon-state={iconReady ? undefined : 'loading'}
+    >
+      <div className="app-details-head">
+        <AppAvatar origin={app.origin} name={name} size="md" onReady={() => setIconReady(true)} />
+        {iconReady ? (
+          <div className="app-details-head-text">
+            <h3 id="app-details-title">{name}</h3>
+            <span className="mono app-details-host">{app.origin}</span>
           </div>
+        ) : (
+          <div className="app-details-head-text">
+            <SkeletonLine width="40%" height={16} />
+            <SkeletonLine width="70%" height={10} />
+          </div>
+        )}
+      </div>
 
+      {!iconReady ? (
+        <div className="app-details-section">
+          <SkeletonLine width="30%" height={10} />
+          <div className="permission-chips" style={{ marginTop: 10 }}>
+            <SkeletonLine width={88} height={28} />
+            <SkeletonLine width={72} height={28} />
+            <SkeletonLine width={96} height={28} />
+          </div>
+        </div>
+      ) : (
+        <>
           <div className="app-details-section">
             <p className="scope-list-label">Permissions</p>
             <div className="permission-chips" aria-label="Permissions">
               {CONNECT_SCOPES.map((scope) => (
-                <span key={scope.id} className="permission-chip" title={scope.description}>
+                <button
+                  key={scope.id}
+                  type="button"
+                  className="permission-chip"
+                  title={scope.description}
+                  onClick={() => openPermissionDetails(app.origin, scope.id)}
+                >
                   <ScopeIcon scopeId={scope.id} size={13} />
                   {scope.label}
-                </span>
+                </button>
               ))}
               {autoPay?.enabled ? (
-                <span
+                <button
+                  type="button"
                   className="permission-chip permission-chip-accent"
                   title={`Up to $${autoPay.maxUsd} every ${autoPay.windowHours} hours`}
+                  onClick={() => openPermissionDetails(app.origin, 'auto-pay')}
                 >
                   <ScopeIcon scopeId="auto-pay" size={13} />
                   Auto-pay · ${autoPay.maxUsd}/{autoPay.windowHours}h
-                </span>
+                </button>
               ) : null}
             </div>
           </div>
@@ -115,16 +130,16 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
             <dl className="app-activity-stats">
               <div>
                 <dt>Spent 24h</dt>
-                <dd>{formatUsdFromSats(money.spent24h, usdPerBsv)}</dd>
+                <dd>{formatPrimaryFromSats(money.spent24h, currency, usdPerBsv)}</dd>
               </div>
               <div>
                 <dt>Earned 24h</dt>
-                <dd>{formatUsdFromSats(money.earned24h, usdPerBsv)}</dd>
+                <dd>{formatPrimaryFromSats(money.earned24h, currency, usdPerBsv)}</dd>
               </div>
             </dl>
           </div>
 
-          <div className="actions qr-actions app-details-actions">
+          <div className="actions app-details-actions">
             {home ? (
               <button
                 className="btn btn-primary btn-icon"
@@ -155,17 +170,14 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
               type="button"
               onClick={() => {
                 onRevoke(app.origin)
-                onClose()
+                onDone()
               }}
             >
               Disconnect
             </button>
-            <button className="btn btn-ghost" type="button" onClick={onClose}>
-              Done
-            </button>
           </div>
-        </div>
-      </div>
-    </ModalPortal>
+        </>
+      )}
+    </div>
   )
 }

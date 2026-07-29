@@ -117,6 +117,21 @@ export function formatBsv(sats: number): string {
   return `${formatted} BSV`
 }
 
+/** Compact BSV (or sats) with at most `maxSignificant` significant digits. */
+export function formatBsvSignificant(sats: number, maxSignificant = 5): string {
+  const safe = Number.isFinite(sats) ? Math.max(0, Math.trunc(sats)) : 0
+  if (safe < SATS_DISPLAY_THRESHOLD) {
+    return `${safe.toLocaleString('en-US')} sats`
+  }
+  const bsv = safe / 1e8
+  const trimmed = Number(bsv.toPrecision(maxSignificant))
+  const body = trimmed.toLocaleString('en-US', {
+    maximumSignificantDigits: maxSignificant,
+    useGrouping: true,
+  })
+  return `${body} BSV`
+}
+
 export function formatSats(sats: number): string {
   const safe = Number.isFinite(sats) ? Math.max(0, Math.trunc(sats)) : 0
   return safe.toLocaleString('en-US')

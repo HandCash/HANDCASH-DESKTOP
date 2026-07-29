@@ -1,3 +1,6 @@
+import { formatBsv, formatBsvSignificant } from './session'
+import type { DisplayCurrency } from './displayCurrency'
+
 const CACHE_KEY = 'handcash.brc100.bsvUsd'
 const CACHE_TTL_MS = 5 * 60_000
 
@@ -118,4 +121,25 @@ export function formatUsdFromSats(
 ): string {
   if (usdPerBsv == null) return '—'
   return formatUsd(satsToUsd(sats, usdPerBsv), opts)
+}
+
+/** Primary amount according to display-currency preference. */
+export function formatPrimaryFromSats(
+  sats: number,
+  currency: DisplayCurrency,
+  usdPerBsv: number | null = getCachedUsdPerBsv(),
+  opts?: { compact?: boolean; signed?: boolean },
+): string {
+  if (currency === 'bsv') return formatBsv(sats)
+  return formatUsdFromSats(sats, usdPerBsv, opts)
+}
+
+/** Companion amount (the other unit), compact for row chips. */
+export function formatSecondaryFromSats(
+  sats: number,
+  currency: DisplayCurrency,
+  usdPerBsv: number | null = getCachedUsdPerBsv(),
+): string {
+  if (currency === 'usd') return formatBsvSignificant(sats, 5)
+  return formatUsdFromSats(sats, usdPerBsv, { compact: true })
 }

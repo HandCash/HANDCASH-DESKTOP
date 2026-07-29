@@ -133,6 +133,10 @@ export function listRecentActivity(limit = 40): ActivityEntry[] {
   return entries.slice(0, Math.max(1, limit))
 }
 
+export function getActivityById(id: string): ActivityEntry | null {
+  return readAll().find((e) => e.id === id) ?? null
+}
+
 /** Origin used for in-wallet Send / Receive (not a connected app). */
 export const WALLET_ACTIVITY_ORIGIN = 'handcash'
 

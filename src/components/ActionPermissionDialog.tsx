@@ -4,7 +4,13 @@ import type { PendingAction } from '../wallet/permissions'
 import { appDisplayName, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
 import { ModalPortal } from './ModalPortal'
-import { formatUsdFromSats, getCachedUsdPerBsv } from '../wallet/fx'
+import { SkeletonLine } from './Skeleton'
+import {
+  formatPrimaryFromSats,
+  formatSecondaryFromSats,
+  getCachedUsdPerBsv,
+} from '../wallet/fx'
+import { getDisplayCurrency } from '../wallet/displayCurrency'
 import {
   DEFAULT_AUTO_PAY_MAX_USD,
   DEFAULT_AUTO_PAY_WINDOW_HOURS,
@@ -28,13 +34,25 @@ function isPaymentAction(method: string): boolean {
   return method === 'createAction' || method === 'signAction'
 }
 
-export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
+function ActionPermissionBody({
+  pending,
+  onAllow,
+  onDeny,
+}: {
+  pending: PendingAction
+  onAllow: (autoPay?: AutoPayChoice) => void
+  onDeny: () => void
+}) {
+  const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
   const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
 
   useEffect(() => {
-    if (!pending) return
+    setIconReady(false)
+  }, [pending.id, pending.origin])
+
+  useEffect(() => {
     const existing: AutoPaySettings | null = getAutoPaySettings(pending.origin)
     if (existing?.enabled) {
       setAutoEnabled(true)
@@ -45,16 +63,19 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
       setMaxUsd(String(DEFAULT_AUTO_PAY_MAX_USD))
       setWindowHours(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
     }
-  }, [pending?.id, pending?.origin])
-
-  if (!pending) return null
+  }, [pending.id, pending.origin])
 
   const name = appDisplayName(pending.origin)
   const copy = humanActionCopy(pending.method)
   const usdPerBsv = getCachedUsdPerBsv()
-  const usd =
+  const currency = getDisplayCurrency()
+  const amountPrimary =
     pending.amountSats != null && pending.amountSats > 0
-      ? formatUsdFromSats(pending.amountSats, usdPerBsv)
+      ? formatPrimaryFromSats(pending.amountSats, currency, usdPerBsv)
+      : null
+  const amountSecondary =
+    pending.amountSats != null && pending.amountSats > 0
+      ? formatSecondaryFromSats(pending.amountSats, currency, usdPerBsv)
       : null
   const showAutoPay = isPaymentAction(pending.method)
 
@@ -64,37 +85,55 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
 
   return (
-    <ModalPortal>
-      <div
-        className="modal-backdrop permission-backdrop"
-        data-aeon-scope="dialog"
-        data-aeon-state={stateToAttr('pending')}
-        role="presentation"
-      >
-        <div
-          className="panel modal permission-modal action-permission-modal"
-          data-aeon-part="content"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="action-permission-title"
-        >
-          <div className="connect-app-hero">
-            <AppAvatar origin={pending.origin} name={name} size="lg" />
-            <div>
-              <p className="permission-eyebrow">{copy.eyebrow}</p>
-              <h2 id="action-permission-title">{pending.title}</h2>
-              <p className="lede" style={{ marginBottom: 0 }}>
-                <strong className="permission-origin">{name}</strong> {copy.verb}.
-              </p>
-            </div>
+    <div
+      className="panel modal permission-modal action-permission-modal"
+      data-aeon-part="content"
+      data-aeon-state={iconReady ? undefined : 'loading'}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="action-permission-title"
+    >
+      <div className="connect-app-hero">
+        <AppAvatar
+          origin={pending.origin}
+          name={name}
+          size="lg"
+          onReady={() => setIconReady(true)}
+        />
+        {iconReady ? (
+          <div>
+            <p className="permission-eyebrow">{copy.eyebrow}</p>
+            <h2 id="action-permission-title">{pending.title}</h2>
+            <p className="lede" style={{ marginBottom: 0 }}>
+              <strong className="permission-origin">{name}</strong> {copy.verb}.
+            </p>
           </div>
+        ) : (
+          <div>
+            <SkeletonLine width="36%" height={10} />
+            <SkeletonLine width="72%" height={18} />
+            <SkeletonLine width="58%" height={12} />
+          </div>
+        )}
+      </div>
 
-          {(usd || pending.amountLabel) && (
+      {!iconReady ? (
+        <div className="app-details-section">
+          <SkeletonLine width="40%" height={12} />
+          <SkeletonLine width="55%" height={22} />
+          <SkeletonLine width="85%" height={12} />
+          <SkeletonLine width="70%" height={12} />
+        </div>
+      ) : (
+        <>
+          {(amountPrimary || pending.amountLabel) && (
             <div className="action-amount" data-aeon-part="amount">
               <span>Amount</span>
-              <strong>{usd && usd !== '—' ? usd : pending.amountLabel}</strong>
-              {usd && usd !== '—' && pending.amountLabel ? (
-                <em className="action-amount-bsv">{pending.amountLabel}</em>
+              <strong>
+                {amountPrimary && amountPrimary !== '—' ? amountPrimary : pending.amountLabel}
+              </strong>
+              {amountSecondary && amountPrimary && amountPrimary !== '—' ? (
+                <em className="action-amount-bsv">{amountSecondary}</em>
               ) : null}
             </div>
           )}
@@ -187,7 +226,24 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
               Approve
             </button>
           </div>
-        </div>
+        </>
+      )}
+    </div>
+  )
+}
+
+export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
+  if (!pending) return null
+
+  return (
+    <ModalPortal>
+      <div
+        className="modal-backdrop permission-backdrop"
+        data-aeon-scope="dialog"
+        data-aeon-state={stateToAttr('pending')}
+        role="presentation"
+      >
+        <ActionPermissionBody pending={pending} onAllow={onAllow} onDeny={onDeny} />
       </div>
     </ModalPortal>
   )
