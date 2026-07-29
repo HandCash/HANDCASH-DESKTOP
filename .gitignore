@@ -1,0 +1,18 @@
+node_modules/
+dist/
+dist-electron/
+release/
+.DS_Store
+*.log
+.env
+.env.*
+!.env.example
+*.local
+.vite/
+out/
+.cursor/
+
+# Accidental compiled Electron copies at repo root (sources live in electron/)
+/main.js
+/preload.js
+/httpServer.js

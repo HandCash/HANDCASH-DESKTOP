@@ -1,0 +1,121 @@
+const CACHE_KEY = 'handcash.brc100.bsvUsd'
+const CACHE_TTL_MS = 5 * 60_000
+
+type RateCache = {
+  usdPerBsv: number
+  fetchedAt: number
+}
+
+let memory: RateCache | null = null
+const listeners = new Set<(rate: number | null) => void>()
+
+function readCache(): RateCache | null {
+  if (memory && Date.now() - memory.fetchedAt < CACHE_TTL_MS) return memory
+  try {
+    const raw = localStorage.getItem(CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as RateCache
+    if (
+      typeof parsed.usdPerBsv === 'number' &&
+      parsed.usdPerBsv > 0 &&
+      typeof parsed.fetchedAt === 'number'
+    ) {
+      memory = parsed
+      return parsed
+    }
+  } catch {
+    // ignore
+  }
+  return null
+}
+
+function writeCache(usdPerBsv: number): void {
+  memory = { usdPerBsv, fetchedAt: Date.now() }
+  localStorage.setItem(CACHE_KEY, JSON.stringify(memory))
+  for (const cb of listeners) cb(usdPerBsv)
+}
+
+async function fetchFromWhatsOnChain(): Promise<number> {
+  const res = await fetch('https://api.whatsonchain.com/v1/bsv/main/exchangerate')
+  if (!res.ok) throw new Error(`rate ${res.status}`)
+  const data = (await res.json()) as { rate?: number; currency?: string }
+  if (typeof data.rate !== 'number' || !(data.rate > 0)) throw new Error('bad rate')
+  return data.rate
+}
+
+async function fetchFromCoinGecko(): Promise<number> {
+  const res = await fetch(
+    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
+  )
+  if (!res.ok) throw new Error(`coingecko ${res.status}`)
+  const data = (await res.json()) as { 'bitcoin-cash-sv'?: { usd?: number } }
+  const rate = data['bitcoin-cash-sv']?.usd
+  if (typeof rate !== 'number' || !(rate > 0)) throw new Error('bad coingecko rate')
+  return rate
+}
+
+/** Cached BSV→USD. Returns null until a successful fetch. */
+export function getCachedUsdPerBsv(): number | null {
+  return readCache()?.usdPerBsv ?? null
+}
+
+export function subscribeUsdRate(cb: (rate: number | null) => void): () => void {
+  listeners.add(cb)
+  cb(getCachedUsdPerBsv())
+  return () => {
+    listeners.delete(cb)
+  }
+}
+
+export async function refreshUsdPerBsv(force = false): Promise<number | null> {
+  const cached = readCache()
+  if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
+    return cached.usdPerBsv
+  }
+  try {
+    const rate = await fetchFromWhatsOnChain()
+    writeCache(rate)
+    return rate
+  } catch (err) {
+    console.warn('[fx] WhatsOnChain rate failed', err)
+  }
+  try {
+    const rate = await fetchFromCoinGecko()
+    writeCache(rate)
+    return rate
+  } catch (err) {
+    console.warn('[fx] CoinGecko rate failed', err)
+  }
+  return cached?.usdPerBsv ?? null
+}
+
+export function satsToUsd(sats: number, usdPerBsv: number | null = getCachedUsdPerBsv()): number {
+  if (!usdPerBsv || !Number.isFinite(sats)) return 0
+  return (Math.max(0, sats) / 1e8) * usdPerBsv
+}
+
+export function formatUsd(
+  amount: number,
+  opts?: { compact?: boolean; signed?: boolean },
+): string {
+  const safe = Number.isFinite(amount) ? amount : 0
+  const abs = Math.abs(safe)
+  const digits = abs >= 1000 || opts?.compact ? 2 : abs >= 1 ? 2 : abs >= 0.01 ? 2 : 4
+  const body = abs.toLocaleString('en-US', {
+    style: 'currency',
+    currency: 'USD',
+    minimumFractionDigits: digits > 2 ? 2 : digits,
+    maximumFractionDigits: digits,
+  })
+  if (!opts?.signed || safe === 0) return body
+  return safe > 0 ? `+${body}` : `-${body.replace('$', '')}`
+}
+
+export function formatUsdFromSats(
+  sats: number,
+  usdPerBsv: number | null = getCachedUsdPerBsv(),
+  opts?: { compact?: boolean; signed?: boolean },
+): string {
+  if (usdPerBsv == null) return '—'
+  return formatUsd(satsToUsd(sats, usdPerBsv), opts)
+}

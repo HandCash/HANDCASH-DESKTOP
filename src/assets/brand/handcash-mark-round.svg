@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="HandCash">
+  <!-- Official-style round mark (white on #38D385), vectorized from HandCash Connect asset -->
+  <circle cx="64" cy="64" r="64" fill="#38D385"/>
+  <!-- left ring segment -->
+  <path
+    fill="#FFFFFF"
+    d="M64 22
+       A42 42 0 0 0 64 106
+       A30 30 0 0 1 64 34
+       A30 30 0 0 1 64 94
+       A42 42 0 0 0 64 22
+       Z"
+  />
+  <!-- right ring segment -->
+  <path
+    fill="#FFFFFF"
+    d="M64 22
+       A42 42 0 0 1 64 106
+       A30 30 0 0 0 64 94
+       A30 30 0 0 0 64 34
+       A42 42 0 0 1 64 22
+       Z"
+  />
+  <!-- center -->
+  <circle cx="64" cy="64" r="13" fill="#FFFFFF"/>
+  <!-- connector -->
+  <rect x="64" y="56.5" width="38" height="15" fill="#FFFFFF"/>
+</svg>

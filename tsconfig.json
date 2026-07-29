@@ -1,0 +1,33 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "skipLibCheck": true,
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noFallthroughCasesInSwitch": true,
+    "resolveJsonModule": true,
+    "paths": {
+      "@aeon-ui/core": ["./node_modules/aeon-ui-engine/packages/core/src/index.ts"],
+      "@aeon-ui/primitives": ["./node_modules/aeon-ui-engine/packages/primitives/src/index.ts"],
+      "@aeon-ui/react": ["./node_modules/aeon-ui-engine/packages/react/src/index.ts"],
+      "@aeon-ui/ui": ["./node_modules/aeon-ui-engine/packages/ui/src/index.ts"],
+      "@aeon-ui/surface": ["./node_modules/aeon-ui-engine/packages/surface/src/index.ts"],
+      "@aeon-ui/panda/styled-system/css": [
+        "./node_modules/aeon-ui-engine/packages/panda/styled-system/css/index.d.ts"
+      ],
+      "@aeon-ui/panda/styled-system/recipes": [
+        "./node_modules/aeon-ui-engine/packages/panda/styled-system/recipes/index.d.ts"
+      ]
+    }
+  },
+  "include": ["src"]
+}
