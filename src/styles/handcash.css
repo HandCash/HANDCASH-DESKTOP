@@ -541,7 +541,8 @@ input {
 .wallet-actions {
   margin-top: 0;
   flex: 0 0 auto;
-  justify-content: flex-start;
+  justify-content: flex-end;
+  align-items: center;
   flex-wrap: nowrap;
   min-width: 0;
 }
@@ -551,7 +552,7 @@ input {
   min-width: 0;
   display: flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
 }
 
 .wallet-balance {
@@ -563,27 +564,20 @@ input {
   background: transparent;
   color: inherit;
   font: inherit;
-  text-align: center;
+  text-align: left;
   cursor: pointer;
   display: flex;
   flex-direction: row;
   align-items: baseline;
-  justify-content: center;
+  justify-content: flex-start;
   flex-wrap: wrap;
   gap: 8px 10px;
-}
-
-.wallet-hero-end {
-  flex: 0 0 auto;
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  min-width: 0;
 }
 
 .wallet-refresh {
   position: static;
   margin-top: 0;
+  flex-shrink: 0;
   z-index: 2;
 }
 
@@ -942,17 +936,11 @@ input {
     flex-wrap: wrap;
   }
 
-  .wallet-actions {
-    width: 100%;
-    justify-content: flex-start;
-  }
-
   .wallet-balance-slot {
-    order: -1;
     width: 100%;
   }
 
-  .wallet-hero-end {
+  .wallet-actions {
     margin-left: auto;
   }
 
@@ -1625,10 +1613,9 @@ button.wallet-detail-value.is-copied {
 }
 
 .history-with-filters .payment-filters {
-  margin-top: 8px;
-  margin-bottom: 0;
+  margin: 0 0 8px;
   position: sticky;
-  bottom: 0;
+  top: 0;
   z-index: 2;
   background: var(--hc-bg, #000);
 }
@@ -1639,10 +1626,58 @@ button.wallet-detail-value.is-copied {
   min-height: 0;
 }
 
+.connected-panel-head-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.activity-filter-toggle {
+  appearance: none;
+  position: relative;
+  width: 32px;
+  height: 32px;
+  margin: 0;
+  padding: 0;
+  border-radius: var(--hc-radius);
+  border: 1px solid hsl(var(--border));
+  background: rgba(0, 0, 0, 0.28);
+  color: var(--hc-muted);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: color 140ms ease, border-color 140ms ease, background 140ms ease;
+}
+
+.activity-filter-toggle:hover {
+  color: var(--hc-text);
+  border-color: color-mix(in srgb, var(--hc-accent) 40%, transparent);
+}
+
+.activity-filter-toggle[data-active],
+.activity-filter-toggle[aria-expanded='true'] {
+  color: var(--hc-accent);
+  border-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 14%, transparent);
+}
+
+.activity-filter-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--hc-accent);
+  box-shadow: 0 0 0 2px rgba(0, 0, 0, 0.55);
+}
+
 .payment-filters {
-  padding: 8px 0 0;
-  border-top: 1px solid hsl(var(--border));
-  border-bottom: 0;
+  padding: 0 0 8px;
+  border-bottom: 1px solid hsl(var(--border));
+  border-top: 0;
 }
 
 .payment-filter-carousel {

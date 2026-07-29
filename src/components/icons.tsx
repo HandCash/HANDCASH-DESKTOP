@@ -86,6 +86,15 @@ export function TransactionsIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `filter_list` */
+export function FilterIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M10 18h4v-2h-4v2zM3 6v2h18V6H3zm3 7h12v-2H6v2z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `timeline` */
 export function ActivityIcon(props: IconProps) {
   return (

@@ -8,6 +8,7 @@ import type {
 } from '../wallet/paymentFilters'
 
 type Props = {
+  id?: string
   value: PaymentFilters
   origins: PaymentOriginOption[]
   onChange: (next: PaymentFilters) => void
@@ -55,9 +56,14 @@ function Chip({
   )
 }
 
-export function PaymentFiltersPanel({ value, origins, onChange }: Props) {
+export function PaymentFiltersPanel({ id, value, origins, onChange }: Props) {
   return (
-    <aside className="payment-filters" data-aeon-scope="payment-filters" aria-label="Activity filters">
+    <aside
+      id={id}
+      className="payment-filters"
+      data-aeon-scope="payment-filters"
+      aria-label="Activity filters"
+    >
       <div className="payment-filter-carousel" role="toolbar" aria-label="Activity filters">
         <div className="payment-filter-segment" role="group" aria-label="Type">
           {KIND_OPTIONS.map((opt) => (

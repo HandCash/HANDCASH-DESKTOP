@@ -105,22 +105,10 @@ export function Dashboard({
     <section className="dashboard" data-aeon-scope="dashboard" data-aeon-state="ready">
       <div className="dashboard-main">
         <div className="panel wallet-hero">
+          <div className="connected-panel-head">
+            <h2>Your wallet</h2>
+          </div>
           <div className="wallet-hero-main">
-            <div className="actions wallet-actions">
-              <button className="btn btn-primary btn-icon" onClick={() => openSendFlow()}>
-                <SendIcon size={16} />
-                Send
-              </button>
-              <button className="btn btn-ghost btn-icon" onClick={() => openReceiveFlow()}>
-                <ReceiveIcon size={16} />
-                Receive
-              </button>
-              <button className="btn btn-ghost btn-icon" onClick={onLock}>
-                <LockIcon size={16} />
-                Lock
-              </button>
-            </div>
-
             <div className="wallet-balance-slot">
               <button
                 type="button"
@@ -149,7 +137,19 @@ export function Dashboard({
               </button>
             </div>
 
-            <div className="wallet-hero-end">
+            <div className="actions wallet-actions">
+              <button className="btn btn-primary btn-icon" onClick={() => openSendFlow()}>
+                <SendIcon size={16} />
+                Send
+              </button>
+              <button className="btn btn-ghost btn-icon" onClick={() => openReceiveFlow()}>
+                <ReceiveIcon size={16} />
+                Receive
+              </button>
+              <button className="btn btn-ghost btn-icon" onClick={onLock}>
+                <LockIcon size={16} />
+                Lock
+              </button>
               <button
                 type="button"
                 className="refresh-btn wallet-refresh"

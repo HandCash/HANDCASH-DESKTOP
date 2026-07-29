@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { ReceiveIcon, SendIcon } from './icons'
+import { FilterIcon, ReceiveIcon, SendIcon } from './icons'
 import { SkeletonHistoryRow } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
@@ -167,6 +167,7 @@ export function ActivityFeed({
 }: FeedProps) {
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
   const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const listRef = useRef<HTMLUListElement>(null)
   useScrollReveal(listRef)
 
@@ -174,6 +175,11 @@ export function ActivityFeed({
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
     [entries, filters, showFilters],
   )
+
+  const filtersActive =
+    filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
+    filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
+    filters.origin !== DEFAULT_PAYMENT_FILTERS.origin
 
   // Drop a selected app filter if that origin disappears.
   useEffect(() => {
@@ -203,23 +209,51 @@ export function ActivityFeed({
   const head = (
     <div className="connected-panel-head">
       <h2>{title}</h2>
-      {showCount ? <span className="connected-count">{filtered.length}</span> : null}
+      <div className="connected-panel-head-actions">
+        {showCount ? <span className="connected-count">{filtered.length}</span> : null}
+        {showFilters ? (
+          <button
+            type="button"
+            className="activity-filter-toggle"
+            aria-label={filtersOpen ? 'Hide filters' : 'Show filters'}
+            aria-expanded={filtersOpen}
+            aria-controls="activity-filters"
+            title="Filters"
+            data-active={filtersOpen || filtersActive ? '' : undefined}
+            onClick={() => setFiltersOpen((open) => !open)}
+          >
+            <FilterIcon size={16} />
+            {filtersActive ? <span className="activity-filter-dot" aria-hidden /> : null}
+          </button>
+        ) : null}
+      </div>
     </div>
   )
 
-  const filtersPanel = showFilters ? (
-    <PaymentFiltersPanel value={filters} origins={origins} onChange={setFilters} />
-  ) : null
+  const filtersPanel =
+    showFilters && filtersOpen ? (
+      <PaymentFiltersPanel
+        id="activity-filters"
+        value={filters}
+        origins={origins}
+        onChange={setFilters}
+      />
+    ) : null
 
   if (embedded) {
     return (
       <div
-        className={showFilters ? 'history-embedded history-with-filters' : 'history-embedded'}
+        className={
+          showFilters
+            ? `history-embedded history-with-filters${filtersOpen ? ' filters-open' : ''}`
+            : 'history-embedded'
+        }
         data-aeon-scope="activity-feed"
+        data-aeon-state={filtersOpen ? 'filters-open' : 'filters-closed'}
       >
         {head}
-        {body}
         {filtersPanel}
+        {body}
       </div>
     )
   }
@@ -227,8 +261,8 @@ export function ActivityFeed({
   return (
     <section className="history-panel panel" data-aeon-scope="recent-activity">
       {head}
-      {body}
       {filtersPanel}
+      {body}
     </section>
   )
 }
