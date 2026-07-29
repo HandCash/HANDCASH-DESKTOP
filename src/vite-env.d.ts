@@ -15,6 +15,21 @@ declare module '*.svg?url' {
   export default src
 }
 
+type DetectedBarcode = {
+  rawValue: string
+  format: string
+}
+
+type BarcodeDetectorOptions = {
+  formats?: string[]
+}
+
+declare class BarcodeDetector {
+  constructor(options?: BarcodeDetectorOptions)
+  detect(source: ImageBitmapSource): Promise<DetectedBarcode[]>
+  static getSupportedFormats(): Promise<string[]>
+}
+
 type HttpRequestEvent = {
   method: string
   path: string
@@ -53,6 +68,9 @@ interface HandCashBridge {
   respondHttp: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
+  storageGetSync?: (key: string) => string | null
+  storageSetSync?: (key: string, value: string) => boolean
+  clipboardWrite?: (text: string) => Promise<void>
 }
 
 interface Window {

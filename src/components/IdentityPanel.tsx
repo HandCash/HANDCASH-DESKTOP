@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import type { WalletProfile } from '../machines/appMachine'
+import { copyText } from '../wallet/clipboard'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
@@ -34,12 +35,9 @@ export function IdentityPanel({ profile }: Props) {
   }, [profile.identityKey])
 
   const copyIdentity = async () => {
-    try {
-      await navigator.clipboard.writeText(profile.identityKey)
+    if (await copyText(profile.identityKey)) {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      // ignore
     }
   }
 
@@ -52,7 +50,12 @@ export function IdentityPanel({ profile }: Props) {
       <div className="identity-layout">
         <div className="identity-qr" data-aeon-part="media">
           {error ? <p className="error">{error}</p> : null}
-          <div className="identity-qr-frame">
+          <button
+            type="button"
+            className="identity-qr-frame identity-qr-copy"
+            title="Click to copy identity key"
+            onClick={() => void copyIdentity()}
+          >
             {dataUrl ? (
               <DeferredImage
                 src={dataUrl}
@@ -67,8 +70,10 @@ export function IdentityPanel({ profile }: Props) {
             ) : !error ? (
               <SkeletonQr size={180} />
             ) : null}
-          </div>
-          <p className="identity-qr-hint">Scan to share this identity key</p>
+          </button>
+          <p className="identity-qr-hint">
+            {copied ? 'Copied' : 'Tap QR to copy'}
+          </p>
         </div>
 
         <div className="identity-info">
@@ -76,8 +81,8 @@ export function IdentityPanel({ profile }: Props) {
             <span>Identity key</span>
             <button
               type="button"
-              className={`mono wallet-detail-value${copied ? ' is-copied' : ''}`}
-              title="Click to copy identity"
+              className={`mono identity-key${copied ? ' is-copied' : ''}`}
+              title="Click to copy identity key"
               onClick={() => void copyIdentity()}
             >
               {copied ? 'Copied' : profile.identityKey}
@@ -85,7 +90,7 @@ export function IdentityPanel({ profile }: Props) {
           </div>
           <div className="identity-nav-row">
             <span>Network</span>
-            <strong className="identity-nav-network">
+            <strong className="identity-network">
               {profile.chain === 'main' ? 'Mainnet' : 'Testnet'}
             </strong>
           </div>

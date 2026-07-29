@@ -1,4 +1,4 @@
-import { formatBsv, formatBsvSignificant } from './session'
+import { formatBsvSignificant } from './session'
 import type { DisplayCurrency } from './displayCurrency'
 
 const CACHE_KEY = 'handcash.brc100.bsvUsd'
@@ -130,7 +130,8 @@ export function formatPrimaryFromSats(
   usdPerBsv: number | null = getCachedUsdPerBsv(),
   opts?: { compact?: boolean; signed?: boolean },
 ): string {
-  if (currency === 'bsv') return formatBsv(sats)
+  // Outside the hero balance, BSV uses 5 significant figures.
+  if (currency === 'bsv') return formatBsvSignificant(sats, 5)
   return formatUsdFromSats(sats, usdPerBsv, opts)
 }
 

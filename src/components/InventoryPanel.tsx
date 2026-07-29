@@ -14,19 +14,19 @@ export function InventoryPanel() {
   return (
     <div
       className="nav-section-body"
-      data-aeon-scope="inventory"
+      data-aeon-scope="collectables"
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Inventory</h2>
-        <CollectionViewToggle label="Inventory view" />
+        <h2>Collectables</h2>
+        <CollectionViewToggle label="Collectables view" />
       </div>
       {view === 'grid' ? (
         <div className="collection-grid collection-grid-empty">
-          <p className="connected-empty-line">No items yet</p>
+          <p className="connected-empty-line">No collectables yet</p>
         </div>
       ) : (
-        <p className="connected-empty-line">No items yet</p>
+        <p className="connected-empty-line">No collectables yet</p>
       )}
     </div>
   )

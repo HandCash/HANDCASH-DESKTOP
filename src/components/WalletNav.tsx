@@ -3,6 +3,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
 import type { ConnectedApp } from '../wallet/permissions'
 import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
+import { getFriendById } from '../wallet/friends'
 import {
   clearNavChild,
   getNavState,
@@ -15,6 +16,7 @@ import {
 } from '../wallet/navStore'
 import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
+import { FriendDetailsPanel } from './FriendDetailsPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { TransactionsPanel } from './RecentActivity'
@@ -27,9 +29,9 @@ import { NavBreadcrumb } from './NavBreadcrumb'
 import {
   ActivityIcon,
   AppsIcon,
+  CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
-  InventoryIcon,
 } from './icons'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
@@ -50,7 +52,7 @@ const SECTIONS: {
 }[] = [
   { value: 'activity', label: 'Activity', Icon: ActivityIcon },
   { value: 'apps', label: 'Apps', Icon: AppsIcon },
-  { value: 'inventory', label: 'Inventory', Icon: InventoryIcon },
+  { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', Icon: IdentityIcon },
 ]
@@ -102,6 +104,10 @@ export function WalletNav({
     }
     if (child.type === 'send') return [root, { label: 'Send' }]
     if (child.type === 'receive') return [root, { label: 'Receive' }]
+    if (child.type === 'friend') {
+      const friend = getFriendById(child.friendId)
+      return [root, { label: friend?.label || 'Friend' }]
+    }
     return [root, { label: 'Payment' }]
   })()
 
@@ -148,12 +154,15 @@ export function WalletNav({
               {child.type === 'payment' && (
                 <PaymentDetailsPanel entryId={child.entryId} chain={profile.chain} />
               )}
+              {child.type === 'friend' && (
+                <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
+              )}
             </div>
           ) : (
             <div className="wallet-nav-panel">
               {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
               {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
-              {nav.section === 'inventory' && <InventoryPanel />}
+              {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
               {nav.section === 'identity' && <IdentityPanel profile={profile} />}
             </div>
@@ -161,25 +170,27 @@ export function WalletNav({
         </div>
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
-          {SECTIONS.map(({ value, label, Icon }) => {
-            const selected = nav.section === value
-            return (
-              <button
-                key={value}
-                type="button"
-                role="tab"
-                className="wallet-nav-tab"
-                aria-label={label}
-                aria-selected={selected}
-                title={label}
-                data-selected={selected ? '' : undefined}
-                onClick={() => selectSection(value)}
-              >
-                <Icon size={18} />
-                <span className="wallet-nav-tab-label">{label}</span>
-              </button>
-            )
-          })}
+          <div className="wallet-nav-bar-track">
+            {SECTIONS.map(({ value, label, Icon }) => {
+              const selected = nav.section === value
+              return (
+                <button
+                  key={value}
+                  type="button"
+                  role="tab"
+                  className="wallet-nav-tab"
+                  aria-label={label}
+                  aria-selected={selected}
+                  title={label}
+                  data-selected={selected ? '' : undefined}
+                  onClick={() => selectSection(value)}
+                >
+                  <Icon size={18} />
+                  <span className="wallet-nav-tab-label">{label}</span>
+                </button>
+              )
+            })}
+          </div>
         </div>
       </div>
     </section>

@@ -4,7 +4,6 @@ import { stateToAttr } from '@aeon-ui/core'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import bsvLogoClassic from '../assets/brand/bsv-logo-classic.png'
 import { Skeleton, SkeletonLine } from './Skeleton'
-import { DeferredImage } from './DeferredImage'
 import {
   OFFICIAL_URL,
   formatPct,
@@ -57,12 +56,11 @@ export function WhatIsBsvPanel() {
   const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket())
   const [openSections, setOpenSections] = useState<string[]>([])
   const [classicLogo, setClassicLogo] = useState(false)
-  const [logoReady, setLogoReady] = useState(false)
+  const [logosReady, setLogosReady] = useState({ normal: false, classic: false })
   const logoTaps = useRef({ count: 0, timer: 0 })
-
-  useEffect(() => {
-    setLogoReady(false)
-  }, [classicLogo])
+  const logosReadyRef = useRef(logosReady)
+  const pendingClassicRef = useRef<boolean | null>(null)
+  logosReadyRef.current = logosReady
 
   useEffect(() => {
     const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket()))
@@ -75,13 +73,47 @@ export function WhatIsBsvPanel() {
     }
   }, [])
 
+  useEffect(() => {
+    let cancelled = false
+    const mark = (key: 'normal' | 'classic') => {
+      if (!cancelled) setLogosReady((prev) => (prev[key] ? prev : { ...prev, [key]: true }))
+    }
+    const load = (src: string, key: 'normal' | 'classic') => {
+      const img = new Image()
+      img.onload = () => mark(key)
+      img.onerror = () => mark(key)
+      img.src = src
+      if (img.complete && img.naturalWidth > 0) mark(key)
+    }
+    load(bsvLogo, 'normal')
+    load(bsvLogoClassic, 'classic')
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (pendingClassicRef.current == null) return
+    const wantClassic = pendingClassicRef.current
+    const ready = wantClassic ? logosReady.classic : logosReady.normal
+    if (!ready) return
+    pendingClassicRef.current = null
+    setClassicLogo(wantClassic)
+  }, [logosReady])
+
   const onLogoTap = () => {
     const taps = logoTaps.current
     window.clearTimeout(taps.timer)
     taps.count += 1
     if (taps.count >= 3) {
       taps.count = 0
-      setClassicLogo((v) => !v)
+      const next = !classicLogo
+      const ready = next ? logosReadyRef.current.classic : logosReadyRef.current.normal
+      if (!ready) {
+        pendingClassicRef.current = next
+        return
+      }
+      setClassicLogo(next)
       return
     }
     taps.timer = window.setTimeout(() => {
@@ -92,8 +124,8 @@ export function WhatIsBsvPanel() {
   const change24 = stats?.change24hPct ?? null
   const up24 = (change24 ?? 0) >= 0
   const aboutOpen = openSections.includes('about')
-  const logoSrc = classicLogo ? bsvLogoClassic : bsvLogo
   const marketReady = Boolean(stats)
+  const logoFrameReady = logosReady.normal
 
   return (
     <aside className="panel what-is-bsv" data-aeon-scope="what-is-bsv">
@@ -105,33 +137,44 @@ export function WhatIsBsvPanel() {
           aria-label={classicLogo ? 'Bitcoin SV classic logo' : 'Bitcoin SV logo'}
           title="Bitcoin SV"
         >
-          <DeferredImage
-            className="bsv-logo"
-            src={logoSrc}
-            alt=""
-            width={44}
-            height={44}
-            draggable={false}
-            skeletonWidth={44}
-            skeletonHeight={44}
-            skeletonRadius={12}
-            skeletonClassName="bsv-logo-skeleton"
-            onReady={() => setLogoReady(true)}
-          />
+          {!logoFrameReady ? (
+            <Skeleton
+              className="bsv-logo-skeleton"
+              width={44}
+              height={44}
+              radius={12}
+            />
+          ) : (
+            <span className="bsv-logo-stack" aria-hidden>
+              <img
+                className={`bsv-logo${classicLogo ? '' : ' is-active'}`}
+                src={bsvLogo}
+                alt=""
+                width={44}
+                height={44}
+                draggable={false}
+              />
+              {logosReady.classic ? (
+                <img
+                  className={`bsv-logo${classicLogo ? ' is-active' : ''}`}
+                  src={bsvLogoClassic}
+                  alt=""
+                  width={44}
+                  height={44}
+                  draggable={false}
+                />
+              ) : null}
+            </span>
+          )}
         </button>
         <div className="bsv-asset-text">
-          {logoReady && marketReady ? (
-            <>
-              <strong>Bitcoin SV (BSV)</strong>
-              <span className={`bsv-change ${up24 ? 'is-up' : 'is-down'}`}>
-                {formatPct(change24)} · 24h
-              </span>
-            </>
+          <strong>Bitcoin SV (BSV)</strong>
+          {marketReady ? (
+            <span className={`bsv-change ${up24 ? 'is-up' : 'is-down'}`}>
+              {formatPct(change24)} · 24h
+            </span>
           ) : (
-            <>
-              <SkeletonLine width="70%" height={14} />
-              <SkeletonLine width="45%" height={11} />
-            </>
+            <SkeletonLine width="45%" height={11} />
           )}
         </div>
       </div>
@@ -176,7 +219,7 @@ export function WhatIsBsvPanel() {
             value="about"
             className={`bsv-about-trigger${aboutOpen ? ' is-open' : ''}`}
           >
-            What is BSV
+            What is BSV?
             <Accordion.ItemIndicator className="bsv-about-indicator">▾</Accordion.ItemIndicator>
           </Accordion.ItemTrigger>
         </Accordion.Item>

@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react'
-import {
-  formatBsv,
-} from '../wallet/session'
+import { useEffect, useRef, useState } from 'react'
+import { formatBsv } from '../wallet/session'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import {
   formatUsdFromSats,
@@ -18,6 +16,7 @@ import {
 import { clearAppActivity } from '../wallet/appActivity'
 import type { WalletProfile } from '../machines/appMachine'
 import { SendIcon, ReceiveIcon, LockIcon, RefreshIcon } from './icons'
+import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
   revokeOrigin,
@@ -52,6 +51,8 @@ export function Dashboard({
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [refreshing, setRefreshing] = useState(false)
+  const balanceSlotRef = useRef<HTMLDivElement>(null)
+  const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
@@ -67,6 +68,12 @@ export function Dashboard({
 
   const usdLabel = formatUsdFromSats(balanceSats, usdPerBsv)
   const bsvLabel = formatBsv(balanceSats)
+
+  useFitFontSize(balanceSlotRef, balanceBtnRef, {
+    maxPx: 28,
+    minPx: 8,
+    watch: `${currency}|${usdLabel}|${bsvLabel}`,
+  })
 
   const refreshWallet = async () => {
     if (refreshing) return
@@ -109,8 +116,9 @@ export function Dashboard({
             <h2>Your wallet</h2>
           </div>
           <div className="wallet-hero-main">
-            <div className="wallet-balance-slot">
+            <div className="wallet-balance-slot" ref={balanceSlotRef}>
               <button
+                ref={balanceBtnRef}
                 type="button"
                 className="wallet-balance"
                 data-aeon-part="balance"
@@ -140,19 +148,19 @@ export function Dashboard({
             <div className="actions wallet-actions">
               <button className="btn btn-primary btn-icon" onClick={() => openSendFlow()}>
                 <SendIcon size={16} />
-                Send
+                <span className="wallet-action-label">Send</span>
               </button>
               <button className="btn btn-ghost btn-icon" onClick={() => openReceiveFlow()}>
                 <ReceiveIcon size={16} />
-                Receive
+                <span className="wallet-action-label">Receive</span>
               </button>
               <button className="btn btn-ghost btn-icon" onClick={onLock}>
                 <LockIcon size={16} />
-                Lock
+                <span className="wallet-action-label">Lock</span>
               </button>
               <button
                 type="button"
-                className="refresh-btn wallet-refresh"
+                className="btn btn-ghost btn-icon wallet-refresh"
                 aria-label="Refresh balance"
                 title="Refresh"
                 disabled={refreshing}
@@ -160,6 +168,7 @@ export function Dashboard({
                 onClick={() => void refreshWallet()}
               >
                 <RefreshIcon size={16} />
+                <span className="wallet-action-label">Refresh</span>
               </button>
             </div>
           </div>

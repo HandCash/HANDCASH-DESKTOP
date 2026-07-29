@@ -1,6 +1,6 @@
 import type { ConnectedApp } from './permissions'
 
-export type NavSection = 'activity' | 'apps' | 'inventory' | 'friends' | 'identity'
+export type NavSection = 'activity' | 'apps' | 'collectables' | 'friends' | 'identity'
 
 export type NavChild =
   | { type: 'app'; origin: string }
@@ -8,6 +8,7 @@ export type NavChild =
   | { type: 'send' }
   | { type: 'receive' }
   | { type: 'payment'; entryId: string }
+  | { type: 'friend'; friendId: string }
 
 export type NavState = {
   section: NavSection
@@ -70,4 +71,8 @@ export function openReceiveFlow() {
 
 export function openPaymentDetails(entryId: string) {
   openNavChild('activity', { type: 'payment', entryId })
+}
+
+export function openFriendDetails(friendId: string) {
+  openNavChild('friends', { type: 'friend', friendId })
 }

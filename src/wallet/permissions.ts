@@ -3,7 +3,7 @@ import {
   normalizeAppHost,
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
-import { formatBsv } from './session'
+import { formatBsvSignificant } from './session'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -319,13 +319,13 @@ export function summarizeAction(method: string, args: unknown): {
         typeof out.outputDescription === 'string' && out.outputDescription
           ? out.outputDescription
           : 'Payment'
-      if (sats > 0) details.push(`${label}: ${formatBsv(sats)}`)
+      if (sats > 0) details.push(`${label}: ${formatBsvSignificant(sats, 5)}`)
     }
     return {
       title: 'Approve payment',
       summary: description,
       amountSats: total > 0 ? total : undefined,
-      amountLabel: total > 0 ? formatBsv(total) : undefined,
+      amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
       details,
     }
   }

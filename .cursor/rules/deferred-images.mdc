@@ -13,7 +13,7 @@ alwaysApply: true
 1. Do not use a bare `<img>` in feature UI. Use `DeferredImage` or `AppAvatar`.
 2. `DeferredImage` — remote/local bitmaps (logos, QR, product art). Skeleton in place until `onLoad`; handle cache via `img.complete`.
 3. `AppAvatar` — app favicons. Skeleton until favicon loads or initials fallback; expose `onReady`.
-4. List/detail rows that include an avatar must keep the **whole row/card** on a skeleton (or `media-preload` under the skeleton) until `onReady`. Do not flash name/spent/amount beside an empty icon.
+4. List/detail rows that include an avatar may show the row immediately; `AppAvatar` skeletons only the icon slot until the favicon (or initials) is ready. Do not block an entire activity list on avatar readiness.
 5. Prefer keeping the image mounted under `.media-preload` while the skeleton shows — do not `display:none` / unmount the loader in a way that blocks network load, then remount a second avatar after ready (that re-flashes a skeleton).
 6. Permission dialogs and detail panels follow the same gate when they show an app icon.
 

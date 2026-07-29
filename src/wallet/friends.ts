@@ -1,5 +1,6 @@
 import { PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
+import { durableGetItem, durableSetItem } from './durableStorage'
 
 const STORAGE_KEY = 'handcash.brc100.friends'
 
@@ -20,7 +21,7 @@ function notify(friends: Friend[]) {
 
 function readRaw(): Friend[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as Friend[]
     if (!Array.isArray(parsed)) return []
@@ -37,7 +38,7 @@ function readRaw(): Friend[] {
 }
 
 function writeAll(friends: Friend[]) {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(friends))
+  durableSetItem(STORAGE_KEY, JSON.stringify(friends))
   notify(friends)
 }
 
@@ -93,6 +94,42 @@ export function addFriend(args: { label: string; identityKey: string }): Friend 
   }
   writeAll([...friends, friend])
   return friend
+}
+
+export function getFriendById(id: string): Friend | null {
+  return readRaw().find((f) => f.id === id) ?? null
+}
+
+export function updateFriend(
+  id: string,
+  patch: { label?: string; identityKey?: string },
+): Friend {
+  const friends = readRaw()
+  const index = friends.findIndex((f) => f.id === id)
+  if (index < 0) throw new Error('Friend not found')
+
+  const current = friends[index]!
+  const label = patch.label !== undefined ? patch.label.trim() : current.label
+  const identityKey =
+    patch.identityKey !== undefined
+      ? normalizeIdentityKey(patch.identityKey)
+      : current.identityKey
+
+  if (!label) throw new Error('Label is required')
+  const invalid = validateIdentityKey(identityKey)
+  if (invalid) throw new Error(invalid)
+
+  if (
+    friends.some((f) => f.id !== id && f.identityKey === identityKey)
+  ) {
+    throw new Error('Friend already added')
+  }
+
+  const updated: Friend = { ...current, label, identityKey }
+  const next = friends.slice()
+  next[index] = updated
+  writeAll(next)
+  return updated
 }
 
 export function removeFriend(id: string) {

@@ -56,6 +56,11 @@ const handcash = {
   },
   focusWindow: () => ipcRenderer.invoke('app:focus-window') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
+  storageGetSync: (key: string) =>
+    ipcRenderer.sendSync('storage:get-sync', key) as string | null,
+  storageSetSync: (key: string, value: string) =>
+    ipcRenderer.sendSync('storage:set-sync', key, value) as boolean,
+  clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
 }
 
 contextBridge.exposeInMainWorld('handcash', handcash)

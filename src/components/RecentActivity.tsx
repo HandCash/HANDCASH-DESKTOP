@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import { FilterIcon, ReceiveIcon, SendIcon } from './icons'
-import { SkeletonHistoryRow } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   listRecentActivity,
@@ -68,13 +67,14 @@ function HistoryRow({
   entry,
   currency,
   usdPerBsv,
+  showWhen,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
   usdPerBsv: number | null
+  showWhen: boolean
 }) {
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
-  const [ready, setReady] = useState(isWallet)
   const spent = entry.kind === 'spent'
   const amountLabel = formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed =
@@ -85,12 +85,10 @@ function HistoryRow({
         : `+${amountLabel}`
 
   return (
-    <li data-ready={ready ? true : undefined}>
-      {!ready ? <SkeletonHistoryRow /> : null}
+    <li>
       <button
         type="button"
-        className={ready ? 'history-row history-row-btn' : 'media-preload'}
-        tabIndex={ready ? 0 : -1}
+        className="history-row history-row-btn"
         onClick={() => openPaymentDetails(entry.id)}
       >
         <div className="history-icon">
@@ -101,7 +99,6 @@ function HistoryRow({
               origin={entry.origin}
               name={appDisplayName(entry.origin)}
               size="sm"
-              onReady={() => setReady(true)}
             />
           )}
         </div>
@@ -112,7 +109,7 @@ function HistoryRow({
           <span className="history-amount" title={amountLabel}>
             {signed}
           </span>
-          <span className="history-when">{formatWhen(entry.at)}</span>
+          {showWhen ? <span className="history-when">{formatWhen(entry.at)}</span> : null}
         </div>
       </button>
     </li>
@@ -127,6 +124,7 @@ type FeedProps = {
   emptyLabel?: string
   showCount?: boolean
   showFilters?: boolean
+  showWhen?: boolean
 }
 
 function useActivityFeed(limit: number) {
@@ -180,6 +178,7 @@ export function ActivityFeed({
   emptyLabel = 'No activity yet',
   showCount = true,
   showFilters = false,
+  showWhen = false,
 }: FeedProps) {
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
   const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
@@ -217,6 +216,7 @@ export function ActivityFeed({
             entry={entry}
             currency={currency}
             usdPerBsv={usdPerBsv}
+            showWhen={showWhen}
           />
         ))}
       </ul>
@@ -299,6 +299,7 @@ export function TransactionsPanel({ chain }: { chain?: Chain }) {
       emptyLabel="No activity yet"
       showCount={false}
       showFilters
+      showWhen
     />
   )
 }

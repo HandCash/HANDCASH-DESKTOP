@@ -1,9 +1,10 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
 import electronUpdater from 'electron-updater'
 import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
+import { durableGet, durableSet } from './durableStore.js'
 
 const { autoUpdater } = electronUpdater
 
@@ -73,6 +74,18 @@ function createWindow(): void {
       nodeIntegration: false,
       sandbox: false,
     },
+  })
+
+  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
+    if (permission === 'media' || permission === 'mediaKeySystem') {
+      callback(true)
+      return
+    }
+    callback(false)
+  })
+
+  mainWindow.webContents.session.setPermissionCheckHandler((_wc, permission) => {
+    return permission === 'media' || permission === 'mediaKeySystem'
   })
 
   if (isDev) {
@@ -183,4 +196,18 @@ ipcMain.handle('app:open-external', async (_event, url: unknown) => {
     throw new Error('Invalid external URL')
   }
   await shell.openExternal(url)
+})
+
+ipcMain.on('storage:get-sync', (event, key: unknown) => {
+  event.returnValue = typeof key === 'string' ? durableGet(key) : null
+})
+
+ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown) => {
+  event.returnValue =
+    typeof key === 'string' && typeof value === 'string' ? durableSet(key, value) : false
+})
+
+ipcMain.handle('clipboard:write', (_event, text: unknown) => {
+  if (typeof text !== 'string') throw new Error('Invalid clipboard text')
+  clipboard.writeText(text)
 })

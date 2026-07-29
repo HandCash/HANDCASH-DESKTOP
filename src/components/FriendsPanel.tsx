@@ -4,10 +4,10 @@ import {
   addFriend,
   addressFromIdentityKey,
   listFriends,
-  removeFriend,
   subscribeFriends,
   type Friend,
 } from '../wallet/friends'
+import { openFriendDetails } from '../wallet/navStore'
 
 type Props = {
   chain: Chain
@@ -62,7 +62,7 @@ export function FriendsPanel({ chain }: Props) {
             className="mono"
             value={identityKey}
             onChange={(e) => setIdentityKey(e.target.value)}
-            placeholder="02… or 03…"
+            placeholder="02… or 03… (66 hex chars)"
             autoComplete="off"
             spellCheck={false}
           />
@@ -73,7 +73,11 @@ export function FriendsPanel({ chain }: Props) {
           </p>
         )}
         <div className="actions">
-          <button type="submit" className="btn btn-primary" disabled={!label.trim() || !identityKey.trim()}>
+          <button
+            type="submit"
+            className="btn btn-primary"
+            disabled={!label.trim() || !identityKey.trim()}
+          >
             Add friend
           </button>
         </div>
@@ -92,7 +96,11 @@ export function FriendsPanel({ chain }: Props) {
             }
             return (
               <li key={friend.id} className="friend-row">
-                <div className="friend-row-body">
+                <button
+                  type="button"
+                  className="friend-row-main"
+                  onClick={() => openFriendDetails(friend.id)}
+                >
                   <strong className="friend-label">{friend.label}</strong>
                   <span className="friend-key mono" title={friend.identityKey}>
                     {shortenKey(friend.identityKey)}
@@ -100,13 +108,6 @@ export function FriendsPanel({ chain }: Props) {
                   <span className="friend-address mono" title={address}>
                     {address}
                   </span>
-                </div>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-compact"
-                  onClick={() => removeFriend(friend.id)}
-                >
-                  Remove
                 </button>
               </li>
             )

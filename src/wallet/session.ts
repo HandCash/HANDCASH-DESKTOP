@@ -120,16 +120,29 @@ export function formatBsv(sats: number): string {
 /** Compact BSV (or sats) with at most `maxSignificant` significant digits. */
 export function formatBsvSignificant(sats: number, maxSignificant = 5): string {
   const safe = Number.isFinite(sats) ? Math.max(0, Math.trunc(sats)) : 0
-  if (safe < SATS_DISPLAY_THRESHOLD) {
-    return `${safe.toLocaleString('en-US')} sats`
-  }
+  const asSats = () => `${safe.toLocaleString('en-US')} sats`
+  // Keep tiny amounts as sats so lists never show long leading-zero decimals (e.g. 0.00012345).
+  if (safe < 100_000) return asSats()
+
   const bsv = safe / 1e8
-  const trimmed = Number(bsv.toPrecision(maxSignificant))
-  const body = trimmed.toLocaleString('en-US', {
-    maximumSignificantDigits: maxSignificant,
-    useGrouping: true,
-  })
-  return `${body} BSV`
+  let raw = bsv.toPrecision(maxSignificant)
+  if (/e/i.test(raw)) {
+    raw = Number(raw).toLocaleString('en-US', {
+      maximumSignificantDigits: maxSignificant,
+      useGrouping: false,
+    })
+  }
+  if (raw.includes('.')) {
+    raw = raw.replace(/(\.\d*?)0+$/, '$1').replace(/\.$/, '')
+  }
+  const neg = raw.startsWith('-')
+  const unsigned = neg ? raw.slice(1) : raw
+  const [intPart, fracPart] = unsigned.split('.')
+  const intGrouped = Number(intPart).toLocaleString('en-US')
+  const body = fracPart != null ? `${intGrouped}.${fracPart}` : intGrouped
+  const digitCount = `${intPart}${fracPart ?? ''}`.replace(/^0+/, '') || '0'
+  if (digitCount.length > maxSignificant) return asSats()
+  return `${neg ? '-' : ''}${body} BSV`
 }
 
 export function formatSats(sats: number): string {
