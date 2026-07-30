@@ -2,7 +2,7 @@
 /**
  * Bump package.json version (semver) and keep release docs in sync.
  *
- *   node scripts/bump-version.mjs patch|minor|major [--no-commit] [--sync-market]
+ *   node scripts/bump-version.mjs patch|minor|major [--no-commit] [--sync-market] [--push]
  *   node scripts/bump-version.mjs --sync-market   # only update items-market defaults
  */
 import { execSync } from 'node:child_process'
@@ -23,6 +23,7 @@ const args = process.argv.slice(2)
 const syncOnly = args.includes('--sync-market') && !['patch', 'minor', 'major'].some((a) => args.includes(a))
 const doSyncMarket = args.includes('--sync-market')
 const noCommit = args.includes('--no-commit')
+const doPush = args.includes('--push')
 const bump = args.find((a) => a === 'patch' || a === 'minor' || a === 'major')
 
 function parseSemver(v) {
@@ -65,9 +66,17 @@ function syncMarket(version) {
   return true
 }
 
-function prependChangelog(version) {
+function syncVersionTs(version) {
+  if (!fs.existsSync(versionTsPath)) return
+  fs.writeFileSync(
+    versionTsPath,
+    `/** App semver — mirrors package.json (electron-builder / updater source of truth). */\nexport const APP_VERSION = '${version}' as const\n`,
+  )
+}
+
+function prependChangelog(version, note) {
   const header = `# Changelog\n\n`
-  const entry = `## [${version}] - ${today()}\n\n### Changed\n\n- Describe this release.\n\n`
+  const entry = `## [${version}] - ${today()}\n\n### Changed\n\n- ${note}\n\n`
   if (!fs.existsSync(changelogPath)) {
     fs.writeFileSync(changelogPath, header + entry)
     return
@@ -92,7 +101,7 @@ if (syncOnly) {
 }
 
 if (!bump) {
-  console.error('Usage: bump-version.mjs patch|minor|major [--no-commit] [--sync-market]')
+  console.error('Usage: bump-version.mjs patch|minor|major [--no-commit] [--sync-market] [--push]')
   process.exit(1)
 }
 
@@ -100,20 +109,34 @@ const prev = pkg.version
 const next = bumpSemver(prev, bump)
 pkg.version = next
 fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
-prependChangelog(next)
+syncVersionTs(next)
+prependChangelog(
+  next,
+  bump === 'patch'
+    ? 'Patch release (every push must ship a new version).'
+    : 'Describe this release.',
+)
 console.log(`version ${prev} → ${next}`)
 
 if (doSyncMarket) syncMarket(next)
 
 if (!noCommit) {
-  const files = ['package.json', 'CHANGELOG.md']
-  if (doSyncMarket && fs.existsSync(marketDownloads)) {
-    // market lives in another repo — only remind
-    console.log('Note: commit items-market VERSION change in that repo separately.')
-  }
-  execSync(`git add package.json CHANGELOG.md`, { cwd: root, stdio: 'inherit' })
+  execSync(`git add package.json CHANGELOG.md src/version.ts`, { cwd: root, stdio: 'inherit' })
   execSync(`git commit -m "Release v${next}"`, { cwd: root, stdio: 'inherit' })
-  execSync(`git tag v${next}`, { cwd: root, stdio: 'inherit' })
-  console.log(`Tagged v${next}. Push with: git push && git push origin v${next}`)
+  try {
+    execSync(`git tag v${next}`, { cwd: root, stdio: 'inherit' })
+  } catch {
+    console.warn(`Tag v${next} already exists`)
+  }
+  console.log(`Tagged v${next}.`)
   console.log('Pushing the tag runs Release Linux (GitHub Actions) → AppImage + latest-linux.yml')
+}
+
+if (doPush) {
+  execSync('git push origin HEAD', { cwd: root, stdio: 'inherit' })
+  execSync(`git push origin v${next}`, { cwd: root, stdio: 'inherit' })
+  console.log(`Pushed master + v${next}`)
+} else if (!noCommit) {
+  console.log(`Push with: git push && git push origin v${next}`)
+  console.log('Or: npm run version:push')
 }

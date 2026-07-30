@@ -1,0 +1,18 @@
+---
+description: Every push to master must bump Desktop semver and tag
+alwaysApply: true
+---
+
+# Version on every push
+
+Do **not** `git push` to `master` without a new semver.
+
+```bash
+npm run version:push          # patch bump + tag + push
+# or
+npm run version:minor -- --push
+```
+
+`scripts/require-version-bump.mjs` and `.githooks/pre-push` enforce `package.json` version > latest remote `v*` tag.
+
+After tagging, Linux AppImage CI runs automatically. Sync the website with `--sync-market` when downloads should move.
