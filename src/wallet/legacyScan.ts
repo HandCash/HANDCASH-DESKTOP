@@ -96,15 +96,26 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 /**
  * Import scanned legacy P2PKH UTXOs into BRC-100 managed change.
  * Uses SetupClient.fundWalletFromP2PKHOutpoints (builds BEEF + sweeps).
+ *
+ * HARD RULE: refuses satoshis === 1 (possible ordinals). Pass only funding UTXOs.
  */
 export async function importLegacyUtxos(
-  outpoints: string[],
+  utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
-): Promise<{ imported: number; failed: number; errors: string[] }> {
+): Promise<{ imported: number; failed: number; errors: string[]; skippedOneSats: number }> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
-  if (outpoints.length === 0) return { imported: 0, failed: 0, errors: [] }
 
+  const skippedOneSats = utxos.filter((u) => u.satoshis === 1).length
+  const safe = utxos.filter((u) => u.satoshis > 1)
+  if (skippedOneSats > 0) {
+    console.warn(
+      `[legacy] refused to sweep ${skippedOneSats} one-sat outpoint(s) — possible ordinals`,
+    )
+  }
+  if (safe.length === 0) return { imported: 0, failed: 0, errors: [], skippedOneSats }
+
+  const outpoints = safe.map((u) => u.outpoint)
   const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(wallet.rootKeyHex))
   const results = await SetupClient.fundWalletFromP2PKHOutpoints(
     wallet.wallet,
@@ -122,5 +133,5 @@ export async function importLegacyUtxos(
       if (r.error) errors.push(`${r.outpoint}: ${r.error}`)
     }
   }
-  return { imported, failed, errors }
+  return { imported, failed, errors, skippedOneSats }
 }

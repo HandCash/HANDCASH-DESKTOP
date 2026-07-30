@@ -140,11 +140,17 @@ export async function refreshLegacyAddressPayload(
   const scan = await scanLegacyAddress(active)
   const scannedTxids = [...new Set(scan.utxos.map((u) => u.txid).filter(Boolean))]
 
-  const { funding, oneSats } = await classifyLegacyUtxos(
+  const { funding, oneSats, heldOneSats } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,
     reportedItems,
   )
+
+  if (heldOneSats.length > 0) {
+    console.info(
+      `[migration] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
+    )
+  }
 
   let importedItemsCount = 0
   if (oneSats.length > 0) {
@@ -157,10 +163,7 @@ export async function refreshLegacyAddressPayload(
 
   let importedCount = 0
   if (funding.length > 0) {
-    const result = await importLegacyUtxos(
-      funding.map((u) => u.outpoint),
-      active,
-    )
+    const result = await importLegacyUtxos(funding, active)
     importedCount = result.imported
     if (result.failed > 0) {
       console.warn('[migration] legacy import partial', result)

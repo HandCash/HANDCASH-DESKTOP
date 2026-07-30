@@ -24,7 +24,15 @@ export async function syncLegacyFunds(): Promise<number | null> {
   try {
     const scan = await scanLegacyAddress(active)
     if (scan.utxos.length > 0) {
-      const { funding, oneSats } = await classifyLegacyUtxos(scan.utxos, active.chain)
+      const { funding, oneSats, heldOneSats } = await classifyLegacyUtxos(
+        scan.utxos,
+        active.chain,
+      )
+      if (heldOneSats.length > 0) {
+        console.info(
+          `[sync] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
+        )
+      }
       if (oneSats.length > 0) {
         const itemResult = await importOneSatOrdinals(oneSats, active)
         if (itemResult.failed > 0) {
@@ -32,10 +40,7 @@ export async function syncLegacyFunds(): Promise<number | null> {
         }
       }
       if (funding.length > 0) {
-        const result = await importLegacyUtxos(
-          funding.map((u) => u.outpoint),
-          active,
-        )
+        const result = await importLegacyUtxos(funding, active)
         if (result.failed > 0) {
           console.warn('[sync] legacy import partial', result)
         }

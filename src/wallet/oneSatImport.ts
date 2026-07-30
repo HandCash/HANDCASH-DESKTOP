@@ -1,6 +1,8 @@
 /**
  * Import 1Sat ordinals into BRC-100 basket `1sat` via internalizeAction.
- * Never pass these outpoints through fundWalletFromP2PKHOutpoints (that spends them).
+ *
+ * HARD RULE: never pass satoshis === 1 through fundWalletFromP2PKHOutpoints.
+ * Unrecognized 1-sat outs stay on the address until classified (cloud items or GorillaPool).
  */
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
@@ -21,6 +23,15 @@ export type OneSatImportResult = {
   failed: number
   errors: string[]
   outpoints: string[]
+}
+
+export type ClassifiedLegacyUtxos = {
+  /** satoshis > 1 only — safe to fund-sweep */
+  funding: LegacyUtxo[]
+  /** Confirmed ordinals — internalize to basket `1sat` */
+  oneSats: MigrationItem[]
+  /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
+  heldOneSats: LegacyUtxo[]
 }
 
 function gorillaBase(chain: Chain): string {
@@ -77,14 +88,16 @@ export async function isOneSatInscription(
 }
 
 /**
- * Split scanned UTXOs into funding vs 1sat.
- * Prefer explicit `knownItems`; otherwise probe 1-sat outs via GorillaPool.
+ * Split scanned UTXOs.
+ * - funding: only satoshis > 1
+ * - oneSats: cloud-known or GorillaPool-confirmed inscriptions
+ * - heldOneSats: every other 1-sat — MUST NOT be swept
  */
 export async function classifyLegacyUtxos(
   utxos: LegacyUtxo[],
   chain: Chain,
   knownItems: MigrationItem[] = [],
-): Promise<{ funding: LegacyUtxo[]; oneSats: MigrationItem[] }> {
+): Promise<ClassifiedLegacyUtxos> {
   const knownByOutpoint = new Map<string, MigrationItem>()
   for (const item of knownItems) {
     const n = normalizeMigrationItem(item)
@@ -93,27 +106,36 @@ export async function classifyLegacyUtxos(
 
   const funding: LegacyUtxo[] = []
   const oneSats: MigrationItem[] = [...knownByOutpoint.values()]
+  const heldOneSats: LegacyUtxo[] = []
   const claimed = new Set(knownByOutpoint.keys())
 
   for (const u of utxos) {
     if (claimed.has(u.outpoint)) continue
+
+    // HARD RULE: never fund-sweep 1-sat outs.
     if (u.satoshis === 1) {
       const isInsc = await isOneSatInscription(u.txid, u.vout, chain)
-      if (isInsc) {
+      if (isInsc || knownByOutpoint.has(u.outpoint)) {
         oneSats.push({
           outpoint: u.outpoint,
           txid: u.txid,
           vout: u.vout,
-          origin: `${u.txid}_${u.vout}`,
+          origin: knownByOutpoint.get(u.outpoint)?.origin ?? `${u.txid}_${u.vout}`,
         })
         claimed.add(u.outpoint)
-        continue
+      } else {
+        heldOneSats.push(u)
       }
+      continue
     }
-    funding.push(u)
+
+    if (u.satoshis > 1) {
+      funding.push(u)
+    }
+    // satoshis === 0 or weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats }
+  return { funding, oneSats, heldOneSats }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */
@@ -132,7 +154,6 @@ export async function importOneSatOrdinals(
     return { imported: 0, failed: 0, errors: [], outpoints: [] }
   }
 
-  // Group by txid so one BEEF covers multiple outs from the same transfer.
   const byTxid = new Map<string, MigrationItem[]>()
   for (const item of normalized) {
     const txid = item.txid!
