@@ -91,9 +91,18 @@ export function getLegacyAddressPayload(): LegacyAddressPayload {
   }
 }
 
-export async function refreshLegacyAddressPayload(): Promise<RefreshLegacyAddressPayload> {
+export async function refreshLegacyAddressPayload(
+  args?: { txids?: string[] } | null,
+): Promise<RefreshLegacyAddressPayload> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
+
+  const reportedTxids = Array.isArray(args?.txids)
+    ? args.txids.filter((t): t is string => typeof t === 'string' && t.length > 0)
+    : []
+  if (reportedTxids.length > 0) {
+    recordMigrationTxids(reportedTxids)
+  }
 
   try {
     reconcilePendingSends()
@@ -102,7 +111,7 @@ export async function refreshLegacyAddressPayload(): Promise<RefreshLegacyAddres
   }
 
   const scan = await scanLegacyAddress(active)
-  const txids = [...new Set(scan.utxos.map((u) => u.txid).filter(Boolean))]
+  const scannedTxids = [...new Set(scan.utxos.map((u) => u.txid).filter(Boolean))]
   let importedCount = 0
 
   if (scan.utxos.length > 0) {
@@ -114,8 +123,8 @@ export async function refreshLegacyAddressPayload(): Promise<RefreshLegacyAddres
     }
   }
 
-  if (txids.length > 0) {
-    recordMigrationTxids(txids)
+  if (scannedTxids.length > 0) {
+    recordMigrationTxids(scannedTxids)
   }
 
   let satoshis = 0
@@ -124,6 +133,8 @@ export async function refreshLegacyAddressPayload(): Promise<RefreshLegacyAddres
   } catch (err) {
     console.warn('[migration] balance refresh failed', err)
   }
+
+  const txids = [...new Set([...reportedTxids, ...scannedTxids])]
 
   return {
     address: active.address,

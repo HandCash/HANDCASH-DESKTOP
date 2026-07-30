@@ -60,7 +60,11 @@ async function dispatchWalletMethod(
     case 'getLegacyAddress':
       return getLegacyAddressPayload()
     case 'refreshLegacyAddress':
-      return refreshLegacyAddressPayload()
+      return refreshLegacyAddressPayload(
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? (args as { txids?: string[] })
+          : undefined,
+      )
     case 'listMigrationTxids':
       return listMigrationTxids()
     case 'getVersion':

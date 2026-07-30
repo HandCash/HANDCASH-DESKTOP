@@ -63,7 +63,7 @@ After a site connects via `waitForAuthentication`, HandCash migrate hosts (`hand
 | Method | Returns |
 |--------|---------|
 | `getLegacyAddress` | `{ address, identityKey, handle, chain }` — Desktop P2PKH destination |
-| `refreshLegacyAddress` | Scan/import legacy UTXOs → `{ address, satoshis, importedCount, txids }` |
+| `refreshLegacyAddress` | Optional `{ txids }` from cloud; scan/import → `{ address, satoshis, importedCount, txids }` |
 | `listMigrationTxids` | `{ txids }` — persisted migration-related txids |
 
 Product page: `https://handcash.io/migrate` (items-market).
