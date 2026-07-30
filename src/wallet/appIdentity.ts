@@ -65,6 +65,11 @@ export function appDisplayName(origin: string | undefined): string {
   if (host === 'localhost' || host.startsWith('127.0.0.1')) return 'Local app'
 
   const base = host.split(':')[0] ?? host
+  if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash Migrate'
+  if (base === 'market.handcash.io' || base === 'preprod-market.handcash.io') {
+    return 'HandCash Migrate'
+  }
+
   const parts = base.split('.').filter(Boolean)
   const skip = new Set(['www', 'app', 'www2', 'm', 'api', 'dev', 'staging'])
   let label = parts[0] ?? host

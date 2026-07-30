@@ -56,6 +56,18 @@ APPIMAGE_EXTRACT_AND_RUN=1 /home/spidercorp/Projects/handcash-brc100/release/Han
 | `src/wallet/` | Encrypted vault + `@bsv/wallet-toolbox-client` IDB wallet + method dispatch |
 | `src/components/` | Surfaces that project `data-aeon-state` |
 
+### Migration methods (HandCash extensions on the BRC bridge)
+
+After a site connects via `waitForAuthentication`, HandCash migrate hosts (`handcash.io`, `market.handcash.io`, `preprod-market.handcash.io`, localhost) may call:
+
+| Method | Returns |
+|--------|---------|
+| `getLegacyAddress` | `{ address, identityKey, handle, chain }` — Desktop P2PKH destination |
+| `refreshLegacyAddress` | Scan/import legacy UTXOs → `{ address, satoshis, importedCount, txids }` |
+| `listMigrationTxids` | `{ txids }` — persisted migration-related txids |
+
+Product page: `https://handcash.io/migrate` (items-market).
+
 ## Notes
 
 - Official HandCash Desktop product (`HandCash/HANDCASH-DESKTOP`).

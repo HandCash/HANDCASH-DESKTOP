@@ -7,6 +7,13 @@ import {
 } from './permissions'
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { extractTxid } from './txExplorer'
+import {
+  getLegacyAddressPayload,
+  isMigrationMethod,
+  isMigrationOrigin,
+  listMigrationTxids,
+  refreshLegacyAddressPayload,
+} from './migration'
 
 type HttpRequestEvent = {
   method: string
@@ -50,6 +57,12 @@ async function dispatchWalletMethod(
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
 
   switch (method) {
+    case 'getLegacyAddress':
+      return getLegacyAddressPayload()
+    case 'refreshLegacyAddress':
+      return refreshLegacyAddressPayload()
+    case 'listMigrationTxids':
+      return listMigrationTxids()
     case 'getVersion':
       return wallet.getVersion({})
     case 'getNetwork':
@@ -173,6 +186,17 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         status: 'error',
         code: 'PERMISSION_DENIED',
         description: 'You denied this app access to HandCash.',
+      }),
+    }
+  }
+
+  if (isMigrationMethod(method) && !isMigrationOrigin(originator)) {
+    return {
+      status: 403,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'MIGRATION_ORIGIN_DENIED',
+        description: 'Migration methods are only available to HandCash migrate hosts.',
       }),
     }
   }
