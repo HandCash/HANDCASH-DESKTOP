@@ -1,6 +1,14 @@
 import type { ConnectedApp } from './permissions'
 
-export type NavSection = 'activity' | 'apps' | 'collectables' | 'friends' | 'identity'
+export type NavSection =
+  | 'activity'
+  | 'apps'
+  | 'collectables'
+  | 'friends'
+  | 'identity'
+  | 'settings'
+
+export type SettingId = 'change-password'
 
 export type NavChild =
   | { type: 'app'; origin: string }
@@ -10,6 +18,7 @@ export type NavChild =
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend' }
+  | { type: 'setting'; settingId: SettingId }
 
 export type NavState = {
   section: NavSection
@@ -80,4 +89,8 @@ export function openFriendDetails(friendId: string) {
 
 export function openAddFriend() {
   openNavChild('friends', { type: 'add-friend' })
+}
+
+export function openSetting(settingId: SettingId) {
+  openNavChild('settings', { type: 'setting', settingId })
 }

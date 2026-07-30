@@ -91,7 +91,7 @@ export function IdentityPanel({ profile }: Props) {
           <div className="identity-nav-row">
             <span>Network</span>
             <strong className="identity-network">
-              {profile.chain === 'main' ? 'Mainnet' : 'Testnet'}
+              {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
             </strong>
           </div>
         </div>

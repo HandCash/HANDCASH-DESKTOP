@@ -129,3 +129,32 @@ export async function unlockVault(password: string): Promise<{ rootKeyHex: strin
     throw new Error('Incorrect password')
   }
 }
+
+export async function changeVaultPassword(
+  currentPassword: string,
+  newPassword: string,
+): Promise<void> {
+  if (newPassword.length < 8) throw new Error('Password must be at least 8 characters')
+  if (currentPassword === newPassword) {
+    throw new Error('New password must be different from your current password')
+  }
+
+  const { rootKeyHex, record } = await unlockVault(currentPassword)
+
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await deriveKey(newPassword, salt)
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(rootKeyHex),
+  )
+
+  const updated: VaultRecord = {
+    ...record,
+    ciphertext: b64(ciphertext),
+    iv: b64(iv),
+    salt: b64(salt),
+  }
+  localStorage.setItem(VAULT_KEY, JSON.stringify(updated))
+}

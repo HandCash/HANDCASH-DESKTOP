@@ -117,17 +117,7 @@ export function FriendsPanel({ chain }: Props) {
       </div>
 
       {friends.length === 0 ? (
-        <div className="friends-empty">
-          <p className="connected-empty-line">No friends yet</p>
-          <button
-            type="button"
-            className="btn btn-primary btn-icon"
-            onClick={() => openAddFriend()}
-          >
-            <PersonAddIcon size={16} />
-            Add friend
-          </button>
-        </div>
+        <p className="connected-empty-line">No friends yet</p>
       ) : view === 'grid' ? (
         <ul className="collection-grid">
           {friends.map((friend) => (

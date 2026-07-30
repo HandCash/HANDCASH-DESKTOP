@@ -26,6 +26,8 @@ import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
+import { SettingsPanel, settingLabel } from './SettingsPanel'
+import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import {
   ActivityIcon,
@@ -33,6 +35,7 @@ import {
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
+  SettingsIcon,
 } from './icons'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
@@ -56,6 +59,7 @@ const SECTIONS: {
   { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', Icon: IdentityIcon },
+  { value: 'settings', label: 'Settings', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
@@ -106,6 +110,7 @@ export function WalletNav({
     if (child.type === 'send') return [root, { label: 'Send' }]
     if (child.type === 'receive') return [root, { label: 'Receive' }]
     if (child.type === 'add-friend') return [root, { label: 'Add friend' }]
+    if (child.type === 'setting') return [root, { label: settingLabel(child.settingId) }]
     if (child.type === 'friend') {
       const friend = getFriendById(child.friendId)
       return [root, { label: friend?.label || 'Friend' }]
@@ -160,6 +165,9 @@ export function WalletNav({
                 <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
               )}
               {child.type === 'add-friend' && <AddFriendPanel />}
+              {child.type === 'setting' && child.settingId === 'change-password' && (
+                <ChangePasswordPanel />
+              )}
             </div>
           ) : (
             <div className="wallet-nav-panel">
@@ -168,6 +176,7 @@ export function WalletNav({
               {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
               {nav.section === 'identity' && <IdentityPanel profile={profile} />}
+              {nav.section === 'settings' && <SettingsPanel />}
             </div>
           )}
         </div>
