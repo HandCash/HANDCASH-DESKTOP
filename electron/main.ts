@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
 import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
-import { durableGet, durableSet } from './durableStore.js'
+import { durableGet, durableSafeStorageAvailable, durableSet } from './durableStore.js'
 import {
   checkForUpdates,
   downloadUpdate,
@@ -17,7 +17,9 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 
-/** Vite / `npm run dev` origin. Packaged builds use file:// so existing IndexedDB stays intact. */
+/** Vite / `npm run dev` origin. Packaged builds use file:// so existing IndexedDB stays intact.
+ * Vault keys live in durable prefs (origin-independent + OS-sealed when available).
+ * Do not flip packaged back to localhost without a proven IDB migration — that orphaned keys before. */
 const DEV_ORIGIN = 'http://localhost:5173'
 
 log.transports.file.level = 'info'
@@ -235,10 +237,19 @@ ipcMain.on('storage:get-sync', (event, key: unknown) => {
   event.returnValue = typeof key === 'string' ? durableGet(key) : null
 })
 
-ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown) => {
+ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unknown) => {
+  const allow =
+    opts &&
+    typeof opts === 'object' &&
+    !Array.isArray(opts) &&
+    (opts as { allowVaultIdentityReplace?: unknown }).allowVaultIdentityReplace === true
   event.returnValue =
-    typeof key === 'string' && typeof value === 'string' ? durableSet(key, value) : false
+    typeof key === 'string' && typeof value === 'string'
+      ? durableSet(key, value, allow ? { allowVaultIdentityReplace: true } : undefined)
+      : false
 })
+
+ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
 
 ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')

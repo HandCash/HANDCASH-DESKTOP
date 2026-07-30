@@ -91,7 +91,12 @@ interface HandCashBridge {
   focusWindow?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
   storageGetSync?: (key: string) => string | null
-  storageSetSync?: (key: string, value: string) => boolean
+  storageSetSync?: (
+    key: string,
+    value: string,
+    opts?: { allowVaultIdentityReplace?: boolean },
+  ) => boolean
+  safeStorageAvailable?: () => Promise<boolean>
   clipboardWrite?: (text: string) => Promise<void>
   getUpdateStatus?: () => Promise<UpdateStatus>
   checkForUpdates?: () => Promise<UpdateStatus>

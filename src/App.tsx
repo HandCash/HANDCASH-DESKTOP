@@ -139,6 +139,7 @@ export function App() {
             <AuthScreen
               mode={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}
               error={snapshot.context.error}
+              recoveryOnly={snapshot.context.recoveryOnly}
               onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
               onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
               onFail={(error) => send({ type: 'FAIL', error })}

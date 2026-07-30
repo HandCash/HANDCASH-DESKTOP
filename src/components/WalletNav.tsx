@@ -31,6 +31,7 @@ import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
+import { BackupPhrasePanel } from './BackupPhrasePanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCollectable } from '../wallet/collectables'
 import {
@@ -209,6 +210,9 @@ export function WalletNav({
               )}
               {child.type === 'setting' && child.settingId === 'change-password' && (
                 <ChangePasswordPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'backup-phrase' && (
+                <BackupPhrasePanel />
               )}
             </div>
           ) : (

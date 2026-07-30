@@ -8,7 +8,7 @@ export type NavSection =
   | 'identity'
   | 'settings'
 
-export type SettingId = 'change-password'
+export type SettingId = 'change-password' | 'backup-phrase'
 
 export type NavChild =
   | { type: 'app'; origin: string }

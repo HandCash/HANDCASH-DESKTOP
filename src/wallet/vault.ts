@@ -1,45 +1,63 @@
 /**
- * Guardrails so we never silently mint a second root key over an existing wallet.
+ * Vault custody: password-wrapped root key + BIP39 mnemonic, durable across origins,
+ * OS-sealed at rest when Electron safeStorage is available.
  *
- * Chart concern: vault lifecycle is create-once / unlock / rewrap-password.
- * IndexedDB (wallet-toolbox) can retain UTXOs under an older identityKey if a
- * new vault is created — that is what emptied balances after storage migrations.
+ * Lifecycle: create-once (with recovery phrase) | restore-from-phrase | unlock | rewrap-password.
+ * Never mint a second root while toolbox UTXOs or an existing vault identity exist.
  */
-import { PrivateKey } from '@bsv/sdk'
+import { HD, Mnemonic, PrivateKey } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const VAULT_KEY = 'handcash.brc100.vault.v1'
-/** Last displaced vault ciphertext (full record) — recovery aid only. */
 const VAULT_BACKUP_KEY = 'handcash.brc100.vault.backup.v1'
-/** Append-only meta about vault writes (no secrets). */
 const VAULT_AUDIT_KEY = 'handcash.brc100.vault.audit.v1'
 const TOOLBOX_DB = 'wallet-toolbox-mainnet'
 
 export type Chain = 'main' | 'test'
 
 export type VaultRecord = {
-  version: 1
+  version: 1 | 2
   chain: Chain
   handle: string
   identityKey: string
   address: string
-  /** AES-GCM ciphertext of rootKeyHex, base64 */
+  /** AES-GCM ciphertext — v1: rootKeyHex string; v2: JSON { rootKeyHex, mnemonic } */
   ciphertext: string
   iv: string
   salt: string
+  /** Present on v2+ wallets created/restored with BIP39. */
+  hasMnemonic?: boolean
+}
+
+export type UnlockedVault = {
+  rootKeyHex: string
+  mnemonic: string | null
+  record: VaultRecord
 }
 
 export type VaultAuditEntry = {
   at: number
-  action: 'create' | 'password' | 'blocked-create' | 'blocked-overwrite'
+  action: 'create' | 'restore' | 'password' | 'blocked-create' | 'blocked-overwrite' | 'mismatch-warn'
   identityKeyPrefix: string
   previousIdentityKeyPrefix?: string
   detail?: string
 }
 
+export type ToolboxMismatch = {
+  vaultIdentityKey: string
+  toolboxIdentityKeys: string[]
+  /** True when vault identity is absent from toolbox but other identities exist. */
+  orphanedFundsLikely: boolean
+}
+
 type ToolboxUserRow = {
   userId?: number
   identityKey?: string
+}
+
+type VaultSecretV2 = {
+  rootKeyHex: string
+  mnemonic: string
 }
 
 function b64(bytes: ArrayBuffer | Uint8Array): string {
@@ -115,11 +133,11 @@ function backupExistingVault(reason: string): void {
   }
 }
 
-/**
- * Persist vault. Refuses changing identityKey once a vault exists.
- * Password rewrap keeps the same identityKey and is allowed.
- */
-function persistVault(record: VaultRecord, action: 'create' | 'password'): void {
+function persistVault(
+  record: VaultRecord,
+  action: 'create' | 'restore' | 'password',
+  opts?: { allowIdentityReplace?: boolean },
+): void {
   const existingRaw = readVaultRaw()
   if (existingRaw) {
     let previous: VaultRecord
@@ -129,23 +147,42 @@ function persistVault(record: VaultRecord, action: 'create' | 'password'): void 
       throw new Error('Existing wallet data is unreadable. Refusing to overwrite keys.')
     }
     if (previous.identityKey !== record.identityKey) {
-      appendAudit({
-        at: Date.now(),
-        action: 'blocked-overwrite',
-        identityKeyPrefix: prefixIk(record.identityKey),
-        previousIdentityKeyPrefix: prefixIk(previous.identityKey),
-        detail: 'identity-mismatch',
-      })
-      throw new Error(
-        'Refusing to overwrite wallet keys with a different identity. Unlock the existing wallet instead.',
-      )
+      if (!opts?.allowIdentityReplace) {
+        appendAudit({
+          at: Date.now(),
+          action: 'blocked-overwrite',
+          identityKeyPrefix: prefixIk(record.identityKey),
+          previousIdentityKeyPrefix: prefixIk(previous.identityKey),
+          detail: 'identity-mismatch',
+        })
+        throw new Error(
+          'Refusing to overwrite wallet keys with a different identity. Unlock the existing wallet instead.',
+        )
+      }
     }
     backupExistingVault(action)
-  } else if (action !== 'create') {
+  } else if (action === 'password') {
     throw new Error('No wallet found')
   }
 
-  durableSetItem(VAULT_KEY, JSON.stringify(record))
+  const payload = JSON.stringify(record)
+  const wrote = durableSetItem(VAULT_KEY, payload, {
+    allowVaultIdentityReplace: Boolean(opts?.allowIdentityReplace),
+  })
+  const stored = durableGetItem(VAULT_KEY)
+  if (!wrote || stored == null) {
+    throw new Error('Failed to persist wallet vault. Keys were not changed.')
+  }
+  try {
+    const storedRecord = JSON.parse(stored) as VaultRecord
+    if (storedRecord.identityKey !== record.identityKey) {
+      throw new Error('Failed to persist wallet vault. Keys were not changed.')
+    }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('Failed to persist')) throw err
+    throw new Error('Failed to persist wallet vault. Keys were not changed.')
+  }
+
   appendAudit({
     at: Date.now(),
     action,
@@ -153,14 +190,74 @@ function persistVault(record: VaultRecord, action: 'create' | 'password'): void 
     previousIdentityKeyPrefix: existingRaw
       ? prefixIk((JSON.parse(existingRaw) as VaultRecord).identityKey)
       : undefined,
+    detail: opts?.allowIdentityReplace ? 'recovery-replace' : undefined,
   })
+}
+
+export function rootKeyFromMnemonic(mnemonic: string, passphrase = ''): {
+  rootKeyHex: string
+  identityKey: string
+  address: string
+  mnemonic: string
+} {
+  const m = Mnemonic.fromString(mnemonic.trim().toLowerCase().replace(/\s+/g, ' '))
+  if (!m.check()) throw new Error('Invalid recovery phrase')
+  const seed = m.toSeed(passphrase)
+  const hd = HD.fromSeed(seed)
+  const rootKeyHex = hd.privKey.toHex()
+  const identityKey = hd.privKey.toPublicKey().toString()
+  const address = hd.privKey.toAddress()
+  return { rootKeyHex, identityKey, address, mnemonic: m.toString() }
+}
+
+async function encryptSecret(
+  password: string,
+  secret: string,
+): Promise<{ ciphertext: string; iv: string; salt: string }> {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const iv = crypto.getRandomValues(new Uint8Array(12))
+  const key = await deriveKey(password, salt)
+  const ciphertext = await crypto.subtle.encrypt(
+    { name: 'AES-GCM', iv },
+    key,
+    new TextEncoder().encode(secret),
+  )
+  return { ciphertext: b64(ciphertext), iv: b64(iv), salt: b64(salt) }
+}
+
+async function decryptSecret(password: string, record: VaultRecord): Promise<string> {
+  const key = await deriveKey(password, fromB64(record.salt))
+  const plain = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: toBufferSource(fromB64(record.iv)) },
+    key,
+    toBufferSource(fromB64(record.ciphertext)),
+  )
+  return new TextDecoder().decode(plain)
+}
+
+function parseUnlockedSecret(plain: string): { rootKeyHex: string; mnemonic: string | null } {
+  const trimmed = plain.trim()
+  if (trimmed.startsWith('{')) {
+    const parsed = JSON.parse(trimmed) as VaultSecretV2
+    if (typeof parsed.rootKeyHex !== 'string') throw new Error('Corrupt wallet vault')
+    PrivateKey.fromHex(parsed.rootKeyHex)
+    return {
+      rootKeyHex: parsed.rootKeyHex,
+      mnemonic: typeof parsed.mnemonic === 'string' ? parsed.mnemonic : null,
+    }
+  }
+  PrivateKey.fromHex(trimmed)
+  return { rootKeyHex: trimmed, mnemonic: null }
 }
 
 export function hasVault(): boolean {
   return readVaultRaw() !== null
 }
 
-export function readVaultMeta(): Pick<VaultRecord, 'handle' | 'identityKey' | 'address' | 'chain'> | null {
+export function readVaultMeta(): Pick<
+  VaultRecord,
+  'handle' | 'identityKey' | 'address' | 'chain' | 'hasMnemonic' | 'version'
+> | null {
   const raw = readVaultRaw()
   if (!raw) return null
   const parsed = JSON.parse(raw) as VaultRecord
@@ -169,6 +266,8 @@ export function readVaultMeta(): Pick<VaultRecord, 'handle' | 'identityKey' | 'a
     identityKey: parsed.identityKey,
     address: parsed.address,
     chain: parsed.chain,
+    hasMnemonic: parsed.hasMnemonic,
+    version: parsed.version,
   }
 }
 
@@ -197,21 +296,18 @@ export function normalizeHandle(input: string): string {
   return cleaned
 }
 
-/** Local vault label only — not a HandCash $handle. */
 const LOCAL_WALLET_LABEL = 'wallet'
 
-/** Identities already present in the toolbox IndexedDB (UTXO owners). */
 export async function listToolboxIdentityKeys(): Promise<string[]> {
   if (typeof indexedDB === 'undefined') return []
 
-  // Prefer databases() so we never create/upgrade an empty toolbox DB.
   try {
     if (typeof indexedDB.databases === 'function') {
       const dbs = await indexedDB.databases()
       if (!dbs.some((d) => d.name === TOOLBOX_DB)) return []
     }
   } catch {
-    // fall through to open attempt
+    // fall through
   }
 
   return new Promise((resolve) => {
@@ -224,7 +320,6 @@ export async function listToolboxIdentityKeys(): Promise<string[]> {
     }
     req.onerror = () => resolve([])
     req.onupgradeneeded = () => {
-      // DB did not exist — abort so we do not create a blank toolbox DB.
       try {
         req.transaction?.abort()
       } catch {
@@ -234,7 +329,6 @@ export async function listToolboxIdentityKeys(): Promise<string[]> {
     }
     req.onsuccess = () => {
       const db = req.result
-      // If we just created it via a race, treat as empty and close.
       if (!db.objectStoreNames.contains('users')) {
         db.close()
         resolve([])
@@ -263,14 +357,23 @@ export async function listToolboxIdentityKeys(): Promise<string[]> {
   })
 }
 
-/**
- * True when toolbox DB has wallet users but durable vault is missing — creating
- * a new vault would orphan those UTXOs (the failure mode from storage migrations).
- */
 export async function hasOrphanedToolboxWallet(): Promise<boolean> {
   if (hasVault()) return false
   const keys = await listToolboxIdentityKeys()
   return keys.length > 0
+}
+
+export async function getVaultToolboxMismatch(
+  vaultIdentityKey: string,
+): Promise<ToolboxMismatch | null> {
+  const toolboxIdentityKeys = await listToolboxIdentityKeys()
+  if (toolboxIdentityKeys.length === 0) return null
+  if (toolboxIdentityKeys.includes(vaultIdentityKey)) return null
+  return {
+    vaultIdentityKey,
+    toolboxIdentityKeys,
+    orphanedFundsLikely: true,
+  }
 }
 
 export async function assertSafeToCreateVault(): Promise<void> {
@@ -292,7 +395,29 @@ export async function assertSafeToCreateVault(): Promise<void> {
       detail: `toolbox-users:${toolboxKeys.length}`,
     })
     throw new Error(
-      'This device already has wallet funds under another key. Creating a new wallet is blocked so those keys are not replaced. Restore the original wallet backup if you have one.',
+      'This device already has wallet funds under another key. Creating a new wallet is blocked. Restore with your recovery phrase if you have it.',
+    )
+  }
+}
+
+/**
+ * Restore is allowed when there is no vault, or when toolbox orphans exist and
+ * the mnemonic identity matches one of those toolbox users (recovery path).
+ */
+export async function assertSafeToRestoreVault(identityKey: string): Promise<void> {
+  if (hasVault()) {
+    const meta = readVaultMeta()
+    if (meta?.identityKey === identityKey) {
+      throw new Error('This wallet is already installed. Unlock it with your password.')
+    }
+    throw new Error(
+      'A different wallet already exists on this device. Refusing to replace its keys.',
+    )
+  }
+  const toolboxKeys = await listToolboxIdentityKeys()
+  if (toolboxKeys.length > 0 && !toolboxKeys.includes(identityKey)) {
+    throw new Error(
+      'That recovery phrase does not match the wallet data on this device. Refusing to create a mismatched vault.',
     )
   }
 }
@@ -300,59 +425,125 @@ export async function assertSafeToCreateVault(): Promise<void> {
 export async function createVault(args: {
   password: string
   chain: Chain
-  /** @deprecated local DB label only; unused by UI */
   handle?: string
-}): Promise<{ rootKeyHex: string; record: VaultRecord }> {
+}): Promise<UnlockedVault> {
   await assertSafeToCreateVault()
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
   if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
 
-  const root = PrivateKey.fromRandom()
-  const rootKeyHex = root.toHex()
-  const identityKey = root.toPublicKey().toString()
-  const address = root.toAddress()
-
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(args.password, salt)
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    new TextEncoder().encode(rootKeyHex),
-  )
+  const generated = Mnemonic.fromRandom(128)
+  const mnemonic = generated.toString()
+  const derived = rootKeyFromMnemonic(mnemonic)
+  const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic }
+  const enc = await encryptSecret(args.password, JSON.stringify(secret))
 
   const record: VaultRecord = {
-    version: 1,
+    version: 2,
     chain: args.chain,
     handle,
-    identityKey,
-    address,
-    ciphertext: b64(ciphertext),
-    iv: b64(iv),
-    salt: b64(salt),
+    identityKey: derived.identityKey,
+    address: derived.address,
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    salt: enc.salt,
+    hasMnemonic: true,
   }
   persistVault(record, 'create')
-  return { rootKeyHex, record }
+  return { rootKeyHex: derived.rootKeyHex, mnemonic, record }
 }
 
-export async function unlockVault(password: string): Promise<{ rootKeyHex: string; record: VaultRecord }> {
+export async function restoreVaultFromMnemonic(args: {
+  mnemonic: string
+  password: string
+  chain: Chain
+  handle?: string
+  passphrase?: string
+}): Promise<UnlockedVault> {
+  if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
+  const derived = rootKeyFromMnemonic(args.mnemonic, args.passphrase ?? '')
+
+  let allowIdentityReplace = false
+  if (hasVault()) {
+    const meta = readVaultMeta()
+    if (meta?.identityKey === derived.identityKey) {
+      throw new Error('This wallet is already installed. Unlock it with your password.')
+    }
+    const mismatch = meta ? await getVaultToolboxMismatch(meta.identityKey) : null
+    const toolboxKeys = await listToolboxIdentityKeys()
+    if (mismatch?.orphanedFundsLikely && toolboxKeys.includes(derived.identityKey)) {
+      // Wrong vault on disk, phrase matches funded toolbox identity — replace keys.
+      allowIdentityReplace = true
+    } else {
+      throw new Error(
+        'A different wallet already exists on this device. Refusing to replace its keys.',
+      )
+    }
+  } else {
+    await assertSafeToRestoreVault(derived.identityKey)
+  }
+
+  const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
+  const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic }
+  const enc = await encryptSecret(args.password, JSON.stringify(secret))
+
+  const record: VaultRecord = {
+    version: 2,
+    chain: args.chain,
+    handle,
+    identityKey: derived.identityKey,
+    address: derived.address,
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    salt: enc.salt,
+    hasMnemonic: true,
+  }
+  persistVault(record, 'restore', { allowIdentityReplace })
+  return { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic, record }
+}
+
+export async function unlockVault(password: string): Promise<UnlockedVault> {
   const raw = readVaultRaw()
   if (!raw) throw new Error('No wallet found')
   const record = JSON.parse(raw) as VaultRecord
-  const key = await deriveKey(password, fromB64(record.salt))
   try {
-    const plain = await crypto.subtle.decrypt(
-      { name: 'AES-GCM', iv: toBufferSource(fromB64(record.iv)) },
-      key,
-      toBufferSource(fromB64(record.ciphertext)),
-    )
-    const rootKeyHex = new TextDecoder().decode(plain)
-    PrivateKey.fromHex(rootKeyHex)
-    return { rootKeyHex, record }
-  } catch {
+    const plain = await decryptSecret(password, record)
+    const { rootKeyHex, mnemonic } = parseUnlockedSecret(plain)
+    const mismatch = await getVaultToolboxMismatch(record.identityKey)
+    if (mismatch?.orphanedFundsLikely) {
+      appendAudit({
+        at: Date.now(),
+        action: 'mismatch-warn',
+        identityKeyPrefix: prefixIk(record.identityKey),
+        previousIdentityKeyPrefix: prefixIk(mismatch.toolboxIdentityKeys[0]),
+        detail: 'vault-toolbox-mismatch',
+      })
+      throw new Error(
+        'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase if you have it.',
+      )
+    }
+    return { rootKeyHex, mnemonic, record }
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('does not match the funded')) throw err
     throw new Error('Incorrect password')
   }
+}
+
+/** Reveal mnemonic after password check (Settings backup). */
+export async function revealMnemonic(password: string): Promise<string> {
+  const unlocked = await unlockVault(password)
+  if (!unlocked.mnemonic) {
+    throw new Error(
+      'This wallet was created before recovery phrases. Export an emergency key backup instead.',
+    )
+  }
+  return unlocked.mnemonic
+}
+
+/** Emergency: reveal root key hex after password check (legacy wallets). */
+export async function revealRootKeyHex(password: string): Promise<string> {
+  const unlocked = await unlockVault(password)
+  return unlocked.rootKeyHex
 }
 
 export async function changeVaultPassword(
@@ -364,23 +555,19 @@ export async function changeVaultPassword(
     throw new Error('New password must be different from your current password')
   }
 
-  const { rootKeyHex, record } = await unlockVault(currentPassword)
-
-  const salt = crypto.getRandomValues(new Uint8Array(16))
-  const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(newPassword, salt)
-  const ciphertext = await crypto.subtle.encrypt(
-    { name: 'AES-GCM', iv },
-    key,
-    new TextEncoder().encode(rootKeyHex),
-  )
+  const unlocked = await unlockVault(currentPassword)
+  const secret = unlocked.mnemonic
+    ? JSON.stringify({ rootKeyHex: unlocked.rootKeyHex, mnemonic: unlocked.mnemonic } satisfies VaultSecretV2)
+    : unlocked.rootKeyHex
+  const enc = await encryptSecret(newPassword, secret)
 
   const updated: VaultRecord = {
-    ...record,
-    ciphertext: b64(ciphertext),
-    iv: b64(iv),
-    salt: b64(salt),
+    ...unlocked.record,
+    version: unlocked.mnemonic ? 2 : unlocked.record.version,
+    hasMnemonic: Boolean(unlocked.mnemonic),
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    salt: enc.salt,
   }
-  // Same identityKey — persistVault allows rewrap, backs up previous ciphertext.
   persistVault(updated, 'password')
 }

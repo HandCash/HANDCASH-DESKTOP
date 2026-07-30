@@ -2942,6 +2942,32 @@ a.app-details-host:hover {
   gap: 4px;
 }
 
+.recovery-phrase-grid {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px 12px;
+}
+
+.recovery-phrase-grid li {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 28%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 0.9rem;
+  word-break: break-word;
+}
+
+.recovery-phrase-index {
+  color: var(--hc-muted);
+  font-weight: 600;
+  margin-right: 4px;
+}
+
 .settings-row {
   border-radius: 10px;
 }

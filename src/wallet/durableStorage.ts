@@ -1,5 +1,10 @@
 /** Origin-independent prefs via Electron userData (falls back to localStorage). */
 
+export type DurableSetOptions = {
+  /** Recovery-only: replace vault when identityKey changes (archives previous). */
+  allowVaultIdentityReplace?: boolean
+}
+
 export function durableGetItem(key: string): string | null {
   try {
     const fromElectron = window.handcash?.storageGetSync?.(key)
@@ -31,15 +36,18 @@ export function durableGetItem(key: string): string | null {
   }
 }
 
-export function durableSetItem(key: string, value: string): void {
+export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
   try {
     localStorage.setItem(key, value)
   } catch {
     // ignore quota / private mode
   }
   try {
-    window.handcash?.storageSetSync?.(key, value)
+    const ok = window.handcash?.storageSetSync?.(key, value, opts)
+    if (typeof ok === 'boolean') return ok
   } catch {
     // ignore
   }
+  // Browser / no Electron bridge — localStorage write is best-effort success.
+  return true
 }

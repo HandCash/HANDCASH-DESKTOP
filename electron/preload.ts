@@ -80,8 +80,13 @@ const handcash = {
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
   storageGetSync: (key: string) =>
     ipcRenderer.sendSync('storage:get-sync', key) as string | null,
-  storageSetSync: (key: string, value: string) =>
-    ipcRenderer.sendSync('storage:set-sync', key, value) as boolean,
+  storageSetSync: (
+    key: string,
+    value: string,
+    opts?: { allowVaultIdentityReplace?: boolean },
+  ) => ipcRenderer.sendSync('storage:set-sync', key, value, opts) as boolean,
+  safeStorageAvailable: () =>
+    ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
   getUpdateStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdateStatus>,

@@ -15,6 +15,8 @@ export type AppContext = {
   error: string | null
   bridgeOnline: boolean
   version: string
+  /** When true, onboarding only offers restore (toolbox orphans, no vault). */
+  recoveryOnly: boolean
 }
 
 export type AppEvent =
@@ -32,7 +34,7 @@ export type AppEvent =
 
 /**
  * Chart: appSession
- * States: boot → onboarding | locked | ready | sending
+ * States: boot → onboarding | locked | ready | sending | failure
  * Events: BOOTSTRAPPED, CREATED, UNLOCKED, LOCK, OPEN_SEND, CLOSE_SEND, SENT, FAIL…
  */
 export const appMachine = setup({
@@ -49,6 +51,7 @@ export const appMachine = setup({
     error: null,
     bridgeOnline: false,
     version: '0.0.0',
+    recoveryOnly: false,
   },
   on: {
     BRIDGE: {
@@ -64,24 +67,26 @@ export const appMachine = setup({
             target: 'locked',
             actions: assign({
               version: ({ event }) => event.version,
+              recoveryOnly: false,
               error: null,
             }),
           },
           {
-            // IndexedDB has wallet users but durable vault is missing — do not
-            // offer "create wallet" (that is how keys get replaced).
+            // IndexedDB has wallet users but durable vault is missing — restore only.
             guard: ({ event }) => Boolean(event.orphanedToolbox),
-            target: 'failure',
+            target: 'onboarding',
             actions: assign({
               version: ({ event }) => event.version,
+              recoveryOnly: true,
               error: () =>
-                'This device already has wallet data, but the unlock keys are missing. Creating a new wallet is blocked so those keys cannot be overwritten. Restore a backup of your HandCash config if you have one.',
+                'This device has wallet data but missing unlock keys. Restore with your recovery phrase — creating a new wallet is blocked.',
             }),
           },
           {
             target: 'onboarding',
             actions: assign({
               version: ({ event }) => event.version,
+              recoveryOnly: false,
               error: null,
             }),
           },
@@ -99,6 +104,7 @@ export const appMachine = setup({
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            recoveryOnly: false,
             error: null,
           }),
         },
@@ -117,6 +123,16 @@ export const appMachine = setup({
           actions: assign({
             profile: ({ event }) => event.profile,
             balanceSats: ({ event }) => event.balanceSats,
+            error: null,
+          }),
+        },
+        // Restore-replace from locked mismatch UI
+        CREATED: {
+          target: 'ready',
+          actions: assign({
+            profile: ({ event }) => event.profile,
+            balanceSats: ({ event }) => event.balanceSats,
+            recoveryOnly: false,
             error: null,
           }),
         },

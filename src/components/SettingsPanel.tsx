@@ -22,6 +22,11 @@ const SETTING_GROUPS: SettingGroup[] = [
         label: 'Change password',
         description: 'Update your wallet unlock password',
       },
+      {
+        id: 'backup-phrase',
+        label: 'Backup recovery phrase',
+        description: 'View the only backup that can restore this wallet',
+      },
     ],
   },
 ]
