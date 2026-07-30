@@ -36,7 +36,7 @@ export function BrandLogo({
         skeletonClassName="brand-logo-skeleton"
       />
       {showWordmark && (
-        <div>
+        <div className="brand-wordmark">
           <div className="brand-name">HandCash</div>
           <div className="brand-sub">
             Desktop <span className="brand-beta">BETA</span>

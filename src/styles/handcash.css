@@ -118,6 +118,14 @@ html.platform-darwin .titlebar {
   gap: 12px;
 }
 
+.brand-wordmark {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 0;
+  line-height: 1;
+}
+
 .brand-logo-mark {
   width: 34px;
   height: 34px;
@@ -153,6 +161,8 @@ html.platform-darwin .titlebar {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-size: 0.95rem;
+  line-height: 1.05;
+  margin: 0;
 }
 
 .brand-sub {
@@ -162,7 +172,9 @@ html.platform-darwin .titlebar {
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
+  line-height: 1.05;
+  margin: 0;
 }
 
 .brand-beta {
@@ -170,8 +182,8 @@ html.platform-darwin .titlebar {
   font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.08em;
-  padding: 1px 5px;
-  border-radius: 4px;
+  padding: 0 4px;
+  border-radius: 3px;
   border: 1px solid hsl(var(--primary) / 0.45);
   background: hsl(var(--primary) / 0.12);
   color: hsl(var(--primary));
