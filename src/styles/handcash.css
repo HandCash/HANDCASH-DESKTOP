@@ -386,6 +386,21 @@ html.platform-darwin .titlebar {
   border-color: hsl(var(--primary) / 0.35);
 }
 
+.btn-danger {
+  background: hsl(var(--destructive));
+  color: hsl(var(--destructive-foreground));
+  border-color: transparent;
+}
+
+.btn-danger:hover {
+  filter: brightness(1.06);
+}
+
+.btn-danger:disabled {
+  opacity: 0.45;
+  filter: none;
+}
+
 .btn[data-aeon-state~='submitting'],
 .btn:disabled {
   opacity: 0.55;

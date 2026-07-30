@@ -29,6 +29,16 @@ const SETTING_GROUPS: SettingGroup[] = [
       },
     ],
   },
+  {
+    title: 'Danger zone',
+    items: [
+      {
+        id: 'wipe-wallet',
+        label: 'Wipe wallet data',
+        description: 'Delete keys and local funds data from this device',
+      },
+    ],
+  },
 ]
 
 const UPDATE_MODES: { value: UpdateMode; label: string; description: string }[] = [

@@ -97,6 +97,7 @@ interface HandCashBridge {
     opts?: { allowVaultIdentityReplace?: boolean },
   ) => boolean
   safeStorageAvailable?: () => Promise<boolean>
+  wipeWalletStorage?: () => Promise<{ removed: number }>
   clipboardWrite?: (text: string) => Promise<void>
   getUpdateStatus?: () => Promise<UpdateStatus>
   checkForUpdates?: () => Promise<UpdateStatus>

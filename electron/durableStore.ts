@@ -179,3 +179,31 @@ export function durableRemove(key: string): boolean {
 export function durableSafeStorageAvailable(): boolean {
   return canSeal()
 }
+
+/**
+ * Factory-reset wallet prefs: vault, backups, history, friends, apps, etc.
+ * Does not touch unrelated keys (e.g. update mode).
+ */
+export function durableWipeWallet(): { removed: number } {
+  try {
+    const store = readStore()
+    let removed = 0
+    for (const key of Object.keys(store)) {
+      if (
+        key.startsWith('handcash.brc100') ||
+        key === VAULT_KEY ||
+        key === VAULT_BACKUP_KEY ||
+        key.startsWith(VAULT_HISTORY_PREFIX)
+      ) {
+        delete store[key]
+        removed++
+      }
+    }
+    writeStore(store)
+    log.warn('durableWipeWallet removed keys', removed)
+    return { removed }
+  } catch (err) {
+    log.error('durableWipeWallet failed', err)
+    throw err
+  }
+}

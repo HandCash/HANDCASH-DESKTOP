@@ -47,6 +47,12 @@ function setCollectablesCache(items: Collectable[]) {
   notifyCollectables(items)
 }
 
+export function clearCollectablesCache(): void {
+  cachedCollectables = []
+  collectablesHydrated = false
+  notifyCollectables([])
+}
+
 export function getCachedCollectables(): Collectable[] {
   return cachedCollectables.slice()
 }

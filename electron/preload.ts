@@ -87,6 +87,8 @@ const handcash = {
   ) => ipcRenderer.sendSync('storage:set-sync', key, value, opts) as boolean,
   safeStorageAvailable: () =>
     ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
+  wipeWalletStorage: () =>
+    ipcRenderer.invoke('storage:wipe-wallet') as Promise<{ removed: number }>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
   getUpdateStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdateStatus>,

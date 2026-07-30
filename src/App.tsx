@@ -4,6 +4,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import { appMachine } from './machines/appMachine'
 import { hasVault, hasOrphanedToolboxWallet } from './wallet/vault'
 import { clearActiveWallet } from './wallet/session'
+import { finishPendingWalletWipe } from './wallet/wipeWallet'
 import { handleBrc100Request } from './wallet/brc100Handler'
 import {
   resolvePermission,
@@ -30,6 +31,8 @@ export function App() {
     let cancelled = false
     ;(async () => {
       try {
+        await finishPendingWalletWipe()
+        if (cancelled) return
         const info = window.handcash
           ? await window.handcash.getAppInfo()
           : { version: '1.0.0-web', name: 'HandCash', isPackaged: false, platform: 'web' }

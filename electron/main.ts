@@ -3,7 +3,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
 import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
-import { durableGet, durableSafeStorageAvailable, durableSet } from './durableStore.js'
+import { durableGet, durableSafeStorageAvailable, durableSet, durableWipeWallet } from './durableStore.js'
 import {
   checkForUpdates,
   downloadUpdate,
@@ -250,6 +250,8 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
 })
 
 ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
+
+ipcMain.handle('storage:wipe-wallet', () => durableWipeWallet())
 
 ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')
