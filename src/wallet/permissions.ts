@@ -4,6 +4,7 @@ import {
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import { formatBsvSignificant } from './session'
+import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -108,14 +109,13 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
 }
 
 function readConnected(): ConnectedApp[] {
-  // Prefer new key; fall back to legacy allowlist key.
-  const next = localStorage.getItem(STORAGE_KEY)
+  // Prefer durable / new key; fall back to legacy allowlist key.
+  const next = durableGetItem(STORAGE_KEY)
   if (next) return migrateRaw(next)
-  const legacy = localStorage.getItem('handcash.brc100.allowedOrigins')
+  const legacy = durableGetItem('handcash.brc100.allowedOrigins')
   if (legacy) {
     const apps = migrateRaw(legacy)
     writeConnected(apps)
-    localStorage.removeItem('handcash.brc100.allowedOrigins')
     return apps
   }
   return []
@@ -131,7 +131,7 @@ function writeConnected(apps: ConnectedApp[]): void {
   for (const app of apps) {
     dedup.set(app.origin, app)
   }
-  localStorage.setItem(
+  durableSetItem(
     STORAGE_KEY,
     JSON.stringify([...dedup.values()]),
   )

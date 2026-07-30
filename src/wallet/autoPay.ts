@@ -1,6 +1,7 @@
 import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { getCachedUsdPerBsv, satsToUsd } from './fx'
+import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const STORAGE_KEY = 'handcash.brc100.autoPay'
 
@@ -22,7 +23,7 @@ const listeners = new Set<Listener>()
 
 function readStore(): Store {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return {}
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
@@ -51,7 +52,7 @@ function readStore(): Store {
 }
 
 function writeStore(store: Store): void {
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(store))
+  durableSetItem(STORAGE_KEY, JSON.stringify(store))
   for (const cb of listeners) cb()
 }
 

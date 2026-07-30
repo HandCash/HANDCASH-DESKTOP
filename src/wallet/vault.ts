@@ -1,4 +1,5 @@
 import { PrivateKey } from '@bsv/sdk'
+import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const VAULT_KEY = 'handcash.brc100.vault.v1'
 
@@ -49,11 +50,11 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
 }
 
 export function hasVault(): boolean {
-  return localStorage.getItem(VAULT_KEY) !== null
+  return durableGetItem(VAULT_KEY) !== null
 }
 
 export function readVaultMeta(): Pick<VaultRecord, 'handle' | 'identityKey' | 'address' | 'chain'> | null {
-  const raw = localStorage.getItem(VAULT_KEY)
+  const raw = durableGetItem(VAULT_KEY)
   if (!raw) return null
   const parsed = JSON.parse(raw) as VaultRecord
   return {
@@ -106,12 +107,12 @@ export async function createVault(args: {
     iv: b64(iv),
     salt: b64(salt),
   }
-  localStorage.setItem(VAULT_KEY, JSON.stringify(record))
+  durableSetItem(VAULT_KEY, JSON.stringify(record))
   return { rootKeyHex, record }
 }
 
 export async function unlockVault(password: string): Promise<{ rootKeyHex: string; record: VaultRecord }> {
-  const raw = localStorage.getItem(VAULT_KEY)
+  const raw = durableGetItem(VAULT_KEY)
   if (!raw) throw new Error('No wallet found')
   const record = JSON.parse(raw) as VaultRecord
   const key = await deriveKey(password, fromB64(record.salt))
@@ -156,5 +157,5 @@ export async function changeVaultPassword(
     iv: b64(iv),
     salt: b64(salt),
   }
-  localStorage.setItem(VAULT_KEY, JSON.stringify(updated))
+  durableSetItem(VAULT_KEY, JSON.stringify(updated))
 }

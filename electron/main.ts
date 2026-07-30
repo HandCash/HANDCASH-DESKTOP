@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
@@ -27,6 +28,59 @@ if (process.platform === 'linux') {
 
 function getIconPath(): string | undefined {
   return path.join(__dirname, '../build/icon.png')
+}
+
+/**
+ * Vite `npm run dev` stores IndexedDB under origin http://localhost:5173.
+ * Packaged builds use file:// — a different origin — so balance/UTXOs look empty.
+ * One-time copy when the packaged DB is still empty.
+ */
+function migrateIndexedDbFromViteDev(): void {
+  try {
+    const userData = app.getPath('userData')
+    const marker = path.join(userData, 'migrated-idb-from-vite-v1')
+    if (fs.existsSync(marker)) return
+
+    const idbRoot = path.join(userData, 'IndexedDB')
+    const from = path.join(idbRoot, 'http_localhost_5173.indexeddb.leveldb')
+    const to = path.join(idbRoot, 'file__0.indexeddb.leveldb')
+    if (!fs.existsSync(from)) {
+      fs.writeFileSync(marker, JSON.stringify({ skipped: 'no-vite-idb', at: Date.now() }))
+      return
+    }
+
+    const fromSize = dirBytes(from)
+    const toSize = fs.existsSync(to) ? dirBytes(to) : 0
+    // Only replace an empty/tiny packaged DB with the Vite one.
+    if (toSize > 100_000 && toSize >= fromSize * 0.5) {
+      fs.writeFileSync(
+        marker,
+        JSON.stringify({ skipped: 'packaged-idb-already-populated', toSize, fromSize, at: Date.now() }),
+      )
+      return
+    }
+
+    fs.mkdirSync(idbRoot, { recursive: true })
+    fs.rmSync(to, { recursive: true, force: true })
+    fs.cpSync(from, to, { recursive: true })
+    fs.writeFileSync(
+      marker,
+      JSON.stringify({ migrated: true, fromSize, toSizeBefore: toSize, at: Date.now() }),
+    )
+    log.info('Migrated IndexedDB from Vite localhost origin to file:// origin', { fromSize })
+  } catch (err) {
+    log.warn('IndexedDB vite→packaged migration failed', err)
+  }
+}
+
+function dirBytes(dir: string): number {
+  let total = 0
+  for (const name of fs.readdirSync(dir)) {
+    const p = path.join(dir, name)
+    const st = fs.statSync(p)
+    total += st.isDirectory() ? dirBytes(p) : st.size
+  }
+  return total
 }
 
 function isAppUrl(url: string): boolean {
@@ -138,6 +192,9 @@ async function ensureBridge(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  if (!isDev) {
+    migrateIndexedDbFromViteDev()
+  }
   createWindow()
   await ensureBridge()
 

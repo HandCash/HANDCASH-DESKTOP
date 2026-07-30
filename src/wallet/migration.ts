@@ -12,6 +12,7 @@ import {
   normalizeMigrationItem,
   type MigrationItem,
 } from './oneSatImport'
+import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
 const MAX_TXIDS = 200
@@ -64,7 +65,7 @@ export function isMigrationMethod(method: string): boolean {
 
 function readTxidLog(): string[] {
   try {
-    const raw = localStorage.getItem(TXID_STORAGE_KEY)
+    const raw = durableGetItem(TXID_STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -75,7 +76,7 @@ function readTxidLog(): string[] {
 }
 
 function writeTxidLog(txids: string[]): void {
-  localStorage.setItem(TXID_STORAGE_KEY, JSON.stringify(txids.slice(0, MAX_TXIDS)))
+  durableSetItem(TXID_STORAGE_KEY, JSON.stringify(txids.slice(0, MAX_TXIDS)))
 }
 
 /** Prepend unique txids (newest first). */
