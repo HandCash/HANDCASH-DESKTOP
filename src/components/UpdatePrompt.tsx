@@ -59,7 +59,7 @@ export function UpdatePrompt() {
         <Prompt.Portal>
           <Prompt.Backdrop />
           <Prompt.Positioner>
-            <Prompt.Content className="modal update-prompt-modal">
+            <Prompt.Content className="panel modal update-prompt-modal">
               <Prompt.Eyebrow>Security</Prompt.Eyebrow>
               <Prompt.Title>Restart to Update</Prompt.Title>
               <Prompt.Description>
