@@ -76,6 +76,20 @@ function applyModeToUpdater(mode: UpdateMode) {
   autoUpdater.autoInstallOnAppQuit = mode !== 'none'
 }
 
+/**
+ * Local `electron-builder --mac dir` (esp. arm64) often omits app-update.yml.
+ * Pin the GitHub feed explicitly so Check for Updates works without that file.
+ */
+function configureUpdateFeed() {
+  autoUpdater.setFeedURL({
+    provider: 'github',
+    owner: 'HandCash',
+    repo: 'HANDCASH-DESKTOP',
+    releaseType: 'prerelease',
+  })
+  autoUpdater.allowPrerelease = true
+}
+
 export function getUpdateStatus(): UpdateStatus {
   return status
 }
@@ -122,6 +136,7 @@ export function initAutoUpdater(opts: {
     autoUpdater.logger = log
     autoUpdater.allowPrerelease = true
     autoUpdater.allowDowngrade = false
+    configureUpdateFeed()
     applyModeToUpdater(mode)
 
     autoUpdater.on('checking-for-update', () => {

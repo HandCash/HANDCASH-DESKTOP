@@ -20,13 +20,14 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",
     "preview": "vite preview",
-    "launch": "bash scripts/launch.sh"
+    "launch": "bash scripts/launch.sh",
+    "launch:mac": "bash scripts/launch-mac.sh"
   },
   "dependencies": {
     "@bsv/sdk": "^2.2.0",
     "@bsv/wallet-toolbox-client": "^2.4.4",
     "@xstate/react": "^5.0.3",
-    "aeon-ui-engine": "^1.0.3",
+    "aeon-ui-engine": "^1.2.0",
     "cors": "^2.8.5",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",

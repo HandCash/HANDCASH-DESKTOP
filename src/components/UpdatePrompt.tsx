@@ -1,126 +1,83 @@
-import { useEffect, useState } from 'react'
-import {
-  downloadUpdateNow,
-  installUpdateNow,
-  useUpdateStatus,
-  type UpdateStatus,
-} from '../wallet/updateStatus'
+import { Prompt, StatusBanner } from '@aeon-ui/react'
+import { useUpdate } from '../wallet/updateProvider'
 
-function dismissKey(version: string | null): string {
-  return `handcash.update.dismissed:${version ?? 'unknown'}`
-}
-
-function wasDismissed(version: string | null): boolean {
-  try {
-    return sessionStorage.getItem(dismissKey(version)) === '1'
-  } catch {
-    return false
-  }
-}
-
-function dismiss(version: string | null) {
-  try {
-    sessionStorage.setItem(dismissKey(version), '1')
-  } catch {
-    /* ignore */
-  }
-}
-
-function bannerCopy(status: UpdateStatus): {
-  title: string
-  body: string
-  action: 'download' | 'restart' | null
-} | null {
-  if (status.phase === 'ready' && status.canInstall) {
+function bannerCopy(phase: string, version: string | null, percent: number | null) {
+  if (phase === 'ready') {
     return {
       title: 'Update ready',
-      body: `HandCash Desktop ${status.availableVersion ?? ''} is ready to install.`,
-      action: 'restart',
+      body: `HandCash Desktop ${version ?? ''} is ready to install.`,
+      action: 'restart' as const,
     }
   }
-  if (status.phase === 'downloading') {
+  if (phase === 'downloading') {
     return {
       title: 'Downloading update…',
-      body: `${status.availableVersion ?? ''} — ${status.percent ?? 0}%`,
+      body: `${version ?? ''} — ${percent ?? 0}%`,
       action: null,
     }
   }
-  if (status.phase === 'available') {
+  if (phase === 'available') {
     return {
       title: 'Update available',
-      body: `HandCash Desktop ${status.availableVersion ?? ''} is available.`,
-      action: status.percent == null ? 'download' : null,
+      body: `HandCash Desktop ${version ?? ''} is available.`,
+      action: 'download' as const,
     }
   }
   return null
 }
 
-/** Cursor-style: top banner + restart prompt. No first-run prefs wizard. */
+/** Cursor-style update UX projected from appUpdate statechart. */
 export function UpdatePrompt() {
-  const status = useUpdateStatus()
-  const copy = bannerCopy(status)
-  const [restartOpen, setRestartOpen] = useState(false)
-
-  useEffect(() => {
-    if (status.phase === 'ready' && status.canInstall && !wasDismissed(status.availableVersion)) {
-      setRestartOpen(true)
-    }
-  }, [status.phase, status.canInstall, status.availableVersion])
-
-  if (!copy) return null
+  const update = useUpdate()
+  const { context, promptOpen, download, install, dismissPrompt } = update
+  const copy = bannerCopy(context.phase, context.availableVersion, context.percent)
 
   return (
-    <>
-      <div className="update-banner" role="status">
-        <div className="update-banner-copy">
-          <strong>{copy.title}</strong>
-          <span>{copy.body}</span>
-        </div>
-        <div className="update-banner-actions">
-          {copy.action === 'download' ? (
-            <button type="button" className="primary" onClick={() => void downloadUpdateNow()}>
-              Update
-            </button>
-          ) : null}
-          {copy.action === 'restart' ? (
-            <button type="button" className="primary" onClick={() => void installUpdateNow()}>
-              Restart to Update
-            </button>
-          ) : null}
-        </div>
-      </div>
-
-      {restartOpen && status.canInstall ? (
-        <div
-          className="modal-backdrop update-prompt-backdrop"
-          role="dialog"
-          aria-modal="true"
-          aria-labelledby="update-prompt-title"
-        >
-          <div className="modal update-prompt-modal">
-            <h2 id="update-prompt-title">Restart to Update</h2>
-            <p>
-              HandCash Desktop <strong>{status.availableVersion}</strong> has been downloaded and is
-              ready to install.
-            </p>
-            <div className="actions">
-              <button
-                type="button"
-                className="ghost"
-                onClick={() => {
-                  dismiss(status.availableVersion)
-                  setRestartOpen(false)
-                }}
-              >
-                Later
-              </button>
-              <button type="button" className="primary" onClick={() => void installUpdateNow()}>
+    <div data-aeon-scope="app-update" data-aeon-state={update.stateAttr}>
+      {copy ? (
+        <StatusBanner.Root tone="info" status={context.phase}>
+          <StatusBanner.Copy>
+            <StatusBanner.Title>{copy.title}</StatusBanner.Title>
+            <StatusBanner.Body>{copy.body}</StatusBanner.Body>
+          </StatusBanner.Copy>
+          <StatusBanner.Actions>
+            {copy.action === 'download' ? (
+              <StatusBanner.Action className="btn btn-primary" onClick={() => void download()}>
+                Update
+              </StatusBanner.Action>
+            ) : null}
+            {copy.action === 'restart' ? (
+              <StatusBanner.Action className="btn btn-primary" onClick={() => void install()}>
                 Restart to Update
-              </button>
-            </div>
-          </div>
-        </div>
+              </StatusBanner.Action>
+            ) : null}
+          </StatusBanner.Actions>
+        </StatusBanner.Root>
       ) : null}
-    </>
+
+      <Prompt.Root open={promptOpen} status={promptOpen ? 'pending' : 'dismissed'}>
+        <Prompt.Portal>
+          <Prompt.Backdrop />
+          <Prompt.Positioner>
+            <Prompt.Content className="modal update-prompt-modal">
+              <Prompt.Eyebrow>Security</Prompt.Eyebrow>
+              <Prompt.Title>Restart to Update</Prompt.Title>
+              <Prompt.Description>
+                HandCash Desktop <strong>{context.availableVersion}</strong> has been downloaded and
+                is ready to install.
+              </Prompt.Description>
+              <Prompt.Actions>
+                <Prompt.Secondary className="btn btn-ghost" onClick={dismissPrompt}>
+                  Later
+                </Prompt.Secondary>
+                <Prompt.Primary className="btn btn-primary" onClick={() => void install()}>
+                  Restart to Update
+                </Prompt.Primary>
+              </Prompt.Actions>
+            </Prompt.Content>
+          </Prompt.Positioner>
+        </Prompt.Portal>
+      </Prompt.Root>
+    </div>
   )
 }

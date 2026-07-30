@@ -19,7 +19,7 @@ import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { setAutoPaySettings } from './wallet/autoPay'
-import { initUpdateStatusBridge } from './wallet/updateStatus'
+import { UpdateProvider } from './wallet/updateProvider'
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -60,14 +60,13 @@ export function App() {
 
   useEffect(() => subscribePermissionRequests(setPendingPrompt), [])
 
-  useEffect(() => initUpdateStatusBridge(), [])
-
   useEffect(() => {
     if (!window.handcash?.onHttpRequestCancelled) return
     return window.handcash.onHttpRequestCancelled(() => {
       cancelPendingPermissions('http-cancelled')
     })
   }, [])
+
 
   useEffect(() => {
     if (!window.handcash) return
@@ -101,86 +100,88 @@ export function App() {
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
   return (
-    <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
-      <header className="titlebar">
-        <BrandLogo variant="green" />
-        <div className="status-pill">
-          <span className="status-dot" {...(!snapshot.context.bridgeOnline ? { 'data-offline': true } : {})} />
-          {snapshot.context.bridgeOnline ? 'Online' : 'Offline'}
-        </div>
-      </header>
+    <UpdateProvider>
+      <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
+        <header className="titlebar aeon-titlebar">
+          <BrandLogo variant="green" />
+          <div className="status-pill" data-aeon-no-drag>
+            <span className="status-dot" {...(!snapshot.context.bridgeOnline ? { 'data-offline': true } : {})} />
+            {snapshot.context.bridgeOnline ? 'Online' : 'Offline'}
+          </div>
+        </header>
 
-      <main className="stage">
-        {snapshot.matches('boot') && (
-          <section className="hero-panel" data-aeon-state="loading">
-            <h1 className="display">Opening HandCash…</h1>
-            <p className="lede">Getting your wallet ready.</p>
-          </section>
-        )}
+        <main className="stage">
+          {snapshot.matches('boot') && (
+            <section className="hero-panel" data-aeon-state="loading">
+              <h1 className="display">Opening HandCash…</h1>
+              <p className="lede">Getting your wallet ready.</p>
+            </section>
+          )}
 
-        {snapshot.matches('failure') && (
-          <section className="hero-panel" data-aeon-state="failure">
-            <h1 className="display">Something broke.</h1>
-            <p className="error">{snapshot.context.error}</p>
-            <button className="btn btn-primary" onClick={() => send({ type: 'CLEAR_ERROR' })}>
-              Retry
-            </button>
-          </section>
-        )}
+          {snapshot.matches('failure') && (
+            <section className="hero-panel" data-aeon-state="failure">
+              <h1 className="display">Something broke.</h1>
+              <p className="error">{snapshot.context.error}</p>
+              <button className="btn btn-primary" onClick={() => send({ type: 'CLEAR_ERROR' })}>
+                Retry
+              </button>
+            </section>
+          )}
 
-        {(snapshot.matches('onboarding') || snapshot.matches('locked')) && (
-          <AuthScreen
-            mode={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}
-            error={snapshot.context.error}
-            onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
-            onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
-            onFail={(error) => send({ type: 'FAIL', error })}
-          />
-        )}
+          {(snapshot.matches('onboarding') || snapshot.matches('locked')) && (
+            <AuthScreen
+              mode={snapshot.matches('onboarding') ? 'onboarding' : 'locked'}
+              error={snapshot.context.error}
+              onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
+              onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
+              onFail={(error) => send({ type: 'FAIL', error })}
+            />
+          )}
 
-        {(snapshot.matches('ready') || snapshot.matches('sending')) && snapshot.context.profile && (
-          <Dashboard
-            profile={snapshot.context.profile}
-            balanceSats={snapshot.context.balanceSats}
-            error={snapshot.context.error}
-            onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
-            onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
-            onLock={() => {
-              clearActiveWallet()
-              cancelPendingPermissions('lock')
-              clearPermissionSession()
-              send({ type: 'LOCK' })
-            }}
-            onFail={(error) => send({ type: 'FAIL', error })}
-          />
-        )}
-      </main>
+          {(snapshot.matches('ready') || snapshot.matches('sending')) && snapshot.context.profile && (
+            <Dashboard
+              profile={snapshot.context.profile}
+              balanceSats={snapshot.context.balanceSats}
+              error={snapshot.context.error}
+              onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
+              onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
+              onLock={() => {
+                clearActiveWallet()
+                cancelPendingPermissions('lock')
+                clearPermissionSession()
+                send({ type: 'LOCK' })
+              }}
+              onFail={(error) => send({ type: 'FAIL', error })}
+            />
+          )}
+        </main>
 
-      <UpdatePrompt />
+        <UpdatePrompt />
 
-      <ConnectPermissionDialog
-        pending={pendingConnect}
-        onAllow={() => {
-          if (pendingConnect) resolvePermission(pendingConnect.id, 'allow')
-        }}
-        onDeny={() => {
-          if (pendingConnect) resolvePermission(pendingConnect.id, 'deny')
-        }}
-      />
+        <ConnectPermissionDialog
+          pending={pendingConnect}
+          onAllow={() => {
+            if (pendingConnect) resolvePermission(pendingConnect.id, 'allow')
+          }}
+          onDeny={() => {
+            if (pendingConnect) resolvePermission(pendingConnect.id, 'deny')
+          }}
+        />
 
-      <ActionPermissionDialog
-        pending={pendingAction}
-        onAllow={(autoPay) => {
-          if (!pendingAction) return
-          if (autoPay) {
-            setAutoPaySettings(pendingAction.origin, autoPay)
-          }
-          resolvePermission(pendingAction.id, 'allow')
-        }}
-        onDeny={() => {
-          if (pendingAction) resolvePermission(pendingAction.id, 'deny')
-        }}
-      />
-    </div>
+        <ActionPermissionDialog
+          pending={pendingAction}
+          onAllow={(autoPay) => {
+            if (!pendingAction) return
+            if (autoPay) {
+              setAutoPaySettings(pendingAction.origin, autoPay)
+            }
+            resolvePermission(pendingAction.id, 'allow')
+          }}
+          onDeny={() => {
+            if (pendingAction) resolvePermission(pendingAction.id, 'deny')
+          }}
+        />
+      </div>
+    </UpdateProvider>
   )
 }

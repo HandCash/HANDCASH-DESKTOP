@@ -21,5 +21,9 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    watch: {
+      // packaging writes here — don't restart Vite while launch:mac runs
+      ignored: ['**/release/**', '**/dist/**', '**/dist-electron/**'],
+    },
   },
 })

@@ -1,0 +1,5 @@
+owner: HandCash
+repo: HANDCASH-DESKTOP
+provider: github
+releaseType: prerelease
+updaterCacheDirName: handcash-brc100-updater

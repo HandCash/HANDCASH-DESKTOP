@@ -2973,29 +2973,21 @@ a.app-details-host:hover {
   padding: 8px;
 }
 
-.settings-toggle-row,
 .settings-update-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   width: 100%;
-  cursor: pointer;
-}
-
-.settings-toggle-row input[type='checkbox'] {
-  width: 18px;
-  height: 18px;
-  margin-top: 2px;
-  accent-color: var(--hc-accent);
-  flex-shrink: 0;
-  cursor: pointer;
 }
 
 .settings-interval-select,
 .settings-check-btn {
   flex-shrink: 0;
   align-self: center;
+  position: relative;
+  z-index: 2;
+  pointer-events: auto;
 }
 
 .settings-interval-select {
@@ -3003,10 +2995,29 @@ a.app-details-host:hover {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
-  background: rgba(0, 0, 0, 0.25);
+  background: rgba(0, 0, 0, 0.45);
   color: var(--hc-text);
   font: inherit;
   font-size: 0.85rem;
+  cursor: pointer;
+  -webkit-appearance: menulist;
+  appearance: auto;
+}
+
+.settings-interval-select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.settings-interval-select option {
+  background: #0a0a0a;
+  color: #fafafa;
+}
+
+[data-aeon-scope='statusBanner'] button.btn,
+[data-aeon-scope='prompt'] button.btn {
+  text-transform: none;
+  letter-spacing: 0.02em;
 }
 
 .update-banner {

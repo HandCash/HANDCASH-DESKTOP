@@ -1,11 +1,6 @@
-import { useState } from 'react'
 import { openSetting, type SettingId } from '../wallet/navStore'
-import {
-  checkForUpdatesNow,
-  setUpdateModeNow,
-  useUpdateStatus,
-  type UpdateMode,
-} from '../wallet/updateStatus'
+import { useUpdate } from '../wallet/updateProvider'
+import type { UpdateMode } from '../machines/updateMachine'
 
 type SettingItem = {
   id: SettingId
@@ -60,6 +55,7 @@ function phaseLabel(phase: string): string {
     case 'ready':
       return 'Ready to restart'
     case 'not-available':
+    case 'notAvailable':
       return 'Up to date'
     case 'error':
       return 'Update check failed'
@@ -77,29 +73,16 @@ export function settingLabel(id: SettingId): string {
 }
 
 export function SettingsPanel() {
-  const update = useUpdateStatus()
-  const [busy, setBusy] = useState(false)
-
-  async function onModeChange(mode: UpdateMode) {
-    setBusy(true)
-    try {
-      await setUpdateModeNow(mode)
-    } finally {
-      setBusy(false)
-    }
-  }
-
-  async function onCheck() {
-    setBusy(true)
-    try {
-      await checkForUpdatesNow()
-    } finally {
-      setBusy(false)
-    }
-  }
+  const update = useUpdate()
+  const { context, check, setMode, stateAttr } = update
+  const checking = context.phase === 'checking'
 
   return (
-    <div className="nav-section-body settings-nav" data-aeon-scope="settings">
+    <div
+      className="nav-section-body settings-nav"
+      data-aeon-scope="settings"
+      data-aeon-state={stateAttr}
+    >
       <div className="connected-panel-head">
         <h2>Settings</h2>
       </div>
@@ -126,23 +109,27 @@ export function SettingsPanel() {
         </section>
       ))}
 
-      <section className="settings-group">
+      <section className="settings-group" data-aeon-part="application">
         <h3 className="settings-group-title">Application</h3>
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
-            <label className="settings-update-row">
+            <div className="settings-update-row">
               <span className="settings-row-body">
-                <strong className="settings-row-label">Update Mode</strong>
+                <label className="settings-row-label" htmlFor="settings-update-mode">
+                  Update Mode
+                </label>
                 <span className="settings-row-desc">
-                  {UPDATE_MODES.find((m) => m.value === update.mode)?.description ??
+                  {UPDATE_MODES.find((m) => m.value === context.mode)?.description ??
                     'How HandCash Desktop checks for updates'}
                 </span>
               </span>
               <select
+                id="settings-update-mode"
                 className="settings-interval-select"
-                value={update.mode}
-                disabled={busy || !window.handcash?.setUpdateMode}
-                onChange={(e) => void onModeChange(e.target.value as UpdateMode)}
+                value={context.mode}
+                data-aeon-part="update-mode"
+                data-aeon-state={context.mode}
+                onChange={(e) => void setMode(e.target.value as UpdateMode)}
               >
                 {UPDATE_MODES.map((m) => (
                   <option key={m.value} value={m.value}>
@@ -150,31 +137,33 @@ export function SettingsPanel() {
                   </option>
                 ))}
               </select>
-            </label>
+            </div>
           </li>
 
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">
-                  Version {update.currentVersion || '—'}
+                  Version {context.currentVersion || '—'}
                 </strong>
                 <span className="settings-row-desc">
-                  {phaseLabel(update.phase)}
-                  {update.availableVersion ? ` · ${update.availableVersion}` : ''}
-                  {update.phase === 'downloading' && update.percent != null
-                    ? ` · ${update.percent}%`
+                  {phaseLabel(context.phase)}
+                  {context.availableVersion ? ` · ${context.availableVersion}` : ''}
+                  {context.phase === 'downloading' && context.percent != null
+                    ? ` · ${context.percent}%`
                     : ''}
-                  {update.error ? ` · ${update.error}` : ''}
+                  {context.error ? ` · ${context.error}` : ''}
                 </span>
               </span>
               <button
                 type="button"
-                className="ghost settings-check-btn"
-                disabled={busy || update.mode === 'none' || !window.handcash?.checkForUpdates}
-                onClick={() => void onCheck()}
+                className="btn btn-ghost settings-check-btn"
+                disabled={checking || context.mode === 'none'}
+                data-aeon-part="check-updates"
+                data-aeon-state={checking ? 'checking' : context.mode}
+                onClick={() => void check()}
               >
-                {busy && update.phase === 'checking' ? 'Checking…' : 'Check for Updates'}
+                {checking ? 'Checking…' : 'Check for Updates'}
               </button>
             </div>
           </li>
