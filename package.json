@@ -1,7 +1,7 @@
 {
   "name": "handcash-brc100",
   "version": "1.0.0",
-  "description": "Official HandCash Desktop wallet — self-custodial BRC-100, based on BSVA open standards",
+  "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
   "author": "HandCash BRC100",
@@ -68,8 +68,10 @@
     ],
     "publish": [
       {
-        "provider": "generic",
-        "url": "https://updates.example.com/handcash-brc100"
+        "provider": "github",
+        "owner": "HandCash",
+        "repo": "HANDCASH-DESKTOP",
+        "releaseType": "release"
       }
     ],
     "mac": {

@@ -37,7 +37,9 @@ export function BrandLogo({
       />
       {showWordmark && (
         <div>
-          <div className="brand-name">HandCash</div>
+          <div className="brand-name">
+            HandCash <span className="brand-beta">BETA</span>
+          </div>
           <div className="brand-sub">Desktop</div>
         </div>
       )}

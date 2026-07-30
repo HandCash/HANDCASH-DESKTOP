@@ -1,6 +1,8 @@
 # HandCash Desktop
 
-Official HandCash **desktop wallet** — self-custodial, built on the BSV Association open [BRC-100](https://brc.dev/100) wallet interface (same protocol surface as [bsv-desktop](https://github.com/bsv-blockchain/bsv-desktop)).
+Official HandCash **desktop wallet (BETA)** — self-custodial, built on the BSV Association open [BRC-100](https://brc.dev/100) wallet interface (same protocol surface as [bsv-desktop](https://github.com/bsv-blockchain/bsv-desktop)).
+
+> **BETA** — early open-source release. Not Apple-notarized yet; Gatekeeper may require Right-click → Open on macOS.
 
 ## What you get
 
@@ -30,6 +32,19 @@ npm run package:win        # NSIS installer + portable
 ```
 
 Artifacts land in `release/`. On Linux, ship the AppImage the way Exodus ships a single downloadable binary.
+
+### Releases / auto-update
+
+Installers publish to **GitHub Releases** on `HandCash/HANDCASH-DESKTOP` (electron-builder `publish.provider = github`). Migrate page download buttons default to:
+
+`https://github.com/HandCash/HANDCASH-DESKTOP/releases/latest/download/…`
+
+```bash
+# after packaging
+gh release create v1.0.0 release/HandCash-* release/latest-mac.yml --title "HandCash Desktop 1.0.0"
+```
+
+Mac production needs Apple Developer ID + notarization before Gatekeeper will trust opens without Right-click → Open.
 
 ### Fedora Atomic / Wayblue (no FUSE)
 
