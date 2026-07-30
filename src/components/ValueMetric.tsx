@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { copyText } from '../wallet/clipboard'
 
 type Props = {
   title: string
@@ -28,7 +29,7 @@ export function ValueMetric({ title, value, children, showQr = false, onShowQr, 
           <button
             type="button"
             className="btn btn-ghost btn-compact"
-            onClick={() => void (onCopy ? onCopy(value) : navigator.clipboard.writeText(value))}
+            onClick={() => void (onCopy ? onCopy(value) : copyText(value))}
             aria-label={`Copy ${title}`}
           >
             Copy

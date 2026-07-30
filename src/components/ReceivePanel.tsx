@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
+import { copyText } from '../wallet/clipboard'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
@@ -38,13 +39,9 @@ export function ReceivePanel({
   }, [value])
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      // ignore
-    }
+    if (!(await copyText(value))) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
   }
 
   return (

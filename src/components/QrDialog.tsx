@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { stateToAttr } from '@aeon-ui/core'
+import { copyText } from '../wallet/clipboard'
 import { ModalPortal } from './ModalPortal'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
@@ -62,13 +63,9 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
   if (!open) return null
 
   const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(value)
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
-    } catch {
-      // ignore
-    }
+    if (!(await copyText(value))) return
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), 1600)
   }
 
   return (

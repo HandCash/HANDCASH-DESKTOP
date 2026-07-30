@@ -102,7 +102,7 @@ export function App() {
         <BrandLogo variant="green" />
         <div className="status-pill">
           <span className="status-dot" {...(!snapshot.context.bridgeOnline ? { 'data-offline': true } : {})} />
-          {snapshot.context.bridgeOnline ? 'Connect online' : 'Connect offline'}
+          {snapshot.context.bridgeOnline ? 'Online' : 'Offline'}
         </div>
       </header>
 
