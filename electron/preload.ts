@@ -22,6 +22,7 @@ export type BridgeStatus = {
 }
 
 const handcash = {
+  platform: process.platform,
   getAppInfo: () =>
     ipcRenderer.invoke('app:get-info') as Promise<{
       version: string

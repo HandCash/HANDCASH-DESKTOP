@@ -52,6 +52,7 @@ type BridgeStatus = {
 }
 
 interface HandCashBridge {
+  platform?: string
   getAppInfo: () => Promise<{
     version: string
     name: string

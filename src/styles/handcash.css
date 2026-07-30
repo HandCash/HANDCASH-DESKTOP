@@ -107,6 +107,11 @@ input {
   -webkit-app-region: no-drag;
 }
 
+html.platform-darwin .titlebar {
+  /* Electron hiddenInset: traffic lights sit over the titlebar on macOS only */
+  padding-top: 36px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -3531,6 +3536,9 @@ a.app-details-host:hover {
 @media (max-width: 640px) {
   .titlebar {
     padding: 10px 12px;
+  }
+  html.platform-darwin .titlebar {
+    padding-top: 36px;
   }
   .stage {
     padding: 16px 12px 24px;
