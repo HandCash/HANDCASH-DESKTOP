@@ -18,7 +18,7 @@ export type AppContext = {
 }
 
 export type AppEvent =
-  | { type: 'BOOTSTRAPPED'; hasVault: boolean; version: string }
+  | { type: 'BOOTSTRAPPED'; hasVault: boolean; version: string; orphanedToolbox?: boolean }
   | { type: 'CREATED'; profile: WalletProfile; balanceSats: number }
   | { type: 'UNLOCKED'; profile: WalletProfile; balanceSats: number }
   | { type: 'LOCK' }
@@ -65,6 +65,17 @@ export const appMachine = setup({
             actions: assign({
               version: ({ event }) => event.version,
               error: null,
+            }),
+          },
+          {
+            // IndexedDB has wallet users but durable vault is missing — do not
+            // offer "create wallet" (that is how keys get replaced).
+            guard: ({ event }) => Boolean(event.orphanedToolbox),
+            target: 'failure',
+            actions: assign({
+              version: ({ event }) => event.version,
+              error: () =>
+                'This device already has wallet data, but the unlock keys are missing. Creating a new wallet is blocked so those keys cannot be overwritten. Restore a backup of your HandCash config if you have one.',
             }),
           },
           {

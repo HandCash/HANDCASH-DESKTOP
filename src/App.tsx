@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { appMachine } from './machines/appMachine'
-import { hasVault } from './wallet/vault'
+import { hasVault, hasOrphanedToolboxWallet } from './wallet/vault'
 import { clearActiveWallet } from './wallet/session'
 import { handleBrc100Request } from './wallet/brc100Handler'
 import {
@@ -34,7 +34,14 @@ export function App() {
           ? await window.handcash.getAppInfo()
           : { version: '1.0.0-web', name: 'HandCash', isPackaged: false, platform: 'web' }
         if (cancelled) return
-        send({ type: 'BOOTSTRAPPED', hasVault: hasVault(), version: info.version })
+        const orphanedToolbox = !hasVault() ? await hasOrphanedToolboxWallet() : false
+        if (cancelled) return
+        send({
+          type: 'BOOTSTRAPPED',
+          hasVault: hasVault(),
+          version: info.version,
+          orphanedToolbox,
+        })
 
         if (window.handcash?.getBridgeStatus) {
           const status = await window.handcash.getBridgeStatus()

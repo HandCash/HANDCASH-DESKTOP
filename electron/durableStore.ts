@@ -39,6 +39,31 @@ export function durableSet(key: string, value: string): boolean {
   if (typeof key !== 'string' || !key || typeof value !== 'string') return false
   try {
     const store = readStore()
+
+    // Hard guard: never replace vault.v1 with a different identityKey.
+    if (key === 'handcash.brc100.vault.v1' && typeof store[key] === 'string') {
+      try {
+        const prev = JSON.parse(store[key]) as { identityKey?: string }
+        const next = JSON.parse(value) as { identityKey?: string }
+        if (
+          typeof prev.identityKey === 'string' &&
+          typeof next.identityKey === 'string' &&
+          prev.identityKey !== next.identityKey
+        ) {
+          log.error('durableSet blocked vault identity overwrite', {
+            previousPrefix: prev.identityKey.slice(0, 12),
+            nextPrefix: next.identityKey.slice(0, 12),
+          })
+          return false
+        }
+        // Keep last ciphertext for recovery if something still displaces the record.
+        store['handcash.brc100.vault.backup.v1'] = store[key]
+      } catch (err) {
+        log.warn('durableSet vault guard parse failed — refusing write', err)
+        return false
+      }
+    }
+
     store[key] = value
     writeStore(store)
     return true
@@ -53,6 +78,11 @@ export function durableRemove(key: string): boolean {
   try {
     const store = readStore()
     if (!(key in store)) return true
+    // Never delete the live vault without keeping a backup copy.
+    if (key === 'handcash.brc100.vault.v1' && typeof store[key] === 'string') {
+      store['handcash.brc100.vault.backup.v1'] = store[key]
+      log.warn('durableRemove vault.v1 — preserved backup.v1')
+    }
     delete store[key]
     writeStore(store)
     return true

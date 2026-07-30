@@ -76,6 +76,37 @@ function applyModeToUpdater(mode: UpdateMode) {
   autoUpdater.autoInstallOnAppQuit = mode !== 'none'
 }
 
+/** electron-updater dumps HttpError + headers; keep Settings readable. */
+function friendlyUpdateError(err: unknown): string {
+  const raw = err instanceof Error ? err.message : String(err)
+  const firstLine = raw.split('\n')[0] ?? raw
+
+  if (/latest-linux\.yml/i.test(raw)) {
+    return 'No Linux update package on GitHub yet (need AppImage + latest-linux.yml).'
+  }
+  if (/latest-mac\.yml/i.test(raw)) {
+    return 'No Mac update package on GitHub yet (need latest-mac.yml).'
+  }
+  if (/latest-windows\.yml|latest\.yml/i.test(raw) && /win/i.test(process.platform)) {
+    return 'No Windows update package on GitHub yet.'
+  }
+  if (/404/.test(raw) && /latest-.*\.yml/i.test(raw)) {
+    return 'Update metadata missing from the GitHub release for this platform.'
+  }
+  if (/APPIMAGE env is not defined/i.test(raw)) {
+    return 'Linux auto-update needs the AppImage build (not the unpacked dir).'
+  }
+
+  return firstLine.length > 160 ? `${firstLine.slice(0, 157)}…` : firstLine
+}
+
+/** Missing platform artifacts should not look like a hard failure. */
+function isMissingPlatformArtifact(err: unknown): boolean {
+  const raw = err instanceof Error ? err.message : String(err)
+  return /Cannot find latest-(linux|mac|windows)?\.?yml/i.test(raw) ||
+    (/404/.test(raw) && /latest-.*\.yml/i.test(raw))
+}
+
 /**
  * Local `electron-builder --mac dir` (esp. arm64) often omits app-update.yml.
  * Pin the GitHub feed explicitly so Check for Updates works without that file.
@@ -183,9 +214,19 @@ export function initAutoUpdater(opts: {
 
     autoUpdater.on('error', (err) => {
       log.warn('autoUpdater error', err)
+      if (isMissingPlatformArtifact(err)) {
+        setStatus({
+          phase: 'not-available',
+          availableVersion: null,
+          percent: null,
+          canInstall: false,
+          error: friendlyUpdateError(err),
+        })
+        return
+      }
       setStatus({
         phase: 'error',
-        error: err instanceof Error ? err.message : String(err),
+        error: friendlyUpdateError(err),
         canInstall: false,
       })
     })
@@ -228,10 +269,20 @@ export async function checkForUpdates(opts?: {
     await autoUpdater.checkForUpdates()
   } catch (err) {
     log.warn('checkForUpdates failed', err)
-    setStatus({
-      phase: 'error',
-      error: err instanceof Error ? err.message : String(err),
-    })
+    if (isMissingPlatformArtifact(err)) {
+      setStatus({
+        phase: 'not-available',
+        availableVersion: null,
+        percent: null,
+        canInstall: false,
+        error: friendlyUpdateError(err),
+      })
+    } else {
+      setStatus({
+        phase: 'error',
+        error: friendlyUpdateError(err),
+      })
+    }
   } finally {
     applyModeToUpdater(readMode())
   }
@@ -246,7 +297,7 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
     log.warn('downloadUpdate failed', err)
     setStatus({
       phase: 'error',
-      error: err instanceof Error ? err.message : String(err),
+      error: friendlyUpdateError(err),
     })
   }
   return status

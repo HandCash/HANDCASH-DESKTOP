@@ -27,6 +27,16 @@ npm run version:sync-market
 
 Until step 3, the website keeps linking the previous published build. Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
 
+Each platform needs its updater metadata on the release:
+
+| Platform | Required artifact |
+|----------|-------------------|
+| macOS | `latest-mac.yml` (+ dmg/zip) |
+| Linux | `latest-linux.yml` (+ AppImage) |
+| Windows | `latest.yml` (+ NSIS) |
+
+A Mac-only prerelease makes Linux **Check for Updates** fail until an AppImage is published. Prefer shipping `npm run package:linux` assets onto the same tag.
+
 ## Do not
 
 - Point the site at `/releases/latest/` while assets are **prerelease** (GitHub ignores them).

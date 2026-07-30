@@ -44,7 +44,7 @@ const UPDATE_MODES: { value: UpdateMode; label: string; description: string }[] 
   },
 ]
 
-function phaseLabel(phase: string): string {
+function phaseLabel(phase: string, error: string | null): string {
   switch (phase) {
     case 'checking':
       return 'Checking for updates…'
@@ -56,6 +56,8 @@ function phaseLabel(phase: string): string {
       return 'Ready to restart'
     case 'not-available':
     case 'notAvailable':
+      // Missing platform artifacts land here with a soft note — not “Up to date”.
+      if (error) return error
       return 'Up to date'
     case 'error':
       return 'Update check failed'
@@ -147,12 +149,12 @@ export function SettingsPanel() {
                   Version {context.currentVersion || '—'}
                 </strong>
                 <span className="settings-row-desc">
-                  {phaseLabel(context.phase)}
+                  {phaseLabel(context.phase, context.error)}
                   {context.availableVersion ? ` · ${context.availableVersion}` : ''}
                   {context.phase === 'downloading' && context.percent != null
                     ? ` · ${context.percent}%`
                     : ''}
-                  {context.error ? ` · ${context.error}` : ''}
+                  {context.phase === 'error' && context.error ? ` · ${context.error}` : ''}
                 </span>
               </span>
               <button

@@ -1,6 +1,4 @@
 import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron'
-import fs from 'node:fs'
-import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
@@ -19,16 +17,14 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 
-/** Same origin as Vite — IndexedDB/localStorage stay shared across `npm run dev` and packaged. */
-const APP_ORIGIN = 'http://localhost:5173'
-const APP_PORT = 5173
+/** Vite / `npm run dev` origin. Packaged builds use file:// so existing IndexedDB stays intact. */
+const DEV_ORIGIN = 'http://localhost:5173'
 
 log.transports.file.level = 'info'
 
 let mainWindow: BrowserWindow | null = null
 let bridge: BridgeServerHandle | null = null
 let bridgeError: string | null = null
-let staticServer: http.Server | null = null
 
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('--disable-gpu-sandbox')
@@ -39,74 +35,17 @@ function getIconPath(): string | undefined {
   return path.join(__dirname, '../build/icon.png')
 }
 
-const MIME: Record<string, string> = {
-  '.html': 'text/html; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.json': 'application/json',
-  '.svg': 'image/svg+xml',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.jpeg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.woff': 'font/woff',
-  '.woff2': 'font/woff2',
-  '.map': 'application/json',
-}
-
-/**
- * Serve packaged `dist/` on localhost:5173 so Chromium uses the same origin
- * (and IndexedDB) as `npm run dev`. LevelDB copies between file:// and http:// are unreliable.
- */
-async function ensurePackagedStaticServer(): Promise<void> {
-  if (isDev || staticServer) return
-  const distRoot = path.join(__dirname, '../dist')
-  const server = http.createServer((req, res) => {
-    try {
-      const raw = decodeURIComponent((req.url ?? '/').split('?')[0] || '/')
-      let rel = raw === '/' ? '/index.html' : raw
-      if (rel.includes('\0') || rel.includes('..')) {
-        res.writeHead(400).end('Bad request')
-        return
-      }
-      let filePath = path.join(distRoot, rel)
-      if (!filePath.startsWith(distRoot)) {
-        res.writeHead(403).end('Forbidden')
-        return
-      }
-      if (!fs.existsSync(filePath) || fs.statSync(filePath).isDirectory()) {
-        filePath = path.join(distRoot, 'index.html')
-      }
-      const ext = path.extname(filePath).toLowerCase()
-      res.writeHead(200, { 'Content-Type': MIME[ext] ?? 'application/octet-stream' })
-      fs.createReadStream(filePath).pipe(res)
-    } catch (err) {
-      log.warn('static serve error', err)
-      res.writeHead(500).end('Error')
-    }
-  })
-
-  await new Promise<void>((resolve) => {
-    server.once('error', (err: NodeJS.ErrnoException) => {
-      if (err.code === 'EADDRINUSE') {
-        log.info(`Port ${APP_PORT} already in use — loading ${APP_ORIGIN} (Vite or prior server)`)
-        staticServer = null
-        resolve()
-        return
-      }
-      log.error('Packaged static server failed', err)
-      resolve()
-    })
-    server.listen(APP_PORT, '127.0.0.1', () => {
-      staticServer = server
-      log.info(`Packaged UI serving at ${APP_ORIGIN}`)
-      resolve()
-    })
-  })
-}
-
 function isAppUrl(url: string): boolean {
-  return url.startsWith(APP_ORIGIN) || url.startsWith('http://127.0.0.1:5173')
+  if (url.startsWith(DEV_ORIGIN) || url.startsWith('http://127.0.0.1:5173')) return true
+  if (url.startsWith('file://')) {
+    const distRoot = path.join(__dirname, '../dist')
+    try {
+      return decodeURIComponent(fileURLToPath(url)).startsWith(distRoot)
+    } catch {
+      return false
+    }
+  }
+  return false
 }
 
 function isSafeExternalUrl(url: string): boolean {
@@ -163,9 +102,13 @@ function createWindow(): void {
     return permission === 'media' || permission === 'mediaKeySystem'
   })
 
-  void mainWindow.loadURL(APP_ORIGIN)
+  // Packaged: file:// keeps the existing Chromium IndexedDB (file__0.*).
+  // Serving on localhost:5173 looks empty — LevelDB cannot be reliably copied across origins.
   if (isDev) {
+    void mainWindow.loadURL(DEV_ORIGIN)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
+  } else {
+    void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
 
   mainWindow.once('ready-to-show', () => {
@@ -211,7 +154,6 @@ async function ensureBridge(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  await ensurePackagedStaticServer()
   createWindow()
   await ensureBridge()
 
@@ -236,8 +178,6 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   void bridge?.stop()
   bridge = null
-  staticServer?.close()
-  staticServer = null
 })
 
 ipcMain.handle('app:get-info', () => ({
