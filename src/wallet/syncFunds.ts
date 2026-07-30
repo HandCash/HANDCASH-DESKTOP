@@ -1,10 +1,12 @@
 import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
+import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
 
 /**
- * Quietly scan the legacy receive address and import any UTXOs into
- * managed wallet balance. Safe to call on an interval; failures are logged only.
+ * Quietly scan the legacy receive address and import UTXOs.
+ * 1Sat ordinals → basket `1sat` (internalize). Other P2PKH → managed change.
+ * Safe to call on an interval; failures are logged only.
  *
  * Important for self-sends: createAction pays your receive address as an
  * "external" output, so balance drops until those UTXOs are imported back.
@@ -22,10 +24,21 @@ export async function syncLegacyFunds(): Promise<number | null> {
   try {
     const scan = await scanLegacyAddress(active)
     if (scan.utxos.length > 0) {
-      const outpoints = scan.utxos.map((u) => u.outpoint)
-      const result = await importLegacyUtxos(outpoints, active)
-      if (result.failed > 0) {
-        console.warn('[sync] legacy import partial', result)
+      const { funding, oneSats } = await classifyLegacyUtxos(scan.utxos, active.chain)
+      if (oneSats.length > 0) {
+        const itemResult = await importOneSatOrdinals(oneSats, active)
+        if (itemResult.failed > 0) {
+          console.warn('[sync] 1sat import partial', itemResult)
+        }
+      }
+      if (funding.length > 0) {
+        const result = await importLegacyUtxos(
+          funding.map((u) => u.outpoint),
+          active,
+        )
+        if (result.failed > 0) {
+          console.warn('[sync] legacy import partial', result)
+        }
       }
     }
   } catch (err) {

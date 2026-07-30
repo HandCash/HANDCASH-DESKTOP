@@ -6,6 +6,12 @@ import { getActiveWallet, fetchBalanceSats } from './session'
 import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'
 import { reconcilePendingSends } from './pendingSend'
 import { normalizeAppHost } from './appIdentity'
+import {
+  classifyLegacyUtxos,
+  importOneSatOrdinals,
+  normalizeMigrationItem,
+  type MigrationItem,
+} from './oneSatImport'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
 const MAX_TXIDS = 200
@@ -21,11 +27,18 @@ export type RefreshLegacyAddressPayload = {
   address: string
   satoshis: number
   importedCount: number
+  importedItemsCount: number
   txids: string[]
 }
 
 export type ListMigrationTxidsPayload = {
   txids: string[]
+}
+
+export type RefreshLegacyAddressArgs = {
+  txids?: string[]
+  /** Ordinal outs from cloud migrate — internalized to basket `1sat`. */
+  items?: MigrationItem[]
 }
 
 /** Origins allowed to call migration methods (after connect). */
@@ -91,15 +104,29 @@ export function getLegacyAddressPayload(): LegacyAddressPayload {
   }
 }
 
+function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
+  txids: string[]
+  items: MigrationItem[]
+} {
+  const txids = Array.isArray(args?.txids)
+    ? args.txids.filter((t): t is string => typeof t === 'string' && t.length > 0)
+    : []
+  const items = Array.isArray(args?.items)
+    ? args.items.map(normalizeMigrationItem).filter((x): x is MigrationItem => x != null)
+    : []
+  return { txids, items }
+}
+
+/**
+ * Record cloud txids, internalize 1sats → basket `1sat`, sweep remaining as funds.
+ */
 export async function refreshLegacyAddressPayload(
-  args?: { txids?: string[] } | null,
+  args?: RefreshLegacyAddressArgs | null,
 ): Promise<RefreshLegacyAddressPayload> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const reportedTxids = Array.isArray(args?.txids)
-    ? args.txids.filter((t): t is string => typeof t === 'string' && t.length > 0)
-    : []
+  const { txids: reportedTxids, items: reportedItems } = parseRefreshArgs(args)
   if (reportedTxids.length > 0) {
     recordMigrationTxids(reportedTxids)
   }
@@ -112,11 +139,28 @@ export async function refreshLegacyAddressPayload(
 
   const scan = await scanLegacyAddress(active)
   const scannedTxids = [...new Set(scan.utxos.map((u) => u.txid).filter(Boolean))]
-  let importedCount = 0
 
-  if (scan.utxos.length > 0) {
-    const outpoints = scan.utxos.map((u) => u.outpoint)
-    const result = await importLegacyUtxos(outpoints, active)
+  const { funding, oneSats } = await classifyLegacyUtxos(
+    scan.utxos,
+    active.chain,
+    reportedItems,
+  )
+
+  let importedItemsCount = 0
+  if (oneSats.length > 0) {
+    const itemResult = await importOneSatOrdinals(oneSats, active)
+    importedItemsCount = itemResult.imported
+    if (itemResult.failed > 0) {
+      console.warn('[migration] 1sat import partial', itemResult)
+    }
+  }
+
+  let importedCount = 0
+  if (funding.length > 0) {
+    const result = await importLegacyUtxos(
+      funding.map((u) => u.outpoint),
+      active,
+    )
     importedCount = result.imported
     if (result.failed > 0) {
       console.warn('[migration] legacy import partial', result)
@@ -140,6 +184,7 @@ export async function refreshLegacyAddressPayload(
     address: active.address,
     satoshis,
     importedCount,
+    importedItemsCount,
     txids,
   }
 }
