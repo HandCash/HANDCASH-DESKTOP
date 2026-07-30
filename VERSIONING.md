@@ -16,26 +16,32 @@ Semver while **BETA**: `MAJOR.MINOR.PATCH` in root `package.json`.
 # 1. Bump (creates commit + tag vX.Y.Z)
 npm run version:minor   # or version:patch / version:major
 
-# 2. Build + publish GitHub prerelease assets
-npm run package:mac     # (and win/linux as needed)
-# Upload DMG/zip to GitHub release matching the tag (prerelease)
+# 2. Push commit + tag — Linux AppImage builds on GitHub Actions
+git push && git push origin vX.Y.Z
+# Workflow: .github/workflows/release-linux.yml → uploads AppImage + latest-linux.yml
 
-# 3. Point the download site at the new tag
+# 3. Build + upload Mac (local or future macOS CI) to the same tag
+npm run package:mac
+# Upload DMG/zip + latest-mac.yml to the GitHub prerelease
+
+# 4. Point the download site at the new tag
 npm run version:sync-market
 # then deploy items-market (pre-prod / prod)
 ```
 
-Until step 3, the website keeps linking the previous published build. Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
+**Backfill Linux onto an existing tag** (Actions → Release Linux → Run workflow → tag `v1.0.0`).
+
+Until step 4, the website keeps linking the previous published build. Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
 
 Each platform needs its updater metadata on the release:
 
 | Platform | Required artifact |
 |----------|-------------------|
 | macOS | `latest-mac.yml` (+ dmg/zip) |
-| Linux | `latest-linux.yml` (+ AppImage) |
+| Linux | `latest-linux.yml` (+ AppImage) — **built on GitHub Actions** |
 | Windows | `latest.yml` (+ NSIS) |
 
-A Mac-only prerelease makes Linux **Check for Updates** fail until an AppImage is published. Prefer shipping `npm run package:linux` assets onto the same tag.
+A Mac-only prerelease makes Linux **Check for Updates** report no update until an AppImage is published.
 
 ## Do not
 

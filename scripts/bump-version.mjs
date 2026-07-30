@@ -115,4 +115,5 @@ if (!noCommit) {
   execSync(`git commit -m "Release v${next}"`, { cwd: root, stdio: 'inherit' })
   execSync(`git tag v${next}`, { cwd: root, stdio: 'inherit' })
   console.log(`Tagged v${next}. Push with: git push && git push origin v${next}`)
+  console.log('Pushing the tag runs Release Linux (GitHub Actions) → AppImage + latest-linux.yml')
 }

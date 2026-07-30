@@ -1,0 +1,102 @@
+# Build Linux AppImage on GitHub and publish to the matching GitHub Release
+# (latest-linux.yml + AppImage for electron-updater).
+#
+# Triggers:
+#   - push of tag v* (after `npm run version:*` + `git push origin vX.Y.Z`)
+#   - manual Run workflow (optional tag, e.g. v1.0.0 to backfill an existing release)
+
+name: Release Linux
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build & upload (e.g. v1.0.0). Leave empty to use the current branch tip / package.json version.'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-linux-${{ github.workflow }}-${{ inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.sha }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Read version
+        id: meta
+        run: |
+          VERSION="$(node -p "require('./package.json').version")"
+          TAG="v${VERSION}"
+          if [ -n "${{ inputs.tag }}" ]; then
+            TAG="${{ inputs.tag }}"
+          elif [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            TAG="${GITHUB_REF_NAME}"
+          fi
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "Building HandCash ${VERSION} → release ${TAG}"
+
+      - name: Build Linux AppImage
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Ensure electron-builder can create/update the prerelease
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run package:linux -- --publish never
+
+      - name: Ensure GitHub Release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            echo "Release $TAG already exists"
+          else
+            gh release create "$TAG" \
+              --repo "${{ github.repository }}" \
+              --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
+              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — Linux AppImage from CI." \
+              --prerelease \
+              --target "${{ github.sha }}"
+          fi
+
+      - name: Upload Linux artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.meta.outputs.tag }}"
+          shopt -s nullglob
+          files=(release/*.AppImage release/*.AppImage.blockmap release/latest-linux.yml)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No Linux artifacts found under release/" >&2
+            ls -la release/ || true
+            exit 1
+          fi
+          # Replace prior Linux assets on re-run
+          for f in "${files[@]}"; do
+            name="$(basename "$f")"
+            gh release delete-asset "$TAG" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
+          done
+          gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber
+          echo "Uploaded to $TAG:"
+          printf '  %s\n' "${files[@]}"
