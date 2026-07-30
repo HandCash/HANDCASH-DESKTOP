@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.1] - 2026-07-30
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 All notable changes to HandCash Desktop are documented here.
 
 ## [1.1.0] - 2026-07-30
