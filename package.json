@@ -71,7 +71,7 @@
         "provider": "github",
         "owner": "HandCash",
         "repo": "HANDCASH-DESKTOP",
-        "releaseType": "release"
+        "releaseType": "prerelease"
       }
     ],
     "mac": {

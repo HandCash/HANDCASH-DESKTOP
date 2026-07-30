@@ -18,6 +18,8 @@ export type NavChild =
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend' }
+  | { type: 'collectable'; outpoint: string }
+  | { type: 'send-collectable'; outpoint: string }
   | { type: 'setting'; settingId: SettingId }
 
 export type NavState = {
@@ -89,6 +91,14 @@ export function openFriendDetails(friendId: string) {
 
 export function openAddFriend() {
   openNavChild('friends', { type: 'add-friend' })
+}
+
+export function openCollectableDetails(outpoint: string) {
+  openNavChild('collectables', { type: 'collectable', outpoint })
+}
+
+export function openSendCollectable(outpoint: string) {
+  openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 
 export function openSetting(settingId: SettingId) {

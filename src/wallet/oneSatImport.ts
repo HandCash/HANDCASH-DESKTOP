@@ -3,6 +3,9 @@
  *
  * HARD RULE: never pass satoshis === 1 through fundWalletFromP2PKHOutpoints.
  * Unrecognized 1-sat outs stay on the address until classified (cloud items or GorillaPool).
+ *
+ * GorillaPool often lags on the *current* transfer outpoint. When the new location
+ * is not indexed yet, walk prior inputs (WhatsOnChain) and resolve origin from there.
  */
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
@@ -16,6 +19,9 @@ export type MigrationItem = {
   origin?: string
   txid?: string
   vout?: number
+  /** Display hints from indexer (optional) */
+  name?: string
+  app?: string
 }
 
 export type OneSatImportResult = {
@@ -34,19 +40,54 @@ export type ClassifiedLegacyUtxos = {
   heldOneSats: LegacyUtxo[]
 }
 
+export type CollectableTrait = {
+  name: string
+  value: string
+}
+
+export type ResolvedInscription = {
+  origin: string
+  name?: string
+  app?: string
+  mimeType?: string
+  type?: string
+  subType?: string
+  collectionId?: string
+  traits: CollectableTrait[]
+  /** Other string map fields worth showing in details */
+  extras: CollectableTrait[]
+}
+
 function gorillaBase(chain: Chain): string {
   return chain === 'main'
     ? 'https://ordinals.gorillapool.io'
     : 'https://testnet.ordinals.gorillapool.io'
 }
 
+function wocBase(chain: Chain): string {
+  return chain === 'main'
+    ? 'https://api.whatsonchain.com/v1/bsv/main'
+    : 'https://api.whatsonchain.com/v1/bsv/test'
+}
+
 function parseOutpoint(outpoint: string): { txid: string; vout: number } | null {
-  const dot = outpoint.lastIndexOf('.')
+  const normalized = outpoint.includes('_')
+    ? outpoint.replace(/_(\d+)$/, '.$1')
+    : outpoint
+  const dot = normalized.lastIndexOf('.')
   if (dot <= 0) return null
-  const txid = outpoint.slice(0, dot)
-  const vout = Number(outpoint.slice(dot + 1))
+  const txid = normalized.slice(0, dot)
+  const vout = Number(normalized.slice(dot + 1))
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
   return { txid, vout }
+}
+
+function toUnderscoreOutpoint(txid: string, vout: number): string {
+  return `${txid}_${vout}`
+}
+
+function toDotOutpoint(txid: string, vout: number): string {
+  return `${txid}.${vout}`
 }
 
 /** Normalize cloud/item payload into outpoint + origin. */
@@ -56,35 +97,221 @@ export function normalizeMigrationItem(raw: unknown): MigrationItem | null {
   let txid = typeof o.txid === 'string' ? o.txid : undefined
   let vout = typeof o.vout === 'number' ? o.vout : undefined
   let outpoint = typeof o.outpoint === 'string' ? o.outpoint : undefined
-  const origin = typeof o.origin === 'string' ? o.origin : undefined
+  let origin = typeof o.origin === 'string' ? o.origin : undefined
+  const name = typeof o.name === 'string' ? o.name : undefined
+  const app = typeof o.app === 'string' ? o.app : undefined
 
   if (!outpoint && txid != null && vout != null) {
-    outpoint = `${txid}.${vout}`
+    outpoint = toDotOutpoint(txid, vout)
   }
   if ((!txid || vout == null) && outpoint) {
     const parsed = parseOutpoint(outpoint)
     if (parsed) {
       txid = parsed.txid
       vout = parsed.vout
+      outpoint = toDotOutpoint(parsed.txid, parsed.vout)
     }
   }
+  if (origin?.includes('.')) {
+    origin = origin.replace(/\.(\d+)$/, '_$1')
+  }
   if (!outpoint || txid == null || vout == null) return null
-  return { outpoint, origin, txid, vout }
+  return { outpoint, origin, txid, vout, name, app }
 }
 
-/** Probe GorillaPool — true if this outpoint is a known inscription. */
+type GpMap = Record<string, unknown>
+
+type GpTxo = {
+  origin?:
+    | string
+    | {
+        outpoint?: string
+        data?: {
+          map?: GpMap
+          insc?: { file?: { type?: string }; text?: string; json?: unknown }
+        }
+      }
+  data?: {
+    map?: GpMap
+    insc?: { file?: { type?: string }; text?: string; json?: unknown }
+  }
+}
+
+function asString(value: unknown): string | undefined {
+  if (typeof value === 'string' && value.trim()) return value.trim()
+  if (typeof value === 'number' && Number.isFinite(value)) return String(value)
+  if (typeof value === 'boolean') return value ? 'true' : 'false'
+  return undefined
+}
+
+function parseTraits(raw: unknown): CollectableTrait[] {
+  if (!Array.isArray(raw)) return []
+  const traits: CollectableTrait[] = []
+  for (const row of raw) {
+    if (!row || typeof row !== 'object') continue
+    const o = row as Record<string, unknown>
+    const name = asString(o.name) ?? asString(o.trait_type) ?? asString(o.trait)
+    const value = asString(o.value) ?? asString(o.val)
+    if (name && value) traits.push({ name, value })
+  }
+  return traits
+}
+
+function extractResolved(meta: GpTxo): ResolvedInscription | null {
+  const originRaw =
+    typeof meta.origin === 'string'
+      ? meta.origin
+      : typeof meta.origin?.outpoint === 'string'
+        ? meta.origin.outpoint
+        : null
+  if (!originRaw) return null
+  const origin = originRaw.includes('.')
+    ? originRaw.replace(/\.(\d+)$/, '_$1')
+    : originRaw
+
+  const originData = typeof meta.origin === 'object' ? meta.origin?.data : undefined
+  const map = (originData?.map ?? meta.data?.map ?? {}) as GpMap
+  const insc = originData?.insc ?? meta.data?.insc
+  const fileType = asString(insc?.file?.type)
+
+  const subTypeData =
+    map.subTypeData && typeof map.subTypeData === 'object'
+      ? (map.subTypeData as Record<string, unknown>)
+      : null
+
+  const traits = [
+    ...parseTraits(subTypeData?.traits),
+    ...parseTraits(map.traits),
+    ...parseTraits(map.attributes),
+  ]
+
+  const collectionId =
+    asString(subTypeData?.collectionId) ??
+    asString(map.collectionId) ??
+    asString(map.collection)
+
+  const skipKeys = new Set([
+    'name',
+    'app',
+    'type',
+    'subType',
+    'subTypeData',
+    'traits',
+    'attributes',
+    'collectionId',
+    'collection',
+  ])
+  const extras: CollectableTrait[] = []
+  for (const [key, value] of Object.entries(map)) {
+    if (skipKeys.has(key)) continue
+    const text = asString(value)
+    if (text) extras.push({ name: key, value: text })
+  }
+
+  return {
+    origin,
+    name: asString(map.name),
+    app: asString(map.app),
+    mimeType: fileType,
+    type: asString(map.type),
+    subType: asString(map.subType),
+    collectionId,
+    traits,
+    extras,
+  }
+}
+
+async function fetchGpTxo(outpointUnderscore: string, chain: Chain): Promise<GpTxo | null> {
+  try {
+    const url = `${gorillaBase(chain)}/api/txos/${outpointUnderscore}?script=false`
+    const res = await fetch(url, { signal: AbortSignal.timeout(5000) })
+    if (!res.ok) {
+      // Some indexers only expose /inscriptions for the same outpoint.
+      const inscUrl = `${gorillaBase(chain)}/api/inscriptions/${outpointUnderscore}?script=false`
+      const inscRes = await fetch(inscUrl, { signal: AbortSignal.timeout(5000) })
+      if (!inscRes.ok) return null
+      return (await inscRes.json()) as GpTxo
+    }
+    return (await res.json()) as GpTxo
+  } catch {
+    return null
+  }
+}
+
+type WocVin = { txid?: string; vout?: number }
+type WocTx = { vin?: WocVin[] }
+
+async function fetchWocTx(txid: string, chain: Chain): Promise<WocTx | null> {
+  try {
+    const url = `${wocBase(chain)}/tx/${txid}`
+    const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    return (await res.json()) as WocTx
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve inscription origin for a 1-sat outpoint.
+ * Falls back to walking prior inputs when GorillaPool has not indexed the new location yet.
+ */
+export async function resolveOneSatInscription(
+  txid: string,
+  vout: number,
+  chain: Chain,
+  maxDepth = 6,
+): Promise<ResolvedInscription | null> {
+  const seen = new Set<string>()
+  let curTxid = txid
+  let curVout = vout
+
+  for (let depth = 0; depth <= maxDepth; depth++) {
+    const key = toUnderscoreOutpoint(curTxid, curVout)
+    if (seen.has(key)) break
+    seen.add(key)
+
+    const meta = await fetchGpTxo(key, chain)
+    if (meta) {
+      const resolved = extractResolved(meta)
+      if (resolved) return resolved
+    }
+
+    if (depth === maxDepth) break
+
+    const tx = await fetchWocTx(curTxid, chain)
+    const vins = tx?.vin ?? []
+    if (vins.length === 0) break
+
+    // Prefer any prior outpoint GorillaPool already knows as an ordinal.
+    let next: { txid: string; vout: number } | null = null
+    for (const vin of vins.slice(0, 12)) {
+      if (typeof vin.txid !== 'string' || !Number.isInteger(vin.vout)) continue
+      const prevKey = toUnderscoreOutpoint(vin.txid, vin.vout!)
+      if (seen.has(prevKey)) continue
+      const prevMeta = await fetchGpTxo(prevKey, chain)
+      if (prevMeta) {
+        const resolved = extractResolved(prevMeta)
+        if (resolved) return resolved
+      }
+      if (!next) next = { txid: vin.txid, vout: vin.vout! }
+    }
+
+    if (!next) break
+    curTxid = next.txid
+    curVout = next.vout
+  }
+
+  return null
+}
+
+/** Probe whether this outpoint is (or carries) a known inscription. */
 export async function isOneSatInscription(
   txid: string,
   vout: number,
   chain: Chain,
 ): Promise<boolean> {
-  try {
-    const url = `${gorillaBase(chain)}/api/inscriptions/${txid}_${vout}?script=false`
-    const res = await fetch(url, { signal: AbortSignal.timeout(4000) })
-    return res.ok
-  } catch {
-    return false
-  }
+  return (await resolveOneSatInscription(txid, vout, chain)) != null
 }
 
 /**
@@ -114,13 +341,26 @@ export async function classifyLegacyUtxos(
 
     // HARD RULE: never fund-sweep 1-sat outs.
     if (u.satoshis === 1) {
-      const isInsc = await isOneSatInscription(u.txid, u.vout, chain)
-      if (isInsc || knownByOutpoint.has(u.outpoint)) {
+      const known = knownByOutpoint.get(u.outpoint)
+      const resolved =
+        known?.origin != null
+          ? {
+              origin: known.origin.includes('.')
+                ? known.origin.replace(/\.(\d+)$/, '_$1')
+                : known.origin,
+              name: known.name,
+              app: known.app,
+            }
+          : await resolveOneSatInscription(u.txid, u.vout, chain)
+
+      if (resolved || known) {
         oneSats.push({
           outpoint: u.outpoint,
           txid: u.txid,
           vout: u.vout,
-          origin: knownByOutpoint.get(u.outpoint)?.origin ?? `${u.txid}_${u.vout}`,
+          origin: resolved?.origin ?? known?.origin ?? toUnderscoreOutpoint(u.txid, u.vout),
+          name: resolved?.name ?? known?.name,
+          app: resolved?.app ?? known?.app,
         })
         claimed.add(u.outpoint)
       } else {
@@ -187,10 +427,14 @@ export async function importOneSatOrdinals(
             tags: [
               'ordinal',
               `origin:${(item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')}`,
+              ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
+              ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
             ],
-            customInstructions: item.origin
-              ? JSON.stringify({ origin: item.origin })
-              : undefined,
+            customInstructions: JSON.stringify({
+              origin: item.origin,
+              name: item.name,
+              app: item.app,
+            }),
           },
         })),
         seekPermission: false,
@@ -209,4 +453,11 @@ export async function importOneSatOrdinals(
   }
 
   return { imported, failed, errors, outpoints }
+}
+
+export function contentUrlForOrigin(origin: string, chain: Chain = 'main'): string {
+  const underscored = origin.includes('.')
+    ? origin.replace(/\.(\d+)$/, '_$1')
+    : origin
+  return `${gorillaBase(chain)}/content/${underscored}`
 }

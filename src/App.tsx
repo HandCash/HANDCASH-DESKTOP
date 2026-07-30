@@ -17,7 +17,9 @@ import { Dashboard } from './components/Dashboard'
 import { BrandLogo } from './components/BrandLogo'
 import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
+import { UpdatePrompt } from './components/UpdatePrompt'
 import { setAutoPaySettings } from './wallet/autoPay'
+import { initUpdateStatusBridge } from './wallet/updateStatus'
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -57,6 +59,8 @@ export function App() {
   }, [send])
 
   useEffect(() => subscribePermissionRequests(setPendingPrompt), [])
+
+  useEffect(() => initUpdateStatusBridge(), [])
 
   useEffect(() => {
     if (!window.handcash?.onHttpRequestCancelled) return
@@ -151,6 +155,8 @@ export function App() {
           />
         )}
       </main>
+
+      <UpdatePrompt />
 
       <ConnectPermissionDialog
         pending={pendingConnect}

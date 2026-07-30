@@ -51,6 +51,27 @@ type BridgeStatus = {
   error: string | null
 }
 
+type UpdateMode = 'default' | 'manual' | 'none'
+
+type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'ready'
+  | 'error'
+
+type UpdateStatus = {
+  phase: UpdatePhase
+  mode: UpdateMode
+  currentVersion: string
+  availableVersion: string | null
+  percent: number | null
+  error: string | null
+  canInstall: boolean
+}
+
 interface HandCashBridge {
   platform?: string
   getAppInfo: () => Promise<{
@@ -72,6 +93,12 @@ interface HandCashBridge {
   storageGetSync?: (key: string) => string | null
   storageSetSync?: (key: string, value: string) => boolean
   clipboardWrite?: (text: string) => Promise<void>
+  getUpdateStatus?: () => Promise<UpdateStatus>
+  checkForUpdates?: () => Promise<UpdateStatus>
+  downloadUpdate?: () => Promise<UpdateStatus>
+  setUpdateMode?: (mode: UpdateMode) => Promise<UpdateStatus>
+  installUpdate?: () => Promise<void>
+  onUpdateStatus?: (handler: (status: UpdateStatus) => void) => () => void
 }
 
 interface Window {

@@ -8,6 +8,7 @@ import {
   clearNavChild,
   getNavState,
   openAppDetails,
+  openCollectableDetails,
   openNavChild,
   setNavSection,
   subscribeNav,
@@ -20,6 +21,8 @@ import { FriendDetailsPanel } from './FriendDetailsPanel'
 import { AddFriendPanel } from './AddFriendPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
+import { CollectableDetailsPanel } from './CollectableDetailsPanel'
+import { SendCollectablePanel } from './SendCollectablePanel'
 import { TransactionsPanel } from './RecentActivity'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
@@ -29,6 +32,7 @@ import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
+import { getCollectable } from '../wallet/collectables'
 import {
   ActivityIcon,
   AppsIcon,
@@ -75,8 +79,23 @@ export function WalletNav({
   onFail,
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
+  const [collectableLabel, setCollectableLabel] = useState('Collectable')
 
   useEffect(() => subscribeNav(setNav), [])
+
+  useEffect(() => {
+    const child = nav.child
+    if (!child || (child.type !== 'collectable' && child.type !== 'send-collectable')) {
+      return
+    }
+    let cancelled = false
+    void getCollectable(child.outpoint).then((item) => {
+      if (!cancelled) setCollectableLabel(item?.name || 'Collectable')
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [nav.child])
 
   const child = nav.child
   const aeonState = child ? `${nav.section}.${child.type}` : nav.section
@@ -114,6 +133,19 @@ export function WalletNav({
     if (child.type === 'friend') {
       const friend = getFriendById(child.friendId)
       return [root, { label: friend?.label || 'Friend' }]
+    }
+    if (child.type === 'collectable') {
+      return [root, { label: collectableLabel }]
+    }
+    if (child.type === 'send-collectable') {
+      return [
+        root,
+        {
+          label: collectableLabel,
+          onClick: () => openCollectableDetails(child.outpoint),
+        },
+        { label: 'Send' },
+      ]
     }
     return [root, { label: 'Payment' }]
   })()
@@ -165,6 +197,16 @@ export function WalletNav({
                 <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
               )}
               {child.type === 'add-friend' && <AddFriendPanel />}
+              {child.type === 'collectable' && (
+                <CollectableDetailsPanel outpoint={child.outpoint} />
+              )}
+              {child.type === 'send-collectable' && (
+                <SendCollectablePanel
+                  outpoint={child.outpoint}
+                  chain={profile.chain}
+                  onFail={onFail}
+                />
+              )}
               {child.type === 'setting' && child.settingId === 'change-password' && (
                 <ChangePasswordPanel />
               )}

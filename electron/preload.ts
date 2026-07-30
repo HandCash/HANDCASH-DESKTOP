@@ -21,6 +21,27 @@ export type BridgeStatus = {
   error: string | null
 }
 
+type UpdateMode = 'default' | 'manual' | 'none'
+
+type UpdatePhase =
+  | 'idle'
+  | 'checking'
+  | 'available'
+  | 'not-available'
+  | 'downloading'
+  | 'ready'
+  | 'error'
+
+type UpdateStatus = {
+  phase: UpdatePhase
+  mode: UpdateMode
+  currentVersion: string
+  availableVersion: string | null
+  percent: number | null
+  error: string | null
+  canInstall: boolean
+}
+
 const handcash = {
   platform: process.platform,
   getAppInfo: () =>
@@ -62,6 +83,17 @@ const handcash = {
   storageSetSync: (key: string, value: string) =>
     ipcRenderer.sendSync('storage:set-sync', key, value) as boolean,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
+  getUpdateStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdateStatus>,
+  checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdateStatus>,
+  downloadUpdate: () => ipcRenderer.invoke('updater:download') as Promise<UpdateStatus>,
+  setUpdateMode: (mode: UpdateMode) =>
+    ipcRenderer.invoke('updater:set-mode', mode) as Promise<UpdateStatus>,
+  installUpdate: () => ipcRenderer.invoke('updater:install') as Promise<void>,
+  onUpdateStatus: (handler: (status: UpdateStatus) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status)
+    ipcRenderer.on('updater:status', listener)
+    return () => ipcRenderer.removeListener('updater:status', listener)
+  },
 }
 
 contextBridge.exposeInMainWorld('handcash', handcash)

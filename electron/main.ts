@@ -4,11 +4,17 @@ import http from 'node:http'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
-import electronUpdater from 'electron-updater'
 import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
 import { durableGet, durableSet } from './durableStore.js'
-
-const { autoUpdater } = electronUpdater
+import {
+  checkForUpdates,
+  downloadUpdate,
+  getUpdateStatus,
+  initAutoUpdater,
+  quitAndInstall,
+  setUpdateMode,
+  type UpdateMode,
+} from './autoUpdate.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -18,9 +24,6 @@ const APP_ORIGIN = 'http://localhost:5173'
 const APP_PORT = 5173
 
 log.transports.file.level = 'info'
-autoUpdater.logger = log
-autoUpdater.autoDownload = true
-autoUpdater.autoInstallOnAppQuit = true
 
 let mainWindow: BrowserWindow | null = null
 let bridge: BridgeServerHandle | null = null
@@ -212,11 +215,11 @@ app.whenReady().then(async () => {
   createWindow()
   await ensureBridge()
 
-  if (!isDev) {
-    autoUpdater.checkForUpdatesAndNotify().catch((err) => {
-      log.warn('autoUpdater check failed', err)
-    })
-  }
+  initAutoUpdater({
+    getMainWindow: () => mainWindow,
+    currentVersion: app.getVersion(),
+    isDev,
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
@@ -243,6 +246,23 @@ ipcMain.handle('app:get-info', () => ({
   isPackaged: app.isPackaged,
   platform: process.platform,
 }))
+
+ipcMain.handle('updater:get-status', () => getUpdateStatus())
+
+ipcMain.handle('updater:check', async () => checkForUpdates({ reason: 'manual' }))
+
+ipcMain.handle('updater:download', async () => downloadUpdate())
+
+ipcMain.handle('updater:set-mode', (_event, mode: unknown) => {
+  if (mode === 'default' || mode === 'manual' || mode === 'none') {
+    return setUpdateMode(mode as UpdateMode)
+  }
+  return getUpdateStatus()
+})
+
+ipcMain.handle('updater:install', () => {
+  quitAndInstall()
+})
 
 ipcMain.handle('bridge:get-status', () => bridgeStatus())
 
