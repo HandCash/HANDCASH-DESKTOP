@@ -20,12 +20,12 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'change-password',
         label: 'Change password',
-        description: 'Update your wallet unlock password',
+        description: '',
       },
       {
         id: 'backup-phrase',
         label: 'Backup recovery phrase',
-        description: 'View the only backup that can restore this wallet',
+        description: '',
       },
     ],
   },
@@ -35,7 +35,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'wipe-wallet',
         label: 'Wipe wallet data',
-        description: 'Delete keys and local funds data from this device',
+        description: '',
       },
     ],
   },
@@ -45,17 +45,17 @@ const UPDATE_MODES: { value: UpdateMode; label: string; description: string }[] 
   {
     value: 'default',
     label: 'Default',
-    description: 'Check and download updates automatically',
+    description: 'Automatic checks',
   },
   {
     value: 'manual',
     label: 'Manual',
-    description: 'Only check when you ask',
+    description: 'Check when asked',
   },
   {
     value: 'none',
     label: 'None',
-    description: 'Disable updates',
+    description: 'Updates off',
   },
 ]
 
@@ -96,7 +96,7 @@ export function SettingsPanel() {
 
   return (
     <div
-      className="nav-section-body settings-nav"
+      className="nav-section-body settings-nav settings-scroll"
       data-aeon-scope="settings"
       data-aeon-state={stateAttr}
     >
@@ -117,7 +117,9 @@ export function SettingsPanel() {
                 >
                   <span className="settings-row-body">
                     <strong className="settings-row-label">{label}</strong>
-                    <span className="settings-row-desc">{description}</span>
+                    {description ? (
+                      <span className="settings-row-desc">{description}</span>
+                    ) : null}
                   </span>
                 </button>
               </li>

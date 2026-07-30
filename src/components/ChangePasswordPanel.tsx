@@ -38,7 +38,7 @@ export function ChangePasswordPanel() {
   }
 
   return (
-    <div className="settings-detail settings-detail-compact" data-aeon-scope="settings-change-password">
+    <div className="settings-detail settings-detail-compact settings-scroll" data-aeon-scope="settings-change-password">
       <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
         <div className="field">
           <label htmlFor="settings-current-password">Current</label>

@@ -23,10 +23,14 @@ import {
   subscribeConnectedApps,
   type ConnectedApp,
 } from '../wallet/permissions'
-import { openReceiveFlow, openSendFlow } from '../wallet/navStore'
+import { openReceiveFlow, openSendFlow, openSetting } from '../wallet/navStore'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
+import {
+  isBackupConfirmed,
+  subscribeBackupConfirmed,
+} from '../wallet/backupStatus'
 
 type Props = {
   profile: WalletProfile
@@ -51,12 +55,14 @@ export function Dashboard({
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [refreshing, setRefreshing] = useState(false)
+  const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => subscribeBackupConfirmed(setBackupConfirmed), [])
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -112,8 +118,22 @@ export function Dashboard({
     <section className="dashboard" data-aeon-scope="dashboard" data-aeon-state="ready">
       <div className="dashboard-main">
         <div className="panel wallet-hero">
-          <div className="connected-panel-head">
+          <div className="connected-panel-head wallet-hero-head">
             <h2>Your wallet</h2>
+            {!backupConfirmed ? (
+              <button
+                type="button"
+                className="wallet-backup-warn"
+                data-aeon-scope="backup-reminder"
+                data-aeon-state="needed"
+                onClick={() => openSetting('backup-phrase')}
+              >
+                <span className="wallet-backup-warn-mark" aria-hidden>
+                  !
+                </span>
+                Backup your wallet
+              </button>
+            ) : null}
           </div>
           <div className="wallet-hero-main">
             <div className="wallet-balance-slot" ref={balanceSlotRef}>

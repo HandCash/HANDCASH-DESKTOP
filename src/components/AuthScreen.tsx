@@ -9,8 +9,8 @@ import {
   type Chain,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
+import { markBackupConfirmed } from '../wallet/backupStatus'
 import type { WalletProfile } from '../machines/appMachine'
-import { RecoveryPhrasePanel } from './RecoveryPhrasePanel'
 
 type Props = {
   mode: 'onboarding' | 'locked'
@@ -22,7 +22,6 @@ type Props = {
   onFail: (error: string) => void
 }
 
-type OnboardingStep = 'form' | 'phrase'
 type FormMode = 'create' | 'restore' | 'unlock'
 
 function isMismatchError(message: string | null | undefined): boolean {
@@ -49,12 +48,6 @@ export function AuthScreen({
     recoveryOnly ? 'restore' : mode === 'locked' ? 'unlock' : 'create',
   )
   const [mnemonicInput, setMnemonicInput] = useState('')
-  const [pendingPhrase, setPendingPhrase] = useState<string | null>(null)
-  const [pendingProfile, setPendingProfile] = useState<{
-    profile: WalletProfile
-    balanceSats: number
-  } | null>(null)
-  const [step, setStep] = useState<OnboardingStep>('form')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
 
   useEffect(() => {
@@ -64,13 +57,6 @@ export function AuthScreen({
   useEffect(() => {
     if (mode === 'locked' && isMismatchError(error)) setOfferRestoreOnLock(true)
   }, [mode, error])
-
-  const finishCreated = (profile: WalletProfile, balanceSats: number) => {
-    setPendingPhrase(null)
-    setPendingProfile(null)
-    setStep('form')
-    onCreated(profile, balanceSats)
-  }
 
   const submit = async () => {
     if (snapshot.context.password.length < 8) {
@@ -92,8 +78,9 @@ export function AuthScreen({
           chain: unlocked.record.chain,
         })
         const balanceSats = await fetchBalanceSats(active.wallet)
+        markBackupConfirmed()
         send({ type: 'SUCCESS' })
-        finishCreated(
+        onCreated(
           {
             handle: unlocked.record.handle,
             identityKey: unlocked.record.identityKey,
@@ -114,19 +101,15 @@ export function AuthScreen({
         })
         const balanceSats = await fetchBalanceSats(active.wallet)
         send({ type: 'SUCCESS' })
-        const profile = {
-          handle: unlocked.record.handle,
-          identityKey: unlocked.record.identityKey,
-          address: unlocked.record.address,
-          chain: unlocked.record.chain,
-        }
-        if (!unlocked.mnemonic) {
-          finishCreated(profile, balanceSats)
-          return
-        }
-        setPendingProfile({ profile, balanceSats })
-        setPendingPhrase(unlocked.mnemonic)
-        setStep('phrase')
+        onCreated(
+          {
+            handle: unlocked.record.handle,
+            identityKey: unlocked.record.identityKey,
+            address: unlocked.record.address,
+            chain: unlocked.record.chain,
+          },
+          balanceSats,
+        )
         return
       }
 
@@ -158,15 +141,6 @@ export function AuthScreen({
     }
   }
 
-  if (mode === 'onboarding' && step === 'phrase' && pendingPhrase && pendingProfile) {
-    return (
-      <RecoveryPhrasePanel
-        mnemonic={pendingPhrase}
-        onConfirmed={() => finishCreated(pendingProfile.profile, pendingProfile.balanceSats)}
-      />
-    )
-  }
-
   const title =
     formMode === 'restore'
       ? 'Recover access.'
@@ -183,10 +157,10 @@ export function AuthScreen({
 
   const lede =
     formMode === 'restore'
-      ? 'Enter your 12-word recovery phrase and choose a new unlock password for this device.'
+      ? 'Enter your recovery phrase and a new unlock password.'
       : formMode === 'create'
-        ? 'Your money stays on this device. You will get a recovery phrase — save it offline.'
-        : 'Enter your password to open your wallet on this device.'
+        ? 'Your money stays on this device.'
+        : 'Enter your password to open your wallet.'
 
   return (
     <section className="hero-panel" data-aeon-scope="auth" data-aeon-state={stateAttr}>
@@ -245,7 +219,7 @@ export function AuthScreen({
             <textarea
               id="mnemonic"
               rows={3}
-              placeholder="twelve words separated by spaces"
+              placeholder="words separated by spaces"
               value={mnemonicInput}
               onChange={(e) => setMnemonicInput(e.target.value)}
               autoComplete="off"

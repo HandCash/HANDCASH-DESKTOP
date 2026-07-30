@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
+import { isBackupConfirmed, markBackupConfirmed } from '../wallet/backupStatus'
 
 export function BackupPhrasePanel() {
   const meta = readVaultMeta()
@@ -8,6 +9,7 @@ export function BackupPhrasePanel() {
   const [rootKey, setRootKey] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [confirmed, setConfirmed] = useState(() => isBackupConfirmed())
 
   const reveal = async (e: FormEvent) => {
     e.preventDefault()
@@ -37,18 +39,23 @@ export function BackupPhrasePanel() {
     }
   }
 
+  const confirmSaved = () => {
+    markBackupConfirmed()
+    setConfirmed(true)
+    setMnemonic(null)
+    setRootKey(null)
+    setPassword('')
+  }
+
   return (
-    <div className="nav-section-body" data-aeon-scope="backup-phrase">
-      <div className="connected-panel-head">
-        <h2>Backup</h2>
-      </div>
-      <p className="lede" style={{ marginTop: 0 }}>
+    <div className="nav-section-body settings-scroll" data-aeon-scope="backup-phrase">
+      <p className="settings-hint">
         {meta?.hasMnemonic
-          ? 'Reveal your 12-word recovery phrase. Anyone with these words can spend your money.'
-          : 'This wallet was created before recovery phrases. You can export an emergency root key instead.'}
+          ? 'Anyone with these words can spend your money.'
+          : 'Legacy wallet — export an emergency key and store it offline.'}
       </p>
 
-      <form className="panel" onSubmit={(e) => void reveal(e)}>
+      <form className="settings-form settings-form-compact" onSubmit={(e) => void reveal(e)}>
         <div className="field">
           <label htmlFor="backup-password">Password</label>
           <input
@@ -66,7 +73,7 @@ export function BackupPhrasePanel() {
         ) : null}
         <div className="actions">
           <button className="btn btn-primary" type="submit" disabled={busy || password.length < 8}>
-            {busy ? 'Unlocking…' : meta?.hasMnemonic ? 'Show recovery phrase' : 'Show emergency key'}
+            {busy ? 'Unlocking…' : meta?.hasMnemonic ? 'Show phrase' : 'Show key'}
           </button>
         </div>
       </form>
@@ -82,17 +89,10 @@ export function BackupPhrasePanel() {
           </ol>
           <div className="actions" style={{ marginTop: 12 }}>
             <button type="button" className="btn btn-ghost" onClick={() => void copy(mnemonic)}>
-              Copy phrase
+              Copy
             </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setMnemonic(null)
-                setPassword('')
-              }}
-            >
-              Hide
+            <button type="button" className="btn btn-primary" onClick={confirmSaved}>
+              I saved it
             </button>
           </div>
         </div>
@@ -105,20 +105,19 @@ export function BackupPhrasePanel() {
           </p>
           <div className="actions" style={{ marginTop: 12 }}>
             <button type="button" className="btn btn-ghost" onClick={() => void copy(rootKey)}>
-              Copy key
+              Copy
             </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                setRootKey(null)
-                setPassword('')
-              }}
-            >
-              Hide
+            <button type="button" className="btn btn-primary" onClick={confirmSaved}>
+              I saved it
             </button>
           </div>
         </div>
+      ) : null}
+
+      {confirmed && !mnemonic && !rootKey ? (
+        <p className="settings-success" role="status">
+          Backup marked as saved on this device.
+        </p>
       ) : null}
     </div>
   )

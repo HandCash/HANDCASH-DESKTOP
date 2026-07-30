@@ -28,20 +28,16 @@ export function WipeWalletPanel() {
 
   return (
     <div
-      className="nav-section-body settings-detail"
+      className="nav-section-body settings-detail settings-scroll"
       data-aeon-scope="wipe-wallet"
       data-aeon-state={stateAttr}
     >
-      <div className="connected-panel-head">
-        <h2>Wipe wallet data</h2>
-      </div>
-      <p className="lede" style={{ marginTop: 0 }}>
-        Permanently delete the unlock keys, on-device balances, friends, connected apps, and
-        activity on this computer. This cannot be undone without your recovery phrase.
+      <p className="settings-hint">
+        Deletes keys and local wallet data on this device. Needs your recovery phrase to restore.
       </p>
 
       <form
-        className="panel settings-form"
+        className="settings-form settings-form-compact"
         data-aeon-part="form"
         onSubmit={(e) => {
           e.preventDefault()
@@ -60,26 +56,19 @@ export function WipeWalletPanel() {
           />
         </div>
 
-        <label
-          className="field"
-          style={{ display: 'flex', gap: 10, alignItems: 'flex-start' }}
-        >
+        <label className="field settings-check-label">
           <input
             type="checkbox"
             checked={snapshot.context.acknowledged}
             disabled={snapshot.matches('wiping')}
             onChange={(e) => send({ type: 'TOGGLE_ACK', acknowledged: e.target.checked })}
-            style={{ marginTop: 4 }}
           />
-          <span>
-            I understand this removes wallet data from this device. Coins are only recoverable
-            with my recovery phrase.
-          </span>
+          <span>I understand this cannot be undone without my recovery phrase.</span>
         </label>
 
         <div className="field">
           <label htmlFor="wipe-confirm">
-            Type <strong>{CONFIRM_WORD}</strong> to confirm
+            Type <strong>{CONFIRM_WORD}</strong>
           </label>
           <input
             id="wipe-confirm"
@@ -107,7 +96,7 @@ export function WipeWalletPanel() {
             data-aeon-state={stateAttr}
             disabled={!canSubmit || snapshot.matches('wiping')}
           >
-            {snapshot.matches('wiping') ? 'Wiping…' : 'Wipe all wallet data'}
+            {snapshot.matches('wiping') ? 'Wiping…' : 'Wipe wallet data'}
           </button>
         </div>
       </form>

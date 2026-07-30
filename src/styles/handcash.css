@@ -657,6 +657,7 @@ html.platform-darwin .titlebar {
 
 @container wallet-hero (max-width: 420px) {
   .wallet-hero-main {
+    flex-wrap: wrap;
     gap: 6px;
   }
 
@@ -666,6 +667,11 @@ html.platform-darwin .titlebar {
 
   .wallet-actions .btn-icon {
     padding-inline: 8px;
+  }
+
+  .wallet-backup-warn {
+    font-size: 0.72rem;
+    padding: 4px 8px;
   }
 }
 
@@ -1498,7 +1504,100 @@ button.wallet-detail-value.is-copied {
   gap: 0;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+
+.nav-child-stage:hover,
+.nav-child-stage:focus-within {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.45) transparent;
+}
+
+.nav-child-stage::-webkit-scrollbar {
+  width: 3px;
+  height: 3px;
+}
+
+.nav-child-stage::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 999px;
+}
+
+.nav-child-stage:hover::-webkit-scrollbar-thumb,
+.nav-child-stage:focus-within::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.45);
+}
+
+.settings-scroll {
+  min-height: 0;
+  padding-bottom: 8px;
+}
+
+.settings-hint {
+  margin: 0 0 14px;
+  color: var(--hc-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.settings-check-label {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.settings-check-label input {
+  margin-top: 4px;
+  flex-shrink: 0;
+}
+
+.wallet-backup-warn {
+  appearance: none;
+  margin: 0;
+  margin-left: auto;
+  padding: 4px 10px;
+  border: 1px solid color-mix(in srgb, hsl(var(--destructive)) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, hsl(var(--destructive)) 12%, transparent);
+  color: hsl(var(--destructive));
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.wallet-backup-warn:hover {
+  background: color-mix(in srgb, hsl(var(--destructive)) 20%, transparent);
+}
+
+.wallet-backup-warn:focus-visible {
+  outline: 2px solid color-mix(in srgb, hsl(var(--destructive)) 55%, transparent);
+  outline-offset: 2px;
+}
+
+.wallet-backup-warn-mark {
+  display: inline-grid;
+  place-items: center;
+  width: 1.1em;
+  height: 1.1em;
+  border-radius: 999px;
+  border: 1.5px solid currentColor;
+  font-size: 0.72rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.wallet-hero-head {
+  margin-bottom: 12px;
 }
 
 .wallet-nav-bar {
