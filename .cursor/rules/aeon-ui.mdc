@@ -1,26 +1,30 @@
 ---
-description: Prefer Aeon UI for interactive surfaces
-globs: ["**/*.tsx", "**/*.ts"]
+description: Aeon UI is the single source of truth for Desktop UI — machines first, no parallel stacks
+globs: ["**/*.{tsx,ts,css}"]
 alwaysApply: true
 ---
 
-# Aeon UI
+# Aeon UI (Desktop SSoT)
 
-Prefer Aeon primitives from `aeon-ui-engine`. **Build state machines first; UI reflects those machines** (`UI = f(state)`). Do not invent parallel boolean flags for the same concern.
+HandCash Desktop UI is built **only** through **Aeon** (`aeon-ui-engine` / `@aeon-ui/*`). Do not introduce a second UI system.
 
-## Rules
+## Must
 
-1. Name the charts (states + events) before writing JSX.
-2. Compose from documented parts only — every interactive surface projects a machine snapshot or documented status prop onto `data-aeon-state`.
-3. Prefer compound roots: Field, Button, Async, Dialog, Identity, ProfileHeader, …
-4. Keep loading, empty, success, and failure as explicit states (totality).
-5. Primitives stay universal — compose niche products; do not invent niche components.
+1. **Machines first** — define XState charts (states + events) in `src/machines/`, then project UI. **UI = f(state)**.
+2. Project machine/status onto `data-aeon-scope`, `data-aeon-part`, `data-aeon-state` (via `@aeon-ui/core` helpers when available).
+3. Prefer Aeon compounds: `Prompt`, `StatusBanner`, `Accordion`, Field/Button/Dialog patterns from `@aeon-ui/react`.
+4. Brand once: `applyBrandPalette` in `src/main.tsx`. Product chrome lives in `src/styles/handcash.css` keyed off `data-aeon-*`.
+5. Vite: keep `aeonUiViteAliases()` + `aeonUiOptimizeDeps()` from `aeon-ui-engine/vite` (or `aeonUiVitePlugin()`).
+6. Need a missing primitive? Prefer composing Aeon parts. If the shell belongs in the engine, change **AeonUI** (`~/AeonUI`) and bump `aeon-ui-engine` — do not fork a Desktop-only dialog kit.
 
-## Install
+## Do not
 
-```bash
-npx aeon-ui init
-npm install aeon-ui-engine react react-dom xstate @xstate/react
-```
+- Add Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
+- Duplicate machine concerns with ad-hoc `useState` / boolean flags (`isOpen`, `isLoading` parallel to a chart).
+- Rebuild Prompt / StatusBanner / AppNav / Electron chrome when Aeon already ships them.
+- Invent niche Aeon primitives for wallet-only flows — compose universal parts.
+- Copy items-market Tailwind/shadcn patterns into this repo.
 
-Import `@aeon-ui/panda/styles.css` and `@aeon-ui/panda/theme-runtime.css`. For Vite, wire `aeonUiViteAliases()` and `aeonUiOptimizeDeps()` from `aeon-ui-engine/vite`.
+## Engine source
+
+Canonical Aeon authoring rules: `~/AeonUI/AGENTS.md`. Desktop **consumes** Aeon; it does not re-implement it.

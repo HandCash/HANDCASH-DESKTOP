@@ -28,23 +28,24 @@
   --shadow-section: 0 1px 3px rgba(0, 0, 0, 0.25);
   --shadow-section-hover: 0 4px 12px rgba(0, 0, 0, 0.35);
 
-  --hc-bg: hsl(var(--background));
-  --hc-bg-elevated: hsl(var(--bg-light));
-  --hc-surface: hsl(var(--card));
-  --hc-surface-2: hsl(var(--secondary));
-  --hc-border: hsl(var(--border));
-  --hc-text: hsl(var(--foreground));
-  --hc-muted: hsl(var(--muted-foreground));
-  --hc-accent: hsl(var(--primary));
-  --hc-accent-2: hsl(var(--primary));
-  --hc-accent-dim: hsl(var(--primary) / 0.14);
-  --hc-danger: hsl(var(--destructive));
+  /* Prefer Aeon brand vars (applyBrandPalette); HSL fallbacks for first paint */
+  --hc-bg: var(--colors-aeon-bg, hsl(var(--background)));
+  --hc-bg-elevated: var(--colors-aeon-surface-raised, hsl(var(--bg-light)));
+  --hc-surface: var(--colors-aeon-surface, hsl(var(--card)));
+  --hc-surface-2: var(--colors-aeon-surface-raised, hsl(var(--secondary)));
+  --hc-border: var(--colors-aeon-border, hsl(var(--border)));
+  --hc-text: var(--colors-aeon-text, hsl(var(--foreground)));
+  --hc-muted: var(--colors-aeon-muted, hsl(var(--muted-foreground)));
+  --hc-accent: var(--colors-aeon-accent, hsl(var(--primary)));
+  --hc-accent-2: var(--colors-aeon-accent, hsl(var(--primary)));
+  --hc-accent-dim: var(--colors-aeon-accent-dim, hsl(var(--primary) / 0.14));
+  --hc-danger: var(--colors-aeon-danger, hsl(var(--destructive)));
   --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--primary) / 0.18), transparent 55%),
     radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.12), transparent 50%),
-    hsl(var(--background));
-  --hc-font: 'Archivo', ui-sans-serif, system-ui, sans-serif;
-  --hc-display: 'Syncopate', 'Archivo', ui-sans-serif, sans-serif;
-  --hc-radius: var(--radius);
+    var(--hc-bg);
+  --hc-font: var(--aeon-font, 'Archivo', ui-sans-serif, system-ui, sans-serif);
+  --hc-display: var(--aeon-font-display, 'Syncopate', 'Archivo', ui-sans-serif, sans-serif);
+  --hc-radius: var(--aeon-radius, var(--radius));
   --hc-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
 }
 
@@ -53,63 +54,14 @@
   border-color: hsl(var(--border));
 }
 
-*::-webkit-scrollbar {
-  width: 3px;
-  height: 3px;
-}
-
-*::-webkit-scrollbar-thumb {
-  background: hsl(var(--muted-foreground) / 0.35);
-  border-radius: 999px;
-}
-
-html,
-body,
-#root {
-  margin: 0;
-  min-height: 100%;
-  height: 100%;
-}
-
-body {
-  font-family: var(--hc-font);
-  background: var(--hc-glow);
-  color: var(--hc-text);
-  -webkit-font-smoothing: antialiased;
-  overflow: hidden;
-  letter-spacing: 0.01em;
-}
-
 button,
 input {
   font: inherit;
 }
 
-.app-shell {
-  height: 100%;
-  display: grid;
-  grid-template-rows: auto 1fr;
-}
-
-.titlebar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  border-bottom: 1px solid hsl(var(--border));
-  background: hsl(var(--background) / 0.88);
-  backdrop-filter: blur(12px);
-  -webkit-app-region: drag;
-}
-
-.titlebar button,
-.titlebar a {
-  -webkit-app-region: no-drag;
-}
-
-html.platform-darwin .titlebar {
-  /* Electron hiddenInset: traffic lights sit over the titlebar on macOS only */
-  padding-top: 36px;
+/* Product atmosphere — shell/titlebar/stage/scrollbars live in Aeon electron.css */
+body {
+  background: var(--hc-glow);
 }
 
 .brand {
@@ -218,12 +170,7 @@ html.platform-darwin .titlebar {
   box-shadow: none;
 }
 
-.stage {
-  height: 100%;
-  overflow: auto;
-  padding: 20px clamp(14px, 3vw, 28px) 28px;
-}
-
+/* Stage chrome from Aeon electron.css; dashboard fills remaining height */
 .stage:has(.dashboard) {
   overflow: hidden;
   display: flex;
@@ -1097,27 +1044,7 @@ button.wallet-detail-value.is-copied {
   animation: rise 200ms ease both;
 }
 
-/* Aeon Dialog/Prompt shell — unstyled parts get real layout (updates + permissions). */
-[data-aeon-scope='dialog'][data-aeon-part='backdrop'] {
-  position: fixed;
-  inset: 0;
-  z-index: 1000;
-  background: rgba(0, 0, 0, 0.72);
-  animation: rise 200ms ease both;
-}
-
-[data-aeon-scope='dialog'][data-aeon-part='positioner'] {
-  position: fixed;
-  inset: 0;
-  z-index: 1001;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 16px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-}
-
+/* Dialog/Prompt shell + titles: Aeon consumer-shell.css. Product z-index / width only. */
 .permission-backdrop {
   z-index: 60;
   background: rgba(0, 0, 0, 0.82);
@@ -1136,9 +1063,7 @@ button.wallet-detail-value.is-copied {
   overflow-y: auto;
 }
 
-.modal h2,
-[data-aeon-scope='dialog'][data-aeon-part='title'],
-[data-aeon-scope='prompt'][data-aeon-part='title'] {
+.modal h2 {
   font-family: var(--hc-display);
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -3193,44 +3118,7 @@ a.app-details-host:hover {
   color: #fafafa;
 }
 
-[data-aeon-scope='statusBanner'] button.btn,
-[data-aeon-scope='prompt'] button.btn {
-  text-transform: none;
-  letter-spacing: 0.02em;
-}
-
-.update-banner {
-  position: sticky;
-  top: 0;
-  z-index: 40;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 14px;
-  background: color-mix(in srgb, var(--hc-accent) 14%, #0a120e);
-  border-bottom: 1px solid color-mix(in srgb, var(--hc-accent) 35%, transparent);
-}
-
-.update-banner-copy {
-  display: grid;
-  gap: 2px;
-  min-width: 0;
-}
-
-.update-banner-copy strong {
-  font-size: 0.9rem;
-}
-
-.update-banner-copy span {
-  font-size: 0.78rem;
-  color: var(--hc-muted);
-  line-height: 1.35;
-}
-
-.update-banner-actions {
-  flex-shrink: 0;
-}
+/* StatusBanner sticky chrome: Aeon consumer-shell.css */
 
 .update-prompt-backdrop {
   z-index: 1100;
@@ -3983,14 +3871,10 @@ a.app-details-host:hover {
 }
 
 @media (max-width: 640px) {
+  /* titlebar/stage padding: Aeon electron.css */
   .titlebar {
-    padding: 10px 12px;
-  }
-  html.platform-darwin .titlebar {
-    padding-top: 36px;
-  }
-  .stage {
-    padding: 16px 12px 24px;
+    padding-left: 12px;
+    padding-right: 12px;
   }
 
   .connected-app-body {

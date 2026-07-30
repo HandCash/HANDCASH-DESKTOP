@@ -31,7 +31,7 @@
     "@bsv/sdk": "^2.2.0",
     "@bsv/wallet-toolbox-client": "^2.4.4",
     "@xstate/react": "^5.0.3",
-    "aeon-ui-engine": "^1.2.0",
+    "aeon-ui-engine": "github:GenericCPU/aeon-ui#v1.3.0",
     "cors": "^2.8.5",
     "electron-log": "^5.4.3",
     "electron-updater": "^6.7.3",

@@ -1,0 +1,47 @@
+---
+description: BSVA BRC-100 bridge and HandCash migration contract — do not invent alternate protocols
+globs: ["**/wallet/**", "**/electron/**", "**/brc100/**", "**/*migration*", "**/*permission*"]
+alwaysApply: true
+---
+
+# BRC-100 / BSVA (Desktop)
+
+Desktop is a **BRC-100** wallet bridge (BSVA / Babbage-style local HTTP). Follow [BRC-100](https://brc.dev/100). Do not invent a parallel app-connect protocol.
+
+## Bridge (do not break)
+
+| Concern | Source of truth |
+|---------|-----------------|
+| HTTPS | `127.0.0.1:2121` |
+| HTTP fallback | `127.0.0.1:3321` |
+| Server | `electron/httpServer.ts` |
+| Dispatch | `src/wallet/brc100Handler.ts` |
+| Permissions | `src/wallet/permissions.ts` |
+| Migrate extensions | `src/wallet/migration.ts` |
+| 1Sat basket | `src/wallet/oneSatImport.ts` |
+
+- Expose `GET /health`, `GET /manifest.json`, `POST /{method}` with `originator` header.
+- Gate methods via `PUBLIC_METHODS` / `CONNECT_METHODS` / `ACTION_METHODS` + origin prompts.
+- Storage keys for bridge/migrate: `handcash.brc100.*`.
+- SDK: `@bsv/sdk`, `@bsv/wallet-toolbox-client` — prefer these over ad-hoc crypto/tx code.
+
+## HandCash migrate contract (keep mirrored)
+
+Methods (migration origins only): `getLegacyAddress`, `refreshLegacyAddress({ txids?, items? })`, `listMigrationTxids`.
+
+Allowed hosts: `handcash.io`, `market.handcash.io`, `preprod-market.handcash.io`, localhost.
+
+**Mirror types/docs** in items-market:
+
+- `items-market/src/lib/brc100/types.ts`
+- `items-market/src/lib/brc100/handcashBrcClient.ts`
+- `items-market/docs/migrate-brc100.md`
+
+Changing method names, payloads, or origin rules **requires updating both repos in the same change set**.
+
+## Do not
+
+- Change ports/paths without updating market client + migrate docs.
+- Allow migrate methods from arbitrary origins.
+- Bypass permission prompts for `createAction` / `signAction` / `internalizeAction`.
+- Put ordinals outside basket `1sat` without an explicit BSVA/HandCash decision.
