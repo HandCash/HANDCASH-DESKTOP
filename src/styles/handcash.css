@@ -3323,6 +3323,37 @@ a.app-details-host:hover {
   background: none;
 }
 
+.send-stage-success,
+.send-stage-failure,
+.send-stage-status {
+  justify-content: center;
+  align-items: center;
+  gap: 32px;
+  padding: 28px 20px 36px;
+}
+
+.send-stage-success .send-stage-body-center,
+.send-stage-failure .send-stage-body-center,
+.send-stage-status .send-stage-body-center {
+  flex: 0 1 auto;
+  width: 100%;
+  max-width: 420px;
+  gap: 18px;
+  padding: 0;
+}
+
+.send-stage-success .send-actions,
+.send-stage-failure .send-actions {
+  justify-content: center;
+  width: 100%;
+  max-width: 420px;
+}
+
+.send-stage-success .send-actions .btn,
+.send-stage-failure .send-actions .btn {
+  min-width: 148px;
+}
+
 /* Keep suggestions in document flow so actions cannot cover them. */
 .send-friend-suggest.friend-suggest-list {
   position: relative;
@@ -3444,13 +3475,13 @@ a.app-details-host:hover {
   display: grid;
   place-items: center;
   color: var(--hc-accent);
-  margin-bottom: 4px;
+  margin: 0 0 8px;
   animation: send-success-pop 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
 .send-success-mark svg {
-  width: 72px;
-  height: 72px;
+  width: 80px;
+  height: 80px;
 }
 
 @keyframes send-success-pop {
@@ -3469,7 +3500,7 @@ a.app-details-host:hover {
 }
 
 .send-txid {
-  margin: 10px 0 0;
+  margin: 4px 0 0;
   max-width: min(100%, 360px);
   color: var(--hc-muted);
   font-size: 0.72rem;

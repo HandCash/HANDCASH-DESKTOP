@@ -325,7 +325,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
         <div className="send-stage send-stage-success">
           <div className="send-stage-body send-stage-body-center">
             <div className="send-success-mark" aria-hidden>
-              <CheckCircleIcon size={72} />
+              <CheckCircleIcon size={80} />
             </div>
             <p className="send-status-title">Sent</p>
             <p className="send-confirm-amount send-success-amount">{amountLabel}</p>
