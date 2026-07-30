@@ -37,6 +37,8 @@ type GetWindow = () => BrowserWindow | null
 const PREF_MODE = 'handcash.update.mode'
 /** Background poll when mode is default (Cursor checks periodically). */
 const AUTO_CHECK_MS = 4 * 60 * 60 * 1000
+/** Never leave Settings on “Checking…” forever (missing channel yml / hung HTTP). */
+const CHECK_TIMEOUT_MS = 25_000
 
 let status: UpdateStatus = {
   phase: 'idle',
@@ -52,6 +54,7 @@ let getWindow: GetWindow = () => null
 let checkTimer: ReturnType<typeof setInterval> | null = null
 let isDev = false
 let wired = false
+let checkInFlight: Promise<UpdateStatus> | null = null
 
 function readMode(): UpdateMode {
   const raw = durableGet(PREF_MODE)
@@ -81,6 +84,9 @@ function friendlyUpdateError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const firstLine = raw.split('\n')[0] ?? raw
 
+  if (/timed out|timeout/i.test(raw)) {
+    return 'Update check timed out. Check your network and try again.'
+  }
   if (/latest-linux\.yml/i.test(raw)) {
     return 'No Linux update package on GitHub yet (need AppImage + latest-linux.yml).'
   }
@@ -103,8 +109,29 @@ function friendlyUpdateError(err: unknown): string {
 /** Missing platform artifacts should not look like a hard failure. */
 function isMissingPlatformArtifact(err: unknown): boolean {
   const raw = err instanceof Error ? err.message : String(err)
-  return /Cannot find latest-(linux|mac|windows)?\.?yml/i.test(raw) ||
-    (/404/.test(raw) && /latest-.*\.yml/i.test(raw))
+  return (
+    /Cannot find latest-(linux|mac|windows)?\.?yml/i.test(raw) ||
+    (/404/.test(raw) && /latest-.*\.yml/i.test(raw)) ||
+    /ERR_UPDATER_CHANNEL_FILE_NOT_FOUND/i.test(raw)
+  )
+}
+
+function applyCheckFailure(err: unknown) {
+  if (isMissingPlatformArtifact(err)) {
+    setStatus({
+      phase: 'not-available',
+      availableVersion: null,
+      percent: null,
+      canInstall: false,
+      error: friendlyUpdateError(err),
+    })
+    return
+  }
+  setStatus({
+    phase: 'error',
+    error: friendlyUpdateError(err),
+    canInstall: false,
+  })
 }
 
 /**
@@ -119,6 +146,24 @@ function configureUpdateFeed() {
     releaseType: 'prerelease',
   })
   autoUpdater.allowPrerelease = true
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${Math.round(ms / 1000)}s`))
+    }, ms)
+    promise.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (err) => {
+        clearTimeout(timer)
+        reject(err)
+      },
+    )
+  })
 }
 
 export function getUpdateStatus(): UpdateStatus {
@@ -214,21 +259,7 @@ export function initAutoUpdater(opts: {
 
     autoUpdater.on('error', (err) => {
       log.warn('autoUpdater error', err)
-      if (isMissingPlatformArtifact(err)) {
-        setStatus({
-          phase: 'not-available',
-          availableVersion: null,
-          percent: null,
-          canInstall: false,
-          error: friendlyUpdateError(err),
-        })
-        return
-      }
-      setStatus({
-        phase: 'error',
-        error: friendlyUpdateError(err),
-        canInstall: false,
-      })
+      applyCheckFailure(err)
     })
   }
 
@@ -262,43 +293,72 @@ export async function checkForUpdates(opts?: {
     return status
   }
 
-  try {
-    setStatus({ phase: 'checking', error: null })
-    // Manual check always downloads when an update exists (Cursor “Check for Updates”)
-    autoUpdater.autoDownload = reason === 'manual' || mode === 'default'
-    await autoUpdater.checkForUpdates()
-  } catch (err) {
-    log.warn('checkForUpdates failed', err)
-    if (isMissingPlatformArtifact(err)) {
-      setStatus({
-        phase: 'not-available',
-        availableVersion: null,
-        percent: null,
-        canInstall: false,
-        error: friendlyUpdateError(err),
-      })
-    } else {
-      setStatus({
-        phase: 'error',
-        error: friendlyUpdateError(err),
-      })
+  if (checkInFlight) return checkInFlight
+
+  checkInFlight = (async () => {
+    const shouldDownload = reason === 'manual' || mode === 'default'
+    try {
+      setStatus({ phase: 'checking', error: null })
+      // Always discover first without auto-download so a missing Linux channel
+      // (or hung download) cannot pin Settings on “Checking…”.
+      autoUpdater.autoDownload = false
+      const result = await withTimeout(
+        autoUpdater.checkForUpdates(),
+        CHECK_TIMEOUT_MS,
+        'Update check',
+      )
+
+      if (!result?.isUpdateAvailable) {
+        if (status.phase === 'checking') {
+          setStatus({
+            phase: 'not-available',
+            availableVersion: null,
+            percent: null,
+            canInstall: false,
+            error: null,
+          })
+        }
+        return status
+      }
+
+      if (shouldDownload) {
+        setStatus({
+          phase: 'downloading',
+          availableVersion: result.updateInfo.version,
+          percent: 0,
+          error: null,
+          canInstall: false,
+        })
+        await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
+      } else if (status.phase === 'checking') {
+        setStatus({
+          phase: 'available',
+          availableVersion: result.updateInfo.version,
+          percent: null,
+          error: null,
+          canInstall: false,
+        })
+      }
+    } catch (err) {
+      log.warn('checkForUpdates failed', err)
+      applyCheckFailure(err)
+    } finally {
+      applyModeToUpdater(readMode())
+      checkInFlight = null
     }
-  } finally {
-    applyModeToUpdater(readMode())
-  }
-  return status
+    return status
+  })()
+
+  return checkInFlight
 }
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
   try {
     setStatus({ phase: 'downloading', percent: 0, error: null })
-    await autoUpdater.downloadUpdate()
+    await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
   } catch (err) {
     log.warn('downloadUpdate failed', err)
-    setStatus({
-      phase: 'error',
-      error: friendlyUpdateError(err),
-    })
+    applyCheckFailure(err)
   }
   return status
 }
