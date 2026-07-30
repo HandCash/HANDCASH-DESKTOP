@@ -49,32 +49,50 @@ export function ReceivePanel({
 
   return (
     <div className="nav-child-panel receive-panel" data-aeon-scope="receive">
-      <p className="qr-subtitle">{subtitle}</p>
-      {error && <p className="error">{error}</p>}
-      <div className="qr-frame" data-aeon-part="media">
-        {dataUrl ? (
-          <DeferredImage
-            src={dataUrl}
-            alt="Receive address QR code"
-            width={220}
-            height={220}
-            skeletonWidth={220}
-            skeletonHeight={220}
-            skeletonRadius={4}
-            skeletonClassName="skeleton-qr"
-          />
-        ) : !error ? (
-          <SkeletonQr size={220} />
-        ) : null}
+      <div className="receive-layout">
+        <div className="receive-qr" data-aeon-part="media">
+          {error ? <p className="error">{error}</p> : null}
+          <button
+            type="button"
+            className="qr-frame receive-qr-frame"
+            title="Click to copy address"
+            onClick={() => void copy()}
+          >
+            {dataUrl ? (
+              <DeferredImage
+                src={dataUrl}
+                alt="Receive address QR code"
+                width={220}
+                height={220}
+                skeletonWidth={220}
+                skeletonHeight={220}
+                skeletonRadius={4}
+                skeletonClassName="skeleton-qr"
+              />
+            ) : !error ? (
+              <SkeletonQr size={220} />
+            ) : null}
+          </button>
+          <p className="receive-qr-hint">{copied ? 'Copied' : 'Tap QR to copy'}</p>
+        </div>
+
+        <div className="receive-info">
+          <p className="qr-subtitle receive-subtitle">{subtitle}</p>
+          <button
+            type="button"
+            className={`mono qr-value receive-address${copied ? ' is-copied' : ''}`}
+            title="Click to copy"
+            onClick={() => void copy()}
+          >
+            {copied ? 'Copied' : value}
+          </button>
+          <div className="actions receive-actions">
+            <button type="button" className="btn btn-primary" onClick={() => void copy()}>
+              {copied ? 'Copied' : 'Copy address'}
+            </button>
+          </div>
+        </div>
       </div>
-      <button
-        type="button"
-        className={`mono qr-value${copied ? ' is-copied' : ''}`}
-        title="Click to copy"
-        onClick={() => void copy()}
-      >
-        {copied ? 'Copied' : value}
-      </button>
     </div>
   )
 }

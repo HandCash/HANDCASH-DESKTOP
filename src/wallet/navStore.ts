@@ -9,6 +9,7 @@ export type NavChild =
   | { type: 'receive' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
+  | { type: 'add-friend' }
 
 export type NavState = {
   section: NavSection
@@ -75,4 +76,8 @@ export function openPaymentDetails(entryId: string) {
 
 export function openFriendDetails(friendId: string) {
   openNavChild('friends', { type: 'friend', friendId })
+}
+
+export function openAddFriend() {
+  openNavChild('friends', { type: 'add-friend' })
 }

@@ -4,7 +4,6 @@ import type { PendingAction } from '../wallet/permissions'
 import { appDisplayName, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
 import { ModalPortal } from './ModalPortal'
-import { SkeletonLine } from './Skeleton'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -100,134 +99,115 @@ function ActionPermissionBody({
           size="lg"
           onReady={() => setIconReady(true)}
         />
-        {iconReady ? (
-          <div>
-            <p className="permission-eyebrow">{copy.eyebrow}</p>
-            <h2 id="action-permission-title">{pending.title}</h2>
-            <p className="lede" style={{ marginBottom: 0 }}>
-              <strong className="permission-origin">{name}</strong> {copy.verb}.
-            </p>
-          </div>
-        ) : (
-          <div>
-            <SkeletonLine width="36%" height={10} />
-            <SkeletonLine width="72%" height={18} />
-            <SkeletonLine width="58%" height={12} />
-          </div>
-        )}
+        <div>
+          <p className="permission-eyebrow">{copy.eyebrow}</p>
+          <h2 id="action-permission-title">{pending.title}</h2>
+          <p className="lede" style={{ marginBottom: 0 }}>
+            <strong className="permission-origin">{name}</strong> {copy.verb}.
+          </p>
+        </div>
       </div>
 
-      {!iconReady ? (
-        <div className="app-details-section">
-          <SkeletonLine width="40%" height={12} />
-          <SkeletonLine width="55%" height={22} />
-          <SkeletonLine width="85%" height={12} />
-          <SkeletonLine width="70%" height={12} />
+      {(amountPrimary || pending.amountLabel) && (
+        <div className="action-amount" data-aeon-part="amount">
+          <span>Amount</span>
+          <strong>
+            {amountPrimary && amountPrimary !== '—' ? amountPrimary : pending.amountLabel}
+          </strong>
+          {amountSecondary && amountPrimary && amountPrimary !== '—' ? (
+            <em className="action-amount-bsv">{amountSecondary}</em>
+          ) : null}
         </div>
-      ) : (
-        <>
-          {(amountPrimary || pending.amountLabel) && (
-            <div className="action-amount" data-aeon-part="amount">
-              <span>Amount</span>
-              <strong>
-                {amountPrimary && amountPrimary !== '—' ? amountPrimary : pending.amountLabel}
-              </strong>
-              {amountSecondary && amountPrimary && amountPrimary !== '—' ? (
-                <em className="action-amount-bsv">{amountSecondary}</em>
-              ) : null}
-            </div>
-          )}
+      )}
 
-          <dl className="permission-meta">
-            <div>
-              <dt>What for</dt>
-              <dd>{pending.summary}</dd>
-            </div>
-            {pending.details.map((line) => (
-              <div key={line}>
-                <dt>Detail</dt>
-                <dd>{line}</dd>
-              </div>
-            ))}
-          </dl>
+      <dl className="permission-meta">
+        <div>
+          <dt>What for</dt>
+          <dd>{pending.summary}</dd>
+        </div>
+        {pending.details.map((line) => (
+          <div key={line}>
+            <dt>Detail</dt>
+            <dd>{line}</dd>
+          </div>
+        ))}
+      </dl>
 
-          {showAutoPay ? (
-            <div className="auto-pay" data-aeon-part="auto-pay">
-              <label className="auto-pay-toggle">
+      {showAutoPay ? (
+        <div className="auto-pay" data-aeon-part="auto-pay">
+          <label className="auto-pay-toggle">
+            <input
+              type="checkbox"
+              checked={autoEnabled}
+              onChange={(e) => setAutoEnabled(e.target.checked)}
+            />
+            <span>
+              Automatically process payments from <strong>{name}</strong>
+            </span>
+          </label>
+
+          {autoEnabled ? (
+            <div className="auto-pay-params" role="group" aria-label="Auto-pay limits">
+              <label className="auto-pay-field">
+                <span className="auto-pay-prefix">$</span>
                 <input
-                  type="checkbox"
-                  checked={autoEnabled}
-                  onChange={(e) => setAutoEnabled(e.target.checked)}
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={maxUsd}
+                  onChange={(e) => setMaxUsd(e.target.value)}
+                  aria-label="Maximum dollars"
                 />
-                <span>
-                  Automatically process payments from <strong>{name}</strong>
-                </span>
               </label>
-
-              {autoEnabled ? (
-                <div className="auto-pay-params" role="group" aria-label="Auto-pay limits">
-                  <label className="auto-pay-field">
-                    <span className="auto-pay-prefix">$</span>
-                    <input
-                      type="number"
-                      min="0.01"
-                      step="0.01"
-                      inputMode="decimal"
-                      value={maxUsd}
-                      onChange={(e) => setMaxUsd(e.target.value)}
-                      aria-label="Maximum dollars"
-                    />
-                  </label>
-                  <span className="auto-pay-sep">every</span>
-                  <label className="auto-pay-field auto-pay-field-hours">
-                    <input
-                      type="number"
-                      min="1"
-                      step="1"
-                      inputMode="numeric"
-                      value={windowHours}
-                      onChange={(e) => setWindowHours(e.target.value)}
-                      aria-label="Hours"
-                    />
-                  </label>
-                  <span className="auto-pay-sep">hours</span>
-                </div>
-              ) : null}
+              <span className="auto-pay-sep">every</span>
+              <label className="auto-pay-field auto-pay-field-hours">
+                <input
+                  type="number"
+                  min="1"
+                  step="1"
+                  inputMode="numeric"
+                  value={windowHours}
+                  onChange={(e) => setWindowHours(e.target.value)}
+                  aria-label="Hours"
+                />
+              </label>
+              <span className="auto-pay-sep">hours</span>
             </div>
           ) : null}
+        </div>
+      ) : null}
 
-          <p className="permission-note">
-            Only approve if you trust this request from {name}. Denying cancels it safely.
-          </p>
+      <p className="permission-note">
+        Only approve if you trust this request from {name}. Denying cancels it safely.
+      </p>
 
-          <div className="actions connect-actions">
-            <button className="btn btn-ghost" type="button" onClick={onDeny}>
-              Deny
-            </button>
-            <button
-              className="btn btn-primary"
-              type="button"
-              autoFocus
-              disabled={autoEnabled && (!maxUsdValid || !hoursValid)}
-              onClick={() => {
-                if (!showAutoPay) {
-                  onAllow()
-                  return
-                }
-                onAllow({
-                  enabled: autoEnabled,
-                  maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-                  windowHours: hoursValid
-                    ? Math.round(parsedHours)
-                    : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-                })
-              }}
-            >
-              Approve
-            </button>
-          </div>
-        </>
-      )}
+      <div className="actions connect-actions">
+        <button className="btn btn-ghost" type="button" onClick={onDeny}>
+          Deny
+        </button>
+        <button
+          className="btn btn-primary"
+          type="button"
+          autoFocus
+          disabled={autoEnabled && (!maxUsdValid || !hoursValid)}
+          onClick={() => {
+            if (!showAutoPay) {
+              onAllow()
+              return
+            }
+            onAllow({
+              enabled: autoEnabled,
+              maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
+              windowHours: hoursValid
+                ? Math.round(parsedHours)
+                : DEFAULT_AUTO_PAY_WINDOW_HOURS,
+            })
+          }}
+        >
+          Approve
+        </button>
+      </div>
     </div>
   )
 }

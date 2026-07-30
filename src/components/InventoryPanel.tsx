@@ -7,9 +7,9 @@ import {
 } from '../wallet/collectionView'
 
 export function InventoryPanel() {
-  const [view, setView] = useState<CollectionView>(() => getCollectionView())
+  const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
 
-  useEffect(() => subscribeCollectionView(setView), [])
+  useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
 
   return (
     <div
@@ -19,7 +19,7 @@ export function InventoryPanel() {
     >
       <div className="connected-panel-head">
         <h2>Collectables</h2>
-        <CollectionViewToggle label="Collectables view" />
+        <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
       {view === 'grid' ? (
         <div className="collection-grid collection-grid-empty">

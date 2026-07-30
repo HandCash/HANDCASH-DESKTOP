@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatBsv } from '../wallet/session'
+import { formatBsvSignificant } from '../wallet/session'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import {
   formatUsdFromSats,
@@ -67,7 +67,7 @@ export function Dashboard({
   }, [])
 
   const usdLabel = formatUsdFromSats(balanceSats, usdPerBsv)
-  const bsvLabel = formatBsv(balanceSats)
+  const bsvLabel = formatBsvSignificant(balanceSats, 5)
 
   useFitFontSize(balanceSlotRef, balanceBtnRef, {
     maxPx: 28,

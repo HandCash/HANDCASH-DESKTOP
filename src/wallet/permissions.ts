@@ -122,7 +122,7 @@ function readConnected(): ConnectedApp[] {
 }
 
 function emitConnected(): void {
-  const apps = readConnected()
+  const apps = listConnectedApps()
   for (const cb of connectedListeners) cb(apps)
 }
 
@@ -133,7 +133,7 @@ function writeConnected(apps: ConnectedApp[]): void {
   }
   localStorage.setItem(
     STORAGE_KEY,
-    JSON.stringify([...dedup.values()].sort((a, b) => b.connectedAt - a.connectedAt)),
+    JSON.stringify([...dedup.values()]),
   )
   emitConnected()
 }
@@ -175,6 +175,41 @@ export function isActionMethod(method: string): boolean {
   return ACTION_METHODS.has(method)
 }
 
+/** Identity / ownership proofs that often follow a Connect authorize. */
+export function isIdentityProofMethod(method: string): boolean {
+  return method === 'createSignature' || method === 'proveCertificate'
+}
+
+const FRESH_CONNECT_MS = 20_000
+const recentlyConnectedAt = new Map<string, number>()
+const sessionApprovedProofs = new Set<string>()
+
+function proofGrantKey(origin: string, method: string): string {
+  return `${origin}::${method}`
+}
+
+function markRecentlyConnected(origin: string): void {
+  recentlyConnectedAt.set(origin, Date.now())
+}
+
+function wasRecentlyConnected(origin: string): boolean {
+  const at = recentlyConnectedAt.get(origin)
+  return at != null && Date.now() - at < FRESH_CONNECT_MS
+}
+
+export function clearPermissionSession(origin?: string): void {
+  if (!origin) {
+    recentlyConnectedAt.clear()
+    sessionApprovedProofs.clear()
+    return
+  }
+  const key = normalizeOrigin(origin)
+  recentlyConnectedAt.delete(key)
+  for (const grant of [...sessionApprovedProofs]) {
+    if (grant.startsWith(`${key}::`)) sessionApprovedProofs.delete(grant)
+  }
+}
+
 export function normalizeOrigin(origin: string | undefined): string {
   return normalizeAppHost(origin)
 }
@@ -204,17 +239,20 @@ export function allowOrigin(origin: string | undefined): void {
     },
     ...existing,
   ])
+  markRecentlyConnected(key)
 }
 
 export function revokeOrigin(origin: string): void {
   const key = normalizeOrigin(origin)
   writeConnected(readConnected().filter((a) => a.origin !== key))
   clearAutoPaySettings(key)
+  clearPermissionSession(key)
 }
 
 export function revokeAllOrigins(): void {
   writeConnected([])
   clearAutoPaySettings()
+  clearPermissionSession()
 }
 
 export function subscribePermissionRequests(cb: PromptListener): () => void {
@@ -227,7 +265,7 @@ export function subscribePermissionRequests(cb: PromptListener): () => void {
 
 export function subscribeConnectedApps(cb: ConnectedListener): () => void {
   connectedListeners.add(cb)
-  cb(readConnected())
+  cb(listConnectedApps())
   return () => {
     connectedListeners.delete(cb)
   }
@@ -244,6 +282,20 @@ export function resolvePermission(id: number, decision: PermissionDecision): voi
   current = null
   resolve(decision)
   pumpQueue()
+}
+
+/** Drop every waiting connect/action prompt (HTTP timeout / client gone). */
+export function cancelPendingPermissions(reason = 'cancelled'): void {
+  void reason
+  const waiting = [...queue]
+  queue.length = 0
+  if (current) {
+    const { resolve } = current
+    current = null
+    resolve('deny')
+  }
+  for (const item of waiting) item.resolve('deny')
+  notify()
 }
 
 export function requestOriginPermission(origin: string | undefined, method: string): Promise<PermissionDecision> {
@@ -389,6 +441,57 @@ export function requestActionApproval(
     return Promise.resolve('allow')
   }
 
+  // After Connect authorize, skip a second popup for identity proofs in the same flow.
+  if (isIdentityProofMethod(method) && wasRecentlyConnected(key)) {
+    sessionApprovedProofs.add(proofGrantKey(key, method))
+    return Promise.resolve('allow')
+  }
+
+  // Same session: user already approved this proof once for this app.
+  if (isIdentityProofMethod(method) && sessionApprovedProofs.has(proofGrantKey(key, method))) {
+    return Promise.resolve('allow')
+  }
+
+  // Coalesce concurrent identical action prompts (apps often fire createSignature twice).
+  if (
+    current?.request.kind === 'action' &&
+    current.request.origin === key &&
+    current.request.method === method
+  ) {
+    return new Promise((resolve) => {
+      const prev = current!
+      current = {
+        request: prev.request,
+        resolve: (decision) => {
+          if (decision === 'allow' && isIdentityProofMethod(method)) {
+            sessionApprovedProofs.add(proofGrantKey(key, method))
+          }
+          prev.resolve(decision)
+          resolve(decision)
+        },
+      }
+    })
+  }
+
+  const queued = queue.find(
+    (item) =>
+      item.request.kind === 'action' &&
+      item.request.origin === key &&
+      item.request.method === method,
+  )
+  if (queued) {
+    return new Promise((resolve) => {
+      const prevResolve = queued.resolve
+      queued.resolve = (decision) => {
+        if (decision === 'allow' && isIdentityProofMethod(method)) {
+          sessionApprovedProofs.add(proofGrantKey(key, method))
+        }
+        prevResolve(decision)
+        resolve(decision)
+      }
+    })
+  }
+
   return enqueuePrompt({
     id: idCounter++,
     kind: 'action',
@@ -400,6 +503,11 @@ export function requestActionApproval(
     amountLabel,
     amountSats,
     createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow' && isIdentityProofMethod(method)) {
+      sessionApprovedProofs.add(proofGrantKey(key, method))
+    }
+    return decision
   })
 }
 

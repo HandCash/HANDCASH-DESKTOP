@@ -17,6 +17,7 @@ import {
 import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
 import { FriendDetailsPanel } from './FriendDetailsPanel'
+import { AddFriendPanel } from './AddFriendPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { TransactionsPanel } from './RecentActivity'
@@ -104,6 +105,7 @@ export function WalletNav({
     }
     if (child.type === 'send') return [root, { label: 'Send' }]
     if (child.type === 'receive') return [root, { label: 'Receive' }]
+    if (child.type === 'add-friend') return [root, { label: 'Add friend' }]
     if (child.type === 'friend') {
       const friend = getFriendById(child.friendId)
       return [root, { label: friend?.label || 'Friend' }]
@@ -157,6 +159,7 @@ export function WalletNav({
               {child.type === 'friend' && (
                 <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
               )}
+              {child.type === 'add-friend' && <AddFriendPanel />}
             </div>
           ) : (
             <div className="wallet-nav-panel">

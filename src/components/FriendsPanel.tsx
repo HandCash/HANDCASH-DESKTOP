@@ -1,117 +1,144 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useEffect, useState } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
-  addFriend,
   addressFromIdentityKey,
   listFriends,
   subscribeFriends,
   type Friend,
 } from '../wallet/friends'
-import { openFriendDetails } from '../wallet/navStore'
+import {
+  getCollectionView,
+  subscribeCollectionView,
+  type CollectionView,
+} from '../wallet/collectionView'
+import { openAddFriend, openFriendDetails } from '../wallet/navStore'
+import { CollectionViewToggle } from './CollectionViewToggle'
+import { PersonAddIcon } from './icons'
 
 type Props = {
   chain: Chain
 }
 
-function shortenKey(key: string): string {
-  if (key.length <= 18) return key
-  return `${key.slice(0, 8)}…${key.slice(-8)}`
+function friendInitial(label: string): string {
+  const t = label.trim()
+  return t ? t.slice(0, 1).toUpperCase() : '?'
+}
+
+function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
+  let address = ''
+  try {
+    address = addressFromIdentityKey(friend.identityKey, chain)
+  } catch {
+    address = 'Invalid key'
+  }
+
+  return (
+    <li className="friend-row">
+      <button
+        type="button"
+        className="friend-row-main"
+        onClick={() => openFriendDetails(friend.id)}
+      >
+        <span className="friend-avatar" aria-hidden>
+          {friendInitial(friend.label)}
+        </span>
+        <div className="friend-row-body">
+          <strong className="friend-label">{friend.label}</strong>
+          <span className="friend-key mono" title={friend.identityKey}>
+            {friend.identityKey}
+          </span>
+          <span className="friend-address mono" title={address}>
+            {address}
+          </span>
+        </div>
+      </button>
+    </li>
+  )
+}
+
+function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
+  let address = ''
+  try {
+    address = addressFromIdentityKey(friend.identityKey, chain)
+  } catch {
+    address = 'Invalid key'
+  }
+
+  return (
+    <li className="collection-grid-card friend-grid-card">
+      <button
+        type="button"
+        className="collection-grid-main"
+        onClick={() => openFriendDetails(friend.id)}
+      >
+        <span className="friend-avatar friend-avatar-lg" aria-hidden>
+          {friendInitial(friend.label)}
+        </span>
+        <strong className="collection-grid-name">{friend.label}</strong>
+        <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
+          {friend.identityKey}
+        </span>
+        <span className="friend-grid-address mono" title={address}>
+          {address}
+        </span>
+      </button>
+    </li>
+  )
 }
 
 export function FriendsPanel({ chain }: Props) {
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
-  const [label, setLabel] = useState('')
-  const [identityKey, setIdentityKey] = useState('')
-  const [error, setError] = useState<string | null>(null)
+  const [view, setView] = useState<CollectionView>(() => getCollectionView('friends'))
 
   useEffect(() => subscribeFriends(setFriends), [])
-
-  const onAdd = (e: FormEvent) => {
-    e.preventDefault()
-    setError(null)
-    try {
-      addFriend({ label, identityKey })
-      setLabel('')
-      setIdentityKey('')
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
-  }
+  useEffect(() => subscribeCollectionView(setView, 'friends'), [])
 
   return (
-    <div className="nav-section-body" data-aeon-scope="friends">
-      <div className="connected-panel-head">
+    <div
+      className="nav-section-body"
+      data-aeon-scope="friends"
+      data-aeon-state={view}
+    >
+      <div className="connected-panel-head friends-panel-head">
         <h2>Friends</h2>
+        <button
+          type="button"
+          className="friends-add-btn"
+          aria-label="Add friend"
+          title="Add friend"
+          onClick={() => openAddFriend()}
+        >
+          <PersonAddIcon size={18} />
+          <span>Add friend</span>
+        </button>
+        <div className="connected-panel-head-actions">
+          <CollectionViewToggle label="Friends view" scope="friends" />
+        </div>
       </div>
 
-      <form className="friends-add-form" onSubmit={onAdd}>
-        <div className="field">
-          <label htmlFor="friend-label">Label</label>
-          <input
-            id="friend-label"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Alice"
-            autoComplete="off"
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="friend-key">Identity key</label>
-          <input
-            id="friend-key"
-            className="mono"
-            value={identityKey}
-            onChange={(e) => setIdentityKey(e.target.value)}
-            placeholder="02… or 03… (66 hex chars)"
-            autoComplete="off"
-            spellCheck={false}
-          />
-        </div>
-        {error && (
-          <p className="error" role="status">
-            {error}
-          </p>
-        )}
-        <div className="actions">
+      {friends.length === 0 ? (
+        <div className="friends-empty">
+          <p className="connected-empty-line">No friends yet</p>
           <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={!label.trim() || !identityKey.trim()}
+            type="button"
+            className="btn btn-primary btn-icon"
+            onClick={() => openAddFriend()}
           >
+            <PersonAddIcon size={16} />
             Add friend
           </button>
         </div>
-      </form>
-
-      {friends.length === 0 ? (
-        <p className="connected-empty-line">No friends yet</p>
+      ) : view === 'grid' ? (
+        <ul className="collection-grid">
+          {friends.map((friend) => (
+            <FriendGridItem key={friend.id} friend={friend} chain={chain} />
+          ))}
+        </ul>
       ) : (
         <ul className="friends-list">
-          {friends.map((friend) => {
-            let address = ''
-            try {
-              address = addressFromIdentityKey(friend.identityKey, chain)
-            } catch {
-              address = 'Invalid key'
-            }
-            return (
-              <li key={friend.id} className="friend-row">
-                <button
-                  type="button"
-                  className="friend-row-main"
-                  onClick={() => openFriendDetails(friend.id)}
-                >
-                  <strong className="friend-label">{friend.label}</strong>
-                  <span className="friend-key mono" title={friend.identityKey}>
-                    {shortenKey(friend.identityKey)}
-                  </span>
-                  <span className="friend-address mono" title={address}>
-                    {address}
-                  </span>
-                </button>
-              </li>
-            )
-          })}
+          {friends.map((friend) => (
+            <FriendListItem key={friend.id} friend={friend} chain={chain} />
+          ))}
         </ul>
       )}
     </div>

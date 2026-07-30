@@ -7,9 +7,12 @@ import {
   fetchBalanceSats,
   getActiveWallet,
 } from '../wallet/session'
+import { syncLegacyFunds } from '../wallet/syncFunds'
 import {
+  amountToSats,
   formatPrimaryFromSats,
   formatSecondaryFromSats,
+  formatTypedAmount,
   getCachedUsdPerBsv,
   subscribeUsdRate,
 } from '../wallet/fx'
@@ -19,9 +22,15 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
+  hasActivityTxid,
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from '../wallet/appActivity'
+import {
+  beginPendingSend,
+  clearPendingSend,
+  completePendingSend,
+} from '../wallet/pendingSend'
 import {
   addressFromIdentityKey,
   listFriends,
@@ -71,8 +80,15 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
     [recipientQuery, friends],
   )
 
+  const amountSats = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+  const amountLabel = formatTypedAmount(sendSnap.context.amount, currency)
+  const amountSecondary =
+    amountSats > 0 ? formatSecondaryFromSats(amountSats, currency, usdPerBsv) : null
+
   const canReview =
-    sendSnap.context.to.trim().length > 0 && Number(sendSnap.context.amount) > 0
+    sendSnap.context.to.trim().length > 0 &&
+    amountSats > 0 &&
+    (currency === 'bsv' || usdPerBsv != null)
 
   const recipientLabel =
     sendSnap.context.friendLabel || shortenAddress(sendSnap.context.to)
@@ -96,13 +112,29 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
       onFail('Wallet locked')
       return
     }
+    let pendingId: string | null = null
     try {
-      const satoshis = Math.round(Number(sendSnap.context.amount) * 1e8)
-      if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
+      const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+      if (!Number.isFinite(satoshis) || satoshis <= 0) {
+        throw new Error(
+          currency === 'usd' && usdPerBsv == null
+            ? 'USD rate unavailable'
+            : 'Invalid amount',
+        )
+      }
 
-      const lockingScript = new P2PKH().lock(sendSnap.context.to.trim()).toHex()
+      const to = sendSnap.context.to.trim()
+      const pending = beginPendingSend({
+        to,
+        sats: satoshis,
+        friendLabel: sendSnap.context.friendLabel,
+      })
+      pendingId = pending.id
+
+      const lockingScript = new P2PKH().lock(to).toHex()
       const result = await active.wallet.createAction({
-        description: `HandCash send to ${sendSnap.context.to}`,
+        description: `HandCash send to ${to}`,
+        labels: ['handcash-send'],
         outputs: [
           {
             lockingScript,
@@ -112,23 +144,40 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
         ],
       })
 
-      const balance = await fetchBalanceSats(active.wallet)
       const txid =
         (result as { txid?: string })?.txid ?? `local-${Date.now().toString(16)}`
+      completePendingSend(pending.id, txid)
+
       const recipientNote = sendSnap.context.friendLabel
-        ? `${sendSnap.context.friendLabel} (${sendSnap.context.to.trim()})`
-        : sendSnap.context.to.trim()
-      recordAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'spent',
-        sats: satoshis,
-        method: 'send',
-        note: `Sent to ${recipientNote}`,
-        txid,
-      })
+        ? `${sendSnap.context.friendLabel} (${to})`
+        : to
+      if (!hasActivityTxid(txid)) {
+        recordAppActivity({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          kind: 'spent',
+          sats: satoshis,
+          method: 'send',
+          note: `Sent to ${recipientNote}`,
+          txid,
+        })
+      }
+      clearPendingSend(pending.id)
+      pendingId = null
+
       send({ type: 'SUCCESS', txid })
-      onSent(balance)
+      onSent(Math.max(0, balanceSats - satoshis))
+      void syncLegacyFunds()
+        .then((balance) => {
+          if (balance != null) onSent(balance)
+          else {
+            return fetchBalanceSats(active.wallet).then((b) => onSent(b))
+          }
+        })
+        .catch((err) => {
+          console.warn('[send] balance refresh failed', err)
+        })
     } catch (err) {
+      if (pendingId) clearPendingSend(pendingId)
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
       onFail(message)
@@ -139,8 +188,8 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
     <div className="nav-child-panel send-panel" data-aeon-scope="send" data-aeon-state={sendState}>
       {sendSnap.matches('editing') && (
         <div className="send-stage send-stage-edit">
-          <div className="send-stage-body">
-            <div className="send-amount-hero">
+          <div className="send-layout">
+            <div className="send-amount-hero" data-currency={currency}>
               <label htmlFor="amount" className="send-amount-label">
                 Amount
               </label>
@@ -153,95 +202,111 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                   onChange={(e) => send({ type: 'EDIT', amount: e.target.value })}
                   placeholder="0"
                   autoFocus
+                  aria-label={currency === 'usd' ? 'Amount in USD' : 'Amount in BSV'}
                 />
-                <span className="send-amount-unit">BSV</span>
               </div>
+              <p className="send-amount-unit" aria-hidden>
+                {currency === 'usd' ? 'USD' : 'BSV'}
+              </p>
+              {amountSecondary ? (
+                <p className="send-amount-secondary">≈ {amountSecondary}</p>
+              ) : null}
               <p className="send-available">
                 Available {formatPrimaryFromSats(balanceSats, currency, usdPerBsv)} ·{' '}
                 {formatSecondaryFromSats(balanceSats, currency, usdPerBsv)}
               </p>
+              {currency === 'usd' && usdPerBsv == null ? (
+                <p className="send-amount-warning">USD rate unavailable — switch to BSV or refresh</p>
+              ) : null}
             </div>
 
-            <div className="field friend-recipient-field send-to-field">
-              <label htmlFor="to">To</label>
-              <input
-                id="to"
-                value={recipientQuery}
-                onChange={(e) => {
-                  const value = e.target.value
-                  setRecipientQuery(value)
-                  setShowFriendMatches(true)
-                  send({ type: 'EDIT', to: value.trim(), friendLabel: null })
-                }}
-                onFocus={() => setShowFriendMatches(true)}
-                onBlur={() => {
-                  window.setTimeout(() => setShowFriendMatches(false), 120)
-                }}
-                placeholder="Search friends or paste address"
-                autoComplete="off"
-                spellCheck={false}
-              />
-              {sendSnap.context.friendLabel && (
-                <p className="friend-recipient-hint">
-                  Sending to <strong>{sendSnap.context.friendLabel}</strong>
-                </p>
-              )}
-              {showFriendMatches && friendMatches.length > 0 && (
-                <ul className="friend-suggest-list" role="listbox">
-                  {friendMatches.map((friend) => (
-                    <li key={friend.id}>
-                      <button
-                        type="button"
-                        className="friend-suggest-item"
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => selectFriend(friend)}
-                      >
-                        <strong>{friend.label}</strong>
-                        <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </div>
-          </div>
+            <div className="send-side">
+              <div className="field friend-recipient-field send-to-field">
+                <label htmlFor="to">To</label>
+                <input
+                  id="to"
+                  value={recipientQuery}
+                  onChange={(e) => {
+                    const value = e.target.value
+                    setRecipientQuery(value)
+                    setShowFriendMatches(true)
+                    send({ type: 'EDIT', to: value.trim(), friendLabel: null })
+                  }}
+                  onFocus={() => setShowFriendMatches(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setShowFriendMatches(false), 120)
+                  }}
+                  placeholder="Search friends or paste address"
+                  autoComplete="off"
+                  spellCheck={false}
+                />
+                {sendSnap.context.friendLabel && (
+                  <p className="friend-recipient-hint">
+                    Sending to <strong>{sendSnap.context.friendLabel}</strong>
+                  </p>
+                )}
+                {showFriendMatches && friendMatches.length > 0 && (
+                  <ul className="friend-suggest-list send-friend-suggest" role="listbox">
+                    {friendMatches.map((friend) => (
+                      <li key={friend.id}>
+                        <button
+                          type="button"
+                          className="friend-suggest-item"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectFriend(friend)}
+                        >
+                          <strong>{friend.label}</strong>
+                          <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
 
-          <div className="actions send-actions">
-            <button
-              className="btn btn-primary"
-              disabled={!canReview}
-              onClick={() => send({ type: 'REVIEW' })}
-            >
-              Review
-            </button>
-            <button className="btn btn-ghost" onClick={onClose}>
-              Cancel
-            </button>
+              <div className="actions send-actions">
+                <button
+                  className="btn btn-primary"
+                  disabled={!canReview}
+                  onClick={() => send({ type: 'REVIEW' })}
+                >
+                  Review
+                </button>
+                <button className="btn btn-ghost" onClick={onClose}>
+                  Cancel
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {sendSnap.matches('confirming') && (
         <div className="send-stage send-stage-confirm">
-          <div className="send-stage-body send-stage-body-center">
-            <p className="send-eyebrow">You’re sending</p>
-            <p className="send-confirm-amount">
-              {sendSnap.context.amount} <span>BSV</span>
-            </p>
-            <p className="send-confirm-to">
-              to <strong>{recipientLabel}</strong>
-            </p>
-            {sendSnap.context.friendLabel ? (
-              <p className="mono send-confirm-address">{sendSnap.context.to}</p>
-            ) : null}
-          </div>
-          <div className="actions send-actions">
-            <button className="btn btn-primary" onClick={() => void confirmSend()}>
-              Confirm
-            </button>
-            <button className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-              Back
-            </button>
+          <div className="send-layout send-layout-confirm">
+            <div className="send-amount-hero">
+              <p className="send-eyebrow">You’re sending</p>
+              <p className="send-confirm-amount">{amountLabel}</p>
+              {amountSecondary ? (
+                <p className="send-amount-secondary">≈ {amountSecondary}</p>
+              ) : null}
+            </div>
+            <div className="send-side">
+              <p className="send-confirm-to">
+                to <strong>{recipientLabel}</strong>
+              </p>
+              {sendSnap.context.friendLabel ? (
+                <p className="mono send-confirm-address">{sendSnap.context.to}</p>
+              ) : null}
+              <div className="actions send-actions">
+                <button className="btn btn-primary" onClick={() => void confirmSend()}>
+                  Confirm
+                </button>
+                <button className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
+                  Back
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
@@ -251,7 +316,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
           <div className="send-stage-body send-stage-body-center">
             <div className="send-spinner" aria-hidden />
             <p className="send-status-title">Sending…</p>
-            <p className="send-status-sub">Broadcasting your payment</p>
+            <p className="send-status-sub">Broadcasting your payment…</p>
           </div>
         </div>
       )}
@@ -263,9 +328,10 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
               <CheckCircleIcon size={72} />
             </div>
             <p className="send-status-title">Sent</p>
-            <p className="send-confirm-amount send-success-amount">
-              {sendSnap.context.amount} <span>BSV</span>
-            </p>
+            <p className="send-confirm-amount send-success-amount">{amountLabel}</p>
+            {amountSecondary ? (
+              <p className="send-amount-secondary">≈ {amountSecondary}</p>
+            ) : null}
             <p className="send-confirm-to">
               to <strong>{recipientLabel}</strong>
             </p>

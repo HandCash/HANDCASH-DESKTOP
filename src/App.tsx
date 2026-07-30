@@ -7,6 +7,8 @@ import { clearActiveWallet } from './wallet/session'
 import { handleBrc100Request } from './wallet/brc100Handler'
 import {
   resolvePermission,
+  cancelPendingPermissions,
+  clearPermissionSession,
   subscribePermissionRequests,
   type PendingPrompt,
 } from './wallet/permissions'
@@ -55,6 +57,13 @@ export function App() {
   }, [send])
 
   useEffect(() => subscribePermissionRequests(setPendingPrompt), [])
+
+  useEffect(() => {
+    if (!window.handcash?.onHttpRequestCancelled) return
+    return window.handcash.onHttpRequestCancelled(() => {
+      cancelPendingPermissions('http-cancelled')
+    })
+  }, [])
 
   useEffect(() => {
     if (!window.handcash) return
@@ -134,6 +143,8 @@ export function App() {
             onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
             onLock={() => {
               clearActiveWallet()
+              cancelPendingPermissions('lock')
+              clearPermissionSession()
               send({ type: 'LOCK' })
             }}
             onFail={(error) => send({ type: 'FAIL', error })}

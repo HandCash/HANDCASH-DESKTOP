@@ -97,6 +97,34 @@ export function satsToUsd(sats: number, usdPerBsv: number | null = getCachedUsdP
   return (Math.max(0, sats) / 1e8) * usdPerBsv
 }
 
+/** Convert a typed display amount (USD or BSV) into satoshis. */
+export function amountToSats(
+  amount: string | number,
+  currency: DisplayCurrency,
+  usdPerBsv: number | null = getCachedUsdPerBsv(),
+): number {
+  const n = typeof amount === 'number' ? amount : Number(String(amount).trim())
+  if (!Number.isFinite(n) || n <= 0) return 0
+  if (currency === 'bsv') return Math.round(n * 1e8)
+  if (usdPerBsv == null || !(usdPerBsv > 0)) return 0
+  return Math.round((n / usdPerBsv) * 1e8)
+}
+
+/** Format a typed primary amount for confirm/success copy. */
+export function formatTypedAmount(amount: string, currency: DisplayCurrency): string {
+  const n = Number(String(amount).trim())
+  if (!Number.isFinite(n) || n < 0) return currency === 'usd' ? '$0' : '0 BSV'
+  if (currency === 'usd') {
+    return n.toLocaleString('en-US', {
+      style: 'currency',
+      currency: 'USD',
+      minimumFractionDigits: 0,
+      maximumFractionDigits: 4,
+    })
+  }
+  return `${n} BSV`
+}
+
 export function formatUsd(
   amount: number,
   opts?: { compact?: boolean; signed?: boolean },

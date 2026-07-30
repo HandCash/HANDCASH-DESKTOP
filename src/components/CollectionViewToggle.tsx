@@ -4,17 +4,22 @@ import {
   setCollectionView,
   subscribeCollectionView,
   type CollectionView,
+  type CollectionViewScope,
 } from '../wallet/collectionView'
 import { ViewGridIcon, ViewListIcon } from './icons'
 
 type Props = {
   label?: string
+  scope?: CollectionViewScope
 }
 
-export function CollectionViewToggle({ label = 'View' }: Props) {
-  const [view, setView] = useState<CollectionView>(() => getCollectionView())
+export function CollectionViewToggle({
+  label = 'View',
+  scope = 'apps',
+}: Props) {
+  const [view, setView] = useState<CollectionView>(() => getCollectionView(scope))
 
-  useEffect(() => subscribeCollectionView(setView), [])
+  useEffect(() => subscribeCollectionView(setView, scope), [scope])
 
   return (
     <div className="collection-view-toggle" role="group" aria-label={label}>
@@ -25,7 +30,7 @@ export function CollectionViewToggle({ label = 'View' }: Props) {
         aria-pressed={view === 'list'}
         title="List"
         data-active={view === 'list' ? true : undefined}
-        onClick={() => setCollectionView('list')}
+        onClick={() => setCollectionView('list', scope)}
       >
         <ViewListIcon size={16} />
       </button>
@@ -36,7 +41,7 @@ export function CollectionViewToggle({ label = 'View' }: Props) {
         aria-pressed={view === 'grid'}
         title="Grid"
         data-active={view === 'grid' ? true : undefined}
-        onClick={() => setCollectionView('grid')}
+        onClick={() => setCollectionView('grid', scope)}
       >
         <ViewGridIcon size={16} />
       </button>

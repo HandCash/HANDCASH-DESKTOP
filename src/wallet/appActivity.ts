@@ -1,4 +1,5 @@
 import { normalizeAppHost } from './appIdentity'
+import { durableGetItem, durableSetItem } from './durableStorage'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
@@ -29,7 +30,7 @@ const DAY_MS = 24 * 60 * 60_000
 
 function readAll(): ActivityEntry[] {
   try {
-    const raw = localStorage.getItem(STORAGE_KEY)
+    const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -48,10 +49,17 @@ function readAll(): ActivityEntry[] {
 }
 
 function writeAll(entries: ActivityEntry[]): void {
-  // Cap history so localStorage stays small.
+  // Cap history so storage stays small.
   const trimmed = entries.slice(-2000)
-  localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed))
+  durableSetItem(STORAGE_KEY, JSON.stringify(trimmed))
   for (const cb of listeners) cb()
+}
+
+/** True if we already logged this on-chain (or local) txid. */
+export function hasActivityTxid(txid: string | undefined | null): boolean {
+  const key = txid?.trim().toLowerCase()
+  if (!key) return false
+  return readAll().some((e) => e.txid?.toLowerCase() === key)
 }
 
 export function subscribeAppActivity(cb: ActivityListener): () => void {
@@ -113,6 +121,23 @@ export function getAppMoneySummary(origin: string): AppMoneySummary {
     }
   }
   return { spent24h, earned24h, spentAll, earnedAll }
+}
+
+/** Latest activity timestamp for an origin (0 if none). */
+export function getAppLastActivityAt(origin: string): number {
+  const key = normalizeAppHost(origin)
+  let latest = 0
+  for (const e of readAll()) {
+    if (e.origin !== key) continue
+    if (e.at > latest) latest = e.at
+  }
+  return latest
+}
+
+/** Total sats moved (spent + earned) for ranking connected apps. */
+export function getAppActivityVolume(origin: string): number {
+  const money = getAppMoneySummary(origin)
+  return money.spentAll + money.earnedAll
 }
 
 /** Spent satoshis for an origin since `sinceMs` (inclusive). */

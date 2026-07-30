@@ -27,6 +27,15 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
     readySent.current = false
   }, [origin, candidates])
 
+  // Don't hang forever on a silent favicon fetch (offline / stalled CDN).
+  useEffect(() => {
+    if (ready || !src) return
+    const id = window.setTimeout(() => {
+      setFailed(true)
+    }, 1800)
+    return () => window.clearTimeout(id)
+  }, [ready, src, index])
+
   useEffect(() => {
     const img = imgRef.current
     if (!img || !src) return

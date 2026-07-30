@@ -27,7 +27,7 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import { subscribeConnectedApps } from '../wallet/permissions'
-import { openPaymentDetails } from '../wallet/navStore'
+import { openPaymentDetails, setNavSection } from '../wallet/navStore'
 import type { Chain } from '../wallet/vault'
 
 function formatWhen(at: number): string {
@@ -125,6 +125,9 @@ type FeedProps = {
   showCount?: boolean
   showFilters?: boolean
   showWhen?: boolean
+  /** Footer CTA under the list (dashboard recent activity). */
+  viewAllLabel?: string
+  onViewAll?: () => void
 }
 
 function useActivityFeed(limit: number) {
@@ -179,6 +182,8 @@ export function ActivityFeed({
   showCount = true,
   showFilters = false,
   showWhen = false,
+  viewAllLabel,
+  onViewAll,
 }: FeedProps) {
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
   const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
@@ -219,6 +224,13 @@ export function ActivityFeed({
             showWhen={showWhen}
           />
         ))}
+        {viewAllLabel && onViewAll ? (
+          <li className="history-view-all-row">
+            <button type="button" className="history-view-all" onClick={onViewAll}>
+              {viewAllLabel}
+            </button>
+          </li>
+        ) : null}
       </ul>
     )
 
@@ -285,7 +297,16 @@ export function ActivityFeed({
 
 /** Side column feed. */
 export function RecentActivityPanel({ chain }: { chain?: Chain }) {
-  return <ActivityFeed chain={chain} title="Recent activity" limit={40} />
+  return (
+    <ActivityFeed
+      chain={chain}
+      title="Recent activity"
+      limit={15}
+      showCount={false}
+      viewAllLabel="View full activity"
+      onViewAll={() => setNavSection('activity')}
+    />
+  )
 }
 
 /** Full activity tab. */

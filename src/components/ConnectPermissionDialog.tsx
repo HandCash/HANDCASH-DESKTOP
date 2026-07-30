@@ -5,7 +5,6 @@ import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdenti
 import { AppAvatar } from './AppAvatar'
 import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
-import { SkeletonLine } from './Skeleton'
 
 type Props = {
   pending: PendingPermission | null
@@ -46,75 +45,53 @@ function ConnectPermissionBody({
           size="lg"
           onReady={() => setIconReady(true)}
         />
-        {iconReady ? (
-          <div>
-            <p className="permission-eyebrow">HandCash Connect</p>
-            <h2 id="connect-permission-title">Connect {name}?</h2>
-            <p className="connect-app-host mono">{pending.origin}</p>
-          </div>
-        ) : (
-          <div>
-            <SkeletonLine width="36%" height={10} />
-            <SkeletonLine width="70%" height={18} />
-            <SkeletonLine width="55%" height={10} />
-          </div>
-        )}
+        <div>
+          <p className="permission-eyebrow">HandCash Connect</p>
+          <h2 id="connect-permission-title">Connect {name}?</h2>
+          <p className="connect-app-host mono">{pending.origin}</p>
+        </div>
       </div>
 
-      {!iconReady ? (
-        <div className="app-details-section">
-          <SkeletonLine width="90%" height={12} />
-          <SkeletonLine width="75%" height={12} />
-          <div className="permission-chips" style={{ marginTop: 14 }}>
-            <SkeletonLine width={88} height={28} />
-            <SkeletonLine width={72} height={28} />
-            <SkeletonLine width={96} height={28} />
-          </div>
-        </div>
-      ) : (
-        <>
-          <p className="lede">
-            <strong>{name}</strong> wants to connect to your HandCash wallet.
-            {home ? (
-              <>
-                {' '}
-                <a href={home} target="_blank" rel="noreferrer">
-                  Visit site
-                </a>
-              </>
-            ) : null}
-          </p>
+      <p className="lede">
+        <strong>{name}</strong> wants to connect to your HandCash wallet.
+        {home ? (
+          <>
+            {' '}
+            <a href={home} target="_blank" rel="noreferrer">
+              Visit site
+            </a>
+          </>
+        ) : null}
+      </p>
 
-          <div className="scope-list" aria-label="Permissions requested">
-            <p className="scope-list-label">This app will be able to</p>
-            {CONNECT_SCOPES.map((scope) => (
-              <div key={scope.id} className="scope-row">
-                <span className="scope-icon" aria-hidden>
-                  <ScopeIcon scopeId={scope.id} size={15} />
-                </span>
-                <div>
-                  <strong>{scope.label}</strong>
-                  <p>{scope.description}</p>
-                </div>
-              </div>
-            ))}
+      <div className="scope-list" aria-label="Permissions requested">
+        <p className="scope-list-label">This app will be able to</p>
+        {CONNECT_SCOPES.map((scope) => (
+          <div key={scope.id} className="scope-row">
+            <span className="scope-icon" aria-hidden>
+              <ScopeIcon scopeId={scope.id} size={15} />
+            </span>
+            <div>
+              <strong>{scope.label}</strong>
+              <p>{scope.description}</p>
+            </div>
           </div>
+        ))}
+      </div>
 
-          <p className="permission-note">
-            Payments still need your approval every time. You can disconnect this app later from
-            Connected apps.
-          </p>
+      <p className="permission-note">
+        Payments still need your approval every time. You can disconnect this app later from
+        Connected apps.
+      </p>
 
-          <div className="actions connect-actions">
-            <button className="btn btn-ghost" type="button" onClick={onDeny}>
-              Deny
-            </button>
-            <button className="btn btn-primary" type="button" autoFocus onClick={onAllow}>
-              Authorize
-            </button>
-          </div>
-        </>
-      )}
+      <div className="actions connect-actions">
+        <button className="btn btn-ghost" type="button" onClick={onDeny}>
+          Deny
+        </button>
+        <button className="btn btn-primary" type="button" autoFocus onClick={onAllow}>
+          Authorize
+        </button>
+      </div>
     </div>
   )
 }

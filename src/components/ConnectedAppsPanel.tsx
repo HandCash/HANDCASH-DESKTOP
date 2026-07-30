@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { SkeletonAppCard, SkeletonAppRow } from './Skeleton'
@@ -16,6 +16,8 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
+  getAppActivityVolume,
+  getAppLastActivityAt,
   getAppMoneySummary,
   subscribeAppActivity,
 } from '../wallet/appActivity'
@@ -126,14 +128,24 @@ function AppGridItem({
 export function ConnectedAppsPanel({ apps }: Props) {
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [view, setView] = useState<CollectionView>(() => getCollectionView())
+  const [view, setView] = useState<CollectionView>(() => getCollectionView('apps'))
   const [tick, setTick] = useState(0)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-  useEffect(() => subscribeCollectionView(setView), [])
+  useEffect(() => subscribeCollectionView(setView, 'apps'), [])
   useEffect(() => subscribeAppActivity(() => setTick((n) => n + 1)), [])
-  void tick
+
+  const orderedApps = useMemo(() => {
+    void tick
+    return apps.slice().sort((a, b) => {
+      const vol = getAppActivityVolume(b.origin) - getAppActivityVolume(a.origin)
+      if (vol !== 0) return vol
+      const recent = getAppLastActivityAt(b.origin) - getAppLastActivityAt(a.origin)
+      if (recent !== 0) return recent
+      return b.connectedAt - a.connectedAt
+    })
+  }, [apps, tick])
 
   return (
     <div
@@ -143,13 +155,13 @@ export function ConnectedAppsPanel({ apps }: Props) {
     >
       <div className="connected-panel-head">
         <h2>Apps</h2>
-        <CollectionViewToggle label="Apps view" />
+        <CollectionViewToggle label="Apps view" scope="apps" />
       </div>
-      {apps.length === 0 ? (
+      {orderedApps.length === 0 ? (
         <p className="connected-empty-line">No apps connected</p>
       ) : view === 'grid' ? (
         <ul className="collection-grid">
-          {apps.map((app) => (
+          {orderedApps.map((app) => (
             <AppGridItem
               key={app.origin}
               app={app}
@@ -160,7 +172,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
         </ul>
       ) : (
         <ul className="connected-app-list">
-          {apps.map((app) => (
+          {orderedApps.map((app) => (
             <AppListItem
               key={app.origin}
               app={app}
