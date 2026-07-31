@@ -23,15 +23,13 @@ git push && git push origin vX.Y.Z
 # 3. Build + upload Mac (local or future macOS CI) to the same tag
 npm run package:mac
 # Upload DMG/zip + latest-mac.yml to the GitHub prerelease
-
-# 4. Point the download site at the new tag
-npm run version:sync-market
-# then deploy items-market (pre-prod / prod)
 ```
 
 **Backfill Linux onto an existing tag** (Actions → Release Linux → Run workflow → tag `v1.0.0`).
 
-Until step 4, the website keeps linking the previous published build. Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
+The migrate / wallet download site (`items-market` `/api/desktop-downloads`) resolves the **newest GitHub release automatically** (including prereleases). No manual version pin after publish. Optional emergency pin: `NEXT_PUBLIC_DESKTOP_VERSION` / `NEXT_PUBLIC_DESKTOP_RELEASE_TAG`.
+
+Installed apps on **Update Mode: Default** still pick up the new GitHub release via auto-update.
 
 Each platform needs its updater metadata on the release:
 
@@ -45,5 +43,5 @@ A Mac-only prerelease makes Linux **Check for Updates** report no update until a
 
 ## Do not
 
-- Point the site at `/releases/latest/` while assets are **prerelease** (GitHub ignores them).
+- Rely on GitHub `/releases/latest/` for BETA downloads — that endpoint ignores **prerelease** tags. The website uses the GitHub Releases API instead (includes prereleases).
 - Ship a higher `package.json` version without a matching GitHub release if you expect Check for Updates / download buttons to work for that version.
