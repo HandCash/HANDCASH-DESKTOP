@@ -3193,6 +3193,14 @@ a.app-details-host:hover {
   color: var(--hc-muted);
 }
 
+.settings-lab-intro {
+  margin: 0.15rem 0 0.55rem;
+  font-size: 0.82rem;
+  line-height: 1.45;
+  color: var(--hc-muted);
+  max-width: 42rem;
+}
+
 .settings-list {
   list-style: none;
   margin: 0;
@@ -4252,6 +4260,13 @@ a.app-details-host:hover {
   flex-shrink: 0;
 }
 
+.collectable-media-md {
+  width: 96px;
+  height: 96px;
+  border-radius: 10px;
+  flex-shrink: 0;
+}
+
 .collectable-media-lg {
   width: 200px;
   height: 200px;
@@ -4275,27 +4290,34 @@ a.app-details-host:hover {
 
 .collectable-details {
   display: grid;
-  gap: 16px;
+  gap: 10px;
+  align-content: start;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  overflow: auto;
+  padding-bottom: 8px;
 }
 
 .collectable-details-hero {
-  display: grid;
-  justify-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: 12px;
-  text-align: center;
+  text-align: left;
 }
 
 .collectable-details-copy {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
-  max-width: 100%;
+  flex: 1;
+  align-content: start;
 }
 
 .collectable-details-name {
   margin: 0;
-  font-size: 1.05rem;
-  line-height: 1.25;
+  font-size: 0.98rem;
+  line-height: 1.2;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4304,7 +4326,8 @@ a.app-details-host:hover {
 .collectable-details-app {
   margin: 0;
   color: var(--hc-muted);
-  font-size: 0.82rem;
+  font-size: 0.78rem;
+  line-height: 1.25;
 }
 
 .collectable-origin-value {
@@ -4317,9 +4340,21 @@ a.app-details-host:hover {
   text-align: left;
 }
 
+.collectable-details-meta {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
 .collectable-meta-field {
   min-width: 0;
   width: 100%;
+  gap: 2px;
+  margin-bottom: 0;
+}
+
+.collectable-meta-field .field-static-label {
+  margin-bottom: 0;
 }
 
 .collectable-full-value {
@@ -4331,53 +4366,116 @@ a.app-details-host:hover {
   text-overflow: unset;
   overflow-wrap: anywhere;
   word-break: break-all;
+  font-size: 0.74rem;
+  line-height: 1.3;
 }
 
 .collectable-traits {
   display: grid;
-  gap: 8px;
+  gap: 6px;
   min-width: 0;
   width: 100%;
 }
 
-.collectable-trait-grid {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-  gap: 8px;
+.collectable-traits > .field-static-label {
+  margin-bottom: 0;
 }
 
-.collectable-trait {
-  display: grid;
-  gap: 4px;
-  padding: 10px 12px;
-  border-radius: calc(var(--hc-radius) + 2px);
+.collectable-trait-strip {
+  width: 100% !important;
+  display: grid !important;
+  grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr));
+  gap: 8px 12px !important;
+}
+
+.collectable-trait-strip [data-aeon-part='chip'] {
+  min-width: 0;
+  align-items: flex-start;
+  gap: 0.2rem;
+  padding: 6px 8px;
+  border-radius: calc(var(--hc-radius) + 1px);
   border: 1px solid hsl(var(--border));
   background: rgba(255, 255, 255, 0.03);
-  min-width: 0;
 }
 
-.collectable-trait-name {
-  color: var(--hc-muted);
-  font-size: 0.68rem;
+.collectable-trait-strip [data-aeon-part='value'] {
+  font-size: 0.8rem !important;
+  font-weight: 650;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  text-align: left;
+  width: 100%;
+}
+
+.collectable-trait-strip [data-aeon-part='label'] {
+  font-size: 0.62rem !important;
   letter-spacing: 0.06em;
-  text-transform: uppercase;
+  text-align: left;
+  width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.collectable-trait-value {
-  font-size: 0.88rem;
-  line-height: 1.25;
-  overflow-wrap: anywhere;
-  word-break: break-word;
+.collectable-details-actions {
+  margin-top: 6px;
+  width: auto;
+  max-width: none;
+  justify-self: start;
 }
 
-.collectable-details-actions {
-  margin-top: 4px;
+.collectable-details-actions .btn {
+  width: auto;
+  min-height: 32px;
+  padding: 6px 12px;
+  font-size: 0.78rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+}
+
+.collectable-card {
+  display: grid;
+  gap: 0;
+}
+
+.collectable-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.collectable-send-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+  margin: 0 8px 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.collectable-send-btn:hover {
+  border-color: color-mix(in srgb, var(--hc-accent, #38d385) 45%, transparent);
+  background: color-mix(in srgb, var(--hc-accent, #38d385) 10%, transparent);
+}
+
+.collectable-send-btn--row {
+  margin: 0 10px 0 0;
+  flex-shrink: 0;
 }
 
 .send-collectable-panel {

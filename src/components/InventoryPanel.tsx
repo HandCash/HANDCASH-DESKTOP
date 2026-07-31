@@ -13,9 +13,10 @@ import {
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
-import { openCollectableDetails } from '../wallet/navStore'
+import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import { playWalletSound } from '../wallet/soundService'
+import { SendIcon } from './icons'
 
 function CollectableGridItem({ item }: { item: Collectable }) {
   return (
@@ -49,6 +50,20 @@ function CollectableGridItem({ item }: { item: Collectable }) {
           </span>
         ) : null}
       </button>
+      <button
+        type="button"
+        className="collectable-send-btn"
+        title={`Send ${item.name}`}
+        aria-label={`Send ${item.name}`}
+        onClick={(e) => {
+          e.stopPropagation()
+          playWalletSound('soft')
+          openSendCollectable(item.outpoint)
+        }}
+      >
+        <SendIcon size={14} />
+        Send
+      </button>
     </li>
   )
 }
@@ -80,6 +95,19 @@ function CollectableListItem({ item }: { item: Collectable }) {
           <strong className="connected-app-name">{item.name}</strong>
           {item.app ? <span className="connected-app-host">{item.app}</span> : null}
         </div>
+      </button>
+      <button
+        type="button"
+        className="collectable-send-btn collectable-send-btn--row"
+        title={`Send ${item.name}`}
+        aria-label={`Send ${item.name}`}
+        onClick={() => {
+          playWalletSound('soft')
+          openSendCollectable(item.outpoint)
+        }}
+      >
+        <SendIcon size={14} />
+        Send
       </button>
     </li>
   )

@@ -1,6 +1,6 @@
 /**
  * HandCash Desktop — master + per-scope Mermaid statecharts.
- * Readable charts for Settings → About → View statecharts.
+ * Readable charts for Settings → Lab → View statecharts.
  * Covers XState machines and major UI scopes (Aeon data-aeon-state).
  */
 
@@ -318,24 +318,24 @@ const IDENTITY = `stateDiagram-v2
 
 const SETTINGS = `stateDiagram-v2
   direction TB
-  [*] --> root
-  root --> changePassword : open
-  root --> backupPhrase : open
-  root --> wipeWallet : open
-  root --> statecharts : open
-  root --> lab : toggle flags
-  changePassword --> root : back
-  backupPhrase --> root : back
-  wipeWallet --> root : back / done
-  statecharts --> root : back
-  lab --> root : stay
+  [*] --> settingsHome
+  settingsHome --> changePassword : open
+  settingsHome --> backupPhrase : open
+  settingsHome --> wipeWallet : open
+  settingsHome --> lab : open lab
+  changePassword --> settingsHome : back
+  backupPhrase --> settingsHome : back
+  wipeWallet --> settingsHome : back / done
+  lab --> settingsHome : back
+  lab --> statecharts : view charts
+  statecharts --> lab : back
 
-  root : Settings
+  settingsHome : Settings
   changePassword : Password
   backupPhrase : Backup
   wipeWallet : Wipe
-  statecharts : Statecharts
   lab : Lab
+  statecharts : Statecharts
 `
 
 const CHANGE_PASSWORD = `stateDiagram-v2
@@ -526,7 +526,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'settingsFlow',
     label: 'Settings',
-    caption: 'settings — root and nested panels',
+    caption: 'settings — home, lab, nested panels',
     source: SETTINGS,
   },
   {

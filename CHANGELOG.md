@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.1.10] - 2026-07-31
+
+### Changed
+
+- Compact collectable details (side hero, scroll); Origin/Outpoint at bottom; traits via Aeon MetricStrip.
+- Inventory Send affordance; Lab/About statecharts cleanup; settings chart id fix.
+- Consume aeon-ui-engine ^1.3.5.
+
 ## [1.1.9] - 2026-07-31
 
 ### Changed

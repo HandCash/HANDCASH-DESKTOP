@@ -165,6 +165,10 @@ export function SettingsPanel() {
 
       <section className="settings-group" data-aeon-part="lab" data-settings-group="Lab">
         <h3 className="settings-group-title">Lab</h3>
+        <p className="settings-lab-intro">
+          Experimental corners of this self-custodial HandCash Desktop wallet. Features here stay
+          off by default while we prove them — your keys and funds remain on this device either way.
+        </p>
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
@@ -173,7 +177,7 @@ export function SettingsPanel() {
                   Chat
                 </label>
                 <span className="settings-row-desc">
-                  Experimental friend messaging and in-chat pay — off by default
+                  Friend messaging and in-chat pay/request — experimental, off by default
                 </span>
               </span>
               <label className="settings-sfx-toggle">
@@ -192,6 +196,28 @@ export function SettingsPanel() {
                 />
                 <span>{labChatEnabled ? 'On' : 'Off'}</span>
               </label>
+            </div>
+          </li>
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <strong className="settings-row-label">Statecharts</strong>
+                <span className="settings-row-desc">
+                  Diagrams of the wallet’s UI = f(state) machines — session, nav, send, chat, and the
+                  rest. Handy when debugging flows or explaining how Desktop is wired.
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost settings-check-btn"
+                data-aeon-part="view-statecharts"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSetting('statecharts')
+                }}
+              >
+                View statecharts
+              </button>
             </div>
           </li>
         </ul>
@@ -301,20 +327,9 @@ export function SettingsPanel() {
               <span className="settings-row-body">
                 <strong className="settings-row-label">HandCash Desktop</strong>
                 <span className="settings-row-desc">
-                  Self-custodial BRC-100 wallet · UI = f(state)
+                  Self-custodial BRC-100 wallet for Bitcoin SV — keys stay on this device
                 </span>
               </span>
-              <button
-                type="button"
-                className="btn btn-primary settings-check-btn"
-                data-aeon-part="view-statecharts"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSetting('statecharts')
-                }}
-              >
-                View statecharts
-              </button>
             </div>
           </li>
           <li className="settings-row settings-row-static">

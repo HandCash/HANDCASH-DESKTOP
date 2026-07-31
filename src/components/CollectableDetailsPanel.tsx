@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
   getCollectable,
@@ -7,13 +8,19 @@ import {
 } from '../wallet/collectables'
 import { openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
   outpoint: string
 }
 
-function MetaRow({ label, value, onCopy, copied }: {
+function MetaRow({
+  label,
+  value,
+  onCopy,
+  copied,
+}: {
   label: string
   value: string
   onCopy?: () => void
@@ -45,19 +52,19 @@ function MetaRow({ label, value, onCopy, copied }: {
   )
 }
 
-function TraitGrid({ title, traits }: { title: string; traits: CollectableTrait[] }) {
+function TraitStrip({ title, traits }: { title: string; traits: CollectableTrait[] }) {
   if (traits.length === 0) return null
   return (
     <div className="collectable-traits">
       <span className="field-static-label">{title}</span>
-      <ul className="collectable-trait-grid">
+      <MetricStrip.Root density="loose" className="collectable-trait-strip">
         {traits.map((trait) => (
-          <li key={`${trait.name}:${trait.value}`} className="collectable-trait">
-            <span className="collectable-trait-name">{trait.name}</span>
-            <strong className="collectable-trait-value">{trait.value}</strong>
-          </li>
+          <MetricStrip.Chip key={`${trait.name}:${trait.value}`}>
+            <MetricStrip.Value title={trait.value}>{trait.value}</MetricStrip.Value>
+            <MetricStrip.Label>{trait.name}</MetricStrip.Label>
+          </MetricStrip.Chip>
         ))}
-      </ul>
+      </MetricStrip.Root>
     </div>
   )
 }
@@ -108,58 +115,57 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     ...item.extras,
   ]
 
+  const startSend = () => {
+    playWalletSound('soft')
+    openSendCollectable(item.outpoint)
+  }
+
   return (
     <div
       className="nav-child-panel collectable-details"
       data-aeon-scope="collectable-details"
     >
       <div className="collectable-details-hero">
-        <div className="collectable-media collectable-media-lg">
+        <div className="collectable-media collectable-media-md">
           <DeferredImage
             src={item.imageUrl}
             alt={item.name}
-            width={200}
-            height={200}
-            skeletonWidth={200}
-            skeletonHeight={200}
-            skeletonRadius={12}
+            width={96}
+            height={96}
+            skeletonWidth={96}
+            skeletonHeight={96}
+            skeletonRadius={10}
             skeletonClassName="skeleton-qr"
           />
         </div>
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>
           {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
+          <div className="actions collectable-details-actions">
+            <button type="button" className="btn btn-primary btn-icon" onClick={startSend}>
+              <SendIcon size={14} />
+              Send item
+            </button>
+          </div>
         </div>
       </div>
 
-      <MetaRow
-        label="Origin"
-        value={item.origin}
-        copied={copied === 'origin'}
-        onCopy={() => void copy('origin', item.origin)}
-      />
+      <TraitStrip title="Traits" traits={item.traits} />
+      <TraitStrip title="Details" traits={infoTraits} />
 
-      <MetaRow
-        label="Outpoint"
-        value={item.outpoint}
-        copied={copied === 'outpoint'}
-        onCopy={() => void copy('outpoint', item.outpoint)}
-      />
-
-      <TraitGrid title="Traits" traits={item.traits} />
-      <TraitGrid title="Details" traits={infoTraits} />
-
-      <div className="actions collectable-details-actions">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            playWalletSound('soft')
-            openSendCollectable(item.outpoint)
-          }}
-        >
-          Send
-        </button>
+      <div className="collectable-details-meta">
+        <MetaRow
+          label="Origin"
+          value={item.origin}
+          copied={copied === 'origin'}
+          onCopy={() => void copy('origin', item.origin)}
+        />
+        <MetaRow
+          label="Outpoint"
+          value={item.outpoint}
+          copied={copied === 'outpoint'}
+          onCopy={() => void copy('outpoint', item.outpoint)}
+        />
       </div>
     </div>
   )
