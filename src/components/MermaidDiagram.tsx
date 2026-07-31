@@ -1,16 +1,14 @@
 import { useEffect, useId, useState } from 'react'
 
-let mermaidReady = false
-
 function ensureMermaid(mermaid: typeof import('mermaid').default) {
-  if (mermaidReady) return
+  // Always (re)apply compact theme so hot reload / prior init don't keep huge spacing.
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'loose',
     theme: 'base',
     themeVariables: {
       fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
-      fontSize: '16px',
+      fontSize: '11px',
       primaryColor: '#1a2420',
       primaryTextColor: '#e8f5ef',
       primaryBorderColor: '#38d385',
@@ -22,12 +20,11 @@ function ensureMermaid(mermaid: typeof import('mermaid').default) {
       noteBorderColor: '#2a3d34',
     },
     state: {
-      nodeSpacing: 56,
-      rankSpacing: 64,
-      fontSize: 16,
+      nodeSpacing: 28,
+      rankSpacing: 32,
+      fontSize: 11,
     },
   })
-  mermaidReady = true
 }
 
 type Props = {
@@ -35,7 +32,7 @@ type Props = {
   title?: string
 }
 
-/** High-legibility Mermaid state diagram for Settings → Statecharts. */
+/** Compact Mermaid state diagram for Settings → Statecharts. */
 export function MermaidDiagram({ source, title }: Props) {
   const reactId = useId().replace(/:/g, '')
   const [svg, setSvg] = useState<string | null>(null)
@@ -78,7 +75,7 @@ export function MermaidDiagram({ source, title }: Props) {
           dangerouslySetInnerHTML={{ __html: svg }}
         />
       ) : (
-        <p className="statechart-loading">Rendering statechart…</p>
+        <p className="statechart-loading">Rendering…</p>
       )}
     </figure>
   )

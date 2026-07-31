@@ -22,17 +22,6 @@ export function NavBreadcrumb({ crumbs }: Props) {
 
   return (
     <div className="connected-panel-head nav-breadcrumb-head">
-      {onBack ? (
-        <button
-          type="button"
-          className="nav-back-btn"
-          aria-label="Back"
-          title="Back"
-          onClick={onBack}
-        >
-          <BackIcon size={18} />
-        </button>
-      ) : null}
       <h2 className="nav-breadcrumb" aria-label="Breadcrumb">
         {crumbs.map((crumb, index) => {
           const last = index === crumbs.length - 1
@@ -50,6 +39,17 @@ export function NavBreadcrumb({ crumbs }: Props) {
           )
         })}
       </h2>
+      {onBack ? (
+        <button
+          type="button"
+          className="nav-back-btn"
+          aria-label="Back"
+          title="Back"
+          onClick={onBack}
+        >
+          <BackIcon size={18} />
+        </button>
+      ) : null}
     </div>
   )
 }

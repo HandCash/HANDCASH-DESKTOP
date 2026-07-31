@@ -2,6 +2,7 @@ import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { wipeMachine } from '../machines/wipeMachine'
 import { wipeAllWalletData } from '../wallet/wipeWallet'
+import { playWalletSound } from '../wallet/soundService'
 
 const CONFIRM_WORD = 'DELETE'
 
@@ -19,10 +20,12 @@ export function WipeWalletPanel() {
     try {
       await wipeAllWalletData(snapshot.context.password)
       send({ type: 'SUCCESS' })
+      playWalletSound('soft')
       window.location.reload()
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
+      playWalletSound('error')
     }
   }
 

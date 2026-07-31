@@ -1,7 +1,9 @@
 import type { ConnectedApp } from './permissions'
+import { focusChatPeer } from './chatFocus'
 
 export type NavSection =
   | 'activity'
+  | 'chat'
   | 'apps'
   | 'collectables'
   | 'friends'
@@ -91,6 +93,11 @@ export function openPaymentDetails(entryId: string) {
 
 export function openFriendDetails(friendId: string) {
   openNavChild('friends', { type: 'friend', friendId })
+}
+
+export function openChatWithFriend(friendId: string) {
+  focusChatPeer(friendId)
+  setNavSection('chat')
 }
 
 export function openAddFriend() {

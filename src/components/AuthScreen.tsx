@@ -10,6 +10,7 @@ import {
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
 import { markBackupConfirmed } from '../wallet/backupStatus'
+import { playWalletSound } from '../wallet/soundService'
 import type { WalletProfile } from '../machines/appMachine'
 
 type Props = {
@@ -80,6 +81,7 @@ export function AuthScreen({
         const balanceSats = await fetchBalanceSats(active.wallet)
         markBackupConfirmed()
         send({ type: 'SUCCESS' })
+        playWalletSound('unlock')
         onCreated(
           {
             handle: unlocked.record.handle,
@@ -101,6 +103,7 @@ export function AuthScreen({
         })
         const balanceSats = await fetchBalanceSats(active.wallet)
         send({ type: 'SUCCESS' })
+        playWalletSound('unlock')
         onCreated(
           {
             handle: unlocked.record.handle,
@@ -121,6 +124,7 @@ export function AuthScreen({
       })
       const balanceSats = await fetchBalanceSats(active.wallet)
       send({ type: 'SUCCESS' })
+      playWalletSound('unlock')
       onUnlocked(
         {
           handle: unlocked.record.handle,
@@ -137,6 +141,7 @@ export function AuthScreen({
         setFormMode('restore')
       }
       send({ type: 'FAIL', error: message })
+      playWalletSound('error')
       onFail(message)
     }
   }

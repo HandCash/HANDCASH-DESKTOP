@@ -14,6 +14,7 @@ import {
   listMigrationTxids,
   refreshLegacyAddressPayload,
 } from './migration'
+import { playWalletSound } from './soundService'
 
 type HttpRequestEvent = {
   method: string
@@ -222,7 +223,9 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   try {
     const result = await dispatchWalletMethod(active.wallet, method, args, originator)
 
-    if (method === 'createAction') {
+    if (method === 'refreshLegacyAddress') {
+      playWalletSound('receive')
+    } else if (method === 'createAction') {
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
         recordAppActivity({
@@ -235,6 +238,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
             : undefined,
           txid: extractTxid(result),
         })
+        playWalletSound('success')
       }
     } else if (method === 'internalizeAction') {
       const sats = extractSatsFromArgs(method, args)
@@ -246,12 +250,14 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           method,
           txid: extractTxid(result) ?? extractTxid(args),
         })
+        playWalletSound('receive')
       }
     }
 
     return { status: 200, body: JSON.stringify(result ?? {}) }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
+    if (isActionMethod(method)) playWalletSound('error')
     return {
       status: 400,
       body: JSON.stringify({ status: 'error', description: message }),

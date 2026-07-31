@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { APP_VERSION } from '../version'
+import { playWalletSound } from '../wallet/soundService'
 
 /**
  * Brief confirmation when View → Copy Screenshot (⌘⇧S / Ctrl+Shift+S) lands on the clipboard.
@@ -15,6 +16,7 @@ export function ScreenshotToast() {
       setFailed(null)
       setVersion(payload.version || APP_VERSION)
       setVisible(true)
+      playWalletSound('copy')
     })
   }, [])
 

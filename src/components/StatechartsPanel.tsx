@@ -12,28 +12,23 @@ export function StatechartsPanel() {
       data-aeon-scope="statecharts"
       data-aeon-part="panel"
     >
-      <header className="statecharts-head">
-        <h3 className="statecharts-title">Software statecharts</h3>
-        <p className="statecharts-lead">
-          Master map of HandCash Desktop — navigate each XState chart that drives the UI.
-        </p>
-      </header>
-
-      <nav className="statecharts-nav" aria-label="Statechart pages">
-        {APP_STATECHART_PAGES.map((p) => (
-          <button
-            key={p.id}
-            type="button"
-            className={`statecharts-nav-btn${p.id === page.id ? ' is-active' : ''}`}
-            aria-current={p.id === page.id ? 'page' : undefined}
-            onClick={() => setPageId(p.id)}
-          >
-            {p.label}
-          </button>
-        ))}
-      </nav>
-
-      <p className="statecharts-caption">{page.caption}</p>
+      <div className="statecharts-toolbar">
+        <nav className="statecharts-nav" aria-label="Statechart pages">
+          {APP_STATECHART_PAGES.map((p) => (
+            <button
+              key={p.id}
+              type="button"
+              className={`statecharts-nav-btn${p.id === page.id ? ' is-active' : ''}`}
+              aria-current={p.id === page.id ? 'page' : undefined}
+              title={p.caption}
+              onClick={() => setPageId(p.id)}
+            >
+              {p.label}
+            </button>
+          ))}
+        </nav>
+        <p className="statecharts-caption">{page.caption}</p>
+      </div>
 
       <div className="statecharts-viewport" data-aeon-part="chart">
         <MermaidDiagram key={page.id} source={page.source} title={page.label} />

@@ -28,6 +28,7 @@ import {
   completePendingSend,
 } from '../wallet/pendingSend'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
+import { playWalletSound } from '../wallet/soundService'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import type { Chain } from '../wallet/vault'
@@ -74,6 +75,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
 
   useEffect(() => {
     if (stage === 'success') playPaymentSuccessSound()
+    if (stage === 'failure') playWalletSound('error')
   }, [stage])
 
   const matches = useMemo(

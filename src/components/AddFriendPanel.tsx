@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { addFriend } from '../wallet/friends'
 import { clearNavChild } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 
 export function AddFriendPanel() {
   const [label, setLabel] = useState('')
@@ -12,9 +13,11 @@ export function AddFriendPanel() {
     setError(null)
     try {
       addFriend({ label, identityKey })
+      playWalletSound('soft')
       clearNavChild()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      playWalletSound('error')
     }
   }
 

@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { changeVaultPassword } from '../wallet/vault'
+import { playWalletSound } from '../wallet/soundService'
 
 export function ChangePasswordPanel() {
   const [currentPassword, setCurrentPassword] = useState('')
@@ -30,8 +31,10 @@ export function ChangePasswordPanel() {
       setNewPassword('')
       setConfirmPassword('')
       setSuccess(true)
+      playWalletSound('success')
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      playWalletSound('error')
     } finally {
       setSubmitting(false)
     }

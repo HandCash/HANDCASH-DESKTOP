@@ -19,6 +19,7 @@ import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
 import { FriendDetailsPanel } from './FriendDetailsPanel'
 import { AddFriendPanel } from './AddFriendPanel'
+import { ChatPanel } from './ChatPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
@@ -39,6 +40,7 @@ import { getCollectable } from '../wallet/collectables'
 import {
   ActivityIcon,
   AppsIcon,
+  ChatIcon,
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
@@ -62,6 +64,7 @@ const SECTIONS: {
   Icon: ComponentType<IconProps>
 }[] = [
   { value: 'activity', label: 'Activity', Icon: ActivityIcon },
+  { value: 'chat', label: 'Chat', Icon: ChatIcon },
   { value: 'apps', label: 'Apps', Icon: AppsIcon },
   { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', Icon: FriendsIcon },
@@ -227,6 +230,7 @@ export function WalletNav({
           ) : (
             <div className="wallet-nav-panel">
               {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
+              {nav.section === 'chat' && <ChatPanel chain={profile.chain} />}
               {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
               {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}

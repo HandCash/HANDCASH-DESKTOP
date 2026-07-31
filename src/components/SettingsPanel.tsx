@@ -1,8 +1,14 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
 import { useUpdate } from '../wallet/updateProvider'
 import type { UpdateMode } from '../machines/updateMachine'
+import {
+  isWalletSfxEnabled,
+  setWalletSfxEnabled,
+  subscribeWalletSfx,
+} from '../wallet/soundPrefs'
+import { playWalletSound } from '../wallet/soundService'
 
 type SettingItem = {
   id: SettingId
@@ -97,6 +103,7 @@ export function SettingsPanel() {
   const { context, check, setMode, stateAttr } = update
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
+  const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -108,6 +115,8 @@ export function SettingsPanel() {
     const stage = rootRef.current?.closest('.wallet-nav-stage')
     if (stage instanceof HTMLElement) stage.scrollTop = 0
   }, [])
+
+  useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
 
   return (
     <div
@@ -147,6 +156,35 @@ export function SettingsPanel() {
       <section className="settings-group" data-aeon-part="application">
         <h3 className="settings-group-title">Application</h3>
         <ul className="settings-list">
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <label className="settings-row-label" htmlFor="settings-sfx-enabled">
+                  Sound effects
+                </label>
+                <span className="settings-row-desc">
+                  Soft chimes for send, receive, unlock, copy, and connect — off by default
+                </span>
+              </span>
+              <label className="settings-sfx-toggle">
+                <input
+                  id="settings-sfx-enabled"
+                  type="checkbox"
+                  checked={sfxEnabled}
+                  data-aeon-part="sfx-enabled"
+                  data-aeon-state={sfxEnabled ? 'on' : 'off'}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                    setWalletSfxEnabled(next)
+                    setSfxEnabled(next)
+                    if (next) playWalletSound('success', { force: true })
+                  }}
+                />
+                <span>{sfxEnabled ? 'On' : 'Off'}</span>
+              </label>
+            </div>
+          </li>
+
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
               <span className="settings-row-body">

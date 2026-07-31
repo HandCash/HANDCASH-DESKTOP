@@ -1,8 +1,11 @@
+import { playWalletSound } from './soundService'
+
 /** Copy text with Electron IPC fallback when Clipboard API is blocked. */
 export async function copyText(text: string): Promise<boolean> {
   try {
     if (window.handcash?.clipboardWrite) {
       await window.handcash.clipboardWrite(text)
+      playWalletSound('copy')
       return true
     }
   } catch {
@@ -11,6 +14,7 @@ export async function copyText(text: string): Promise<boolean> {
 
   try {
     await navigator.clipboard.writeText(text)
+    playWalletSound('copy')
     return true
   } catch {
     // fall through
@@ -26,6 +30,7 @@ export async function copyText(text: string): Promise<boolean> {
     el.select()
     const ok = document.execCommand('copy')
     document.body.removeChild(el)
+    if (ok) playWalletSound('copy')
     return ok
   } catch {
     return false

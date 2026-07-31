@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Prompt } from '@aeon-ui/react'
 import { useUpdate } from '../wallet/updateProvider'
+import { playWalletSound } from '../wallet/soundService'
 
 type ToastAction = 'download' | 'restart' | null
 
@@ -118,8 +119,16 @@ export function UpdatePrompt() {
       context.phase === 'downloading' ||
       context.phase === 'ready'
     ) {
+      if (prev !== context.phase) {
+        if (context.phase === 'ready' || context.phase === 'available') {
+          playWalletSound('soft')
+        }
+      }
       setFromCheck(false)
       return
+    }
+    if (context.phase === 'error' && prev !== 'error') {
+      playWalletSound('error')
     }
     if (context.phase === 'idle') {
       setFromCheck(false)

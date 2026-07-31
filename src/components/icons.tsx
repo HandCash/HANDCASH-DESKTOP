@@ -156,6 +156,15 @@ export function InventoryIcon(props: IconProps) {
   return <CollectablesIcon {...props} />
 }
 
+/** Material Icons — `chat` */
+export function ChatIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `group` */
 export function FriendsIcon(props: IconProps) {
   return (

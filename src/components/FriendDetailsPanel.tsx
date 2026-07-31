@@ -8,7 +8,7 @@ import {
   updateFriend,
   type Friend,
 } from '../wallet/friends'
-import { clearNavChild } from '../wallet/navStore'
+import { clearNavChild, openChatWithFriend } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 
 type Props = {
@@ -136,7 +136,14 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
-          <button type="submit" className="btn btn-primary" disabled={!label.trim() || label.trim() === friend.label}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => openChatWithFriend(friend.id)}
+          >
+            Message
+          </button>
+          <button type="submit" className="btn btn-ghost" disabled={!label.trim() || label.trim() === friend.label}>
             Save
           </button>
           <button

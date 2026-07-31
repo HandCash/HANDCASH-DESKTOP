@@ -22,6 +22,7 @@ import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
 import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
+import { playWalletSound } from './wallet/soundService'
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -178,10 +179,16 @@ export function App() {
         <ConnectPermissionDialog
           pending={pendingConnect}
           onAllow={() => {
-            if (pendingConnect) resolvePermission(pendingConnect.id, 'allow')
+            if (pendingConnect) {
+              resolvePermission(pendingConnect.id, 'allow')
+              playWalletSound('connect')
+            }
           }}
           onDeny={() => {
-            if (pendingConnect) resolvePermission(pendingConnect.id, 'deny')
+            if (pendingConnect) {
+              resolvePermission(pendingConnect.id, 'deny')
+              playWalletSound('deny')
+            }
           }}
         />
 
@@ -193,9 +200,13 @@ export function App() {
               setAutoPaySettings(pendingAction.origin, autoPay)
             }
             resolvePermission(pendingAction.id, 'allow')
+            playWalletSound('connect')
           }}
           onDeny={() => {
-            if (pendingAction) resolvePermission(pendingAction.id, 'deny')
+            if (pendingAction) {
+              resolvePermission(pendingAction.id, 'deny')
+              playWalletSound('deny')
+            }
           }}
         />
       </div>
