@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.9] - 2026-07-31
+
+### Changed
+
+- In-chat pay/request confirm (no Send redirect); Lab Chat flag; quieter receive SFX on sync.
+- Statecharts: stable fit/zoom, taller labels, click a linked state to open its chart.
+
 ## [1.1.8] - 2026-07-31
 
 ### Changed
