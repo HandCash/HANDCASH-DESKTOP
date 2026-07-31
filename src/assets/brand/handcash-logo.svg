@@ -1,26 +1,27 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 420 96" fill="none" role="img" aria-label="HandCash">
   <svg x="0" y="8" width="80" height="80" viewBox="0 0 128 128">
     <circle cx="64" cy="64" r="64" fill="#38D385"/>
-    <path
-      fill="#FFFFFF"
-      d="M64 22
-         A42 42 0 0 0 64 106
-         A30 30 0 0 1 64 34
-         A30 30 0 0 1 64 94
-         A42 42 0 0 0 64 22
-         Z"
-    />
-    <path
-      fill="#FFFFFF"
-      d="M64 22
-         A42 42 0 0 1 64 106
-         A30 30 0 0 0 64 94
-         A30 30 0 0 0 64 34
-         A42 42 0 0 1 64 22
-         Z"
-    />
-    <circle cx="64" cy="64" r="13" fill="#FFFFFF"/>
-    <rect x="64" y="56.5" width="38" height="15" fill="#FFFFFF"/>
+    <!-- White logo mark = 69% of the green icon (was ~65.6%; scale 0.69/0.65625) -->
+    <g transform="translate(64 64) scale(1.0514) translate(-64 -64)" fill="#FFFFFF">
+      <path
+        d="M64 22
+           A42 42 0 0 0 64 106
+           A30 30 0 0 1 64 34
+           A30 30 0 0 1 64 94
+           A42 42 0 0 0 64 22
+           Z"
+      />
+      <path
+        d="M64 22
+           A42 42 0 0 1 64 106
+           A30 30 0 0 0 64 94
+           A30 30 0 0 0 64 34
+           A42 42 0 0 1 64 22
+           Z"
+      />
+      <circle cx="64" cy="64" r="13"/>
+      <rect x="64" y="56.5" width="38" height="15"/>
+    </g>
   </svg>
   <text
     x="104"

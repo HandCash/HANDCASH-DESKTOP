@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
   getCollectable,
+  listCollectables,
   sendCollectable,
   type Collectable,
 } from '../wallet/collectables'
@@ -21,7 +22,13 @@ import {
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from '../wallet/appActivity'
+import {
+  beginPendingSend,
+  clearPendingSend,
+  completePendingSend,
+} from '../wallet/pendingSend'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
+import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
@@ -30,7 +37,7 @@ import { DeferredImage } from './DeferredImage'
 type Props = {
   outpoint: string
   chain: Chain
-  onSent?: () => void
+  onSent?: (balanceSats: number) => void
   onFail: (error: string) => void
 }
 
@@ -94,12 +101,23 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
     if (!item) return
     setStage('sending')
     setError(null)
+    let pendingId: string | null = null
     try {
+      const pending = beginPendingSend({
+        to: to.trim(),
+        sats: 1,
+        friendLabel,
+      })
+      pendingId = pending.id
+
       const result = await sendCollectable({
         outpoint: item.outpoint,
         toAddress: to,
         name: item.name,
+        origin: item.origin,
+        app: item.app,
       })
+      completePendingSend(pending.id, result.txid)
       setTxid(result.txid)
       const noteTo = friendLabel ? `${friendLabel} (${to})` : to
       if (!hasActivityTxid(result.txid)) {
@@ -112,10 +130,26 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
           txid: result.txid,
         })
       }
+      clearPendingSend(pending.id)
+      pendingId = null
+
       setStage('success')
-      onSent?.()
+      void listCollectables().catch(() => {})
       void syncLegacyFunds()
+        .then(async (balance) => {
+          if (balance != null) {
+            onSent?.(balance)
+            return
+          }
+          const active = getActiveWallet()
+          if (!active) return
+          onSent?.(await fetchBalanceSats(active.wallet))
+        })
+        .catch((err) => {
+          console.warn('[send-collectable] balance refresh failed', err)
+        })
     } catch (err) {
+      if (pendingId) clearPendingSend(pendingId)
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
       setStage('failure')

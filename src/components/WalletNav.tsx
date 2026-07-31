@@ -206,6 +206,7 @@ export function WalletNav({
                 <SendCollectablePanel
                   outpoint={child.outpoint}
                   chain={profile.chain}
+                  onSent={onSent}
                   onFail={onFail}
                 />
               )}

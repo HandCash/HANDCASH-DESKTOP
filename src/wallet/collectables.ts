@@ -238,11 +238,34 @@ export async function getCollectable(
   return item
 }
 
-/** Transfer a basket `1sat` output to a P2PKH address via BRC-100 createAction. */
+function formatSendError(err: unknown): Error {
+  if (err instanceof Error) {
+    const name = err.name || ''
+    const msg = err.message || String(err)
+    if (name.includes('INSUFFICIENT_FUNDS') || /insufficient.?funds/i.test(msg)) {
+      return new Error('Not enough BSV to cover the network fee for this transfer')
+    }
+    if (/invalid.*address|lockingScript|P2PKH/i.test(msg)) {
+      return new Error('Invalid recipient address')
+    }
+    return err
+  }
+  return new Error(String(err))
+}
+
+/**
+ * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
+ *
+ * Ordinal sat stays on output 0 (`randomizeOutputs: false`). Fees are funded
+ * from the default change basket. Origin/name/app tags match import metadata
+ * so recipients (and our activity trail) can resolve the inscription.
+ */
 export async function sendCollectable(args: {
   outpoint: string
   toAddress: string
   name?: string
+  origin?: string
+  app?: string
 }): Promise<{ txid: string }> {
   const wallet = getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
@@ -251,35 +274,103 @@ export async function sendCollectable(args: {
   const to = args.toAddress.trim()
   if (!to) throw new Error('Recipient required')
 
-  const lockingScript = new P2PKH().lock(to).toHex()
-  const label = (args.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
+  let lockingScript: string
+  try {
+    lockingScript = new P2PKH().lock(to).toHex()
+  } catch {
+    throw new Error('Invalid recipient address')
+  }
 
-  const result = await wallet.wallet.createAction({
-    description: `Send ${label}`.slice(0, 50),
-    labels: ['1sat', 'handcash-send-collectable'],
-    inputs: [
-      {
-        outpoint,
-        inputDescription: '1sat collectable',
-      },
-    ],
-    outputs: [
-      {
-        lockingScript,
-        satoshis: 1,
-        outputDescription: 'Collectable transfer',
-      },
-    ],
-    options: {
-      trustSelf: 'known',
-      randomizeOutputs: false,
-      acceptDelayedBroadcast: true,
-    },
+  const held = await wallet.wallet.listOutputs({
+    basket: '1sat',
+    limit: 1000,
+    includeTags: true,
+    includeCustomInstructions: true,
+    seekPermission: false,
   })
+  const match = (held.outputs ?? []).find(
+    (o) => normalizeOutpoint(o.outpoint) === outpoint,
+  )
+  if (!match) throw new Error('Collectable is no longer in this wallet')
+  if ((match.satoshis ?? 1) !== 1) {
+    throw new Error('Collectable UTXO is not a 1-sat ordinal')
+  }
 
-  const txid = (result as { txid?: string }).txid
-  if (!txid) throw new Error('Send completed without txid')
+  const item = (await getCollectable(outpoint, wallet)) ?? null
+  const origin = parseOrigin(args.origin ?? item?.origin, outpoint)
+  const name =
+    (args.name ?? item?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
+  const app = args.app ?? item?.app
+  const originTag = origin.replace(/_(\d+)$/, '.$1')
+  const tags = [
+    'ordinal',
+    `origin:${originTag}`,
+    `name:${name.slice(0, 80)}`,
+    ...(app ? [`app:${app.slice(0, 40)}`] : []),
+  ]
+
+  const [txidIn] = outpoint.split('.')
+  let inputBEEF: number[] | undefined
+  try {
+    if (txidIn && wallet.services?.getBeefForTxid) {
+      const beef = await wallet.services.getBeefForTxid(txidIn)
+      if (beef && typeof beef.toBinary === 'function') {
+        inputBEEF = beef.toBinary()
+      }
+    }
+  } catch (err) {
+    console.warn('[collectables] inputBEEF fetch skipped', err)
+  }
+
+  let result: { txid?: string; signableTransaction?: unknown }
+  try {
+    result = await wallet.wallet.createAction({
+      description: `Send ${name}`.slice(0, 50),
+      labels: ['1sat', 'handcash-send-collectable'],
+      ...(inputBEEF ? { inputBEEF } : {}),
+      inputs: [
+        {
+          outpoint,
+          inputDescription: '1sat collectable',
+        },
+      ],
+      outputs: [
+        {
+          lockingScript,
+          satoshis: 1,
+          outputDescription: 'Collectable transfer',
+          tags,
+          customInstructions: JSON.stringify({
+            origin,
+            name,
+            app,
+          }),
+        },
+      ],
+      options: {
+        trustSelf: 'known',
+        ...(txidIn ? { knownTxids: [txidIn] } : {}),
+        randomizeOutputs: false,
+        // Surface broadcast errors immediately for ordinal transfers.
+        acceptDelayedBroadcast: false,
+        signAndProcess: true,
+      },
+    })
+  } catch (err) {
+    throw formatSendError(err)
+  }
+
+  const txid = result.txid
+  if (!txid) {
+    if (result.signableTransaction) {
+      throw new Error('Collectable send needs additional signatures')
+    }
+    throw new Error('Send completed without txid')
+  }
 
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
+  void listCollectables(wallet).catch((err) => {
+    console.warn('[collectables] post-send refresh failed', err)
+  })
   return { txid }
 }

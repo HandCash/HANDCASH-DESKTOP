@@ -5,12 +5,17 @@ import bsvLogo from '../assets/brand/bsv-logo.png'
 import bsvLogoClassic from '../assets/brand/bsv-logo-classic.png'
 import { Skeleton, SkeletonLine } from './Skeleton'
 import {
+  BSV_CHART_RANGE_LABEL,
   OFFICIAL_URL,
+  changePctForRange,
   formatPct,
   formatPriceUsd,
   getCachedBsvMarket,
+  nextBsvChartRange,
   refreshBsvMarket,
+  sparklineForRange,
   subscribeBsvMarket,
+  type BsvChartRange,
   type BsvMarketStats,
 } from '../wallet/bsvMarket'
 
@@ -54,6 +59,7 @@ function Sparkline({ values, up }: { values: number[]; up: boolean }) {
 
 export function WhatIsBsvPanel() {
   const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket())
+  const [chartRange, setChartRange] = useState<BsvChartRange>('24h')
   const [openSections, setOpenSections] = useState<string[]>([])
   const [classicLogo, setClassicLogo] = useState(false)
   const [logosReady, setLogosReady] = useState({ normal: false, classic: false })
@@ -64,7 +70,7 @@ export function WhatIsBsvPanel() {
 
   useEffect(() => {
     const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket()))
-    void refreshBsvMarket()
+    void refreshBsvMarket(true)
     const id = window.setInterval(() => void refreshBsvMarket(), 5 * 60_000)
     return () => {
       unsub()
@@ -121,11 +127,13 @@ export function WhatIsBsvPanel() {
     }, 700)
   }
 
-  const change24 = stats?.change24hPct ?? null
-  const up24 = (change24 ?? 0) >= 0
+  const changePct = changePctForRange(stats, chartRange)
+  const sparkValues = sparklineForRange(stats, chartRange)
+  const up = (changePct ?? 0) >= 0
   const aboutOpen = openSections.includes('about')
   const marketReady = Boolean(stats)
   const logoFrameReady = logosReady.normal
+  const rangeLabel = BSV_CHART_RANGE_LABEL[chartRange]
 
   return (
     <aside className="panel what-is-bsv" data-aeon-scope="what-is-bsv">
@@ -170,9 +178,15 @@ export function WhatIsBsvPanel() {
         <div className="bsv-asset-text">
           <strong>Bitcoin SV (BSV)</strong>
           {marketReady ? (
-            <span className={`bsv-change ${up24 ? 'is-up' : 'is-down'}`}>
-              {formatPct(change24)} · 24h
-            </span>
+            <button
+              type="button"
+              className={`bsv-change ${up ? 'is-up' : 'is-down'}`}
+              onClick={() => setChartRange((r) => nextBsvChartRange(r))}
+              aria-label={`Price change ${rangeLabel}. Click to cycle 24h, 7D, 1M`}
+              title="Click to cycle 24h → 7D → 1M"
+            >
+              {formatPct(changePct)} · {rangeLabel}
+            </button>
           ) : (
             <SkeletonLine width="45%" height={11} />
           )}
@@ -192,7 +206,7 @@ export function WhatIsBsvPanel() {
       >
         <div className="bsv-stage-panel bsv-stage-chart" aria-hidden={aboutOpen}>
           {marketReady ? (
-            <Sparkline values={stats?.sparkline ?? []} up={up24} />
+            <Sparkline values={sparkValues} up={up} />
           ) : (
             <div className="bsv-spark bsv-spark-empty" aria-hidden />
           )}

@@ -83,6 +83,10 @@ body {
   height: 34px;
   border-radius: 8px;
   object-fit: contain;
+  object-position: center;
+  /* Logo mark fills 69% of the icon tile; black frame shows around it */
+  padding: 15.5%;
+  box-sizing: border-box;
   flex-shrink: 0;
   background: #000;
   box-shadow: 0 0 20px -6px hsl(var(--primary) / 0.45);
@@ -892,19 +896,21 @@ body {
 
 .bsv-logo-stack {
   position: relative;
-  display: block;
+  display: grid;
+  place-items: center;
   width: 44px;
   height: 44px;
   border-radius: 12px;
   overflow: hidden;
+  background: #000;
 }
 
 .bsv-logo {
-  width: 44px;
-  height: 44px;
-  border-radius: 12px;
+  width: 69%;
+  height: 69%;
+  border-radius: 50%;
   display: block;
-  object-fit: cover;
+  object-fit: contain;
   user-select: none;
   -webkit-user-drag: none;
 }
@@ -912,6 +918,9 @@ body {
 .bsv-logo-stack .bsv-logo {
   position: absolute;
   inset: 0;
+  margin: auto;
+  width: 69%;
+  height: 69%;
   opacity: 0;
   transition: opacity 180ms ease;
 }
@@ -936,8 +945,30 @@ body {
 }
 
 .bsv-change {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.15rem;
+  margin: 0;
+  padding: 0;
+  border: none;
+  background: transparent;
+  font: inherit;
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
+  color: inherit;
+  cursor: pointer;
+  border-radius: 4px;
+  text-align: left;
+}
+
+.bsv-change:hover {
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+.bsv-change:focus-visible {
+  outline: 2px solid var(--hc-accent, #38d39f);
+  outline-offset: 2px;
 }
 
 .bsv-price {
@@ -1671,15 +1702,15 @@ button.wallet-detail-value.is-copied {
 }
 
 .wallet-backup-warn-mark {
-  display: inline-grid;
-  place-items: center;
-  width: 1.1em;
-  height: 1.1em;
-  border-radius: 999px;
-  border: 1.5px solid currentColor;
-  font-size: 0.72rem;
-  font-weight: 800;
-  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  line-height: 0;
+}
+
+.wallet-backup-warn-mark svg {
+  display: block;
 }
 
 .wallet-hero-head {

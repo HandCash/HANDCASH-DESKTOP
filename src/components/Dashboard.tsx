@@ -15,7 +15,7 @@ import {
 } from '../wallet/displayCurrency'
 import { clearAppActivity } from '../wallet/appActivity'
 import type { WalletProfile } from '../machines/appMachine'
-import { SendIcon, ReceiveIcon, LockIcon, RefreshIcon } from './icons'
+import { SendIcon, ReceiveIcon, LockIcon, RefreshIcon, WarningIcon } from './icons'
 import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
@@ -129,7 +129,7 @@ export function Dashboard({
                 onClick={() => openSetting('backup-phrase')}
               >
                 <span className="wallet-backup-warn-mark" aria-hidden>
-                  !
+                  <WarningIcon size={14} />
                 </span>
                 Backup your wallet
               </button>
