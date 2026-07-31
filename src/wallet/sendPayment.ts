@@ -9,6 +9,7 @@ import {
   clearPendingSend,
   completePendingSend,
 } from './pendingSend'
+import { resolvePaymentAddress } from './friends'
 import { fetchBalanceSats, getActiveWallet } from './session'
 import { syncLegacyFunds } from './syncFunds'
 
@@ -27,9 +28,8 @@ export async function sendSatsToAddress(opts: {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const to = opts.to.trim()
+  const to = resolvePaymentAddress(opts.to, active.chain)
   const satoshis = opts.satoshis
-  if (!to) throw new Error('Missing address')
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
   const pending = beginPendingSend({

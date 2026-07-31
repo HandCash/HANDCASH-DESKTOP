@@ -32,13 +32,13 @@ const SETTING_GROUPS: SettingGroup[] = [
     items: [
       {
         id: 'backup-phrase',
-        label: 'Backup recovery phrase',
-        description: 'Show your 12-word phrase (password required)',
+        label: 'Recovery phrase',
+        description: 'Password required',
       },
       {
         id: 'change-password',
         label: 'Change password',
-        description: 'Update the unlock password on this device',
+        description: '',
       },
     ],
   },
@@ -47,8 +47,8 @@ const SETTING_GROUPS: SettingGroup[] = [
     items: [
       {
         id: 'wipe-wallet',
-        label: 'Wipe wallet data',
-        description: 'Factory-reset this device (needs phrase to restore)',
+        label: 'Wipe wallet',
+        description: 'Needs phrase to restore',
       },
     ],
   },
@@ -165,10 +165,6 @@ export function SettingsPanel() {
 
       <section className="settings-group" data-aeon-part="lab" data-settings-group="Lab">
         <h3 className="settings-group-title">Lab</h3>
-        <p className="settings-lab-intro">
-          Experimental corners of this self-custodial HandCash Desktop wallet. Features here stay
-          off by default while we prove them — your keys and funds remain on this device either way.
-        </p>
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
@@ -176,9 +172,7 @@ export function SettingsPanel() {
                 <label className="settings-row-label" htmlFor="settings-lab-chat">
                   Chat
                 </label>
-                <span className="settings-row-desc">
-                  Friend messaging and in-chat pay/request — experimental, off by default
-                </span>
+                <span className="settings-row-desc">Experimental</span>
               </span>
               <label className="settings-sfx-toggle">
                 <input
@@ -202,10 +196,6 @@ export function SettingsPanel() {
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">Statecharts</strong>
-                <span className="settings-row-desc">
-                  Diagrams of the wallet’s UI = f(state) machines — session, nav, send, chat, and the
-                  rest. Handy when debugging flows or explaining how Desktop is wired.
-                </span>
               </span>
               <button
                 type="button"
@@ -216,7 +206,7 @@ export function SettingsPanel() {
                   openSetting('statecharts')
                 }}
               >
-                View statecharts
+                View
               </button>
             </div>
           </li>
@@ -232,9 +222,6 @@ export function SettingsPanel() {
                 <label className="settings-row-label" htmlFor="settings-sfx-enabled">
                   Sound effects
                 </label>
-                <span className="settings-row-desc">
-                  Chimes for taps, send, receive, unlock, copy, connect, and more — off by default
-                </span>
               </span>
               <label className="settings-sfx-toggle">
                 <input
@@ -259,12 +246,8 @@ export function SettingsPanel() {
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <label className="settings-row-label" htmlFor="settings-update-mode">
-                  Update Mode
+                  Updates
                 </label>
-                <span className="settings-row-desc">
-                  {UPDATE_MODES.find((m) => m.value === context.mode)?.description ??
-                    'How HandCash Desktop checks for updates'}
-                </span>
               </span>
               <select
                 id="settings-update-mode"
@@ -312,7 +295,7 @@ export function SettingsPanel() {
                   void check()
                 }}
               >
-                {checking ? 'Checking…' : 'Check for Updates'}
+                {checking ? 'Checking…' : 'Check'}
               </button>
             </div>
           </li>
@@ -326,9 +309,7 @@ export function SettingsPanel() {
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">HandCash Desktop</strong>
-                <span className="settings-row-desc">
-                  Self-custodial BRC-100 wallet for Bitcoin SV — keys stay on this device
-                </span>
+                <span className="settings-row-desc">Self-custodial BRC-100 wallet</span>
               </span>
             </div>
           </li>
@@ -337,7 +318,6 @@ export function SettingsPanel() {
               <span className="settings-row-body">
                 <strong className="settings-row-label">Screenshot</strong>
                 <span className="settings-row-desc">
-                  Copy the app window (with v{runningVersion} BETA badge) ·{' '}
                   {window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
                 </span>
               </span>
@@ -347,7 +327,7 @@ export function SettingsPanel() {
                 data-aeon-part="copy-screenshot"
                 onClick={() => void window.handcash?.copyScreenshot?.()}
               >
-                Copy now
+                Copy
               </button>
             </div>
           </li>

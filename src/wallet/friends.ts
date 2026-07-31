@@ -1,4 +1,4 @@
-import { PublicKey } from '@bsv/sdk'
+import { P2PKH, PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
@@ -57,6 +57,25 @@ export function subscribeFriends(listener: FriendsListener): () => void {
 export function addressFromIdentityKey(identityKey: string, chain: Chain): string {
   const prefix = chain === 'main' ? 'mainnet' : 'testnet'
   return PublicKey.fromString(identityKey.trim()).toAddress(prefix)
+}
+
+/** Accept a P2PKH address or BSV identity key; always returns a lockable address. */
+export function resolvePaymentAddress(recipient: string, chain: Chain): string {
+  const value = recipient.trim()
+  if (!value) throw new Error('Recipient required')
+
+  try {
+    new P2PKH().lock(value)
+    return value
+  } catch {
+    // not a payment address — try identity key
+  }
+
+  try {
+    return addressFromIdentityKey(value, chain)
+  } catch {
+    throw new Error('Invalid recipient address or identity key')
+  }
 }
 
 export function normalizeIdentityKey(identityKey: string): string {

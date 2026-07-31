@@ -9,6 +9,7 @@ import {
 import {
   addressFromIdentityKey,
   listFriends,
+  resolvePaymentAddress,
   searchFriends,
   subscribeFriends,
   type Friend,
@@ -39,7 +40,7 @@ type Props = {
   outpoint: string
   chain: Chain
   onSent?: (balanceSats: number) => void
-  onFail: (error: string) => void
+  onFail?: (error: string) => void
 }
 
 type Stage = 'edit' | 'confirm' | 'sending' | 'success' | 'failure'
@@ -50,7 +51,7 @@ function shortenAddress(value: string): string {
   return `${v.slice(0, 10)}…${v.slice(-8)}`
 }
 
-export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props) {
+export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [recipientQuery, setRecipientQuery] = useState('')
@@ -95,7 +96,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
       setFriendLabel(friend.label)
       setError(null)
     } catch (err) {
-      onFail(err instanceof Error ? err.message : String(err))
+      setError(err instanceof Error ? err.message : String(err))
+      playWalletSound('deny')
     }
   }
 
@@ -155,7 +157,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
       setStage('failure')
-      onFail(message)
     }
   }
 
@@ -206,7 +207,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
               onBlur={() => {
                 window.setTimeout(() => setShowMatches(false), 120)
               }}
-              placeholder="Search friends or paste address"
+              placeholder="Friend, address, or identity key"
               autoComplete="off"
               spellCheck={false}
               autoFocus
@@ -216,6 +217,11 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
                 Sending to <strong>{friendLabel}</strong>
               </p>
             )}
+            {error && stage === 'edit' ? (
+              <p className="error" role="status">
+                {error}
+              </p>
+            ) : null}
             {showMatches && matches.length > 0 && (
               <ul className="friend-suggest-list send-friend-suggest" role="listbox">
                 {matches.map((friend) => (
@@ -240,7 +246,18 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
               type="button"
               className="btn btn-primary"
               disabled={!canReview}
-              onClick={() => setStage('confirm')}
+              onClick={() => {
+                try {
+                  const address = resolvePaymentAddress(to, chain)
+                  setTo(address)
+                  setError(null)
+                  setStage('confirm')
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : String(err)
+                  setError(message)
+                  playWalletSound('deny')
+                }
+              }}
             >
               Review
             </button>

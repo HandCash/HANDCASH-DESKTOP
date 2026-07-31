@@ -23,32 +23,23 @@ function MetaRow({
 }: {
   label: string
   value: string
-  onCopy?: () => void
-  copied?: boolean
+  onCopy: () => void
+  copied: boolean
 }) {
-  if (onCopy) {
-    return (
-      <div className="field collectable-meta-field">
-        <span className="field-static-label">{label}</span>
+  return (
+    <>
+      <dt>{label}</dt>
+      <dd>
         <button
           type="button"
-          className={`mono wallet-detail-value collectable-full-value${
-            copied ? ' is-copied' : ''
-          }`}
-          title={`Click to copy ${label.toLowerCase()}`}
+          className={`mono collectable-meta-copy${copied ? ' is-copied' : ''}`}
+          title={`Click to copy ${label.toLowerCase()}\n${value}`}
           onClick={onCopy}
         >
           {copied ? 'Copied' : value}
         </button>
-      </div>
-    )
-  }
-
-  return (
-    <div className="field collectable-meta-field">
-      <span className="field-static-label">{label}</span>
-      <p className="mono wallet-detail-value collectable-full-value">{value}</p>
-    </div>
+      </dd>
+    </>
   )
 }
 
@@ -72,7 +63,7 @@ function TraitStrip({ title, traits }: { title: string; traits: CollectableTrait
 export function CollectableDetailsPanel({ outpoint }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [loading, setLoading] = useState(true)
-  const [copied, setCopied] = useState<'origin' | 'outpoint' | null>(null)
+  const [copied, setCopied] = useState<'origin' | 'outpoint' | 'collection' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -93,7 +84,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     }
   }, [outpoint])
 
-  const copy = async (kind: 'origin' | 'outpoint', value: string) => {
+  const copy = async (kind: 'origin' | 'outpoint' | 'collection', value: string) => {
     if (!(await copyText(value))) return
     setCopied(kind)
     window.setTimeout(() => setCopied(null), 1600)
@@ -106,12 +97,11 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     return <p className="connected-empty-line">Collectable not found</p>
   }
 
-  const infoTraits: CollectableTrait[] = [
+  const detailRows: CollectableTrait[] = [
     ...(item.app ? [{ name: 'App', value: item.app }] : []),
     ...(item.type ? [{ name: 'Type', value: item.type }] : []),
     ...(item.subType ? [{ name: 'Subtype', value: item.subType }] : []),
     ...(item.mimeType ? [{ name: 'MIME', value: item.mimeType }] : []),
-    ...(item.collectionId ? [{ name: 'Collection', value: item.collectionId }] : []),
     ...item.extras,
   ]
 
@@ -151,9 +141,17 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       </div>
 
       <TraitStrip title="Traits" traits={item.traits} />
-      <TraitStrip title="Details" traits={infoTraits} />
+      <TraitStrip title="Details" traits={detailRows} />
 
-      <div className="collectable-details-meta">
+      <dl className="collectable-details-meta">
+        {item.collectionId ? (
+          <MetaRow
+            label="Collection"
+            value={item.collectionId}
+            copied={copied === 'collection'}
+            onCopy={() => void copy('collection', item.collectionId!)}
+          />
+        ) : null}
         <MetaRow
           label="Origin"
           value={item.origin}
@@ -166,7 +164,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           copied={copied === 'outpoint'}
           onCopy={() => void copy('outpoint', item.outpoint)}
         />
-      </div>
+      </dl>
     </div>
   )
 }

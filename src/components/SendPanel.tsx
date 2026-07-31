@@ -165,7 +165,6 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
-      onFail(message)
     }
   }
 
@@ -221,7 +220,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                   onBlur={() => {
                     window.setTimeout(() => setShowFriendMatches(false), 120)
                   }}
-                  placeholder="Search friends or paste address"
+                  placeholder="Friend, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
                 />

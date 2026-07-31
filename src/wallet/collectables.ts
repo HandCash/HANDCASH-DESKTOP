@@ -9,6 +9,7 @@ import {
   type CollectableTrait,
   type ResolvedInscription,
 } from './oneSatImport'
+import { resolvePaymentAddress } from './friends'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -246,7 +247,7 @@ function formatSendError(err: unknown): Error {
       return new Error('Not enough BSV to cover the network fee for this transfer')
     }
     if (/invalid.*address|lockingScript|P2PKH/i.test(msg)) {
-      return new Error('Invalid recipient address')
+      return new Error('Invalid recipient address or identity key')
     }
     return err
   }
@@ -271,14 +272,13 @@ export async function sendCollectable(args: {
   if (!wallet) throw new Error('Wallet locked')
 
   const outpoint = normalizeOutpoint(args.outpoint)
-  const to = args.toAddress.trim()
-  if (!to) throw new Error('Recipient required')
+  const to = resolvePaymentAddress(args.toAddress, wallet.chain)
 
   let lockingScript: string
   try {
     lockingScript = new P2PKH().lock(to).toHex()
   } catch {
-    throw new Error('Invalid recipient address')
+    throw new Error('Invalid recipient address or identity key')
   }
 
   const held = await wallet.wallet.listOutputs({
