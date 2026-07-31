@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.8] - 2026-07-31
+
+### Changed
+
+- Chat (BRC-218 commands), opt-in wallet SFX, favicon retry, compact statecharts, desktop icon mark inset.
+
 ## [1.1.7] - 2026-07-31
 
 ### Changed
