@@ -237,6 +237,17 @@ body {
   line-height: 1.45;
 }
 
+.auth-unlock-nudge {
+  margin: 10px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 40%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+  color: var(--hc-text);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
 .auth-form {
   display: grid;
   gap: 0.15rem;
@@ -1737,6 +1748,17 @@ button.wallet-detail-value.is-copied {
   margin-bottom: 12px;
 }
 
+.wallet-sync-note {
+  margin: 8px 0 0;
+  color: var(--hc-muted);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.wallet-sync-note.is-error {
+  color: hsl(var(--destructive));
+}
+
 .wallet-nav-bar {
   display: block;
   padding: 8px 10px;
@@ -1899,6 +1921,15 @@ button.identity-qr-copy:focus-visible {
   font-size: 0.78rem;
   text-align: center;
   line-height: 1.35;
+}
+
+.identity-key-note {
+  margin: 6px 0 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+  text-align: center;
+  line-height: 1.35;
+  max-width: 220px;
 }
 
 .identity-info {
@@ -4059,6 +4090,10 @@ a.app-details-host:hover {
   margin: 6px 0 0;
   font-size: 0.8rem;
   color: var(--hc-accent);
+}
+
+.send-recipient-hint {
+  color: var(--hc-muted);
 }
 
 .friend-suggest-list {

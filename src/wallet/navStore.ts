@@ -1,6 +1,8 @@
 import type { ConnectedApp } from './permissions'
 import { focusChatPeer } from './chatFocus'
 import { isLabChatEnabled } from './labPrefs'
+import { isBackupConfirmed } from './backupStatus'
+import { playWalletSound } from './soundService'
 
 export type NavSection =
   | 'activity'
@@ -81,6 +83,11 @@ export function openPermissionDetails(origin: string, scopeId: string) {
 }
 
 export function openSendFlow() {
+  if (!isBackupConfirmed()) {
+    playWalletSound('deny')
+    openSetting('backup-phrase')
+    return
+  }
   openNavChild('activity', { type: 'send' })
 }
 
@@ -111,6 +118,11 @@ export function openCollectableDetails(outpoint: string) {
 }
 
 export function openSendCollectable(outpoint: string) {
+  if (!isBackupConfirmed()) {
+    playWalletSound('deny')
+    openSetting('backup-phrase')
+    return
+  }
   openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 

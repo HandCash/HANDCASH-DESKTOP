@@ -3,8 +3,19 @@ import {
   normalizeAppHost,
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
+import { isBackupConfirmed } from './backupStatus'
+import { openSetting } from './navStore'
 import { formatBsvSignificant } from './session'
+import { playWalletSound } from './soundService'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+
+/** Block connect / spend until the user confirms their backup phrase. */
+function denyUntilBackupConfirmed(): Promise<PermissionDecision> {
+  playWalletSound('deny')
+  void window.handcash?.focusWindow?.()
+  openSetting('backup-phrase')
+  return Promise.resolve('deny')
+}
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -60,6 +71,7 @@ const ACTION_METHODS = new Set([
   'relinquishOutput',
   'relinquishCertificate',
   'createSignature',
+  'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',
   'revealSpecificKeyLinkage',
@@ -301,6 +313,8 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
 export function requestOriginPermission(origin: string | undefined, method: string): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
 
+  if (!isBackupConfirmed()) return denyUntilBackupConfirmed()
+
   if (isOriginAllowed(key)) return Promise.resolve('allow')
 
   if (current?.request.kind === 'connect' && current.request.origin === key) {
@@ -398,6 +412,14 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'encrypt') {
+    return {
+      title: 'Encrypt data',
+      summary: 'Encrypt data with your wallet keys',
+      details: [],
+    }
+  }
+
   if (method === 'decrypt') {
     return {
       title: 'Decrypt data',
@@ -436,6 +458,13 @@ export function requestActionApproval(
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
+
+  if (
+    (method === 'createAction' || method === 'signAction') &&
+    !isBackupConfirmed()
+  ) {
+    return denyUntilBackupConfirmed()
+  }
 
   if (canAutoProcessPayment(key, method, amountSats)) {
     return Promise.resolve('allow')

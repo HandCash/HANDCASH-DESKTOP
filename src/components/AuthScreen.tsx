@@ -11,6 +11,10 @@ import {
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
 import { markBackupConfirmed } from '../wallet/backupStatus'
 import { playWalletSound } from '../wallet/soundService'
+import {
+  clearUnlockNudge,
+  subscribeUnlockNudge,
+} from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 
 type Props = {
@@ -50,10 +54,13 @@ export function AuthScreen({
   )
   const [mnemonicInput, setMnemonicInput] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
+  const [unlockNudge, setUnlockNudge] = useState(false)
 
   useEffect(() => {
     if (recoveryOnly) setFormMode('restore')
   }, [recoveryOnly])
+
+  useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
 
   useEffect(() => {
     if (mode === 'locked' && isMismatchError(error)) setOfferRestoreOnLock(true)
@@ -82,6 +89,7 @@ export function AuthScreen({
         markBackupConfirmed()
         send({ type: 'SUCCESS' })
         playWalletSound('unlock')
+        clearUnlockNudge()
         onCreated(
           {
             handle: unlocked.record.handle,
@@ -104,6 +112,7 @@ export function AuthScreen({
         const balanceSats = await fetchBalanceSats(active.wallet)
         send({ type: 'SUCCESS' })
         playWalletSound('unlock')
+        clearUnlockNudge()
         onCreated(
           {
             handle: unlocked.record.handle,
@@ -125,6 +134,7 @@ export function AuthScreen({
       const balanceSats = await fetchBalanceSats(active.wallet)
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
+      clearUnlockNudge()
       onUnlocked(
         {
           handle: unlocked.record.handle,
@@ -169,6 +179,11 @@ export function AuthScreen({
       <div className="auth-copy">
         <h1 className="auth-title">{title}</h1>
         <p className="auth-lede">{lede}</p>
+        {unlockNudge && mode === 'locked' ? (
+          <p className="auth-unlock-nudge" role="status">
+            An app needs this wallet — unlock to continue.
+          </p>
+        ) : null}
       </div>
 
       <form

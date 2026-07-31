@@ -212,6 +212,9 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
               spellCheck={false}
               autoFocus
             />
+            <p className="friend-recipient-hint send-recipient-hint">
+              Identity keys resolve to a payment address on this network.
+            </p>
             {friendLabel && (
               <p className="friend-recipient-hint">
                 Sending to <strong>{friendLabel}</strong>

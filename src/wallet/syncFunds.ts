@@ -3,6 +3,7 @@ import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
 import { playWalletSound } from './soundService'
+import { setSyncHealth } from './walletHealth'
 
 export type SyncLegacyFundsOptions = {
   /**
@@ -28,7 +29,7 @@ function maybeReceiveChime(): void {
 /**
  * Quietly scan the legacy receive address and import UTXOs.
  * 1Sat ordinals → basket `1sat` (internalize). Other P2PKH → managed change.
- * Safe to call on an interval; failures are logged only.
+ * Safe to call on an interval; surfaces held/error via walletHealth.
  *
  * Important for self-sends: createAction pays your receive address as an
  * "external" output, so balance drops until those UTXOs are imported back.
@@ -39,6 +40,8 @@ export async function syncLegacyFunds(
   const announceReceive = opts?.announceReceive !== false
   const active = getActiveWallet()
   if (!active) return null
+
+  setSyncHealth({ phase: 'syncing', message: null })
 
   let balanceBefore = 0
   let balanceBeforeOk = false
@@ -56,6 +59,8 @@ export async function syncLegacyFunds(
   }
 
   let newOneSatOutpoints: string[] = []
+  let heldCount = 0
+  let partialWarn: string | null = null
 
   try {
     const scan = await scanLegacyAddress(active)
@@ -64,6 +69,7 @@ export async function syncLegacyFunds(
         scan.utxos,
         active.chain,
       )
+      heldCount = heldOneSats.length
       if (heldOneSats.length > 0) {
         console.info(
           `[sync] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
@@ -73,6 +79,7 @@ export async function syncLegacyFunds(
         const itemResult = await importOneSatOrdinals(oneSats, active)
         if (itemResult.failed > 0) {
           console.warn('[sync] 1sat import partial', itemResult)
+          partialWarn = `Some items didn’t import (${itemResult.failed}). Try Refresh.`
         }
         newOneSatOutpoints = (itemResult.outpoints ?? []).filter(
           (op) => !announcedOneSatOutpoints.has(op),
@@ -85,28 +92,50 @@ export async function syncLegacyFunds(
         const result = await importLegacyUtxos(funding, active)
         if (result.failed > 0) {
           console.warn('[sync] legacy import partial', result)
+          partialWarn =
+            partialWarn ??
+            `Some funds didn’t import (${result.failed}). Try Refresh.`
         }
       }
     }
   } catch (err) {
     console.warn('[sync] legacy scan/import skipped', err)
+    setSyncHealth({
+      phase: 'error',
+      message: 'Couldn’t refresh funds — check network and try Refresh.',
+      heldOneSats: heldCount,
+    })
+    return null
   }
 
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
     if (announceReceive) {
-      // Only chime on a real spendable balance increase. Do NOT key off
-      // import success counts — re-import / no-op success is common on the
-      // 30s poll and was causing intermittent receive SFX while idle.
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
       const newItems = newOneSatOutpoints.length > 0
       if (balanceRose || newItems) {
         maybeReceiveChime()
       }
     }
+
+    const heldMessage =
+      heldCount > 0
+        ? `${heldCount} one-sat output${heldCount === 1 ? '' : 's'} waiting on the index — not spendable as BSV.`
+        : null
+
+    setSyncHealth({
+      phase: 'ok',
+      message: partialWarn ?? heldMessage,
+      heldOneSats: heldCount,
+    })
     return balanceAfter
   } catch (err) {
     console.warn('[sync] balance refresh failed', err)
+    setSyncHealth({
+      phase: 'error',
+      message: 'Balance refresh failed — try Refresh.',
+      heldOneSats: heldCount,
+    })
     return null
   }
 }

@@ -74,6 +74,9 @@ export function IdentityPanel({ profile }: Props) {
           <p className="identity-qr-hint">
             {copied ? 'Copied' : 'Tap QR to copy'}
           </p>
+          <p className="identity-key-note">
+            Identity key — not a payment address. Use Receive for BSV.
+          </p>
         </div>
 
         <div className="identity-info">

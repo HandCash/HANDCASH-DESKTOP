@@ -15,6 +15,7 @@ import {
   refreshLegacyAddressPayload,
 } from './migration'
 import { playWalletSound } from './soundService'
+import { requestUnlockForBridge } from './walletHealth'
 
 type HttpRequestEvent = {
   method: string
@@ -149,6 +150,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
 
   const active = getActiveWallet()
   if (!active) {
+    requestUnlockForBridge()
     return {
       status: 503,
       body: JSON.stringify({

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.1.12] - 2026-07-31
+
+### Changed
+
+- Surface sync / held 1-sat / migrate-style errors in the wallet UI (not console-only).
+- Clarify identity key vs payment address on Identity, Receive, and Send.
+- Require backup confirmation before first outbound send or app connect.
+- Unlock nudge when the BRC-100 bridge is hit while the wallet is locked.
+- Windows release CI workflow (`latest.yml` + installers on tag).
+- Gate `encrypt` with other action methods; document migrate bridge hosts.
+
 ## [1.1.10] - 2026-07-31
 
 ### Changed

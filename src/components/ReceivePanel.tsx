@@ -11,7 +11,7 @@ type Props = {
 
 export function ReceivePanel({
   value,
-  subtitle = 'Scan to send BSV to this wallet',
+  subtitle = 'Payment address — scan or copy to receive BSV',
 }: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)

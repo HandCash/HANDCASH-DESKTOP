@@ -224,6 +224,9 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                   autoComplete="off"
                   spellCheck={false}
                 />
+                <p className="friend-recipient-hint send-recipient-hint">
+                  Identity keys resolve to a payment address on this network.
+                </p>
                 {sendSnap.context.friendLabel && (
                   <p className="friend-recipient-hint">
                     Sending to <strong>{sendSnap.context.friendLabel}</strong>

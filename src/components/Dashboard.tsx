@@ -32,6 +32,10 @@ import {
   isBackupConfirmed,
   subscribeBackupConfirmed,
 } from '../wallet/backupStatus'
+import {
+  subscribeSyncHealth,
+  type SyncHealth,
+} from '../wallet/walletHealth'
 
 type Props = {
   profile: WalletProfile
@@ -57,6 +61,7 @@ export function Dashboard({
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [refreshing, setRefreshing] = useState(false)
   const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
+  const [syncHealth, setSyncHealthState] = useState<SyncHealth | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -64,6 +69,7 @@ export function Dashboard({
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => subscribeBackupConfirmed(setBackupConfirmed), [])
+  useEffect(() => subscribeSyncHealth(setSyncHealthState), [])
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -224,6 +230,15 @@ export function Dashboard({
               </button>
             </div>
           </div>
+
+          {syncHealth?.message ? (
+            <p
+              className={`wallet-sync-note${syncHealth.phase === 'error' ? ' is-error' : ''}`}
+              role="status"
+            >
+              {syncHealth.message}
+            </p>
+          ) : null}
 
           {error && (
             <p className="error" role="status" style={{ marginTop: 10 }}>
