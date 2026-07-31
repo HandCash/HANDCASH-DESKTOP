@@ -6,7 +6,7 @@ import { APP_VERSION } from '../version'
  */
 export function ScreenshotToast() {
   const [visible, setVisible] = useState(false)
-  const [version, setVersion] = useState(APP_VERSION)
+  const [version, setVersion] = useState<string>(APP_VERSION)
   const [failed, setFailed] = useState<string | null>(null)
 
   useEffect(() => {
