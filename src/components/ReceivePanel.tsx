@@ -1,21 +1,36 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import { copyText } from '../wallet/clipboard'
+import { buildPeerPayUri } from '../wallet/peerPayUri'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
+type ReceiveMode = 'peerpay' | 'address'
+
 type Props = {
-  value: string
-  subtitle?: string
+  address: string
+  identityKey: string
 }
 
-export function ReceivePanel({
-  value,
-  subtitle = 'Payment address — scan or copy to receive BSV',
-}: Props) {
+export function ReceivePanel({ address, identityKey }: Props) {
+  const [mode, setMode] = useState<ReceiveMode>('peerpay')
   const [dataUrl, setDataUrl] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [copied, setCopied] = useState(false)
+
+  const peerpayUri = useMemo(() => {
+    try {
+      return buildPeerPayUri(identityKey)
+    } catch {
+      return null
+    }
+  }, [identityKey])
+
+  const value = mode === 'peerpay' && peerpayUri ? peerpayUri : address
+  const subtitle =
+    mode === 'peerpay'
+      ? 'PeerPay (BRC-125) — identity key payment link'
+      : 'Payment address — scan or copy to receive BSV'
 
   useEffect(() => {
     let cancelled = false
@@ -52,13 +67,13 @@ export function ReceivePanel({
           <button
             type="button"
             className="qr-frame receive-qr-frame"
-            title="Click to copy address"
+            title="Click to copy"
             onClick={() => void copy()}
           >
             {dataUrl ? (
               <DeferredImage
                 src={dataUrl}
-                alt="Receive address QR code"
+                alt={mode === 'peerpay' ? 'PeerPay QR code' : 'Receive address QR code'}
                 width={220}
                 height={220}
                 skeletonWidth={220}
@@ -74,6 +89,24 @@ export function ReceivePanel({
         </div>
 
         <div className="receive-info">
+          {peerpayUri ? (
+            <div className="actions receive-mode-actions" style={{ marginBottom: 12 }}>
+              <button
+                type="button"
+                className={mode === 'peerpay' ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setMode('peerpay')}
+              >
+                PeerPay
+              </button>
+              <button
+                type="button"
+                className={mode === 'address' ? 'btn btn-primary' : 'btn btn-ghost'}
+                onClick={() => setMode('address')}
+              >
+                Address
+              </button>
+            </div>
+          ) : null}
           <p className="qr-subtitle receive-subtitle">{subtitle}</p>
           <button
             type="button"
@@ -85,7 +118,7 @@ export function ReceivePanel({
           </button>
           <div className="actions receive-actions">
             <button type="button" className="btn btn-primary" onClick={() => void copy()}>
-              {copied ? 'Copied' : 'Copy address'}
+              {copied ? 'Copied' : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
             </button>
           </div>
         </div>

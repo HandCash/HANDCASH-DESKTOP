@@ -13,6 +13,7 @@ import {
   formatSecondaryFromSats,
   formatTypedAmount,
   getCachedUsdPerBsv,
+  satsToUsd,
   subscribeUsdRate,
 } from '../wallet/fx'
 import {
@@ -30,6 +31,7 @@ import {
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { sendSatsToAddress } from '../wallet/sendPayment'
+import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 
@@ -98,6 +100,34 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
     } catch (err) {
       onFail(err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const applyRecipientInput = (value: string) => {
+    setRecipientQuery(value)
+    setShowFriendMatches(true)
+    const peer = tryParsePeerPayUri(value)
+    if (peer) {
+      try {
+        const address = addressFromIdentityKey(peer.identityKey, chain)
+        const patch: { to: string; friendLabel: null; amount?: string } = {
+          to: address,
+          friendLabel: null,
+        }
+        if (peer.sats != null) {
+          if (currency === 'usd' && usdPerBsv != null && usdPerBsv > 0) {
+            const usd = satsToUsd(peer.sats, usdPerBsv)
+            patch.amount = String(Number(usd.toFixed(4)))
+          } else {
+            patch.amount = String(peer.sats / 1e8)
+          }
+        }
+        send({ type: 'EDIT', ...patch })
+        return
+      } catch (err) {
+        onFail(err instanceof Error ? err.message : String(err))
+      }
+    }
+    send({ type: 'EDIT', to: value.trim(), friendLabel: null })
   }
 
   const confirmSend = async () => {
@@ -181,22 +211,17 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                 <input
                   id="to"
                   value={recipientQuery}
-                  onChange={(e) => {
-                    const value = e.target.value
-                    setRecipientQuery(value)
-                    setShowFriendMatches(true)
-                    send({ type: 'EDIT', to: value.trim(), friendLabel: null })
-                  }}
+                  onChange={(e) => applyRecipientInput(e.target.value)}
                   onFocus={() => setShowFriendMatches(true)}
                   onBlur={() => {
                     window.setTimeout(() => setShowFriendMatches(false), 120)
                   }}
-                  placeholder="Friend, address, or identity key"
+                  placeholder="Friend, peerpay:, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <p className="friend-recipient-hint send-recipient-hint">
-                  Identity keys resolve to a payment address on this network.
+                  PeerPay links and identity keys resolve to a payment address on this network.
                 </p>
                 {sendSnap.context.friendLabel && (
                   <p className="friend-recipient-hint">

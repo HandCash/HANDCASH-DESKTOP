@@ -5,6 +5,7 @@ import {
   type ActivityEntry,
   type ActivityKind,
 } from './appActivity'
+import { actionTimeLabelsForWindow } from './brc114'
 import { listConnectedApps } from './permissions'
 
 export type PaymentKindFilter = 'all' | ActivityKind
@@ -34,6 +35,15 @@ const TIME_MS: Record<Exclude<PaymentTimeFilter, 'all'>, number> = {
 export function paymentTimeCutoff(time: PaymentTimeFilter, now = Date.now()): number | null {
   if (time === 'all') return null
   return now - TIME_MS[time]
+}
+
+/** BRC-114 control labels matching a PaymentTimeFilter window (empty when `all`). */
+export function brc114LabelsForPaymentTime(
+  time: PaymentTimeFilter,
+  now = Date.now(),
+): string[] {
+  if (time === 'all') return []
+  return actionTimeLabelsForWindow(TIME_MS[time], now)
 }
 
 export function matchesPaymentFilters(

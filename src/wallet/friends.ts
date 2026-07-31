@@ -1,6 +1,7 @@
 import { P2PKH, PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { tryParsePeerPayUri } from './peerPayUri'
 
 const STORAGE_KEY = 'handcash.brc100.friends'
 
@@ -74,10 +75,13 @@ export function addressFromIdentityKey(identityKey: string, chain: Chain): strin
   return PublicKey.fromString(identityKey.trim()).toAddress(prefix)
 }
 
-/** Accept a P2PKH address or BSV identity key; always returns a lockable address. */
+/** Accept a P2PKH address, identity key, or BRC-125 peerpay URI; returns a lockable address. */
 export function resolvePaymentAddress(recipient: string, chain: Chain): string {
   const value = recipient.trim()
   if (!value) throw new Error('Recipient required')
+
+  const peer = tryParsePeerPayUri(value)
+  if (peer) return addressFromIdentityKey(peer.identityKey, chain)
 
   try {
     new P2PKH().lock(value)
@@ -89,7 +93,7 @@ export function resolvePaymentAddress(recipient: string, chain: Chain): string {
   try {
     return addressFromIdentityKey(value, chain)
   } catch {
-    throw new Error('Invalid recipient address or identity key')
+    throw new Error('Invalid recipient address, identity key, or peerpay URI')
   }
 }
 

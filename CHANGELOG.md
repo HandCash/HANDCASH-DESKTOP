@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.15] - 2026-07-31
+
+### Changed
+
+- BRC-125 PeerPay URIs on Receive (default QR) and Send (paste + optional sats).
+- BRC-112 balance-basket fallback; BRC-114 time-label helpers for activity windows.
+
 ## [1.1.14] - 2026-07-31
 
 ### Changed

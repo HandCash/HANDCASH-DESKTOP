@@ -1,6 +1,7 @@
 import { PrivateKey, type WalletInterface } from '@bsv/sdk'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
+import { BALANCE_DEFAULT_BASKET } from './brc112'
 
 const { specOpWalletBalance } = sdk
 
@@ -80,6 +81,17 @@ export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promi
     if (Number.isFinite(result.totalOutputs)) return Math.max(0, Math.trunc(result.totalOutputs))
   } catch (err) {
     console.warn('[balance] specOpWalletBalance failed', err)
+  }
+
+  // BRC-112: `balance <basket>` returns satoshi sum in totalOutputs.
+  try {
+    const result = await w.listOutputs({
+      basket: BALANCE_DEFAULT_BASKET,
+      limit: 1,
+    })
+    if (Number.isFinite(result.totalOutputs)) return Math.max(0, Math.trunc(result.totalOutputs))
+  } catch (err) {
+    console.warn('[balance] BRC-112 balance default failed', err)
   }
 
   try {

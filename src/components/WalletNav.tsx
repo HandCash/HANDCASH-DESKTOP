@@ -196,7 +196,9 @@ export function WalletNav({
                   onClose={() => clearNavChild()}
                 />
               )}
-              {child.type === 'receive' && <ReceivePanel value={profile.address} />}
+              {child.type === 'receive' && (
+                <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
+              )}
               {child.type === 'payment' && (
                 <PaymentDetailsPanel entryId={child.entryId} chain={profile.chain} />
               )}
