@@ -8,7 +8,11 @@ export type NavSection =
   | 'identity'
   | 'settings'
 
-export type SettingId = 'change-password' | 'backup-phrase' | 'wipe-wallet'
+export type SettingId =
+  | 'change-password'
+  | 'backup-phrase'
+  | 'wipe-wallet'
+  | 'statecharts'
 
 export type NavChild =
   | { type: 'app'; origin: string }

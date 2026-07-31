@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom'
 import { Prompt } from '@aeon-ui/react'
 import { useUpdate } from '../wallet/updateProvider'
 
-type ToastAction = 'download' | 'restart' | 'open-site' | null
+type ToastAction = 'download' | 'restart' | null
 
 type ToastCopy = {
   title: string
@@ -12,8 +12,6 @@ type ToastCopy = {
   dismissable: boolean
   sticky: boolean
 }
-
-const WALLET_DOWNLOAD_URL = 'https://handcash.io/wallet'
 
 function toastCopy(
   phase: string,
@@ -34,8 +32,10 @@ function toastCopy(
   }
   if (phase === 'downloading') {
     return {
-      title: 'Downloading update…',
-      body: `${version ?? 'Update'} — ${percent ?? 0}%`,
+      title: macManual ? 'Opening installer…' : 'Downloading update…',
+      body: macManual
+        ? `HandCash Desktop ${version ?? ''} — your browser will download the DMG.`
+        : `${version ?? 'Update'} — ${percent ?? 0}%`,
       action: null,
       dismissable: false,
       sticky: true,
@@ -45,8 +45,10 @@ function toastCopy(
     if (macManual) {
       return {
         title: 'Update available',
-        body: `HandCash Desktop ${version ?? ''} — download a fresh install (in-app update can damage the Mac app).`,
-        action: 'open-site',
+        body:
+          error ??
+          `HandCash Desktop ${version ?? ''} is ready. Get the installer — drag HandCash into Applications.`,
+        action: 'download',
         dismissable: true,
         sticky: true,
       }
@@ -188,16 +190,7 @@ export function UpdatePrompt() {
                         className="btn btn-primary"
                         onClick={() => void download()}
                       >
-                        Update
-                      </button>
-                    ) : null}
-                    {copy.action === 'open-site' ? (
-                      <button
-                        type="button"
-                        className="btn btn-primary"
-                        onClick={() => void window.handcash?.openExternal?.(WALLET_DOWNLOAD_URL)}
-                      >
-                        Download
+                        {macManual ? 'Get update' : 'Update'}
                       </button>
                     ) : null}
                     {copy.action === 'restart' ? (

@@ -19,6 +19,7 @@ import { BrandLogo } from './components/BrandLogo'
 import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
+import { ScreenshotToast } from './components/ScreenshotToast'
 import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
 
@@ -172,6 +173,7 @@ export function App() {
         </main>
 
         <UpdatePrompt />
+        <ScreenshotToast />
 
         <ConnectPermissionDialog
           pending={pendingConnect}

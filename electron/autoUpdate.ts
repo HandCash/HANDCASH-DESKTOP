@@ -4,7 +4,7 @@
  *   manual  → only when user checks; still download then prompt restart
  *   none    → no update checks
  */
-import type { BrowserWindow } from 'electron'
+import { shell, type BrowserWindow } from 'electron'
 import log from 'electron-log'
 import electronUpdater from 'electron-updater'
 import { durableGet, durableSet } from './durableStore.js'
@@ -75,16 +75,31 @@ function setStatus(patch: Partial<UpdateStatus>) {
 }
 
 /**
- * BETA Mac builds are ad-hoc signed. Squirrel.Mac / ShipIt cannot validate those
- * updates and often leaves HandCash.app damaged ("code has no resources…").
- * Until Developer ID signing exists, never download or install via the updater.
+ * BETA Mac builds are ad-hoc signed (`identity: null`). Squirrel.Mac / ShipIt
+ * cannot validate those updates and often leaves HandCash.app damaged
+ * ("code has no resources…"). Until Developer ID + notarization exist, never
+ * let ShipIt replace the app — open the arch-matched DMG instead.
  */
 function macShipItUnsafe(): boolean {
   return process.platform === 'darwin'
 }
 
-const MAC_MANUAL_DOWNLOAD =
-  'Mac auto-update needs a Developer ID–signed build. Download the latest from handcash.io/wallet.'
+const MAC_DMG_HINT =
+  'Installer opened — drag HandCash into Applications to finish updating.'
+
+/** Published GitHub DMG for this Mac arch (ShipIt-safe path). */
+export function macDmgDownloadUrl(version: string): string {
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  const tag = version.startsWith('v') ? version : `v${version}`
+  const semver = version.replace(/^v/, '')
+  return `https://github.com/HandCash/HANDCASH-DESKTOP/releases/download/${tag}/HandCash-${semver}-${arch}-mac.dmg`
+}
+
+async function openMacDmgInstaller(version: string): Promise<void> {
+  const url = macDmgDownloadUrl(version)
+  log.info('Opening Mac DMG installer (ShipIt skipped)', { version, url })
+  await shell.openExternal(url)
+}
 
 function applyModeToUpdater(mode: UpdateMode) {
   const allowShipIt = !macShipItUnsafe()
@@ -108,7 +123,7 @@ function friendlyUpdateError(err: unknown): string {
   const firstLine = raw.split('\n')[0] ?? raw
 
   if (isMacCodeSignatureFailure(err)) {
-    return MAC_MANUAL_DOWNLOAD
+    return MAC_DMG_HINT
   }
   if (/timed out|timeout/i.test(raw)) {
     return 'Update check timed out. Check your network and try again.'
@@ -359,14 +374,35 @@ export async function checkForUpdates(opts?: {
       }
 
       if (macShipItUnsafe()) {
-        // Announce only — never let ShipIt touch /Applications/HandCash.app.
+        // Never let ShipIt touch /Applications/HandCash.app — open the DMG.
+        const version = result.updateInfo.version
         setStatus({
           phase: 'available',
-          availableVersion: result.updateInfo.version,
+          availableVersion: version,
           percent: null,
-          error: MAC_MANUAL_DOWNLOAD,
-          canInstall: false,
+          error: null,
+          canInstall: true,
         })
+        if (shouldDownload) {
+          try {
+            await openMacDmgInstaller(version)
+            setStatus({
+              phase: 'available',
+              availableVersion: version,
+              percent: null,
+              error: MAC_DMG_HINT,
+              canInstall: true,
+            })
+          } catch (err) {
+            log.warn('openMacDmgInstaller failed', err)
+            setStatus({
+              phase: 'error',
+              availableVersion: version,
+              error: err instanceof Error ? err.message : String(err),
+              canInstall: true,
+            })
+          }
+        }
       } else if (shouldDownload) {
         setStatus({
           phase: 'downloading',
@@ -400,12 +436,30 @@ export async function checkForUpdates(opts?: {
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
   if (macShipItUnsafe()) {
-    setStatus({
-      phase: 'available',
-      error: MAC_MANUAL_DOWNLOAD,
-      canInstall: false,
-      percent: null,
-    })
+    const version = status.availableVersion
+    if (!version) {
+      setStatus({
+        phase: 'error',
+        error: 'No update version to download yet. Check for updates first.',
+        canInstall: false,
+        percent: null,
+      })
+      return status
+    }
+    try {
+      setStatus({ phase: 'downloading', percent: null, error: null, canInstall: true })
+      await openMacDmgInstaller(version)
+      setStatus({
+        phase: 'available',
+        availableVersion: version,
+        percent: null,
+        error: MAC_DMG_HINT,
+        canInstall: true,
+      })
+    } catch (err) {
+      log.warn('Mac DMG open failed', err)
+      applyCheckFailure(err)
+    }
     return status
   }
   try {
@@ -420,10 +474,22 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
 
 export function quitAndInstall(): void {
   if (macShipItUnsafe()) {
-    log.warn('quitAndInstall blocked on unsigned Mac build — use handcash.io/wallet')
+    const version = status.availableVersion
+    log.warn('quitAndInstall blocked on unsigned Mac — opening DMG instead', { version })
+    if (version) {
+      void openMacDmgInstaller(version).then(() => {
+        setStatus({
+          phase: 'available',
+          availableVersion: version,
+          error: MAC_DMG_HINT,
+          canInstall: true,
+        })
+      })
+      return
+    }
     setStatus({
       phase: 'available',
-      error: MAC_MANUAL_DOWNLOAD,
+      error: 'Check for updates, then use Get update to open the installer.',
       canInstall: false,
     })
     return

@@ -99,6 +99,8 @@ interface HandCashBridge {
   safeStorageAvailable?: () => Promise<boolean>
   wipeWalletStorage?: () => Promise<{ removed: number }>
   clipboardWrite?: (text: string) => Promise<void>
+  copyScreenshot?: () => Promise<{ ok: true; version: string } | { ok: false; error: string }>
+  onScreenshotCopied?: (handler: (payload: { at: number; version: string }) => void) => () => void
   getUpdateStatus?: () => Promise<UpdateStatus>
   checkForUpdates?: () => Promise<UpdateStatus>
   downloadUpdate?: () => Promise<UpdateStatus>

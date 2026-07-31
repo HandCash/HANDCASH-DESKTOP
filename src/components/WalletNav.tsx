@@ -30,6 +30,7 @@ import { SendPanel } from './SendPanel'
 import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
+import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { BackupPhrasePanel } from './BackupPhrasePanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
@@ -218,6 +219,9 @@ export function WalletNav({
               )}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'statecharts' && (
+                <StatechartsPanel />
               )}
             </div>
           ) : (

@@ -90,6 +90,18 @@ const handcash = {
   wipeWalletStorage: () =>
     ipcRenderer.invoke('storage:wipe-wallet') as Promise<{ removed: number }>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
+  copyScreenshot: () =>
+    ipcRenderer.invoke('clipboard:screenshot') as Promise<
+      { ok: true; version: string } | { ok: false; error: string }
+    >,
+  onScreenshotCopied: (handler: (payload: { at: number; version: string }) => void) => {
+    const listener = (
+      _: Electron.IpcRendererEvent,
+      payload: { at: number; version: string },
+    ) => handler(payload)
+    ipcRenderer.on('screenshot:copied', listener)
+    return () => ipcRenderer.removeListener('screenshot:copied', listener)
+  },
   getUpdateStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdateStatus>,
   downloadUpdate: () => ipcRenderer.invoke('updater:download') as Promise<UpdateStatus>,

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from 'electron'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
@@ -83,6 +83,144 @@ function bridgeStatus() {
 function notifyBridgeStatus(): void {
   if (!mainWindow || mainWindow.isDestroyed()) return
   mainWindow.webContents.send('bridge-status', bridgeStatus())
+}
+
+/** Capture the main window and put a PNG on the system clipboard. */
+async function copyAppScreenshotToClipboard(): Promise<
+  { ok: true; version: string } | { ok: false; error: string }
+> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return { ok: false, error: 'No window to capture' }
+  }
+  const version = app.getVersion()
+  const badge = `HandCash ${version} BETA`
+  let badgeInjected = false
+  try {
+    // Stamp version onto the capture so shares advertise the build.
+    await mainWindow.webContents.executeJavaScript(
+      `(() => {
+        const existing = document.getElementById('hc-screenshot-badge');
+        if (existing) existing.remove();
+        const el = document.createElement('div');
+        el.id = 'hc-screenshot-badge';
+        el.setAttribute('aria-hidden', 'true');
+        el.textContent = ${JSON.stringify(badge)};
+        el.style.cssText = [
+          'position:fixed',
+          'right:14px',
+          'bottom:14px',
+          'z-index:2147483647',
+          'padding:6px 10px',
+          'border-radius:8px',
+          'border:1px solid rgba(56,211,133,0.55)',
+          'background:rgba(6,12,10,0.88)',
+          'color:#38d385',
+          'font:700 12px/1.2 "IBM Plex Sans",system-ui,sans-serif',
+          'letter-spacing:0.06em',
+          'text-transform:uppercase',
+          'pointer-events:none',
+          'box-shadow:0 8px 24px rgba(0,0,0,0.45)',
+        ].join(';');
+        document.body.appendChild(el);
+      })()`,
+    )
+    badgeInjected = true
+    // Let layout paint the badge before capture.
+    await new Promise((r) => setTimeout(r, 40))
+
+    const image = await mainWindow.capturePage()
+    if (image.isEmpty()) {
+      return { ok: false, error: 'Capture was empty' }
+    }
+    clipboard.writeImage(image)
+    if (!mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('screenshot:copied', { at: Date.now(), version })
+    }
+    log.info('App screenshot copied to clipboard', version)
+    return { ok: true, version }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    log.error('Screenshot to clipboard failed', error)
+    return { ok: false, error }
+  } finally {
+    if (badgeInjected && mainWindow && !mainWindow.isDestroyed()) {
+      void mainWindow.webContents
+        .executeJavaScript(
+          `document.getElementById('hc-screenshot-badge')?.remove()`,
+        )
+        .catch(() => {})
+    }
+  }
+}
+
+function installAppMenu(): void {
+  const isMac = process.platform === 'darwin'
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: 'about' as const },
+              { type: 'separator' as const },
+              { role: 'services' as const },
+              { type: 'separator' as const },
+              { role: 'hide' as const },
+              { role: 'hideOthers' as const },
+              { role: 'unhide' as const },
+              { type: 'separator' as const },
+              { role: 'quit' as const },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: 'Edit',
+      submenu: [
+        { role: 'undo' },
+        { role: 'redo' },
+        { type: 'separator' },
+        { role: 'cut' },
+        { role: 'copy' },
+        { role: 'paste' },
+        ...(isMac ? [{ role: 'pasteAndMatchStyle' as const }, { role: 'selectAll' as const }] : [
+          { role: 'selectAll' as const },
+        ]),
+      ],
+    },
+    {
+      label: 'View',
+      submenu: [
+        {
+          label: 'Copy Screenshot',
+          accelerator: 'CommandOrControl+Shift+S',
+          click: () => {
+            void copyAppScreenshotToClipboard()
+          },
+        },
+        { type: 'separator' },
+        { role: 'reload' },
+        { role: 'toggleDevTools' },
+        { type: 'separator' },
+        { role: 'resetZoom' },
+        { role: 'zoomIn' },
+        { role: 'zoomOut' },
+        { type: 'separator' },
+        { role: 'togglefullscreen' },
+      ],
+    },
+    {
+      label: 'Window',
+      submenu: [
+        { role: 'minimize' },
+        { role: 'zoom' },
+        ...(isMac
+          ? [{ type: 'separator' as const }, { role: 'front' as const }]
+          : [{ role: 'close' as const }]),
+      ],
+    },
+  ]
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function createWindow(): void {
@@ -188,6 +326,7 @@ app.whenReady().then(async () => {
   }
 
   createWindow()
+  installAppMenu()
   await ensureBridge()
 
   app.on('activate', () => {
@@ -283,3 +422,5 @@ ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')
   clipboard.writeText(text)
 })
+
+ipcMain.handle('clipboard:screenshot', async () => copyAppScreenshotToClipboard())

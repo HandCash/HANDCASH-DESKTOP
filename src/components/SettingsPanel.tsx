@@ -84,6 +84,7 @@ function phaseLabel(phase: string, error: string | null): string {
 }
 
 export function settingLabel(id: SettingId): string {
+  if (id === 'statecharts') return 'Statecharts'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
     if (item) return item.label
@@ -198,6 +199,49 @@ export function SettingsPanel() {
                 onClick={() => void check()}
               >
                 {checking ? 'Checking…' : 'Check for Updates'}
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section className="settings-group" data-aeon-part="about">
+        <h3 className="settings-group-title">About</h3>
+        <ul className="settings-list">
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <strong className="settings-row-label">HandCash Desktop</strong>
+                <span className="settings-row-desc">
+                  Self-custodial BRC-100 wallet · UI = f(state)
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-primary settings-check-btn"
+                data-aeon-part="view-statecharts"
+                onClick={() => openSetting('statecharts')}
+              >
+                View statecharts
+              </button>
+            </div>
+          </li>
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <strong className="settings-row-label">Screenshot</strong>
+                <span className="settings-row-desc">
+                  Copy the app window (with v{runningVersion} BETA badge) ·{' '}
+                  {window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
+                </span>
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost settings-check-btn"
+                data-aeon-part="copy-screenshot"
+                onClick={() => void window.handcash?.copyScreenshot?.()}
+              >
+                Copy now
               </button>
             </div>
           </li>

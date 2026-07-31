@@ -44,7 +44,24 @@ Installers publish to **GitHub Releases** on `HandCash/HANDCASH-DESKTOP` (electr
 gh release create v1.0.0 release/HandCash-* release/latest-mac.yml --title "HandCash Desktop 1.0.0"
 ```
 
-Mac production needs Apple Developer ID + notarization before Gatekeeper will trust opens without Right-click → Open.
+Mac production needs **Apple Developer ID Application** signing + notarization before
+Squirrel.Mac (ShipIt) in-app replace is safe. Until then, Mac “updates” open the
+arch-matched DMG from GitHub Releases instead of ShipIt (unsigned ShipIt installs
+corrupt `HandCash.app`).
+
+Wire signing when the cert is available:
+
+```bash
+# CI / local secrets
+export CSC_LINK=...                 # .p12
+export CSC_KEY_PASSWORD=...
+export APPLE_ID=...
+export APPLE_APP_SPECIFIC_PASSWORD=...
+export APPLE_TEAM_ID=...
+
+# package.json build.mac — remove identity: null, set hardenedRuntime: true
+# then remove macShipItUnsafe() guard in electron/autoUpdate.ts
+```
 
 ### Fedora Atomic / Wayblue (no FUSE)
 

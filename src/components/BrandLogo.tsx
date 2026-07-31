@@ -1,4 +1,5 @@
 import { handcashBrand, type HandCashMarkVariant } from '../assets/brand'
+import { APP_VERSION } from '../version'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
@@ -39,7 +40,9 @@ export function BrandLogo({
         <div className="brand-wordmark">
           <div className="brand-name">HandCash</div>
           <div className="brand-sub">
-            Desktop <span className="brand-beta">BETA</span>
+            Desktop
+            <span className="brand-version">v{APP_VERSION}</span>
+            <span className="brand-beta">BETA</span>
           </div>
         </div>
       )}
