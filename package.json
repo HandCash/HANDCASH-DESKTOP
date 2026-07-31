@@ -100,7 +100,8 @@
         }
       ],
       "artifactName": "${productName}-${version}-${arch}-mac.${ext}",
-      "hardenedRuntime": true,
+      "identity": null,
+      "hardenedRuntime": false,
       "gatekeeperAssess": false
     },
     "dmg": {

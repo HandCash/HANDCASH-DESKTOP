@@ -156,14 +156,16 @@ async function ensureBridge(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
-  createWindow()
-  await ensureBridge()
-
+  // Init updater before the window so the first getUpdateStatus() has the real version
+  // (not the default 0.0.0) when Settings mounts.
   initAutoUpdater({
     getMainWindow: () => mainWindow,
     currentVersion: app.getVersion(),
     isDev,
   })
+
+  createWindow()
+  await ensureBridge()
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {

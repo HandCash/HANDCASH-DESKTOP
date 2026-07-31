@@ -2984,11 +2984,21 @@ a.app-details-host:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
+  /* Keep Security / backup above Application — never clip the first groups */
+  min-height: min-content;
+  padding-bottom: 24px;
 }
 
 .settings-group {
   display: grid;
   gap: 8px;
+  flex-shrink: 0;
+}
+
+.settings-group[data-settings-group='Security'] .settings-row-main {
+  padding: 12px 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 6%, transparent);
 }
 
 .settings-group-title {

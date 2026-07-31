@@ -13,6 +13,7 @@ import {
   type UpdateContext,
   type UpdateMode,
 } from '../machines/updateMachine'
+import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 const MODE_KEY = 'handcash.update.mode'
@@ -46,16 +47,31 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
     const stored = readStoredMode()
     if (stored) send({ type: 'SET_MODE', mode: stored })
 
+    // Seed bundled version immediately so Settings never flashes 0.0.0.
+    const ctx = contextRef.current
+    send({
+      type: 'SYNC',
+      status: {
+        phase: ctx.phase,
+        mode: stored ?? ctx.mode,
+        currentVersion: APP_VERSION,
+        availableVersion: ctx.availableVersion,
+        percent: ctx.percent,
+        error: ctx.error,
+        canInstall: ctx.canInstall,
+      },
+    })
+
     const api = window.handcash
     if (!api?.getUpdateStatus || !api.onUpdateStatus) {
       void api?.getAppInfo?.().then((info) => {
-        const ctx = contextRef.current
+        const next = contextRef.current
         send({
           type: 'SYNC',
           status: {
             phase: 'idle',
-            mode: stored ?? ctx.mode,
-            currentVersion: info.version,
+            mode: stored ?? next.mode,
+            currentVersion: info.version || APP_VERSION,
             availableVersion: null,
             percent: null,
             error: null,
@@ -68,9 +84,30 @@ export function UpdateProvider({ children }: { children: ReactNode }) {
 
     let cancelled = false
     void api.getUpdateStatus().then((status) => {
-      if (!cancelled) send({ type: 'SYNC', status })
+      if (cancelled) return
+      send({
+        type: 'SYNC',
+        status: {
+          ...status,
+          currentVersion:
+            status.currentVersion && status.currentVersion !== '0.0.0'
+              ? status.currentVersion
+              : APP_VERSION,
+        },
+      })
     })
-    const off = api.onUpdateStatus((status) => send({ type: 'SYNC', status }))
+    const off = api.onUpdateStatus((status) =>
+      send({
+        type: 'SYNC',
+        status: {
+          ...status,
+          currentVersion:
+            status.currentVersion && status.currentVersion !== '0.0.0'
+              ? status.currentVersion
+              : APP_VERSION,
+        },
+      }),
+    )
     return () => {
       cancelled = true
       off()

@@ -79,11 +79,25 @@ function applyModeToUpdater(mode: UpdateMode) {
   autoUpdater.autoInstallOnAppQuit = mode !== 'none'
 }
 
+function isMacCodeSignatureFailure(err: unknown): boolean {
+  const raw = err instanceof Error ? err.message : String(err)
+  return (
+    /code signature/i.test(raw) ||
+    /did not pass validation/i.test(raw) ||
+    /ShipIt/i.test(raw) ||
+    /signature indicates they must be present/i.test(raw)
+  )
+}
+
 /** electron-updater dumps HttpError + headers; keep Settings readable. */
 function friendlyUpdateError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const firstLine = raw.split('\n')[0] ?? raw
 
+  if (isMacCodeSignatureFailure(err)) {
+    // BETA builds are ad-hoc signed; Squirrel.Mac cannot install those updates.
+    return 'Mac auto-update needs a Developer ID–signed build. Download the latest from handcash.io/wallet.'
+  }
   if (/timed out|timeout/i.test(raw)) {
     return 'Update check timed out. Check your network and try again.'
   }
@@ -124,6 +138,17 @@ function applyCheckFailure(err: unknown) {
       percent: null,
       canInstall: false,
       error: friendlyUpdateError(err),
+    })
+    return
+  }
+  if (isMacCodeSignatureFailure(err)) {
+    // Keep availableVersion so Settings can still show “download site” context,
+    // but never offer Restart/Install for unsigned BETA packages.
+    setStatus({
+      phase: 'error',
+      error: friendlyUpdateError(err),
+      canInstall: false,
+      percent: null,
     })
     return
   }

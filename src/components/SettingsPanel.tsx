@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react'
+import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
 import { useUpdate } from '../wallet/updateProvider'
 import type { UpdateMode } from '../machines/updateMachine'
@@ -18,14 +20,14 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Security',
     items: [
       {
-        id: 'change-password',
-        label: 'Change password',
-        description: '',
-      },
-      {
         id: 'backup-phrase',
         label: 'Backup recovery phrase',
-        description: '',
+        description: 'Show your 12-word phrase (password required)',
+      },
+      {
+        id: 'change-password',
+        label: 'Change password',
+        description: 'Update the unlock password on this device',
       },
     ],
   },
@@ -35,7 +37,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'wipe-wallet',
         label: 'Wipe wallet data',
-        description: '',
+        description: 'Factory-reset this device (needs phrase to restore)',
       },
     ],
   },
@@ -93,9 +95,22 @@ export function SettingsPanel() {
   const update = useUpdate()
   const { context, check, setMode, stateAttr } = update
   const checking = context.phase === 'checking'
+  const rootRef = useRef<HTMLDivElement>(null)
+  // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
+  const runningVersion =
+    context.currentVersion && context.currentVersion !== '0.0.0'
+      ? context.currentVersion
+      : APP_VERSION
+
+  useEffect(() => {
+    rootRef.current?.scrollIntoView({ block: 'start' })
+    const stage = rootRef.current?.closest('.wallet-nav-stage')
+    if (stage instanceof HTMLElement) stage.scrollTop = 0
+  }, [])
 
   return (
     <div
+      ref={rootRef}
       className="nav-section-body settings-nav settings-scroll"
       data-aeon-scope="settings"
       data-aeon-state={stateAttr}
@@ -105,7 +120,7 @@ export function SettingsPanel() {
       </div>
 
       {SETTING_GROUPS.map((group) => (
-        <section key={group.title} className="settings-group">
+        <section key={group.title} className="settings-group" data-settings-group={group.title}>
           <h3 className="settings-group-title">{group.title}</h3>
           <ul className="settings-list">
             {group.items.map(({ id, label, description }) => (
@@ -162,12 +177,12 @@ export function SettingsPanel() {
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
               <span className="settings-row-body">
-                <strong className="settings-row-label">
-                  Version {context.currentVersion || '—'}
-                </strong>
+                <strong className="settings-row-label">Version {runningVersion}</strong>
                 <span className="settings-row-desc">
                   {phaseLabel(context.phase, context.error)}
-                  {context.availableVersion ? ` · ${context.availableVersion}` : ''}
+                  {context.availableVersion && context.availableVersion !== runningVersion
+                    ? ` · ${context.availableVersion} available`
+                    : ''}
                   {context.phase === 'downloading' && context.percent != null
                     ? ` · ${context.percent}%`
                     : ''}
