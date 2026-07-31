@@ -4451,6 +4451,9 @@ a.app-details-host:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 0.28rem;
+  max-height: 5.5rem;
+  overflow-y: auto;
+  padding-right: 2px;
 }
 
 .statecharts-nav-btn {
@@ -4498,51 +4501,191 @@ a.app-details-host:hover {
 .statecharts-viewport {
   flex: 1 1 auto;
   min-height: 0;
+  max-height: 100%;
   overflow: hidden;
+  isolation: isolate;
+  contain: layout;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 28%, transparent);
   background: #0a100e;
-  padding: 0.4rem;
+  padding: 0;
   display: flex;
-  align-items: center;
-  justify-content: center;
+  align-items: stretch;
+  justify-content: stretch;
+  position: relative;
 }
 
 .statechart-figure {
   margin: 0;
   width: 100%;
   height: 100%;
+  max-width: 100%;
+  max-height: 100%;
   min-width: 0;
   min-height: 0;
   display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  position: relative;
+}
+
+/* Offscreen measure host — real width so Mermaid does not clip node labels. */
+.statechart-mermaid-host {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  width: 960px;
+  height: auto;
+  overflow: visible;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.statechart-zoom-bar {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 3;
+  display: flex;
   align-items: center;
-  justify-content: center;
+  gap: 4px;
+  padding: 3px;
+  border-radius: 8px;
+  background: color-mix(in srgb, #0a100e 82%, #1a2420);
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.35);
+}
+
+.statechart-zoom-btn {
+  appearance: none;
+  margin: 0;
+  min-width: 28px;
+  height: 26px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.statechart-zoom-btn:hover {
+  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 18%, transparent);
+}
+
+.statechart-zoom-label {
+  min-width: 3.2rem;
+  text-align: center;
+  font-size: 0.68rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-muted);
+}
+
+.statechart-panzoom {
+  flex: 1 1 auto;
+  min-height: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+  position: relative;
+}
+
+.statechart-panzoom:active {
+  cursor: grabbing;
 }
 
 .statechart-mermaid {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  overflow: hidden;
+  position: absolute;
+  left: 0;
+  top: 0;
+  transform-origin: 0 0;
+  display: block;
+  width: max-content;
+  height: max-content;
+  max-width: none;
+  max-height: none;
+  overflow: visible;
+  user-select: none;
 }
 
 .statechart-mermaid svg {
-  max-width: 100% !important;
-  max-height: 100% !important;
-  width: auto !important;
-  height: auto !important;
-  font-size: 11px;
+  display: block;
+  max-width: none !important;
+  max-height: none !important;
+  overflow: visible !important;
+  shape-rendering: geometricPrecision;
+  text-rendering: geometricPrecision;
 }
 
-.statechart-mermaid .nodeLabel,
+.statechart-mermaid .state-title,
+.statechart-mermaid .state-description,
 .statechart-mermaid .edgeLabel,
-.statechart-mermaid .label,
-.statechart-mermaid text {
+.statechart-mermaid .nodeLabel,
+.statechart-mermaid .markdown-node-label,
+.statechart-mermaid text,
+.statechart-mermaid foreignObject,
+.statechart-mermaid foreignObject div,
+.statechart-mermaid foreignObject span,
+.statechart-mermaid foreignObject p {
   font-family: 'IBM Plex Sans', 'Instrument Sans', system-ui, sans-serif !important;
-  font-size: 11px !important;
+  font-size: 13px !important;
   font-weight: 600 !important;
+  line-height: 1.35 !important;
+}
+
+.statechart-mermaid foreignObject {
+  overflow: visible !important;
+}
+
+.statechart-mermaid foreignObject div,
+.statechart-mermaid foreignObject p,
+.statechart-mermaid .nodeLabel,
+.statechart-mermaid .markdown-node-label {
+  white-space: normal !important;
+  overflow: visible !important;
+  text-overflow: unset !important;
+  max-height: none !important;
+  height: auto !important;
+}
+
+.statechart-mermaid .node.is-navigable {
+  cursor: pointer;
+}
+
+.statechart-mermaid .node.is-navigable > rect,
+.statechart-mermaid .node.is-navigable .label-container {
+  transition: stroke 120ms ease, filter 120ms ease;
+}
+
+.statechart-mermaid .node.is-navigable:hover > rect,
+.statechart-mermaid .node.is-navigable:hover .label-container {
+  stroke: var(--hc-accent, #38d385) !important;
+  filter: brightness(1.12);
+}
+
+.statechart-mermaid .node.is-navigable:focus-visible {
+  outline: 2px solid var(--hc-accent, #38d385);
+  outline-offset: 2px;
+}
+
+/* Belt-and-suspenders: never let Mermaid scratch nodes paint over the shell. */
+body > svg[id^='hc-mmd-'],
+body > svg[id^='d'],
+body > div[id^='d'][data-processed],
+body > div.statechart-mermaid-host {
+  position: absolute !important;
+  left: -10000px !important;
+  width: 960px !important;
+  height: auto !important;
+  overflow: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 .statechart-loading,
@@ -4652,13 +4795,6 @@ a.app-details-host:hover {
   font-size: 1.05rem;
 }
 
-.chat-banner {
-  margin: 0 12px 8px;
-  font-size: 0.68rem;
-  line-height: 1.35;
-  opacity: 0.65;
-}
-
 .chat-peer-list {
   list-style: none;
   margin: 0;
@@ -4749,10 +4885,10 @@ a.app-details-host:hover {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: 12px 12px 8px;
+  padding: 14px 14px 10px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 6px;
 }
 
 .chat-bubble-row {
@@ -4765,26 +4901,41 @@ a.app-details-host:hover {
 }
 
 .chat-bubble {
-  max-width: min(92%, 320px);
-  padding: 8px 10px 4px;
-  border-radius: 12px 12px 12px 4px;
-  background: color-mix(in srgb, #15241c 90%, #2a3d32);
-  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.2);
+  max-width: min(88%, 340px);
+  padding: 8px 11px 5px;
+  border-radius: 14px 14px 14px 5px;
+  background: color-mix(in srgb, #182820 92%, #2d4036);
+  border: 1px solid color-mix(in srgb, #ffffff 5%, transparent);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.18);
+  color: var(--hc-text, #e8f5ef);
 }
 
 .chat-bubble.is-mine {
-  border-radius: 12px 12px 4px 12px;
-  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 28%, #14241c);
+  border-radius: 14px 14px 5px 14px;
+  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 22%, #15241c);
+  border-color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 28%, transparent);
 }
 
 .chat-bubble.is-card {
-  border: 1px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 35%, transparent);
+  min-width: min(72%, 200px);
+  max-width: min(92%, 300px);
+  padding: 10px 12px 6px;
+  background: color-mix(in srgb, #101a14 88%, #1c2e24);
+  border: 1px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 32%, transparent);
+}
+
+.chat-bubble.is-mine.is-card {
+  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 14%, #121c16);
+}
+
+.chat-bubble.is-request {
+  border-color: color-mix(in srgb, #7eb8ff 40%, transparent);
 }
 
 .chat-bubble-text {
   margin: 0;
-  font-size: 0.88rem;
-  line-height: 1.4;
+  font-size: 0.9rem;
+  line-height: 1.42;
   white-space: pre-wrap;
   word-break: break-word;
 }
@@ -4792,9 +4943,69 @@ a.app-details-host:hover {
 .chat-bubble-time {
   display: block;
   text-align: right;
+  font-size: 0.6rem;
+  letter-spacing: 0.02em;
+  opacity: 0.48;
+  margin-top: 5px;
+}
+
+.chat-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.chat-card-badge {
+  display: inline-flex;
+  align-items: center;
+  padding: 2px 7px;
+  border-radius: 999px;
   font-size: 0.62rem;
-  opacity: 0.5;
-  margin-top: 4px;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 90%, #fff);
+  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 16%, transparent);
+}
+
+.chat-bubble.is-request .chat-card-badge {
+  color: #b7d4ff;
+  background: color-mix(in srgb, #7eb8ff 18%, transparent);
+}
+
+.chat-card-status {
+  font-size: 0.64rem;
+  font-weight: 600;
+  opacity: 0.72;
+  text-align: right;
+  line-height: 1.25;
+  max-width: 58%;
+}
+
+.chat-card-status[data-status='pending'] {
+  color: color-mix(in srgb, #f0c674 90%, #fff);
+  opacity: 1;
+}
+
+.chat-card-status[data-status='sending'] {
+  color: var(--hc-muted);
+  opacity: 1;
+}
+
+.chat-card-status[data-status='sent'] {
+  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 90%, #fff);
+  opacity: 1;
+}
+
+.chat-card-status[data-status='failed'] {
+  color: #f07178;
+  opacity: 1;
+}
+
+.chat-card-status[data-status='cancelled'] {
+  opacity: 0.55;
 }
 
 .chat-card-title {
@@ -4806,14 +5017,77 @@ a.app-details-host:hover {
 }
 
 .chat-card-amount {
-  margin: 4px 0 2px;
-  font-size: 1rem;
-  font-weight: 700;
+  margin: 2px 0 0;
+  font-size: 1.2rem;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+  line-height: 1.2;
+}
+
+.chat-card-sats {
+  margin: 2px 0 0;
+  font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
+  color: var(--hc-muted);
+  opacity: 0.9;
 }
 
 .chat-card-meta {
-  font-size: 0.7rem;
+  display: block;
+  margin-top: 4px;
+  font-size: 0.68rem;
   opacity: 0.65;
+}
+
+.chat-card-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.chat-card-btn {
+  appearance: none;
+  margin: 0;
+  padding: 6px 11px;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  font: inherit;
+  font-size: 0.74rem;
+  font-weight: 650;
+  cursor: pointer;
+  line-height: 1.2;
+}
+
+.chat-card-btn-ghost {
+  background: transparent;
+  color: var(--hc-muted);
+  border-color: color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
+}
+
+.chat-card-btn-ghost:hover {
+  color: var(--hc-text);
+}
+
+.chat-card-btn-primary {
+  background: var(--hc-accent, #3dcf8e);
+  color: #0a120e;
+  border-color: var(--hc-accent, #3dcf8e);
+}
+
+.chat-card-btn-primary:hover {
+  filter: brightness(1.05);
+}
+
+.chat-bubble[data-pay-status='sent'] .chat-card-meta {
+  color: color-mix(in srgb, var(--hc-accent, #3dcf8e) 85%, #fff);
+  opacity: 1;
+}
+
+.chat-bubble[data-pay-status='failed'] .chat-card-meta {
+  color: #f07178;
+  opacity: 1;
 }
 
 .chat-system {
@@ -4848,47 +5122,84 @@ a.app-details-host:hover {
   border-top: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 70%, transparent);
 }
 
-.chat-input {
+.chat-input-bar {
   flex: 1;
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+  min-width: 0;
   min-height: 40px;
-  max-height: 120px;
-  resize: none;
+  padding: 4px 6px 4px 4px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
   background: color-mix(in srgb, #0a120e 80%, #1a1a1a);
+}
+
+.chat-input-bar:focus-within {
+  outline: 2px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 45%, transparent);
+  outline-offset: 0;
+}
+
+.chat-composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+  padding-bottom: 2px;
+}
+
+.chat-action-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin: 0;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--hc-muted);
+  cursor: pointer;
+  line-height: 0;
+}
+
+.chat-action-btn:hover {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-accent, #3dcf8e) 12%, transparent);
+}
+
+.chat-action-btn svg {
+  flex-shrink: 0;
+}
+
+.chat-input {
+  flex: 1;
+  min-width: 0;
+  min-height: 32px;
+  max-height: 120px;
+  resize: none;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: inherit;
   font: inherit;
   font-size: 0.9rem;
-  padding: 10px 14px;
+  padding: 8px 8px 8px 4px;
   line-height: 1.35;
 }
 
 .chat-input:focus {
-  outline: 2px solid color-mix(in srgb, var(--hc-accent, #3dcf8e) 45%, transparent);
-  outline-offset: 0;
+  outline: none;
 }
 
 .chat-placeholder {
   margin: auto;
   padding: 24px;
   text-align: center;
-  max-width: 280px;
-}
-
-.chat-placeholder h3 {
-  margin: 0 0 8px;
-}
-
-.chat-placeholder p {
-  margin: 0 0 10px;
-  font-size: 0.85rem;
-  line-height: 1.45;
-  opacity: 0.75;
-}
-
-.chat-placeholder-cmds {
-  font-size: 0.75rem;
-  opacity: 0.85;
+  opacity: 0.55;
+  font-size: 0.9rem;
 }
 
 @media (max-width: 520px) {
@@ -4901,6 +5212,7 @@ a.app-details-host:hover {
     border-right: 0;
     border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
   }
+
 }
 
 

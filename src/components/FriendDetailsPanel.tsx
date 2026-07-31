@@ -9,7 +9,9 @@ import {
   type Friend,
 } from '../wallet/friends'
 import { clearNavChild, openChatWithFriend } from '../wallet/navStore'
+import { isLabChatEnabled, subscribeLabChat } from '../wallet/labPrefs'
 import { copyText } from '../wallet/clipboard'
+import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
   friendId: string
@@ -23,6 +25,9 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [saved, setSaved] = useState(false)
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedAddress, setCopiedAddress] = useState(false)
+  const [labChat, setLabChat] = useState(() => isLabChatEnabled())
+
+  useEffect(() => subscribeLabChat(setLabChat), [])
 
   useEffect(() => {
     return subscribeFriends(() => {
@@ -60,7 +65,9 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     try {
       updateFriend(friend.id, { label })
       setSaved(true)
+      playWalletSound('soft')
     } catch (err) {
+      playWalletSound('error')
       setError(err instanceof Error ? err.message : String(err))
     }
   }
@@ -136,13 +143,18 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => openChatWithFriend(friend.id)}
-          >
-            Message
-          </button>
+          {labChat ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                playWalletSound('soft')
+                openChatWithFriend(friend.id)
+              }}
+            >
+              Message
+            </button>
+          ) : null}
           <button type="submit" className="btn btn-ghost" disabled={!label.trim() || label.trim() === friend.label}>
             Save
           </button>
@@ -150,6 +162,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
             type="button"
             className="btn btn-ghost"
             onClick={() => {
+              playWalletSound('deny')
               removeFriend(friend.id)
               clearNavChild()
             }}

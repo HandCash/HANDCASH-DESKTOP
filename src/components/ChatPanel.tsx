@@ -3,7 +3,6 @@ import type { Chain } from '../wallet/vault'
 import {
   addressFromIdentityKey,
   getFriendById,
-  listFriends,
   subscribeFriends,
   type Friend,
 } from '../wallet/friends'
@@ -12,23 +11,28 @@ import {
   listChatPeers,
   listMessages,
   subscribeChat,
+  updateMessage,
   type ChatMessage,
 } from '../wallet/chatStore'
-import {
-  helpText,
-  normalizeChatText,
-  parseLocalCommand,
-  type ParsedAmount,
-} from '../wallet/brc218'
-import { openSendFlow, openAddFriend } from '../wallet/navStore'
-import { setSendPrefill } from '../wallet/sendPrefill'
+import { normalizeChatText, parseLocalCommand, formatFiatLabel, formatSatsLabel, type ParsedAmount } from '../wallet/brc218'
+import { openAddFriend } from '../wallet/navStore'
 import { amountToSats, getCachedUsdPerBsv } from '../wallet/fx'
+import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
+import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
+import { sendSatsToAddress } from '../wallet/sendPayment'
 import { subscribeChatFocus, takeChatFocus } from '../wallet/chatFocus'
-import { PersonAddIcon, SendIcon } from './icons'
+import { copyText } from '../wallet/clipboard'
+import {
+  PayIcon,
+  PersonAddIcon,
+  RequestMoneyIcon,
+  SendIcon,
+} from './icons'
 
 type Props = {
   chain: Chain
+  onSent?: (balanceSats: number) => void
 }
 
 function friendInitial(label: string): string {
@@ -44,36 +48,87 @@ function formatTime(ts: number): string {
   }
 }
 
-function resolvePeer(
-  token: string | undefined,
-  friends: Friend[],
-  current: Friend | null,
-): Friend | null {
-  if (!token) return current
-  const q = token.replace(/^@/, '').toLowerCase()
-  return (
-    friends.find((f) => f.label.toLowerCase() === q) ||
-    friends.find((f) => f.identityKey.toLowerCase().startsWith(q)) ||
-    friends.find((f) => f.id === token) ||
-    null
-  )
+function shortenTxid(txid: string): string {
+  if (txid.length <= 16) return txid
+  return `${txid.slice(0, 8)}…${txid.slice(-6)}`
 }
 
-function amountToSendPrefill(amount: ParsedAmount | undefined): {
-  amount?: string
-  amountUnit?: 'usd' | 'bsv' | 'sats'
+function resolveAmountSats(amount: ParsedAmount | undefined): {
+  amountLabel?: string
   sats?: number
 } {
   if (!amount) return {}
   if (amount.kind === 'sats') {
-    return { amount: String(amount.sats), amountUnit: 'sats', sats: amount.sats }
+    if (amount.sats < 1) return { amountLabel: amount.label }
+    return { amountLabel: amount.label, sats: amount.sats }
   }
   const usdPerBsv = getCachedUsdPerBsv()
-  const sats = amountToSats(String(amount.value), 'usd', usdPerBsv)
-  return { amount: String(amount.value), amountUnit: 'usd', sats: sats > 0 ? sats : undefined }
+  let sats = amountToSats(String(amount.value), 'usd', usdPerBsv)
+  // Tiny USD that rounds under 1 sat still sends the chain minimum.
+  if (sats < 1 && amount.value > 0 && usdPerBsv != null && usdPerBsv > 0) {
+    sats = 1
+  }
+  const amountLabel = formatFiatLabel(amount.value, amount.currency)
+  if (sats < 1) return { amountLabel }
+  return { amountLabel, sats }
 }
 
-function MessageBubble({ msg }: { msg: ChatMessage }) {
+/** Default amount lead from unit of account: `$` or `… bsv`. */
+function defaultAmountLead(currency: DisplayCurrency): { text: string; cursor: number } {
+  if (currency === 'usd') return { text: ' $', cursor: 2 }
+  return { text: '  bsv', cursor: 1 }
+}
+
+function isUnitOnlyRest(rest: string): boolean {
+  const t = rest.trim()
+  return !t || t === '$' || /^bsv$/i.test(t)
+}
+
+/** Switch/replace `/pay` ↔ `/request`, keep amount when present, else unit lead. */
+function applyPaymentVerb(
+  prev: string,
+  verb: 'pay' | 'request',
+): { draft: string; cursor: number } {
+  const currency = getDisplayCurrency()
+  const trimmed = prev.trimStart()
+  const m = trimmed.match(/^\/(pay|request)(\s[\s\S]*)?$/i)
+  if (m) {
+    const rest = m[2] ?? ''
+    if (isUnitOnlyRest(rest)) {
+      const lead = defaultAmountLead(currency)
+      const draft = `/${verb}${lead.text}`
+      return { draft, cursor: `/${verb}`.length + lead.cursor }
+    }
+    const preserved = rest.startsWith(' ') ? rest : ` ${rest}`
+    const draft = `/${verb}${preserved}`
+    return { draft, cursor: draft.length }
+  }
+  const lead = defaultAmountLead(currency)
+  const draft = `/${verb}${lead.text}`
+  return { draft, cursor: `/${verb}`.length + lead.cursor }
+}
+
+function payStatusLabel(msg: ChatMessage): string {
+  const st = msg.meta?.payStatus
+  if (st === 'pending') return 'Confirm to send'
+  if (st === 'sending') return 'Sending…'
+  if (st === 'sent') {
+    return msg.meta?.txid ? `Sent · ${shortenTxid(msg.meta.txid)}` : 'Sent'
+  }
+  if (st === 'failed') return msg.meta?.error ? `Failed · ${msg.meta.error}` : 'Failed'
+  if (st === 'cancelled') return 'Cancelled'
+  return msg.meta?.status ?? ''
+}
+
+function MessageBubble({
+  msg,
+  onConfirmPay,
+  onCancelPay,
+}: {
+  msg: ChatMessage
+  onConfirmPay?: (id: string) => void
+  onCancelPay?: (id: string) => void
+}) {
   if (msg.direction === 'system' || msg.kind === 'system') {
     return (
       <div className="chat-system" role="status">
@@ -83,23 +138,69 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   }
 
   const mine = msg.direction === 'out'
+  const payStatus = msg.meta?.payStatus
+  const canAct = msg.kind === 'pay-sent' && payStatus === 'pending'
+  const isCard = msg.kind === 'pay-request' || msg.kind === 'pay-sent'
+  const amountLabel = msg.meta?.amountLabel ?? msg.text
+  const satsLine =
+    msg.meta?.sats && msg.meta.sats > 0 && !/\bsats?\b/i.test(amountLabel)
+      ? formatSatsLabel(msg.meta.sats)
+      : null
+
   return (
     <div className={`chat-bubble-row${mine ? ' is-mine' : ''}`}>
       <div
-        className={`chat-bubble${mine ? ' is-mine' : ''}${msg.kind === 'pay-request' ? ' is-card' : ''}${msg.kind === 'pay-sent' ? ' is-card' : ''}`}
+        className={[
+          'chat-bubble',
+          mine ? 'is-mine' : '',
+          isCard ? 'is-card' : '',
+          msg.kind === 'pay-sent' ? 'is-pay' : '',
+          msg.kind === 'pay-request' ? 'is-request' : '',
+        ]
+          .filter(Boolean)
+          .join(' ')}
         data-kind={msg.kind}
+        data-pay-status={payStatus || undefined}
       >
         {msg.kind === 'pay-request' ? (
           <>
-            <strong className="chat-card-title">Payment request</strong>
-            <p className="chat-card-amount">{msg.meta?.amountLabel ?? msg.text}</p>
+            <div className="chat-card-head">
+              <span className="chat-card-badge">Request</span>
+            </div>
+            <p className="chat-card-amount">{amountLabel}</p>
+            {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
             {msg.meta?.status ? <span className="chat-card-meta">{msg.meta.status}</span> : null}
           </>
         ) : msg.kind === 'pay-sent' ? (
           <>
-            <strong className="chat-card-title">Payment</strong>
-            <p className="chat-card-amount">{msg.meta?.amountLabel ?? msg.text}</p>
-            <span className="chat-card-meta">{msg.meta?.status ?? 'Opened in Send'}</span>
+            <div className="chat-card-head">
+              <span className="chat-card-badge">Pay</span>
+              {payStatus ? (
+                <span className="chat-card-status" data-status={payStatus}>
+                  {payStatusLabel(msg)}
+                </span>
+              ) : null}
+            </div>
+            <p className="chat-card-amount">{amountLabel}</p>
+            {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+            {canAct ? (
+              <div className="chat-card-actions">
+                <button
+                  type="button"
+                  className="chat-card-btn chat-card-btn-ghost"
+                  onClick={() => onCancelPay?.(msg.id)}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  className="chat-card-btn chat-card-btn-primary"
+                  onClick={() => onConfirmPay?.(msg.id)}
+                >
+                  Confirm
+                </button>
+              </div>
+            ) : null}
           </>
         ) : (
           <p className="chat-bubble-text">{msg.text}</p>
@@ -112,8 +213,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
   )
 }
 
-export function ChatPanel({ chain }: Props) {
-  const [friends, setFriends] = useState(() => listFriends())
+export function ChatPanel({ chain, onSent }: Props) {
   const [peers, setPeers] = useState(() => listChatPeers())
   const [activePeerId, setActivePeerId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -122,7 +222,6 @@ export function ChatPanel({ chain }: Props) {
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const refresh = () => {
-    setFriends(listFriends())
     setPeers(listChatPeers())
   }
 
@@ -140,56 +239,159 @@ export function ChatPanel({ chain }: Props) {
   const activeFriend = activePeerId ? getFriendById(activePeerId) : null
   const messages = useMemo(
     () => (activePeerId ? listMessages(activePeerId) : []),
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- refresh via peers/messages tick
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- peers tick refreshes store
     [activePeerId, peers],
   )
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages.length, activePeerId])
+  }, [messages.length, activePeerId, peers])
 
-  const openPay = (friend: Friend, amount?: ParsedAmount, memo?: string) => {
+  /** Queue an in-chat payment card — never leave Chat for Send. */
+  const queuePay = (friend: Friend, amount: ParsedAmount, memo?: string) => {
     let address = ''
     try {
       address = addressFromIdentityKey(friend.identityKey, chain)
     } catch {
-      setHint('Cannot resolve payment address for this identity.')
+      setHint('Could not resolve payment address.')
       playWalletSound('error')
       return
     }
-    const pre = amountToSendPrefill(amount)
-    setSendPrefill({
-      to: address,
-      friendLabel: friend.label,
-      amount: pre.amount,
-      amountUnit: pre.amountUnit,
-      memo,
-    })
+    const resolved = resolveAmountSats(amount)
+    if (!resolved.sats || resolved.sats <= 0) {
+      setHint(
+        amount.kind === 'fiat' && getCachedUsdPerBsv() == null
+          ? 'USD rate unavailable — try 1 sat or BSV'
+          : 'Amount too small — try 1 sat or more',
+      )
+      playWalletSound('error')
+      return
+    }
     appendMessage(friend.id, {
       direction: 'out',
       kind: 'pay-sent',
-      text: `Pay ${pre.amount ? (amount?.label ?? pre.amount) : ''} → ${friend.label}`.trim(),
+      text: `Pay ${resolved.amountLabel ?? amount.label}`,
       meta: {
-        amountLabel: amount?.label,
-        sats: pre.sats,
-        status: 'Confirm in Send',
+        amountLabel: resolved.amountLabel ?? amount.label,
+        sats: resolved.sats,
+        to: address,
+        friendLabel: friend.label,
+        memo,
+        payStatus: 'pending',
+        status: 'Confirm to send',
       },
     })
     playWalletSound('soft')
-    openSendFlow()
   }
 
-  const handleCompose = (rawLine: string) => {
+  const confirmPay = async (messageId: string) => {
+    const msg = messages.find((m) => m.id === messageId)
+    if (!msg || msg.meta?.payStatus !== 'pending') return
+    const to = msg.meta?.to
+    const sats = msg.meta?.sats
+    if (!to || !sats || sats <= 0) {
+      updateMessage(messageId, {
+        meta: { payStatus: 'failed', status: 'Failed', error: 'Missing payment details' },
+      })
+      playWalletSound('error')
+      return
+    }
+
+    updateMessage(messageId, {
+      meta: { payStatus: 'sending', status: 'Sending…', error: undefined },
+    })
+
+    try {
+      const { txid, balanceSats } = await sendSatsToAddress({
+        to,
+        satoshis: sats,
+        friendLabel: msg.meta?.friendLabel,
+        description: msg.meta?.memo
+          ? `HandCash chat: ${msg.meta.memo}`
+          : `HandCash chat pay to ${to}`,
+      })
+      updateMessage(messageId, {
+        meta: {
+          payStatus: 'sent',
+          status: 'Sent',
+          txid,
+          error: undefined,
+        },
+      })
+      playPaymentSuccessSound()
+      onSent?.(balanceSats)
+    } catch (err) {
+      const error = err instanceof Error ? err.message : String(err)
+      updateMessage(messageId, {
+        meta: { payStatus: 'failed', status: 'Failed', error },
+      })
+      playWalletSound('error')
+    }
+  }
+
+  const cancelPay = (messageId: string) => {
+    const msg = messages.find((m) => m.id === messageId)
+    if (!msg || msg.meta?.payStatus !== 'pending') return
+    updateMessage(messageId, {
+      meta: { payStatus: 'cancelled', status: 'Cancelled' },
+    })
+    playWalletSound('soft')
+  }
+
+  const fillPaymentCommand = (verb: 'pay' | 'request') => {
+    if (!activeFriend) return
+    setHint(null)
+    let cursor = 0
+    setDraft((prev) => {
+      const next = applyPaymentVerb(prev, verb)
+      cursor = next.cursor
+      return next.draft
+    })
+    playWalletSound('soft')
+    requestAnimationFrame(() => {
+      const el = inputRef.current
+      if (!el) return
+      el.focus()
+      el.setSelectionRange(cursor, cursor)
+    })
+  }
+
+  const onPay = () => fillPaymentCommand('pay')
+  const onRequest = () => fillPaymentCommand('request')
+
+  const onWhois = async () => {
+    if (!activeFriend) return
+    setHint(null)
+    let address = ''
+    try {
+      address = addressFromIdentityKey(activeFriend.identityKey, chain)
+    } catch {
+      address = ''
+    }
+    const line = address || activeFriend.identityKey
+    const ok = await copyText(line)
+    appendMessage(activeFriend.id, {
+      direction: 'system',
+      kind: 'system',
+      text: [
+        activeFriend.label,
+        activeFriend.identityKey,
+        address ? address : null,
+        ok ? 'Copied' : null,
+      ]
+        .filter(Boolean)
+        .join('\n'),
+    })
+    playWalletSound(ok ? 'copy' : 'soft')
+  }
+
+  /** Plain chat; optional BRC-218 slash still works for power users, never advertised. */
+  const sendText = (rawLine: string) => {
     const line = rawLine.trim()
-    if (!line) return
+    if (!line || !activePeerId || !activeFriend) return
     setHint(null)
 
-    // Literal slash chat
     if (line.startsWith('//')) {
-      if (!activePeerId || !activeFriend) {
-        setHint('Pick a friend thread first.')
-        return
-      }
       appendMessage(activePeerId, {
         direction: 'out',
         kind: 'text',
@@ -201,131 +403,71 @@ export function ChatPanel({ chain }: Props) {
     }
 
     const cmd = parseLocalCommand(line)
-    if (!cmd) {
-      if (!activePeerId || !activeFriend) {
-        setHint('Pick a friend on the left, or start with /help')
+    if (cmd?.verb === 'pay' || cmd?.verb === 'tip') {
+      const amount = 'amount' in cmd ? cmd.amount : undefined
+      if (!amount) {
+        setHint('Add an amount, e.g. /pay $0.01 or /pay 1 sat')
+        playWalletSound('error')
         return
       }
-      appendMessage(activePeerId, { direction: 'out', kind: 'text', text: line })
-      playWalletSound('soft')
+      queuePay(activeFriend, amount, cmd.verb === 'pay' ? cmd.memo : undefined)
       setDraft('')
       return
     }
-
-    if (cmd.verb === 'help') {
-      const peer = activePeerId ?? friends[0]?.id
-      if (peer) {
-        appendMessage(peer, { direction: 'system', kind: 'system', text: helpText() })
-        setActivePeerId(peer)
-      } else {
-        setHint(helpText())
-      }
-      setDraft('')
-      return
-    }
-
-    if (cmd.verb === 'unsupported') {
-      setHint(`Unsupported command /${cmd.name}. Try /help`)
-      playWalletSound('error')
-      return
-    }
-
-    const peerFriend = resolvePeer(
-      'recipient' in cmd ? cmd.recipient : undefined,
-      friends,
-      activeFriend,
-    )
-
-    if (cmd.verb === 'whois') {
-      const target = peerFriend ?? activeFriend
-      if (!target) {
-        setHint('Add a friend first, then /whois')
-        return
-      }
-      let address = ''
-      try {
-        address = addressFromIdentityKey(target.identityKey, chain)
-      } catch {
-        address = '(invalid key)'
-      }
-      setActivePeerId(target.id)
-      appendMessage(target.id, {
-        direction: 'system',
-        kind: 'system',
-        text: [
-          `whois ${target.label}`,
-          `identity: ${target.identityKey}`,
-          `address: ${address}`,
-          `chain: ${chain}`,
-        ].join('\n'),
-      })
-      playWalletSound('soft')
-      setDraft('')
-      return
-    }
-
-    if (!peerFriend) {
-      setHint('Unknown recipient. Add them in Friends, or open their thread.')
-      playWalletSound('error')
-      return
-    }
-
-    setActivePeerId(peerFriend.id)
-
-    if (cmd.verb === 'message') {
-      const text = cmd.text?.trim()
-      if (!text) {
-        setHint('Usage: /message [recipient] <text>')
-        return
-      }
-      appendMessage(peerFriend.id, { direction: 'out', kind: 'text', text })
-      playWalletSound('soft')
-      setDraft('')
-      return
-    }
-
-    if (cmd.verb === 'request') {
+    if (cmd?.verb === 'request') {
       if (!cmd.amount) {
-        setHint('Usage: /request [recipient] <$amount|N sats> [memo]')
+        setHint('Add an amount, e.g. /request $0.01 or /request 1 sat')
+        playWalletSound('error')
         return
       }
-      appendMessage(peerFriend.id, {
+      const resolved = resolveAmountSats(cmd.amount)
+      appendMessage(activeFriend.id, {
         direction: 'out',
         kind: 'pay-request',
         text: cmd.memo || cmd.amount.label,
         meta: {
-          amountLabel: cmd.amount.label,
-          sats: amountToSendPrefill(cmd.amount).sats,
-          status: 'Awaiting counterparty (local card)',
+          amountLabel: resolved.amountLabel ?? cmd.amount.label,
+          sats: resolved.sats,
+          status: 'Request',
         },
       })
       playWalletSound('soft')
       setDraft('')
       return
     }
-
-    if (cmd.verb === 'pay' || cmd.verb === 'tip') {
-      const amount = cmd.verb === 'tip' ? cmd.amount : cmd.amount
-      if (cmd.verb === 'pay' && !amount) {
-        setHint('Usage: /pay [recipient] <$amount|N sats> [memo]')
-        return
-      }
-      // tip without amount → open send blank to this peer
-      openPay(peerFriend, amount, cmd.verb === 'pay' ? cmd.memo : undefined)
+    if (cmd?.verb === 'whois') {
+      void onWhois()
       setDraft('')
       return
     }
+    if (cmd?.verb === 'message' && cmd.text.trim()) {
+      appendMessage(activePeerId, { direction: 'out', kind: 'text', text: cmd.text.trim() })
+      playWalletSound('soft')
+      setDraft('')
+      return
+    }
+    // Unsupported slash → send as plain text (never lecture)
+    if (cmd?.verb === 'help' || cmd?.verb === 'unsupported') {
+      appendMessage(activePeerId, { direction: 'out', kind: 'text', text: line })
+      playWalletSound('soft')
+      setDraft('')
+      return
+    }
+
+    appendMessage(activePeerId, { direction: 'out', kind: 'text', text: line })
+    playWalletSound('soft')
+    setDraft('')
   }
 
   const onSubmit = (e: FormEvent) => {
     e.preventDefault()
-    handleCompose(draft)
+    sendText(draft)
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
-      handleCompose(draft)
+      sendText(draft)
     }
   }
 
@@ -344,12 +486,9 @@ export function ChatPanel({ chain }: Props) {
             <PersonAddIcon size={18} />
           </button>
         </div>
-        <p className="chat-banner">
-          BSV identity chat · BRC-218 commands · peer relay coming with BRC-169
-        </p>
         <ul className="chat-peer-list">
           {peers.length === 0 ? (
-            <li className="chat-empty">Add friends to start chatting</li>
+            <li className="chat-empty">No chats yet</li>
           ) : (
             peers.map(({ peerId, friend, thread }) => {
               const label = friend?.label ?? 'Unknown'
@@ -368,7 +507,7 @@ export function ChatPanel({ chain }: Props) {
                     <span className="chat-peer-body">
                       <strong>{label}</strong>
                       <span className="chat-peer-preview">
-                        {thread?.lastPreview || 'No messages yet'}
+                        {thread?.lastPreview || ' '}
                       </span>
                     </span>
                   </button>
@@ -395,44 +534,65 @@ export function ChatPanel({ chain }: Props) {
             </header>
 
             <div className="chat-thread-messages">
-              {messages.length === 0 ? (
-                <div className="chat-system">
-                  <pre>
-                    {`Say hi to ${activeFriend.label}.\nTry /pay $1 or /whois\n/help for BRC-218 commands`}
-                  </pre>
-                </div>
-              ) : (
-                messages.map((m) => <MessageBubble key={m.id} msg={m} />)
-              )}
+              {messages.map((m) => (
+                <MessageBubble
+                  key={m.id}
+                  msg={m}
+                  onConfirmPay={(id) => void confirmPay(id)}
+                  onCancelPay={cancelPay}
+                />
+              ))}
               <div ref={threadEndRef} />
             </div>
 
             {hint ? <p className="chat-hint">{hint}</p> : null}
 
             <form className="chat-composer" onSubmit={onSubmit}>
-              <textarea
-                ref={inputRef}
-                className="chat-input"
-                rows={1}
-                placeholder="Message or /pay $2.18…"
-                value={draft}
-                onChange={(e) => setDraft(e.target.value)}
-                onKeyDown={onKeyDown}
-                autoComplete="off"
-              />
-              <button type="submit" className="btn btn-primary btn-icon" aria-label="Send" disabled={!draft.trim()}>
+              <div className="chat-input-bar">
+                <div className="chat-composer-actions" role="toolbar" aria-label="Chat actions">
+                  <button
+                    type="button"
+                    className="chat-action-btn"
+                    title="Pay"
+                    aria-label="Pay"
+                    onClick={onPay}
+                  >
+                    <PayIcon size={20} />
+                  </button>
+                  <button
+                    type="button"
+                    className="chat-action-btn"
+                    title="Receive"
+                    aria-label="Receive"
+                    onClick={onRequest}
+                  >
+                    <RequestMoneyIcon size={20} />
+                  </button>
+                </div>
+                <textarea
+                  ref={inputRef}
+                  className="chat-input"
+                  rows={1}
+                  placeholder="Message"
+                  value={draft}
+                  onChange={(e) => setDraft(e.target.value)}
+                  onKeyDown={onKeyDown}
+                  autoComplete="off"
+                />
+              </div>
+              <button
+                type="submit"
+                className="btn btn-primary btn-icon"
+                aria-label="Send"
+                disabled={!draft.trim()}
+              >
                 <SendIcon size={18} />
               </button>
             </form>
           </>
         ) : (
           <div className="chat-placeholder">
-            <h3>Messages</h3>
-            <p>
-              Telegram-style chat addressed by BSV identity keys. Slash commands follow BRC-218 —
-              only what you type is executable.
-            </p>
-            <p className="chat-placeholder-cmds mono">/pay · /whois · /request · /tip · /help</p>
+            <p>Select a chat</p>
           </div>
         )}
       </section>

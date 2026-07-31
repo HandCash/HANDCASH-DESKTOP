@@ -8,6 +8,11 @@ import {
   setWalletSfxEnabled,
   subscribeWalletSfx,
 } from '../wallet/soundPrefs'
+import {
+  isLabChatEnabled,
+  setLabChatEnabled,
+  subscribeLabChat,
+} from '../wallet/labPrefs'
 import { playWalletSound } from '../wallet/soundService'
 
 type SettingItem = {
@@ -104,6 +109,7 @@ export function SettingsPanel() {
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
+  const [labChatEnabled, setLabChatEnabledState] = useState(() => isLabChatEnabled())
   // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -117,6 +123,7 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
+  useEffect(() => subscribeLabChat(setLabChatEnabledState), [])
 
   return (
     <div
@@ -138,7 +145,10 @@ export function SettingsPanel() {
                 <button
                   type="button"
                   className="settings-row-main"
-                  onClick={() => openSetting(id)}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    openSetting(id)
+                  }}
                 >
                   <span className="settings-row-body">
                     <strong className="settings-row-label">{label}</strong>
@@ -153,6 +163,40 @@ export function SettingsPanel() {
         </section>
       ))}
 
+      <section className="settings-group" data-aeon-part="lab" data-settings-group="Lab">
+        <h3 className="settings-group-title">Lab</h3>
+        <ul className="settings-list">
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <label className="settings-row-label" htmlFor="settings-lab-chat">
+                  Chat
+                </label>
+                <span className="settings-row-desc">
+                  Experimental friend messaging and in-chat pay — off by default
+                </span>
+              </span>
+              <label className="settings-sfx-toggle">
+                <input
+                  id="settings-lab-chat"
+                  type="checkbox"
+                  checked={labChatEnabled}
+                  data-aeon-part="lab-chat"
+                  data-aeon-state={labChatEnabled ? 'on' : 'off'}
+                  onChange={(e) => {
+                    const next = e.target.checked
+                    setLabChatEnabled(next)
+                    setLabChatEnabledState(next)
+                    playWalletSound(next ? 'soft' : 'deny', { force: true })
+                  }}
+                />
+                <span>{labChatEnabled ? 'On' : 'Off'}</span>
+              </label>
+            </div>
+          </li>
+        </ul>
+      </section>
+
       <section className="settings-group" data-aeon-part="application">
         <h3 className="settings-group-title">Application</h3>
         <ul className="settings-list">
@@ -163,7 +207,7 @@ export function SettingsPanel() {
                   Sound effects
                 </label>
                 <span className="settings-row-desc">
-                  Soft chimes for send, receive, unlock, copy, and connect — off by default
+                  Chimes for taps, send, receive, unlock, copy, connect, and more — off by default
                 </span>
               </span>
               <label className="settings-sfx-toggle">
@@ -177,7 +221,7 @@ export function SettingsPanel() {
                     const next = e.target.checked
                     setWalletSfxEnabled(next)
                     setSfxEnabled(next)
-                    if (next) playWalletSound('success', { force: true })
+                    if (next) playWalletSound('receive', { force: true })
                   }}
                 />
                 <span>{sfxEnabled ? 'On' : 'Off'}</span>
@@ -202,7 +246,10 @@ export function SettingsPanel() {
                 value={context.mode}
                 data-aeon-part="update-mode"
                 data-aeon-state={context.mode}
-                onChange={(e) => void setMode(e.target.value as UpdateMode)}
+                onChange={(e) => {
+                  playWalletSound('soft')
+                  void setMode(e.target.value as UpdateMode)
+                }}
               >
                 {UPDATE_MODES.map((m) => (
                   <option key={m.value} value={m.value}>
@@ -234,7 +281,10 @@ export function SettingsPanel() {
                 disabled={checking || context.mode === 'none'}
                 data-aeon-part="check-updates"
                 data-aeon-state={checking ? 'checking' : context.mode}
-                onClick={() => void check()}
+                onClick={() => {
+                  playWalletSound('soft')
+                  void check()
+                }}
               >
                 {checking ? 'Checking…' : 'Check for Updates'}
               </button>
@@ -258,7 +308,10 @@ export function SettingsPanel() {
                 type="button"
                 className="btn btn-primary settings-check-btn"
                 data-aeon-part="view-statecharts"
-                onClick={() => openSetting('statecharts')}
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSetting('statecharts')
+                }}
               >
                 View statecharts
               </button>

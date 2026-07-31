@@ -137,7 +137,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent, onFail }: Props)
 
       setStage('success')
       void listCollectables().catch(() => {})
-      void syncLegacyFunds()
+      void syncLegacyFunds({ announceReceive: false })
         .then(async (balance) => {
           if (balance != null) {
             onSent?.(balance)

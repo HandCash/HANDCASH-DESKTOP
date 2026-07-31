@@ -3,6 +3,13 @@ import { listFriends, type Friend } from './friends'
 
 const STORAGE_KEY = 'handcash.brc100.chat.v1'
 
+export type ChatPayStatus =
+  | 'pending'
+  | 'sending'
+  | 'sent'
+  | 'failed'
+  | 'cancelled'
+
 export type ChatMessageKind = 'text' | 'system' | 'command' | 'pay-request' | 'pay-sent'
 
 export type ChatMessage = {
@@ -19,6 +26,12 @@ export type ChatMessage = {
     amountLabel?: string
     sats?: number
     status?: string
+    payStatus?: ChatPayStatus
+    to?: string
+    friendLabel?: string
+    memo?: string
+    txid?: string
+    error?: string
   }
 }
 
@@ -111,6 +124,24 @@ export function appendMessage(
   state.messages.push(msg)
   writeState(state)
   return msg
+}
+
+export function updateMessage(
+  id: string,
+  patch: Partial<Pick<ChatMessage, 'text' | 'kind' | 'meta'>>,
+): ChatMessage | null {
+  const state = readState()
+  const idx = state.messages.findIndex((m) => m.id === id)
+  if (idx < 0) return null
+  const prev = state.messages[idx]!
+  const next: ChatMessage = {
+    ...prev,
+    ...patch,
+    meta: patch.meta !== undefined ? { ...prev.meta, ...patch.meta } : prev.meta,
+  }
+  state.messages[idx] = next
+  writeState(state)
+  return next
 }
 
 export function ensureThread(peerId: string): void {

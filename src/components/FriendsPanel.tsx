@@ -12,6 +12,7 @@ import {
   type CollectionView,
 } from '../wallet/collectionView'
 import { openAddFriend, openFriendDetails } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { PersonAddIcon } from './icons'
 
@@ -37,7 +38,10 @@ function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
       <button
         type="button"
         className="friend-row-main"
-        onClick={() => openFriendDetails(friend.id)}
+        onClick={() => {
+          playWalletSound('soft')
+          openFriendDetails(friend.id)
+        }}
       >
         <span className="friend-avatar" aria-hidden>
           {friendInitial(friend.label)}
@@ -69,7 +73,10 @@ function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
       <button
         type="button"
         className="collection-grid-main"
-        onClick={() => openFriendDetails(friend.id)}
+        onClick={() => {
+          playWalletSound('soft')
+          openFriendDetails(friend.id)
+        }}
       >
         <span className="friend-avatar friend-avatar-lg" aria-hidden>
           {friendInitial(friend.label)}
@@ -106,7 +113,10 @@ export function FriendsPanel({ chain }: Props) {
           className="friends-add-btn"
           aria-label="Add friend"
           title="Add friend"
-          onClick={() => openAddFriend()}
+          onClick={() => {
+            playWalletSound('soft')
+            openAddFriend()
+          }}
         >
           <PersonAddIcon size={18} />
           <span>Add friend</span>

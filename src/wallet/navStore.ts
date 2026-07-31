@@ -1,5 +1,6 @@
 import type { ConnectedApp } from './permissions'
 import { focusChatPeer } from './chatFocus'
+import { isLabChatEnabled } from './labPrefs'
 
 export type NavSection =
   | 'activity'
@@ -96,6 +97,7 @@ export function openFriendDetails(friendId: string) {
 }
 
 export function openChatWithFriend(friendId: string) {
+  if (!isLabChatEnabled()) return
   focusChatPeer(friendId)
   setNavSection('chat')
 }

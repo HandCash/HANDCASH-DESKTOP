@@ -1,6 +1,7 @@
 import { ScopeIcon } from './ScopeIcon'
 import { getPermissionScope, appDisplayName } from '../wallet/appIdentity'
-import { getAutoPaySettings, clearAutoPaySettings } from '../wallet/autoPay'
+import { clearAutoPaySettings, getAutoPaySettings } from '../wallet/autoPay'
+import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
   origin: string
@@ -48,7 +49,10 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
           <button
             type="button"
             className="btn btn-ghost btn-compact"
-            onClick={() => clearAutoPaySettings(origin)}
+            onClick={() => {
+              playWalletSound('soft')
+              clearAutoPaySettings(origin)
+            }}
           >
             Turn off
           </button>

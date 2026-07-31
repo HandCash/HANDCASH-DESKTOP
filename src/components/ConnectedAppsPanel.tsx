@@ -27,6 +27,7 @@ import {
   type CollectionView,
 } from '../wallet/collectionView'
 import { openAppDetails } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
   apps: ConnectedApp[]
@@ -57,7 +58,10 @@ function AppListItem({
           type="button"
           className="connected-app-main"
           tabIndex={ready ? 0 : -1}
-          onClick={() => openAppDetails(app)}
+          onClick={() => {
+            playWalletSound('soft')
+            openAppDetails(app)
+          }}
         >
           <AppAvatar origin={app.origin} name={name} size="sm" onReady={() => setReady(true)} />
           <div className="connected-app-body">
@@ -70,7 +74,10 @@ function AppListItem({
           className="connected-app-usd"
           data-currency={currency}
           tabIndex={ready ? 0 : -1}
-          onClick={() => openAppDetails(app)}
+          onClick={() => {
+            playWalletSound('soft')
+            openAppDetails(app)
+          }}
         >
           <span className="connected-app-usd-amounts">
             <span className="connected-app-usd-primary">{primary}</span>
@@ -107,7 +114,10 @@ function AppGridItem({
           type="button"
           className="collection-grid-main"
           tabIndex={ready ? 0 : -1}
-          onClick={() => openAppDetails(app)}
+          onClick={() => {
+            playWalletSound('soft')
+            openAppDetails(app)
+          }}
         >
           <AppAvatar origin={app.origin} name={name} size="md" onReady={() => setReady(true)} />
           <strong className="collection-grid-name">{name}</strong>

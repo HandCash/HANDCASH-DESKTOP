@@ -27,6 +27,7 @@ import {
   type AutoPaySettings,
 } from '../wallet/autoPay'
 import { openPermissionDetails } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
   app: ConnectedApp
@@ -145,6 +146,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
                 className="btn btn-primary btn-icon"
                 type="button"
                 onClick={() => {
+                  playWalletSound('soft')
                   if (window.handcash?.openExternal) {
                     void window.handcash.openExternal(home)
                   } else {
@@ -160,7 +162,10 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
               <button
                 className="btn btn-ghost"
                 type="button"
-                onClick={() => clearAutoPaySettings(app.origin)}
+                onClick={() => {
+                  playWalletSound('soft')
+                  clearAutoPaySettings(app.origin)
+                }}
               >
                 Turn off auto-pay
               </button>
@@ -169,6 +174,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
               className="btn btn-ghost"
               type="button"
               onClick={() => {
+                playWalletSound('deny')
                 onRevoke(app.origin)
                 onDone()
               }}

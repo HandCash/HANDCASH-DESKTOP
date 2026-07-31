@@ -46,6 +46,8 @@ import {
   IdentityIcon,
   SettingsIcon,
 } from './icons'
+import { isLabChatEnabled, subscribeLabChat } from '../wallet/labPrefs'
+import { playWalletSound } from '../wallet/soundService'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -62,18 +64,25 @@ const SECTIONS: {
   value: NavSection
   label: string
   Icon: ComponentType<IconProps>
+  /** When set, tab only shows if the lab flag is on. */
+  lab?: 'chat'
 }[] = [
   { value: 'activity', label: 'Activity', Icon: ActivityIcon },
-  { value: 'chat', label: 'Chat', Icon: ChatIcon },
   { value: 'apps', label: 'Apps', Icon: AppsIcon },
   { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', Icon: FriendsIcon },
+  { value: 'chat', label: 'Chat', Icon: ChatIcon, lab: 'chat' },
   { value: 'identity', label: 'Identity', Icon: IdentityIcon },
   { value: 'settings', label: 'Settings', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
   return SECTIONS.find((s) => s.value === section)?.label ?? section
+}
+
+function isSectionVisible(section: (typeof SECTIONS)[number], labChat: boolean): boolean {
+  if (section.lab === 'chat') return labChat
+  return true
 }
 
 export function WalletNav({
@@ -86,8 +95,18 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
+  const [labChat, setLabChat] = useState(() => isLabChatEnabled())
 
   useEffect(() => subscribeNav(setNav), [])
+  useEffect(() => subscribeLabChat(setLabChat), [])
+
+  useEffect(() => {
+    if (!labChat && nav.section === 'chat') {
+      setNavSection('friends')
+    }
+  }, [labChat, nav.section])
+
+  const visibleSections = SECTIONS.filter((s) => isSectionVisible(s, labChat))
 
   useEffect(() => {
     const child = nav.child
@@ -157,6 +176,7 @@ export function WalletNav({
   })()
 
   const selectSection = (next: NavSection) => {
+    playWalletSound('soft')
     if (next !== nav.section) setNavSection(next)
     else clearNavChild()
   }
@@ -230,7 +250,9 @@ export function WalletNav({
           ) : (
             <div className="wallet-nav-panel">
               {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
-              {nav.section === 'chat' && <ChatPanel chain={profile.chain} />}
+              {nav.section === 'chat' && labChat && (
+                <ChatPanel chain={profile.chain} onSent={onSent} />
+              )}
               {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
               {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
@@ -242,7 +264,7 @@ export function WalletNav({
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
           <div className="wallet-nav-bar-track">
-            {SECTIONS.map(({ value, label, Icon }) => {
+            {visibleSections.map(({ value, label, Icon }) => {
               const selected = nav.section === value
               return (
                 <button

@@ -19,41 +19,74 @@ export type Brc218Command =
 
 const IMPLEMENTED = new Set(['pay', 'message', 'request', 'tip', 'whois', 'help'])
 
+/** Adaptive fiat label — keeps sub-cent amounts readable ($0.001, $0.0001). */
+export function formatFiatLabel(value: number, currency = 'USD'): string {
+  if (!Number.isFinite(value)) return currency === 'USD' ? '$0' : `${currency} 0`
+  const abs = Math.abs(value)
+  const digits = abs >= 1 ? 2 : abs >= 0.01 ? 2 : abs >= 0.0001 ? 4 : 6
+  const body = abs.toLocaleString('en-US', {
+    minimumFractionDigits: Math.min(2, digits),
+    maximumFractionDigits: digits,
+  })
+  if (currency === 'USD') return `$${body}`
+  return `${currency} $${body}`
+}
+
+export function formatSatsLabel(sats: number): string {
+  const n = Math.max(0, Math.floor(sats))
+  return `${n.toLocaleString()} sat${n === 1 ? '' : 's'}`
+}
+
 function parseAmountToken(tokens: string[], from: number): { amount: ParsedAmount; next: number } | null {
   const a = tokens[from]
   const b = tokens[from + 1]
   if (!a) return null
 
-  // 21545 sats
+  // 1 sat / 21545 sats
   if (/^\d+$/.test(a) && b && /^(sat|sats)$/i.test(b)) {
     const sats = Number(a)
+    if (!Number.isFinite(sats) || sats < 1) return null
     return {
-      amount: { kind: 'sats', sats, label: `${sats.toLocaleString()} sats` },
+      amount: { kind: 'sats', sats, label: formatSatsLabel(sats) },
       next: from + 2,
     }
   }
 
-  // $2.18 or USD $2.18
+  // 0.01 bsv / 0.00000001 bsv (1 sat)
+  if (/^\d+(\.\d+)?$/.test(a) && b && /^bsv$/i.test(b)) {
+    const value = Number(a)
+    if (!Number.isFinite(value) || value <= 0) return null
+    const sats = Math.round(value * 1e8)
+    if (sats < 1) return null
+    return {
+      amount: { kind: 'sats', sats, label: `${a} BSV` },
+      next: from + 2,
+    }
+  }
+
+  // $2.18 or USD $2.18 — also $0.001 / $.01
   const fiatPrefixed = /^(USD|EUR|GBP|CHF|CAD|AUD)$/i.test(a) && b?.startsWith('$')
   if (fiatPrefixed) {
-    const value = Number(b.slice(1))
-    if (!Number.isFinite(value)) return null
+    const raw = b.slice(1)
+    const value = Number(raw.startsWith('.') ? `0${raw}` : raw)
+    if (!Number.isFinite(value) || value <= 0) return null
     return {
       amount: {
         kind: 'fiat',
         currency: a.toUpperCase(),
         value,
-        label: `${a.toUpperCase()} $${value.toFixed(2)}`,
+        label: formatFiatLabel(value, a.toUpperCase()),
       },
       next: from + 2,
     }
   }
 
   if (a.startsWith('$')) {
-    const value = Number(a.slice(1))
-    if (!Number.isFinite(value)) return null
+    const raw = a.slice(1)
+    const value = Number(raw.startsWith('.') ? `0${raw}` : raw)
+    if (!Number.isFinite(value) || value <= 0) return null
     return {
-      amount: { kind: 'fiat', currency: 'USD', value, label: `$${value.toFixed(2)}` },
+      amount: { kind: 'fiat', currency: 'USD', value, label: formatFiatLabel(value) },
       next: from + 1,
     }
   }
@@ -142,7 +175,7 @@ export function helpText(): string {
     '/whois [recipient] — show identity',
     '/message [recipient] <text> — send text',
     '/help — this list',
-    'Amounts: $2.18 or 21545 sats',
+    'Amounts: $0.01, $0.001, 1 sat, 0.00000001 bsv, or 21545 sats',
     'Use // to send a literal /… message',
   ].join('\n')
 }

@@ -6,6 +6,7 @@ import {
   type CollectableTrait,
 } from '../wallet/collectables'
 import { openSendCollectable } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
@@ -152,7 +153,10 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         <button
           type="button"
           className="btn btn-primary"
-          onClick={() => openSendCollectable(item.outpoint)}
+          onClick={() => {
+            playWalletSound('soft')
+            openSendCollectable(item.outpoint)
+          }}
         >
           Send
         </button>

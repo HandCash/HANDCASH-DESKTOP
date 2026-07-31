@@ -15,6 +15,7 @@ import {
 } from '../wallet/collectables'
 import { openCollectableDetails } from '../wallet/navStore'
 import { syncLegacyFunds } from '../wallet/syncFunds'
+import { playWalletSound } from '../wallet/soundService'
 
 function CollectableGridItem({ item }: { item: Collectable }) {
   return (
@@ -22,7 +23,10 @@ function CollectableGridItem({ item }: { item: Collectable }) {
       <button
         type="button"
         className="collection-grid-main collectable-main"
-        onClick={() => openCollectableDetails(item.outpoint)}
+        onClick={() => {
+          playWalletSound('soft')
+          openCollectableDetails(item.outpoint)
+        }}
       >
         <div className="collectable-media">
           <DeferredImage
@@ -55,7 +59,10 @@ function CollectableListItem({ item }: { item: Collectable }) {
       <button
         type="button"
         className="connected-app-main collectable-row-main"
-        onClick={() => openCollectableDetails(item.outpoint)}
+        onClick={() => {
+          playWalletSound('soft')
+          openCollectableDetails(item.outpoint)
+        }}
       >
         <div className="collectable-media collectable-media-sm">
           <DeferredImage
@@ -108,7 +115,7 @@ export function InventoryPanel() {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
-        await syncLegacyFunds()
+        await syncLegacyFunds({ announceReceive: false })
         await listCollectables()
         if (!cancelled) {
           setReady(areCollectablesHydrated())

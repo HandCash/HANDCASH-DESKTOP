@@ -224,7 +224,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     const result = await dispatchWalletMethod(active.wallet, method, args, originator)
 
     if (method === 'refreshLegacyAddress') {
-      playWalletSound('receive')
+      const payload = result as { importedCount?: number; importedItemsCount?: number } | null
+      const funds = payload?.importedCount ?? 0
+      const items = payload?.importedItemsCount ?? 0
+      if (funds > 0 || items > 0) playWalletSound('receive')
+      else playWalletSound('soft')
     } else if (method === 'createAction') {
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
@@ -239,6 +243,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           txid: extractTxid(result),
         })
         playWalletSound('success')
+      } else {
+        playWalletSound('soft')
       }
     } else if (method === 'internalizeAction') {
       const sats = extractSatsFromArgs(method, args)
@@ -251,7 +257,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           txid: extractTxid(result) ?? extractTxid(args),
         })
         playWalletSound('receive')
+      } else {
+        playWalletSound('soft')
       }
+    } else if (isActionMethod(method)) {
+      playWalletSound('soft')
     }
 
     return { status: 200, body: JSON.stringify(result ?? {}) }

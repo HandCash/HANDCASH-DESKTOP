@@ -28,6 +28,7 @@ import {
 } from '../wallet/displayCurrency'
 import { subscribeConnectedApps } from '../wallet/permissions'
 import { openPaymentDetails, setNavSection } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
 
 function formatWhen(at: number): string {
@@ -89,7 +90,10 @@ function HistoryRow({
       <button
         type="button"
         className="history-row history-row-btn"
-        onClick={() => openPaymentDetails(entry.id)}
+        onClick={() => {
+          playWalletSound('soft')
+          openPaymentDetails(entry.id)
+        }}
       >
         <div className="history-icon">
           {isWallet ? (
@@ -226,7 +230,14 @@ export function ActivityFeed({
         ))}
         {viewAllLabel && onViewAll ? (
           <li className="history-view-all-row">
-            <button type="button" className="history-view-all" onClick={onViewAll}>
+            <button
+              type="button"
+              className="history-view-all"
+              onClick={() => {
+                playWalletSound('soft')
+                onViewAll()
+              }}
+            >
               {viewAllLabel}
             </button>
           </li>
@@ -248,7 +259,10 @@ export function ActivityFeed({
             aria-controls="activity-filters"
             title="Filters"
             data-active={filtersOpen || filtersActive ? '' : undefined}
-            onClick={() => setFiltersOpen((open) => !open)}
+            onClick={() => {
+              playWalletSound('soft')
+              setFiltersOpen((open) => !open)
+            }}
           >
             <FilterIcon size={16} />
             {filtersActive ? <span className="activity-filter-dot" aria-hidden /> : null}

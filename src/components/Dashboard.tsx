@@ -24,6 +24,7 @@ import {
   type ConnectedApp,
 } from '../wallet/permissions'
 import { openReceiveFlow, openSendFlow, openSetting } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
@@ -87,8 +88,15 @@ export function Dashboard({
     try {
       await refreshUsdPerBsv(true)
       const sats = await syncLegacyFunds()
-      if (sats != null) onRefreshBalance(sats)
+      if (sats != null) {
+        // Receive chime is handled inside sync when balance rises.
+        if (sats <= balanceSats) playWalletSound('soft')
+        onRefreshBalance(sats)
+      } else {
+        playWalletSound('soft')
+      }
     } catch (err) {
+      playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
     } finally {
       setRefreshing(false)
@@ -126,7 +134,10 @@ export function Dashboard({
                 className="wallet-backup-warn"
                 data-aeon-scope="backup-reminder"
                 data-aeon-state="needed"
-                onClick={() => openSetting('backup-phrase')}
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSetting('backup-phrase')
+                }}
               >
                 <span className="wallet-backup-warn-mark" aria-hidden>
                   <WarningIcon size={14} />
@@ -149,7 +160,10 @@ export function Dashboard({
                     : 'Balance in BSV. Click to show USD first.'
                 }
                 title="Click to swap currency"
-                onClick={() => toggleDisplayCurrency()}
+                onClick={() => {
+                  playWalletSound('soft')
+                  toggleDisplayCurrency()
+                }}
               >
                 {currency === 'usd' ? (
                   <>
@@ -166,15 +180,33 @@ export function Dashboard({
             </div>
 
             <div className="actions wallet-actions">
-              <button className="btn btn-primary btn-icon" onClick={() => openSendFlow()}>
+              <button
+                className="btn btn-primary btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSendFlow()
+                }}
+              >
                 <SendIcon size={16} />
                 <span className="wallet-action-label">Send</span>
               </button>
-              <button className="btn btn-ghost btn-icon" onClick={() => openReceiveFlow()}>
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openReceiveFlow()
+                }}
+              >
                 <ReceiveIcon size={16} />
                 <span className="wallet-action-label">Receive</span>
               </button>
-              <button className="btn btn-ghost btn-icon" onClick={onLock}>
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
+                  onLock()
+                }}
+              >
                 <LockIcon size={16} />
                 <span className="wallet-action-label">Lock</span>
               </button>

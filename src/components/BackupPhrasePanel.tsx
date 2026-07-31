@@ -1,6 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import { isBackupConfirmed, markBackupConfirmed } from '../wallet/backupStatus'
+import { playWalletSound } from '../wallet/soundService'
 
 export function BackupPhrasePanel() {
   const meta = readVaultMeta()
@@ -23,7 +24,9 @@ export function BackupPhrasePanel() {
       } else {
         setRootKey(await revealRootKeyHex(password))
       }
+      playWalletSound('unlock')
     } catch (err) {
+      playWalletSound('error')
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
@@ -34,7 +37,9 @@ export function BackupPhrasePanel() {
     try {
       if (window.handcash?.clipboardWrite) await window.handcash.clipboardWrite(text)
       else await navigator.clipboard.writeText(text)
+      playWalletSound('copy')
     } catch {
+      playWalletSound('error')
       setError('Could not copy to clipboard.')
     }
   }
@@ -45,6 +50,7 @@ export function BackupPhrasePanel() {
     setMnemonic(null)
     setRootKey(null)
     setPassword('')
+    playWalletSound('success')
   }
 
   return (

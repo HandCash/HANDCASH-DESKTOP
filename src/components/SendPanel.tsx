@@ -1,7 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { P2PKH } from '@bsv/sdk'
 import { sendMachine } from '../machines/sendMachine'
 import {
   fetchBalanceSats,
@@ -23,16 +22,6 @@ import {
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
-  hasActivityTxid,
-  recordAppActivity,
-  WALLET_ACTIVITY_ORIGIN,
-} from '../wallet/appActivity'
-import {
-  beginPendingSend,
-  clearPendingSend,
-  completePendingSend,
-} from '../wallet/pendingSend'
-import {
   addressFromIdentityKey,
   listFriends,
   searchFriends,
@@ -42,6 +31,7 @@ import {
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { takeSendPrefill } from '../wallet/sendPrefill'
+import { sendSatsToAddress } from '../wallet/sendPayment'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 
@@ -141,13 +131,6 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
 
   const confirmSend = async () => {
     send({ type: 'CONFIRM' })
-    const active = getActiveWallet()
-    if (!active) {
-      send({ type: 'FAIL', error: 'Wallet locked' })
-      onFail('Wallet locked')
-      return
-    }
-    let pendingId: string | null = null
     try {
       const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
       if (!Number.isFinite(satoshis) || satoshis <= 0) {
@@ -159,52 +142,20 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
       }
 
       const to = sendSnap.context.to.trim()
-      const pending = beginPendingSend({
+      const { txid } = await sendSatsToAddress({
         to,
-        sats: satoshis,
+        satoshis,
         friendLabel: sendSnap.context.friendLabel,
       })
-      pendingId = pending.id
-
-      const lockingScript = new P2PKH().lock(to).toHex()
-      const result = await active.wallet.createAction({
-        description: `HandCash send to ${to}`,
-        labels: ['handcash-send'],
-        outputs: [
-          {
-            lockingScript,
-            satoshis,
-            outputDescription: 'Payment',
-          },
-        ],
-      })
-
-      const txid =
-        (result as { txid?: string })?.txid ?? `local-${Date.now().toString(16)}`
-      completePendingSend(pending.id, txid)
-
-      const recipientNote = sendSnap.context.friendLabel
-        ? `${sendSnap.context.friendLabel} (${to})`
-        : to
-      if (!hasActivityTxid(txid)) {
-        recordAppActivity({
-          origin: WALLET_ACTIVITY_ORIGIN,
-          kind: 'spent',
-          sats: satoshis,
-          method: 'send',
-          note: `Sent to ${recipientNote}`,
-          txid,
-        })
-      }
-      clearPendingSend(pending.id)
-      pendingId = null
 
       send({ type: 'SUCCESS', txid })
       onSent(Math.max(0, balanceSats - satoshis))
-      void syncLegacyFunds()
+      void syncLegacyFunds({ announceReceive: false })
         .then((balance) => {
           if (balance != null) onSent(balance)
           else {
+            const active = getActiveWallet()
+            if (!active) return
             return fetchBalanceSats(active.wallet).then((b) => onSent(b))
           }
         })
@@ -212,7 +163,6 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
           console.warn('[send] balance refresh failed', err)
         })
     } catch (err) {
-      if (pendingId) clearPendingSend(pendingId)
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
       onFail(message)
