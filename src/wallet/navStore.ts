@@ -13,6 +13,8 @@ export type NavSection =
 export type SettingId =
   | 'change-password'
   | 'backup-phrase'
+  | 'split-backup'
+  | 'history-backup'
   | 'wipe-wallet'
   | 'statecharts'
 

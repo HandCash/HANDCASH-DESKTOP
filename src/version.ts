@@ -1,2 +1,2 @@
 /** App semver — mirrors package.json (electron-builder / updater source of truth). */
-export const APP_VERSION = '1.1.13' as const
+export const APP_VERSION = '1.1.14' as const

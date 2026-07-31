@@ -502,6 +502,59 @@ export async function restoreVaultFromMnemonic(args: {
   return { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic, record }
 }
 
+/**
+ * Restore from a BRC-140 reconstructed root key (no mnemonic).
+ * Same custody guards as mnemonic restore.
+ */
+export async function restoreVaultFromRootKey(args: {
+  rootKeyHex: string
+  password: string
+  chain: Chain
+  handle?: string
+}): Promise<UnlockedVault> {
+  if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
+  const key = PrivateKey.fromHex(args.rootKeyHex.trim())
+  const rootKeyHex = key.toHex()
+  const identityKey = key.toPublicKey().toString()
+  const address = key.toAddress()
+
+  let allowIdentityReplace = false
+  if (hasVault()) {
+    const meta = readVaultMeta()
+    if (meta?.identityKey === identityKey) {
+      throw new Error('This wallet is already installed. Unlock it with your password.')
+    }
+    const mismatch = meta ? await getVaultToolboxMismatch(meta.identityKey) : null
+    const toolboxKeys = await listToolboxIdentityKeys()
+    if (mismatch?.orphanedFundsLikely && toolboxKeys.includes(identityKey)) {
+      allowIdentityReplace = true
+    } else {
+      throw new Error(
+        'A different wallet already exists on this device. Refusing to replace its keys.',
+      )
+    }
+  } else {
+    await assertSafeToRestoreVault(identityKey)
+  }
+
+  const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
+  const enc = await encryptSecret(args.password, rootKeyHex)
+
+  const record: VaultRecord = {
+    version: 1,
+    chain: args.chain,
+    handle,
+    identityKey,
+    address,
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    salt: enc.salt,
+    hasMnemonic: false,
+  }
+  persistVault(record, 'restore', { allowIdentityReplace })
+  return { rootKeyHex, mnemonic: null, record }
+}
+
 export async function unlockVault(password: string): Promise<UnlockedVault> {
   const raw = readVaultRaw()
   if (!raw) throw new Error('No wallet found')

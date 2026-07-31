@@ -33,6 +33,8 @@ import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { BackupPhrasePanel } from './BackupPhrasePanel'
+import { SplitBackupPanel } from './SplitBackupPanel'
+import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCollectable } from '../wallet/collectables'
@@ -218,6 +220,12 @@ export function WalletNav({
               )}
               {child.type === 'setting' && child.settingId === 'backup-phrase' && (
                 <BackupPhrasePanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'split-backup' && (
+                <SplitBackupPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'history-backup' && (
+                <HistoryBackupPanel />
               )}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />

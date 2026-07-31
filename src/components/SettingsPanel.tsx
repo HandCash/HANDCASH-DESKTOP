@@ -31,6 +31,16 @@ const SETTING_GROUPS: SettingGroup[] = [
         description: 'Password required',
       },
       {
+        id: 'split-backup',
+        label: 'Key slices',
+        description: 'BRC-140 · 2-of-3 · store apart',
+      },
+      {
+        id: 'history-backup',
+        label: 'History backup',
+        description: 'BRC-38/39 · file or your URL',
+      },
+      {
         id: 'change-password',
         label: 'Change password',
         description: '',
@@ -91,6 +101,8 @@ function phaseLabel(phase: string, error: string | null): string {
 
 export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
+  if (id === 'split-backup') return 'Key slices'
+  if (id === 'history-backup') return 'History backup'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
     if (item) return item.label
@@ -104,6 +116,7 @@ export function SettingsPanel() {
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
+  const [logPath, setLogPath] = useState<string | null>(null)
   // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -117,6 +130,17 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
+
+  useEffect(() => {
+    let cancelled = false
+    void window.handcash?.getLogInfo?.().then((info) => {
+      if (cancelled) return
+      setLogPath(info?.file ?? info?.dir ?? null)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div
@@ -263,6 +287,43 @@ export function SettingsPanel() {
                 }}
               >
                 {checking ? 'Checking…' : 'Check'}
+              </button>
+            </div>
+          </li>
+        </ul>
+      </section>
+
+      <section className="settings-group" data-aeon-part="logs" data-settings-group="Logs">
+        <h3 className="settings-group-title">Logs</h3>
+        <ul className="settings-list">
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <strong className="settings-row-label">App logs</strong>
+                <span className="settings-row-desc">
+                  Bridge, updates, and errors — share with support if something breaks
+                </span>
+                {logPath ? (
+                  <span className="settings-row-desc settings-log-path mono" title={logPath}>
+                    {logPath}
+                  </span>
+                ) : null}
+              </span>
+              <button
+                type="button"
+                className="btn btn-ghost settings-check-btn"
+                data-aeon-part="open-logs"
+                disabled={!window.handcash?.openLogs}
+                onClick={() => {
+                  playWalletSound('soft')
+                  void window.handcash?.openLogs?.().then((result) => {
+                    if (result && !result.ok) {
+                      playWalletSound('error')
+                    }
+                  })
+                }}
+              >
+                Open
               </button>
             </div>
           </li>

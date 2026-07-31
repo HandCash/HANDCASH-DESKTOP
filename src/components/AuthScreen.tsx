@@ -5,11 +5,13 @@ import { unlockMachine } from '../machines/unlockMachine'
 import {
   createVault,
   restoreVaultFromMnemonic,
+  restoreVaultFromRootKey,
   unlockVault,
   type Chain,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
 import { markBackupConfirmed } from '../wallet/backupStatus'
+import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
 import {
   clearUnlockNudge,
@@ -27,7 +29,7 @@ type Props = {
   onFail: (error: string) => void
 }
 
-type FormMode = 'create' | 'restore' | 'unlock'
+type FormMode = 'create' | 'restore' | 'restore-shares' | 'unlock'
 
 function isMismatchError(message: string | null | undefined): boolean {
   if (!message) return false
@@ -53,6 +55,8 @@ export function AuthScreen({
     recoveryOnly ? 'restore' : mode === 'locked' ? 'unlock' : 'create',
   )
   const [mnemonicInput, setMnemonicInput] = useState('')
+  const [share1, setShare1] = useState('')
+  const [share2, setShare2] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
 
@@ -77,6 +81,35 @@ export function AuthScreen({
       if (formMode === 'restore') {
         const unlocked = await restoreVaultFromMnemonic({
           mnemonic: mnemonicInput,
+          password,
+          chain,
+        })
+        const active = await bootWallet({
+          rootKeyHex: unlocked.rootKeyHex,
+          handle: unlocked.record.handle,
+          chain: unlocked.record.chain,
+        })
+        const balanceSats = await fetchBalanceSats(active.wallet)
+        markBackupConfirmed()
+        send({ type: 'SUCCESS' })
+        playWalletSound('unlock')
+        clearUnlockNudge()
+        onCreated(
+          {
+            handle: unlocked.record.handle,
+            identityKey: unlocked.record.identityKey,
+            address: unlocked.record.address,
+            chain: unlocked.record.chain,
+          },
+          balanceSats,
+        )
+        return
+      }
+
+      if (formMode === 'restore-shares') {
+        const recovered = recoverRootKeyFromBrc140Shares([share1, share2])
+        const unlocked = await restoreVaultFromRootKey({
+          rootKeyHex: recovered.rootKeyHex,
           password,
           chain,
         })
@@ -157,7 +190,7 @@ export function AuthScreen({
   }
 
   const title =
-    formMode === 'restore'
+    formMode === 'restore' || formMode === 'restore-shares'
       ? 'Restore wallet'
       : formMode === 'create'
         ? 'Create wallet'
@@ -166,13 +199,19 @@ export function AuthScreen({
   const lede =
     formMode === 'restore'
       ? 'Enter your 12-word phrase and choose a password for this device.'
-      : formMode === 'create'
-        ? 'Pick a password. Your keys stay on this device.'
-        : 'Enter your password to unlock.'
+      : formMode === 'restore-shares'
+        ? 'Paste any two BRC-140 shares and choose a password for this device.'
+        : formMode === 'create'
+          ? 'Pick a password. Your keys stay on this device.'
+          : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
   const primaryLabel =
-    formMode === 'restore' ? 'Restore' : formMode === 'create' ? 'Create' : 'Unlock'
+    formMode === 'restore' || formMode === 'restore-shares'
+      ? 'Restore'
+      : formMode === 'create'
+        ? 'Create'
+        : 'Unlock'
 
   return (
     <section className="auth-screen" data-aeon-scope="auth" data-aeon-state={stateAttr}>
@@ -236,6 +275,38 @@ export function AuthScreen({
           </div>
         ) : null}
 
+        {formMode === 'restore-shares' ? (
+          <>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="share1">BRC-140 share 1</label>
+              <textarea
+                id="share1"
+                rows={2}
+                placeholder="x.y.2.integrity…"
+                value={share1}
+                onChange={(e) => setShare1(e.target.value)}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                autoFocus
+              />
+            </div>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="share2">BRC-140 share 2</label>
+              <textarea
+                id="share2"
+                rows={2}
+                placeholder="x.y.2.integrity…"
+                value={share2}
+                onChange={(e) => setShare2(e.target.value)}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+              />
+            </div>
+          </>
+        ) : null}
+
         <div className="field" data-aeon-part="field">
           <label htmlFor="password">Password</label>
           <input
@@ -245,7 +316,7 @@ export function AuthScreen({
             value={snapshot.context.password}
             onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
             autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
-            autoFocus={formMode !== 'restore'}
+            autoFocus={formMode === 'unlock' || formMode === 'create'}
           />
         </div>
 
@@ -271,15 +342,48 @@ export function AuthScreen({
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('restore')}>
               Restore
             </button>
+            {' · '}
+            <button
+              type="button"
+              className="auth-alt-link"
+              onClick={() => setFormMode('restore-shares')}
+            >
+              Split shares
+            </button>
           </p>
         ) : null}
 
-        {mode === 'onboarding' && !recoveryOnly && formMode === 'restore' ? (
+        {mode === 'onboarding' &&
+        !recoveryOnly &&
+        (formMode === 'restore' || formMode === 'restore-shares') ? (
           <p className="auth-alt">
             New here?{' '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('create')}>
               Create a wallet
             </button>
+            {formMode === 'restore' ? (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="auth-alt-link"
+                  onClick={() => setFormMode('restore-shares')}
+                >
+                  Use split shares
+                </button>
+              </>
+            ) : (
+              <>
+                {' · '}
+                <button
+                  type="button"
+                  className="auth-alt-link"
+                  onClick={() => setFormMode('restore')}
+                >
+                  Use recovery phrase
+                </button>
+              </>
+            )}
           </p>
         ) : null}
       </form>

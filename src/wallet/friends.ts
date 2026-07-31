@@ -46,6 +46,21 @@ export function listFriends(): Friend[] {
   return readRaw().slice().sort((a, b) => a.label.localeCompare(b.label))
 }
 
+/** Merge friends by identity key (keeps existing labels). */
+export function mergeFriends(incoming: Friend[]): number {
+  const local = readRaw()
+  const byIk = new Map(local.map((f) => [f.identityKey, f]))
+  let added = 0
+  for (const friend of incoming) {
+    if (!friend?.identityKey || !friend.label) continue
+    if (byIk.has(friend.identityKey)) continue
+    byIk.set(friend.identityKey, friend)
+    added += 1
+  }
+  writeAll([...byIk.values()])
+  return added
+}
+
 export function subscribeFriends(listener: FriendsListener): () => void {
   listeners.add(listener)
   listener(listFriends())

@@ -78,6 +78,15 @@ const handcash = {
   },
   focusWindow: () => ipcRenderer.invoke('app:focus-window') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
+  getLogInfo: () =>
+    ipcRenderer.invoke('app:get-log-info') as Promise<{
+      file: string | null
+      dir: string | null
+    }>,
+  openLogs: () =>
+    ipcRenderer.invoke('app:open-logs') as Promise<
+      { ok: true; file: string } | { ok: false; error: string }
+    >,
   storageGetSync: (key: string) =>
     ipcRenderer.sendSync('storage:get-sync', key) as string | null,
   storageSetSync: (

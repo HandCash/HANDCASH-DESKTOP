@@ -162,6 +162,31 @@ export function getActivityById(id: string): ActivityEntry | null {
   return readAll().find((e) => e.id === id) ?? null
 }
 
+/** Export full local activity (storage-capped) for history backup. */
+export function exportAllActivity(): ActivityEntry[] {
+  return readAll()
+}
+
+/** Merge remote activity into local history (idempotent by id / txid). */
+export function mergeActivityEntries(incoming: ActivityEntry[]): number {
+  const local = readAll()
+  const byId = new Map(local.map((e) => [e.id, e]))
+  const byTx = new Map(
+    local.filter((e) => e.txid).map((e) => [e.txid!.toLowerCase(), e]),
+  )
+  let added = 0
+  for (const entry of incoming) {
+    if (!entry?.id) continue
+    if (byId.has(entry.id)) continue
+    if (entry.txid && byTx.has(entry.txid.toLowerCase())) continue
+    byId.set(entry.id, entry)
+    if (entry.txid) byTx.set(entry.txid.toLowerCase(), entry)
+    added += 1
+  }
+  writeAll([...byId.values()].sort((a, b) => a.at - b.at))
+  return added
+}
+
 /** Origin used for in-wallet Send / Receive (not a connected app). */
 export const WALLET_ACTIVITY_ORIGIN = 'handcash'
 

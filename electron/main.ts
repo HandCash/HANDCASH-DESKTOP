@@ -354,6 +354,34 @@ ipcMain.handle('app:get-info', () => ({
   platform: process.platform,
 }))
 
+ipcMain.handle('app:get-log-info', () => {
+  try {
+    const file = log.transports.file.getFile()
+    const filePath = file.path
+    return {
+      file: filePath,
+      dir: path.dirname(filePath),
+    }
+  } catch (err) {
+    log.warn('get-log-info failed', err)
+    return { file: null, dir: null }
+  }
+})
+
+ipcMain.handle('app:open-logs', async () => {
+  try {
+    const file = log.transports.file.getFile()
+    const filePath = file.path
+    // Reveal the active log file in Finder / Explorer / file manager.
+    shell.showItemInFolder(filePath)
+    return { ok: true as const, file: filePath }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn('open-logs failed', err)
+    return { ok: false as const, error: message }
+  }
+})
+
 ipcMain.handle('updater:get-status', () => getUpdateStatus())
 
 ipcMain.handle('updater:check', async () => checkForUpdates({ reason: 'manual' }))

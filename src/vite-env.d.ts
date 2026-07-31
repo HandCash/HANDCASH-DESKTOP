@@ -90,6 +90,8 @@ interface HandCashBridge {
   respondHttp: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
+  getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>
+  openLogs?: () => Promise<{ ok: true; file: string } | { ok: false; error: string }>
   storageGetSync?: (key: string) => string | null
   storageSetSync?: (
     key: string,

@@ -1672,6 +1672,58 @@ button.wallet-detail-value.is-copied {
   line-height: 1.4;
 }
 
+.split-backup-list {
+  list-style: none;
+  margin: 0 0 12px;
+  padding: 0;
+  display: grid;
+  gap: 14px;
+}
+
+.split-backup-item {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: 10px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.split-backup-item-head {
+  display: grid;
+  gap: 2px;
+}
+
+.split-backup-share {
+  display: block;
+  padding: 8px;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.35);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  word-break: break-all;
+  white-space: pre-wrap;
+}
+
+.split-backup-item-actions {
+  margin: 0;
+}
+
+.split-backup-confirm {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  margin: 12px 0;
+  font-size: 0.84rem;
+  line-height: 1.4;
+  color: var(--hc-muted);
+}
+
+.split-backup-confirm input {
+  margin-top: 3px;
+  flex-shrink: 0;
+}
+
 .settings-check-label {
   display: flex;
   gap: 10px;
@@ -3303,6 +3355,16 @@ a.app-details-host:hover {
   font-size: 0.78rem;
   line-height: 1.35;
   color: var(--hc-muted);
+}
+
+.settings-log-path {
+  display: block;
+  max-width: min(100%, 28rem);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  opacity: 0.85;
+  font-size: 0.72rem;
 }
 
 .settings-row-static {

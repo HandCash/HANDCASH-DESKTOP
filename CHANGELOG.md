@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.14] - 2026-07-31
+
+### Changed
+
+- BRC-140 key slices (2-of-3) for recovery; store slices in different places.
+- BRC-38/39 wallet data backup (download/import wallet.brc39; optional custom URL — HandCash host left blank).
+- Settings: open app logs folder for support.
+- Restore via BRC-140 share paste on auth.
+
 ## [1.1.13] - 2026-07-31
 
 ### Changed
