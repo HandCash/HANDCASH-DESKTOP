@@ -84,6 +84,7 @@ body {
   border-radius: 8px;
   object-fit: contain;
   flex-shrink: 0;
+  background: #000;
   box-shadow: 0 0 20px -6px hsl(var(--primary) / 0.45);
 }
 
@@ -3128,7 +3129,42 @@ a.app-details-host:hover {
   color: #fafafa;
 }
 
-/* StatusBanner sticky chrome: Aeon consumer-shell.css */
+/* Update UX: Aeon toast (bottom-end) instead of sticky StatusBanner */
+
+.update-toast-viewport.aeonToast__viewport {
+  z-index: 1200;
+  bottom: calc(var(--spacing-pad-md, 1rem) + env(safe-area-inset-bottom, 0px));
+  right: calc(var(--spacing-pad-md, 1rem) + env(safe-area-inset-right, 0px));
+}
+
+.update-toast.aeonToast__root {
+  min-width: min(20rem, calc(100vw - 2rem));
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-surface-2) 92%, #000);
+  box-shadow: 0 0 0 1px rgba(87, 255, 151, 0.06), 0 18px 48px rgba(0, 0, 0, 0.55);
+  padding-right: 2rem;
+}
+
+.update-toast[data-aeon-state='error'] {
+  border-left-color: var(--hc-danger);
+}
+
+.update-toast[data-aeon-state='downloading'] .aeonToast__description {
+  font-variant-numeric: tabular-nums;
+}
+
+.update-toast-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.35rem;
+}
+
+.update-toast-actions .btn {
+  min-height: 2rem;
+  padding-inline: 0.85rem;
+  font-size: 0.8rem;
+}
 
 .update-prompt-backdrop {
   z-index: 1100;

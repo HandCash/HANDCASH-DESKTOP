@@ -74,9 +74,22 @@ function setStatus(patch: Partial<UpdateStatus>) {
   pushStatus()
 }
 
+/**
+ * BETA Mac builds are ad-hoc signed. Squirrel.Mac / ShipIt cannot validate those
+ * updates and often leaves HandCash.app damaged ("code has no resources…").
+ * Until Developer ID signing exists, never download or install via the updater.
+ */
+function macShipItUnsafe(): boolean {
+  return process.platform === 'darwin'
+}
+
+const MAC_MANUAL_DOWNLOAD =
+  'Mac auto-update needs a Developer ID–signed build. Download the latest from handcash.io/wallet.'
+
 function applyModeToUpdater(mode: UpdateMode) {
-  autoUpdater.autoDownload = mode === 'default'
-  autoUpdater.autoInstallOnAppQuit = mode !== 'none'
+  const allowShipIt = !macShipItUnsafe()
+  autoUpdater.autoDownload = allowShipIt && mode === 'default'
+  autoUpdater.autoInstallOnAppQuit = allowShipIt && mode !== 'none'
 }
 
 function isMacCodeSignatureFailure(err: unknown): boolean {
@@ -95,8 +108,7 @@ function friendlyUpdateError(err: unknown): string {
   const firstLine = raw.split('\n')[0] ?? raw
 
   if (isMacCodeSignatureFailure(err)) {
-    // BETA builds are ad-hoc signed; Squirrel.Mac cannot install those updates.
-    return 'Mac auto-update needs a Developer ID–signed build. Download the latest from handcash.io/wallet.'
+    return MAC_MANUAL_DOWNLOAD
   }
   if (/timed out|timeout/i.test(raw)) {
     return 'Update check timed out. Check your network and try again.'
@@ -346,7 +358,16 @@ export async function checkForUpdates(opts?: {
         return status
       }
 
-      if (shouldDownload) {
+      if (macShipItUnsafe()) {
+        // Announce only — never let ShipIt touch /Applications/HandCash.app.
+        setStatus({
+          phase: 'available',
+          availableVersion: result.updateInfo.version,
+          percent: null,
+          error: MAC_MANUAL_DOWNLOAD,
+          canInstall: false,
+        })
+      } else if (shouldDownload) {
         setStatus({
           phase: 'downloading',
           availableVersion: result.updateInfo.version,
@@ -378,6 +399,15 @@ export async function checkForUpdates(opts?: {
 }
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
+  if (macShipItUnsafe()) {
+    setStatus({
+      phase: 'available',
+      error: MAC_MANUAL_DOWNLOAD,
+      canInstall: false,
+      percent: null,
+    })
+    return status
+  }
   try {
     setStatus({ phase: 'downloading', percent: 0, error: null })
     await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
@@ -389,5 +419,14 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
 }
 
 export function quitAndInstall(): void {
+  if (macShipItUnsafe()) {
+    log.warn('quitAndInstall blocked on unsigned Mac build — use handcash.io/wallet')
+    setStatus({
+      phase: 'available',
+      error: MAC_MANUAL_DOWNLOAD,
+      canInstall: false,
+    })
+    return
+  }
   autoUpdater.quitAndInstall(false, true)
 }

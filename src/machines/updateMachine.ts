@@ -34,7 +34,7 @@ function phaseState(phase: UpdatePhase) {
  * Chart: appUpdate
  * States: idle → checking → available → downloading → ready | notAvailable | error
  * Mode lives in context (default | manual | none) — Cursor-style update.mode.
- * UI = f(snapshot): banner / prompt / settings all project data-aeon-state from value.
+ * UI = f(snapshot): toast / prompt / settings all project data-aeon-state from value.
  */
 export const updateMachine = setup({
   types: {
