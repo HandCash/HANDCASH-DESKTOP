@@ -1,12 +1,9 @@
 import type { ConnectedApp } from './permissions'
-import { focusChatPeer } from './chatFocus'
-import { isLabChatEnabled } from './labPrefs'
 import { isBackupConfirmed } from './backupStatus'
 import { playWalletSound } from './soundService'
 
 export type NavSection =
   | 'activity'
-  | 'chat'
   | 'apps'
   | 'collectables'
   | 'friends'
@@ -101,12 +98,6 @@ export function openPaymentDetails(entryId: string) {
 
 export function openFriendDetails(friendId: string) {
   openNavChild('friends', { type: 'friend', friendId })
-}
-
-export function openChatWithFriend(friendId: string) {
-  if (!isLabChatEnabled()) return
-  focusChatPeer(friendId)
-  setNavSection('chat')
 }
 
 export function openAddFriend() {

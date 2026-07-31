@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.1.13] - 2026-07-31
+
+### Changed
+
+- Remove Chat (Lab chat, BRC-218 composer, in-thread pay cards, and related nav/settings).
+
 ## [1.1.12] - 2026-07-31
 
 ### Changed

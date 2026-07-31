@@ -8,11 +8,6 @@ import {
   setWalletSfxEnabled,
   subscribeWalletSfx,
 } from '../wallet/soundPrefs'
-import {
-  isLabChatEnabled,
-  setLabChatEnabled,
-  subscribeLabChat,
-} from '../wallet/labPrefs'
 import { playWalletSound } from '../wallet/soundService'
 
 type SettingItem = {
@@ -109,7 +104,6 @@ export function SettingsPanel() {
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
-  const [labChatEnabled, setLabChatEnabledState] = useState(() => isLabChatEnabled())
   // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -123,7 +117,6 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
-  useEffect(() => subscribeLabChat(setLabChatEnabledState), [])
 
   return (
     <div
@@ -166,32 +159,6 @@ export function SettingsPanel() {
       <section className="settings-group" data-aeon-part="lab" data-settings-group="Lab">
         <h3 className="settings-group-title">Lab</h3>
         <ul className="settings-list">
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <span className="settings-row-body">
-                <label className="settings-row-label" htmlFor="settings-lab-chat">
-                  Chat
-                </label>
-                <span className="settings-row-desc">Experimental</span>
-              </span>
-              <label className="settings-sfx-toggle">
-                <input
-                  id="settings-lab-chat"
-                  type="checkbox"
-                  checked={labChatEnabled}
-                  data-aeon-part="lab-chat"
-                  data-aeon-state={labChatEnabled ? 'on' : 'off'}
-                  onChange={(e) => {
-                    const next = e.target.checked
-                    setLabChatEnabled(next)
-                    setLabChatEnabledState(next)
-                    playWalletSound(next ? 'soft' : 'deny', { force: true })
-                  }}
-                />
-                <span>{labChatEnabled ? 'On' : 'Off'}</span>
-              </label>
-            </div>
-          </li>
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
               <span className="settings-row-body">

@@ -17,7 +17,6 @@ import {
 } from '../wallet/fx'
 import {
   getDisplayCurrency,
-  setDisplayCurrency,
   subscribeDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
@@ -30,7 +29,6 @@ import {
 } from '../wallet/friends'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
-import { takeSendPrefill } from '../wallet/sendPrefill'
 import { sendSatsToAddress } from '../wallet/sendPayment'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
@@ -61,33 +59,6 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-
-  useEffect(() => {
-    const prefill = takeSendPrefill()
-    if (!prefill) return
-    if (prefill.amountUnit === 'usd') {
-      setDisplayCurrency('usd')
-      setCurrency('usd')
-    } else if (prefill.amountUnit === 'sats' || prefill.amountUnit === 'bsv') {
-      setDisplayCurrency('bsv')
-      setCurrency('bsv')
-    }
-    let amount = prefill.amount ?? ''
-    if (prefill.amountUnit === 'sats' && prefill.amount) {
-      amount = (Number(prefill.amount) / 1e8).toFixed(8).replace(/\.?0+$/, '')
-    }
-    if (prefill.to) {
-      setRecipientQuery(prefill.friendLabel || prefill.to)
-      send({
-        type: 'EDIT',
-        to: prefill.to,
-        friendLabel: prefill.friendLabel ?? null,
-        amount: amount || undefined,
-      })
-    } else if (amount) {
-      send({ type: 'EDIT', amount })
-    }
-  }, [send])
 
   const isSuccess = sendSnap.matches('success')
   const isFailure = sendSnap.matches('failure')

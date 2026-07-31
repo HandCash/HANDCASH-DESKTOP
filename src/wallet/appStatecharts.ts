@@ -26,7 +26,6 @@ const MASTER = `stateDiagram-v2
   appSession --> connectPermission : BRC-100 connect
   appSession --> actionPermission : BRC-100 pay / sign
 
-  walletNav --> chatFlow : Chat
   walletNav --> friendsFlow : Friends
   walletNav --> collectablesFlow : Collectables
   walletNav --> connectedApps : Apps
@@ -34,7 +33,6 @@ const MASTER = `stateDiagram-v2
   walletNav --> identityPanel : Identity
   walletNav --> settingsFlow : Settings
 
-  chatFlow --> chatPay : /pay card
   collectablesFlow --> sendCollectable : send item
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupPhrase : backup
@@ -45,8 +43,6 @@ const MASTER = `stateDiagram-v2
   walletNav : Nav sections
   sendPayment : Send payment
   receiveFlow : Receive
-  chatFlow : Chat
-  chatPay : Chat pay
   friendsFlow : Friends
   collectablesFlow : Collectables
   sendCollectable : Send item
@@ -116,8 +112,7 @@ const WALLET_NAV = `stateDiagram-v2
 
   state section {
     [*] --> activity
-    activity --> chat : tab
-    chat --> apps : tab
+    activity --> apps : tab
     apps --> collectables : tab
     collectables --> friends : tab
     friends --> identity : tab
@@ -174,42 +169,6 @@ const RECEIVE = `stateDiagram-v2
   qrOpen : QR open
 `
 
-const CHAT = `stateDiagram-v2
-  direction TB
-  [*] --> list
-
-  list --> thread : select peer
-  thread --> list : (sidebar)
-  thread --> composing : type / Pay / Receive
-  composing --> thread : send text
-  composing --> chatPay : /pay amount
-  composing --> thread : /request amount
-  chatPay --> thread : confirm / cancel / fail
-
-  list : List
-  thread : Thread
-  composing : Composing
-  chatPay : Pay card
-`
-
-const CHAT_PAY = `stateDiagram-v2
-  direction LR
-  [*] --> pending
-  pending --> sending : CONFIRM
-  pending --> cancelled : CANCEL
-  sending --> sent : SUCCESS
-  sending --> failed : FAIL
-  cancelled --> [*]
-  sent --> [*]
-  failed --> [*]
-
-  pending : Pending
-  sending : Sending
-  sent : Sent
-  failed : Failed
-  cancelled : Cancelled
-`
-
 const FRIENDS = `stateDiagram-v2
   direction TB
   [*] --> list
@@ -217,11 +176,9 @@ const FRIENDS = `stateDiagram-v2
   list --> add : add friend
   details --> list : back
   add --> list : saved / back
-  details --> chat : Message
   list : List
   details : Details
   add : Add friend
-  chat : Chat
 `
 
 const COLLECTABLES = `stateDiagram-v2
@@ -464,21 +421,9 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: RECEIVE,
   },
   {
-    id: 'chatFlow',
-    label: 'Chat',
-    caption: 'chat — list, thread, composer, pay cards',
-    source: CHAT,
-  },
-  {
-    id: 'chatPay',
-    label: 'Chat pay',
-    caption: 'chatPay — in-thread confirm → createAction',
-    source: CHAT_PAY,
-  },
-  {
     id: 'friendsFlow',
     label: 'Friends',
-    caption: 'friends — list, add, details, message',
+    caption: 'friends — list, add, details',
     source: FRIENDS,
   },
   {

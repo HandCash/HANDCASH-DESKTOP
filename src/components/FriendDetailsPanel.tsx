@@ -8,8 +8,7 @@ import {
   updateFriend,
   type Friend,
 } from '../wallet/friends'
-import { clearNavChild, openChatWithFriend } from '../wallet/navStore'
-import { isLabChatEnabled, subscribeLabChat } from '../wallet/labPrefs'
+import { clearNavChild } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
 
@@ -25,9 +24,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [saved, setSaved] = useState(false)
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedAddress, setCopiedAddress] = useState(false)
-  const [labChat, setLabChat] = useState(() => isLabChatEnabled())
-
-  useEffect(() => subscribeLabChat(setLabChat), [])
 
   useEffect(() => {
     return subscribeFriends(() => {
@@ -143,18 +139,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
-          {labChat ? (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                playWalletSound('soft')
-                openChatWithFriend(friend.id)
-              }}
-            >
-              Message
-            </button>
-          ) : null}
           <button type="submit" className="btn btn-ghost" disabled={!label.trim() || label.trim() === friend.label}>
             Save
           </button>
