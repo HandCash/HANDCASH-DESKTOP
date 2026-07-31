@@ -13,20 +13,31 @@ import {
   setUpdateMode,
   type UpdateMode,
 } from './autoUpdate.js'
+import {
+  shouldLoadViaLocalhostOrigin,
+  startPackagedUiServer,
+  stopPackagedUiServer,
+  UI_ORIGIN,
+} from './uiServer.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
 
-/** Vite / `npm run dev` origin. Packaged builds use file:// so existing IndexedDB stays intact.
- * Vault keys live in durable prefs (origin-independent + OS-sealed when available).
- * Do not flip packaged back to localhost without a proven IDB migration — that orphaned keys before. */
-const DEV_ORIGIN = 'http://localhost:5173'
+/**
+ * Renderer origin:
+ * - Dev: Vite on http://localhost:5173
+ * - Packaged: prefer the same localhost origin when that IndexedDB partition holds
+ *   the toolbox UTXO set (common after npm run dev). Vault keys are durable/OS-sealed
+ *   and origin-independent. Otherwise file:// (file__0.*).
+ */
+const DEV_ORIGIN = UI_ORIGIN
 
 log.transports.file.level = 'info'
 
 let mainWindow: BrowserWindow | null = null
 let bridge: BridgeServerHandle | null = null
 let bridgeError: string | null = null
+let packagedUiOrigin: string | null = null
 
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('--disable-gpu-sandbox')
@@ -39,6 +50,7 @@ function getIconPath(): string | undefined {
 
 function isAppUrl(url: string): boolean {
   if (url.startsWith(DEV_ORIGIN) || url.startsWith('http://127.0.0.1:5173')) return true
+  if (packagedUiOrigin && url.startsWith(packagedUiOrigin)) return true
   if (url.startsWith('file://')) {
     const distRoot = path.join(__dirname, '../dist')
     try {
@@ -104,11 +116,13 @@ function createWindow(): void {
     return permission === 'media' || permission === 'mediaKeySystem'
   })
 
-  // Packaged: file:// keeps the existing Chromium IndexedDB (file__0.*).
-  // Serving on localhost:5173 looks empty — LevelDB cannot be reliably copied across origins.
+  // Packaged wallets that started life under `npm run dev` keep UTXOs in the
+  // localhost IndexedDB partition — load that origin so balance is not zero.
   if (isDev) {
     void mainWindow.loadURL(DEV_ORIGIN)
     mainWindow.webContents.openDevTools({ mode: 'detach' })
+  } else if (packagedUiOrigin) {
+    void mainWindow.loadURL(packagedUiOrigin)
   } else {
     void mainWindow.loadFile(path.join(__dirname, '../dist/index.html'))
   }
@@ -164,6 +178,15 @@ app.whenReady().then(async () => {
     isDev,
   })
 
+  if (!isDev && shouldLoadViaLocalhostOrigin()) {
+    try {
+      packagedUiOrigin = await startPackagedUiServer(path.join(__dirname, '../dist'))
+    } catch (err) {
+      log.warn('Packaged localhost UI server failed — falling back to file://', err)
+      packagedUiOrigin = null
+    }
+  }
+
   createWindow()
   await ensureBridge()
 
@@ -182,6 +205,7 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   void bridge?.stop()
   bridge = null
+  void stopPackagedUiServer()
 })
 
 ipcMain.handle('app:get-info', () => ({

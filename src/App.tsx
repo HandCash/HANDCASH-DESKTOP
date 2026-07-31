@@ -122,17 +122,21 @@ export function App() {
 
         <main className="stage">
           {snapshot.matches('boot') && (
-            <section className="hero-panel" data-aeon-state="loading">
-              <h1 className="display">Opening HandCash…</h1>
-              <p className="lede">Getting your wallet ready.</p>
+            <section className="auth-screen" data-aeon-state="loading">
+              <div className="auth-copy">
+                <h1 className="auth-title">Opening…</h1>
+                <p className="auth-lede">Getting your wallet ready.</p>
+              </div>
             </section>
           )}
 
           {snapshot.matches('failure') && (
-            <section className="hero-panel" data-aeon-state="failure">
-              <h1 className="display">Something broke.</h1>
-              <p className="error">{snapshot.context.error}</p>
-              <button className="btn btn-primary" onClick={() => send({ type: 'CLEAR_ERROR' })}>
+            <section className="auth-screen" data-aeon-state="failure">
+              <div className="auth-copy">
+                <h1 className="auth-title">Something broke</h1>
+                <p className="error auth-error">{snapshot.context.error}</p>
+              </div>
+              <button className="btn btn-primary auth-submit" onClick={() => send({ type: 'CLEAR_ERROR' })}>
                 Retry
               </button>
             </section>

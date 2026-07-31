@@ -143,69 +143,55 @@ export function AuthScreen({
 
   const title =
     formMode === 'restore'
-      ? 'Recover access.'
-      : formMode === 'create'
-        ? 'Own your cash.'
-        : 'Unlock HandCash.'
-
-  const subtitle =
-    formMode === 'restore'
       ? 'Restore wallet'
       : formMode === 'create'
-        ? 'Create your wallet'
+        ? 'Create wallet'
         : 'Welcome back'
 
   const lede =
     formMode === 'restore'
-      ? 'Enter your recovery phrase and a new unlock password.'
+      ? 'Enter your 12-word phrase and choose a password for this device.'
       : formMode === 'create'
-        ? 'Your money stays on this device.'
-        : 'Enter your password to open your wallet.'
+        ? 'Pick a password. Your keys stay on this device.'
+        : 'Enter your password to unlock.'
+
+  const submitting = snapshot.matches('submitting')
+  const primaryLabel =
+    formMode === 'restore' ? 'Restore' : formMode === 'create' ? 'Create' : 'Unlock'
 
   return (
-    <section className="hero-panel" data-aeon-scope="auth" data-aeon-state={stateAttr}>
-      <div>
-        <p className="brand-sub" style={{ marginBottom: 10 }}>
-          {subtitle}
-        </p>
-        <h1 className="display">{title}</h1>
-        <p className="lede" style={{ marginTop: 14 }}>
-          {lede}
-        </p>
+    <section className="auth-screen" data-aeon-scope="auth" data-aeon-state={stateAttr}>
+      <div className="auth-copy">
+        <h1 className="auth-title">{title}</h1>
+        <p className="auth-lede">{lede}</p>
       </div>
 
-      <div className="panel" data-aeon-part="form">
-        {mode === 'onboarding' && !recoveryOnly ? (
-          <div className="actions" style={{ marginBottom: 12 }}>
-            <button
-              type="button"
-              className={`btn ${formMode === 'create' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setFormMode('create')}
-            >
-              Create
-            </button>
-            <button
-              type="button"
-              className={`btn ${formMode === 'restore' ? 'btn-primary' : 'btn-ghost'}`}
-              onClick={() => setFormMode('restore')}
-            >
-              Restore
-            </button>
-          </div>
-        ) : null}
-
+      <form
+        className="auth-form"
+        data-aeon-part="form"
+        onSubmit={(e) => {
+          e.preventDefault()
+          void submit()
+        }}
+      >
         {mode === 'locked' && offerRestoreOnLock ? (
-          <div className="actions" style={{ marginBottom: 12 }}>
+          <div className="auth-mode-switch" role="tablist" aria-label="Wallet access">
             <button
               type="button"
-              className={`btn ${formMode === 'unlock' ? 'btn-primary' : 'btn-ghost'}`}
+              role="tab"
+              aria-selected={formMode === 'unlock'}
+              className="auth-mode-tab"
+              data-aeon-state={formMode === 'unlock' ? 'selected' : 'idle'}
               onClick={() => setFormMode('unlock')}
             >
               Unlock
             </button>
             <button
               type="button"
-              className={`btn ${formMode === 'restore' ? 'btn-primary' : 'btn-ghost'}`}
+              role="tab"
+              aria-selected={formMode === 'restore'}
+              className="auth-mode-tab"
+              data-aeon-state={formMode === 'restore' ? 'selected' : 'idle'}
               onClick={() => setFormMode('restore')}
             >
               Restore
@@ -219,12 +205,13 @@ export function AuthScreen({
             <textarea
               id="mnemonic"
               rows={3}
-              placeholder="words separated by spaces"
+              placeholder="twelve words separated by spaces"
               value={mnemonicInput}
               onChange={(e) => setMnemonicInput(e.target.value)}
               autoComplete="off"
               autoCapitalize="off"
               spellCheck={false}
+              autoFocus
             />
           </div>
         ) : null}
@@ -237,37 +224,45 @@ export function AuthScreen({
             placeholder="At least 8 characters"
             value={snapshot.context.password}
             onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void submit()
-            }}
             autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
+            autoFocus={formMode !== 'restore'}
           />
         </div>
 
         {(error || snapshot.context.error) && (
-          <p className="error" role="alert">
+          <p className="error auth-error" role="alert">
             {error || snapshot.context.error}
           </p>
         )}
 
-        <div className="actions">
-          <button
-            className="btn btn-primary"
-            data-aeon-part="trigger"
-            data-aeon-state={stateAttr}
-            disabled={snapshot.matches('submitting')}
-            onClick={() => void submit()}
-          >
-            {snapshot.matches('submitting')
-              ? 'Working…'
-              : formMode === 'restore'
-                ? 'Restore wallet'
-                : formMode === 'create'
-                  ? 'Create wallet'
-                  : 'Unlock'}
-          </button>
-        </div>
-      </div>
+        <button
+          type="submit"
+          className="btn btn-primary auth-submit"
+          data-aeon-part="trigger"
+          data-aeon-state={stateAttr}
+          disabled={submitting}
+        >
+          {submitting ? 'Working…' : primaryLabel}
+        </button>
+
+        {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
+          <p className="auth-alt">
+            Have a recovery phrase?{' '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('restore')}>
+              Restore
+            </button>
+          </p>
+        ) : null}
+
+        {mode === 'onboarding' && !recoveryOnly && formMode === 'restore' ? (
+          <p className="auth-alt">
+            New here?{' '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('create')}>
+              Create a wallet
+            </button>
+          </p>
+        ) : null}
+      </form>
     </section>
   )
 }
