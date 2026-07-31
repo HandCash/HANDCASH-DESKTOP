@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.7] - 2026-07-31
+
+### Changed
+
+- Mac updates open the arch-matched GitHub DMG (ShipIt still blocked until Developer ID).
+- Screenshot to clipboard (⌘⇧S) with version badge; About statecharts.
+
 ## [1.1.6] - 2026-07-31
 
 ### Changed
