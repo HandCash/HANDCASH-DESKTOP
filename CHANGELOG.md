@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.0] - 2026-08-01
+
+### Added
+
+- Collectables type selector (1Sat / Twonk) with Twonk send and receive.
+- Item permissions: view (optional collection/creator), send, and receive — separate from Pay.
+
+### Changed
+
+- Pay and Auto-pay never cover NFT / collectable spends.
+
 ## [1.1.16] - 2026-08-01
 
 ### Changed
