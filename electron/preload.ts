@@ -87,6 +87,11 @@ const handcash = {
     ipcRenderer.invoke('app:open-logs') as Promise<
       { ok: true; file: string } | { ok: false; error: string }
     >,
+  uploadLogs: (url: string) =>
+    ipcRenderer.invoke('app:upload-logs', url) as Promise<
+      | { ok: true; bytes: number; status: number }
+      | { ok: false; error: string }
+    >,
   storageGetSync: (key: string) =>
     ipcRenderer.sendSync('storage:get-sync', key) as string | null,
   storageSetSync: (

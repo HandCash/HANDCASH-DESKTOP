@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
+import { toastError } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
@@ -11,12 +12,9 @@ type Props = {
 
 export function IdentityPanel({ profile }: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   useEffect(() => {
     let cancelled = false
-    setError(null)
     void QRCode.toDataURL(profile.identityKey, {
       width: 220,
       margin: 2,
@@ -27,7 +25,9 @@ export function IdentityPanel({ profile }: Props) {
         if (!cancelled) setDataUrl(url)
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) {
+          toastError('QR failed', err instanceof Error ? err.message : String(err))
+        }
       })
     return () => {
       cancelled = true
@@ -35,10 +35,7 @@ export function IdentityPanel({ profile }: Props) {
   }, [profile.identityKey])
 
   const copyIdentity = async () => {
-    if (await copyText(profile.identityKey)) {
-      setCopied(true)
-      window.setTimeout(() => setCopied(false), 1600)
-    }
+    await copyText(profile.identityKey, { label: 'identity key' })
   }
 
   return (
@@ -49,7 +46,6 @@ export function IdentityPanel({ profile }: Props) {
 
       <div className="identity-layout">
         <div className="identity-qr" data-aeon-part="media">
-          {error ? <p className="error">{error}</p> : null}
           <button
             type="button"
             className="identity-qr-frame identity-qr-copy"
@@ -67,13 +63,11 @@ export function IdentityPanel({ profile }: Props) {
                 skeletonRadius={4}
                 skeletonClassName="skeleton-qr"
               />
-            ) : !error ? (
+            ) : (
               <SkeletonQr size={180} />
-            ) : null}
+            )}
           </button>
-          <p className="identity-qr-hint">
-            {copied ? 'Copied' : 'Tap QR to copy'}
-          </p>
+          <p className="identity-qr-hint">Tap QR to copy</p>
           <p className="identity-key-note">
             Identity key — not a payment address. Use Receive for BSV.
           </p>
@@ -84,11 +78,11 @@ export function IdentityPanel({ profile }: Props) {
             <span>Identity key</span>
             <button
               type="button"
-              className={`mono identity-key${copied ? ' is-copied' : ''}`}
+              className="mono identity-key"
               title="Click to copy identity key"
               onClick={() => void copyIdentity()}
             >
-              {copied ? 'Copied' : profile.identityKey}
+              {profile.identityKey}
             </button>
           </div>
           <div className="identity-nav-row">

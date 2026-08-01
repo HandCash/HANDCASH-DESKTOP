@@ -20,6 +20,8 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",
     "preview": "vite preview",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "launch": "bash scripts/launch.sh",
     "launch:mac": "bash scripts/launch-mac.sh",
     "version:patch": "node scripts/bump-version.mjs patch",
@@ -59,6 +61,7 @@
     "electron-builder": "^26.0.12",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
+    "vitest": "^3.2.7",
     "wait-on": "^8.0.3"
   },
   "build": {

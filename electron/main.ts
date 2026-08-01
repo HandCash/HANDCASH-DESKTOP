@@ -1,4 +1,5 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from 'electron'
+import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
@@ -65,7 +66,8 @@ function isAppUrl(url: string): boolean {
 function isSafeExternalUrl(url: string): boolean {
   try {
     const { protocol } = new URL(url)
-    return protocol === 'http:' || protocol === 'https:'
+    // http(s) for links; mailto for user-controlled key-slice / share handoff.
+    return protocol === 'http:' || protocol === 'https:' || protocol === 'mailto:'
   } catch {
     return false
   }
@@ -378,6 +380,49 @@ ipcMain.handle('app:open-logs', async () => {
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     log.warn('open-logs failed', err)
+    return { ok: false as const, error: message }
+  }
+})
+
+ipcMain.handle('app:upload-logs', async (_event, url: unknown) => {
+  if (typeof url !== 'string' || !url.trim()) {
+    return { ok: false as const, error: 'Upload URL required' }
+  }
+  let parsed: URL
+  try {
+    parsed = new URL(url.trim())
+  } catch {
+    return { ok: false as const, error: 'Invalid URL' }
+  }
+  if (parsed.protocol !== 'http:' && parsed.protocol !== 'https:') {
+    return { ok: false as const, error: 'URL must be http(s)' }
+  }
+  try {
+    const file = log.transports.file.getFile()
+    const filePath = file.path
+    const body = await fs.readFile(filePath)
+    const res = await fetch(parsed.toString(), {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'text/plain; charset=utf-8',
+        'X-HandCash-Log': path.basename(filePath),
+        'X-HandCash-Version': app.getVersion(),
+        'X-HandCash-Platform': process.platform,
+      },
+      body,
+    })
+    if (!res.ok) {
+      const text = await res.text().catch(() => '')
+      return {
+        ok: false as const,
+        error: `Upload failed (${res.status})${text ? `: ${text.slice(0, 160)}` : ''}`,
+      }
+    }
+    log.info('logs uploaded', { url: parsed.origin, bytes: body.byteLength })
+    return { ok: true as const, bytes: body.byteLength, status: res.status }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn('upload-logs failed', err)
     return { ok: false as const, error: message }
   }
 })

@@ -99,7 +99,9 @@ export async function finishPendingWalletWipe(): Promise<void> {
  * Destroy all local wallet data after password check, then reload into onboarding.
  */
 export async function wipeAllWalletData(password: string): Promise<void> {
-  if (password.length < 8) throw new Error('Password must be at least 8 characters')
+  if (password.length < 8) {
+    throw new Error('Password must be at least 8 characters')
+  }
 
   // Prove the operator knows the unlock password before destroying keys.
   await unlockVault(password)

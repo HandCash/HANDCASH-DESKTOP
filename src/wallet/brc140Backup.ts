@@ -75,9 +75,9 @@ export function recoverRootKeyFromBrc140Shares(shareLines: string[]): {
 
 /** Suggested destinations for a 2-of-3 layout (transport only — not part of BRC-140). */
 export const BRC140_DESTINATION_HINTS = [
-  'Google Drive / Google account',
-  'iCloud / Apple account',
-  'Dropbox, USB, or printed offline',
+  'Email to yourself (your mail client)',
+  'Password manager / notes',
+  'USB, paper, or another device',
 ] as const
 
 export function shareDownloadFilename(index: number, total: number, integrity: string): string {

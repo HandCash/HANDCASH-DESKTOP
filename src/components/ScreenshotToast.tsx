@@ -1,45 +1,19 @@
-import { useEffect, useState } from 'react'
+import { useEffect } from 'react'
 import { APP_VERSION } from '../version'
 import { playWalletSound } from '../wallet/soundService'
+import { toastSuccess } from '../wallet/toast'
 
 /**
- * Brief confirmation when View → Copy Screenshot (⌘⇧S / Ctrl+Shift+S) lands on the clipboard.
+ * Bridges View → Copy Screenshot (⌘⇧S / Ctrl+Shift+S) into the shared toast host.
  */
 export function ScreenshotToast() {
-  const [visible, setVisible] = useState(false)
-  const [version, setVersion] = useState<string>(APP_VERSION)
-  const [failed, setFailed] = useState<string | null>(null)
-
   useEffect(() => {
     if (!window.handcash?.onScreenshotCopied) return
     return window.handcash.onScreenshotCopied((payload) => {
-      setFailed(null)
-      setVersion(payload.version || APP_VERSION)
-      setVisible(true)
       playWalletSound('copy')
+      toastSuccess('Screenshot copied', `v${payload.version || APP_VERSION} BETA`)
     })
   }, [])
 
-  useEffect(() => {
-    if (!visible && !failed) return
-    const id = window.setTimeout(() => {
-      setVisible(false)
-      setFailed(null)
-    }, 2400)
-    return () => window.clearTimeout(id)
-  }, [visible, failed])
-
-  if (!visible && !failed) return null
-
-  return (
-    <div
-      className={`screenshot-toast${failed ? ' is-error' : ''}`}
-      role="status"
-      aria-live="polite"
-      data-aeon-scope="screenshot-toast"
-      data-aeon-state={failed ? 'error' : 'copied'}
-    >
-      {failed ? failed : `Screenshot copied · v${version} BETA`}
-    </div>
-  )
+  return null
 }

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import QRCode from 'qrcode'
 import { copyText } from '../wallet/clipboard'
 import { buildPeerPayUri } from '../wallet/peerPayUri'
+import { toastError } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
@@ -15,8 +16,6 @@ type Props = {
 export function ReceivePanel({ address, identityKey }: Props) {
   const [mode, setMode] = useState<ReceiveMode>('peerpay')
   const [dataUrl, setDataUrl] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [copied, setCopied] = useState(false)
 
   const peerpayUri = useMemo(() => {
     try {
@@ -34,7 +33,6 @@ export function ReceivePanel({ address, identityKey }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    setError(null)
     setDataUrl(null)
     void QRCode.toDataURL(value, {
       width: 220,
@@ -46,7 +44,9 @@ export function ReceivePanel({ address, identityKey }: Props) {
         if (!cancelled) setDataUrl(url)
       })
       .catch((err: unknown) => {
-        if (!cancelled) setError(err instanceof Error ? err.message : String(err))
+        if (!cancelled) {
+          toastError('QR failed', err instanceof Error ? err.message : String(err))
+        }
       })
     return () => {
       cancelled = true
@@ -54,16 +54,13 @@ export function ReceivePanel({ address, identityKey }: Props) {
   }, [value])
 
   const copy = async () => {
-    if (!(await copyText(value))) return
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
+    await copyText(value, { label: mode === 'peerpay' ? 'PeerPay link' : 'address' })
   }
 
   return (
     <div className="nav-child-panel receive-panel" data-aeon-scope="receive">
       <div className="receive-layout">
         <div className="receive-qr" data-aeon-part="media">
-          {error ? <p className="error">{error}</p> : null}
           <button
             type="button"
             className="qr-frame receive-qr-frame"
@@ -81,11 +78,11 @@ export function ReceivePanel({ address, identityKey }: Props) {
                 skeletonRadius={4}
                 skeletonClassName="skeleton-qr"
               />
-            ) : !error ? (
+            ) : (
               <SkeletonQr size={220} />
-            ) : null}
+            )}
           </button>
-          <p className="receive-qr-hint">{copied ? 'Copied' : 'Tap QR to copy'}</p>
+          <p className="receive-qr-hint">Tap QR to copy</p>
         </div>
 
         <div className="receive-info">
@@ -110,15 +107,15 @@ export function ReceivePanel({ address, identityKey }: Props) {
           <p className="qr-subtitle receive-subtitle">{subtitle}</p>
           <button
             type="button"
-            className={`mono qr-value receive-address${copied ? ' is-copied' : ''}`}
+            className="mono qr-value receive-address"
             title="Click to copy"
             onClick={() => void copy()}
           >
-            {copied ? 'Copied' : value}
+            {value}
           </button>
           <div className="actions receive-actions">
             <button type="button" className="btn btn-primary" onClick={() => void copy()}>
-              {copied ? 'Copied' : mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
+              {mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
             </button>
           </div>
         </div>

@@ -30,6 +30,7 @@ import {
 } from '../wallet/pendingSend'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import type { Chain } from '../wallet/vault'
@@ -157,6 +158,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
       setStage('failure')
+      toastError('Send failed', message)
     }
   }
 

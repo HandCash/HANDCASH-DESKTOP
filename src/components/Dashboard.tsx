@@ -29,18 +29,16 @@ import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import {
+  getMissingBackupStep,
   isBackupConfirmed,
   subscribeBackupConfirmed,
 } from '../wallet/backupStatus'
-import {
-  subscribeSyncHealth,
-  type SyncHealth,
-} from '../wallet/walletHealth'
+import { subscribeSyncHealth } from '../wallet/walletHealth'
+import { showToast } from '../wallet/toast'
 
 type Props = {
   profile: WalletProfile
   balanceSats: number
-  error: string | null
   onSent: (balanceSats: number) => void
   onRefreshBalance: (balanceSats: number) => void
   onLock: () => void
@@ -50,7 +48,6 @@ type Props = {
 export function Dashboard({
   profile,
   balanceSats,
-  error,
   onSent,
   onRefreshBalance,
   onLock,
@@ -61,15 +58,39 @@ export function Dashboard({
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [refreshing, setRefreshing] = useState(false)
   const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
-  const [syncHealth, setSyncHealthState] = useState<SyncHealth | null>(null)
+  const [missingBackup, setMissingBackup] = useState(() => getMissingBackupStep())
+  const lastSyncToastBody = useRef<string | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-  useEffect(() => subscribeBackupConfirmed(setBackupConfirmed), [])
-  useEffect(() => subscribeSyncHealth(setSyncHealthState), [])
+  useEffect(
+    () =>
+      subscribeBackupConfirmed(() => {
+        setBackupConfirmed(isBackupConfirmed())
+        setMissingBackup(getMissingBackupStep())
+      }),
+    [],
+  )
+  useEffect(
+    () =>
+      subscribeSyncHealth((health) => {
+        if (!health.message) {
+          lastSyncToastBody.current = null
+          return
+        }
+        if (health.message === lastSyncToastBody.current) return
+        lastSyncToastBody.current = health.message
+        showToast({
+          title: health.phase === 'error' ? 'Sync issue' : 'Sync',
+          body: health.message,
+          tone: health.phase === 'error' ? 'error' : 'neutral',
+        })
+      }),
+    [],
+  )
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -102,7 +123,6 @@ export function Dashboard({
         playWalletSound('soft')
       }
     } catch (err) {
-      playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
     } finally {
       setRefreshing(false)
@@ -139,16 +159,16 @@ export function Dashboard({
                 type="button"
                 className="wallet-backup-warn"
                 data-aeon-scope="backup-reminder"
-                data-aeon-state="needed"
+                data-aeon-state={missingBackup ?? 'needed'}
                 onClick={() => {
                   playWalletSound('soft')
-                  openSetting('backup-phrase')
+                  openSetting(missingBackup === 'history' ? 'history-backup' : 'backup')
                 }}
               >
                 <span className="wallet-backup-warn-mark" aria-hidden>
                   <WarningIcon size={14} />
                 </span>
-                Backup your wallet
+                {missingBackup === 'history' ? 'Backup history' : 'Backup keys'}
               </button>
             ) : null}
           </div>
@@ -231,20 +251,6 @@ export function Dashboard({
             </div>
           </div>
 
-          {syncHealth?.message ? (
-            <p
-              className={`wallet-sync-note${syncHealth.phase === 'error' ? ' is-error' : ''}`}
-              role="status"
-            >
-              {syncHealth.message}
-            </p>
-          ) : null}
-
-          {error && (
-            <p className="error" role="status" style={{ marginTop: 10 }}>
-              {error}
-            </p>
-          )}
         </div>
 
         <WalletNav

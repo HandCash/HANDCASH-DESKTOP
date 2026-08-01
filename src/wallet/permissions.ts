@@ -3,17 +3,18 @@ import {
   normalizeAppHost,
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
-import { isBackupConfirmed } from './backupStatus'
+import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
 import { openSetting } from './navStore'
 import { formatBsvSignificant } from './session'
 import { playWalletSound } from './soundService'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 
-/** Block connect / spend until the user confirms their backup phrase. */
+/** Block connect / spend until keys + history backups are confirmed. */
 function denyUntilBackupConfirmed(): Promise<PermissionDecision> {
   playWalletSound('deny')
   void window.handcash?.focusWindow?.()
-  openSetting('backup-phrase')
+  const missing = getMissingBackupStep()
+  openSetting(missing === 'history' ? 'history-backup' : 'backup')
   return Promise.resolve('deny')
 }
 

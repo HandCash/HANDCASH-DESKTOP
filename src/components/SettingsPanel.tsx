@@ -8,12 +8,15 @@ import {
   setWalletSfxEnabled,
   subscribeWalletSfx,
 } from '../wallet/soundPrefs'
+import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 type SettingItem = {
   id: SettingId
   label: string
   description: string
+  tag?: string
 }
 
 type SettingGroup = {
@@ -26,23 +29,20 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Security',
     items: [
       {
-        id: 'backup-phrase',
-        label: 'Recovery phrase',
-        description: 'Password required',
-      },
-      {
-        id: 'split-backup',
-        label: 'Key slices',
-        description: 'BRC-140 · 2-of-3 · store apart',
+        id: 'backup',
+        label: 'Keys',
+        description: 'Split or phrase',
+        tag: 'BRC-140',
       },
       {
         id: 'history-backup',
-        label: 'History backup',
-        description: 'BRC-38/39 · file or your URL',
+        label: 'History',
+        description: 'Required for recovery',
+        tag: 'BRC-39',
       },
       {
         id: 'change-password',
-        label: 'Change password',
+        label: 'Password',
         description: '',
       },
     ],
@@ -53,7 +53,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'wipe-wallet',
         label: 'Wipe wallet',
-        description: 'Needs phrase to restore',
+        description: 'Remove from this device',
       },
     ],
   },
@@ -100,9 +100,10 @@ function phaseLabel(phase: string, error: string | null): string {
 }
 
 export function settingLabel(id: SettingId): string {
+  if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
-  if (id === 'split-backup') return 'Key slices'
-  if (id === 'history-backup') return 'History backup'
+  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
+  if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
     if (item) return item.label
@@ -117,6 +118,8 @@ export function SettingsPanel() {
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [logPath, setLogPath] = useState<string | null>(null)
+  const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
+  const [uploadingLogs, setUploadingLogs] = useState(false)
   // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -157,7 +160,7 @@ export function SettingsPanel() {
         <section key={group.title} className="settings-group" data-settings-group={group.title}>
           <h3 className="settings-group-title">{group.title}</h3>
           <ul className="settings-list">
-            {group.items.map(({ id, label, description }) => (
+            {group.items.map(({ id, label, description, tag }) => (
               <li key={id} className="settings-row">
                 <button
                   type="button"
@@ -168,7 +171,10 @@ export function SettingsPanel() {
                   }}
                 >
                   <span className="settings-row-body">
-                    <strong className="settings-row-label">{label}</strong>
+                    <strong className="settings-row-label">
+                      {label}
+                      {tag ? <span className="spec-tag">{tag}</span> : null}
+                    </strong>
                     {description ? (
                       <span className="settings-row-desc">{description}</span>
                     ) : null}
@@ -179,30 +185,6 @@ export function SettingsPanel() {
           </ul>
         </section>
       ))}
-
-      <section className="settings-group" data-aeon-part="lab" data-settings-group="Lab">
-        <h3 className="settings-group-title">Lab</h3>
-        <ul className="settings-list">
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <span className="settings-row-body">
-                <strong className="settings-row-label">Statecharts</strong>
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost settings-check-btn"
-                data-aeon-part="view-statecharts"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSetting('statecharts')
-                }}
-              >
-                View
-              </button>
-            </div>
-          </li>
-        </ul>
-      </section>
 
       <section className="settings-group" data-aeon-part="application">
         <h3 className="settings-group-title">Application</h3>
@@ -300,9 +282,7 @@ export function SettingsPanel() {
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">App logs</strong>
-                <span className="settings-row-desc">
-                  Bridge, updates, and errors — share with support if something breaks
-                </span>
+                <span className="settings-row-desc">Share with support if something breaks</span>
                 {logPath ? (
                   <span className="settings-row-desc settings-log-path mono" title={logPath}>
                     {logPath}
@@ -327,19 +307,87 @@ export function SettingsPanel() {
               </button>
             </div>
           </li>
+          <li className="settings-row settings-row-static">
+            <div className="settings-log-upload">
+              <label className="settings-row-label" htmlFor="settings-log-upload-url">
+                Upload URL
+              </label>
+              <span className="settings-row-desc">
+                POST the current log file to this http(s) endpoint
+              </span>
+              <div className="settings-log-upload-row">
+                <input
+                  id="settings-log-upload-url"
+                  className="settings-log-upload-input"
+                  type="url"
+                  inputMode="url"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder="https://…"
+                  value={logUploadUrl}
+                  data-aeon-part="log-upload-url"
+                  onChange={(e) => setLogUploadUrlState(e.target.value)}
+                  onBlur={() => setLogUploadUrl(logUploadUrl)}
+                />
+                <button
+                  type="button"
+                  className="btn btn-ghost settings-check-btn"
+                  data-aeon-part="upload-logs"
+                  disabled={uploadingLogs || !window.handcash?.uploadLogs}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    const url = setLogUploadUrl(logUploadUrl)
+                    setLogUploadUrlState(url)
+                    if (!url) {
+                      toastError('Set an upload URL first')
+                      return
+                    }
+                    if (!window.handcash?.uploadLogs) {
+                      toastError('Log upload unavailable')
+                      return
+                    }
+                    setUploadingLogs(true)
+                    void window.handcash
+                      .uploadLogs(url)
+                      .then((result) => {
+                        if (!result.ok) {
+                          playWalletSound('error')
+                          toastError('Upload failed', result.error)
+                          return
+                        }
+                        toastSuccess('Logs sent', `${result.bytes} bytes`)
+                      })
+                      .finally(() => setUploadingLogs(false))
+                  }}
+                >
+                  {uploadingLogs ? 'Sending…' : 'Send'}
+                </button>
+              </div>
+            </div>
+          </li>
         </ul>
       </section>
 
-      <section className="settings-group" data-aeon-part="about">
+      <section className="settings-group" data-aeon-part="about" data-settings-group="About">
         <h3 className="settings-group-title">About</h3>
         <ul className="settings-list">
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
+          <li className="settings-row">
+            <button
+              type="button"
+              className="settings-row-main"
+              onClick={() => {
+                playWalletSound('soft')
+                openSetting('about-handcash')
+              }}
+            >
               <span className="settings-row-body">
-                <strong className="settings-row-label">HandCash Desktop</strong>
-                <span className="settings-row-desc">Self-custodial BRC-100 wallet</span>
+                <strong className="settings-row-label">
+                  HandCash
+                  <span className="spec-tag">BRC-100</span>
+                </strong>
+                <span className="settings-row-desc">Desktop wallet</span>
               </span>
-            </div>
+            </button>
           </li>
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">

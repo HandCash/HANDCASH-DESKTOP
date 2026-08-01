@@ -10,7 +10,14 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from '../wallet/historyBackupPrefs'
+import {
+  canConfirmHistoryBackup,
+  markHistoryBackupConfirmed,
+  noteHistoryBackupExport,
+} from '../wallet/backupStatus'
+import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 function formatWhen(ts: number | null): string {
   if (!ts) return 'Never'
@@ -27,8 +34,8 @@ export function HistoryBackupPanel() {
   const [baseUrl, setBaseUrl] = useState(prefs.baseUrl)
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | null>(null)
-  const [error, setError] = useState<string | null>(null)
-  const [ok, setOk] = useState<string | null>(null)
+  const [exportTick, setExportTick] = useState(0)
+  const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
 
   const resolvedUrl = useMemo(
     () => resolveHistoryBackupBaseUrl({ ...prefs, baseUrl }),
@@ -39,39 +46,52 @@ export function HistoryBackupPanel() {
     const next = setHistoryBackupPrefs({ baseUrl })
     setPrefs(next)
     playWalletSound('soft')
-    setOk(baseUrl.trim() ? 'Backup URL saved' : 'Backup URL cleared')
+    toastSuccess(baseUrl.trim() ? 'Backup URL saved' : 'Backup URL cleared')
+  }
+
+  const confirmHistory = () => {
+    if (!markHistoryBackupConfirmed()) {
+      toastError('Export history first', 'Download or upload a .brc39 backup before confirming.')
+      playWalletSound('deny')
+      return
+    }
+    playWalletSound('success')
+    toastSuccess('History backup saved')
+  }
+
+  const markExported = () => {
+    noteHistoryBackupExport()
+    setExportTick((n) => n + 1)
   }
 
   const runExportFile = async (e: FormEvent) => {
     e.preventDefault()
-    setError(null)
-    setOk(null)
     setBusy('file')
     try {
       await exportBrc39ToFile(password)
       playWalletSound('success')
-      setOk('Downloaded wallet.brc39 (BRC-39 · password-encrypted)')
+      toastSuccess('Downloaded wallet.brc39')
+      markExported()
     } catch (err) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
+      toastError('Export failed', err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(null)
     }
   }
 
   const runUpload = async () => {
-    setError(null)
-    setOk(null)
     setBusy('upload')
     try {
       setHistoryBackupPrefs({ baseUrl })
       const result = await uploadBrc39Backup(password)
       setPrefs(getHistoryBackupPrefs())
       playWalletSound('success')
-      setOk(`Uploaded BRC-39 · ${formatWhen(result.exportedAt)}`)
+      toastSuccess('Uploaded', formatWhen(result.exportedAt))
+      markExported()
     } catch (err) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
+      toastError('Upload failed', err instanceof Error ? err.message : String(err))
       setPrefs(getHistoryBackupPrefs())
     } finally {
       setBusy(null)
@@ -79,19 +99,15 @@ export function HistoryBackupPanel() {
   }
 
   const runRestoreUrl = async () => {
-    setError(null)
-    setOk(null)
     setBusy('restore')
     try {
       setHistoryBackupPrefs({ baseUrl })
       const result = await downloadAndRestoreBrc39Backup(password)
       playWalletSound('success')
-      setOk(
-        `Merged from URL · +${result.inserts} inserts · ${result.updates} updates`,
-      )
+      toastSuccess('Restored from URL', `${result.inserts + result.updates} changes`)
     } catch (err) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
+      toastError('Restore failed', err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(null)
     }
@@ -99,18 +115,14 @@ export function HistoryBackupPanel() {
 
   const runImportFile = async (file: File | null) => {
     if (!file) return
-    setError(null)
-    setOk(null)
     setBusy('import')
     try {
       const result = await importBrc39FromFile(file, password)
       playWalletSound('success')
-      setOk(
-        `Merged from file · +${result.inserts} inserts · ${result.updates} updates`,
-      )
+      toastSuccess('Imported', `${result.inserts + result.updates} changes`)
     } catch (err) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
+      toastError('Import failed', err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(null)
       if (fileRef.current) fileRef.current.value = ''
@@ -120,19 +132,20 @@ export function HistoryBackupPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
-        Exports Wallet Toolbox data as <strong>BRC-38</strong>, encrypted to{' '}
-        <strong>BRC-39</strong> (<code>wallet.brc39</code>) with Argon2id + AES-256-GCM. Not your
-        recovery key — use Key slices / phrase for that. Optional URL stores the ciphertext blob
-        only (no HandCash host yet — leave blank or set your own).
+        <span className="spec-tag">BRC-39</span>
+        <span className="settings-hint-after-tag">
+          You will not be able to collect your funds without an up-to-date backup of your
+          transactions. Keys alone are not enough. Download or upload before confirming.
+        </span>
       </p>
 
       <div className="settings-form settings-form-compact">
         <div className="field">
-          <label htmlFor="history-backup-url">Backup URL (optional)</label>
+          <label htmlFor="history-backup-url">URL (optional)</label>
           <input
             id="history-backup-url"
             type="url"
-            placeholder="https://your-backup.example.com"
+            placeholder="https://…"
             value={baseUrl}
             onChange={(e) => setBaseUrl(e.target.value)}
             autoComplete="off"
@@ -143,13 +156,10 @@ export function HistoryBackupPanel() {
             Save URL
           </button>
         </div>
-        <p className="settings-hint">
-          Remote path: <code>PUT/GET …/v1/wallets/&#123;identityKey&#125;/wallet.brc39</code>
-        </p>
         {resolvedUrl ? (
           <p className="settings-row-desc">
             Last upload: {formatWhen(prefs.lastUploadedAt)}
-            {prefs.lastError ? ` · last error: ${prefs.lastError}` : ''}
+            {prefs.lastError ? ` · ${prefs.lastError}` : ''}
           </p>
         ) : null}
       </div>
@@ -165,28 +175,18 @@ export function HistoryBackupPanel() {
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
-        {ok ? (
-          <p className="settings-hint" role="status">
-            {ok}
-          </p>
-        ) : null}
         <div className="actions">
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={busy !== null || password.length < 8}
+            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
           >
             {busy === 'file' ? 'Exporting…' : 'Download .brc39'}
           </button>
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={busy !== null || password.length < 8}
+            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
             onClick={() => fileRef.current?.click()}
           >
             {busy === 'import' ? 'Importing…' : 'Import file'}
@@ -196,7 +196,7 @@ export function HistoryBackupPanel() {
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={busy !== null || password.length < 8 || !resolvedUrl}
+            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH || !resolvedUrl}
             onClick={() => void runUpload()}
           >
             {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
@@ -204,7 +204,7 @@ export function HistoryBackupPanel() {
           <button
             type="button"
             className="btn btn-ghost"
-            disabled={busy !== null || password.length < 8 || !resolvedUrl}
+            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH || !resolvedUrl}
             onClick={() => void runRestoreUrl()}
           >
             {busy === 'restore' ? 'Restoring…' : 'Restore from URL'}
@@ -218,6 +218,17 @@ export function HistoryBackupPanel() {
           onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
         />
       </form>
+
+      <div className="actions" style={{ marginTop: 12 }}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={confirmHistory}
+          disabled={!canConfirm}
+        >
+          {canConfirm ? 'History backup saved' : 'Export first'}
+        </button>
+      </div>
     </div>
   )
 }

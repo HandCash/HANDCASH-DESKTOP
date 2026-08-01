@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { addFriend } from '../wallet/friends'
 import { clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 export function AddFriendPanel() {
   const [label, setLabel] = useState('')
@@ -14,10 +15,13 @@ export function AddFriendPanel() {
     try {
       addFriend({ label, identityKey })
       playWalletSound('soft')
+      toastSuccess('Friend added')
       clearNavChild()
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
       playWalletSound('error')
+      toastError('Couldn’t add friend', message)
     }
   }
 

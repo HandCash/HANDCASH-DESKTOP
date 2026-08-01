@@ -5,8 +5,12 @@
  * Lifecycle: create-once (with recovery phrase) | restore-from-phrase | unlock | rewrap-password.
  * Never mint a second root while toolbox UTXOs or an existing vault identity exist.
  */
-import { HD, Mnemonic, PrivateKey } from '@bsv/sdk'
+import { Hash, HD, Mnemonic, PrivateKey } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { validatePassword } from './passwordPolicy.js'
+
+/** BRC-75 (default) or pre-BRC-75 HD master from BIP39 seed. */
+export type MnemonicScheme = 'brc-75' | 'legacy-hd'
 
 const VAULT_KEY = 'handcash.brc100.vault.v1'
 const VAULT_BACKUP_KEY = 'handcash.brc100.vault.backup.v1'
@@ -194,20 +198,80 @@ function persistVault(
   })
 }
 
-export function rootKeyFromMnemonic(mnemonic: string, passphrase = ''): {
+type MnemonicDerived = {
   rootKeyHex: string
   identityKey: string
   address: string
   mnemonic: string
-} {
+  scheme: MnemonicScheme
+}
+
+function normalizeMnemonic(mnemonic: string): Mnemonic {
   const m = Mnemonic.fromString(mnemonic.trim().toLowerCase().replace(/\s+/g, ' '))
   if (!m.check()) throw new Error('Invalid recovery phrase')
+  return m
+}
+
+function derivedFromPrivateKey(
+  key: PrivateKey,
+  mnemonic: string,
+  scheme: MnemonicScheme,
+): MnemonicDerived {
+  return {
+    rootKeyHex: key.toHex(),
+    identityKey: key.toPublicKey().toString(),
+    address: key.toAddress(),
+    mnemonic,
+    scheme,
+  }
+}
+
+/**
+ * BRC-75 — BIP39 mnemonic → seed → SHA-256(seed) as the master private key.
+ * New wallets use 128-bit entropy (12 words).
+ */
+export function rootKeyFromMnemonicBrc75(mnemonic: string, passphrase = ''): MnemonicDerived {
+  const m = normalizeMnemonic(mnemonic)
+  const seed = m.toSeed(passphrase)
+  const digest = Hash.sha256(Array.from(seed))
+  const rootKeyHex = digest.map((b) => b.toString(16).padStart(2, '0')).join('')
+  const key = PrivateKey.fromHex(rootKeyHex)
+  return derivedFromPrivateKey(key, m.toString(), 'brc-75')
+}
+
+/** Legacy Desktop path: BIP39 seed → BIP32 HD master private key. */
+export function rootKeyFromMnemonicLegacyHd(mnemonic: string, passphrase = ''): MnemonicDerived {
+  const m = normalizeMnemonic(mnemonic)
   const seed = m.toSeed(passphrase)
   const hd = HD.fromSeed(seed)
-  const rootKeyHex = hd.privKey.toHex()
-  const identityKey = hd.privKey.toPublicKey().toString()
-  const address = hd.privKey.toAddress()
-  return { rootKeyHex, identityKey, address, mnemonic: m.toString() }
+  return derivedFromPrivateKey(hd.privKey, m.toString(), 'legacy-hd')
+}
+
+/** Default derivation for new wallets / backups (BRC-75). */
+export function rootKeyFromMnemonic(mnemonic: string, passphrase = ''): MnemonicDerived {
+  return rootKeyFromMnemonicBrc75(mnemonic, passphrase)
+}
+
+/**
+ * Pick BRC-75 unless local toolbox / vault already belongs to the legacy HD key.
+ */
+async function resolveMnemonicDerivation(
+  mnemonic: string,
+  passphrase: string,
+): Promise<MnemonicDerived> {
+  const brc75 = rootKeyFromMnemonicBrc75(mnemonic, passphrase)
+  const legacy = rootKeyFromMnemonicLegacyHd(mnemonic, passphrase)
+  if (brc75.identityKey === legacy.identityKey) return brc75
+
+  const meta = readVaultMeta()
+  if (meta?.identityKey === legacy.identityKey) return legacy
+  if (meta?.identityKey === brc75.identityKey) return brc75
+
+  const toolboxKeys = await listToolboxIdentityKeys()
+  if (toolboxKeys.includes(legacy.identityKey) && !toolboxKeys.includes(brc75.identityKey)) {
+    return legacy
+  }
+  return brc75
 }
 
 async function encryptSecret(
@@ -430,11 +494,13 @@ export async function createVault(args: {
   await assertSafeToCreateVault()
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
-  if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
+  const createPwError = validatePassword(args.password)
+  if (createPwError) throw new Error(createPwError)
 
+  // BRC-75 examples use 128-bit entropy → 12-word BIP39 phrase.
   const generated = Mnemonic.fromRandom(128)
   const mnemonic = generated.toString()
-  const derived = rootKeyFromMnemonic(mnemonic)
+  const derived = rootKeyFromMnemonicBrc75(mnemonic)
   const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic }
   const enc = await encryptSecret(args.password, JSON.stringify(secret))
 
@@ -460,8 +526,9 @@ export async function restoreVaultFromMnemonic(args: {
   handle?: string
   passphrase?: string
 }): Promise<UnlockedVault> {
-  if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
-  const derived = rootKeyFromMnemonic(args.mnemonic, args.passphrase ?? '')
+  const restorePwError = validatePassword(args.password)
+  if (restorePwError) throw new Error(restorePwError)
+  const derived = await resolveMnemonicDerivation(args.mnemonic, args.passphrase ?? '')
 
   let allowIdentityReplace = false
   if (hasVault()) {
@@ -512,7 +579,8 @@ export async function restoreVaultFromRootKey(args: {
   chain: Chain
   handle?: string
 }): Promise<UnlockedVault> {
-  if (args.password.length < 8) throw new Error('Password must be at least 8 characters')
+  const rootPwError = validatePassword(args.password)
+  if (rootPwError) throw new Error(rootPwError)
   const key = PrivateKey.fromHex(args.rootKeyHex.trim())
   const rootKeyHex = key.toHex()
   const identityKey = key.toPublicKey().toString()
@@ -603,7 +671,8 @@ export async function changeVaultPassword(
   currentPassword: string,
   newPassword: string,
 ): Promise<void> {
-  if (newPassword.length < 8) throw new Error('Password must be at least 8 characters')
+  const pwError = validatePassword(newPassword)
+  if (pwError) throw new Error(pwError)
   if (currentPassword === newPassword) {
     throw new Error('New password must be different from your current password')
   }

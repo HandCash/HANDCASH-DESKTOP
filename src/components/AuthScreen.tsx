@@ -11,7 +11,7 @@ import {
   type UnlockedVault,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
-import { markBackupConfirmed } from '../wallet/backupStatus'
+import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
 import {
@@ -117,7 +117,6 @@ export function AuthScreen({
       chain: unlocked.record.chain,
     })
     const balanceSats = await fetchBalanceSats(active.wallet)
-    markBackupConfirmed()
     send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()
@@ -134,8 +133,15 @@ export function AuthScreen({
 
   const submit = async () => {
     if (snapshot.matches('submitting')) return
-    if (snapshot.context.password.length < 8) {
-      onFail('Password must be at least 8 characters')
+    if (formMode === 'create' || isRestoreMethod(formMode)) {
+      const pwError = validatePassword(snapshot.context.password)
+      if (pwError) {
+        onFail(pwError)
+        return
+      }
+    } else if (snapshot.context.password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
+      // Unlock: accept existing shorter passwords created before the policy bump.
+      onFail(`Password must be at least ${UNLOCK_PASSWORD_MIN_LENGTH} characters`)
       return
     }
     const password = snapshot.context.password
@@ -456,7 +462,11 @@ export function AuthScreen({
           <input
             id="password"
             type="password"
-            placeholder="At least 8 characters"
+            placeholder={
+              formMode === 'unlock'
+                ? 'Your password'
+                : '10+ chars, letter and number'
+            }
             value={snapshot.context.password}
             onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
             autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
@@ -500,7 +510,7 @@ export function AuthScreen({
 
         {isRestoreMethod(formMode) ? (
           <p className="auth-lede auth-restore-note">
-            History backups (BRC-38/39) restore after unlock in Settings — they are not key custody.
+            History backups restore after unlock in Settings → History.
           </p>
         ) : null}
       </form>

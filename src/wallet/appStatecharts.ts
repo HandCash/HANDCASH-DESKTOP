@@ -1,6 +1,6 @@
 /**
  * HandCash Desktop — master + per-scope Mermaid statecharts.
- * Readable charts for Settings → Lab → View statecharts.
+ * Readable charts for Settings → About → HandCash → View statecharts.
  * Covers XState machines and major UI scopes (Aeon data-aeon-state).
  */
 
@@ -35,8 +35,11 @@ const MASTER = `stateDiagram-v2
 
   collectablesFlow --> sendCollectable : send item
   settingsFlow --> changePassword : change pw
-  settingsFlow --> backupPhrase : backup
+  settingsFlow --> backupKeys : keys
+  settingsFlow --> historyBackup : history
+  settingsFlow --> aboutHandCash : about
   settingsFlow --> wipeWallet : wipe
+  aboutHandCash --> statecharts : view charts
 
   appSession : Session host
   unlockForm : Unlock form
@@ -53,7 +56,10 @@ const MASTER = `stateDiagram-v2
   identityPanel : Identity
   settingsFlow : Settings
   changePassword : Change password
-  backupPhrase : Backup phrase
+  backupKeys : Keys backup
+  historyBackup : History backup
+  aboutHandCash : About HandCash
+  statecharts : Statecharts
   wipeWallet : Wipe wallet
   qrReveal : QR dialog
   appUpdate : App update
@@ -277,21 +283,24 @@ const SETTINGS = `stateDiagram-v2
   direction TB
   [*] --> settingsHome
   settingsHome --> changePassword : open
-  settingsHome --> backupPhrase : open
+  settingsHome --> backupKeys : open
+  settingsHome --> historyBackup : open
   settingsHome --> wipeWallet : open
-  settingsHome --> lab : open lab
+  settingsHome --> aboutHandCash : open
   changePassword --> settingsHome : back
-  backupPhrase --> settingsHome : back
+  backupKeys --> settingsHome : back
+  historyBackup --> settingsHome : back
   wipeWallet --> settingsHome : back / done
-  lab --> settingsHome : back
-  lab --> statecharts : view charts
-  statecharts --> lab : back
+  aboutHandCash --> settingsHome : back
+  aboutHandCash --> statecharts : view charts
+  statecharts --> aboutHandCash : back
 
   settingsHome : Settings
   changePassword : Password
-  backupPhrase : Backup
+  backupKeys : Keys
+  historyBackup : History
   wipeWallet : Wipe
-  lab : Lab
+  aboutHandCash : About HandCash
   statecharts : Statecharts
 `
 
@@ -471,7 +480,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'settingsFlow',
     label: 'Settings',
-    caption: 'settings — home, lab, nested panels',
+    caption: 'settings — keys, history, about, nested panels',
     source: SETTINGS,
   },
   {
@@ -482,8 +491,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'backupPhrase',
-    label: 'Backup',
-    caption: 'backupPhrase — reveal mnemonic',
+    label: 'Keys',
+    caption: 'backupKeys — BRC-140 / BRC-75 reveal',
     source: BACKUP_PHRASE,
   },
   {

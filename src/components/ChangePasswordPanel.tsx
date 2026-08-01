@@ -1,26 +1,27 @@
 import { useState, type FormEvent } from 'react'
 import { changeVaultPassword } from '../wallet/vault'
+import { validatePassword } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 export function ChangePasswordPanel() {
   const [currentPassword, setCurrentPassword] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
   const [submitting, setSubmitting] = useState(false)
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSuccess(false)
 
     if (newPassword !== confirmPassword) {
       setError('New passwords do not match')
       return
     }
-    if (newPassword.length < 8) {
-      setError('Password must be at least 8 characters')
+    const pwError = validatePassword(newPassword)
+    if (pwError) {
+      setError(pwError)
       return
     }
 
@@ -30,11 +31,13 @@ export function ChangePasswordPanel() {
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
-      setSuccess(true)
       playWalletSound('success')
+      toastSuccess('Password updated')
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
       playWalletSound('error')
+      toastError('Couldn’t change password', message)
     } finally {
       setSubmitting(false)
     }
@@ -59,7 +62,7 @@ export function ChangePasswordPanel() {
           <input
             id="settings-new-password"
             type="password"
-            placeholder="At least 8 characters"
+            placeholder="10+ chars, letter and number"
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             autoComplete="new-password"
@@ -81,11 +84,6 @@ export function ChangePasswordPanel() {
         {error ? (
           <p className="error" role="alert">
             {error}
-          </p>
-        ) : null}
-        {success ? (
-          <p className="settings-success" role="status">
-            Password updated.
           </p>
         ) : null}
 

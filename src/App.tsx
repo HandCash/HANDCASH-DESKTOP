@@ -20,9 +20,12 @@ import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
+import { AppToastHost } from './components/AppToastHost'
 import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
 import { playWalletSound } from './wallet/soundService'
+import { showToast, toastError } from './wallet/toast'
+import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -41,12 +44,22 @@ export function App() {
         if (cancelled) return
         const orphanedToolbox = !hasVault() ? await hasOrphanedToolboxWallet() : false
         if (cancelled) return
+        const vaultPresent = hasVault()
         send({
           type: 'BOOTSTRAPPED',
-          hasVault: hasVault(),
+          hasVault: vaultPresent,
           version: info.version,
           orphanedToolbox,
         })
+
+        if (vaultPresent && isVaultStoredUnsealed()) {
+          showToast({
+            title: 'Vault not OS-sealed',
+            body: 'This device could not seal the vault with the OS keychain. Your password still encrypts keys; keep the machine locked.',
+            tone: 'error',
+            durationMs: 9000,
+          })
+        }
 
         if (window.handcash?.getBridgeStatus) {
           const status = await window.handcash.getBridgeStatus()
@@ -159,7 +172,6 @@ export function App() {
             <Dashboard
               profile={snapshot.context.profile}
               balanceSats={snapshot.context.balanceSats}
-              error={snapshot.context.error}
               onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
               onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
               onLock={() => {
@@ -168,11 +180,15 @@ export function App() {
                 clearPermissionSession()
                 send({ type: 'LOCK' })
               }}
-              onFail={(error) => send({ type: 'FAIL', error })}
+              onFail={(error) => {
+                playWalletSound('error')
+                toastError('Something went wrong', error)
+              }}
             />
           )}
         </main>
 
+        <AppToastHost />
         <UpdatePrompt />
         <ScreenshotToast />
 

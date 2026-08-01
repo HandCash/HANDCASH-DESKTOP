@@ -1,5 +1,5 @@
 import type { ConnectedApp } from './permissions'
-import { isBackupConfirmed } from './backupStatus'
+import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
 import { playWalletSound } from './soundService'
 
 export type NavSection =
@@ -12,10 +12,12 @@ export type NavSection =
 
 export type SettingId =
   | 'change-password'
+  | 'backup'
   | 'backup-phrase'
   | 'split-backup'
   | 'history-backup'
   | 'wipe-wallet'
+  | 'about-handcash'
   | 'statecharts'
 
 export type NavChild =
@@ -81,10 +83,15 @@ export function openPermissionDetails(origin: string, scopeId: string) {
   openNavChild('apps', { type: 'permission', origin, scopeId })
 }
 
+function openRequiredBackup() {
+  const missing = getMissingBackupStep()
+  openSetting(missing === 'history' ? 'history-backup' : 'backup')
+}
+
 export function openSendFlow() {
   if (!isBackupConfirmed()) {
     playWalletSound('deny')
-    openSetting('backup-phrase')
+    openRequiredBackup()
     return
   }
   openNavChild('activity', { type: 'send' })
@@ -113,12 +120,17 @@ export function openCollectableDetails(outpoint: string) {
 export function openSendCollectable(outpoint: string) {
   if (!isBackupConfirmed()) {
     playWalletSound('deny')
-    openSetting('backup-phrase')
+    openRequiredBackup()
     return
   }
   openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 
+function resolveSettingId(settingId: SettingId): SettingId {
+  if (settingId === 'backup-phrase' || settingId === 'split-backup') return 'backup'
+  return settingId
+}
+
 export function openSetting(settingId: SettingId) {
-  openNavChild('settings', { type: 'setting', settingId })
+  openNavChild('settings', { type: 'setting', settingId: resolveSettingId(settingId) })
 }

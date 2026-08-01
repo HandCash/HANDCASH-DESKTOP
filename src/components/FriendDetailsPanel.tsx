@@ -11,6 +11,7 @@ import {
 import { clearNavChild } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 type Props = {
   friendId: string
@@ -21,9 +22,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [friend, setFriend] = useState<Friend | null>(() => getFriendById(friendId))
   const [label, setLabel] = useState(friend?.label ?? '')
   const [error, setError] = useState<string | null>(null)
-  const [saved, setSaved] = useState(false)
-  const [copiedKey, setCopiedKey] = useState(false)
-  const [copiedAddress, setCopiedAddress] = useState(false)
 
   useEffect(() => {
     return subscribeFriends(() => {
@@ -38,9 +36,6 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     setFriend(next)
     setLabel(next?.label ?? '')
     setError(null)
-    setSaved(false)
-    setCopiedKey(false)
-    setCopiedAddress(false)
   }, [friendId])
 
   if (!friend) {
@@ -57,32 +52,25 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const onSave = (e: FormEvent) => {
     e.preventDefault()
     setError(null)
-    setSaved(false)
     try {
       updateFriend(friend.id, { label })
-      setSaved(true)
       playWalletSound('soft')
+      toastSuccess('Friend saved')
     } catch (err) {
       playWalletSound('error')
-      setError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      toastError('Couldn’t save friend', message)
     }
   }
 
   const copyKey = async () => {
-    if (await copyText(friend.identityKey)) {
-      setCopiedKey(true)
-      setCopiedAddress(false)
-      window.setTimeout(() => setCopiedKey(false), 1600)
-    }
+    await copyText(friend.identityKey, { label: 'identity key' })
   }
 
   const copyAddress = async () => {
     if (!address || address === 'Invalid key') return
-    if (await copyText(address)) {
-      setCopiedAddress(true)
-      setCopiedKey(false)
-      window.setTimeout(() => setCopiedAddress(false), 1600)
-    }
+    await copyText(address, { label: 'address' })
   }
 
   return (
@@ -93,10 +81,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           <input
             id="friend-edit-label"
             value={label}
-            onChange={(e) => {
-              setLabel(e.target.value)
-              setSaved(false)
-            }}
+            onChange={(e) => setLabel(e.target.value)}
             placeholder="Alice"
             autoComplete="off"
             autoFocus
@@ -107,11 +92,11 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           <span className="field-static-label">Identity key</span>
           <button
             type="button"
-            className={`mono wallet-detail-value friend-copy-value${copiedKey ? ' is-copied' : ''}`}
+            className="mono wallet-detail-value friend-copy-value"
             title="Click to copy identity key"
             onClick={() => void copyKey()}
           >
-            {copiedKey ? 'Copied' : friend.identityKey}
+            {friend.identityKey}
           </button>
         </div>
 
@@ -119,22 +104,17 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           <span className="field-static-label">Receive address</span>
           <button
             type="button"
-            className={`mono wallet-detail-value friend-copy-value${copiedAddress ? ' is-copied' : ''}`}
+            className="mono wallet-detail-value friend-copy-value"
             title="Click to copy address"
             onClick={() => void copyAddress()}
           >
-            {copiedAddress ? 'Copied' : address}
+            {address}
           </button>
         </div>
 
         {error ? (
           <p className="error" role="status">
             {error}
-          </p>
-        ) : null}
-        {saved ? (
-          <p className="friend-saved" role="status">
-            Saved
           </p>
         ) : null}
 

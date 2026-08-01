@@ -32,9 +32,9 @@ import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
-import { BackupPhrasePanel } from './BackupPhrasePanel'
-import { SplitBackupPanel } from './SplitBackupPanel'
+import { WalletBackupPanel } from './WalletBackupPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
+import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCollectable } from '../wallet/collectables'
@@ -220,17 +220,18 @@ export function WalletNav({
               {child.type === 'setting' && child.settingId === 'change-password' && (
                 <ChangePasswordPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'backup-phrase' && (
-                <BackupPhrasePanel />
-              )}
-              {child.type === 'setting' && child.settingId === 'split-backup' && (
-                <SplitBackupPanel />
-              )}
+              {child.type === 'setting' &&
+                (child.settingId === 'backup' ||
+                  child.settingId === 'backup-phrase' ||
+                  child.settingId === 'split-backup') && <WalletBackupPanel />}
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'about-handcash' && (
+                <AboutHandCashPanel />
               )}
               {child.type === 'setting' && child.settingId === 'statecharts' && (
                 <StatechartsPanel />

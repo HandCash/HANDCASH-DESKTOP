@@ -19,12 +19,10 @@ function MetaRow({
   label,
   value,
   onCopy,
-  copied,
 }: {
   label: string
   value: string
   onCopy: () => void
-  copied: boolean
 }) {
   return (
     <>
@@ -32,11 +30,11 @@ function MetaRow({
       <dd>
         <button
           type="button"
-          className={`mono collectable-meta-copy${copied ? ' is-copied' : ''}`}
+          className="mono collectable-meta-copy"
           title={`Click to copy ${label.toLowerCase()}\n${value}`}
           onClick={onCopy}
         >
-          {copied ? 'Copied' : value}
+          {value}
         </button>
       </dd>
     </>
@@ -63,7 +61,6 @@ function TraitStrip({ title, traits }: { title: string; traits: CollectableTrait
 export function CollectableDetailsPanel({ outpoint }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [loading, setLoading] = useState(true)
-  const [copied, setCopied] = useState<'origin' | 'outpoint' | 'collection' | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -84,10 +81,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     }
   }, [outpoint])
 
-  const copy = async (kind: 'origin' | 'outpoint' | 'collection', value: string) => {
-    if (!(await copyText(value))) return
-    setCopied(kind)
-    window.setTimeout(() => setCopied(null), 1600)
+  const copy = async (label: string, value: string) => {
+    await copyText(value, { label })
   }
 
   if (loading && !item) {
@@ -148,20 +143,17 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           <MetaRow
             label="Collection"
             value={item.collectionId}
-            copied={copied === 'collection'}
             onCopy={() => void copy('collection', item.collectionId!)}
           />
         ) : null}
         <MetaRow
           label="Origin"
           value={item.origin}
-          copied={copied === 'origin'}
           onCopy={() => void copy('origin', item.origin)}
         />
         <MetaRow
           label="Outpoint"
           value={item.outpoint}
-          copied={copied === 'outpoint'}
           onCopy={() => void copy('outpoint', item.outpoint)}
         />
       </dl>

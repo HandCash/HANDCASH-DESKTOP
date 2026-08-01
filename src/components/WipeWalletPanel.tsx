@@ -35,10 +35,7 @@ export function WipeWalletPanel() {
       data-aeon-scope="wipe-wallet"
       data-aeon-state={stateAttr}
     >
-      <p className="settings-hint">
-        Deletes keys and local wallet data on this device. Needs a recovery phrase, BRC-140
-        shares, or emergency key to restore.
-      </p>
+      <p className="settings-hint">Removes this wallet from the device. You’ll need a backup to restore.</p>
 
       <form
         className="settings-form settings-form-compact"
@@ -67,10 +64,7 @@ export function WipeWalletPanel() {
             disabled={snapshot.matches('wiping')}
             onChange={(e) => send({ type: 'TOGGLE_ACK', acknowledged: e.target.checked })}
           />
-          <span>
-            I understand this cannot be undone without my recovery phrase, key slices, or emergency
-            key.
-          </span>
+          <span>I understand this cannot be undone without my backup.</span>
         </label>
 
         <div className="field">
@@ -103,7 +97,7 @@ export function WipeWalletPanel() {
             data-aeon-state={stateAttr}
             disabled={!canSubmit || snapshot.matches('wiping')}
           >
-            {snapshot.matches('wiping') ? 'Wiping…' : 'Wipe wallet data'}
+            {snapshot.matches('wiping') ? 'Wiping…' : 'Wipe wallet'}
           </button>
         </div>
       </form>

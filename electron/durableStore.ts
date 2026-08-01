@@ -47,16 +47,33 @@ function canSeal(): boolean {
   }
 }
 
+const VAULT_SEAL_STATUS_KEY = 'handcash.brc100.vaultSealStatus'
+
+function setVaultSealStatus(status: 'sealed' | 'unsealed'): void {
+  try {
+    const store = readStore()
+    store[VAULT_SEAL_STATUS_KEY] = status
+    writeStore(store)
+  } catch (err) {
+    log.warn('could not persist vault seal status', err)
+  }
+}
+
 /** Seal vault payloads with OS keychain/DPAPI when available. */
 function sealIfNeeded(key: string, value: string): string {
   if (!key.startsWith('handcash.brc100.vault')) return value
   if (value.startsWith(SEALED_PREFIX)) return value
-  if (!canSeal()) return value
+  if (!canSeal()) {
+    if (key === VAULT_KEY) setVaultSealStatus('unsealed')
+    return value
+  }
   try {
     const buf = safeStorage.encryptString(value)
+    if (key === VAULT_KEY) setVaultSealStatus('sealed')
     return SEALED_PREFIX + buf.toString('base64')
   } catch (err) {
     log.warn('safeStorage seal failed — storing unsealed vault', err)
+    if (key === VAULT_KEY) setVaultSealStatus('unsealed')
     return value
   }
 }

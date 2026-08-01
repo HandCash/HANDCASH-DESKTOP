@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import { stateToAttr } from '@aeon-ui/core'
 import { copyText } from '../wallet/clipboard'
+import { toastError } from '../wallet/toast'
 import { ModalPortal } from './ModalPortal'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
@@ -23,18 +24,14 @@ function defaultSubtitle(label: string): string {
 
 export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
   const [dataUrl, setDataUrl] = useState<string | null>(null)
-  const [error, setError] = useState<string | null>(null)
   const [status, setStatus] = useState<'loading' | 'success' | 'failure' | 'empty'>('empty')
-  const [copied, setCopied] = useState(false)
   const title = label.trim() || 'QR'
   const hint = subtitle ?? defaultSubtitle(title)
 
   useEffect(() => {
     if (!open) {
       setDataUrl(null)
-      setError(null)
       setStatus('empty')
-      setCopied(false)
       return
     }
     let cancelled = false
@@ -52,8 +49,8 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
       })
       .catch((err: unknown) => {
         if (cancelled) return
-        setError(err instanceof Error ? err.message : String(err))
         setStatus('failure')
+        toastError('QR failed', err instanceof Error ? err.message : String(err))
       })
     return () => {
       cancelled = true
@@ -63,9 +60,7 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
   if (!open) return null
 
   const copy = async () => {
-    if (!(await copyText(value))) return
-    setCopied(true)
-    window.setTimeout(() => setCopied(false), 1600)
+    await copyText(value)
   }
 
   return (
@@ -93,7 +88,6 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
               <SkeletonQr size={240} />
             </div>
           )}
-          {status === 'failure' && <p className="error">{error}</p>}
           {status === 'success' && dataUrl && (
             <div className="qr-frame" data-aeon-part="media">
               <DeferredImage
@@ -111,11 +105,11 @@ export function QrDialog({ label, value, subtitle, open, onClose }: Props) {
 
           <button
             type="button"
-            className={`mono qr-value${copied ? ' is-copied' : ''}`}
+            className="mono qr-value"
             title="Click to copy"
             onClick={() => void copy()}
           >
-            {copied ? 'Copied' : value}
+            {value}
           </button>
 
           <div className="actions qr-actions">
