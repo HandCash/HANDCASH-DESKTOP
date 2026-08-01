@@ -40,7 +40,7 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
     description:
       'See collectables when you approve. Can be limited to a collection or creator.',
     allows: [
-      'List 1Sat / Twonk inventory',
+      'List 1Sat inventory',
       'Optional collection filter',
       'Optional creator filter',
     ],
@@ -49,13 +49,13 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
     id: 'items-send',
     label: 'Send items',
     description: 'Transfer a collectable. Separate from Pay — auto-pay never applies.',
-    allows: ['Send 1Sat ordinals', 'Send Twonks', 'Release item outputs'],
+    allows: ['Send 1Sat ordinals', 'Release item outputs'],
   },
   {
     id: 'items-receive',
     label: 'Receive items',
     description: 'Accept collectables into your inventory when you approve.',
-    allows: ['Receive 1Sat ordinals', 'Receive Twonks'],
+    allows: ['Receive 1Sat ordinals'],
   },
 ]
 

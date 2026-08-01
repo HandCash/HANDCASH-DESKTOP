@@ -378,12 +378,7 @@ export async function classifyLegacyUtxos(
   return { funding, oneSats, heldOneSats }
 }
 
-function isTwonkMigrationItem(item: MigrationItem): boolean {
-  const text = [item.app, item.name].filter(Boolean).join(' ').toLowerCase()
-  return /\btwonk\b|\btwetch\b|\bsigil\b/.test(text)
-}
-
-/** Internalize ordinal outs into basket `1sat` or `twonk`. */
+/** Internalize ordinal outs into basket `1sat`. */
 export async function importOneSatOrdinals(
   items: MigrationItem[],
   active?: ActiveWallet | null,
@@ -419,36 +414,29 @@ export async function importOneSatOrdinals(
       }
       const beef = await wallet.services.getBeefForTxid(txid)
       const atomic = beef.toBinaryAtomic(txid)
-      const anyTwonk = group.some(isTwonkMigrationItem)
 
       await wallet.wallet.internalizeAction({
         tx: atomic,
-        description: anyTwonk ? 'Import Twonk' : 'Import 1Sat ordinal',
-        labels: [anyTwonk ? 'twonk' : '1sat', 'migration'],
-        outputs: group.map((item) => {
-          const twonk = isTwonkMigrationItem(item)
-          const protocol = twonk ? 'twonk' : '1sat'
-          return {
-            outputIndex: item.vout!,
-            protocol: 'basket insertion' as const,
-            insertionRemittance: {
-              basket: protocol,
-              tags: [
-                'ordinal',
-                ...(twonk ? ['twonk', 'protocol:twonk'] : []),
-                `origin:${(item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')}`,
-                ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
-                ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
-              ],
-              customInstructions: JSON.stringify({
-                origin: item.origin,
-                name: item.name,
-                app: item.app,
-                protocol,
-              }),
-            },
-          }
-        }),
+        description: 'Import 1Sat ordinal',
+        labels: ['1sat', 'migration'],
+        outputs: group.map((item) => ({
+          outputIndex: item.vout!,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: {
+            basket: '1sat',
+            tags: [
+              'ordinal',
+              `origin:${(item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')}`,
+              ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
+              ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
+            ],
+            customInstructions: JSON.stringify({
+              origin: item.origin,
+              name: item.name,
+              app: item.app,
+            }),
+          },
+        })),
         seekPermission: false,
       })
 

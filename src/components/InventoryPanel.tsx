@@ -1,13 +1,6 @@
-import { useEffect, useMemo, useState } from 'react'
-import { CollectableTypeToggle } from './CollectableTypeToggle'
+import { useEffect, useState } from 'react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
-import {
-  collectableTypeLabel,
-  getCollectableType,
-  subscribeCollectableType,
-  type CollectableType,
-} from '../wallet/collectableType'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -123,7 +116,6 @@ function CollectableListItem({ item }: { item: Collectable }) {
 
 export function InventoryPanel() {
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
-  const [protocol, setProtocol] = useState<CollectableType>(() => getCollectableType())
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
   /** Only true after a successful listOutputs (may be empty). */
   const [ready, setReady] = useState(() => areCollectablesHydrated())
@@ -134,7 +126,6 @@ export function InventoryPanel() {
   const [heldNote, setHeldNote] = useState<string | null>(null)
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
-  useEffect(() => subscribeCollectableType(setProtocol), [])
   useEffect(
     () =>
       subscribeSyncHealth((h) => {
@@ -191,54 +182,41 @@ export function InventoryPanel() {
     }
   }, [])
 
-  const visible = useMemo(
-    () => items.filter((item) => item.protocol === protocol),
-    [items, protocol],
-  )
-  const typeLabel = collectableTypeLabel(protocol)
-  const emptyCopy =
-    protocol === 'twonk'
-      ? 'No Twonks yet — send and receive are supported'
-      : 'No 1Sat collectables yet'
-
   return (
     <div
       className="nav-section-body"
       data-aeon-scope="collectables"
-      data-aeon-state={`${protocol}-${view}`}
+      data-aeon-state={view}
     >
       <div className="connected-panel-head">
         <h2>Collectables</h2>
-        <div className="connected-panel-head-actions">
-          <CollectableTypeToggle />
-          <CollectionViewToggle label="Collectables view" scope="collectables" />
-        </div>
+        <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
 
-      {heldNote && protocol === '1sat' ? (
+      {heldNote ? (
         <p className="wallet-sync-note" role="status">
           {heldNote}
         </p>
       ) : null}
 
-      {visible.length > 0 ? (
+      {items.length > 0 ? (
         view === 'grid' ? (
           <ul className="collection-grid">
-            {visible.map((item) => (
+            {items.map((item) => (
               <CollectableGridItem key={item.outpoint} item={item} />
             ))}
           </ul>
         ) : (
           <ul className="connected-app-list">
-            {visible.map((item) => (
+            {items.map((item) => (
               <CollectableListItem key={item.outpoint} item={item} />
             ))}
           </ul>
         )
       ) : awaitingFirst || !ready ? (
-        <p className="connected-empty-line">Looking for {typeLabel} collectables…</p>
+        <p className="connected-empty-line">Looking for collectables…</p>
       ) : (
-        <p className="connected-empty-line">{emptyCopy}</p>
+        <p className="connected-empty-line">No collectables yet</p>
       )}
     </div>
   )

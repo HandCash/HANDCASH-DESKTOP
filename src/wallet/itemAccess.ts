@@ -8,7 +8,7 @@
 import { normalizeAppHost } from './appIdentity'
 
 /** Baskets that hold collectables — not spendable under normal pay. */
-export const ITEM_BASKETS = new Set(['1sat', 'twonk'])
+export const ITEM_BASKETS = new Set(['1sat'])
 
 export type ItemAccess = {
   /** Inventory visibility for this app. */
@@ -80,7 +80,7 @@ export function parseItemViewRequest(args: unknown): ItemViewRequest {
   }
 }
 
-/** True when createAction / labels / outputs look like an ordinal or Twonk transfer. */
+/** True when createAction / labels / outputs look like an ordinal / NFT transfer. */
 export function isItemSpendArgs(method: string, args: unknown): boolean {
   if (method === 'relinquishOutput') {
     const body = asRecord(args)
@@ -94,8 +94,7 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
     : []
   if (
     labels.some((l) =>
-      /^(1sat|twonk)$/i.test(l) ||
-      /collectable|ordinal|twonk|nft/i.test(l),
+      /^1sat$/i.test(l) || /collectable|ordinal|nft/i.test(l),
     )
   ) {
     return true
@@ -105,7 +104,7 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
   for (const raw of inputs) {
     if (!raw || typeof raw !== 'object') continue
     const desc = (raw as { inputDescription?: unknown }).inputDescription
-    if (typeof desc === 'string' && /1sat|ordinal|collectable|twonk|nft/i.test(desc)) {
+    if (typeof desc === 'string' && /1sat|ordinal|collectable|nft/i.test(desc)) {
       return true
     }
   }
@@ -118,13 +117,13 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
     const tags = Array.isArray(out.tags)
       ? out.tags.filter((t): t is string => typeof t === 'string')
       : []
-    if (tags.some((t) => /^(ordinal|twonk)$/i.test(t) || /^(origin|protocol):/i.test(t))) {
+    if (tags.some((t) => /^ordinal$/i.test(t) || /^origin:/i.test(t))) {
       return true
     }
     if (
       out.satoshis === 1 &&
       typeof out.outputDescription === 'string' &&
-      /collectable|ordinal|twonk|nft/i.test(out.outputDescription)
+      /collectable|ordinal|nft/i.test(out.outputDescription)
     ) {
       return true
     }
@@ -152,7 +151,7 @@ export function isItemReceiveArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
-  if (labels.some((l) => /^(1sat|twonk)$/i.test(l) || /ordinal|collectable|twonk/i.test(l))) {
+  if (labels.some((l) => /^1sat$/i.test(l) || /ordinal|collectable/i.test(l))) {
     return true
   }
   const outputs = Array.isArray(body.outputs) ? body.outputs : []

@@ -415,11 +415,9 @@ export function summarizeAction(method: string, args: unknown): {
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
         : 'Send a collectable'
-    const labels = Array.isArray(body.labels)
-      ? body.labels.filter((l): l is string => typeof l === 'string')
-      : []
-    if (labels.includes('twonk')) details.push('Type: Twonk')
-    else if (labels.includes('1sat')) details.push('Type: 1Sat')
+    if (Array.isArray(body.labels) && body.labels.includes('1sat')) {
+      details.push('Type: 1Sat')
+    }
     details.push('Not covered by Pay or Auto-pay')
     return {
       title: 'Send item',
@@ -472,11 +470,9 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'internalizeAction' && isItemReceiveArgs(method, args)) {
-    const labels = Array.isArray(body.labels)
-      ? body.labels.filter((l): l is string => typeof l === 'string')
-      : []
-    if (labels.includes('twonk')) details.push('Type: Twonk')
-    else if (labels.includes('1sat')) details.push('Type: 1Sat')
+    if (Array.isArray(body.labels) && body.labels.includes('1sat')) {
+      details.push('Type: 1Sat')
+    }
     details.push('Adds a collectable to your inventory')
     return {
       title: 'Receive item',

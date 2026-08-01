@@ -1,6 +1,5 @@
 /**
- * Collectables = outputs in BRC-100 item baskets (`1sat`, `twonk`).
- * Twonk send/receive is supported; marketplace features are out of scope for now.
+ * Collectables = outputs in BRC-100 basket `1sat`.
  */
 import { P2PKH } from '@bsv/sdk'
 import { getActiveWallet, type ActiveWallet } from './session'
@@ -10,7 +9,6 @@ import {
   type CollectableTrait,
   type ResolvedInscription,
 } from './oneSatImport'
-import type { CollectableType } from './collectableType'
 import { resolvePaymentAddress } from './friends'
 import type { Chain } from './vault'
 
@@ -29,56 +27,8 @@ export type Collectable = {
   type?: string
   subType?: string
   collectionId?: string
-  /** Protocol family for the Collectables type selector. */
-  protocol: CollectableType
   traits: CollectableTrait[]
   extras: CollectableTrait[]
-}
-
-const ITEM_LIST_BASKETS = ['1sat', 'twonk'] as const
-
-function haystack(...parts: Array<string | undefined>): string {
-  return parts.filter(Boolean).join(' ').toLowerCase()
-}
-
-/** Classify a held output as Twonk vs generic 1Sat. */
-export function classifyCollectableProtocol(args: {
-  basket?: string
-  tags?: string[]
-  app?: string
-  type?: string
-  subType?: string
-  name?: string
-  customInstructions?: string
-}): CollectableType {
-  if (args.basket?.toLowerCase() === 'twonk') return 'twonk'
-  const tags = (args.tags ?? []).map((t) => t.toLowerCase())
-  if (tags.some((t) => t === 'twonk' || t === 'protocol:twonk' || t.startsWith('twonk:'))) {
-    return 'twonk'
-  }
-  let customApp: string | undefined
-  let customProtocol: string | undefined
-  if (args.customInstructions) {
-    try {
-      const o = JSON.parse(args.customInstructions) as Record<string, unknown>
-      if (typeof o.app === 'string') customApp = o.app
-      if (typeof o.protocol === 'string') customProtocol = o.protocol
-      if (typeof o.type === 'string' && /twonk/i.test(o.type)) return 'twonk'
-    } catch {
-      // ignore
-    }
-  }
-  if (customProtocol && /twonk/i.test(customProtocol)) return 'twonk'
-  const text = haystack(
-    args.app,
-    customApp,
-    args.type,
-    args.subType,
-    args.name,
-    ...tags,
-  )
-  if (/\btwonk\b|\btwetch\b|\bsigil\b/.test(text)) return 'twonk'
-  return '1sat'
 }
 
 type CollectablesListener = (items: Collectable[]) => void
@@ -162,7 +112,6 @@ function toCollectable(
     satoshis: number
     tags?: string[]
     customInstructions?: string
-    basket?: string
   },
   chain: Chain,
   resolved?: Partial<ResolvedInscription> | null,
@@ -175,9 +124,6 @@ function toCollectable(
   const name =
     custom.name ?? tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
   const app = custom.app ?? tagValue(o.tags, 'app:') ?? resolved?.app
-  const type = resolved?.type
-  const subType = resolved?.subType
-  const collectionId = resolved?.collectionId
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -186,18 +132,9 @@ function toCollectable(
     imageUrl: contentUrlForOrigin(origin, chain),
     satoshis: o.satoshis,
     mimeType: resolved?.mimeType,
-    type,
-    subType,
-    collectionId,
-    protocol: classifyCollectableProtocol({
-      basket: o.basket,
-      tags: o.tags,
-      app,
-      type,
-      subType,
-      name,
-      customInstructions: o.customInstructions,
-    }),
+    type: resolved?.type,
+    subType: resolved?.subType,
+    collectionId: resolved?.collectionId,
     traits: resolved?.traits ?? [],
     extras: resolved?.extras ?? [],
   }
@@ -209,47 +146,29 @@ export async function listCollectables(
   const wallet = active ?? getActiveWallet()
   if (!wallet) return []
 
-  const outputs: Array<{
+  let outputs: Array<{
     outpoint: string
     satoshis: number
     tags?: string[]
     customInstructions?: string
-    basket?: string
   }> = []
-  const seen = new Set<string>()
-  let listedOk = false
 
-  for (const basket of ITEM_LIST_BASKETS) {
-    try {
-      const result = await wallet.wallet.listOutputs({
-        basket,
-        limit: 1000,
-        includeTags: true,
-        includeCustomInstructions: true,
-        seekPermission: false,
-      })
-      listedOk = true
-      for (const o of result.outputs ?? []) {
-        const outpoint = normalizeOutpoint(o.outpoint)
-        if (seen.has(outpoint)) continue
-        seen.add(outpoint)
-        outputs.push({
-          outpoint,
-          satoshis: o.satoshis ?? 1,
-          tags: o.tags,
-          customInstructions: o.customInstructions,
-          basket,
-        })
-      }
-    } catch (err) {
-      // Twonk basket may not exist yet — only fail hard if 1sat also fails.
-      if (basket === '1sat') {
-        console.warn('[collectables] listOutputs failed', err)
-      }
-    }
-  }
-
-  if (!listedOk) {
+  try {
+    const result = await wallet.wallet.listOutputs({
+      basket: '1sat',
+      limit: 1000,
+      includeTags: true,
+      includeCustomInstructions: true,
+      seekPermission: false,
+    })
+    outputs = (result.outputs ?? []).map((o) => ({
+      outpoint: o.outpoint,
+      satoshis: o.satoshis ?? 1,
+      tags: o.tags,
+      customInstructions: o.customInstructions,
+    }))
+  } catch (err) {
+    console.warn('[collectables] listOutputs failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
     return getCachedCollectables()
   }
@@ -336,11 +255,11 @@ function formatSendError(err: unknown): Error {
 }
 
 /**
- * Transfer a basket item (1Sat or Twonk) to a P2PKH address via createAction.
+ * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
  * Ordinal sat stays on output 0 (`randomizeOutputs: false`). Fees are funded
- * from the default change basket. Origin/name/app/protocol tags match import
- * metadata so recipients can resolve the inscription.
+ * from the default change basket. Origin/name/app tags match import metadata
+ * so recipients (and our activity trail) can resolve the inscription.
  */
 export async function sendCollectable(args: {
   outpoint: string
@@ -362,35 +281,16 @@ export async function sendCollectable(args: {
     throw new Error('Invalid recipient address or identity key')
   }
 
-  let match:
-    | {
-        outpoint: string
-        satoshis?: number
-        tags?: string[]
-        customInstructions?: string
-        basket: string
-      }
-    | undefined
-  for (const basket of ITEM_LIST_BASKETS) {
-    try {
-      const held = await wallet.wallet.listOutputs({
-        basket,
-        limit: 1000,
-        includeTags: true,
-        includeCustomInstructions: true,
-        seekPermission: false,
-      })
-      const hit = (held.outputs ?? []).find(
-        (o) => normalizeOutpoint(o.outpoint) === outpoint,
-      )
-      if (hit) {
-        match = { ...hit, basket }
-        break
-      }
-    } catch {
-      // try next basket
-    }
-  }
+  const held = await wallet.wallet.listOutputs({
+    basket: '1sat',
+    limit: 1000,
+    includeTags: true,
+    includeCustomInstructions: true,
+    seekPermission: false,
+  })
+  const match = (held.outputs ?? []).find(
+    (o) => normalizeOutpoint(o.outpoint) === outpoint,
+  )
   if (!match) throw new Error('Collectable is no longer in this wallet')
   if ((match.satoshis ?? 1) !== 1) {
     throw new Error('Collectable UTXO is not a 1-sat ordinal')
@@ -401,24 +301,13 @@ export async function sendCollectable(args: {
   const name =
     (args.name ?? item?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
   const app = args.app ?? item?.app
-  const protocol =
-    item?.protocol ??
-    classifyCollectableProtocol({
-      basket: match.basket,
-      tags: match.tags,
-      app,
-      name,
-      customInstructions: match.customInstructions,
-    })
   const originTag = origin.replace(/_(\d+)$/, '.$1')
   const tags = [
     'ordinal',
-    ...(protocol === 'twonk' ? ['twonk', 'protocol:twonk'] : []),
     `origin:${originTag}`,
     `name:${name.slice(0, 80)}`,
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
   ]
-  const outputBasket = protocol === 'twonk' ? 'twonk' : '1sat'
 
   const [txidIn] = outpoint.split('.')
   let inputBEEF: number[] | undefined
@@ -437,28 +326,25 @@ export async function sendCollectable(args: {
   try {
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
-      labels: [protocol, 'handcash-send-collectable'],
+      labels: ['1sat', 'handcash-send-collectable'],
       ...(inputBEEF ? { inputBEEF } : {}),
       inputs: [
         {
           outpoint,
-          inputDescription:
-            protocol === 'twonk' ? 'Twonk collectable' : '1sat collectable',
+          inputDescription: '1sat collectable',
         },
       ],
       outputs: [
         {
           lockingScript,
           satoshis: 1,
-          outputDescription:
-            protocol === 'twonk' ? 'Twonk transfer' : 'Collectable transfer',
-          basket: outputBasket,
+          outputDescription: 'Collectable transfer',
+          basket: '1sat',
           tags,
           customInstructions: JSON.stringify({
             origin,
             name,
             app,
-            protocol,
           }),
         },
       ],

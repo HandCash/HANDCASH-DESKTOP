@@ -4,7 +4,6 @@
 
 ### Added
 
-- Collectables type selector (1Sat / Twonk) with Twonk send and receive.
 - Item permissions: view (optional collection/creator), send, and receive — separate from Pay.
 
 ### Changed
