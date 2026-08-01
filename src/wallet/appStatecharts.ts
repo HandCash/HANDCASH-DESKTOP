@@ -93,7 +93,7 @@ const UNLOCK = `stateDiagram-v2
   success --> [*]
 
   note right of idle
-    Modes: unlock | create | restore
+    Modes: unlock | create | restore(phrase|shares|key)
     (AuthScreen formMode)
   end note
 

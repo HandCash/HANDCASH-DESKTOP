@@ -57,8 +57,8 @@ export function BackupPhrasePanel() {
     <div className="nav-section-body settings-scroll" data-aeon-scope="backup-phrase">
       <p className="settings-hint">
         {meta?.hasMnemonic
-          ? 'Anyone with these words can spend your money.'
-          : 'Legacy wallet — export an emergency key and store it offline.'}
+          ? 'Anyone with these words can spend your money. Restore from Auth with Phrase.'
+          : 'No phrase on this vault — export the emergency root key. Restore from Auth with Key (or BRC-140 Shares).'}
       </p>
 
       <form className="settings-form settings-form-compact" onSubmit={(e) => void reveal(e)}>

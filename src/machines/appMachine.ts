@@ -79,7 +79,7 @@ export const appMachine = setup({
               version: ({ event }) => event.version,
               recoveryOnly: true,
               error: () =>
-                'This device has wallet data but missing unlock keys. Restore with your recovery phrase — creating a new wallet is blocked.',
+                'This device has wallet data but missing unlock keys. Restore with a recovery phrase, BRC-140 shares, or emergency key — creating a new wallet is blocked.',
             }),
           },
           {

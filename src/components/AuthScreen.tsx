@@ -1,6 +1,6 @@
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { unlockMachine } from '../machines/unlockMachine'
 import {
   createVault,
@@ -8,6 +8,7 @@ import {
   restoreVaultFromRootKey,
   unlockVault,
   type Chain,
+  type UnlockedVault,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
 import { markBackupConfirmed } from '../wallet/backupStatus'
@@ -29,15 +30,45 @@ type Props = {
   onFail: (error: string) => void
 }
 
-type FormMode = 'create' | 'restore' | 'restore-shares' | 'unlock'
+/** Custody restore paths the vault can bootstrap from. */
+type RestoreMethod = 'phrase' | 'shares' | 'key'
+type FormMode = 'create' | 'unlock' | RestoreMethod
+
+const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
+  { id: 'phrase', label: 'Phrase' },
+  { id: 'shares', label: 'Shares' },
+  { id: 'key', label: 'Key' },
+]
+
+function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
+  return mode === 'phrase' || mode === 'shares' || mode === 'key'
+}
 
 function isMismatchError(message: string | null | undefined): boolean {
   if (!message) return false
   return (
     message.includes('does not match the funded') ||
     message.includes('missing unlock keys') ||
-    message.includes('Restore with your recovery phrase')
+    message.includes('Restore with your recovery') ||
+    message.includes('Restore with a recovery')
   )
+}
+
+function normalizeRootKeyHex(raw: string): string {
+  const s = raw.trim().replace(/^0x/i, '')
+  if (!/^[0-9a-fA-F]{64}$/.test(s)) {
+    throw new Error('Emergency key must be 64 hex characters')
+  }
+  return s.toLowerCase()
+}
+
+async function readTextFile(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader()
+    reader.onload = () => resolve(String(reader.result ?? ''))
+    reader.onerror = () => reject(new Error('Could not read file'))
+    reader.readAsText(file)
+  })
 }
 
 export function AuthScreen({
@@ -52,16 +83,20 @@ export function AuthScreen({
   const chain: Chain = 'main'
   const stateAttr = stateToAttr(snapshot.value)
   const [formMode, setFormMode] = useState<FormMode>(
-    recoveryOnly ? 'restore' : mode === 'locked' ? 'unlock' : 'create',
+    recoveryOnly ? 'phrase' : mode === 'locked' ? 'unlock' : 'create',
   )
   const [mnemonicInput, setMnemonicInput] = useState('')
+  const [passphrase, setPassphrase] = useState('')
+  const [showPassphrase, setShowPassphrase] = useState(false)
   const [share1, setShare1] = useState('')
   const [share2, setShare2] = useState('')
+  const [rootKeyInput, setRootKeyInput] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
+  const shareFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
-    if (recoveryOnly) setFormMode('restore')
+    if (recoveryOnly) setFormMode('phrase')
   }, [recoveryOnly])
 
   useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
@@ -70,7 +105,35 @@ export function AuthScreen({
     if (mode === 'locked' && isMismatchError(error)) setOfferRestoreOnLock(true)
   }, [mode, error])
 
+  const showRestoreMethods =
+    isRestoreMethod(formMode) ||
+    (mode === 'locked' && offerRestoreOnLock) ||
+    recoveryOnly
+
+  const finishCreated = async (unlocked: UnlockedVault) => {
+    const active = await bootWallet({
+      rootKeyHex: unlocked.rootKeyHex,
+      handle: unlocked.record.handle,
+      chain: unlocked.record.chain,
+    })
+    const balanceSats = await fetchBalanceSats(active.wallet)
+    markBackupConfirmed()
+    send({ type: 'SUCCESS' })
+    playWalletSound('unlock')
+    clearUnlockNudge()
+    onCreated(
+      {
+        handle: unlocked.record.handle,
+        identityKey: unlocked.record.identityKey,
+        address: unlocked.record.address,
+        chain: unlocked.record.chain,
+      },
+      balanceSats,
+    )
+  }
+
   const submit = async () => {
+    if (snapshot.matches('submitting')) return
     if (snapshot.context.password.length < 8) {
       onFail('Password must be at least 8 characters')
       return
@@ -78,60 +141,35 @@ export function AuthScreen({
     const password = snapshot.context.password
     send({ type: 'SUBMIT' })
     try {
-      if (formMode === 'restore') {
+      if (formMode === 'phrase') {
         const unlocked = await restoreVaultFromMnemonic({
           mnemonic: mnemonicInput,
           password,
           chain,
+          ...(passphrase.trim() ? { passphrase: passphrase.trim() } : {}),
         })
-        const active = await bootWallet({
-          rootKeyHex: unlocked.rootKeyHex,
-          handle: unlocked.record.handle,
-          chain: unlocked.record.chain,
-        })
-        const balanceSats = await fetchBalanceSats(active.wallet)
-        markBackupConfirmed()
-        send({ type: 'SUCCESS' })
-        playWalletSound('unlock')
-        clearUnlockNudge()
-        onCreated(
-          {
-            handle: unlocked.record.handle,
-            identityKey: unlocked.record.identityKey,
-            address: unlocked.record.address,
-            chain: unlocked.record.chain,
-          },
-          balanceSats,
-        )
+        await finishCreated(unlocked)
         return
       }
 
-      if (formMode === 'restore-shares') {
+      if (formMode === 'shares') {
         const recovered = recoverRootKeyFromBrc140Shares([share1, share2])
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: recovered.rootKeyHex,
           password,
           chain,
         })
-        const active = await bootWallet({
-          rootKeyHex: unlocked.rootKeyHex,
-          handle: unlocked.record.handle,
-          chain: unlocked.record.chain,
+        await finishCreated(unlocked)
+        return
+      }
+
+      if (formMode === 'key') {
+        const unlocked = await restoreVaultFromRootKey({
+          rootKeyHex: normalizeRootKeyHex(rootKeyInput),
+          password,
+          chain,
         })
-        const balanceSats = await fetchBalanceSats(active.wallet)
-        markBackupConfirmed()
-        send({ type: 'SUCCESS' })
-        playWalletSound('unlock')
-        clearUnlockNudge()
-        onCreated(
-          {
-            handle: unlocked.record.handle,
-            identityKey: unlocked.record.identityKey,
-            address: unlocked.record.address,
-            chain: unlocked.record.chain,
-          },
-          balanceSats,
-        )
+        await finishCreated(unlocked)
         return
       }
 
@@ -181,7 +219,7 @@ export function AuthScreen({
       const message = err instanceof Error ? err.message : String(err)
       if (mode === 'locked' && isMismatchError(message)) {
         setOfferRestoreOnLock(true)
-        setFormMode('restore')
+        setFormMode('phrase')
       }
       send({ type: 'FAIL', error: message })
       playWalletSound('error')
@@ -189,29 +227,53 @@ export function AuthScreen({
     }
   }
 
-  const title =
-    formMode === 'restore' || formMode === 'restore-shares'
-      ? 'Restore wallet'
-      : formMode === 'create'
-        ? 'Create wallet'
-        : 'Welcome back'
+  const onShareFile = async (file: File | null) => {
+    if (!file) return
+    try {
+      const text = (await readTextFile(file)).trim()
+      const lines = text
+        .split(/\r?\n/)
+        .map((l) => l.trim())
+        .filter((l) => l && !l.startsWith('#') && l.includes('.'))
+      if (lines.length >= 2) {
+        setShare1(lines[0]!)
+        setShare2(lines[1]!)
+      } else if (lines.length === 1) {
+        if (!share1.trim()) setShare1(lines[0]!)
+        else setShare2(lines[0]!)
+      } else {
+        onFail('No BRC-140 share lines found in that file')
+      }
+    } catch (err) {
+      onFail(err instanceof Error ? err.message : String(err))
+    } finally {
+      if (shareFileRef.current) shareFileRef.current.value = ''
+    }
+  }
+
+  const title = isRestoreMethod(formMode)
+    ? 'Restore wallet'
+    : formMode === 'create'
+      ? 'Create wallet'
+      : 'Welcome back'
 
   const lede =
-    formMode === 'restore'
-      ? 'Enter your 12-word phrase and choose a password for this device.'
-      : formMode === 'restore-shares'
-        ? 'Paste any two BRC-140 shares and choose a password for this device.'
-        : formMode === 'create'
-          ? 'Pick a password. Your keys stay on this device.'
-          : 'Enter your password to unlock.'
+    formMode === 'phrase'
+      ? 'Enter your recovery phrase and choose a password for this device.'
+      : formMode === 'shares'
+        ? 'Paste any two BRC-140 key slices and choose a password for this device.'
+        : formMode === 'key'
+          ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
+          : formMode === 'create'
+            ? 'Pick a password. Your keys stay on this device. Back up with a phrase, key slices, or emergency key after unlock.'
+            : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
-  const primaryLabel =
-    formMode === 'restore' || formMode === 'restore-shares'
-      ? 'Restore'
-      : formMode === 'create'
-        ? 'Create'
-        : 'Unlock'
+  const primaryLabel = isRestoreMethod(formMode)
+    ? 'Restore'
+    : formMode === 'create'
+      ? 'Create'
+      : 'Unlock'
 
   return (
     <section className="auth-screen" data-aeon-scope="auth" data-aeon-state={stateAttr}>
@@ -221,6 +283,12 @@ export function AuthScreen({
         {unlockNudge && mode === 'locked' ? (
           <p className="auth-unlock-nudge" role="status">
             An app needs this wallet — unlock to continue.
+          </p>
+        ) : null}
+        {recoveryOnly ? (
+          <p className="auth-unlock-nudge" role="status">
+            Unlock keys are missing. Restore with a recovery phrase, BRC-140 shares, or emergency
+            key — creating a new wallet is blocked.
           </p>
         ) : null}
       </div>
@@ -248,34 +316,77 @@ export function AuthScreen({
             <button
               type="button"
               role="tab"
-              aria-selected={formMode === 'restore'}
+              aria-selected={isRestoreMethod(formMode)}
               className="auth-mode-tab"
-              data-aeon-state={formMode === 'restore' ? 'selected' : 'idle'}
-              onClick={() => setFormMode('restore')}
+              data-aeon-state={isRestoreMethod(formMode) ? 'selected' : 'idle'}
+              onClick={() => setFormMode('phrase')}
             >
               Restore
             </button>
           </div>
         ) : null}
 
-        {formMode === 'restore' ? (
-          <div className="field" data-aeon-part="field">
-            <label htmlFor="mnemonic">Recovery phrase</label>
-            <textarea
-              id="mnemonic"
-              rows={3}
-              placeholder="twelve words separated by spaces"
-              value={mnemonicInput}
-              onChange={(e) => setMnemonicInput(e.target.value)}
-              autoComplete="off"
-              autoCapitalize="off"
-              spellCheck={false}
-              autoFocus
-            />
+        {showRestoreMethods && isRestoreMethod(formMode) ? (
+          <div className="auth-mode-switch" role="tablist" aria-label="Restore method">
+            {RESTORE_METHODS.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                role="tab"
+                aria-selected={formMode === m.id}
+                className="auth-mode-tab"
+                data-aeon-state={formMode === m.id ? 'selected' : 'idle'}
+                onClick={() => setFormMode(m.id)}
+              >
+                {m.label}
+              </button>
+            ))}
           </div>
         ) : null}
 
-        {formMode === 'restore-shares' ? (
+        {formMode === 'phrase' ? (
+          <>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="mnemonic">Recovery phrase</label>
+              <textarea
+                id="mnemonic"
+                rows={3}
+                placeholder="twelve words separated by spaces"
+                value={mnemonicInput}
+                onChange={(e) => setMnemonicInput(e.target.value)}
+                autoComplete="off"
+                autoCapitalize="off"
+                spellCheck={false}
+                autoFocus
+              />
+            </div>
+            {showPassphrase ? (
+              <div className="field" data-aeon-part="field">
+                <label htmlFor="bip39-passphrase">BIP39 passphrase (optional)</label>
+                <input
+                  id="bip39-passphrase"
+                  type="password"
+                  placeholder="Only if you set one when creating the phrase"
+                  value={passphrase}
+                  onChange={(e) => setPassphrase(e.target.value)}
+                  autoComplete="off"
+                />
+              </div>
+            ) : (
+              <p className="auth-alt">
+                <button
+                  type="button"
+                  className="auth-alt-link"
+                  onClick={() => setShowPassphrase(true)}
+                >
+                  Phrase has a BIP39 passphrase?
+                </button>
+              </p>
+            )}
+          </>
+        ) : null}
+
+        {formMode === 'shares' ? (
           <>
             <div className="field" data-aeon-part="field">
               <label htmlFor="share1">BRC-140 share 1</label>
@@ -304,7 +415,40 @@ export function AuthScreen({
                 spellCheck={false}
               />
             </div>
+            <p className="auth-alt">
+              <button
+                type="button"
+                className="auth-alt-link"
+                onClick={() => shareFileRef.current?.click()}
+              >
+                Import share file
+              </button>
+              <input
+                ref={shareFileRef}
+                type="file"
+                accept=".txt,text/plain"
+                hidden
+                onChange={(e) => void onShareFile(e.target.files?.[0] ?? null)}
+              />
+            </p>
           </>
+        ) : null}
+
+        {formMode === 'key' ? (
+          <div className="field" data-aeon-part="field">
+            <label htmlFor="root-key">Emergency root key</label>
+            <textarea
+              id="root-key"
+              rows={2}
+              placeholder="64 hex characters"
+              value={rootKeyInput}
+              onChange={(e) => setRootKeyInput(e.target.value)}
+              autoComplete="off"
+              autoCapitalize="off"
+              spellCheck={false}
+              autoFocus
+            />
+          </div>
         ) : null}
 
         <div className="field" data-aeon-part="field">
@@ -338,52 +482,25 @@ export function AuthScreen({
 
         {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
           <p className="auth-alt">
-            Have a recovery phrase?{' '}
-            <button type="button" className="auth-alt-link" onClick={() => setFormMode('restore')}>
+            Already have a backup?{' '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('phrase')}>
               Restore
-            </button>
-            {' · '}
-            <button
-              type="button"
-              className="auth-alt-link"
-              onClick={() => setFormMode('restore-shares')}
-            >
-              Split shares
             </button>
           </p>
         ) : null}
 
-        {mode === 'onboarding' &&
-        !recoveryOnly &&
-        (formMode === 'restore' || formMode === 'restore-shares') ? (
+        {mode === 'onboarding' && !recoveryOnly && isRestoreMethod(formMode) ? (
           <p className="auth-alt">
             New here?{' '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('create')}>
               Create a wallet
             </button>
-            {formMode === 'restore' ? (
-              <>
-                {' · '}
-                <button
-                  type="button"
-                  className="auth-alt-link"
-                  onClick={() => setFormMode('restore-shares')}
-                >
-                  Use split shares
-                </button>
-              </>
-            ) : (
-              <>
-                {' · '}
-                <button
-                  type="button"
-                  className="auth-alt-link"
-                  onClick={() => setFormMode('restore')}
-                >
-                  Use recovery phrase
-                </button>
-              </>
-            )}
+          </p>
+        ) : null}
+
+        {isRestoreMethod(formMode) ? (
+          <p className="auth-lede auth-restore-note">
+            History backups (BRC-38/39) restore after unlock in Settings — they are not key custody.
           </p>
         ) : null}
       </form>

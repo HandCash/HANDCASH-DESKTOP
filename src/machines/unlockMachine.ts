@@ -61,6 +61,12 @@ export const unlockMachine = setup({
             error: null,
           }),
         },
+        // Allow immediate retry with the same password (Auth used to dead-end here).
+        SUBMIT: {
+          guard: ({ context }) => context.password.length >= 8,
+          target: 'submitting',
+          actions: assign({ error: null }),
+        },
       },
     },
   },

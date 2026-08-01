@@ -347,6 +347,13 @@ body {
   filter: brightness(1.08);
 }
 
+.auth-restore-note {
+  margin: 12px 0 0;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--hc-muted);
+}
+
 @keyframes rise {
   from {
     opacity: 0;

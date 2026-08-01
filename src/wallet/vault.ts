@@ -395,7 +395,7 @@ export async function assertSafeToCreateVault(): Promise<void> {
       detail: `toolbox-users:${toolboxKeys.length}`,
     })
     throw new Error(
-      'This device already has wallet funds under another key. Creating a new wallet is blocked. Restore with your recovery phrase if you have it.',
+      'This device already has wallet funds under another key. Creating a new wallet is blocked. Restore with your recovery phrase, BRC-140 shares, or emergency key if you have them.',
     )
   }
 }
@@ -572,7 +572,7 @@ export async function unlockVault(password: string): Promise<UnlockedVault> {
         detail: 'vault-toolbox-mismatch',
       })
       throw new Error(
-        'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase if you have it.',
+        'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase, BRC-140 shares, or emergency key if you have them.',
       )
     }
     return { rootKeyHex, mnemonic, record }

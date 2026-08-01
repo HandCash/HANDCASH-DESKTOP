@@ -36,7 +36,8 @@ export function WipeWalletPanel() {
       data-aeon-state={stateAttr}
     >
       <p className="settings-hint">
-        Deletes keys and local wallet data on this device. Needs your recovery phrase to restore.
+        Deletes keys and local wallet data on this device. Needs a recovery phrase, BRC-140
+        shares, or emergency key to restore.
       </p>
 
       <form
@@ -66,7 +67,10 @@ export function WipeWalletPanel() {
             disabled={snapshot.matches('wiping')}
             onChange={(e) => send({ type: 'TOGGLE_ACK', acknowledged: e.target.checked })}
           />
-          <span>I understand this cannot be undone without my recovery phrase.</span>
+          <span>
+            I understand this cannot be undone without my recovery phrase, key slices, or emergency
+            key.
+          </span>
         </label>
 
         <div className="field">
