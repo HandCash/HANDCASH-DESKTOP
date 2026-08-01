@@ -98,8 +98,9 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                 </div>
 
                 <p className="permission-note">
-                  Payments still need your approval every time. You can disconnect this app later
-                  from Connected apps.
+                  BSV payments still need your approval (unless Auto-pay). Viewing or sending
+                  collectables is approved separately and is never covered by Pay. You can
+                  disconnect this app later from Connected apps.
                 </p>
 
                 <Prompt.Actions className="actions connect-actions">

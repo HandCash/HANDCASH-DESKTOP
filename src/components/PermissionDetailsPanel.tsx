@@ -1,6 +1,7 @@
 import { ScopeIcon } from './ScopeIcon'
 import { getPermissionScope, appDisplayName } from '../wallet/appIdentity'
 import { clearAutoPaySettings, getAutoPaySettings } from '../wallet/autoPay'
+import { getItemAccess } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
@@ -8,10 +9,34 @@ type Props = {
   scopeId: string
 }
 
+function itemGrantCopy(scopeId: string, origin: string): string | null {
+  const access = getItemAccess(origin)
+  if (scopeId === 'items-view') {
+    if (access.view === 'none') return 'Not granted yet — approved when the app asks to list items.'
+    if (access.view === 'all') return 'Granted: all collections and creators.'
+    const bits: string[] = []
+    if (access.collections.length) bits.push(`collections ${access.collections.join(', ')}`)
+    if (access.creators.length) bits.push(`creators ${access.creators.join(', ')}`)
+    return `Granted (filtered): ${bits.join(' · ') || 'limited'}`
+  }
+  if (scopeId === 'items-send') {
+    return access.canSend
+      ? 'Granted — this app may send collectables you approve.'
+      : 'Not granted yet — approved when the app asks to send an item.'
+  }
+  if (scopeId === 'items-receive') {
+    return access.canReceive
+      ? 'Granted — this app may receive collectables you approve.'
+      : 'Not granted yet — approved when the app asks to receive an item.'
+  }
+  return null
+}
+
 export function PermissionDetailsPanel({ origin, scopeId }: Props) {
   const scope = getPermissionScope(scopeId)
   const appName = appDisplayName(origin)
   const autoPay = scopeId === 'auto-pay' ? getAutoPaySettings(origin) : null
+  const itemGrant = itemGrantCopy(scopeId, origin)
 
   if (!scope) {
     return <p className="connected-empty-line">Permission not found</p>
@@ -34,6 +59,8 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
       </div>
 
       <p className="permission-details-lede">{scope.description}</p>
+
+      {itemGrant ? <p className="permission-details-lede">{itemGrant}</p> : null}
 
       <ul className="permission-details-allows">
         {scope.allows.map((item) => (

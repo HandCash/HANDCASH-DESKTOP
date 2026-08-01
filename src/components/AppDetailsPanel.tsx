@@ -3,8 +3,13 @@ import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
 import { LaunchIcon } from './icons'
 import { SkeletonLine } from './Skeleton'
-import type { ConnectedApp } from '../wallet/permissions'
+import {
+  getItemAccess,
+  subscribeConnectedApps,
+  type ConnectedApp,
+} from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
+import type { ItemAccess } from '../wallet/itemAccess'
 import {
   getAppMoneySummary,
   subscribeAppActivity,
@@ -42,11 +47,22 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
   const [autoPay, setAutoPay] = useState<AutoPaySettings | null>(() =>
     getAutoPaySettings(app.origin),
   )
+  const [itemAccess, setItemAccess] = useState<ItemAccess>(() => getItemAccess(app.origin))
   const [iconReady, setIconReady] = useState(false)
 
   useEffect(() => {
     setIconReady(false)
+    setItemAccess(getItemAccess(app.origin))
   }, [app.origin])
+
+  useEffect(
+    () =>
+      subscribeConnectedApps((apps) => {
+        const hit = apps.find((a) => a.origin === app.origin)
+        if (hit) setItemAccess(getItemAccess(hit.origin))
+      }),
+    [app.origin],
+  )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -101,18 +117,36 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
           <div className="app-details-section">
             <p className="scope-list-label">Permissions</p>
             <div className="permission-chips" aria-label="Permissions">
-              {CONNECT_SCOPES.map((scope) => (
-                <button
-                  key={scope.id}
-                  type="button"
-                  className="permission-chip"
-                  title={scope.description}
-                  onClick={() => openPermissionDetails(app.origin, scope.id)}
-                >
-                  <ScopeIcon scopeId={scope.id} size={13} />
-                  {scope.label}
-                </button>
-              ))}
+              {CONNECT_SCOPES.map((scope) => {
+                const itemGranted =
+                  scope.id === 'items-view'
+                    ? itemAccess.view !== 'none'
+                    : scope.id === 'items-send'
+                      ? itemAccess.canSend
+                      : scope.id === 'items-receive'
+                        ? itemAccess.canReceive
+                        : true
+                return (
+                  <button
+                    key={scope.id}
+                    type="button"
+                    className={
+                      itemGranted
+                        ? 'permission-chip'
+                        : 'permission-chip permission-chip-muted'
+                    }
+                    title={
+                      itemGranted
+                        ? scope.description
+                        : `${scope.description} (not granted yet)`
+                    }
+                    onClick={() => openPermissionDetails(app.origin, scope.id)}
+                  >
+                    <ScopeIcon scopeId={scope.id} size={13} />
+                    {scope.label}
+                  </button>
+                )
+              })}
               {autoPay?.enabled ? (
                 <button
                   type="button"

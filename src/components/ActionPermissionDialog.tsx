@@ -28,8 +28,17 @@ type Props = {
   onDeny: () => void
 }
 
-function isPaymentAction(method: string): boolean {
-  return method === 'createAction' || method === 'signAction'
+function isBsvPaymentAction(pending: PendingAction): boolean {
+  if (pending.method !== 'createAction' && pending.method !== 'signAction') return false
+  // Item send is a separate permission — never offer Auto-pay.
+  if (
+    pending.title === 'Send item' ||
+    pending.title === 'Confirm item send' ||
+    pending.title === 'Release item'
+  ) {
+    return false
+  }
+  return true
 }
 
 /**
@@ -63,7 +72,9 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   }, [pending?.id, pending?.origin])
 
   const name = pending ? appDisplayName(pending.origin) : ''
-  const copy = pending ? humanActionCopy(pending.method) : { eyebrow: '', verb: '' }
+  const copy = pending
+    ? humanActionCopy(pending.method, pending.title)
+    : { eyebrow: '', verb: '' }
   const usdPerBsv = getCachedUsdPerBsv()
   const currency = getDisplayCurrency()
   const amountPrimary =
@@ -74,7 +85,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
     pending?.amountSats != null && pending.amountSats > 0
       ? formatSecondaryFromSats(pending.amountSats, currency, usdPerBsv)
       : null
-  const showAutoPay = pending ? isPaymentAction(pending.method) : false
+  const showAutoPay = pending ? isBsvPaymentAction(pending) : false
 
   const parsedMaxUsd = Number.parseFloat(maxUsd)
   const parsedHours = Number.parseFloat(windowHours)

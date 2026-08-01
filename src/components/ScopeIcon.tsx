@@ -1,9 +1,12 @@
 import type { ComponentType, SVGProps } from 'react'
 import {
   AutoPayIcon,
+  CollectablesIcon,
   EncryptIcon,
   PayScopeIcon,
   ProfileScopeIcon,
+  ReceiveIcon,
+  SendIcon,
   WalletScopeIcon,
 } from './icons'
 
@@ -15,6 +18,9 @@ const SCOPE_ICONS: Record<string, ComponentType<IconProps>> = {
   wallet: WalletScopeIcon,
   encrypt: EncryptIcon,
   'auto-pay': AutoPayIcon,
+  'items-view': CollectablesIcon,
+  'items-send': SendIcon,
+  'items-receive': ReceiveIcon,
 }
 
 export function ScopeIcon({

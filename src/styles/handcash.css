@@ -2603,6 +2603,51 @@ a.history-row-link:hover .history-tx-hint {
   box-sizing: content-box;
 }
 
+.collectable-type-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 1px;
+  height: 28px;
+  padding: 1px;
+  border-radius: var(--hc-radius);
+  border: 1px solid hsl(var(--border));
+  background: rgba(0, 0, 0, 0.28);
+  flex-shrink: 0;
+  box-sizing: border-box;
+}
+
+.collectable-type-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 24px;
+  margin: 0;
+  padding: 0 8px;
+  border: 0;
+  border-radius: calc(var(--hc-radius) - 2px);
+  background: transparent;
+  color: var(--hc-muted);
+  cursor: pointer;
+  font-family: var(--hc-display);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.collectable-type-btn:hover {
+  color: var(--hc-text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.collectable-type-btn[data-active],
+.collectable-type-btn[aria-pressed='true'] {
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 14%, transparent);
+}
+
 .collection-view-toggle {
   display: inline-flex;
   align-items: center;
@@ -3425,6 +3470,10 @@ a.app-details-host:hover {
   height: 14px;
   flex-shrink: 0;
   opacity: 0.95;
+}
+
+.permission-chip-muted {
+  opacity: 0.55;
 }
 
 .permission-chip-accent {

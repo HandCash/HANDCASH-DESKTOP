@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
+import { collectableTypeLabel } from '../wallet/collectableType'
 import {
   getCollectable,
   type Collectable,
@@ -93,6 +94,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   }
 
   const detailRows: CollectableTrait[] = [
+    { name: 'Protocol', value: collectableTypeLabel(item.protocol) },
     ...(item.app ? [{ name: 'App', value: item.app }] : []),
     ...(item.type ? [{ name: 'Type', value: item.type }] : []),
     ...(item.subType ? [{ name: 'Subtype', value: item.subType }] : []),

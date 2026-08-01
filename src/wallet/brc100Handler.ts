@@ -1,10 +1,13 @@
 import type { WalletInterface } from '@bsv/sdk'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import {
+  filterItemOutputsForOrigin,
   gateOriginAccess,
   isActionMethod,
   requestActionApproval,
+  requestItemViewApproval,
 } from './permissions'
+import { isItemBasket } from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { extractTxid } from './txExplorer'
 import {
@@ -222,8 +225,38 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
   }
 
+  if (method === 'listOutputs') {
+    const basket =
+      args && typeof args === 'object' && !Array.isArray(args)
+        ? (args as { basket?: unknown }).basket
+        : undefined
+    if (isItemBasket(basket)) {
+      const viewDecision = await requestItemViewApproval(originator, args)
+      if (viewDecision !== 'allow') {
+        return {
+          status: 403,
+          body: JSON.stringify({
+            status: 'error',
+            code: 'ITEM_VIEW_DENIED',
+            description: 'You denied this app access to view collectables.',
+          }),
+        }
+      }
+    }
+  }
+
   try {
-    const result = await dispatchWalletMethod(active.wallet, method, args, originator)
+    let result = await dispatchWalletMethod(active.wallet, method, args, originator)
+
+    if (method === 'listOutputs') {
+      const basket =
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? (args as { basket?: unknown }).basket
+          : undefined
+      if (isItemBasket(basket)) {
+        result = filterItemOutputsForOrigin(originator, result)
+      }
+    }
 
     if (method === 'refreshLegacyAddress') {
       const payload = result as { importedCount?: number; importedItemsCount?: number } | null

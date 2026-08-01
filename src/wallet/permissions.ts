@@ -4,6 +4,19 @@ import {
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
+import {
+  DEFAULT_ITEM_ACCESS,
+  isItemBasket,
+  isItemReceiveArgs,
+  isItemSpendArgs,
+  itemViewGranted,
+  mergeItemViewGrant,
+  normalizeItemAccess,
+  outputMatchesItemAccess,
+  parseItemViewRequest,
+  type ItemAccess,
+  type ItemViewRequest,
+} from './itemAccess'
 import { openSetting } from './navStore'
 import { formatBsvSignificant } from './session'
 import { playWalletSound } from './soundService'
@@ -26,6 +39,8 @@ export type ConnectedApp = {
   origin: string
   name: string
   connectedAt: number
+  /** Collectable / NFT capabilities — never implied by Pay. */
+  itemAccess?: ItemAccess
 }
 
 export type PendingPermission = {
@@ -110,6 +125,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           origin: normalizeAppHost(a.origin),
           name: typeof a.name === 'string' && a.name ? a.name : appDisplayName(a.origin),
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
+          itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -243,16 +259,40 @@ export function listAllowedOrigins(): string[] {
 
 export function allowOrigin(origin: string | undefined): void {
   const key = normalizeOrigin(origin)
+  const prior = readConnected().find((a) => a.origin === key)
   const existing = readConnected().filter((a) => a.origin !== key)
   writeConnected([
     {
       origin: key,
       name: appDisplayName(key),
-      connectedAt: Date.now(),
+      connectedAt: prior?.connectedAt ?? Date.now(),
+      // Connect does not grant item view/send/receive — those are approved per request.
+      itemAccess: prior?.itemAccess,
     },
     ...existing,
   ])
   markRecentlyConnected(key)
+}
+
+export function getItemAccess(origin: string | undefined): ItemAccess {
+  const key = normalizeOrigin(origin)
+  const app = readConnected().find((a) => a.origin === key)
+  return normalizeItemAccess(app?.itemAccess)
+}
+
+function patchItemAccess(
+  origin: string | undefined,
+  patch: (current: ItemAccess) => ItemAccess,
+): ItemAccess {
+  const key = normalizeOrigin(origin)
+  const apps = readConnected()
+  const idx = apps.findIndex((a) => a.origin === key)
+  if (idx < 0) return DEFAULT_ITEM_ACCESS
+  const next = patch(normalizeItemAccess(apps[idx]!.itemAccess))
+  const copy = [...apps]
+  copy[idx] = { ...copy[idx]!, itemAccess: next }
+  writeConnected(copy)
+  return next
 }
 
 export function revokeOrigin(origin: string): void {
@@ -370,6 +410,24 @@ export function summarizeAction(method: string, args: unknown): {
   const body = asRecord(args)
   const details: string[] = []
 
+  if (method === 'createAction' && isItemSpendArgs(method, args)) {
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Send a collectable'
+    const labels = Array.isArray(body.labels)
+      ? body.labels.filter((l): l is string => typeof l === 'string')
+      : []
+    if (labels.includes('twonk')) details.push('Type: Twonk')
+    else if (labels.includes('1sat')) details.push('Type: 1Sat')
+    details.push('Not covered by Pay or Auto-pay')
+    return {
+      title: 'Send item',
+      summary: description,
+      details,
+    }
+  }
+
   if (method === 'createAction') {
     const description =
       typeof body.description === 'string' && body.description.trim()
@@ -397,6 +455,14 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'signAction' && isItemSpendArgs(method, args)) {
+    return {
+      title: 'Confirm item send',
+      summary: 'Finish signing a collectable transfer',
+      details: ['Not covered by Pay or Auto-pay'],
+    }
+  }
+
   if (method === 'signAction') {
     return {
       title: 'Confirm payment',
@@ -405,11 +471,36 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'internalizeAction' && isItemReceiveArgs(method, args)) {
+    const labels = Array.isArray(body.labels)
+      ? body.labels.filter((l): l is string => typeof l === 'string')
+      : []
+    if (labels.includes('twonk')) details.push('Type: Twonk')
+    else if (labels.includes('1sat')) details.push('Type: 1Sat')
+    details.push('Adds a collectable to your inventory')
+    return {
+      title: 'Receive item',
+      summary:
+        typeof body.description === 'string' && body.description.trim()
+          ? body.description.trim()
+          : 'Accept a collectable into this wallet',
+      details,
+    }
+  }
+
   if (method === 'internalizeAction') {
     return {
       title: 'Accept funds',
       summary: 'Add incoming coins to your HandCash wallet',
       details: typeof body.description === 'string' ? [body.description] : [],
+    }
+  }
+
+  if (method === 'relinquishOutput' && isItemSpendArgs(method, args)) {
+    return {
+      title: 'Release item',
+      summary: 'Remove a collectable from wallet tracking',
+      details: ['Not covered by Pay or Auto-pay'],
     }
   }
 
@@ -452,6 +543,20 @@ export function summarizeAction(method: string, args: unknown): {
   }
 }
 
+function rememberItemActionGrant(
+  origin: string,
+  method: string,
+  args: unknown,
+): void {
+  if (isItemSpendArgs(method, args)) {
+    patchItemAccess(origin, (cur) => ({ ...cur, canSend: true }))
+    return
+  }
+  if (isItemReceiveArgs(method, args)) {
+    patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
+  }
+}
+
 export function requestActionApproval(
   origin: string | undefined,
   method: string,
@@ -459,6 +564,8 @@ export function requestActionApproval(
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
+  const itemSpend = isItemSpendArgs(method, args)
+  const itemReceive = isItemReceiveArgs(method, args)
 
   if (
     (method === 'createAction' || method === 'signAction') &&
@@ -467,7 +574,14 @@ export function requestActionApproval(
     return denyUntilBackupConfirmed()
   }
 
-  if (canAutoProcessPayment(key, method, amountSats)) {
+  // Item send / receive are never covered by Pay or Auto-pay.
+  // Send always prompts (each transfer). Receive may reuse a prior grant.
+  if (itemSpend) {
+    // fall through to prompt
+  } else if (itemReceive) {
+    const access = getItemAccess(key)
+    if (access.canReceive) return Promise.resolve('allow')
+  } else if (canAutoProcessPayment(key, method, amountSats)) {
     return Promise.resolve('allow')
   }
 
@@ -496,6 +610,9 @@ export function requestActionApproval(
           if (decision === 'allow' && isIdentityProofMethod(method)) {
             sessionApprovedProofs.add(proofGrantKey(key, method))
           }
+          if (decision === 'allow' && (itemSpend || itemReceive)) {
+            rememberItemActionGrant(key, method, args)
+          }
           prev.resolve(decision)
           resolve(decision)
         },
@@ -515,6 +632,9 @@ export function requestActionApproval(
       queued.resolve = (decision) => {
         if (decision === 'allow' && isIdentityProofMethod(method)) {
           sessionApprovedProofs.add(proofGrantKey(key, method))
+        }
+        if (decision === 'allow' && (itemSpend || itemReceive)) {
+          rememberItemActionGrant(key, method, args)
         }
         prevResolve(decision)
         resolve(decision)
@@ -537,8 +657,112 @@ export function requestActionApproval(
     if (decision === 'allow' && isIdentityProofMethod(method)) {
       sessionApprovedProofs.add(proofGrantKey(key, method))
     }
+    if (decision === 'allow' && (itemSpend || itemReceive)) {
+      rememberItemActionGrant(key, method, args)
+    }
     return decision
   })
+}
+
+function summarizeItemView(request: ItemViewRequest): {
+  title: string
+  summary: string
+  details: string[]
+} {
+  const details: string[] = ['Not covered by Pay or wallet activity']
+  if (request.wantsAll) {
+    return {
+      title: 'View items',
+      summary: 'See collectables in this wallet',
+      details: [...details, 'All collections and creators'],
+    }
+  }
+  for (const c of request.collections) details.push(`Collection: ${c}`)
+  for (const c of request.creators) details.push(`Creator: ${c}`)
+  return {
+    title: 'View items',
+    summary: 'See specific collectables in this wallet',
+    details,
+  }
+}
+
+/**
+ * Gate listOutputs against item baskets. Pay does not include inventory access.
+ * Returns allow/deny; caller should filter results when grant is filtered.
+ */
+export async function requestItemViewApproval(
+  origin: string | undefined,
+  args: unknown,
+): Promise<PermissionDecision> {
+  const key = normalizeOrigin(origin)
+  const body = asRecord(args)
+  if (!isItemBasket(body.basket)) return 'allow'
+
+  if (!isBackupConfirmed()) return denyUntilBackupConfirmed()
+
+  const request = parseItemViewRequest(args)
+  const access = getItemAccess(key)
+  if (itemViewGranted(access, request)) return 'allow'
+
+  const { title, summary, details } = summarizeItemView(request)
+
+  if (
+    current?.request.kind === 'action' &&
+    current.request.origin === key &&
+    current.request.method === 'listOutputs'
+  ) {
+    return new Promise((resolve) => {
+      const prev = current!
+      current = {
+        request: prev.request,
+        resolve: (decision) => {
+          if (decision === 'allow') {
+            patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
+          }
+          prev.resolve(decision)
+          resolve(decision)
+        },
+      }
+    })
+  }
+
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: key,
+    method: 'listOutputs',
+    title,
+    summary,
+    details,
+    createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow') {
+      patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
+    }
+    return decision
+  })
+}
+
+/** Filter listOutputs payload to what the app's item grant allows. */
+export function filterItemOutputsForOrigin(
+  origin: string | undefined,
+  result: unknown,
+): unknown {
+  const access = getItemAccess(origin)
+  if (access.view === 'all' || access.view === 'none') return result
+  if (!result || typeof result !== 'object') return result
+  const body = result as { outputs?: unknown[]; totalOutputs?: number }
+  if (!Array.isArray(body.outputs)) return result
+  const outputs = body.outputs.filter((raw) => {
+    if (!raw || typeof raw !== 'object') return false
+    const o = raw as { tags?: string[]; customInstructions?: string }
+    return outputMatchesItemAccess(access, o.tags, o.customInstructions)
+  })
+  return {
+    ...body,
+    outputs,
+    totalOutputs: outputs.length,
+  }
 }
 
 export async function gateOriginAccess(

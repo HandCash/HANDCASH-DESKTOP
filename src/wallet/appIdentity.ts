@@ -18,13 +18,14 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
   {
     id: 'pay',
     label: 'Pay',
-    description: 'Request payments. You approve each one unless auto-pay is on.',
-    allows: ['Payment requests', 'Amounts shown for confirmation'],
+    description:
+      'Request BSV payments. You approve each one unless auto-pay is on. Does not include collectables.',
+    allows: ['BSV payment requests', 'Amounts shown for confirmation', 'Never spends NFTs / items'],
   },
   {
     id: 'wallet',
     label: 'Wallet activity',
-    description: 'Read balance and activity. Does not approve payments.',
+    description: 'Read balance and activity. Does not approve payments or show item inventory.',
     allows: ['Balance & status', 'Related activity'],
   },
   {
@@ -33,13 +34,37 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
     description: 'Encrypt or decrypt with keys for this app. Plaintext stays in the wallet.',
     allows: ['Encrypt for this app', 'Decrypt for this app'],
   },
+  {
+    id: 'items-view',
+    label: 'View items',
+    description:
+      'See collectables when you approve. Can be limited to a collection or creator.',
+    allows: [
+      'List 1Sat / Twonk inventory',
+      'Optional collection filter',
+      'Optional creator filter',
+    ],
+  },
+  {
+    id: 'items-send',
+    label: 'Send items',
+    description: 'Transfer a collectable. Separate from Pay — auto-pay never applies.',
+    allows: ['Send 1Sat ordinals', 'Send Twonks', 'Release item outputs'],
+  },
+  {
+    id: 'items-receive',
+    label: 'Receive items',
+    description: 'Accept collectables into your inventory when you approve.',
+    allows: ['Receive 1Sat ordinals', 'Receive Twonks'],
+  },
 ]
 
 export const AUTO_PAY_SCOPE: AppPermissionScope = {
   id: 'auto-pay',
   label: 'Auto-pay',
-  description: 'Auto-approve matching payments within your limits. Turn off anytime.',
-  allows: ['Payments under your max', 'Within your time window'],
+  description:
+    'Auto-approve matching BSV payments within your limits. Never covers collectables. Turn off anytime.',
+  allows: ['BSV payments under your max', 'Within your time window', 'Never spends NFTs / items'],
 }
 
 export function getPermissionScope(scopeId: string): AppPermissionScope | null {
@@ -121,7 +146,19 @@ export function appInitials(origin: string | undefined): string {
   return name.slice(0, 2).toUpperCase()
 }
 
-export function humanActionCopy(method: string): { eyebrow: string; verb: string } {
+export function humanActionCopy(
+  method: string,
+  title?: string,
+): { eyebrow: string; verb: string } {
+  if (title === 'Send item' || title === 'Confirm item send' || title === 'Release item') {
+    return { eyebrow: 'Item transfer', verb: 'wants to send or release a collectable' }
+  }
+  if (title === 'Receive item') {
+    return { eyebrow: 'Receive item', verb: 'wants to add a collectable to your inventory' }
+  }
+  if (title === 'View items' || method === 'listOutputs') {
+    return { eyebrow: 'View items', verb: 'wants to see collectables in your wallet' }
+  }
   switch (method) {
     case 'createAction':
       return { eyebrow: 'Payment request', verb: 'wants to make a payment' }
