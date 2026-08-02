@@ -114,12 +114,7 @@ export function Dashboard({
     setRefreshing(true)
     try {
       await refreshUsdPerBsv(true)
-      const sats = await syncLegacyFunds({
-        forceRescan: true,
-        reportScan: true,
-        // Chime only when balance rises — toast covers the empty-address case.
-        announceReceive: true,
-      })
+      const sats = await syncLegacyFunds({ forceRescan: true })
       if (sats != null) {
         if (sats <= balanceSats) playWalletSound('soft')
         onRefreshBalance(sats)

@@ -9,7 +9,6 @@ import { reconcilePendingSends } from './pendingSend'
 import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
-import { showToast } from './toast'
 
 export type SyncLegacyFundsOptions = {
   /**
@@ -20,8 +19,6 @@ export type SyncLegacyFundsOptions = {
   announceReceive?: boolean
   /** Manual Refresh — clear import skips when empty and prefer WhatsOnChain. */
   forceRescan?: boolean
-  /** Show a toast summarizing what the address scan found. */
-  reportScan?: boolean
 }
 
 /** Outpoints we've already chimed for this session — avoids re-import noise. */
@@ -65,7 +62,6 @@ async function runSyncLegacyFunds(
 ): Promise<number | null> {
   const announceReceive = opts?.announceReceive !== false
   const forceRescan = opts?.forceRescan === true
-  const reportScan = opts?.reportScan === true
   const active = getActiveWallet()
   if (!active) return null
 
@@ -94,17 +90,13 @@ async function runSyncLegacyFunds(
   let newOneSatOutpoints: string[] = []
   let heldCount = 0
   let partialWarn: string | null = null
-  let scanSats = 0
-  let scanCount = 0
 
   try {
     const scan = await scanLegacyAddress(active, {
       preferWhatsOnChain: forceRescan || balanceBefore === 0,
     })
-    scanSats = scan.sats
-    scanCount = scan.utxos.length
     console.info(
-      `[sync] scanned ${scan.address} via ${scan.source}: ${scanCount} UTXO(s), ${scanSats} sats`,
+      `[sync] scanned ${scan.address} via ${scan.source}: ${scan.utxos.length} UTXO(s), ${scan.sats} sats`,
     )
 
     if (scan.utxos.length > 0) {
@@ -166,9 +158,6 @@ async function runSyncLegacyFunds(
             `Some funds didn’t import (${result.failed}). Try Refresh.`
         }
       }
-    } else if (forceRescan || reportScan) {
-      partialWarn =
-        'Receive address has no unspent coins. If you imported before wiping, those sats moved into internal change — restore History backup to recover them.'
     }
   } catch (err) {
     console.warn('[sync] legacy scan/import skipped', err)
@@ -177,13 +166,6 @@ async function runSyncLegacyFunds(
       message: 'Couldn’t refresh funds — check network and try Refresh.',
       heldOneSats: heldCount,
     })
-    if (reportScan) {
-      showToast({
-        title: 'Refresh failed',
-        body: err instanceof Error ? err.message : String(err),
-        tone: 'error',
-      })
-    }
     return null
   }
 
@@ -212,31 +194,6 @@ async function runSyncLegacyFunds(
       message: partialWarn ?? heldMessage,
       heldOneSats: heldCount,
     })
-
-    if (reportScan) {
-      if (balanceAfter > balanceBefore) {
-        showToast({
-          title: 'Funds imported',
-          body: `Found ${scanCount} UTXO(s) on your receive address (${scanSats.toLocaleString()} sats).`,
-          tone: 'success',
-        })
-      } else if (scanCount === 0) {
-        showToast({
-          title: 'Nothing on receive address',
-          body: 'Same address, but no unspent coins there. Prior imports move sats off that address into internal change — use Settings → History backup to restore those.',
-          tone: 'neutral',
-          durationMs: 10_000,
-        })
-      } else if (balanceAfter === balanceBefore) {
-        showToast({
-          title: 'Scan found coins but balance unchanged',
-          body: `${scanCount} UTXO(s) / ${scanSats.toLocaleString()} sats on address. Try Refresh again or check sync status.`,
-          tone: 'error',
-          durationMs: 9000,
-        })
-      }
-    }
-
     return balanceAfter
   } catch (err) {
     console.warn('[sync] balance refresh failed', err)
