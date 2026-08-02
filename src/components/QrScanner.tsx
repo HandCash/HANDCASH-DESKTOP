@@ -20,9 +20,17 @@ export function QrScanner({ onScan, active = true }: Props) {
     const scanner = new Html5Qrcode(id)
     let cancelled = false
 
+    const isMobile =
+      typeof document !== 'undefined' &&
+      (document.documentElement.classList.contains('platform-mobile') ||
+        window.handcash?.platform === 'android' ||
+        window.handcash?.platform === 'ios')
+    // Phones: rear camera for scanning another screen. Desktop webcams: front.
+    const facingMode = isMobile ? 'environment' : 'user'
+
     void scanner
       .start(
-        { facingMode: 'user' },
+        { facingMode },
         { fps: 8, qrbox: { width: 240, height: 240 } },
         (text) => {
           if (handled.current || cancelled) return
