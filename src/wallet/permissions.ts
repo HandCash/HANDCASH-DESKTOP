@@ -3,20 +3,8 @@ import {
   normalizeAppHost,
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
-import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
-import { openSetting } from './navStore'
 import { formatBsvSignificant } from './session'
-import { playWalletSound } from './soundService'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
-
-/** Block connect / spend until keys + history backups are confirmed. */
-function denyUntilBackupConfirmed(): Promise<PermissionDecision> {
-  playWalletSound('deny')
-  void window.handcash?.focusWindow?.()
-  const missing = getMissingBackupStep()
-  openSetting(missing === 'history' ? 'history-backup' : 'backup')
-  return Promise.resolve('deny')
-}
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -314,8 +302,6 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
 export function requestOriginPermission(origin: string | undefined, method: string): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
 
-  if (!isBackupConfirmed()) return denyUntilBackupConfirmed()
-
   if (isOriginAllowed(key)) return Promise.resolve('allow')
 
   if (current?.request.kind === 'connect' && current.request.origin === key) {
@@ -459,13 +445,6 @@ export function requestActionApproval(
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
-
-  if (
-    (method === 'createAction' || method === 'signAction') &&
-    !isBackupConfirmed()
-  ) {
-    return denyUntilBackupConfirmed()
-  }
 
   if (canAutoProcessPayment(key, method, amountSats)) {
     return Promise.resolve('allow')
