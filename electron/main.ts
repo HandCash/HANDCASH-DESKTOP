@@ -1,4 +1,10 @@
 import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from 'electron'
+import {
+  deviceAuthClear,
+  deviceAuthEnroll,
+  deviceAuthStatus,
+  deviceAuthUnlock,
+} from './deviceAuth.js'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -529,7 +535,24 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
 
 ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
 
-ipcMain.handle('storage:wipe-wallet', () => durableWipeWallet())
+ipcMain.handle('storage:wipe-wallet', () => {
+  deviceAuthClear()
+  return durableWipeWallet()
+})
+
+ipcMain.handle('deviceAuth:status', () => deviceAuthStatus())
+
+ipcMain.handle('deviceAuth:enroll', (_event, password: unknown) => {
+  if (typeof password !== 'string') return { ok: false as const, error: 'Invalid password' }
+  return deviceAuthEnroll(password)
+})
+
+ipcMain.handle('deviceAuth:unlock', async (_event, reason: unknown) => {
+  const r = typeof reason === 'string' && reason.trim() ? reason.trim() : 'Unlock HandCash'
+  return deviceAuthUnlock(r)
+})
+
+ipcMain.handle('deviceAuth:clear', () => deviceAuthClear())
 
 ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')

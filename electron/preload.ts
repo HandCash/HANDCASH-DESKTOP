@@ -115,6 +115,22 @@ const handcash = {
     ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
   wipeWalletStorage: () =>
     ipcRenderer.invoke('storage:wipe-wallet') as Promise<{ removed: number }>,
+  deviceAuthStatus: () =>
+    ipcRenderer.invoke('deviceAuth:status') as Promise<{
+      available: boolean
+      enrolled: boolean
+      label: string
+    }>,
+  deviceAuthEnroll: (password: string) =>
+    ipcRenderer.invoke('deviceAuth:enroll', password) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  deviceAuthUnlock: (reason?: string) =>
+    ipcRenderer.invoke('deviceAuth:unlock', reason) as Promise<
+      { ok: true; password: string } | { ok: false; error: string }
+    >,
+  deviceAuthClear: () =>
+    ipcRenderer.invoke('deviceAuth:clear') as Promise<{ ok: true }>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
   copyScreenshot: () =>
     ipcRenderer.invoke('clipboard:screenshot') as Promise<

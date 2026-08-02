@@ -115,6 +115,18 @@ interface HandCashBridge {
   ) => boolean
   safeStorageAvailable?: () => Promise<boolean>
   wipeWalletStorage?: () => Promise<{ removed: number }>
+  deviceAuthStatus?: () => Promise<{
+    available: boolean
+    enrolled: boolean
+    label: string
+  }>
+  deviceAuthEnroll?: (
+    password: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
+  deviceAuthUnlock?: (
+    reason?: string,
+  ) => Promise<{ ok: true; password: string } | { ok: false; error: string }>
+  deviceAuthClear?: () => Promise<{ ok: true }>
   clipboardWrite?: (text: string) => Promise<void>
   copyScreenshot?: () => Promise<{ ok: true; version: string } | { ok: false; error: string }>
   onScreenshotCopied?: (handler: (payload: { at: number; version: string }) => void) => () => void

@@ -23,6 +23,12 @@ import {
 } from '../wallet/backupServiceClient'
 import { applyLinkedWallet } from '../wallet/applyLinkedWallet'
 import {
+  getDeviceAuthStatus,
+  maybeOfferDeviceAuthEnroll,
+  unlockWithDeviceAuth,
+  type DeviceAuthStatus,
+} from '../wallet/deviceAuth'
+import {
   LinkQrAssembler,
   isLinkQrPayload,
   type LinkAssembleProgress,
@@ -118,14 +124,27 @@ export function AuthScreen({
   const [connectProgress, setConnectProgress] = useState<LinkAssembleProgress | null>(null)
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
+  const [deviceAuth, setDeviceAuth] = useState<DeviceAuthStatus | null>(null)
   const shareFileRef = useRef<HTMLInputElement>(null)
   const linkAssemblerRef = useRef(new LinkQrAssembler())
+  const devicePromptedRef = useRef(false)
 
   useEffect(() => {
     if (recoveryOnly) setFormMode('phrase')
   }, [recoveryOnly])
 
   useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
+
+  useEffect(() => {
+    if (formMode !== 'unlock') return
+    let cancelled = false
+    void getDeviceAuthStatus().then((status) => {
+      if (!cancelled) setDeviceAuth(status)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [formMode])
 
   useEffect(() => {
     if (mode === 'locked' && isMismatchError(error)) setOfferRestoreOnLock(true)
@@ -298,6 +317,9 @@ export function AuthScreen({
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
       clearUnlockNudge()
+      void maybeOfferDeviceAuthEnroll(password).then(async () => {
+        setDeviceAuth(await getDeviceAuthStatus())
+      })
       onUnlocked(
         {
           handle: unlocked.record.handle,
@@ -318,6 +340,53 @@ export function AuthScreen({
       onFail(message)
     }
   }
+
+  const finishDeviceUnlock = async () => {
+    if (snapshot.matches('submitting') || formMode !== 'unlock') return
+    send({ type: 'SUBMIT' })
+    try {
+      const result = await unlockWithDeviceAuth('Unlock HandCash')
+      if (!result.ok) {
+        if (result.error === 'cancelled') {
+          send({ type: 'FAIL', error: '' })
+          return
+        }
+        throw new Error(result.error)
+      }
+      const unlocked = await unlockVault(result.password)
+      const active = await bootWallet({
+        rootKeyHex: unlocked.rootKeyHex,
+        handle: unlocked.record.handle,
+        chain: unlocked.record.chain,
+      })
+      const balanceSats = await fetchBalanceSats(active.wallet)
+      send({ type: 'SUCCESS' })
+      playWalletSound('unlock')
+      clearUnlockNudge()
+      onUnlocked(
+        {
+          handle: unlocked.record.handle,
+          identityKey: unlocked.record.identityKey,
+          address: unlocked.record.address,
+          chain: unlocked.record.chain,
+        },
+        balanceSats,
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      send({ type: 'FAIL', error: message })
+      playWalletSound('error')
+      onFail(message)
+    }
+  }
+
+  useEffect(() => {
+    if (formMode !== 'unlock' || !deviceAuth?.enrolled || devicePromptedRef.current) return
+    if (snapshot.matches('submitting')) return
+    devicePromptedRef.current = true
+    void finishDeviceUnlock()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formMode, deviceAuth?.enrolled])
 
   const onShareFile = async (file: File | null) => {
     if (!file) return
@@ -381,7 +450,9 @@ export function AuthScreen({
             ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
             : formMode === 'create'
               ? 'Pick a password. Your keys stay on this device. Back up with a phrase, key slices, or emergency key after unlock.'
-              : 'Enter your password to unlock.'
+              : deviceAuth?.enrolled
+                ? `Unlock with ${deviceAuth.label}, or enter your password.`
+                : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
   const primaryLabel =
@@ -662,6 +733,18 @@ export function AuthScreen({
           </>
         ) : null}
 
+        {formMode === 'unlock' && deviceAuth?.enrolled ? (
+          <button
+            type="button"
+            className="btn btn-primary auth-submit"
+            data-aeon-part="device-unlock"
+            disabled={submitting}
+            onClick={() => void finishDeviceUnlock()}
+          >
+            {submitting ? 'Working…' : `Unlock with ${deviceAuth.label}`}
+          </button>
+        ) : null}
+
         {formMode !== 'connect' || connectPkg ? (
           <div className="field" data-aeon-part="field">
             <label htmlFor="password">Password</label>
@@ -676,7 +759,9 @@ export function AuthScreen({
               value={snapshot.context.password}
               onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
               autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
-              autoFocus={formMode === 'unlock' || formMode === 'create'}
+              autoFocus={
+                (formMode === 'unlock' && !deviceAuth?.enrolled) || formMode === 'create'
+              }
             />
           </div>
         ) : null}
@@ -690,12 +775,20 @@ export function AuthScreen({
         {formMode !== 'connect' || connectPkg ? (
           <button
             type="submit"
-            className="btn btn-primary auth-submit"
+            className={
+              formMode === 'unlock' && deviceAuth?.enrolled
+                ? 'btn btn-ghost auth-submit'
+                : 'btn btn-primary auth-submit'
+            }
             data-aeon-part="trigger"
             data-aeon-state={stateAttr}
             disabled={submitting}
           >
-            {submitting ? 'Working…' : primaryLabel}
+            {submitting
+              ? 'Working…'
+              : formMode === 'unlock' && deviceAuth?.enrolled
+                ? 'Unlock with password'
+                : primaryLabel}
           </button>
         ) : null}
 

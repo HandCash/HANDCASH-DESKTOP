@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react'
+import { clearDeviceAuth, enrollDeviceAuth, getDeviceAuthStatus } from '../wallet/deviceAuth'
 import { changeVaultPassword } from '../wallet/vault'
 import { validatePassword } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
@@ -28,11 +29,30 @@ export function ChangePasswordPanel() {
     setSubmitting(true)
     try {
       await changeVaultPassword(currentPassword, newPassword)
+      // Old device-unlock secret is the previous password — replace if still enrolled.
+      const status = await getDeviceAuthStatus()
+      if (status.enrolled) {
+        await clearDeviceAuth()
+        if (status.available) {
+          const enrolled = await enrollDeviceAuth(newPassword)
+          if (enrolled.ok) {
+            toastSuccess('Password updated', `${status.label} re-enabled`)
+          } else {
+            toastSuccess(
+              'Password updated',
+              `${status.label} cleared — unlock with password once to re-enable`,
+            )
+          }
+        } else {
+          toastSuccess('Password updated', `${status.label} cleared`)
+        }
+      } else {
+        toastSuccess('Password updated')
+      }
       setCurrentPassword('')
       setNewPassword('')
       setConfirmPassword('')
       playWalletSound('success')
-      toastSuccess('Password updated')
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setError(message)

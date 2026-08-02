@@ -59,9 +59,15 @@ function setVaultSealStatus(status: 'sealed' | 'unsealed'): void {
   }
 }
 
-/** Seal vault payloads with OS keychain/DPAPI when available. */
+function shouldSealKey(key: string): boolean {
+  return (
+    key.startsWith('handcash.brc100.vault') || key.startsWith('handcash.brc100.deviceUnlock')
+  )
+}
+
+/** Seal vault / device-unlock payloads with OS keychain/DPAPI when available. */
 function sealIfNeeded(key: string, value: string): string {
-  if (!key.startsWith('handcash.brc100.vault')) return value
+  if (!shouldSealKey(key)) return value
   if (value.startsWith(SEALED_PREFIX)) return value
   if (!canSeal()) {
     if (key === VAULT_KEY) setVaultSealStatus('unsealed')
@@ -79,7 +85,7 @@ function sealIfNeeded(key: string, value: string): string {
 }
 
 function unsealIfNeeded(key: string, value: string): string {
-  if (!key.startsWith('handcash.brc100.vault')) return value
+  if (!shouldSealKey(key)) return value
   if (!value.startsWith(SEALED_PREFIX)) return value
   if (!canSeal()) {
     log.error('Vault is OS-sealed but safeStorage is unavailable')

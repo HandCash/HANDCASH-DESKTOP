@@ -119,6 +119,12 @@ export async function wipeAllWalletData(password: string): Promise<void> {
   clearCollectablesCache()
   clearImportedLegacyOutpoints()
 
+  try {
+    await window.handcash?.deviceAuthClear?.()
+  } catch {
+    // ignore
+  }
+
   wipeLocalStorage()
   await wipeIndexedDatabases()
 
