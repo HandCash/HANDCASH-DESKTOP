@@ -105,10 +105,26 @@ export async function scanAddressViaServices(
   return { address, chain, sats, utxos, source: 'services' }
 }
 
+export type ScanLegacyOptions = {
+  /** Skip Services and hit WhatsOnChain first (manual Refresh / empty wallet). */
+  preferWhatsOnChain?: boolean
+}
+
 /** Prefer Services; always fall back to WhatsOnChain when Services is empty/fails. */
-export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<LegacyScanResult> {
+export async function scanLegacyAddress(
+  active?: ActiveWallet | null,
+  opts?: ScanLegacyOptions,
+): Promise<LegacyScanResult> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
+
+  if (opts?.preferWhatsOnChain) {
+    try {
+      return await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+    } catch (err) {
+      console.warn('[legacy-scan] WhatsOnChain failed; trying services', err)
+    }
+  }
 
   let servicesResult: LegacyScanResult | null = null
   try {
