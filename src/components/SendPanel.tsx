@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { sendMachine } from '../machines/sendMachine'
@@ -56,6 +56,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
   const [showFriendMatches, setShowFriendMatches] = useState(false)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const sendInFlight = useRef(false)
   const sendState = stateToAttr(sendSnap.value)
 
   useEffect(() => subscribeFriends(setFriends), [])
@@ -131,9 +132,15 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
   }
 
   const confirmSend = async () => {
+    // Sync lock: React state lags a frame, so rapid Confirm taps each broadcast.
+    if (sendInFlight.current || !sendSnap.matches('confirming')) return
+    sendInFlight.current = true
+    const amount = sendSnap.context.amount
+    const to = sendSnap.context.to.trim()
+    const friendLabel = sendSnap.context.friendLabel
     send({ type: 'CONFIRM' })
     try {
-      const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+      const satoshis = amountToSats(amount, currency, usdPerBsv)
       if (!Number.isFinite(satoshis) || satoshis <= 0) {
         throw new Error(
           currency === 'usd' && usdPerBsv == null
@@ -142,11 +149,10 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
         )
       }
 
-      const to = sendSnap.context.to.trim()
       const { txid } = await sendSatsToAddress({
         to,
         satoshis,
-        friendLabel: sendSnap.context.friendLabel,
+        friendLabel,
       })
 
       send({ type: 'SUCCESS', txid })
@@ -164,6 +170,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
           console.warn('[send] balance refresh failed', err)
         })
     } catch (err) {
+      sendInFlight.current = false
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
     }

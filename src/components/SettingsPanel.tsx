@@ -397,7 +397,13 @@ export function SettingsPanel() {
                   HandCash
                   <span className="spec-tag">BRC-100</span>
                 </strong>
-                <span className="settings-row-desc">Desktop wallet</span>
+                <span className="settings-row-desc">
+                  {document.documentElement.classList.contains('platform-mobile') ||
+                  window.handcash?.platform === 'android' ||
+                  window.handcash?.platform === 'ios'
+                    ? 'Mobile wallet'
+                    : 'Desktop wallet'}
+                </span>
               </span>
             </button>
           </li>

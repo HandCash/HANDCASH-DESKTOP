@@ -16,12 +16,22 @@ const markSrc: Record<HandCashMarkVariant, string> = {
   light: handcashBrand.markLightPng,
 }
 
+function productLabel(): string {
+  const platform = window.handcash?.platform
+  if (platform === 'android' || platform === 'ios') return 'Mobile'
+  if (typeof document !== 'undefined' && document.documentElement.classList.contains('platform-mobile')) {
+    return 'Mobile'
+  }
+  return 'Desktop'
+}
+
 export function BrandLogo({
   variant = 'green',
   showWordmark = true,
   size = 34,
   className = '',
 }: Props) {
+  const edition = productLabel()
   return (
     <div className={`brand ${className}`.trim()} data-aeon-scope="identity" data-aeon-part="root">
       <DeferredImage
@@ -40,7 +50,7 @@ export function BrandLogo({
         <div className="brand-wordmark">
           <div className="brand-name">HandCash</div>
           <div className="brand-sub">
-            Desktop
+            {edition}
             <span className="brand-version">v{APP_VERSION}</span>
             <span className="brand-beta">BETA</span>
           </div>

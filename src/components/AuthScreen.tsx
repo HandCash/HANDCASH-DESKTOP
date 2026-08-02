@@ -616,7 +616,11 @@ export function AuthScreen({
             ) : (
               <p className="auth-alt">
                 Received <strong>{connectPkg.handle || connectPkg.identityKey.slice(0, 12)}</strong>.
-                Choose a password for this Desktop.
+                Choose a password for this{' '}
+                {document.documentElement.classList.contains('platform-mobile')
+                  ? 'phone'
+                  : 'Desktop'}
+                .
               </p>
             )}
           </>

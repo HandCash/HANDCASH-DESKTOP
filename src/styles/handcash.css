@@ -2076,6 +2076,10 @@ button.wallet-detail-value.is-copied {
   white-space: nowrap;
 }
 
+.wallet-nav-tab-label-short {
+  display: none;
+}
+
 .wallet-nav-count {
   position: static;
   box-sizing: border-box;

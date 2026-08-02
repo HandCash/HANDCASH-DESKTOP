@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
   getCollectable,
@@ -62,6 +62,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [stage, setStage] = useState<Stage>('edit')
   const [error, setError] = useState<string | null>(null)
   const [txid, setTxid] = useState<string | null>(null)
+  const sendInFlight = useRef(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
 
@@ -103,7 +104,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   }
 
   const confirmSend = async () => {
-    if (!item) return
+    if (!item || sendInFlight.current || stage !== 'confirm') return
+    sendInFlight.current = true
     setStage('sending')
     setError(null)
     let pendingId: string | null = null
@@ -154,6 +156,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
           console.warn('[send-collectable] balance refresh failed', err)
         })
     } catch (err) {
+      sendInFlight.current = false
       if (pendingId) clearPendingSend(pendingId)
       const message = err instanceof Error ? err.message : String(err)
       setError(message)

@@ -2,7 +2,17 @@ import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { APP_VERSION } from '../version'
 
+function productName(): string {
+  const platform = window.handcash?.platform
+  if (platform === 'android' || platform === 'ios') return 'HandCash Mobile'
+  if (typeof document !== 'undefined' && document.documentElement.classList.contains('platform-mobile')) {
+    return 'HandCash Mobile'
+  }
+  return 'HandCash Desktop'
+}
+
 export function AboutHandCashPanel() {
+  const name = productName()
   return (
     <div
       className="nav-section-body settings-scroll about-handcash"
@@ -11,7 +21,7 @@ export function AboutHandCashPanel() {
       <p className="settings-hint about-handcash-lead">
         <span className="spec-tag">BRC-100</span>
         <span className="settings-hint-after-tag">
-          HandCash Desktop is a self-custodial Bitcoin SV wallet. Keys stay on this device; apps
+          {name} is a self-custodial Bitcoin SV wallet. Keys stay on this device; apps
           connect through a local BRC-100 bridge, and you approve what they can do.
         </span>
       </p>

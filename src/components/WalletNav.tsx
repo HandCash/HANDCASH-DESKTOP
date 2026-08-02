@@ -64,14 +64,15 @@ type Props = {
 const SECTIONS: {
   value: NavSection
   label: string
+  shortLabel: string
   Icon: ComponentType<IconProps>
 }[] = [
-  { value: 'activity', label: 'Activity', Icon: ActivityIcon },
-  { value: 'apps', label: 'Apps', Icon: AppsIcon },
-  { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
-  { value: 'friends', label: 'Friends', Icon: FriendsIcon },
-  { value: 'identity', label: 'Identity', Icon: IdentityIcon },
-  { value: 'settings', label: 'Settings', Icon: SettingsIcon },
+  { value: 'activity', label: 'Activity', shortLabel: 'Activity', Icon: ActivityIcon },
+  { value: 'apps', label: 'Apps', shortLabel: 'Apps', Icon: AppsIcon },
+  { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
+  { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
+  { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },
+  { value: 'settings', label: 'Settings', shortLabel: 'Settings', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
@@ -259,7 +260,7 @@ export function WalletNav({
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
           <div className="wallet-nav-bar-track">
-            {SECTIONS.map(({ value, label, Icon }) => {
+            {SECTIONS.map(({ value, label, shortLabel, Icon }) => {
               const selected = nav.section === value
               return (
                 <button
@@ -275,6 +276,7 @@ export function WalletNav({
                 >
                   <Icon size={18} />
                   <span className="wallet-nav-tab-label">{label}</span>
+                  <span className="wallet-nav-tab-label-short">{shortLabel}</span>
                 </button>
               )
             })}

@@ -18,6 +18,8 @@ export type SyncLegacyFundsOptions = {
 const announcedOneSatOutpoints = new Set<string>()
 let lastReceiveChimeAt = 0
 const RECEIVE_CHIME_COOLDOWN_MS = 12_000
+/** Serialize sync — Dashboard interval + Refresh + post-send can overlap. */
+let syncInFlight: Promise<number | null> | null = null
 
 function maybeReceiveChime(): void {
   const now = Date.now()
@@ -35,6 +37,16 @@ function maybeReceiveChime(): void {
  * "external" output, so balance drops until those UTXOs are imported back.
  */
 export async function syncLegacyFunds(
+  opts?: SyncLegacyFundsOptions,
+): Promise<number | null> {
+  if (syncInFlight) return syncInFlight
+  syncInFlight = runSyncLegacyFunds(opts).finally(() => {
+    syncInFlight = null
+  })
+  return syncInFlight
+}
+
+async function runSyncLegacyFunds(
   opts?: SyncLegacyFundsOptions,
 ): Promise<number | null> {
   const announceReceive = opts?.announceReceive !== false
@@ -89,7 +101,23 @@ export async function syncLegacyFunds(
         }
       }
       if (funding.length > 0) {
+        const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
+        console.info(
+          `[sync] legacy scan ${funding.length} funding UTXO(s), ${fundingSats} sats`,
+          funding.map((u) => `${u.outpoint}:${u.satoshis}`),
+        )
         const result = await importLegacyUtxos(funding, active)
+        if (result.skippedAlreadyImported > 0) {
+          console.info(
+            `[sync] skipped ${result.skippedAlreadyImported} already-imported outpoint(s)`,
+          )
+        }
+        if (result.imported > 0) {
+          console.info(
+            `[sync] imported ${result.imported} outpoint(s)`,
+            result.importedOutpoints,
+          )
+        }
         if (result.failed > 0) {
           console.warn('[sync] legacy import partial', result)
           partialWarn =
@@ -110,6 +138,11 @@ export async function syncLegacyFunds(
 
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
+    if (balanceBeforeOk) {
+      console.info(
+        `[sync] balance ${balanceBefore} → ${balanceAfter} sats (Δ ${balanceAfter - balanceBefore})`,
+      )
+    }
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
       const newItems = newOneSatOutpoints.length > 0
