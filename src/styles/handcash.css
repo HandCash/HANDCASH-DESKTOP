@@ -3606,19 +3606,30 @@ a.app-details-host:hover {
 
 .qr-scanner {
   width: 100%;
-  max-width: 320px;
+  max-width: 360px;
 }
 
 .qr-scanner-view {
+  position: relative;
   overflow: hidden;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
   background: #050505;
-  min-height: 240px;
+  min-height: 260px;
+  aspect-ratio: 3 / 4;
 }
 
-.qr-scanner-view video {
+.qr-scanner-view video,
+.qr-scanner-video {
+  display: block;
   width: 100% !important;
+  height: 100% !important;
+  object-fit: cover;
+  background: #050505;
+}
+
+.qr-scanner-view img {
+  display: none !important;
 }
 
 .settings-row-static {
