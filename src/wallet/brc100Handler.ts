@@ -150,6 +150,13 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
 
   const active = getActiveWallet()
   if (!active) {
+    // Discovery must succeed while locked — WalletClient probes getVersion first.
+    if (method === 'getVersion') {
+      return { status: 200, body: JSON.stringify({ version: 'HandCash' }) }
+    }
+    if (method === 'isAuthenticated') {
+      return { status: 200, body: JSON.stringify({ authenticated: false }) }
+    }
     requestUnlockForBridge()
     return {
       status: 503,
