@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import QRCode from 'qrcode'
 import {
+  PAIRING_QR_PREFIX,
   createEmbeddedPairingOffer,
   decodePairingQr,
   resolvePairingPackage,
@@ -73,11 +74,12 @@ export function LinkDevicePanel() {
         },
         TTL_MS,
       )
+      // Dense embedded-link payloads need a large, low-ECC render to stay scannable.
       const dataUrl = await QRCode.toDataURL(qrText, {
-        margin: 1,
-        width: 280,
+        margin: 2,
+        width: 512,
         color: { dark: '#000000', light: '#ffffff' },
-        errorCorrectionLevel: 'M',
+        errorCorrectionLevel: 'L',
       })
       setOffer(next)
       setQrDataUrl(dataUrl)
@@ -93,13 +95,17 @@ export function LinkDevicePanel() {
   }
 
   const ingestQr = async (text: string) => {
+    const raw = text.trim()
+    // Keep the camera running for unrelated / partial reads.
+    if (!raw.startsWith(PAIRING_QR_PREFIX)) return
+    if (busy || pendingPkg) return
     setBusy(true)
     try {
-      const decoded = decodePairingQr(text)
+      const decoded = decodePairingQr(raw)
       const pkg = await resolvePairingPackage(decoded)
       setPendingPkg(pkg)
       playWalletSound('soft')
-      toastSuccess('Wallet received — set a password for this Desktop')
+      toastSuccess('Wallet received — set a password for this device')
     } catch (err) {
       playWalletSound('error')
       toastError('Invalid link', err instanceof Error ? err.message : String(err))
@@ -213,7 +219,7 @@ export function LinkDevicePanel() {
 
       {mode === 'show' && qrDataUrl ? (
         <div className="link-device-qr">
-          <img src={qrDataUrl} alt="Device link QR" width={280} height={280} />
+          <img src={qrDataUrl} alt="Device link QR" width={360} height={360} />
           <p className="settings-hint">
             Expires in {secondsLeft}s
             {offer?.handle ? ` · ${offer.handle}` : ''}
@@ -233,7 +239,7 @@ export function LinkDevicePanel() {
 
       {mode === 'scan' && !pendingPkg ? (
         <>
-          <QrScanner active={!busy} onScan={(text) => void ingestQr(text)} />
+          <QrScanner active onScan={(text) => void ingestQr(text)} />
           <div className="field">
             <label htmlFor="link-paste">Or paste link payload</label>
             <input

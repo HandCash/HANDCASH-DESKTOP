@@ -3599,14 +3599,18 @@ a.app-details-host:hover {
 }
 
 .link-device-qr img {
+  width: min(100%, 360px);
+  height: auto;
   border-radius: 12px;
   background: #fff;
-  padding: 10px;
+  padding: 12px;
 }
 
 .qr-scanner {
   width: 100%;
-  max-width: 360px;
+  max-width: 420px;
+  display: grid;
+  gap: 8px;
 }
 
 .qr-scanner-view {
@@ -3615,7 +3619,7 @@ a.app-details-host:hover {
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
   background: #050505;
-  min-height: 260px;
+  min-height: 280px;
   aspect-ratio: 3 / 4;
 }
 
@@ -3624,12 +3628,18 @@ a.app-details-host:hover {
   display: block;
   width: 100% !important;
   height: 100% !important;
-  object-fit: cover;
+  /* contain = what you see is what is decoded (no CSS crop mismatch) */
+  object-fit: contain;
   background: #050505;
 }
 
-.qr-scanner-view img {
-  display: none !important;
+.qr-scanner-view .qr-scanner-reticle {
+  position: absolute;
+  inset: 12%;
+  border: 2px solid color-mix(in srgb, var(--hc-accent, #3ddc97) 75%, transparent);
+  border-radius: 12px;
+  pointer-events: none;
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
 }
 
 .settings-row-static {
@@ -4039,15 +4049,15 @@ a.app-details-host:hover {
   display: block;
   width: 100%;
   height: 100%;
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .qr-scanner-reticle {
   position: absolute;
-  inset: 18%;
+  inset: 12%;
   border: 2px solid color-mix(in srgb, var(--hc-accent) 70%, transparent);
   border-radius: 12px;
-  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 0 0 999px rgba(0, 0, 0, 0.28);
   pointer-events: none;
 }
 

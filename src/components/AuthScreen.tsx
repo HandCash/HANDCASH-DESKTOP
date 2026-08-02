@@ -22,6 +22,7 @@ import {
   verifyBackupServiceAuth,
 } from '../wallet/backupServiceClient'
 import {
+  PAIRING_QR_PREFIX,
   decodePairingQr,
   resolvePairingPackage,
   type PairingPackage,
@@ -332,8 +333,11 @@ export function AuthScreen({
   }
 
   const ingestConnectQr = async (text: string) => {
+    const raw = text.trim()
+    if (!raw.startsWith(PAIRING_QR_PREFIX)) return
+    if (connectPkg) return
     try {
-      const offer = decodePairingQr(text)
+      const offer = decodePairingQr(raw)
       const pkg = await resolvePairingPackage(offer)
       setConnectPkg(pkg)
       playWalletSound('soft')
@@ -599,10 +603,7 @@ export function AuthScreen({
           <>
             {!connectPkg ? (
               <>
-                <QrScanner
-                  active={!submitting}
-                  onScan={(text) => void ingestConnectQr(text)}
-                />
+                <QrScanner active onScan={(text) => void ingestConnectQr(text)} />
                 <div className="field" data-aeon-part="field">
                   <label htmlFor="connect-paste">Or paste link payload</label>
                   <input
