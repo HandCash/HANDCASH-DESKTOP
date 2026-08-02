@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.1] - 2026-08-02
+
+### Changed
+
+- Remove Twonk support; keep item permission hardening (view/send/receive separate from Pay).
+
 ## [1.2.0] - 2026-08-01
 
 ### Added
