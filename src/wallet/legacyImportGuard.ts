@@ -4,6 +4,9 @@
  * fundWalletFromP2PKHOutpoints can succeed locally before WhatsOnChain drops the
  * UTXO from /unspent. A second sync would otherwise import it again and 2–3× the
  * balance for a single external payment.
+ *
+ * Must be cleared on wipe/restore — otherwise a emptied IDB still blocks re-import
+ * of UTXOs that remain on the receive address.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
@@ -64,4 +67,28 @@ export function markLegacyOutpointImported(outpoint: string): void {
 
 export function releaseLegacyOutpointClaim(outpoint: string): void {
   inFlight.delete(outpoint)
+}
+
+/** Forget specific outpoints so they can be swept again (empty wallet after reimport). */
+export function forgetLegacyOutpoints(outpoints: string[]): void {
+  load()
+  let changed = false
+  for (const op of outpoints) {
+    inFlight.delete(op)
+    if (memory.delete(op)) changed = true
+  }
+  if (changed) persist()
+}
+
+/** Full reset — wipe / restore / factory reset. */
+export function clearImportedLegacyOutpoints(): void {
+  memory.clear()
+  inFlight.clear()
+  loaded = true
+  try {
+    durableSetItem(STORAGE_KEY, '')
+    localStorage.removeItem(STORAGE_KEY)
+  } catch {
+    // ignore
+  }
 }

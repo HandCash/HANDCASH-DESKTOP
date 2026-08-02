@@ -1,4 +1,5 @@
 import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'
+import { forgetLegacyOutpoints, wasLegacyOutpointImported } from './legacyImportGuard'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
@@ -102,6 +103,15 @@ async function runSyncLegacyFunds(
       }
       if (funding.length > 0) {
         const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
+        // After wipe/reimport, IDB is empty but the import-guard may still block
+        // outpoints that remain unspent on the receive address.
+        const blocked = funding.filter((u) => wasLegacyOutpointImported(u.outpoint))
+        if (blocked.length > 0 && balanceBefore < fundingSats) {
+          console.warn(
+            `[sync] forgetting ${blocked.length} guarded outpoint(s) — wallet has ${balanceBefore} sats but address holds ${fundingSats}`,
+          )
+          forgetLegacyOutpoints(blocked.map((u) => u.outpoint))
+        }
         console.info(
           `[sync] legacy scan ${funding.length} funding UTXO(s), ${fundingSats} sats`,
           funding.map((u) => `${u.outpoint}:${u.satoshis}`),

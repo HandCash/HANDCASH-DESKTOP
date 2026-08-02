@@ -1,6 +1,11 @@
 import { P2PKH, PrivateKey } from '@bsv/sdk'
 import { SetupClient, type Services } from '@bsv/wallet-toolbox-client'
 import {
+  hasActivityTxid,
+  recordAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+} from './appActivity'
+import {
   claimLegacyOutpoints,
   markLegacyOutpointImported,
   releaseLegacyOutpointClaim,
@@ -100,18 +105,40 @@ export async function scanAddressViaServices(
   return { address, chain, sats, utxos, source: 'services' }
 }
 
-/** Prefer Services, fall back to WhatsOnChain REST. */
+/** Prefer Services; always fall back to WhatsOnChain when Services is empty/fails. */
 export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<LegacyScanResult> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
+
+  let servicesResult: LegacyScanResult | null = null
   try {
     if (wallet.services) {
-      return await scanAddressViaServices(wallet.services, wallet.address, wallet.chain)
+      servicesResult = await scanAddressViaServices(
+        wallet.services,
+        wallet.address,
+        wallet.chain,
+      )
+      if (servicesResult.utxos.length > 0) return servicesResult
+      console.info('[legacy-scan] services returned 0 UTXOs — trying WhatsOnChain')
     }
   } catch (err) {
     console.warn('[legacy-scan] services failed, trying WhatsOnChain', err)
   }
-  return scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+
+  try {
+    const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+    if (woc.utxos.length > 0 || !servicesResult) return woc
+  } catch (err) {
+    if (!servicesResult) throw err
+    console.warn('[legacy-scan] WhatsOnChain failed; using empty services result', err)
+  }
+  return servicesResult ?? {
+    address: wallet.address,
+    chain: wallet.chain,
+    sats: 0,
+    utxos: [],
+    source: 'whatsonchain',
+  }
 }
 
 export type ImportLegacyResult = {
@@ -184,12 +211,26 @@ export async function importLegacyUtxos(
   const importedOutpoints: string[] = []
   const resultByOp = new Map(results.map((r) => [r.outpoint, r]))
 
+  const satByOp = new Map(toImport.map((u) => [u.outpoint, u.satoshis]))
+
   for (const op of claimed) {
     const r = resultByOp.get(op)
     if (r?.success) {
       imported += 1
       importedOutpoints.push(op)
       markLegacyOutpointImported(op)
+      const sats = satByOp.get(op) ?? 0
+      const txid = op.includes('.') ? op.slice(0, op.lastIndexOf('.')) : op
+      if (sats > 0 && !hasActivityTxid(txid)) {
+        recordAppActivity({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          kind: 'earned',
+          sats,
+          method: 'legacy-import',
+          note: 'Received (legacy address)',
+          txid,
+        })
+      }
     } else {
       failed += 1
       releaseLegacyOutpointClaim(op)

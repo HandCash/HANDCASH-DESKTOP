@@ -11,6 +11,8 @@ import {
   type UnlockedVault,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
+import { clearImportedLegacyOutpoints } from '../wallet/legacyImportGuard'
+import { syncLegacyFunds } from '../wallet/syncFunds'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import {
@@ -132,12 +134,20 @@ export function AuthScreen({
     recoveryOnly
 
   const finishCreated = async (unlocked: UnlockedVault) => {
+    // Fresh vault / restore — never inherit a prior device's import-skip list.
+    clearImportedLegacyOutpoints()
     const active = await bootWallet({
       rootKeyHex: unlocked.rootKeyHex,
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
     })
-    const balanceSats = await fetchBalanceSats(active.wallet)
+    let balanceSats = await fetchBalanceSats(active.wallet)
+    try {
+      const synced = await syncLegacyFunds({ announceReceive: false })
+      if (synced != null) balanceSats = synced
+    } catch (err) {
+      console.warn('[auth] post-create legacy sync failed', err)
+    }
     send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()

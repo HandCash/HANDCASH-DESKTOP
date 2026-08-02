@@ -6,6 +6,7 @@ import { unlockVault } from './vault'
 import { clearActiveWallet } from './session'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
+import { clearImportedLegacyOutpoints } from './legacyImportGuard'
 
 const KEY_PREFIX = 'handcash.brc100'
 const PENDING_IDB_WIPE = 'handcash.brc100.pendingIdbWipe'
@@ -116,6 +117,7 @@ export async function wipeAllWalletData(password: string): Promise<void> {
   clearPermissionSession()
   clearActiveWallet()
   clearCollectablesCache()
+  clearImportedLegacyOutpoints()
 
   wipeLocalStorage()
   await wipeIndexedDatabases()
@@ -124,5 +126,6 @@ export async function wipeAllWalletData(password: string): Promise<void> {
     await window.handcash.wipeWalletStorage()
   }
 
+  clearImportedLegacyOutpoints()
   wipeLocalStorage()
 }
