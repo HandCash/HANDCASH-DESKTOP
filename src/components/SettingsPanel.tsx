@@ -48,7 +48,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'link-device',
         label: 'Link device',
-        description: 'QR login like Telegram',
+        description: 'Show or scan QR either way',
       },
       {
         id: 'change-password',

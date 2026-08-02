@@ -3600,6 +3600,23 @@ a.app-details-host:hover {
   padding: 10px;
 }
 
+.qr-scanner {
+  width: 100%;
+  max-width: 320px;
+}
+
+.qr-scanner-view {
+  overflow: hidden;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
+  background: #050505;
+  min-height: 240px;
+}
+
+.qr-scanner-view video {
+  width: 100% !important;
+}
+
 .settings-row-static {
   padding: 8px;
 }

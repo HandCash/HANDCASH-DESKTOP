@@ -19,7 +19,14 @@ import {
   userIdHashFromEmail,
   verifyBackupServiceAuth,
 } from '../wallet/backupServiceClient'
+import {
+  decodePairingQr,
+  resolvePairingPackage,
+  type PairingPackage,
+} from '../wallet/deviceLinkProtocol'
+import { setHistoryBackupPrefs } from '../wallet/historyBackupPrefs'
 import { playWalletSound } from '../wallet/soundService'
+import { QrScanner } from './QrScanner'
 import {
   clearUnlockNudge,
   subscribeUnlockNudge,
@@ -38,7 +45,7 @@ type Props = {
 
 /** Custody restore paths the vault can bootstrap from. */
 type RestoreMethod = 'phrase' | 'shares' | 'key' | 'services'
-type FormMode = 'create' | 'unlock' | RestoreMethod
+type FormMode = 'create' | 'unlock' | 'connect' | RestoreMethod
 
 const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
@@ -103,6 +110,8 @@ export function AuthScreen({
   const [serviceEmail, setServiceEmail] = useState('')
   const [serviceUrl1, setServiceUrl1] = useState('http://127.0.0.1:8787')
   const [serviceUrl2, setServiceUrl2] = useState('http://127.0.0.1:8788')
+  const [connectPkg, setConnectPkg] = useState<PairingPackage | null>(null)
+  const [connectPaste, setConnectPaste] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const shareFileRef = useRef<HTMLInputElement>(null)
@@ -145,7 +154,7 @@ export function AuthScreen({
 
   const submit = async () => {
     if (snapshot.matches('submitting')) return
-    if (formMode === 'create' || isRestoreMethod(formMode)) {
+    if (formMode === 'create' || isRestoreMethod(formMode) || formMode === 'connect') {
       const pwError = validatePassword(snapshot.context.password)
       if (pwError) {
         onFail(pwError)
@@ -215,6 +224,21 @@ export function AuthScreen({
           password,
           chain,
         })
+        await finishCreated(unlocked)
+        return
+      }
+
+      if (formMode === 'connect') {
+        if (!connectPkg) throw new Error('Scan or paste a link QR from the other device first')
+        const unlocked = await restoreVaultFromRootKey({
+          rootKeyHex: connectPkg.rootKeyHex,
+          password,
+          chain: connectPkg.chain,
+          handle: connectPkg.handle || undefined,
+        })
+        if (connectPkg.historyBackupBaseUrl) {
+          setHistoryBackupPrefs({ baseUrl: connectPkg.historyBackupBaseUrl })
+        }
         await finishCreated(unlocked)
         return
       }
@@ -297,29 +321,49 @@ export function AuthScreen({
     }
   }
 
-  const title = isRestoreMethod(formMode)
-    ? 'Restore wallet'
-    : formMode === 'create'
-      ? 'Create wallet'
-      : 'Welcome back'
+  const ingestConnectQr = async (text: string) => {
+    try {
+      const offer = decodePairingQr(text)
+      const pkg = await resolvePairingPackage(offer)
+      setConnectPkg(pkg)
+      playWalletSound('soft')
+    } catch (err) {
+      playWalletSound('error')
+      onFail(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  const title =
+    formMode === 'connect'
+      ? 'Connect existing wallet'
+      : isRestoreMethod(formMode)
+        ? 'Restore wallet'
+        : formMode === 'create'
+          ? 'Create wallet'
+          : 'Welcome back'
 
   const lede =
-    formMode === 'phrase'
-      ? 'Enter your recovery phrase and choose a password for this device.'
-      : formMode === 'shares'
-        ? 'Paste any two BRC-140 key slices and choose a password for this device.'
-        : formMode === 'key'
-          ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
-          : formMode === 'create'
-            ? 'Pick a password. Your keys stay on this device. Back up with a phrase, key slices, or emergency key after unlock.'
-            : 'Enter your password to unlock.'
+    formMode === 'connect'
+      ? 'Scan the link QR from your other HandCash device (phone or Desktop), then choose a password for this computer.'
+      : formMode === 'phrase'
+        ? 'Enter your recovery phrase and choose a password for this device.'
+        : formMode === 'shares'
+          ? 'Paste any two BRC-140 key slices and choose a password for this device.'
+          : formMode === 'key'
+            ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
+            : formMode === 'create'
+              ? 'Pick a password. Your keys stay on this device. Back up with a phrase, key slices, or emergency key after unlock.'
+              : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
-  const primaryLabel = isRestoreMethod(formMode)
-    ? 'Restore'
-    : formMode === 'create'
-      ? 'Create'
-      : 'Unlock'
+  const primaryLabel =
+    formMode === 'connect'
+      ? 'Connect'
+      : isRestoreMethod(formMode)
+        ? 'Restore'
+        : formMode === 'create'
+          ? 'Create'
+          : 'Unlock'
 
   return (
     <section className="auth-screen" data-aeon-scope="auth" data-aeon-state={stateAttr}>
@@ -541,22 +585,61 @@ export function AuthScreen({
           </>
         ) : null}
 
-        <div className="field" data-aeon-part="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            placeholder={
-              formMode === 'unlock'
-                ? 'Your password'
-                : '10+ chars, letter and number'
-            }
-            value={snapshot.context.password}
-            onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
-            autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
-            autoFocus={formMode === 'unlock' || formMode === 'create'}
-          />
-        </div>
+        {formMode === 'connect' ? (
+          <>
+            {!connectPkg ? (
+              <>
+                <QrScanner
+                  active={!submitting}
+                  onScan={(text) => void ingestConnectQr(text)}
+                />
+                <div className="field" data-aeon-part="field">
+                  <label htmlFor="connect-paste">Or paste link payload</label>
+                  <input
+                    id="connect-paste"
+                    value={connectPaste}
+                    onChange={(e) => setConnectPaste(e.target.value)}
+                    placeholder="handcash-link:…"
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={!connectPaste.trim()}
+                  onClick={() => void ingestConnectQr(connectPaste)}
+                >
+                  Use pasted link
+                </button>
+              </>
+            ) : (
+              <p className="auth-alt">
+                Received <strong>{connectPkg.handle || connectPkg.identityKey.slice(0, 12)}</strong>.
+                Choose a password for this Desktop.
+              </p>
+            )}
+          </>
+        ) : null}
+
+        {formMode !== 'connect' || connectPkg ? (
+          <div className="field" data-aeon-part="field">
+            <label htmlFor="password">Password</label>
+            <input
+              id="password"
+              type="password"
+              placeholder={
+                formMode === 'unlock'
+                  ? 'Your password'
+                  : '10+ chars, letter and number'
+              }
+              value={snapshot.context.password}
+              onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
+              autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
+              autoFocus={formMode === 'unlock' || formMode === 'create'}
+            />
+          </div>
+        ) : null}
 
         {(error || snapshot.context.error) && (
           <p className="error auth-error" role="alert">
@@ -564,21 +647,46 @@ export function AuthScreen({
           </p>
         )}
 
-        <button
-          type="submit"
-          className="btn btn-primary auth-submit"
-          data-aeon-part="trigger"
-          data-aeon-state={stateAttr}
-          disabled={submitting}
-        >
-          {submitting ? 'Working…' : primaryLabel}
-        </button>
+        {formMode !== 'connect' || connectPkg ? (
+          <button
+            type="submit"
+            className="btn btn-primary auth-submit"
+            data-aeon-part="trigger"
+            data-aeon-state={stateAttr}
+            disabled={submitting}
+          >
+            {submitting ? 'Working…' : primaryLabel}
+          </button>
+        ) : null}
 
         {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
           <p className="auth-alt">
-            Already have a backup?{' '}
+            Already have a wallet?{' '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('connect')}>
+              Connect existing
+            </button>
+            {' · '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('phrase')}>
-              Restore
+              Restore backup
+            </button>
+          </p>
+        ) : null}
+
+        {mode === 'onboarding' && !recoveryOnly && formMode === 'connect' ? (
+          <p className="auth-alt">
+            <button
+              type="button"
+              className="auth-alt-link"
+              onClick={() => {
+                setConnectPkg(null)
+                setFormMode('create')
+              }}
+            >
+              Create a wallet
+            </button>
+            {' · '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('phrase')}>
+              Restore backup
             </button>
           </p>
         ) : null}
@@ -588,6 +696,10 @@ export function AuthScreen({
             New here?{' '}
             <button type="button" className="auth-alt-link" onClick={() => setFormMode('create')}>
               Create a wallet
+            </button>
+            {' · '}
+            <button type="button" className="auth-alt-link" onClick={() => setFormMode('connect')}>
+              Connect existing
             </button>
           </p>
         ) : null}
