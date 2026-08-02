@@ -54,6 +54,21 @@ export async function restoreBrc39BackupBytes(
   )
 }
 
+/**
+ * Merge a BRC-39 blob into the already-unlocked active wallet.
+ * `brc39Password` decrypts the file only — it may differ from this device's vault password
+ * (device-link transfers use the source password for the blob).
+ */
+export async function importBrc39IntoActiveWallet(
+  bytes: number[] | Uint8Array,
+  brc39Password: string,
+  mode: 'merge' | 'restore' = 'merge',
+): Promise<BRC38ImportResult> {
+  return withActiveStorageProvider((storage) =>
+    importBRC39(storage, bytes, brc39Password, { mode }),
+  )
+}
+
 export function downloadBrc39File(bytes: Uint8Array, filename = 'wallet.brc39'): void {
   const copy = asArrayBufferBytes(bytes)
   const blob = new Blob([copy], { type: BRC39_MEDIA })

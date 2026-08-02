@@ -3604,6 +3604,11 @@ a.app-details-host:hover {
   border-radius: 12px;
   background: #fff;
   padding: 12px;
+  image-rendering: pixelated;
+}
+
+.link-receive-progress {
+  font-variant-numeric: tabular-nums;
 }
 
 .qr-scanner {

@@ -21,13 +21,13 @@ import {
   userIdHashFromEmail,
   verifyBackupServiceAuth,
 } from '../wallet/backupServiceClient'
+import { applyLinkedWallet } from '../wallet/applyLinkedWallet'
 import {
-  PAIRING_QR_PREFIX,
-  decodePairingQr,
-  resolvePairingPackage,
+  LinkQrAssembler,
+  isLinkQrPayload,
+  type LinkAssembleProgress,
   type PairingPackage,
 } from '../wallet/deviceLinkProtocol'
-import { setHistoryBackupPrefs } from '../wallet/historyBackupPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { QrScanner } from './QrScanner'
 import {
@@ -115,9 +115,11 @@ export function AuthScreen({
   const [serviceUrl2, setServiceUrl2] = useState('http://127.0.0.1:8788')
   const [connectPkg, setConnectPkg] = useState<PairingPackage | null>(null)
   const [connectPaste, setConnectPaste] = useState('')
+  const [connectProgress, setConnectProgress] = useState<LinkAssembleProgress | null>(null)
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const shareFileRef = useRef<HTMLInputElement>(null)
+  const linkAssemblerRef = useRef(new LinkQrAssembler())
 
   useEffect(() => {
     if (recoveryOnly) setFormMode('phrase')
@@ -241,16 +243,25 @@ export function AuthScreen({
 
       if (formMode === 'connect') {
         if (!connectPkg) throw new Error('Scan or paste a link QR from the other device first')
-        const unlocked = await restoreVaultFromRootKey({
-          rootKeyHex: connectPkg.rootKeyHex,
+        const { unlocked, balanceSats, historyRestored } = await applyLinkedWallet(
+          connectPkg,
           password,
-          chain: connectPkg.chain,
-          handle: connectPkg.handle || undefined,
-        })
-        if (connectPkg.historyBackupBaseUrl) {
-          setHistoryBackupPrefs({ baseUrl: connectPkg.historyBackupBaseUrl })
+        )
+        send({ type: 'SUCCESS' })
+        playWalletSound('unlock')
+        clearUnlockNudge()
+        onCreated(
+          {
+            handle: unlocked.record.handle,
+            identityKey: unlocked.record.identityKey,
+            address: unlocked.record.address,
+            chain: unlocked.record.chain,
+          },
+          balanceSats,
+        )
+        if (!historyRestored) {
+          console.warn('[auth] linked without BRC-39 history — balance may need Refresh')
         }
-        await finishCreated(unlocked)
         return
       }
 
@@ -334,15 +345,18 @@ export function AuthScreen({
 
   const ingestConnectQr = async (text: string) => {
     const raw = text.trim()
-    if (!raw.startsWith(PAIRING_QR_PREFIX)) return
+    if (!isLinkQrPayload(raw)) return
     if (connectPkg) return
     try {
-      const offer = decodePairingQr(raw)
-      const pkg = await resolvePairingPackage(offer)
+      const pkg = await linkAssemblerRef.current.ingest(raw)
+      setConnectProgress(linkAssemblerRef.current.progress)
+      if (!pkg) return
       setConnectPkg(pkg)
       playWalletSound('soft')
     } catch (err) {
       playWalletSound('error')
+      linkAssemblerRef.current.reset()
+      setConnectProgress(null)
       onFail(err instanceof Error ? err.message : String(err))
     }
   }
@@ -603,14 +617,25 @@ export function AuthScreen({
           <>
             {!connectPkg ? (
               <>
-                <QrScanner active onScan={(text) => void ingestConnectQr(text)} />
+                <QrScanner
+                  active
+                  dedupeMs={400}
+                  onScan={(text) => void ingestConnectQr(text)}
+                />
+                {connectProgress && connectProgress.total > 0 ? (
+                  <p className="auth-alt">
+                    Receiving {connectProgress.have}/{connectProgress.total} frames…
+                  </p>
+                ) : (
+                  <p className="auth-alt">Aim at the flashing QR — frames can arrive in any order.</p>
+                )}
                 <div className="field" data-aeon-part="field">
                   <label htmlFor="connect-paste">Or paste link payload</label>
                   <input
                     id="connect-paste"
                     value={connectPaste}
                     onChange={(e) => setConnectPaste(e.target.value)}
-                    placeholder="handcash-link:…"
+                    placeholder="handcash-link:… or handcash-link3:…"
                     autoComplete="off"
                     spellCheck={false}
                   />
@@ -626,8 +651,8 @@ export function AuthScreen({
               </>
             ) : (
               <p className="auth-alt">
-                Received <strong>{connectPkg.handle || connectPkg.identityKey.slice(0, 12)}</strong>.
-                Choose a password for this{' '}
+                Received <strong>{connectPkg.handle || connectPkg.identityKey.slice(0, 12)}</strong>
+                {connectPkg.brc39Base64 ? ' with spendable history' : ''}. Choose a password for this{' '}
                 {document.documentElement.classList.contains('platform-mobile')
                   ? 'phone'
                   : 'Desktop'}

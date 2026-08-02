@@ -1,26 +1,25 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
+import { applyLinkedWallet } from '../wallet/applyLinkedWallet'
 import {
-  PAIRING_QR_PREFIX,
-  createEmbeddedPairingOffer,
-  decodePairingQr,
-  resolvePairingPackage,
-  type PairingOfferV2,
+  LINK_FLASH_FPS,
+  LinkQrAssembler,
+  createLinkFlashSession,
+  isLinkQrPayload,
+  packageWithHistory,
+  type LinkAssembleProgress,
+  type LinkFlashSession,
+  type PairingPackage,
 } from '../wallet/deviceLinkProtocol'
-import { getHistoryBackupPrefs, setHistoryBackupPrefs } from '../wallet/historyBackupPrefs'
+import { createBrc39BackupBytes } from '../wallet/historyBackup'
+import { getHistoryBackupPrefs } from '../wallet/historyBackupPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
-import {
-  hasVault,
-  revealRootKeyHex,
-  readVaultMeta,
-  restoreVaultFromRootKey,
-} from '../wallet/vault'
+import { hasVault, readVaultMeta, revealRootKeyHex } from '../wallet/vault'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { QrScanner } from './QrScanner'
-import { clearActiveWallet } from '../wallet/session'
 
-const TTL_MS = 120_000
+const TTL_MS = 180_000
 
 type Mode = 'show' | 'scan'
 
@@ -29,29 +28,62 @@ export function LinkDevicePanel() {
   const [mode, setMode] = useState<Mode>('show')
   const [password, setPassword] = useState('')
   const [busy, setBusy] = useState(false)
-  const [qrDataUrl, setQrDataUrl] = useState<string | null>(null)
-  const [offer, setOffer] = useState<PairingOfferV2 | null>(null)
+  const [flash, setFlash] = useState<LinkFlashSession | null>(null)
+  const [flashIndex, setFlashIndex] = useState(0)
+  const [flashDataUrl, setFlashDataUrl] = useState<string | null>(null)
   const [secondsLeft, setSecondsLeft] = useState(0)
   const [manual, setManual] = useState('')
   const [scanPassword, setScanPassword] = useState('')
-  const [pendingPkg, setPendingPkg] = useState<Awaited<
-    ReturnType<typeof resolvePairingPackage>
-  > | null>(null)
+  const [pendingPkg, setPendingPkg] = useState<PairingPackage | null>(null)
+  const [receiveProgress, setReceiveProgress] = useState<LinkAssembleProgress | null>(null)
+  const assemblerRef = useRef(new LinkQrAssembler())
 
   useEffect(() => {
-    if (!offer) return
+    if (!flash) return
     const tick = () => {
-      const left = Math.max(0, Math.ceil((offer.expiresAt - Date.now()) / 1000))
+      const left = Math.max(0, Math.ceil((flash.expiresAt - Date.now()) / 1000))
       setSecondsLeft(left)
       if (left <= 0) {
-        setQrDataUrl(null)
-        setOffer(null)
+        setFlash(null)
+        setFlashDataUrl(null)
       }
     }
     tick()
     const id = window.setInterval(tick, 500)
     return () => window.clearInterval(id)
-  }, [offer])
+  }, [flash])
+
+  // Cycle QR frames for the multi-code transfer.
+  useEffect(() => {
+    if (!flash || flash.frames.length === 0) return
+    let cancelled = false
+    let i = 0
+    const paint = async (index: number) => {
+      try {
+        const dataUrl = await QRCode.toDataURL(flash.frames[index]!, {
+          margin: 2,
+          width: 512,
+          color: { dark: '#000000', light: '#ffffff' },
+          errorCorrectionLevel: 'L',
+        })
+        if (!cancelled) {
+          setFlashIndex(index)
+          setFlashDataUrl(dataUrl)
+        }
+      } catch (err) {
+        console.warn('[link] frame render failed', err)
+      }
+    }
+    void paint(0)
+    const id = window.setInterval(() => {
+      i = (i + 1) % flash.frames.length
+      void paint(i)
+    }, Math.round(1000 / LINK_FLASH_FPS))
+    return () => {
+      cancelled = true
+      window.clearInterval(id)
+    }
+  }, [flash])
 
   const startShow = async () => {
     if (password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
@@ -60,32 +92,44 @@ export function LinkDevicePanel() {
     }
     setBusy(true)
     try {
-      const rootKeyHex = await revealRootKeyHex(password)
-      const { offer: next, qrText } = await createEmbeddedPairingOffer(
-        {
+      const base = {
+        rootKeyHex: '', // filled below via packageWithHistory path
+        handle: meta?.handle ?? '',
+        identityKey: meta?.identityKey ?? '',
+        address: meta?.address ?? '',
+        chain: (meta?.chain ?? 'main') as 'main' | 'test',
+        historyBackupBaseUrl: getHistoryBackupPrefs().baseUrl,
+        createdAt: Date.now(),
+      }
+
+      // Export history first (needs unlocked storage + password).
+      let pkg: PairingPackage
+      try {
+        const rootKeyHex = await revealRootKeyHex(password)
+        const brc39 = await createBrc39BackupBytes(password)
+        pkg = packageWithHistory({ ...base, rootKeyHex }, brc39, password)
+      } catch (err) {
+        console.warn('[link] history export failed — keys only', err)
+        const rootKeyHex = await revealRootKeyHex(password)
+        pkg = {
           v: 1,
+          ...base,
           rootKeyHex,
-          handle: meta?.handle ?? '',
-          identityKey: meta?.identityKey ?? '',
-          address: meta?.address ?? '',
-          chain: meta?.chain ?? 'main',
-          historyBackupBaseUrl: getHistoryBackupPrefs().baseUrl,
-          createdAt: Date.now(),
-        },
-        TTL_MS,
-      )
-      // Dense embedded-link payloads need a large, low-ECC render to stay scannable.
-      const dataUrl = await QRCode.toDataURL(qrText, {
-        margin: 2,
-        width: 512,
-        color: { dark: '#000000', light: '#ffffff' },
-        errorCorrectionLevel: 'L',
-      })
-      setOffer(next)
-      setQrDataUrl(dataUrl)
+        }
+        toastError(
+          'History export failed',
+          'Sending keys only — balance may need Refresh / History restore on the other device.',
+        )
+      }
+
+      const session = await createLinkFlashSession(pkg, TTL_MS)
+      setFlash(session)
       setPassword('')
       playWalletSound('soft')
-      toastSuccess('Scan on the other device')
+      toastSuccess(
+        session.hasHistory ? 'Point the other device at the flashing QR' : 'Scan the flashing QR',
+        `${session.frameCount} frames`,
+      )
     } catch (err) {
       playWalletSound('error')
       toastError('Could not create link QR', err instanceof Error ? err.message : String(err))
@@ -96,21 +140,23 @@ export function LinkDevicePanel() {
 
   const ingestQr = async (text: string) => {
     const raw = text.trim()
-    // Keep the camera running for unrelated / partial reads.
-    if (!raw.startsWith(PAIRING_QR_PREFIX)) return
-    if (busy || pendingPkg) return
-    setBusy(true)
+    if (!isLinkQrPayload(raw)) return
+    if (pendingPkg) return
     try {
-      const decoded = decodePairingQr(raw)
-      const pkg = await resolvePairingPackage(decoded)
+      const pkg = await assemblerRef.current.ingest(raw)
+      setReceiveProgress(assemblerRef.current.progress)
+      if (!pkg) return
       setPendingPkg(pkg)
       playWalletSound('soft')
-      toastSuccess('Wallet received — set a password for this device')
+      toastSuccess(
+        pkg.brc39Base64 ? 'Wallet + history received' : 'Wallet keys received',
+        'Set a password for this device',
+      )
     } catch (err) {
       playWalletSound('error')
       toastError('Invalid link', err instanceof Error ? err.message : String(err))
-    } finally {
-      setBusy(false)
+      assemblerRef.current.reset()
+      setReceiveProgress(null)
     }
   }
 
@@ -123,26 +169,23 @@ export function LinkDevicePanel() {
     if (hasVault()) {
       const existing = readVaultMeta()
       if (existing && existing.identityKey !== pendingPkg.identityKey) {
-        toastError('Wipe this Desktop wallet first, or use Show QR to send it to the other device')
+        toastError('Wipe this wallet first, or use Show QR to send it to the other device')
         return
       }
     }
     setBusy(true)
     try {
-      clearActiveWallet()
-      const unlocked = await restoreVaultFromRootKey({
-        rootKeyHex: pendingPkg.rootKeyHex,
-        password: scanPassword,
-        chain: pendingPkg.chain,
-        handle: pendingPkg.handle || undefined,
-      })
-      if (pendingPkg.historyBackupBaseUrl) {
-        setHistoryBackupPrefs({ baseUrl: pendingPkg.historyBackupBaseUrl })
-      }
+      const { unlocked, historyRestored } = await applyLinkedWallet(pendingPkg, scanPassword)
       setPendingPkg(null)
       setScanPassword('')
+      assemblerRef.current.reset()
       playWalletSound('unlock')
-      toastSuccess('Connected', unlocked.record.handle)
+      toastSuccess(
+        'Connected',
+        historyRestored
+          ? `${unlocked.record.handle || 'wallet'} · history restored`
+          : unlocked.record.handle,
+      )
       window.location.reload()
     } catch (err) {
       playWalletSound('error')
@@ -156,11 +199,11 @@ export function LinkDevicePanel() {
     <div
       className="nav-section-body settings-scroll"
       data-aeon-scope="link-device"
-      data-aeon-state={qrDataUrl ? 'showing' : pendingPkg ? 'install' : mode}
+      data-aeon-state={flash ? 'showing' : pendingPkg ? 'install' : mode}
     >
       <p className="settings-hint">
-        Either device can go first. Show a QR on the device that already has the wallet, or scan a QR
-        from the other device (camera). Same Wi‑Fi is not required for the new embedded link.
+        Show a flashing QR on the device that has the wallet. The other device scans until all
+        frames are received — keys and spendable history transfer together (no Wi‑Fi needed).
       </p>
 
       <div className="auth-mode-switch" role="tablist" aria-label="Link mode">
@@ -173,6 +216,8 @@ export function LinkDevicePanel() {
           onClick={() => {
             setMode('show')
             setPendingPkg(null)
+            assemblerRef.current.reset()
+            setReceiveProgress(null)
           }}
         >
           Show QR
@@ -185,15 +230,15 @@ export function LinkDevicePanel() {
           data-aeon-state={mode === 'scan' ? 'selected' : 'idle'}
           onClick={() => {
             setMode('scan')
-            setQrDataUrl(null)
-            setOffer(null)
+            setFlash(null)
+            setFlashDataUrl(null)
           }}
         >
           Scan
         </button>
       </div>
 
-      {mode === 'show' && !qrDataUrl ? (
+      {mode === 'show' && !flash ? (
         <>
           <div className="field">
             <label htmlFor="link-device-password">Wallet password</label>
@@ -212,24 +257,27 @@ export function LinkDevicePanel() {
             disabled={busy}
             onClick={() => void startShow()}
           >
-            {busy ? 'Starting…' : 'Show link QR'}
+            {busy ? 'Packing wallet…' : 'Show link QR'}
           </button>
         </>
       ) : null}
 
-      {mode === 'show' && qrDataUrl ? (
+      {mode === 'show' && flash && flashDataUrl ? (
         <div className="link-device-qr">
-          <img src={qrDataUrl} alt="Device link QR" width={360} height={360} />
+          <img src={flashDataUrl} alt="Device link QR frame" width={360} height={360} />
           <p className="settings-hint">
-            Expires in {secondsLeft}s
-            {offer?.handle ? ` · ${offer.handle}` : ''}
+            Frame {flashIndex + 1}/{flash.frameCount}
+            {flash.hasHistory ? ' · includes history' : ' · keys only'}
+            {' · '}expires in {secondsLeft}s
+            {flash.handle ? ` · ${flash.handle}` : ''}
           </p>
+          <p className="settings-hint">Keep this screen bright and hold the other camera steady.</p>
           <button
             type="button"
             className="btn btn-ghost"
             onClick={() => {
-              setQrDataUrl(null)
-              setOffer(null)
+              setFlash(null)
+              setFlashDataUrl(null)
             }}
           >
             Cancel
@@ -239,14 +287,21 @@ export function LinkDevicePanel() {
 
       {mode === 'scan' && !pendingPkg ? (
         <>
-          <QrScanner active onScan={(text) => void ingestQr(text)} />
+          <QrScanner active dedupeMs={400} onScan={(text) => void ingestQr(text)} />
+          {receiveProgress && receiveProgress.total > 0 ? (
+            <p className="settings-hint link-receive-progress">
+              Receiving {receiveProgress.have}/{receiveProgress.total} frames…
+            </p>
+          ) : (
+            <p className="settings-hint">Aim at the flashing QR — frames can arrive in any order.</p>
+          )}
           <div className="field">
-            <label htmlFor="link-paste">Or paste link payload</label>
+            <label htmlFor="link-paste">Or paste a single-frame link payload</label>
             <input
               id="link-paste"
               value={manual}
               onChange={(e) => setManual(e.target.value)}
-              placeholder="handcash-link:…"
+              placeholder="handcash-link:… or handcash-link3:…"
               autoComplete="off"
               spellCheck={false}
             />
@@ -265,11 +320,12 @@ export function LinkDevicePanel() {
       {mode === 'scan' && pendingPkg ? (
         <>
           <p className="settings-hint">
-            Received <strong>{pendingPkg.handle || pendingPkg.identityKey.slice(0, 12)}</strong>.
-            This replaces the vault on this Desktop.
+            Received <strong>{pendingPkg.handle || pendingPkg.identityKey.slice(0, 12)}</strong>
+            {pendingPkg.brc39Base64 ? ' with spendable history' : ' (keys only)'}. This replaces the
+            vault on this device.
           </p>
           <div className="field">
-            <label htmlFor="scan-install-password">Password for this Desktop</label>
+            <label htmlFor="scan-install-password">Password for this device</label>
             <input
               id="scan-install-password"
               type="password"

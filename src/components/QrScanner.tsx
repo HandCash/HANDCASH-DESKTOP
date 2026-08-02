@@ -5,6 +5,8 @@ import { DecodeHintType } from '@zxing/library'
 type Props = {
   onScan: (text: string) => void
   active?: boolean
+  /** Ignore identical payloads for this long (ms). Lower for multi-frame QR. */
+  dedupeMs?: number
 }
 
 function isMobilePlatform(): boolean {
@@ -21,7 +23,7 @@ function isMobilePlatform(): boolean {
  * ZXing handles dense HandCash link QRs better than BarcodeDetector / html5-qrcode.
  * Keeps the camera up until the parent unmounts or sets active=false.
  */
-export function QrScanner({ onScan, active = true }: Props) {
+export function QrScanner({ onScan, active = true, dedupeMs = 2500 }: Props) {
   const [error, setError] = useState<string | null>(null)
   const onScanRef = useRef(onScan)
   onScanRef.current = onScan
@@ -36,15 +38,14 @@ export function QrScanner({ onScan, active = true }: Props) {
     setError(null)
     let cancelled = false
     let controls: { stop: () => void } | undefined
-    let lastText = ''
-    let lastAt = 0
+    const seen = new Map<string, number>()
 
     const hints = new Map<DecodeHintType, unknown>()
     hints.set(DecodeHintType.TRY_HARDER, true)
 
     const reader = new BrowserQRCodeReader(hints, {
-      delayBetweenScanAttempts: 220,
-      delayBetweenScanSuccess: 1200,
+      delayBetweenScanAttempts: dedupeMs < 800 ? 100 : 220,
+      delayBetweenScanSuccess: dedupeMs < 800 ? 80 : 1200,
     })
 
     void (async () => {
@@ -66,10 +67,15 @@ export function QrScanner({ onScan, active = true }: Props) {
             const text = result.getText()?.trim()
             if (!text) return
             const now = Date.now()
-            // Ignore the same payload while the parent validates / retries.
-            if (text === lastText && now - lastAt < 2500) return
-            lastText = text
-            lastAt = now
+            const prev = seen.get(text)
+            if (prev != null && now - prev < dedupeMs) return
+            seen.set(text, now)
+            // Cap map growth during long multi-frame sessions.
+            if (seen.size > 400) {
+              for (const [k, t] of seen) {
+                if (now - t > dedupeMs * 4) seen.delete(k)
+              }
+            }
             onScanRef.current(text)
           },
         )
@@ -112,7 +118,7 @@ export function QrScanner({ onScan, active = true }: Props) {
       }
       video.srcObject = null
     }
-  }, [active])
+  }, [active, dedupeMs])
 
   return (
     <div className="qr-scanner">
