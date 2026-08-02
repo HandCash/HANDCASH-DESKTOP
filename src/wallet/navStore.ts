@@ -16,6 +16,7 @@ export type SettingId =
   | 'backup-phrase'
   | 'split-backup'
   | 'history-backup'
+  | 'backup-services'
   | 'wipe-wallet'
   | 'about-handcash'
   | 'statecharts'

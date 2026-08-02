@@ -22,6 +22,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "backup-service": "npm --prefix backup-service start",
+    "backup-service:test": "npm --prefix backup-service test && npm --prefix backup-service run test:cluster",
     "launch": "bash scripts/launch.sh",
     "launch:mac": "bash scripts/launch-mac.sh",
     "version:patch": "node scripts/bump-version.mjs patch",

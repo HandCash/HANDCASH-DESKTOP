@@ -34,6 +34,7 @@ import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
+import { BackupServicesPanel } from './BackupServicesPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
@@ -226,6 +227,9 @@ export function WalletNav({
                   child.settingId === 'split-backup') && <WalletBackupPanel />}
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'backup-services' && (
+                <BackupServicesPanel />
               )}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />

@@ -1,0 +1,19 @@
+{
+  "name": "handcash-backup-service",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Open backup-service (share vault): store one BRC-140 slice per user, release after OTP.",
+  "type": "module",
+  "license": "Open BSV License",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node src/smoke-test.js",
+    "test:cluster": "node src/smoke-test.js --cluster"
+  },
+  "dependencies": {
+    "@bsv/sdk": "^2.2.0",
+    "cors": "^2.8.5",
+    "express": "^4.21.2"
+  }
+}

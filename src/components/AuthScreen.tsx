@@ -13,6 +13,12 @@ import {
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
+import {
+  retrieveBackupShare,
+  startBackupServiceAuth,
+  userIdHashFromEmail,
+  verifyBackupServiceAuth,
+} from '../wallet/backupServiceClient'
 import { playWalletSound } from '../wallet/soundService'
 import {
   clearUnlockNudge,
@@ -31,17 +37,20 @@ type Props = {
 }
 
 /** Custody restore paths the vault can bootstrap from. */
-type RestoreMethod = 'phrase' | 'shares' | 'key'
+type RestoreMethod = 'phrase' | 'shares' | 'key' | 'services'
 type FormMode = 'create' | 'unlock' | RestoreMethod
 
 const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
   { id: 'shares', label: 'Shares' },
   { id: 'key', label: 'Key' },
+  { id: 'services', label: 'Services' },
 ]
 
 function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
-  return mode === 'phrase' || mode === 'shares' || mode === 'key'
+  return (
+    mode === 'phrase' || mode === 'shares' || mode === 'key' || mode === 'services'
+  )
 }
 
 function isMismatchError(message: string | null | undefined): boolean {
@@ -91,6 +100,9 @@ export function AuthScreen({
   const [share1, setShare1] = useState('')
   const [share2, setShare2] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
+  const [serviceEmail, setServiceEmail] = useState('')
+  const [serviceUrl1, setServiceUrl1] = useState('http://127.0.0.1:8787')
+  const [serviceUrl2, setServiceUrl2] = useState('http://127.0.0.1:8788')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const shareFileRef = useRef<HTMLInputElement>(null)
@@ -172,6 +184,34 @@ export function AuthScreen({
       if (formMode === 'key') {
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: normalizeRootKeyHex(rootKeyInput),
+          password,
+          chain,
+        })
+        await finishCreated(unlocked)
+        return
+      }
+
+      if (formMode === 'services') {
+        const email = serviceEmail.trim().toLowerCase()
+        if (!email.includes('@')) throw new Error('Enter the email used with backup services')
+        const urls = [serviceUrl1, serviceUrl2].map((u) => u.trim().replace(/\/+$/, ''))
+        if (urls.some((u) => !u)) throw new Error('Enter two backup service URLs')
+        const userIdHash = await userIdHashFromEmail(email)
+        const shares: string[] = []
+        for (const url of urls) {
+          const started = await startBackupServiceAuth(url, email)
+          const code = started.devCode
+          if (!code) {
+            throw new Error(
+              'This restore path currently needs a local/dev backup service that returns OTP in the response.',
+            )
+          }
+          const { token } = await verifyBackupServiceAuth(url, started.requestId, code)
+          shares.push(await retrieveBackupShare(url, token, userIdHash))
+        }
+        const recovered = recoverRootKeyFromBrc140Shares(shares)
+        const unlocked = await restoreVaultFromRootKey({
+          rootKeyHex: recovered.rootKeyHex,
           password,
           chain,
         })
@@ -455,6 +495,50 @@ export function AuthScreen({
               autoFocus
             />
           </div>
+        ) : null}
+
+        {formMode === 'services' ? (
+          <>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="service-email">Email</label>
+              <input
+                id="service-email"
+                type="email"
+                placeholder="you@example.com"
+                value={serviceEmail}
+                onChange={(e) => setServiceEmail(e.target.value)}
+                autoComplete="email"
+                autoFocus
+              />
+            </div>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="service-url-1">Backup service 1</label>
+              <input
+                id="service-url-1"
+                type="url"
+                placeholder="http://127.0.0.1:8787"
+                value={serviceUrl1}
+                onChange={(e) => setServiceUrl1(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <div className="field" data-aeon-part="field">
+              <label htmlFor="service-url-2">Backup service 2</label>
+              <input
+                id="service-url-2"
+                type="url"
+                placeholder="http://127.0.0.1:8788"
+                value={serviceUrl2}
+                onChange={(e) => setServiceUrl2(e.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+              />
+            </div>
+            <p className="auth-alt">
+              Authenticate with any two enrolled backup services to rebuild the wallet.
+            </p>
+          </>
         ) : null}
 
         <div className="field" data-aeon-part="field">

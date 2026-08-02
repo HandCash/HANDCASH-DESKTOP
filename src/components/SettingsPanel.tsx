@@ -41,6 +41,11 @@ const SETTING_GROUPS: SettingGroup[] = [
         tag: 'BRC-39',
       },
       {
+        id: 'backup-services',
+        label: 'Backup services',
+        description: 'Optional recovery slices',
+      },
+      {
         id: 'change-password',
         label: 'Password',
         description: '',
@@ -104,6 +109,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
   if (id === 'history-backup') return 'History'
+  if (id === 'backup-services') return 'Backup services'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
     if (item) return item.label
