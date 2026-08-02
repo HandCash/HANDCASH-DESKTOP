@@ -133,10 +133,13 @@ async function runSyncLegacyFunds(
       }
       if (funding.length > 0) {
         const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
+        // Only re-open guarded outpoints when the wallet is truly empty.
+        // Never do this on forceRescan while WOC still lists a just-imported
+        // UTXO — that was re-crediting the same payment (1¢ → 2¢).
         const blocked = funding.filter((u) => wasLegacyOutpointImported(u.outpoint))
-        if (blocked.length > 0 && (forceRescan || balanceBefore < fundingSats)) {
+        if (blocked.length > 0 && balanceBefore === 0) {
           console.warn(
-            `[sync] forgetting ${blocked.length} guarded outpoint(s) — wallet has ${balanceBefore} sats but address holds ${fundingSats}`,
+            `[sync] forgetting ${blocked.length} guarded outpoint(s) — empty wallet but address holds ${fundingSats} sats`,
           )
           forgetLegacyOutpoints(blocked.map((u) => u.outpoint))
         }

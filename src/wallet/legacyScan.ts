@@ -234,22 +234,41 @@ export async function importLegacyUtxos(
     if (r?.success) {
       imported += 1
       importedOutpoints.push(op)
+      // Mark before activity so a concurrent sync cannot claim the same outpoint.
       markLegacyOutpointImported(op)
       const sats = satByOp.get(op) ?? 0
-      const txid = op.includes('.') ? op.slice(0, op.lastIndexOf('.')) : op
-      if (sats > 0 && !hasActivityTxid(txid)) {
+      // Prefer the sweep txid when present so Activity doesn't key off the
+      // funding outpoint tx (which can collide with a second import attempt).
+      const sweepTxid =
+        typeof (r as { txid?: string }).txid === 'string'
+          ? (r as { txid: string }).txid
+          : op.includes('.')
+            ? op.slice(0, op.lastIndexOf('.'))
+            : op
+      if (sats > 0 && !hasActivityTxid(sweepTxid) && !hasActivityTxid(op)) {
         recordAppActivity({
           origin: WALLET_ACTIVITY_ORIGIN,
           kind: 'earned',
           sats,
           method: 'legacy-import',
           note: 'Received (legacy address)',
-          txid,
+          txid: sweepTxid,
         })
       }
     } else {
       failed += 1
-      releaseLegacyOutpointClaim(op)
+      const errText = (r?.error ?? '').toLowerCase()
+      // Already spent / previously internalized — keep the guard so we don't retry.
+      if (
+        errText.includes('missing') ||
+        errText.includes('spent') ||
+        errText.includes('not found') ||
+        errText.includes('double')
+      ) {
+        markLegacyOutpointImported(op)
+      } else {
+        releaseLegacyOutpointClaim(op)
+      }
       if (r?.error) errors.push(`${op}: ${r.error}`)
       else errors.push(`${op}: import failed`)
     }
