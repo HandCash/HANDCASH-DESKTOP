@@ -92,6 +92,18 @@ const handcash = {
       | { ok: true; bytes: number; status: number }
       | { ok: false; error: string }
     >,
+  startDeviceLink: (payload: {
+    sessionId: string
+    ivHex: string
+    ciphertextHex: string
+    ttlMs?: number
+  }) =>
+    ipcRenderer.invoke('device-link:start', payload) as Promise<
+      | { ok: true; sessionId: string; baseUrl: string; expiresAt: number }
+      | { ok: false; error: string }
+    >,
+  stopDeviceLink: () =>
+    ipcRenderer.invoke('device-link:stop') as Promise<{ ok: true }>,
   storageGetSync: (key: string) =>
     ipcRenderer.sendSync('storage:get-sync', key) as string | null,
   storageSetSync: (

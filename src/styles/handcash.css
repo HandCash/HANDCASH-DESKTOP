@@ -3587,6 +3587,19 @@ a.app-details-host:hover {
   font-size: 0.85rem;
 }
 
+.link-device-qr {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.link-device-qr img {
+  border-radius: 12px;
+  background: #fff;
+  padding: 10px;
+}
+
 .settings-row-static {
   padding: 8px;
 }

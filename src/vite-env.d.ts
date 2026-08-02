@@ -97,6 +97,16 @@ interface HandCashBridge {
   ) => Promise<
     { ok: true; bytes: number; status: number } | { ok: false; error: string }
   >
+  startDeviceLink?: (payload: {
+    sessionId: string
+    ivHex: string
+    ciphertextHex: string
+    ttlMs?: number
+  }) => Promise<
+    | { ok: true; sessionId: string; baseUrl: string; expiresAt: number }
+    | { ok: false; error: string }
+  >
+  stopDeviceLink?: () => Promise<{ ok: true }>
   storageGetSync?: (key: string) => string | null
   storageSetSync?: (
     key: string,

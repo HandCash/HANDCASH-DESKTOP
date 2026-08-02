@@ -20,6 +20,7 @@ import {
   stopPackagedUiServer,
   UI_ORIGIN,
 } from './uiServer.js'
+import { startDevicePairing, stopDevicePairing } from './devicePairing.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -382,6 +383,45 @@ ipcMain.handle('app:open-logs', async () => {
     log.warn('open-logs failed', err)
     return { ok: false as const, error: message }
   }
+})
+
+ipcMain.handle('device-link:start', async (_event, payload: unknown) => {
+  const body = payload as {
+    sessionId?: string
+    ivHex?: string
+    ciphertextHex?: string
+    ttlMs?: number
+  }
+  if (
+    typeof body?.sessionId !== 'string' ||
+    typeof body?.ivHex !== 'string' ||
+    typeof body?.ciphertextHex !== 'string'
+  ) {
+    return { ok: false as const, error: 'Invalid pairing payload' }
+  }
+  try {
+    const host = await startDevicePairing({
+      sessionId: body.sessionId,
+      ivHex: body.ivHex,
+      ciphertextHex: body.ciphertextHex,
+      ttlMs: typeof body.ttlMs === 'number' ? body.ttlMs : undefined,
+    })
+    return {
+      ok: true as const,
+      sessionId: host.sessionId,
+      baseUrl: host.lanUrl,
+      expiresAt: host.expiresAt,
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn('device-link:start failed', err)
+    return { ok: false as const, error: message }
+  }
+})
+
+ipcMain.handle('device-link:stop', () => {
+  stopDevicePairing()
+  return { ok: true as const }
 })
 
 ipcMain.handle('app:upload-logs', async (_event, url: unknown) => {

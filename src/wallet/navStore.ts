@@ -17,6 +17,7 @@ export type SettingId =
   | 'split-backup'
   | 'history-backup'
   | 'backup-services'
+  | 'link-device'
   | 'wipe-wallet'
   | 'about-handcash'
   | 'statecharts'

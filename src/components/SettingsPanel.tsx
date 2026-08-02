@@ -46,6 +46,11 @@ const SETTING_GROUPS: SettingGroup[] = [
         description: 'Optional recovery slices',
       },
       {
+        id: 'link-device',
+        label: 'Link device',
+        description: 'QR login like Telegram',
+      },
+      {
         id: 'change-password',
         label: 'Password',
         description: '',
@@ -110,6 +115,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
   if (id === 'history-backup') return 'History'
   if (id === 'backup-services') return 'Backup services'
+  if (id === 'link-device') return 'Link device'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
     if (item) return item.label
