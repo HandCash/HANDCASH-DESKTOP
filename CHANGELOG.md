@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.2] - 2026-08-02
+
+### Changed
+
+- Add the finalized, approved BRC-147/150 1Sat Ordinals specifications to the Desktop standards package.
+
 ## [1.2.1] - 2026-08-02
 
 ### Changed
