@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.8] - 2026-08-04
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
+## [1.2.8] - 2026-08-04
+
+### Fixed
+
+- `package-lock.json` uses HTTPS git URL for `aeon-ui-engine` so GitHub Actions can `npm ci` without SSH keys.
+
 ## [1.2.7] - 2026-08-04
 
 ### Fixed
