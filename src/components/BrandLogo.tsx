@@ -16,6 +16,12 @@ const markSrc: Record<HandCashMarkVariant, string> = {
   light: handcashBrand.markLightPng,
 }
 
+function productLine(): string {
+  const platform = window.handcash?.platform
+  if (platform === 'android' || platform === 'ios') return 'Mobile'
+  return 'Desktop'
+}
+
 export function BrandLogo({
   variant = 'green',
   showWordmark = true,
@@ -40,7 +46,7 @@ export function BrandLogo({
         <div className="brand-wordmark">
           <div className="brand-name">HandCash</div>
           <div className="brand-sub">
-            Desktop
+            {productLine()}
             <span className="brand-version">v{APP_VERSION}</span>
             <span className="brand-beta">BETA</span>
           </div>

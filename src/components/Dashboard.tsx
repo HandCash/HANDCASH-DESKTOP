@@ -63,7 +63,6 @@ export function Dashboard({
   onLock,
   onFail,
 }: Props) {
-  const [appTitle, setAppTitle] = useState('HandCash')
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
@@ -74,24 +73,6 @@ export function Dashboard({
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
-  useEffect(() => {
-    void (async () => {
-      try {
-        const info = await window.handcash?.getAppInfo?.()
-        if (info?.name?.trim()) {
-          setAppTitle(info.name.trim())
-          return
-        }
-      } catch {
-        // fall through
-      }
-      const platform = window.handcash?.platform
-      if (platform === 'android' || platform === 'ios') setAppTitle('HandCash Mobile')
-      else if (platform === 'darwin' || platform === 'win32' || platform === 'linux') {
-        setAppTitle('HandCash Desktop')
-      }
-    })()
-  }, [])
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -195,7 +176,7 @@ export function Dashboard({
       <div className="dashboard-main">
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">
-            <h2 className="wallet-hero-title">{appTitle}</h2>
+            <h2 className="wallet-hero-title">Your balance</h2>
             {!backupConfirmed ? (
               <button
                 type="button"

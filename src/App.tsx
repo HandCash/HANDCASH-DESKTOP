@@ -18,6 +18,7 @@ import {
 import { AuthScreen } from './components/AuthScreen'
 import { Dashboard } from './components/Dashboard'
 import { BrandLogo } from './components/BrandLogo'
+import { WalletStatusPill, sessionFromMachine } from './components/WalletStatusPill'
 import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
@@ -162,10 +163,10 @@ export function App() {
       <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
         <header className="titlebar aeon-titlebar">
           <BrandLogo variant="green" />
-          <div className="status-pill" data-aeon-no-drag>
-            <span className="status-dot" {...(!snapshot.context.bridgeOnline ? { 'data-offline': true } : {})} />
-            {snapshot.context.bridgeOnline ? 'Online' : 'Offline'}
-          </div>
+          <WalletStatusPill
+            session={sessionFromMachine(snapshot.value)}
+            bridgeOnline={snapshot.context.bridgeOnline}
+          />
         </header>
 
         <main className="stage">

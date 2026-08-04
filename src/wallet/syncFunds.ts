@@ -90,7 +90,7 @@ export async function syncLegacyFunds(
   const active = getActiveWallet()
   if (!active) return null
 
-  setSyncHealth({ phase: 'syncing', message: null })
+  setSyncHealth({ phase: 'syncing', message: 'Refreshing funds against the network' })
 
   let balanceBefore = 0
   let balanceBeforeOk = false
