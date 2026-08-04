@@ -514,6 +514,51 @@ body {
   box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
 }
 
+.password-field {
+  position: relative;
+  display: grid;
+}
+
+.password-field input {
+  padding-right: 44px;
+}
+
+.password-field-toggle {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--hc-muted);
+  cursor: pointer;
+}
+
+.password-field-toggle:hover:not(:disabled) {
+  color: var(--hc-text);
+  background: hsl(var(--secondary) / 0.85);
+}
+
+.password-field-toggle:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.password-hint {
+  margin: -6px 0 14px;
+  color: var(--hc-muted);
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;

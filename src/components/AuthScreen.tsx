@@ -21,6 +21,7 @@ import {
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 import { getWalletConfigPrefs } from '../wallet/walletConfig'
+import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 
 type Props = {
@@ -94,6 +95,7 @@ export function AuthScreen({
   const [share1, setShare1] = useState('')
   const [share2, setShare2] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const [pendingCreated, setPendingCreated] = useState<{
@@ -105,6 +107,10 @@ export function AuthScreen({
   useEffect(() => {
     if (recoveryOnly) setFormMode('phrase')
   }, [recoveryOnly])
+
+  useEffect(() => {
+    setConfirmPassword('')
+  }, [formMode])
 
   useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
 
@@ -145,12 +151,18 @@ export function AuthScreen({
     onCreated(profile, balanceSats)
   }
 
+  const needsNewPassword = formMode === 'create' || isRestoreMethod(formMode)
+
   const submit = async () => {
     if (snapshot.matches('submitting')) return
-    if (formMode === 'create' || isRestoreMethod(formMode)) {
+    if (needsNewPassword) {
       const pwError = validatePassword(snapshot.context.password)
       if (pwError) {
         onFail(pwError)
+        return
+      }
+      if (snapshot.context.password !== confirmPassword) {
+        onFail('Passwords do not match')
         return
       }
     } else if (snapshot.context.password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
@@ -267,13 +279,13 @@ export function AuthScreen({
 
   const lede =
     formMode === 'phrase'
-      ? 'Enter your BRC-75 recovery phrase and choose a password for this device. Same phrase = same identity on Desktop or Mobile.'
+      ? 'Enter your BRC-75 recovery phrase, then set a password for this device. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
-        ? 'Paste any two BRC-140 key slices and choose a password for this device. Same slices = same identity.'
+        ? 'Paste any two BRC-140 key slices, then set a password for this device. Same slices = same identity.'
         : formMode === 'key'
-          ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
+          ? 'Paste your emergency root key (64 hex chars), then set a password for this device.'
           : formMode === 'create'
-            ? 'Pick a password. Your keys stay on this device. To use another device later, back up with a phrase or BRC-140 slices after unlock.'
+            ? 'Your keys stay on this device. To use another device later, back up with a phrase or BRC-140 slices after unlock.'
             : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
@@ -473,22 +485,33 @@ export function AuthScreen({
           </div>
         ) : null}
 
-        <div className="field" data-aeon-part="field">
-          <label htmlFor="password">Password</label>
-          <input
-            id="password"
-            type="password"
-            placeholder={
-              formMode === 'unlock'
-                ? 'Your password'
-                : '10+ chars, letter and number'
-            }
-            value={snapshot.context.password}
-            onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
-            autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
-            autoFocus={formMode === 'unlock' || formMode === 'create'}
-          />
-        </div>
+        <PasswordField
+          id="password"
+          label="Password"
+          placeholder={
+            formMode === 'unlock' ? 'Your password' : '10+ chars, letter and number'
+          }
+          value={snapshot.context.password}
+          onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
+          autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
+          autoFocus={formMode === 'unlock' || formMode === 'create'}
+        />
+
+        {needsNewPassword ? (
+          <>
+            <p className="password-hint">
+              This password is used to access your wallet. Don’t forget it.
+            </p>
+            <PasswordField
+              id="password-confirm"
+              label="Confirm password"
+              placeholder="Type it again"
+              value={confirmPassword}
+              onChange={(e) => setConfirmPassword(e.target.value)}
+              autoComplete="new-password"
+            />
+          </>
+        ) : null}
 
         {(error || snapshot.context.error) && (
           <p className="error auth-error" role="alert">

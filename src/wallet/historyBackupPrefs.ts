@@ -4,7 +4,8 @@ const KEY = 'handcash.brc100.historyBackup.v1'
 
 /**
  * Optional remote base URL for BRC-39 blob storage.
- * Blank by default (no HandCash endpoint yet). Override with VITE_HISTORY_BACKUP_BASE_URL when ready.
+ * Blank until the user configures setup / Settings. Override with
+ * VITE_HISTORY_BACKUP_BASE_URL when you want a pre-filled default.
  */
 export const DEFAULT_HISTORY_BACKUP_BASE_URL =
   (typeof import.meta !== 'undefined' &&

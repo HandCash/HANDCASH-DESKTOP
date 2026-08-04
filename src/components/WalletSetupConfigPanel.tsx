@@ -134,7 +134,8 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
             spellCheck={false}
           />
           <p className="hint">
-            Local default points at <code>BRC-CLOUD</code>.
+            Defaults to live <code>BRC-CLOUD</code> (
+            {DEFAULT_HISTORY_BACKUP_SETUP_URL.replace(/^https?:\/\//, '')}).
           </p>
         </div>
       )}

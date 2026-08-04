@@ -2,6 +2,7 @@ import { useState, type FormEvent } from 'react'
 import { unlockVault } from '../wallet/vault'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
+import { PasswordField } from './PasswordField'
 
 type Props = {
   title: string
@@ -57,19 +58,16 @@ export function ConfirmPasswordGate({
         <p className="confirm-password-lede">{lede}</p>
       </div>
       <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
-        <div className="field">
-          <label htmlFor={id}>Unlock password</label>
-          <input
-            id={id}
-            type="password"
-            autoComplete="current-password"
-            placeholder="Your unlock password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            autoFocus
-            disabled={busy}
-          />
-        </div>
+        <PasswordField
+          id={id}
+          label="Unlock password"
+          autoComplete="current-password"
+          placeholder="Your unlock password"
+          value={password}
+          onChange={(e) => setPassword(e.target.value)}
+          autoFocus
+          disabled={busy}
+        />
         {error ? (
           <p className="error" role="alert">
             {error}

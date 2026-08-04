@@ -4,6 +4,7 @@ import { validatePassword } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { PasswordField } from './PasswordField'
 
 export function ChangePasswordPanel() {
   const [currentPassword, setCurrentPassword] = useState<string | null>(null)
@@ -18,7 +19,7 @@ export function ChangePasswordPanel() {
     setError(null)
 
     if (newPassword !== confirmPassword) {
-      setError('New passwords do not match')
+      setError('Passwords do not match')
       return
     }
     const pwError = validatePassword(newPassword)
@@ -71,34 +72,29 @@ export function ChangePasswordPanel() {
       <div className="confirm-password-copy">
         <h3 className="confirm-password-title">Choose a new password</h3>
         <p className="confirm-password-lede">
-          Use at least 10 characters with a letter and a number.
+          This password is used to access your wallet. Don’t forget it.
         </p>
       </div>
       <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
-        <div className="field">
-          <label htmlFor="settings-new-password">New password</label>
-          <input
-            id="settings-new-password"
-            type="password"
-            placeholder="10+ chars, letter and number"
-            value={newPassword}
-            onChange={(e) => setNewPassword(e.target.value)}
-            autoComplete="new-password"
-            autoFocus
-            disabled={submitting}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="settings-confirm-password">Confirm new password</label>
-          <input
-            id="settings-confirm-password"
-            type="password"
-            value={confirmPassword}
-            onChange={(e) => setConfirmPassword(e.target.value)}
-            autoComplete="new-password"
-            disabled={submitting}
-          />
-        </div>
+        <PasswordField
+          id="settings-new-password"
+          label="New password"
+          placeholder="10+ chars, letter and number"
+          value={newPassword}
+          onChange={(e) => setNewPassword(e.target.value)}
+          autoComplete="new-password"
+          autoFocus
+          disabled={submitting}
+        />
+        <PasswordField
+          id="settings-confirm-password"
+          label="Confirm password"
+          placeholder="Type it again"
+          value={confirmPassword}
+          onChange={(e) => setConfirmPassword(e.target.value)}
+          autoComplete="new-password"
+          disabled={submitting}
+        />
 
         {error ? (
           <p className="error" role="alert">

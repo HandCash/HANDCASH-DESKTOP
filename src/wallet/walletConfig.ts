@@ -1,41 +1,52 @@
 /**
  * Wallet configuration chosen at setup (and editable later in Settings).
- * Recommended (HC + Haste BRC-232) stays gated until backup services are live.
+ * Recommended (HC + Haste BRC-232) is on when BRC-CLOUD is reachable.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 const KEY = 'handcash.brc100.walletConfig.v1'
 
-/** Flip when HandCash + Haste BRC-232 backup-services are deployed and healthy. */
-export const BACKUP_SERVICES_LIVE =
+/** Public BRC-CLOUD origin (handles, history, BRC-232 trustholders). */
+export const DEFAULT_BRC_CLOUD_BASE_URL =
   (typeof import.meta !== 'undefined' &&
-    import.meta.env?.VITE_BACKUP_SERVICES_LIVE === 'true') ||
-  false
+    typeof import.meta.env?.VITE_BRC_CLOUD_BASE_URL === 'string' &&
+    import.meta.env.VITE_BRC_CLOUD_BASE_URL.trim()) ||
+  'https://brc-cloud.bcryderman.workers.dev'
+
+/**
+ * Recommended backup is live by default. Set VITE_BACKUP_SERVICES_LIVE=false
+ * to gray it out (e.g. offline / local-only builds).
+ */
+export const BACKUP_SERVICES_LIVE =
+  typeof import.meta !== 'undefined' &&
+  import.meta.env?.VITE_BACKUP_SERVICES_LIVE === 'false'
+    ? false
+    : true
 
 export const DEFAULT_METANET_HANDLES_BASE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_METANET_HANDLES_BASE_URL === 'string' &&
     import.meta.env.VITE_METANET_HANDLES_BASE_URL.trim()) ||
-  'http://127.0.0.1:8787'
+  DEFAULT_BRC_CLOUD_BASE_URL
 
-/** Same host as handles — history lives on handcash-backup-server. */
+/** Same host as handles — history lives on BRC-CLOUD. */
 export const DEFAULT_HISTORY_BACKUP_SETUP_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_HISTORY_BACKUP_BASE_URL === 'string' &&
     import.meta.env.VITE_HISTORY_BACKUP_BASE_URL.trim()) ||
-  'http://127.0.0.1:8787'
+  DEFAULT_BRC_CLOUD_BASE_URL
 
 export const HANDCASH_BACKUP_SERVICE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_HANDCASH_BACKUP_SERVICE_URL === 'string' &&
     import.meta.env.VITE_HANDCASH_BACKUP_SERVICE_URL.trim()) ||
-  'http://127.0.0.1:8787/trustholders/handcash'
+  `${DEFAULT_BRC_CLOUD_BASE_URL}/trustholders/handcash`
 
 export const HASTE_BACKUP_SERVICE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_HASTE_BACKUP_SERVICE_URL === 'string' &&
     import.meta.env.VITE_HASTE_BACKUP_SERVICE_URL.trim()) ||
-  'http://127.0.0.1:8787/trustholders/haste'
+  `${DEFAULT_BRC_CLOUD_BASE_URL}/trustholders/haste`
 
 export type WalletConfigMode = 'recommended' | 'history' | 'none'
 
