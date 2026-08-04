@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.5] - 2026-08-04
+
+### Added
+
+- Wallet layer model (`chainIngest`, `historyReplica`, `localState`) with `recomposeWallet` on unlock/restore/pair sync.
+- BRC-150 provenance helpers; empty-local history guard; soft BRC-39 pull on Refresh.
+- Aeon `KeySliceList` for BRC-140 slice backup (progress, per-row state, distinct-slice confirm).
+
+### Changed
+
+- Trustholder backup uses the same dynamic list UX as offline split key backup.
+
+### Fixed
+
+- Mac auto-update still skips ShipIt on unsigned builds — opens the arch-matched DMG instead so `/Applications/HandCash.app` is not left damaged.
+
 ## [1.2.4] - 2026-08-04
 
 ### Added
