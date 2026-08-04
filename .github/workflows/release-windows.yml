@@ -34,6 +34,13 @@ jobs:
         with:
           ref: ${{ inputs.tag || github.sha }}
 
+      - name: Checkout aeon-ui-engine
+        uses: actions/checkout@v4
+        with:
+          repository: GenericCPU/aeon-ui
+          ref: v1.3.9
+          path: vendor/aeon-ui
+
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
@@ -41,7 +48,10 @@ jobs:
           cache: npm
 
       - name: Install dependencies
-        run: npm ci
+        shell: bash
+        run: |
+          npm pkg set dependencies.aeon-ui-engine=file:vendor/aeon-ui
+          npm install
 
       - name: Read version
         id: meta
