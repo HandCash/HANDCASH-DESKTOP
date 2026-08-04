@@ -1,0 +1,50 @@
+{
+  "name": "@aeon-ui/cli",
+  "version": "0.1.0",
+  "description": "AI-optimized CLI for injecting Aeon UI agent rules, schemas, and starter code",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/cli"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "README.md"
+  ],
+  "keywords": [
+    "aeon-ui",
+    "cli",
+    "cursor",
+    "generative-ui",
+    "ai"
+  ],
+  "type": "module",
+  "bin": {
+    "aeon-ui": "./dist/bin.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/bin.ts src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aeon-ui/schemas": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}

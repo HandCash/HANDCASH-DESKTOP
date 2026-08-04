@@ -1,0 +1,133 @@
+/* Aeon scrollbars — vertical, horizontal, and both. Uses theme runtime vars.
+ * Fallbacks are dark-safe so WebKit never paints a white track before theme CSS loads. */
+
+html,
+[data-aeon-scroll],
+[data-aeon-scope='scroll'] [data-aeon-part='viewport'],
+[data-aeon-scope='select'] [data-aeon-part='content'],
+[data-aeon-scope='combobox'] [data-aeon-part='content'],
+[data-aeon-scope='menu'] [data-aeon-part='content'],
+[data-aeon-scope='popover'] [data-aeon-part='content'],
+[data-aeon-scope='dialog'] [data-aeon-part='content'],
+[data-aeon-scope='appShell'] [data-aeon-part='aside'],
+[data-aeon-scope='appShell'] [data-aeon-part='content'],
+.aeon-scroll,
+.code-example {
+  scrollbar-width: thin;
+  scrollbar-color: var(--aeon-scrollbar-thumb, #2a3344) var(--aeon-scrollbar-track, #141820);
+}
+
+html::-webkit-scrollbar,
+[data-aeon-scroll]::-webkit-scrollbar,
+[data-aeon-scope='scroll'] [data-aeon-part='viewport']::-webkit-scrollbar,
+[data-aeon-scope='select'] [data-aeon-part='content']::-webkit-scrollbar,
+[data-aeon-scope='combobox'] [data-aeon-part='content']::-webkit-scrollbar,
+[data-aeon-scope='menu'] [data-aeon-part='content']::-webkit-scrollbar,
+[data-aeon-scope='popover'] [data-aeon-part='content']::-webkit-scrollbar,
+[data-aeon-scope='dialog'] [data-aeon-part='content']::-webkit-scrollbar,
+[data-aeon-scope='appShell'] [data-aeon-part='aside']::-webkit-scrollbar,
+[data-aeon-scope='appShell'] [data-aeon-part='content']::-webkit-scrollbar,
+.aeon-scroll::-webkit-scrollbar,
+.code-example::-webkit-scrollbar {
+  width: var(--aeon-scrollbar-size, 10px);
+  height: var(--aeon-scrollbar-size, 10px);
+}
+
+html::-webkit-scrollbar-track,
+[data-aeon-scroll]::-webkit-scrollbar-track,
+[data-aeon-scope='scroll'] [data-aeon-part='viewport']::-webkit-scrollbar-track,
+[data-aeon-scope='select'] [data-aeon-part='content']::-webkit-scrollbar-track,
+[data-aeon-scope='combobox'] [data-aeon-part='content']::-webkit-scrollbar-track,
+[data-aeon-scope='menu'] [data-aeon-part='content']::-webkit-scrollbar-track,
+[data-aeon-scope='popover'] [data-aeon-part='content']::-webkit-scrollbar-track,
+[data-aeon-scope='dialog'] [data-aeon-part='content']::-webkit-scrollbar-track,
+[data-aeon-scope='appShell'] [data-aeon-part='aside']::-webkit-scrollbar-track,
+[data-aeon-scope='appShell'] [data-aeon-part='content']::-webkit-scrollbar-track,
+.aeon-scroll::-webkit-scrollbar-track,
+.code-example::-webkit-scrollbar-track {
+  background: var(--aeon-scrollbar-track, #141820);
+}
+
+html::-webkit-scrollbar-thumb,
+[data-aeon-scroll]::-webkit-scrollbar-thumb,
+[data-aeon-scope='scroll'] [data-aeon-part='viewport']::-webkit-scrollbar-thumb,
+[data-aeon-scope='select'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+[data-aeon-scope='combobox'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+[data-aeon-scope='menu'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+[data-aeon-scope='popover'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+[data-aeon-scope='dialog'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+[data-aeon-scope='appShell'] [data-aeon-part='aside']::-webkit-scrollbar-thumb,
+[data-aeon-scope='appShell'] [data-aeon-part='content']::-webkit-scrollbar-thumb,
+.aeon-scroll::-webkit-scrollbar-thumb,
+.code-example::-webkit-scrollbar-thumb {
+  background: var(--aeon-scrollbar-thumb, #2a3344);
+  border-radius: 999px;
+  border: 2px solid var(--aeon-scrollbar-track, #141820);
+}
+
+html::-webkit-scrollbar-thumb:hover,
+[data-aeon-scroll]::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='scroll'] [data-aeon-part='viewport']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='select'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='combobox'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='menu'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='popover'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='dialog'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='appShell'] [data-aeon-part='aside']::-webkit-scrollbar-thumb:hover,
+[data-aeon-scope='appShell'] [data-aeon-part='content']::-webkit-scrollbar-thumb:hover,
+.aeon-scroll::-webkit-scrollbar-thumb:hover,
+.code-example::-webkit-scrollbar-thumb:hover {
+  background: var(--aeon-scrollbar-thumb-hover, #8b93a7);
+}
+
+html::-webkit-scrollbar-corner,
+[data-aeon-scroll]::-webkit-scrollbar-corner,
+[data-aeon-scope='scroll'] [data-aeon-part='viewport']::-webkit-scrollbar-corner,
+[data-aeon-scope='select'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+[data-aeon-scope='combobox'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+[data-aeon-scope='menu'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+[data-aeon-scope='popover'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+[data-aeon-scope='dialog'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+[data-aeon-scope='appShell'] [data-aeon-part='aside']::-webkit-scrollbar-corner,
+[data-aeon-scope='appShell'] [data-aeon-part='content']::-webkit-scrollbar-corner,
+.aeon-scroll::-webkit-scrollbar-corner,
+.code-example::-webkit-scrollbar-corner {
+  background: var(--aeon-scrollbar-corner, #1a2230);
+}
+
+/* Edge fade when content extends beyond viewport (state from ScrollRegion) */
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='between-y'] {
+  box-shadow:
+    inset 0 10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent),
+    inset 0 -10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='between-x'] {
+  box-shadow:
+    inset 10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent),
+    inset -10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='overflow-both'][data-aeon-state*='between-y'][data-aeon-state*='between-x'] {
+  box-shadow:
+    inset 0 10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent),
+    inset 0 -10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent),
+    inset 10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent),
+    inset -10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 85%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='at-start-y'] {
+  box-shadow: inset 0 -10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 80%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='at-end-y'] {
+  box-shadow: inset 0 10px 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 80%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='at-start-x'] {
+  box-shadow: inset -10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 80%, transparent);
+}
+
+[data-aeon-scope='scroll'][data-aeon-part='viewport'][data-aeon-state*='at-end-x'] {
+  box-shadow: inset 10px 0 10px -10px color-mix(in srgb, var(--colors-aeon-bg, #0c0e12) 80%, transparent);
+}

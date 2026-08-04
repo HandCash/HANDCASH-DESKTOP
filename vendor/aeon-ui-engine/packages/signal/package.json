@@ -1,0 +1,32 @@
+{
+  "name": "@aeon-ui/signal",
+  "version": "0.1.0",
+  "description": "Audio analyser tap and band motion math for Aeon Scene visualizers",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/signal"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "README.md"],
+  "keywords": ["aeon-ui", "audio", "visualizer", "analyser", "web-audio"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}

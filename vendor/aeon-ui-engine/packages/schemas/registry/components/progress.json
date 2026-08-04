@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/progress.json",
+  "title": "Progress",
+  "description": "Prop-driven progress: value + indeterminate → idle | loading | complete.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Progress"
+    },
+    "scope": {
+      "const": "progress"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "track",
+          "range",
+          "label"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "loading",
+          "complete"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "indeterminate": {
+          "type": "boolean"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "progress.root",
+          "description": "progress.root"
+        },
+        "Track": {
+          "const": "progress.track",
+          "description": "progress.track"
+        },
+        "Range": {
+          "const": "progress.range",
+          "description": "progress.range"
+        },
+        "Label": {
+          "const": "progress.label",
+          "description": "progress.label"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "progress",
+    "parts": [
+      "root",
+      "track",
+      "range",
+      "label"
+    ],
+    "states": [
+      "idle",
+      "loading",
+      "complete"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "Root": "progress.root",
+      "Track": "progress.track",
+      "Range": "progress.range",
+      "Label": "progress.label"
+    },
+    "examples": []
+  }
+}

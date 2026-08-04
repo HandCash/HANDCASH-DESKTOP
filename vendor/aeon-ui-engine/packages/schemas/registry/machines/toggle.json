@@ -1,0 +1,134 @@
+{
+  "id": "toggle",
+  "initial": "interaction",
+  "events": [
+    "POINTER_DOWN",
+    "TOGGLE",
+    "SET_CHECKED",
+    "POINTER_UP",
+    "POINTER_LEAVE"
+  ],
+  "tree": {
+    "key": "toggle",
+    "id": "toggle",
+    "type": "compound",
+    "events": [
+      "POINTER_DOWN",
+      "TOGGLE",
+      "SET_CHECKED",
+      "POINTER_UP",
+      "POINTER_LEAVE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "interaction",
+        "id": "toggle.interaction",
+        "type": "compound",
+        "events": [
+          "POINTER_DOWN",
+          "TOGGLE",
+          "SET_CHECKED",
+          "POINTER_UP",
+          "POINTER_LEAVE"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "idle",
+            "id": "toggle.interaction.idle",
+            "type": "atomic",
+            "events": [
+              "POINTER_DOWN",
+              "TOGGLE",
+              "SET_CHECKED"
+            ],
+            "transitions": [
+              {
+                "event": "POINTER_DOWN",
+                "target": [
+                  "pressed"
+                ],
+                "guarded": true
+              },
+              {
+                "event": "TOGGLE",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "SET_CHECKED",
+                "target": [],
+                "guarded": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "pressed",
+            "id": "toggle.interaction.pressed",
+            "type": "atomic",
+            "events": [
+              "POINTER_UP",
+              "POINTER_LEAVE"
+            ],
+            "transitions": [
+              {
+                "event": "POINTER_UP",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              },
+              {
+                "event": "POINTER_LEAVE",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "toggle": {
+      "events": [
+        "POINTER_DOWN",
+        "TOGGLE",
+        "SET_CHECKED",
+        "POINTER_UP",
+        "POINTER_LEAVE"
+      ],
+      "type": "compound"
+    },
+    "toggle.interaction": {
+      "events": [
+        "POINTER_DOWN",
+        "TOGGLE",
+        "SET_CHECKED",
+        "POINTER_UP",
+        "POINTER_LEAVE"
+      ],
+      "type": "compound"
+    },
+    "toggle.interaction.idle": {
+      "events": [
+        "POINTER_DOWN",
+        "TOGGLE",
+        "SET_CHECKED"
+      ],
+      "type": "atomic"
+    },
+    "toggle.interaction.pressed": {
+      "events": [
+        "POINTER_UP",
+        "POINTER_LEAVE"
+      ],
+      "type": "atomic"
+    }
+  }
+}

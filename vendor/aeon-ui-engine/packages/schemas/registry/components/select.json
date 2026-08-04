@@ -1,0 +1,140 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/select.json",
+  "title": "Select",
+  "description": "Open/closed via popoverMachine; highlight may be React-local. Do not invent a new open machine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Select"
+    },
+    "scope": {
+      "const": "select"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "trigger",
+          "value",
+          "icon",
+          "positioner",
+          "content",
+          "item"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "select.root",
+          "description": "select.root"
+        },
+        "Trigger": {
+          "const": "select.trigger",
+          "description": "select.trigger"
+        },
+        "Content": {
+          "const": "select.content",
+          "description": "select.content"
+        },
+        "Item": {
+          "const": "select.item",
+          "description": "select.item"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "popoverMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "select",
+    "parts": [
+      "root",
+      "trigger",
+      "value",
+      "icon",
+      "positioner",
+      "content",
+      "item"
+    ],
+    "states": [
+      "open",
+      "closed"
+    ],
+    "machine": "popoverMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE"
+    ],
+    "slots": {
+      "Root": "select.root",
+      "Trigger": "select.trigger",
+      "Content": "select.content",
+      "Item": "select.item"
+    },
+    "examples": []
+  }
+}

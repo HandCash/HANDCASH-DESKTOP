@@ -1,0 +1,47 @@
+{
+  "name": "@aeon-ui/react-scene",
+  "version": "0.1.0",
+  "description": "React bindings for Aeon Scene — visualizers, backdrops, textures",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/react-scene"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "scene-3d.css", "README.md"],
+  "keywords": ["aeon-ui", "react", "visualizer", "background", "scene"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./scene-3d.css": "./scene-3d.css"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external react --external react-dom --external @aeon-ui/geometry --external @aeon-ui/signal --external @aeon-ui/surface --external @aeon-ui/scene",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aeon-ui/geometry": "workspace:*",
+    "@aeon-ui/scene": "workspace:*",
+    "@aeon-ui/signal": "workspace:*",
+    "@aeon-ui/surface": "workspace:*"
+  },
+  "peerDependencies": {
+    "react": "^18 || ^19",
+    "react-dom": "^18 || ^19"
+  },
+  "devDependencies": {
+    "@types/react": "^19.1.2",
+    "@types/react-dom": "^19.1.2",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0",
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}

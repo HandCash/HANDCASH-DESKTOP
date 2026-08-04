@@ -1,0 +1,131 @@
+{
+  "id": "panel",
+  "initial": "resolve",
+  "events": [
+    "COLLAPSE",
+    "TOGGLE",
+    "SET_EXPANDED",
+    "EXPAND"
+  ],
+  "tree": {
+    "key": "panel",
+    "id": "panel",
+    "type": "compound",
+    "events": [
+      "COLLAPSE",
+      "TOGGLE",
+      "SET_EXPANDED",
+      "EXPAND"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "resolve",
+        "id": "panel.resolve",
+        "type": "atomic",
+        "events": [],
+        "transitions": [],
+        "children": []
+      },
+      {
+        "key": "expanded",
+        "id": "panel.expanded",
+        "type": "atomic",
+        "events": [
+          "COLLAPSE",
+          "TOGGLE",
+          "SET_EXPANDED"
+        ],
+        "transitions": [
+          {
+            "event": "COLLAPSE",
+            "target": [
+              "collapsed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "TOGGLE",
+            "target": [
+              "collapsed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_EXPANDED",
+            "target": [
+              "collapsed"
+            ],
+            "guarded": true
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "collapsed",
+        "id": "panel.collapsed",
+        "type": "atomic",
+        "events": [
+          "EXPAND",
+          "TOGGLE",
+          "SET_EXPANDED"
+        ],
+        "transitions": [
+          {
+            "event": "EXPAND",
+            "target": [
+              "expanded"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "TOGGLE",
+            "target": [
+              "expanded"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_EXPANDED",
+            "target": [
+              "expanded"
+            ],
+            "guarded": true
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "panel": {
+      "events": [
+        "COLLAPSE",
+        "TOGGLE",
+        "SET_EXPANDED",
+        "EXPAND"
+      ],
+      "type": "compound"
+    },
+    "panel.resolve": {
+      "events": [],
+      "type": "atomic"
+    },
+    "panel.expanded": {
+      "events": [
+        "COLLAPSE",
+        "TOGGLE",
+        "SET_EXPANDED"
+      ],
+      "type": "atomic"
+    },
+    "panel.collapsed": {
+      "events": [
+        "EXPAND",
+        "TOGGLE",
+        "SET_EXPANDED"
+      ],
+      "type": "atomic"
+    }
+  }
+}

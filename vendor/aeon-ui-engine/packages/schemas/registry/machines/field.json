@@ -1,0 +1,275 @@
+{
+  "id": "field",
+  "events": [
+    "INPUT",
+    "BLUR",
+    "RESET",
+    "VALIDATE",
+    "SUBMIT",
+    "SUBMIT_DONE",
+    "SUBMIT_FAIL"
+  ],
+  "tree": {
+    "key": "field",
+    "id": "field",
+    "type": "parallel",
+    "events": [
+      "INPUT",
+      "BLUR",
+      "RESET",
+      "VALIDATE",
+      "SUBMIT",
+      "SUBMIT_DONE",
+      "SUBMIT_FAIL"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "interaction",
+        "id": "field.interaction",
+        "type": "compound",
+        "events": [
+          "INPUT",
+          "BLUR",
+          "RESET"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "pristine",
+            "id": "field.interaction.pristine",
+            "type": "atomic",
+            "events": [
+              "INPUT",
+              "BLUR"
+            ],
+            "transitions": [
+              {
+                "event": "INPUT",
+                "target": [
+                  "dirty"
+                ],
+                "guarded": false
+              },
+              {
+                "event": "BLUR",
+                "target": [
+                  "dirty"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "dirty",
+            "id": "field.interaction.dirty",
+            "type": "atomic",
+            "events": [
+              "RESET"
+            ],
+            "transitions": [
+              {
+                "event": "RESET",
+                "target": [
+                  "pristine"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      },
+      {
+        "key": "validation",
+        "id": "field.validation",
+        "type": "compound",
+        "events": [
+          "VALIDATE",
+          "RESET"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "valid",
+            "id": "field.validation.valid",
+            "type": "atomic",
+            "events": [
+              "VALIDATE"
+            ],
+            "transitions": [
+              {
+                "event": "VALIDATE",
+                "target": [
+                  "invalid"
+                ],
+                "guarded": true
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "invalid",
+            "id": "field.validation.invalid",
+            "type": "atomic",
+            "events": [
+              "VALIDATE",
+              "RESET"
+            ],
+            "transitions": [
+              {
+                "event": "VALIDATE",
+                "target": [
+                  "valid"
+                ],
+                "guarded": true
+              },
+              {
+                "event": "RESET",
+                "target": [
+                  "valid"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      },
+      {
+        "key": "submission",
+        "id": "field.submission",
+        "type": "compound",
+        "events": [
+          "SUBMIT",
+          "SUBMIT_DONE",
+          "SUBMIT_FAIL"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "idle",
+            "id": "field.submission.idle",
+            "type": "atomic",
+            "events": [
+              "SUBMIT"
+            ],
+            "transitions": [
+              {
+                "event": "SUBMIT",
+                "target": [
+                  "pending"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "pending",
+            "id": "field.submission.pending",
+            "type": "atomic",
+            "events": [
+              "SUBMIT_DONE",
+              "SUBMIT_FAIL"
+            ],
+            "transitions": [
+              {
+                "event": "SUBMIT_DONE",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              },
+              {
+                "event": "SUBMIT_FAIL",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "field": {
+      "events": [
+        "INPUT",
+        "BLUR",
+        "RESET",
+        "VALIDATE",
+        "SUBMIT",
+        "SUBMIT_DONE",
+        "SUBMIT_FAIL"
+      ],
+      "type": "parallel"
+    },
+    "field.interaction": {
+      "events": [
+        "INPUT",
+        "BLUR",
+        "RESET"
+      ],
+      "type": "compound"
+    },
+    "field.interaction.pristine": {
+      "events": [
+        "INPUT",
+        "BLUR"
+      ],
+      "type": "atomic"
+    },
+    "field.interaction.dirty": {
+      "events": [
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "field.validation": {
+      "events": [
+        "VALIDATE",
+        "RESET"
+      ],
+      "type": "compound"
+    },
+    "field.validation.valid": {
+      "events": [
+        "VALIDATE"
+      ],
+      "type": "atomic"
+    },
+    "field.validation.invalid": {
+      "events": [
+        "VALIDATE",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "field.submission": {
+      "events": [
+        "SUBMIT",
+        "SUBMIT_DONE",
+        "SUBMIT_FAIL"
+      ],
+      "type": "compound"
+    },
+    "field.submission.idle": {
+      "events": [
+        "SUBMIT"
+      ],
+      "type": "atomic"
+    },
+    "field.submission.pending": {
+      "events": [
+        "SUBMIT_DONE",
+        "SUBMIT_FAIL"
+      ],
+      "type": "atomic"
+    }
+  }
+}

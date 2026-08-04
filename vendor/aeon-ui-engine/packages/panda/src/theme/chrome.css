@@ -1,0 +1,76 @@
+/* Aeon chrome — focus, selection, native controls. Import after theme-runtime.css */
+
+/* Keyboard-only focus rings; no “circle” on click-selected controls */
+:where([data-aeon-scope], [data-aeon-part]) {
+  -webkit-tap-highlight-color: transparent;
+}
+
+:where(
+  [data-aeon-scope] button,
+  [data-aeon-scope] a,
+  [data-aeon-part='trigger'],
+  [data-aeon-part='control'],
+  [data-aeon-part='item']
+):focus {
+  outline: none;
+}
+
+:where(
+  [data-aeon-scope] button,
+  [data-aeon-part='trigger'],
+  [data-aeon-part='control'],
+  [data-aeon-part='item']
+):focus:not(:focus-visible) {
+  box-shadow: none;
+}
+
+/* Selected ≠ focused — tabs, mode toggles, list items use surface tint only */
+[data-aeon-state*='selected']:not(:focus-visible),
+[data-aeon-state='open']:not(:focus-visible),
+[aria-pressed='true']:not(:focus-visible) {
+  outline: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--colors-aeon-accent) 24%, transparent);
+  color: inherit;
+}
+
+/* Native controls — hidden when using Aeon Select; fallback styling otherwise */
+select:not([data-aeon-native-select]),
+textarea,
+input[type='text'],
+input[type='email'],
+input[type='search'],
+input[type='password'],
+input[type='number'] {
+  font-family: inherit;
+  font-size: 0.8125rem;
+  color: var(--colors-aeon-text);
+  background: var(--colors-aeon-surface);
+  border: 1px solid var(--colors-aeon-border);
+  border-radius: var(--radii-md, 0.5rem);
+  outline: none;
+}
+
+select:not([data-aeon-native-select]):focus-visible,
+textarea:focus-visible,
+input:focus-visible {
+  border-color: var(--colors-aeon-accent);
+  box-shadow: none;
+}
+
+select:not([data-aeon-native-select]) {
+  appearance: none;
+  padding: 0.5rem 2rem 0.5rem 0.75rem;
+  cursor: pointer;
+  background-image: linear-gradient(45deg, transparent 50%, var(--colors-aeon-muted) 50%),
+    linear-gradient(135deg, var(--colors-aeon-muted) 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% + 2px),
+    calc(100% - 9px) calc(50% + 2px);
+  background-size:
+    5px 5px,
+    5px 5px;
+  background-repeat: no-repeat;
+}

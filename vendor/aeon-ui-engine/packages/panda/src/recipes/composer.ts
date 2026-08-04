@@ -1,0 +1,135 @@
+import { defineSlotRecipe } from '@pandacss/dev'
+
+const slots = [
+  'root',
+  'input',
+  'actions',
+  'send',
+  'suggestions',
+  'suggestion',
+  'toolbar',
+] as const
+
+/**
+ * Composer — bottom compose chrome for threads.
+ * Hierarchy: input and send share controlMinHSm — input must never dwarf the action.
+ * States: idle | sending | disabled | error | chat | command | lookup
+ */
+export const composerRecipe = defineSlotRecipe({
+  className: 'aeonComposer',
+  slots,
+  base: {
+    root: {
+      display: 'grid',
+      gridTemplateColumns: 'minmax(0, 1fr) auto',
+      alignItems: 'end',
+      columnGap: '0.4rem',
+      width: '100%',
+      pt: '0.45rem',
+      px: '0.1rem',
+      pb: '0.75rem',
+      borderTopWidth: '1px',
+      borderTopColor: 'border',
+      bg: 'bg',
+      position: 'relative',
+      '&[data-aeon-state=disabled]': { opacity: 0.55, pointerEvents: 'none' },
+      '&[data-aeon-state=sending]': { opacity: 0.85 },
+      '&[data-aeon-state=error]': {
+        borderTopColor: 'danger',
+      },
+      '&[data-aeon-state=command]': {
+        borderTopColor: 'accent',
+      },
+      '&[data-aeon-state=lookup]': {
+        borderTopColor: 'border',
+      },
+    },
+    input: {
+      width: '100%',
+      minH: 'controlMinHSm',
+      h: 'controlMinHSm',
+      maxH: '5.5rem',
+      resize: 'none',
+      overflowY: 'auto',
+      boxSizing: 'border-box',
+      px: '0.75rem',
+      py: '0.35rem',
+      borderRadius: 'lg',
+      borderWidth: '1px',
+      borderColor: 'border',
+      bg: 'surface',
+      color: 'fg',
+      font: 'inherit',
+      fontSize: 'sm',
+      lineHeight: '1.25',
+      outline: 'none',
+      _focus: {
+        borderColor: 'accent',
+        boxShadow: 'none',
+      },
+      _focusVisible: {
+        borderColor: 'accent',
+        boxShadow: 'none',
+      },
+    },
+    actions: {
+      display: 'flex',
+      alignItems: 'center',
+      alignSelf: 'end',
+      gap: '0.35rem',
+      minH: 'controlMinHSm',
+    },
+    send: {
+      display: 'inline-flex',
+      alignItems: 'stretch',
+      justifyContent: 'center',
+      minH: 'controlMinHSm',
+      '& > [data-aeon-scope=button], & > button': {
+        minH: 'controlMinHSm',
+        h: 'controlMinHSm',
+        alignSelf: 'center',
+      },
+    },
+    toolbar: {
+      display: 'flex',
+      alignItems: 'center',
+      gap: '0.25rem',
+      gridColumn: '1 / -1',
+      order: -1,
+      mb: '0.25rem',
+    },
+    suggestions: {
+      listStyle: 'none',
+      margin: '0',
+      padding: '0.25rem',
+      display: 'grid',
+      gap: '0.15rem',
+      gridColumn: '1 / -1',
+      order: -1,
+      mb: '0.35rem',
+      maxH: '10rem',
+      overflowY: 'auto',
+      borderRadius: 'lg',
+      borderWidth: '1px',
+      borderColor: 'border',
+      bg: 'surface',
+    },
+    suggestion: {
+      display: 'flex',
+      alignItems: 'baseline',
+      gap: '0.5rem',
+      width: '100%',
+      textAlign: 'left',
+      px: '0.55rem',
+      py: '0.4rem',
+      borderRadius: 'md',
+      borderWidth: '0',
+      bg: 'transparent',
+      color: 'fg',
+      font: 'inherit',
+      fontSize: 'sm',
+      cursor: 'pointer',
+      _hover: { bg: 'surfaceRaised' },
+    },
+  },
+})

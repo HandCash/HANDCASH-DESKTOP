@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/scroll.json",
+  "title": "Scroll",
+  "description": "Derived overflow/edge snapshot via getScrollSnapshot() — no XState machine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Scroll"
+    },
+    "scope": {
+      "const": "scroll"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "viewport",
+          "content"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "start",
+          "middle",
+          "end",
+          "overflow-x",
+          "overflow-y",
+          "overflow-both"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "scroll.root",
+          "description": "scroll.root"
+        },
+        "Viewport": {
+          "const": "scroll.viewport",
+          "description": "scroll.viewport"
+        },
+        "Content": {
+          "const": "scroll.content",
+          "description": "scroll.content"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "getScrollSnapshot"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "scroll",
+    "parts": [
+      "root",
+      "viewport",
+      "content"
+    ],
+    "states": [
+      "idle",
+      "start",
+      "middle",
+      "end",
+      "overflow-x",
+      "overflow-y",
+      "overflow-both"
+    ],
+    "machine": null,
+    "runtime": "getScrollSnapshot",
+    "events": [],
+    "slots": {
+      "Root": "scroll.root",
+      "Viewport": "scroll.viewport",
+      "Content": "scroll.content"
+    },
+    "examples": []
+  }
+}

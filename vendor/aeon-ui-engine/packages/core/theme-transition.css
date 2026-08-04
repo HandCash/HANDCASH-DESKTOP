@@ -1,0 +1,58 @@
+/**
+ * Smooth light/dark transitions for apps using CSS variables (Tailwind, etc.).
+ * Add class `aeon-theme-transition` on <html> (see syncAeonColorMode / AeonThemeBridge).
+ */
+
+html.aeon-theme-transition {
+  transition:
+    background-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.aeon-theme-transition body {
+  transition:
+    background-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+html.aeon-theme-transition :where(
+  .bg-background,
+  .bg-card,
+  .bg-popover,
+  .bg-muted,
+  .bg-secondary,
+  .bg-accent,
+  .bg-primary,
+  .text-foreground,
+  .text-muted-foreground,
+  .border-border,
+  [data-slot='card'],
+  [data-slot='avatar-fallback']
+) {
+  transition:
+    background-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    border-color 0.45s cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 0.45s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 0.45s;
+  animation-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.aeon-theme-transition,
+  html.aeon-theme-transition body,
+  html.aeon-theme-transition :where(.bg-background, .bg-card, .bg-popover, .bg-muted) {
+    transition: none !important;
+  }
+
+  ::view-transition-group(root),
+  ::view-transition-old(root),
+  ::view-transition-new(root) {
+    animation: none !important;
+  }
+}

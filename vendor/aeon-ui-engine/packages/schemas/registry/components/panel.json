@@ -1,0 +1,143 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/panel.json",
+  "title": "Panel",
+  "description": "Collapsible layout region via panelMachine — expanded | collapsed.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Panel"
+    },
+    "scope": {
+      "const": "panel"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "group",
+          "root",
+          "trigger",
+          "label",
+          "content"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "expanded",
+          "collapsed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Group": {
+          "const": "panel.group",
+          "description": "panel.group"
+        },
+        "Root": {
+          "const": "panel.root",
+          "description": "panel.root"
+        },
+        "Trigger": {
+          "const": "panel.trigger",
+          "description": "panel.trigger"
+        },
+        "Label": {
+          "const": "panel.label",
+          "description": "panel.label"
+        },
+        "Content": {
+          "const": "panel.content",
+          "description": "panel.content"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "panelMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "EXPAND",
+          "COLLAPSE",
+          "TOGGLE",
+          "SET_EXPANDED"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "panel",
+    "parts": [
+      "group",
+      "root",
+      "trigger",
+      "label",
+      "content"
+    ],
+    "states": [
+      "expanded",
+      "collapsed"
+    ],
+    "machine": "panelMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "EXPAND",
+      "COLLAPSE",
+      "TOGGLE",
+      "SET_EXPANDED"
+    ],
+    "slots": {
+      "Group": "panel.group",
+      "Root": "panel.root",
+      "Trigger": "panel.trigger",
+      "Label": "panel.label",
+      "Content": "panel.content"
+    },
+    "examples": []
+  }
+}

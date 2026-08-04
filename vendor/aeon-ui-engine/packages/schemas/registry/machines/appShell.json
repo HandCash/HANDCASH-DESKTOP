@@ -1,0 +1,128 @@
+{
+  "id": "appShell",
+  "initial": "idle",
+  "events": [
+    "OPEN_OVERLAY",
+    "SHOW_DOCK",
+    "HIDE_DOCK",
+    "SET_DOCK",
+    "CLOSE_OVERLAY"
+  ],
+  "tree": {
+    "key": "appShell",
+    "id": "appShell",
+    "type": "compound",
+    "events": [
+      "OPEN_OVERLAY",
+      "SHOW_DOCK",
+      "HIDE_DOCK",
+      "SET_DOCK",
+      "CLOSE_OVERLAY"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "appShell.idle",
+        "type": "atomic",
+        "events": [
+          "OPEN_OVERLAY",
+          "SHOW_DOCK",
+          "HIDE_DOCK",
+          "SET_DOCK"
+        ],
+        "transitions": [
+          {
+            "event": "OPEN_OVERLAY",
+            "target": [
+              "overlayOpen"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SHOW_DOCK",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "HIDE_DOCK",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "SET_DOCK",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "overlayOpen",
+        "id": "appShell.overlayOpen",
+        "type": "atomic",
+        "events": [
+          "CLOSE_OVERLAY",
+          "SHOW_DOCK",
+          "HIDE_DOCK",
+          "SET_DOCK"
+        ],
+        "transitions": [
+          {
+            "event": "CLOSE_OVERLAY",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SHOW_DOCK",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "HIDE_DOCK",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "SET_DOCK",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "appShell": {
+      "events": [
+        "OPEN_OVERLAY",
+        "SHOW_DOCK",
+        "HIDE_DOCK",
+        "SET_DOCK",
+        "CLOSE_OVERLAY"
+      ],
+      "type": "compound"
+    },
+    "appShell.idle": {
+      "events": [
+        "OPEN_OVERLAY",
+        "SHOW_DOCK",
+        "HIDE_DOCK",
+        "SET_DOCK"
+      ],
+      "type": "atomic"
+    },
+    "appShell.overlayOpen": {
+      "events": [
+        "CLOSE_OVERLAY",
+        "SHOW_DOCK",
+        "HIDE_DOCK",
+        "SET_DOCK"
+      ],
+      "type": "atomic"
+    }
+  }
+}

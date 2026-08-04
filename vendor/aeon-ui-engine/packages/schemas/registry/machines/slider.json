@@ -1,0 +1,151 @@
+{
+  "id": "slider",
+  "initial": "interaction",
+  "events": [
+    "SET_VALUE",
+    "STEP",
+    "HOME",
+    "END",
+    "POINTER_DOWN",
+    "POINTER_UP"
+  ],
+  "tree": {
+    "key": "slider",
+    "id": "slider",
+    "type": "compound",
+    "events": [
+      "SET_VALUE",
+      "STEP",
+      "HOME",
+      "END",
+      "POINTER_DOWN",
+      "POINTER_UP"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "interaction",
+        "id": "slider.interaction",
+        "type": "compound",
+        "events": [
+          "SET_VALUE",
+          "STEP",
+          "HOME",
+          "END",
+          "POINTER_DOWN",
+          "POINTER_UP"
+        ],
+        "transitions": [],
+        "children": [
+          {
+            "key": "idle",
+            "id": "slider.interaction.idle",
+            "type": "atomic",
+            "events": [
+              "SET_VALUE",
+              "STEP",
+              "HOME",
+              "END",
+              "POINTER_DOWN"
+            ],
+            "transitions": [
+              {
+                "event": "SET_VALUE",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "STEP",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "HOME",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "END",
+                "target": [],
+                "guarded": true
+              },
+              {
+                "event": "POINTER_DOWN",
+                "target": [
+                  "dragging"
+                ],
+                "guarded": true
+              }
+            ],
+            "children": []
+          },
+          {
+            "key": "dragging",
+            "id": "slider.interaction.dragging",
+            "type": "atomic",
+            "events": [
+              "SET_VALUE",
+              "POINTER_UP"
+            ],
+            "transitions": [
+              {
+                "event": "SET_VALUE",
+                "target": [],
+                "guarded": false
+              },
+              {
+                "event": "POINTER_UP",
+                "target": [
+                  "idle"
+                ],
+                "guarded": false
+              }
+            ],
+            "children": []
+          }
+        ]
+      }
+    ]
+  },
+  "states": {
+    "slider": {
+      "events": [
+        "SET_VALUE",
+        "STEP",
+        "HOME",
+        "END",
+        "POINTER_DOWN",
+        "POINTER_UP"
+      ],
+      "type": "compound"
+    },
+    "slider.interaction": {
+      "events": [
+        "SET_VALUE",
+        "STEP",
+        "HOME",
+        "END",
+        "POINTER_DOWN",
+        "POINTER_UP"
+      ],
+      "type": "compound"
+    },
+    "slider.interaction.idle": {
+      "events": [
+        "SET_VALUE",
+        "STEP",
+        "HOME",
+        "END",
+        "POINTER_DOWN"
+      ],
+      "type": "atomic"
+    },
+    "slider.interaction.dragging": {
+      "events": [
+        "SET_VALUE",
+        "POINTER_UP"
+      ],
+      "type": "atomic"
+    }
+  }
+}

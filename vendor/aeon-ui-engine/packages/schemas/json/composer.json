@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/composer.json",
+  "title": "Composer",
+  "description": "Compose chrome — root state prop idle | sending | disabled | error.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Composer"
+    },
+    "scope": {
+      "const": "composer"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "input",
+          "actions",
+          "send"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "sending",
+          "disabled",
+          "error"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "composer.root",
+          "description": "composer.root"
+        },
+        "Input": {
+          "const": "composer.input",
+          "description": "composer.input"
+        },
+        "Send": {
+          "const": "composer.send",
+          "description": "composer.send"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "composer",
+    "parts": [
+      "root",
+      "input",
+      "actions",
+      "send"
+    ],
+    "states": [
+      "idle",
+      "sending",
+      "disabled",
+      "error"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "Root": "composer.root",
+      "Input": "composer.input",
+      "Send": "composer.send"
+    },
+    "examples": []
+  }
+}

@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/content.json",
+  "title": "Content",
+  "description": "Status-slotted body via contentRegionMachine (or Root state prop projection). Pair with Async for fetch.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Content"
+    },
+    "scope": {
+      "const": "content"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "toolbar",
+          "body",
+          "pending",
+          "empty",
+          "error",
+          "success",
+          "sentinel"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "pending",
+          "empty",
+          "error",
+          "ready",
+          "loadingMore",
+          "success"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "content.root",
+          "description": "content.root"
+        },
+        "Pending": {
+          "const": "content.pending",
+          "description": "content.pending"
+        },
+        "Empty": {
+          "const": "content.empty",
+          "description": "content.empty"
+        },
+        "Error": {
+          "const": "content.error",
+          "description": "content.error"
+        },
+        "Success": {
+          "const": "content.success",
+          "description": "content.success"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "contentRegionMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "LOAD",
+          "RESOLVE",
+          "REJECT",
+          "RETRY",
+          "LOAD_MORE",
+          "MORE_DONE",
+          "SUCCEED",
+          "RESET"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "content",
+    "parts": [
+      "root",
+      "toolbar",
+      "body",
+      "pending",
+      "empty",
+      "error",
+      "success",
+      "sentinel"
+    ],
+    "states": [
+      "idle",
+      "pending",
+      "empty",
+      "error",
+      "ready",
+      "loadingMore",
+      "success"
+    ],
+    "machine": "contentRegionMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "LOAD",
+      "RESOLVE",
+      "REJECT",
+      "RETRY",
+      "LOAD_MORE",
+      "MORE_DONE",
+      "SUCCEED",
+      "RESET"
+    ],
+    "slots": {
+      "Root": "content.root",
+      "Pending": "content.pending",
+      "Empty": "content.empty",
+      "Error": "content.error",
+      "Success": "content.success"
+    },
+    "examples": []
+  }
+}

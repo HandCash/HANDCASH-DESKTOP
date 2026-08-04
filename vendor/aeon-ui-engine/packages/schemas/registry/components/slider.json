@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/slider.json",
+  "title": "Slider",
+  "description": "Range control via sliderMachine — idle | dragging plus numeric value in context.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Slider"
+    },
+    "scope": {
+      "const": "slider"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "track",
+          "range",
+          "thumb",
+          "valueText"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "dragging"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "slider.root",
+          "description": "slider.root"
+        },
+        "Track": {
+          "const": "slider.track",
+          "description": "slider.track"
+        },
+        "Range": {
+          "const": "slider.range",
+          "description": "slider.range"
+        },
+        "Thumb": {
+          "const": "slider.thumb",
+          "description": "slider.thumb"
+        },
+        "ValueText": {
+          "const": "slider.valueText",
+          "description": "slider.valueText"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "sliderMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SET_VALUE",
+          "STEP",
+          "POINTER_DOWN",
+          "POINTER_UP",
+          "HOME",
+          "END"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "slider",
+    "parts": [
+      "root",
+      "track",
+      "range",
+      "thumb",
+      "valueText"
+    ],
+    "states": [
+      "idle",
+      "dragging"
+    ],
+    "machine": "sliderMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SET_VALUE",
+      "STEP",
+      "POINTER_DOWN",
+      "POINTER_UP",
+      "HOME",
+      "END"
+    ],
+    "slots": {
+      "Root": "slider.root",
+      "Track": "slider.track",
+      "Range": "slider.range",
+      "Thumb": "slider.thumb",
+      "ValueText": "slider.valueText"
+    },
+    "examples": []
+  }
+}

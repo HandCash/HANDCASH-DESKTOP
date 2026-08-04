@@ -1,0 +1,314 @@
+{
+  "id": "contentRegion",
+  "initial": "idle",
+  "events": [
+    "LOAD",
+    "RESET",
+    "RESOLVE",
+    "REJECT",
+    "RETRY",
+    "LOAD_MORE",
+    "SUCCEED",
+    "MORE_DONE"
+  ],
+  "tree": {
+    "key": "contentRegion",
+    "id": "contentRegion",
+    "type": "compound",
+    "events": [
+      "LOAD",
+      "RESET",
+      "RESOLVE",
+      "REJECT",
+      "RETRY",
+      "LOAD_MORE",
+      "SUCCEED",
+      "MORE_DONE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "contentRegion.idle",
+        "type": "atomic",
+        "events": [
+          "LOAD",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "LOAD",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "pending",
+        "id": "contentRegion.pending",
+        "type": "atomic",
+        "events": [
+          "RESOLVE",
+          "REJECT"
+        ],
+        "transitions": [
+          {
+            "event": "RESOLVE",
+            "target": [
+              "empty",
+              "ready"
+            ],
+            "guarded": true
+          },
+          {
+            "event": "REJECT",
+            "target": [
+              "error"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "empty",
+        "id": "contentRegion.empty",
+        "type": "atomic",
+        "events": [
+          "LOAD",
+          "RETRY",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "LOAD",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RETRY",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "error",
+        "id": "contentRegion.error",
+        "type": "atomic",
+        "events": [
+          "RETRY",
+          "LOAD",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "RETRY",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "LOAD",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "ready",
+        "id": "contentRegion.ready",
+        "type": "atomic",
+        "events": [
+          "LOAD",
+          "LOAD_MORE",
+          "SUCCEED",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "LOAD",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "LOAD_MORE",
+            "target": [
+              "loadingMore"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SUCCEED",
+            "target": [
+              "success"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "loadingMore",
+        "id": "contentRegion.loadingMore",
+        "type": "atomic",
+        "events": [
+          "MORE_DONE",
+          "REJECT"
+        ],
+        "transitions": [
+          {
+            "event": "MORE_DONE",
+            "target": [
+              "ready",
+              "ready"
+            ],
+            "guarded": true
+          },
+          {
+            "event": "REJECT",
+            "target": [
+              "error"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "success",
+        "id": "contentRegion.success",
+        "type": "atomic",
+        "events": [
+          "LOAD",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "LOAD",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "contentRegion": {
+      "events": [
+        "LOAD",
+        "RESET",
+        "RESOLVE",
+        "REJECT",
+        "RETRY",
+        "LOAD_MORE",
+        "SUCCEED",
+        "MORE_DONE"
+      ],
+      "type": "compound"
+    },
+    "contentRegion.idle": {
+      "events": [
+        "LOAD",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.pending": {
+      "events": [
+        "RESOLVE",
+        "REJECT"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.empty": {
+      "events": [
+        "LOAD",
+        "RETRY",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.error": {
+      "events": [
+        "RETRY",
+        "LOAD",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.ready": {
+      "events": [
+        "LOAD",
+        "LOAD_MORE",
+        "SUCCEED",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.loadingMore": {
+      "events": [
+        "MORE_DONE",
+        "REJECT"
+      ],
+      "type": "atomic"
+    },
+    "contentRegion.success": {
+      "events": [
+        "LOAD",
+        "RESET"
+      ],
+      "type": "atomic"
+    }
+  }
+}

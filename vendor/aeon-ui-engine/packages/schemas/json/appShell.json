@@ -1,0 +1,151 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/appShell.json",
+  "title": "AppShell",
+  "description": "Application chrome frame via appShellMachine — idle | overlayOpen (+ dockVisible).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "AppShell"
+    },
+    "scope": {
+      "const": "appShell"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "header",
+          "subheader",
+          "content",
+          "aside",
+          "footer",
+          "dock",
+          "scrim"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "overlayOpen"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "appShell.root",
+          "description": "appShell.root"
+        },
+        "Header": {
+          "const": "appShell.header",
+          "description": "appShell.header"
+        },
+        "Content": {
+          "const": "appShell.content",
+          "description": "appShell.content"
+        },
+        "Dock": {
+          "const": "appShell.dock",
+          "description": "appShell.dock"
+        },
+        "Scrim": {
+          "const": "appShell.scrim",
+          "description": "appShell.scrim"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "appShellMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN_OVERLAY",
+          "CLOSE_OVERLAY",
+          "SHOW_DOCK",
+          "HIDE_DOCK",
+          "SET_DOCK"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "appShell",
+    "parts": [
+      "root",
+      "header",
+      "subheader",
+      "content",
+      "aside",
+      "footer",
+      "dock",
+      "scrim"
+    ],
+    "states": [
+      "idle",
+      "overlayOpen"
+    ],
+    "machine": "appShellMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN_OVERLAY",
+      "CLOSE_OVERLAY",
+      "SHOW_DOCK",
+      "HIDE_DOCK",
+      "SET_DOCK"
+    ],
+    "slots": {
+      "Root": "appShell.root",
+      "Header": "appShell.header",
+      "Content": "appShell.content",
+      "Dock": "appShell.dock",
+      "Scrim": "appShell.scrim"
+    },
+    "examples": []
+  }
+}

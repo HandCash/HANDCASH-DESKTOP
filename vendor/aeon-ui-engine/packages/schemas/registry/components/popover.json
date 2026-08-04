@@ -1,0 +1,133 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/popover.json",
+  "title": "Popover",
+  "description": "Floating surface — shares popoverMachine. Do not fork a duplicate open/closed chart.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Popover"
+    },
+    "scope": {
+      "const": "popover"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "trigger",
+          "positioner",
+          "content",
+          "arrow",
+          "closeTrigger"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "popover.root",
+          "description": "popover.root"
+        },
+        "Trigger": {
+          "const": "popover.trigger",
+          "description": "popover.trigger"
+        },
+        "Content": {
+          "const": "popover.content",
+          "description": "popover.content"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "popoverMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "popover",
+    "parts": [
+      "root",
+      "trigger",
+      "positioner",
+      "content",
+      "arrow",
+      "closeTrigger"
+    ],
+    "states": [
+      "open",
+      "closed"
+    ],
+    "machine": "popoverMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE"
+    ],
+    "slots": {
+      "Root": "popover.root",
+      "Trigger": "popover.trigger",
+      "Content": "popover.content"
+    },
+    "examples": []
+  }
+}

@@ -1,0 +1,345 @@
+{
+  "$id": "https://aeon-ui.com/registry/catalog.json",
+  "version": "0.1.0",
+  "principle": "UI = f(state)",
+  "description": "Lightweight runtime registry — fetch Aeon component schemas and state-tree JSON on demand instead of bundling every primitive.",
+  "endpoints": {
+    "catalog": "https://aeon-ui.com/registry/catalog.json",
+    "component": "https://aeon-ui.com/registry/components/{id}.json",
+    "machine": "https://aeon-ui.com/registry/machines/{id}.json"
+  },
+  "components": [
+    {
+      "id": "button",
+      "title": "Button",
+      "scope": "button",
+      "schemaUrl": "https://aeon-ui.com/registry/components/button.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/buttonLifecycle.json",
+      "runtime": "status prop",
+      "description": "Action control. status is a prop projection (not an in-tree machine). Never invent parallel useState for lifecycle."
+    },
+    {
+      "id": "async",
+      "title": "Async",
+      "scope": "async",
+      "schemaUrl": "https://aeon-ui.com/registry/components/async.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/async.json",
+      "runtime": "useAeonMachine",
+      "description": "Fetch region with full lifecycle totality: idle → loading → success|empty|failure. Always render every stable state in demos."
+    },
+    {
+      "id": "field",
+      "title": "Field",
+      "scope": "field",
+      "schemaUrl": "https://aeon-ui.com/registry/components/field.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/field.json",
+      "runtime": "useAeonMachine",
+      "description": "Parallel regions: interaction × validation × submission. Do not collapse into a single error boolean."
+    },
+    {
+      "id": "dialog",
+      "title": "Dialog",
+      "scope": "dialog",
+      "schemaUrl": "https://aeon-ui.com/registry/components/dialog.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/dialog.json",
+      "runtime": "useAeonMachine",
+      "description": "Modal open/closed via dialogMachine. Dismissal is a transition, not ad hoc flags."
+    },
+    {
+      "id": "switch",
+      "title": "Switch",
+      "scope": "switch",
+      "schemaUrl": "https://aeon-ui.com/registry/components/switch.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/toggle.json",
+      "runtime": "useAeonMachine",
+      "description": "Binary toggle via toggleMachine."
+    },
+    {
+      "id": "checkbox",
+      "title": "Checkbox",
+      "scope": "checkbox",
+      "schemaUrl": "https://aeon-ui.com/registry/components/checkbox.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/toggle.json",
+      "runtime": "useAeonMachine",
+      "description": "Binary toggle via toggleMachine (same chart family as Switch)."
+    },
+    {
+      "id": "tabs",
+      "title": "Tabs",
+      "scope": "tabs",
+      "schemaUrl": "https://aeon-ui.com/registry/components/tabs.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/tabs.json",
+      "runtime": "useAeonMachine",
+      "description": "Selected tab value from tabsMachine."
+    },
+    {
+      "id": "accordion",
+      "title": "Accordion",
+      "scope": "accordion",
+      "schemaUrl": "https://aeon-ui.com/registry/components/accordion.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/accordion.json",
+      "runtime": "useAeonMachine",
+      "description": "Per-item open state via accordionMachine."
+    },
+    {
+      "id": "popover",
+      "title": "Popover",
+      "scope": "popover",
+      "schemaUrl": "https://aeon-ui.com/registry/components/popover.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/popover.json",
+      "runtime": "useAeonMachine",
+      "description": "Floating surface — shares popoverMachine. Do not fork a duplicate open/closed chart."
+    },
+    {
+      "id": "menu",
+      "title": "Menu",
+      "scope": "menu",
+      "schemaUrl": "https://aeon-ui.com/registry/components/menu.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/popover.json",
+      "runtime": "useAeonMachine",
+      "description": "Shares popoverMachine with Popover/Select open state."
+    },
+    {
+      "id": "select",
+      "title": "Select",
+      "scope": "select",
+      "schemaUrl": "https://aeon-ui.com/registry/components/select.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/popover.json",
+      "runtime": "useAeonMachine",
+      "description": "Open/closed via popoverMachine; highlight may be React-local. Do not invent a new open machine."
+    },
+    {
+      "id": "combobox",
+      "title": "Combobox",
+      "scope": "combobox",
+      "schemaUrl": "https://aeon-ui.com/registry/components/combobox.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/popover.json",
+      "runtime": "useAeonMachine",
+      "description": "Open/closed via popoverMachine (same family as Select/Menu/Popover). Query, highlight, and item registry stay React-local for typeahead."
+    },
+    {
+      "id": "tooltip",
+      "title": "Tooltip",
+      "scope": "tooltip",
+      "schemaUrl": "https://aeon-ui.com/registry/components/tooltip.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/popover.json",
+      "runtime": "useAeonMachine",
+      "description": "Open/closed via popoverMachine (same family as Popover/Select/Combobox). openDelay / closeDelay / touchDuration stay React-local."
+    },
+    {
+      "id": "toast",
+      "title": "Toast",
+      "scope": "toast",
+      "schemaUrl": "https://aeon-ui.com/registry/components/toast.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/toast.json",
+      "runtime": "useAeonMachine",
+      "description": "Per-item visibility via toastMachine."
+    },
+    {
+      "id": "scroll",
+      "title": "Scroll",
+      "scope": "scroll",
+      "schemaUrl": "https://aeon-ui.com/registry/components/scroll.json",
+      "runtime": "getScrollSnapshot",
+      "description": "Derived overflow/edge snapshot via getScrollSnapshot() — no XState machine."
+    },
+    {
+      "id": "progress",
+      "title": "Progress",
+      "scope": "progress",
+      "schemaUrl": "https://aeon-ui.com/registry/components/progress.json",
+      "runtime": "props",
+      "description": "Prop-driven progress: value + indeterminate → idle | loading | complete."
+    },
+    {
+      "id": "radioGroup",
+      "title": "RadioGroup",
+      "scope": "radioGroup",
+      "schemaUrl": "https://aeon-ui.com/registry/components/radioGroup.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/tabs.json",
+      "runtime": "useAeonMachine",
+      "description": "Single selection via tabsMachine (same chart family as Tabs/Nav)."
+    },
+    {
+      "id": "slider",
+      "title": "Slider",
+      "scope": "slider",
+      "schemaUrl": "https://aeon-ui.com/registry/components/slider.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/slider.json",
+      "runtime": "useAeonMachine",
+      "description": "Range control via sliderMachine — idle | dragging plus numeric value in context."
+    },
+    {
+      "id": "pinInput",
+      "title": "PinInput",
+      "scope": "pinInput",
+      "schemaUrl": "https://aeon-ui.com/registry/components/pinInput.json",
+      "runtime": "useState",
+      "description": "OTP / PIN cells — React state for digit buffer; projects idle | complete on root."
+    },
+    {
+      "id": "avatar",
+      "title": "Avatar",
+      "scope": "avatar",
+      "schemaUrl": "https://aeon-ui.com/registry/components/avatar.json",
+      "runtime": "useState",
+      "description": "Image load lifecycle in React; badge presence is a prop projection."
+    },
+    {
+      "id": "content",
+      "title": "Content",
+      "scope": "content",
+      "schemaUrl": "https://aeon-ui.com/registry/components/content.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/contentRegion.json",
+      "runtime": "useAeonMachine",
+      "description": "Status-slotted body via contentRegionMachine (or Root state prop projection). Pair with Async for fetch."
+    },
+    {
+      "id": "panel",
+      "title": "Panel",
+      "scope": "panel",
+      "schemaUrl": "https://aeon-ui.com/registry/components/panel.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/panel.json",
+      "runtime": "useAeonMachine",
+      "description": "Collapsible layout region via panelMachine — expanded | collapsed."
+    },
+    {
+      "id": "appShell",
+      "title": "AppShell",
+      "scope": "appShell",
+      "schemaUrl": "https://aeon-ui.com/registry/components/appShell.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/appShell.json",
+      "runtime": "useAeonMachine",
+      "description": "Application chrome frame via appShellMachine — idle | overlayOpen (+ dockVisible)."
+    },
+    {
+      "id": "stickyBar",
+      "title": "StickyBar",
+      "scope": "bar",
+      "schemaUrl": "https://aeon-ui.com/registry/components/stickyBar.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/stickyBar.json",
+      "runtime": "useAeonMachine",
+      "description": "Sticky/fixed chrome band via stickyBarMachine. DOM scope is bar (reuses bar anatomy zones)."
+    },
+    {
+      "id": "bar",
+      "title": "Bar",
+      "scope": "bar",
+      "schemaUrl": "https://aeon-ui.com/registry/components/bar.json",
+      "runtime": "layout",
+      "description": "Three-zone toolbar layout (leading / center / trailing / seam). Sticky lifecycle uses StickyBar + stickyBarMachine."
+    },
+    {
+      "id": "nav",
+      "title": "Nav",
+      "scope": "nav",
+      "schemaUrl": "https://aeon-ui.com/registry/components/nav.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/tabs.json",
+      "runtime": "useAeonMachine",
+      "description": "Navigational collection via tabsMachine; items project inactive | active | disabled."
+    },
+    {
+      "id": "appNav",
+      "title": "AppNav",
+      "scope": "appNav",
+      "schemaUrl": "https://aeon-ui.com/registry/components/appNav.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/appNav.json",
+      "runtime": "useAeonMachine",
+      "description": "Section + detail stack via appNavMachine — list→detail, settings drill-in."
+    },
+    {
+      "id": "prompt",
+      "title": "Prompt",
+      "scope": "prompt",
+      "schemaUrl": "https://aeon-ui.com/registry/components/prompt.json",
+      "machineUrl": "https://aeon-ui.com/registry/machines/dialog.json",
+      "runtime": "status prop",
+      "description": "Confirm / permission dialog composed on Dialog. Open/closed via dialogMachine; face via status prop."
+    },
+    {
+      "id": "statusBanner",
+      "title": "StatusBanner",
+      "scope": "statusBanner",
+      "schemaUrl": "https://aeon-ui.com/registry/components/statusBanner.json",
+      "runtime": "props",
+      "description": "Non-blocking top-of-app notice — tone + optional status props project to data-aeon-state."
+    },
+    {
+      "id": "separator",
+      "title": "Separator",
+      "scope": "separator",
+      "schemaUrl": "https://aeon-ui.com/registry/components/separator.json",
+      "runtime": "props",
+      "description": "Static divider — orientation prop only."
+    },
+    {
+      "id": "composer",
+      "title": "Composer",
+      "scope": "composer",
+      "schemaUrl": "https://aeon-ui.com/registry/components/composer.json",
+      "runtime": "props",
+      "description": "Compose chrome — root state prop idle | sending | disabled | error."
+    },
+    {
+      "id": "thread",
+      "title": "Thread",
+      "scope": "thread",
+      "schemaUrl": "https://aeon-ui.com/registry/components/thread.json",
+      "runtime": "props",
+      "description": "Message stream — item state prop mine | theirs | pending | failed."
+    },
+    {
+      "id": "identity",
+      "title": "Identity",
+      "scope": "identity",
+      "schemaUrl": "https://aeon-ui.com/registry/components/identity.json",
+      "runtime": "layout",
+      "description": "Avatar + title + subtitle strip — presentational layout, not a niche product scope."
+    },
+    {
+      "id": "profileHeader",
+      "title": "ProfileHeader",
+      "scope": "profileHeader",
+      "schemaUrl": "https://aeon-ui.com/registry/components/profileHeader.json",
+      "runtime": "layout",
+      "description": "Dense account header — identity · metrics · actions. Universal people chrome."
+    },
+    {
+      "id": "metricStrip",
+      "title": "MetricStrip",
+      "scope": "metricStrip",
+      "schemaUrl": "https://aeon-ui.com/registry/components/metricStrip.json",
+      "runtime": "layout",
+      "description": "Dense value|label chips — cluster or loose density. Generic stats only."
+    },
+    {
+      "id": "listRow",
+      "title": "ListRow",
+      "scope": "listRow",
+      "schemaUrl": "https://aeon-ui.com/registry/components/listRow.json",
+      "runtime": "layout",
+      "description": "Settings / menu row — leading · label · trailing. Layout only."
+    },
+    {
+      "id": "entry",
+      "title": "Entry",
+      "scope": "entry",
+      "schemaUrl": "https://aeon-ui.com/registry/components/entry.json",
+      "runtime": "props",
+      "description": "Universal multi-value card (feed stack or listing split). Root state idle | selected | muted — never invent niche scopes."
+    },
+    {
+      "id": "conversation",
+      "title": "Conversation",
+      "scope": "conversation",
+      "schemaUrl": "https://aeon-ui.com/registry/components/conversation.json",
+      "runtime": "props",
+      "description": "Inbox / DM list — item state prop idle | unread | selected. Universal messaging chrome."
+    }
+  ],
+  "client": {
+    "fetchCatalog": "fetch('https://aeon-ui.com/registry/catalog.json').then(r => r.json())",
+    "fetchComponent": "id => fetch(`https://aeon-ui.com/registry/components/${id}.json`).then(r => r.json())",
+    "fetchMachine": "id => fetch(`https://aeon-ui.com/registry/machines/${id}.json`).then(r => r.json())"
+  }
+}

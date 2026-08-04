@@ -1,0 +1,219 @@
+{
+  "id": "async",
+  "initial": "idle",
+  "events": [
+    "FETCH",
+    "RESET",
+    "RESOLVE",
+    "REJECT",
+    "STALE",
+    "REFRESH"
+  ],
+  "tree": {
+    "key": "async",
+    "id": "async",
+    "type": "compound",
+    "events": [
+      "FETCH",
+      "RESET",
+      "RESOLVE",
+      "REJECT",
+      "STALE",
+      "REFRESH"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "async.idle",
+        "type": "atomic",
+        "events": [
+          "FETCH",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "FETCH",
+            "target": [
+              "loading"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "loading",
+        "id": "async.loading",
+        "type": "atomic",
+        "events": [
+          "RESOLVE",
+          "REJECT"
+        ],
+        "transitions": [
+          {
+            "event": "RESOLVE",
+            "target": [
+              "empty",
+              "success"
+            ],
+            "guarded": true
+          },
+          {
+            "event": "REJECT",
+            "target": [
+              "failure"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "empty",
+        "id": "async.empty",
+        "type": "atomic",
+        "events": [
+          "FETCH",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "FETCH",
+            "target": [
+              "loading"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "success",
+        "id": "async.success",
+        "type": "atomic",
+        "events": [
+          "FETCH",
+          "STALE",
+          "REFRESH",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "FETCH",
+            "target": [
+              "loading"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "STALE",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "REFRESH",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "failure",
+        "id": "async.failure",
+        "type": "atomic",
+        "events": [
+          "FETCH",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "FETCH",
+            "target": [
+              "loading"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "async": {
+      "events": [
+        "FETCH",
+        "RESET",
+        "RESOLVE",
+        "REJECT",
+        "STALE",
+        "REFRESH"
+      ],
+      "type": "compound"
+    },
+    "async.idle": {
+      "events": [
+        "FETCH",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "async.loading": {
+      "events": [
+        "RESOLVE",
+        "REJECT"
+      ],
+      "type": "atomic"
+    },
+    "async.empty": {
+      "events": [
+        "FETCH",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "async.success": {
+      "events": [
+        "FETCH",
+        "STALE",
+        "REFRESH",
+        "RESET"
+      ],
+      "type": "atomic"
+    },
+    "async.failure": {
+      "events": [
+        "FETCH",
+        "RESET"
+      ],
+      "type": "atomic"
+    }
+  }
+}

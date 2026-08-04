@@ -1,0 +1,149 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/statusBanner.json",
+  "title": "StatusBanner",
+  "description": "Non-blocking top-of-app notice — tone + optional status props project to data-aeon-state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "StatusBanner"
+    },
+    "scope": {
+      "const": "statusBanner"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "copy",
+          "title",
+          "body",
+          "actions"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "info",
+          "success",
+          "warning",
+          "danger",
+          "neutral"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "tone": {
+          "type": "string",
+          "enum": [
+            "info",
+            "success",
+            "warning",
+            "danger",
+            "neutral"
+          ]
+        },
+        "status": {
+          "type": "string",
+          "description": "Optional secondary token appended to data-aeon-state"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "statusBanner.root",
+          "description": "statusBanner.root"
+        },
+        "Title": {
+          "const": "statusBanner.title",
+          "description": "statusBanner.title"
+        },
+        "Body": {
+          "const": "statusBanner.body",
+          "description": "statusBanner.body"
+        },
+        "Actions": {
+          "const": "statusBanner.actions",
+          "description": "statusBanner.actions"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "statusBanner",
+    "parts": [
+      "root",
+      "copy",
+      "title",
+      "body",
+      "actions"
+    ],
+    "states": [
+      "info",
+      "success",
+      "warning",
+      "danger",
+      "neutral"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "Root": "statusBanner.root",
+      "Title": "statusBanner.title",
+      "Body": "statusBanner.body",
+      "Actions": "statusBanner.actions"
+    },
+    "examples": []
+  }
+}

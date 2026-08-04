@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/avatar.json",
+  "title": "Avatar",
+  "description": "Image load lifecycle in React; badge presence is a prop projection.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Avatar"
+    },
+    "scope": {
+      "const": "avatar"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "image",
+          "fallback",
+          "badge"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "loading",
+          "loaded",
+          "error"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "avatar.root",
+          "description": "avatar.root"
+        },
+        "Image": {
+          "const": "avatar.image",
+          "description": "avatar.image"
+        },
+        "Fallback": {
+          "const": "avatar.fallback",
+          "description": "avatar.fallback"
+        },
+        "Badge": {
+          "const": "avatar.badge",
+          "description": "avatar.badge"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useState"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "avatar",
+    "parts": [
+      "root",
+      "image",
+      "fallback",
+      "badge"
+    ],
+    "states": [
+      "idle",
+      "loading",
+      "loaded",
+      "error"
+    ],
+    "machine": null,
+    "runtime": "useState",
+    "events": [],
+    "slots": {
+      "Root": "avatar.root",
+      "Image": "avatar.image",
+      "Fallback": "avatar.fallback",
+      "Badge": "avatar.badge"
+    },
+    "examples": []
+  }
+}

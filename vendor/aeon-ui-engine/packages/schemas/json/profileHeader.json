@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/profileHeader.json",
+  "title": "ProfileHeader",
+  "description": "Dense account header — identity · metrics · actions. Universal people chrome.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "ProfileHeader"
+    },
+    "scope": {
+      "const": "profileHeader"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "media",
+          "identity",
+          "metrics",
+          "actions",
+          "body"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "profileHeader.root",
+          "description": "profileHeader.root"
+        },
+        "Media": {
+          "const": "profileHeader.media",
+          "description": "profileHeader.media"
+        },
+        "Identity": {
+          "const": "profileHeader.identity",
+          "description": "profileHeader.identity"
+        },
+        "Metrics": {
+          "const": "profileHeader.metrics",
+          "description": "profileHeader.metrics"
+        },
+        "Actions": {
+          "const": "profileHeader.actions",
+          "description": "profileHeader.actions"
+        },
+        "Body": {
+          "const": "profileHeader.body",
+          "description": "profileHeader.body"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "layout"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "profileHeader",
+    "parts": [
+      "root",
+      "media",
+      "identity",
+      "metrics",
+      "actions",
+      "body"
+    ],
+    "states": [
+      "idle"
+    ],
+    "machine": null,
+    "runtime": "layout",
+    "events": [],
+    "slots": {
+      "Root": "profileHeader.root",
+      "Media": "profileHeader.media",
+      "Identity": "profileHeader.identity",
+      "Metrics": "profileHeader.metrics",
+      "Actions": "profileHeader.actions",
+      "Body": "profileHeader.body"
+    },
+    "examples": []
+  }
+}

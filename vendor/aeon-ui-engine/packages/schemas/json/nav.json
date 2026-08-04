@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/nav.json",
+  "title": "Nav",
+  "description": "Navigational collection via tabsMachine; items project inactive | active | disabled.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Nav"
+    },
+    "scope": {
+      "const": "nav"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "item",
+          "indicator",
+          "label",
+          "icon",
+          "badge"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "inactive",
+          "active",
+          "disabled"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "nav.root",
+          "description": "nav.root"
+        },
+        "Item": {
+          "const": "nav.item",
+          "description": "nav.item"
+        },
+        "Label": {
+          "const": "nav.label",
+          "description": "nav.label"
+        },
+        "Icon": {
+          "const": "nav.icon",
+          "description": "nav.icon"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "tabsMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SELECT"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "nav",
+    "parts": [
+      "root",
+      "item",
+      "indicator",
+      "label",
+      "icon",
+      "badge"
+    ],
+    "states": [
+      "inactive",
+      "active",
+      "disabled"
+    ],
+    "machine": "tabsMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SELECT"
+    ],
+    "slots": {
+      "Root": "nav.root",
+      "Item": "nav.item",
+      "Label": "nav.label",
+      "Icon": "nav.icon"
+    },
+    "examples": []
+  }
+}

@@ -1,0 +1,166 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/conversation.json",
+  "title": "Conversation",
+  "description": "Inbox / DM list — item state prop idle | unread | selected. Universal messaging chrome.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Conversation"
+    },
+    "scope": {
+      "const": "conversation"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "item",
+          "leading",
+          "body",
+          "title",
+          "preview",
+          "meta",
+          "badge"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "unread",
+          "selected"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "unread",
+            "selected"
+          ],
+          "default": "idle"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "conversation.root",
+          "description": "conversation.root"
+        },
+        "Item": {
+          "const": "conversation.item",
+          "description": "conversation.item"
+        },
+        "Leading": {
+          "const": "conversation.leading",
+          "description": "conversation.leading"
+        },
+        "Body": {
+          "const": "conversation.body",
+          "description": "conversation.body"
+        },
+        "Title": {
+          "const": "conversation.title",
+          "description": "conversation.title"
+        },
+        "Preview": {
+          "const": "conversation.preview",
+          "description": "conversation.preview"
+        },
+        "Meta": {
+          "const": "conversation.meta",
+          "description": "conversation.meta"
+        },
+        "Badge": {
+          "const": "conversation.badge",
+          "description": "conversation.badge"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "conversation",
+    "parts": [
+      "root",
+      "item",
+      "leading",
+      "body",
+      "title",
+      "preview",
+      "meta",
+      "badge"
+    ],
+    "states": [
+      "idle",
+      "unread",
+      "selected"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "Root": "conversation.root",
+      "Item": "conversation.item",
+      "Leading": "conversation.leading",
+      "Body": "conversation.body",
+      "Title": "conversation.title",
+      "Preview": "conversation.preview",
+      "Meta": "conversation.meta",
+      "Badge": "conversation.badge"
+    },
+    "examples": []
+  }
+}

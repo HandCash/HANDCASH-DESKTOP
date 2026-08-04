@@ -1,0 +1,113 @@
+/* @aeon-ui/surface — procedural materials (import once per app) */
+
+.aeon-surface {
+  position: relative;
+  background-color: var(--aeon-surface-base, #2a2a2e);
+  background-blend-mode: overlay, soft-light, normal;
+  background-size:
+    4px 4px,
+    12px 12px,
+    cover;
+}
+
+.aeon-surface--stone {
+  --aeon-surface-base: #5c5a56;
+  background-image:
+    radial-gradient(circle at 20% 30%, rgba(255, 255, 255, 0.12) 0%, transparent 45%),
+    radial-gradient(circle at 70% 60%, rgba(0, 0, 0, 0.15) 0%, transparent 40%),
+    linear-gradient(145deg, #6e6c68 0%, #4a4844 50%, #3d3b38 100%);
+  background-size: cover;
+}
+
+.aeon-surface--gravel {
+  --aeon-surface-base: #4a4845;
+  background-image:
+    radial-gradient(circle, rgba(255, 255, 255, 0.08) 1px, transparent 1px),
+    radial-gradient(circle, rgba(0, 0, 0, 0.12) 1px, transparent 1px),
+    linear-gradient(180deg, #5a5752 0%, #3e3c38 100%);
+  background-size:
+    3px 3px,
+    5px 5px,
+    cover;
+  background-position:
+    0 0,
+    2px 2px,
+    0 0;
+}
+
+.aeon-surface--brick {
+  --aeon-surface-base: #6b3a32;
+  background-image:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(335deg, rgba(0, 0, 0, 0.3) 11px, transparent 11px),
+    linear-gradient(155deg, rgba(0, 0, 0, 0.24) 11px, transparent 11px),
+    linear-gradient(90deg, #9a5c4a 0%, #7a4038 25%, #8b4a42 50%, #6b3428 75%, #7a4038 100%);
+  background-size:
+    100% 7px,
+    44px 26px,
+    44px 26px,
+    cover;
+  background-position:
+    0 0,
+    0 0,
+    22px 13px,
+    0 0;
+}
+
+/* Asphalt alley ground — aggregate, seams, wear (no image assets). */
+.aeon-surface--pavement {
+  --aeon-surface-base: #2a2a28;
+  background-image:
+    radial-gradient(ellipse 48% 32% at 28% 68%, rgba(255, 255, 255, 0.05) 0%, transparent 72%),
+    radial-gradient(ellipse 42% 28% at 74% 38%, rgba(0, 0, 0, 0.2) 0%, transparent 68%),
+    radial-gradient(circle, rgba(255, 255, 255, 0.07) 0.5px, transparent 0.5px),
+    radial-gradient(circle, rgba(0, 0, 0, 0.13) 0.5px, transparent 0.5px),
+    linear-gradient(180deg, #3a3a36 0%, #2e2e2c 42%, #242422 100%);
+  background-size:
+    100% 100%,
+    100% 100%,
+    4px 4px,
+    5px 5px,
+    cover;
+  background-position:
+    0 0,
+    0 0,
+    0 0,
+    2px 1px,
+    0 0;
+}
+
+/* Kraft cardboard — fiber grain, crease lines (board / marker surfaces). */
+.aeon-surface--kraft {
+  --aeon-surface-base: #b8956a;
+  background-image:
+    repeating-linear-gradient(
+      0deg,
+      transparent 0,
+      transparent 2px,
+      rgba(92, 72, 56, 0.16) 2px,
+      rgba(92, 72, 56, 0.16) 3px
+    ),
+    repeating-linear-gradient(
+      90deg,
+      transparent 0,
+      transparent 7px,
+      rgba(46, 36, 24, 0.06) 7px,
+      rgba(46, 36, 24, 0.06) 8px
+    ),
+    radial-gradient(ellipse 90% 40% at 50% 0%, rgba(160, 120, 70, 0.1) 0%, transparent 55%),
+    radial-gradient(circle, rgba(100, 72, 40, 0.07) 0.8px, transparent 0.8px),
+    linear-gradient(168deg, #c4a070 0%, #b8956a 28%, #a08050 62%, #8a7048 100%);
+  background-size:
+    100% 3px,
+    100% 8px,
+    100% 100%,
+    5px 5px,
+    cover;
+  background-position:
+    0 0,
+    0 1px,
+    0 0,
+    1px 2px,
+    0 0;
+}

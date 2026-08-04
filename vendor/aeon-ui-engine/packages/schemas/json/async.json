@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/async.json",
+  "title": "Async",
+  "description": "Fetch region with full lifecycle totality: idle → loading → success|empty|failure. Always render every stable state in demos.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Async"
+    },
+    "scope": {
+      "const": "async"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "track",
+          "segment",
+          "readout",
+          "readoutRail",
+          "readoutBody",
+          "actions"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "loading",
+          "success",
+          "empty",
+          "failure"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "async.root",
+          "description": "async.root"
+        },
+        "Track": {
+          "const": "async.track",
+          "description": "async.track"
+        },
+        "Segment": {
+          "const": "async.segment",
+          "description": "async.segment"
+        },
+        "Readout": {
+          "const": "async.readout",
+          "description": "async.readout"
+        },
+        "Actions": {
+          "const": "async.actions",
+          "description": "async.actions"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "createAsyncMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "FETCH",
+          "RESOLVE",
+          "REJECT",
+          "RESET",
+          "STALE",
+          "REFRESH"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "<Async.Root>\n  {/* Content faces via asyncStatusToContentState — not Track */}\n  <Async.Actions />\n</Async.Root>"
+      ]
+    }
+  },
+  "x-aeon": {
+    "scope": "async",
+    "parts": [
+      "root",
+      "track",
+      "segment",
+      "readout",
+      "readoutRail",
+      "readoutBody",
+      "actions"
+    ],
+    "states": [
+      "idle",
+      "loading",
+      "success",
+      "empty",
+      "failure"
+    ],
+    "machine": "createAsyncMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "FETCH",
+      "RESOLVE",
+      "REJECT",
+      "RESET",
+      "STALE",
+      "REFRESH"
+    ],
+    "slots": {
+      "Root": "async.root",
+      "Track": "async.track",
+      "Segment": "async.segment",
+      "Readout": "async.readout",
+      "Actions": "async.actions"
+    },
+    "examples": [
+      "<Async.Root>\n  {/* Content faces via asyncStatusToContentState — not Track */}\n  <Async.Actions />\n</Async.Root>"
+    ]
+  }
+}

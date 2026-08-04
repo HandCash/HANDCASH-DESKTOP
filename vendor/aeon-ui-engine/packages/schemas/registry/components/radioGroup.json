@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/radioGroup.json",
+  "title": "RadioGroup",
+  "description": "Single selection via tabsMachine (same chart family as Tabs/Nav).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "RadioGroup"
+    },
+    "scope": {
+      "const": "radioGroup"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "item",
+          "itemControl",
+          "itemIndicator",
+          "itemLabel"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "selected"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "radioGroup.root",
+          "description": "radioGroup.root"
+        },
+        "Item": {
+          "const": "radioGroup.item",
+          "description": "radioGroup.item"
+        },
+        "ItemControl": {
+          "const": "radioGroup.itemControl",
+          "description": "radioGroup.itemControl"
+        },
+        "ItemLabel": {
+          "const": "radioGroup.itemLabel",
+          "description": "radioGroup.itemLabel"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "tabsMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SELECT"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "radioGroup",
+    "parts": [
+      "root",
+      "item",
+      "itemControl",
+      "itemIndicator",
+      "itemLabel"
+    ],
+    "states": [
+      "selected"
+    ],
+    "machine": "tabsMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SELECT"
+    ],
+    "slots": {
+      "Root": "radioGroup.root",
+      "Item": "radioGroup.item",
+      "ItemControl": "radioGroup.itemControl",
+      "ItemLabel": "radioGroup.itemLabel"
+    },
+    "examples": []
+  }
+}

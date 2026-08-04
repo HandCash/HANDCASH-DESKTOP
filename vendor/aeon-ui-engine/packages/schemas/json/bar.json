@@ -1,0 +1,126 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/bar.json",
+  "title": "Bar",
+  "description": "Three-zone toolbar layout (leading / center / trailing / seam). Sticky lifecycle uses StickyBar + stickyBarMachine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Bar"
+    },
+    "scope": {
+      "const": "bar"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "leading",
+          "center",
+          "trailing",
+          "seam"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "bar.root",
+          "description": "bar.root"
+        },
+        "Leading": {
+          "const": "bar.leading",
+          "description": "bar.leading"
+        },
+        "Center": {
+          "const": "bar.center",
+          "description": "bar.center"
+        },
+        "Trailing": {
+          "const": "bar.trailing",
+          "description": "bar.trailing"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "layout"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "bar",
+    "parts": [
+      "root",
+      "leading",
+      "center",
+      "trailing",
+      "seam"
+    ],
+    "states": [
+      "idle"
+    ],
+    "machine": null,
+    "runtime": "layout",
+    "events": [],
+    "slots": {
+      "Root": "bar.root",
+      "Leading": "bar.leading",
+      "Center": "bar.center",
+      "Trailing": "bar.trailing"
+    },
+    "examples": []
+  }
+}

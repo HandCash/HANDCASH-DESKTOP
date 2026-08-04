@@ -1,0 +1,37 @@
+/* Optional — import when using SceneStage / SceneLayer / ScenePlane / SceneRoom */
+@import './scene-room.css';
+
+.aeon-scene-stage {
+  position: relative;
+  overflow: hidden;
+  transform-style: preserve-3d;
+}
+
+.aeon-scene-layer {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  pointer-events: none;
+}
+
+.aeon-scene-plane {
+  position: absolute;
+  transform-style: preserve-3d;
+  background-repeat: no-repeat;
+  background-size: cover;
+  background-position: center;
+}
+
+.aeon-scene-plane--fill {
+  inset: 0;
+}
+
+.aeon-scene-slot {
+  position: absolute;
+  transform-style: preserve-3d;
+  pointer-events: auto;
+}
+
+.aeon-scene-slot--fill {
+  inset: 0;
+}

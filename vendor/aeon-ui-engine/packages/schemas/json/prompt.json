@@ -1,0 +1,155 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/prompt.json",
+  "title": "Prompt",
+  "description": "Confirm / permission dialog composed on Dialog. Open/closed via dialogMachine; face via status prop.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Prompt"
+    },
+    "scope": {
+      "const": "prompt"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "eyebrow",
+          "meta",
+          "amount",
+          "actions",
+          "primary",
+          "secondary"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "pending",
+          "confirming",
+          "dismissed",
+          "confirmed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "pending",
+            "confirming",
+            "dismissed",
+            "confirmed"
+          ],
+          "default": "pending"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "prompt.root",
+          "description": "prompt.root"
+        },
+        "Primary": {
+          "const": "prompt.primary",
+          "description": "prompt.primary"
+        },
+        "Secondary": {
+          "const": "prompt.secondary",
+          "description": "prompt.secondary"
+        },
+        "Actions": {
+          "const": "prompt.actions",
+          "description": "prompt.actions"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "dialogMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "status prop"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "prompt",
+    "parts": [
+      "root",
+      "eyebrow",
+      "meta",
+      "amount",
+      "actions",
+      "primary",
+      "secondary"
+    ],
+    "states": [
+      "pending",
+      "confirming",
+      "dismissed",
+      "confirmed"
+    ],
+    "machine": "dialogMachine",
+    "runtime": "status prop",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE"
+    ],
+    "slots": {
+      "Root": "prompt.root",
+      "Primary": "prompt.primary",
+      "Secondary": "prompt.secondary",
+      "Actions": "prompt.actions"
+    },
+    "examples": []
+  }
+}

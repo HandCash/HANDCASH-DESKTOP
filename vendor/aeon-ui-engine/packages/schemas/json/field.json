@@ -1,0 +1,171 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/field.json",
+  "title": "Field",
+  "description": "Parallel regions: interaction × validation × submission. Do not collapse into a single error boolean.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Field"
+    },
+    "scope": {
+      "const": "field"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "label",
+          "control",
+          "textarea",
+          "message",
+          "hint"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "pristine",
+          "dirty",
+          "valid",
+          "invalid",
+          "idle",
+          "pending",
+          "interaction.pristine",
+          "interaction.dirty",
+          "validation.valid",
+          "validation.invalid",
+          "submission.idle",
+          "submission.pending"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "field.root",
+          "description": "field.root"
+        },
+        "Label": {
+          "const": "field.label",
+          "description": "field.label"
+        },
+        "Control": {
+          "const": "field.control",
+          "description": "field.control"
+        },
+        "Message": {
+          "const": "field.message",
+          "description": "field.message"
+        },
+        "Hint": {
+          "const": "field.hint",
+          "description": "field.hint"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "fieldMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "INPUT",
+          "BLUR",
+          "VALIDATE",
+          "SUBMIT",
+          "SUBMIT_DONE",
+          "SUBMIT_FAIL",
+          "RESET"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "field",
+    "parts": [
+      "root",
+      "label",
+      "control",
+      "textarea",
+      "message",
+      "hint"
+    ],
+    "states": [
+      "pristine",
+      "dirty",
+      "valid",
+      "invalid",
+      "idle",
+      "pending",
+      "interaction.pristine",
+      "interaction.dirty",
+      "validation.valid",
+      "validation.invalid",
+      "submission.idle",
+      "submission.pending"
+    ],
+    "machine": "fieldMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "INPUT",
+      "BLUR",
+      "VALIDATE",
+      "SUBMIT",
+      "SUBMIT_DONE",
+      "SUBMIT_FAIL",
+      "RESET"
+    ],
+    "slots": {
+      "Root": "field.root",
+      "Label": "field.label",
+      "Control": "field.control",
+      "Message": "field.message",
+      "Hint": "field.hint"
+    },
+    "examples": []
+  }
+}

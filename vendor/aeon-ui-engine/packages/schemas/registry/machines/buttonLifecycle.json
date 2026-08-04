@@ -1,0 +1,224 @@
+{
+  "id": "buttonLifecycle",
+  "initial": "idle",
+  "events": [
+    "PRESS",
+    "DISABLE",
+    "SUCCEED",
+    "FAIL",
+    "RESET",
+    "ENABLE"
+  ],
+  "tree": {
+    "key": "buttonLifecycle",
+    "id": "buttonLifecycle",
+    "type": "compound",
+    "events": [
+      "PRESS",
+      "DISABLE",
+      "SUCCEED",
+      "FAIL",
+      "RESET",
+      "ENABLE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "idle",
+        "id": "buttonLifecycle.idle",
+        "type": "atomic",
+        "events": [
+          "PRESS",
+          "DISABLE"
+        ],
+        "transitions": [
+          {
+            "event": "PRESS",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DISABLE",
+            "target": [
+              "disabled"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "pending",
+        "id": "buttonLifecycle.pending",
+        "type": "atomic",
+        "events": [
+          "SUCCEED",
+          "FAIL",
+          "DISABLE"
+        ],
+        "transitions": [
+          {
+            "event": "SUCCEED",
+            "target": [
+              "success"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "FAIL",
+            "target": [
+              "failure"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DISABLE",
+            "target": [
+              "disabled"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "success",
+        "id": "buttonLifecycle.success",
+        "type": "atomic",
+        "events": [
+          "RESET",
+          "PRESS",
+          "DISABLE"
+        ],
+        "transitions": [
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "PRESS",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DISABLE",
+            "target": [
+              "disabled"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "failure",
+        "id": "buttonLifecycle.failure",
+        "type": "atomic",
+        "events": [
+          "RESET",
+          "PRESS",
+          "DISABLE"
+        ],
+        "transitions": [
+          {
+            "event": "RESET",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "PRESS",
+            "target": [
+              "pending"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DISABLE",
+            "target": [
+              "disabled"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "disabled",
+        "id": "buttonLifecycle.disabled",
+        "type": "atomic",
+        "events": [
+          "ENABLE"
+        ],
+        "transitions": [
+          {
+            "event": "ENABLE",
+            "target": [
+              "idle"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "buttonLifecycle": {
+      "events": [
+        "PRESS",
+        "DISABLE",
+        "SUCCEED",
+        "FAIL",
+        "RESET",
+        "ENABLE"
+      ],
+      "type": "compound"
+    },
+    "buttonLifecycle.idle": {
+      "events": [
+        "PRESS",
+        "DISABLE"
+      ],
+      "type": "atomic"
+    },
+    "buttonLifecycle.pending": {
+      "events": [
+        "SUCCEED",
+        "FAIL",
+        "DISABLE"
+      ],
+      "type": "atomic"
+    },
+    "buttonLifecycle.success": {
+      "events": [
+        "RESET",
+        "PRESS",
+        "DISABLE"
+      ],
+      "type": "atomic"
+    },
+    "buttonLifecycle.failure": {
+      "events": [
+        "RESET",
+        "PRESS",
+        "DISABLE"
+      ],
+      "type": "atomic"
+    },
+    "buttonLifecycle.disabled": {
+      "events": [
+        "ENABLE"
+      ],
+      "type": "atomic"
+    }
+  }
+}

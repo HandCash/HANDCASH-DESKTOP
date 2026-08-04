@@ -1,0 +1,143 @@
+{
+  "id": "popover",
+  "initial": "closed",
+  "events": [
+    "OPEN",
+    "TOGGLE",
+    "SET_OPEN",
+    "CLOSE",
+    "ESCAPE",
+    "POINTER_DOWN_OUTSIDE"
+  ],
+  "tree": {
+    "key": "popover",
+    "id": "popover",
+    "type": "compound",
+    "events": [
+      "OPEN",
+      "TOGGLE",
+      "SET_OPEN",
+      "CLOSE",
+      "ESCAPE",
+      "POINTER_DOWN_OUTSIDE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "closed",
+        "id": "popover.closed",
+        "type": "atomic",
+        "events": [
+          "OPEN",
+          "TOGGLE",
+          "SET_OPEN"
+        ],
+        "transitions": [
+          {
+            "event": "OPEN",
+            "target": [
+              "open"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "TOGGLE",
+            "target": [
+              "open"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OPEN",
+            "target": [
+              "open"
+            ],
+            "guarded": true
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "open",
+        "id": "popover.open",
+        "type": "atomic",
+        "events": [
+          "CLOSE",
+          "ESCAPE",
+          "POINTER_DOWN_OUTSIDE",
+          "TOGGLE",
+          "SET_OPEN"
+        ],
+        "transitions": [
+          {
+            "event": "CLOSE",
+            "target": [
+              "closed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "ESCAPE",
+            "target": [
+              "closed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "POINTER_DOWN_OUTSIDE",
+            "target": [
+              "closed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "TOGGLE",
+            "target": [
+              "closed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OPEN",
+            "target": [
+              "closed"
+            ],
+            "guarded": true
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "popover": {
+      "events": [
+        "OPEN",
+        "TOGGLE",
+        "SET_OPEN",
+        "CLOSE",
+        "ESCAPE",
+        "POINTER_DOWN_OUTSIDE"
+      ],
+      "type": "compound"
+    },
+    "popover.closed": {
+      "events": [
+        "OPEN",
+        "TOGGLE",
+        "SET_OPEN"
+      ],
+      "type": "atomic"
+    },
+    "popover.open": {
+      "events": [
+        "CLOSE",
+        "ESCAPE",
+        "POINTER_DOWN_OUTSIDE",
+        "TOGGLE",
+        "SET_OPEN"
+      ],
+      "type": "atomic"
+    }
+  }
+}

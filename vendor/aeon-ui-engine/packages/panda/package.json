@@ -1,0 +1,40 @@
+{
+  "name": "@aeon-ui/panda",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "codegen": "panda codegen && panda cssgen && tsx scripts/emit-theme-runtime.ts",
+    "prepare": "panda codegen && panda cssgen && tsx scripts/emit-theme-runtime.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "exports": {
+    "./styles.css": "./styled-system/styles.css",
+    "./theme-runtime.css": "./theme-runtime.css",
+    "./scrollbars.css": "./src/theme/scrollbars.css",
+    "./chrome.css": "./src/theme/chrome.css",
+    "./themes/config": "./src/theme/themes.config.ts",
+    "./styled-system/css": {
+      "types": "./styled-system/css/index.d.ts",
+      "import": "./styled-system/css/index.mjs"
+    },
+    "./styled-system/recipes": {
+      "types": "./styled-system/recipes/index.d.ts",
+      "import": "./styled-system/recipes/index.mjs"
+    },
+    "./preset": "./panda.config.ts",
+    "./themes": "./src/theme/index.ts"
+  },
+  "files": [
+    "styled-system",
+    "theme-runtime.css",
+    "panda.config.ts",
+    "src",
+    "scripts"
+  ],
+  "devDependencies": {
+    "@pandacss/dev": "^1.11.2",
+    "tsx": "^4.19.4",
+    "typescript": "^5.8.3"
+  }
+}

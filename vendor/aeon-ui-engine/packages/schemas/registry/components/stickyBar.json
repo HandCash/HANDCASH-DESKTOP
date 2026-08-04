@@ -1,0 +1,153 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/stickyBar.json",
+  "title": "StickyBar",
+  "description": "Sticky/fixed chrome band via stickyBarMachine. DOM scope is bar (reuses bar anatomy zones).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "StickyBar"
+    },
+    "scope": {
+      "const": "bar"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "leading",
+          "center",
+          "trailing",
+          "seam"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "floating",
+          "docked",
+          "collapsed",
+          "hidden"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "bar.root",
+          "description": "bar.root"
+        },
+        "Leading": {
+          "const": "bar.leading",
+          "description": "bar.leading"
+        },
+        "Center": {
+          "const": "bar.center",
+          "description": "bar.center"
+        },
+        "Trailing": {
+          "const": "bar.trailing",
+          "description": "bar.trailing"
+        },
+        "Seam": {
+          "const": "bar.seam",
+          "description": "bar.seam"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "stickyBarMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "DOCK",
+          "FLOAT",
+          "COLLAPSE",
+          "EXPAND",
+          "HIDE",
+          "SHOW",
+          "SET_OFFSET"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "bar",
+    "parts": [
+      "root",
+      "leading",
+      "center",
+      "trailing",
+      "seam"
+    ],
+    "states": [
+      "floating",
+      "docked",
+      "collapsed",
+      "hidden"
+    ],
+    "machine": "stickyBarMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "DOCK",
+      "FLOAT",
+      "COLLAPSE",
+      "EXPAND",
+      "HIDE",
+      "SHOW",
+      "SET_OFFSET"
+    ],
+    "slots": {
+      "Root": "bar.root",
+      "Leading": "bar.leading",
+      "Center": "bar.center",
+      "Trailing": "bar.trailing",
+      "Seam": "bar.seam"
+    },
+    "examples": []
+  }
+}

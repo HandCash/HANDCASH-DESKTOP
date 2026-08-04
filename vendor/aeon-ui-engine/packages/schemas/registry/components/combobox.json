@@ -1,0 +1,142 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/combobox.json",
+  "title": "Combobox",
+  "description": "Open/closed via popoverMachine (same family as Select/Menu/Popover). Query, highlight, and item registry stay React-local for typeahead.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Combobox"
+    },
+    "scope": {
+      "const": "combobox"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "input",
+          "icon",
+          "content",
+          "item",
+          "empty"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "combobox.root",
+          "description": "combobox.root"
+        },
+        "Input": {
+          "const": "combobox.input",
+          "description": "combobox.input"
+        },
+        "Content": {
+          "const": "combobox.content",
+          "description": "combobox.content"
+        },
+        "Item": {
+          "const": "combobox.item",
+          "description": "combobox.item"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "popoverMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE",
+          "ESCAPE",
+          "POINTER_DOWN_OUTSIDE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "combobox",
+    "parts": [
+      "root",
+      "input",
+      "icon",
+      "content",
+      "item",
+      "empty"
+    ],
+    "states": [
+      "open",
+      "closed"
+    ],
+    "machine": "popoverMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE",
+      "ESCAPE",
+      "POINTER_DOWN_OUTSIDE"
+    ],
+    "slots": {
+      "Root": "combobox.root",
+      "Input": "combobox.input",
+      "Content": "combobox.content",
+      "Item": "combobox.item"
+    },
+    "examples": []
+  }
+}

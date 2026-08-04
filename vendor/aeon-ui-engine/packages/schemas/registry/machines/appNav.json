@@ -1,0 +1,108 @@
+{
+  "id": "appNav",
+  "initial": "ready",
+  "events": [
+    "SET_SECTION",
+    "PUSH",
+    "REPLACE",
+    "POP",
+    "POP_TO",
+    "CLEAR",
+    "RESET"
+  ],
+  "tree": {
+    "key": "appNav",
+    "id": "appNav",
+    "type": "compound",
+    "events": [
+      "SET_SECTION",
+      "PUSH",
+      "REPLACE",
+      "POP",
+      "POP_TO",
+      "CLEAR",
+      "RESET"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "ready",
+        "id": "appNav.ready",
+        "type": "atomic",
+        "events": [
+          "SET_SECTION",
+          "PUSH",
+          "REPLACE",
+          "POP",
+          "POP_TO",
+          "CLEAR",
+          "RESET"
+        ],
+        "transitions": [
+          {
+            "event": "SET_SECTION",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "PUSH",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "REPLACE",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "POP",
+            "target": [],
+            "guarded": true
+          },
+          {
+            "event": "POP_TO",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "CLEAR",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "RESET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "appNav": {
+      "events": [
+        "SET_SECTION",
+        "PUSH",
+        "REPLACE",
+        "POP",
+        "POP_TO",
+        "CLEAR",
+        "RESET"
+      ],
+      "type": "compound"
+    },
+    "appNav.ready": {
+      "events": [
+        "SET_SECTION",
+        "PUSH",
+        "REPLACE",
+        "POP",
+        "POP_TO",
+        "CLEAR",
+        "RESET"
+      ],
+      "type": "atomic"
+    }
+  }
+}

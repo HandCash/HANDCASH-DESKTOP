@@ -1,0 +1,250 @@
+/**
+ * Consumer shell recipes — baseline look for Prompt, StatusBanner, AppNav,
+ * and headless Dialog chrome.
+ * Opt into brand color via applyBrandPalette(); these rules only use Aeon CSS vars.
+ * Intentionally restrained — products still own marketing atmosphere.
+ */
+
+/* ── Headless Dialog (Prompt composes Dialog without recipe class names) ── */
+
+[data-aeon-scope='dialog'][data-aeon-part='backdrop'] {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  background: color-mix(in srgb, #000 72%, transparent);
+  animation: aeon-shell-rise 200ms ease both;
+}
+
+[data-aeon-scope='dialog'][data-aeon-part='positioner'] {
+  position: fixed;
+  inset: 0;
+  z-index: 1001;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+[data-aeon-scope='dialog'][data-aeon-part='content'] {
+  position: relative;
+  width: min(440px, 100%);
+  margin: auto;
+  flex-shrink: 0;
+  max-height: calc(100vh - 32px);
+  overflow-y: auto;
+  border-radius: calc(var(--aeon-radius, 0.5rem) + 4px);
+  border: 1px solid var(--colors-aeon-border);
+  background: var(--colors-aeon-surface, var(--colors-aeon-bg));
+  color: var(--colors-aeon-text);
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
+  padding: 20px 22px;
+}
+
+@keyframes aeon-shell-rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ── Prompt ── */
+
+[data-aeon-scope='prompt'][data-aeon-part='root'] {
+  display: contents;
+}
+
+[data-aeon-scope='dialog'][data-aeon-part='title'],
+[data-aeon-scope='prompt'][data-aeon-part='title'] {
+  margin: 0;
+  font-family: var(--aeon-font-display, var(--fonts-display, inherit));
+  font-size: 1.05rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--colors-aeon-text);
+  line-height: 1.25;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='eyebrow'] {
+  margin: 0 0 8px;
+  color: var(--colors-aeon-accent);
+  font-family: var(--aeon-font-display, var(--fonts-display, inherit));
+  font-size: 0.72rem;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='description'],
+[data-aeon-scope='dialog'][data-aeon-part='description'] {
+  margin: 8px 0 0;
+  color: var(--colors-aeon-muted);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='meta'] {
+  display: grid;
+  gap: 10px;
+  margin: 16px 0;
+  padding: 14px 16px;
+  border-radius: var(--aeon-radius, 12px);
+  background: var(--colors-aeon-accent-dim);
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='amount'] {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--colors-aeon-text);
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='actions'] {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 18px;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='primary'],
+[data-aeon-scope='prompt'][data-aeon-part='secondary'] {
+  font: inherit;
+  cursor: pointer;
+  border-radius: var(--aeon-radius, 10px);
+  padding: 10px 14px;
+  border: 1px solid transparent;
+  letter-spacing: 0.02em;
+  text-transform: none;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='primary'] {
+  background: var(--colors-aeon-accent);
+  color: var(--colors-aeon-bg);
+  font-weight: 700;
+}
+
+[data-aeon-scope='prompt'][data-aeon-part='secondary'] {
+  background: transparent;
+  color: var(--colors-aeon-muted);
+  border-color: var(--colors-aeon-border);
+}
+
+/* Product `.btn` inside Prompt / StatusBanner — sentence case, not all-caps CTAs */
+[data-aeon-scope='statusBanner'] button.btn,
+[data-aeon-scope='prompt'] button.btn {
+  text-transform: none;
+  letter-spacing: 0.02em;
+}
+
+/* ── StatusBanner (sticky top chrome) ── */
+
+[data-aeon-scope='statusBanner'][data-aeon-part='root'] {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 14px;
+  background: color-mix(in srgb, var(--colors-aeon-accent) 14%, var(--colors-aeon-bg));
+  border-bottom: 1px solid color-mix(in srgb, var(--colors-aeon-accent) 35%, transparent);
+}
+
+[data-aeon-scope='statusBanner'][data-aeon-part='copy'] {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+[data-aeon-scope='statusBanner'][data-aeon-part='title'] {
+  font-size: 0.9rem;
+  color: var(--colors-aeon-text);
+}
+
+[data-aeon-scope='statusBanner'][data-aeon-part='body'] {
+  font-size: 0.78rem;
+  line-height: 1.35;
+  color: var(--colors-aeon-muted);
+}
+
+[data-aeon-scope='statusBanner'][data-aeon-part='actions'] {
+  flex-shrink: 0;
+}
+
+/* ── AppNav breadcrumb / back (dense 28px rail) ── */
+
+[data-aeon-scope='appNav'][data-aeon-part='breadcrumb'] {
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 0;
+  min-width: 0;
+  overflow: hidden;
+  margin: 0;
+  height: 28px;
+  font-family: var(--aeon-font-display, var(--fonts-display, inherit));
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 28px;
+  color: var(--colors-aeon-text);
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='crumb'] {
+  font: inherit;
+  background: transparent;
+  border: 0;
+  color: var(--colors-aeon-muted);
+  cursor: pointer;
+  padding: 0;
+  height: 28px;
+  line-height: 28px;
+  letter-spacing: inherit;
+  text-transform: inherit;
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='crumb']:hover {
+  color: var(--colors-aeon-accent);
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='crumb'][data-aeon-state~='current'] {
+  color: var(--colors-aeon-text);
+  font-weight: 700;
+  cursor: default;
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='crumb']:not(:last-child)::after {
+  content: '/';
+  margin: 0 0.45em;
+  color: var(--colors-aeon-muted);
+  font-weight: 500;
+  pointer-events: none;
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='back'] {
+  appearance: none;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--aeon-radius, 0.5rem);
+  background: transparent;
+  color: var(--colors-aeon-muted);
+  display: inline-grid;
+  place-items: center;
+  cursor: pointer;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+[data-aeon-scope='appNav'][data-aeon-part='back']:hover {
+  color: var(--colors-aeon-accent);
+  background: color-mix(in srgb, var(--colors-aeon-accent) 10%, transparent);
+}

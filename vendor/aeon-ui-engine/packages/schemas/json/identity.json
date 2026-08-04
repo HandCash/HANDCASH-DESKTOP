@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/identity.json",
+  "title": "Identity",
+  "description": "Avatar + title + subtitle strip — presentational layout, not a niche product scope.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Identity"
+    },
+    "scope": {
+      "const": "identity"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "avatar",
+          "title",
+          "subtitle",
+          "meta",
+          "trailing"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "identity.root",
+          "description": "identity.root"
+        },
+        "Avatar": {
+          "const": "identity.avatar",
+          "description": "identity.avatar"
+        },
+        "Title": {
+          "const": "identity.title",
+          "description": "identity.title"
+        },
+        "Subtitle": {
+          "const": "identity.subtitle",
+          "description": "identity.subtitle"
+        },
+        "Meta": {
+          "const": "identity.meta",
+          "description": "identity.meta"
+        },
+        "Trailing": {
+          "const": "identity.trailing",
+          "description": "identity.trailing"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "layout"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "identity",
+    "parts": [
+      "root",
+      "avatar",
+      "title",
+      "subtitle",
+      "meta",
+      "trailing"
+    ],
+    "states": [
+      "idle"
+    ],
+    "machine": null,
+    "runtime": "layout",
+    "events": [],
+    "slots": {
+      "Root": "identity.root",
+      "Avatar": "identity.avatar",
+      "Title": "identity.title",
+      "Subtitle": "identity.subtitle",
+      "Meta": "identity.meta",
+      "Trailing": "identity.trailing"
+    },
+    "examples": []
+  }
+}

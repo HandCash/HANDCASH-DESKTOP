@@ -1,0 +1,182 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/entry.json",
+  "title": "Entry",
+  "description": "Universal multi-value card (feed stack or listing split). Root state idle | selected | muted — never invent niche scopes.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Entry"
+    },
+    "scope": {
+      "const": "entry"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "list",
+          "root",
+          "header",
+          "leading",
+          "heading",
+          "title",
+          "subtitle",
+          "meta",
+          "media",
+          "body",
+          "values",
+          "value",
+          "actions",
+          "footer"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "selected",
+          "muted"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "selected",
+            "muted"
+          ],
+          "default": "idle"
+        },
+        "density": {
+          "type": "string",
+          "enum": [
+            "compact",
+            "cozy"
+          ]
+        },
+        "layout": {
+          "type": "string",
+          "enum": [
+            "stack",
+            "split"
+          ]
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "List": {
+          "const": "entry.list",
+          "description": "entry.list"
+        },
+        "Root": {
+          "const": "entry.root",
+          "description": "entry.root"
+        },
+        "Header": {
+          "const": "entry.header",
+          "description": "entry.header"
+        },
+        "Body": {
+          "const": "entry.body",
+          "description": "entry.body"
+        },
+        "Actions": {
+          "const": "entry.actions",
+          "description": "entry.actions"
+        },
+        "Footer": {
+          "const": "entry.footer",
+          "description": "entry.footer"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "props"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "entry",
+    "parts": [
+      "list",
+      "root",
+      "header",
+      "leading",
+      "heading",
+      "title",
+      "subtitle",
+      "meta",
+      "media",
+      "body",
+      "values",
+      "value",
+      "actions",
+      "footer"
+    ],
+    "states": [
+      "idle",
+      "selected",
+      "muted"
+    ],
+    "machine": null,
+    "runtime": "props",
+    "events": [],
+    "slots": {
+      "List": "entry.list",
+      "Root": "entry.root",
+      "Header": "entry.header",
+      "Body": "entry.body",
+      "Actions": "entry.actions",
+      "Footer": "entry.footer"
+    },
+    "examples": []
+  }
+}

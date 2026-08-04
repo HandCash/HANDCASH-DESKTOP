@@ -1,0 +1,89 @@
+{
+  "id": "toast",
+  "initial": "hidden",
+  "events": [
+    "SHOW",
+    "DISMISS",
+    "TIMEOUT"
+  ],
+  "tree": {
+    "key": "toast",
+    "id": "toast",
+    "type": "compound",
+    "events": [
+      "SHOW",
+      "DISMISS",
+      "TIMEOUT"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "hidden",
+        "id": "toast.hidden",
+        "type": "atomic",
+        "events": [
+          "SHOW"
+        ],
+        "transitions": [
+          {
+            "event": "SHOW",
+            "target": [
+              "visible"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "visible",
+        "id": "toast.visible",
+        "type": "atomic",
+        "events": [
+          "DISMISS",
+          "TIMEOUT"
+        ],
+        "transitions": [
+          {
+            "event": "DISMISS",
+            "target": [
+              "hidden"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "TIMEOUT",
+            "target": [
+              "hidden"
+            ],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "toast": {
+      "events": [
+        "SHOW",
+        "DISMISS",
+        "TIMEOUT"
+      ],
+      "type": "compound"
+    },
+    "toast.hidden": {
+      "events": [
+        "SHOW"
+      ],
+      "type": "atomic"
+    },
+    "toast.visible": {
+      "events": [
+        "DISMISS",
+        "TIMEOUT"
+      ],
+      "type": "atomic"
+    }
+  }
+}

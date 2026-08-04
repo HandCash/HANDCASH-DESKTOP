@@ -1,0 +1,58 @@
+{
+  "id": "accordion",
+  "initial": "managing",
+  "events": [
+    "TOGGLE",
+    "SET_VALUE"
+  ],
+  "tree": {
+    "key": "accordion",
+    "id": "accordion",
+    "type": "compound",
+    "events": [
+      "TOGGLE",
+      "SET_VALUE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "managing",
+        "id": "accordion.managing",
+        "type": "atomic",
+        "events": [
+          "TOGGLE",
+          "SET_VALUE"
+        ],
+        "transitions": [
+          {
+            "event": "TOGGLE",
+            "target": [],
+            "guarded": false
+          },
+          {
+            "event": "SET_VALUE",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "accordion": {
+      "events": [
+        "TOGGLE",
+        "SET_VALUE"
+      ],
+      "type": "compound"
+    },
+    "accordion.managing": {
+      "events": [
+        "TOGGLE",
+        "SET_VALUE"
+      ],
+      "type": "atomic"
+    }
+  }
+}

@@ -1,0 +1,170 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/button.json",
+  "title": "Button",
+  "description": "Action control. status is a prop projection (not an in-tree machine). Never invent parallel useState for lifecycle.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Button"
+    },
+    "scope": {
+      "const": "button"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "group",
+          "label",
+          "icon"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle",
+          "pending",
+          "success",
+          "failure",
+          "disabled"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "pending",
+            "success",
+            "failure",
+            "disabled"
+          ],
+          "default": "idle"
+        },
+        "variant": {
+          "type": "string",
+          "enum": [
+            "solid",
+            "outline",
+            "ghost",
+            "link"
+          ]
+        },
+        "size": {
+          "type": "string",
+          "enum": [
+            "sm",
+            "md",
+            "lg"
+          ]
+        },
+        "disabled": {
+          "type": "boolean"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "button.root",
+          "description": "button.root"
+        },
+        "Group": {
+          "const": "button.group",
+          "description": "button.group"
+        },
+        "Label": {
+          "const": "button.label",
+          "description": "button.label"
+        },
+        "Icon": {
+          "const": "button.icon",
+          "description": "button.icon"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "buttonLifecycleMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "status prop"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": [
+        "<Button.Root status=\"pending\" aria-busy>Saving…</Button.Root>",
+        "const [snap, send] = useAeonMachine(buttonLifecycleMachine)\n<Button.Root status={snap.value as ButtonStatus} onClick={() => send({ type: 'PRESS' })} />"
+      ]
+    }
+  },
+  "x-aeon": {
+    "scope": "button",
+    "parts": [
+      "root",
+      "group",
+      "label",
+      "icon"
+    ],
+    "states": [
+      "idle",
+      "pending",
+      "success",
+      "failure",
+      "disabled"
+    ],
+    "machine": "buttonLifecycleMachine",
+    "runtime": "status prop",
+    "events": [],
+    "slots": {
+      "Root": "button.root",
+      "Group": "button.group",
+      "Label": "button.label",
+      "Icon": "button.icon"
+    },
+    "examples": [
+      "<Button.Root status=\"pending\" aria-busy>Saving…</Button.Root>",
+      "const [snap, send] = useAeonMachine(buttonLifecycleMachine)\n<Button.Root status={snap.value as ButtonStatus} onClick={() => send({ type: 'PRESS' })} />"
+    ]
+  }
+}

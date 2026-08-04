@@ -1,0 +1,58 @@
+{
+  "id": "tabs",
+  "initial": "active",
+  "events": [
+    "SELECT",
+    "SET_VALUE"
+  ],
+  "tree": {
+    "key": "tabs",
+    "id": "tabs",
+    "type": "compound",
+    "events": [
+      "SELECT",
+      "SET_VALUE"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "active",
+        "id": "tabs.active",
+        "type": "atomic",
+        "events": [
+          "SELECT",
+          "SET_VALUE"
+        ],
+        "transitions": [
+          {
+            "event": "SELECT",
+            "target": [],
+            "guarded": true
+          },
+          {
+            "event": "SET_VALUE",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "tabs": {
+      "events": [
+        "SELECT",
+        "SET_VALUE"
+      ],
+      "type": "compound"
+    },
+    "tabs.active": {
+      "events": [
+        "SELECT",
+        "SET_VALUE"
+      ],
+      "type": "atomic"
+    }
+  }
+}

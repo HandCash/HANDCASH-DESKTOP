@@ -1,16 +1,20 @@
 # Changelog
 
-## [1.2.8] - 2026-08-04
+## [1.2.9] - 2026-08-04
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- Vendor `aeon-ui-engine@1.3.9` in-repo (`file:vendor/aeon-ui-engine`) so unsigned Mac/Linux/Windows CI can build without npm publish or access to the private AeonUI repo.
+
+### Notes
+
+- **Unsigned Mac BETA (notarization later):** download DMG from GitHub Releases. If Gatekeeper says “damaged”, run `xattr -cr /Applications/HandCash.app`. Auto-update opens the DMG instead of ShipIt.
 
 ## [1.2.8] - 2026-08-04
 
 ### Fixed
 
-- `package-lock.json` uses HTTPS git URL for `aeon-ui-engine` so GitHub Actions can `npm ci` without SSH keys.
+- Attempted HTTPS git URL for `aeon-ui-engine` (superseded by vendored path in 1.2.9).
 
 ## [1.2.7] - 2026-08-04
 
@@ -18,10 +22,6 @@
 
 - Pin `aeon-ui-engine` to GitHub `v1.3.9` so CI builds Messages/BRC-218 UI (npm 1.3.5 was missing Thread/Composer/Prompt parts).
 - Mac release workflow YAML (unsigned DMG builds — notarization still later).
-
-### Notes
-
-- **Unsigned Mac BETA:** download DMG from GitHub Releases. If Gatekeeper says “damaged”, run `xattr -cr /Applications/HandCash.app`. Auto-update opens the DMG instead of ShipIt (avoids broken in-place updates).
 
 ## [1.2.6] - 2026-08-04
 

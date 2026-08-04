@@ -1,0 +1,137 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/tooltip.json",
+  "title": "Tooltip",
+  "description": "Open/closed via popoverMachine (same family as Popover/Select/Combobox). openDelay / closeDelay / touchDuration stay React-local.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Tooltip"
+    },
+    "scope": {
+      "const": "tooltip"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "trigger",
+          "positioner",
+          "content",
+          "arrow"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "tooltip.root",
+          "description": "tooltip.root"
+        },
+        "Trigger": {
+          "const": "tooltip.trigger",
+          "description": "tooltip.trigger"
+        },
+        "Content": {
+          "const": "tooltip.content",
+          "description": "tooltip.content"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "popoverMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE",
+          "SET_OPEN",
+          "ESCAPE",
+          "POINTER_DOWN_OUTSIDE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "tooltip",
+    "parts": [
+      "root",
+      "trigger",
+      "positioner",
+      "content",
+      "arrow"
+    ],
+    "states": [
+      "open",
+      "closed"
+    ],
+    "machine": "popoverMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE",
+      "SET_OPEN",
+      "ESCAPE",
+      "POINTER_DOWN_OUTSIDE"
+    ],
+    "slots": {
+      "Root": "tooltip.root",
+      "Trigger": "tooltip.trigger",
+      "Content": "tooltip.content"
+    },
+    "examples": []
+  }
+}

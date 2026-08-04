@@ -1,0 +1,114 @@
+/**
+ * Optional Electron chrome helpers.
+ * Import only in desktop shells: import '@aeon-ui/panda/electron.css'
+ *
+ * Defaults aligned with dense wallet / Electron fill-height layouts.
+ */
+
+/* Compact scrollbars on Electron platforms */
+html[data-aeon-platform],
+html.platform-darwin {
+  --aeon-scrollbar-size: 3px;
+  --aeon-scrollbar-track: transparent;
+  --aeon-scrollbar-thumb: color-mix(in srgb, var(--colors-aeon-muted, #a1a1aa) 35%, transparent);
+  --aeon-scrollbar-thumb-hover: color-mix(in srgb, var(--colors-aeon-muted, #a1a1aa) 55%, transparent);
+  --aeon-scrollbar-corner: transparent;
+}
+
+html[data-aeon-platform],
+html[data-aeon-platform] body,
+html[data-aeon-platform] #root,
+html.platform-darwin,
+html.platform-darwin body,
+html.platform-darwin #root {
+  height: 100%;
+  min-height: 100%;
+}
+
+html[data-aeon-platform] body,
+html.platform-darwin body {
+  margin: 0;
+  overflow: hidden;
+  font-family: var(--aeon-font, var(--fonts-ui, system-ui, sans-serif));
+  color: var(--colors-aeon-text);
+  background: var(--colors-aeon-bg);
+  -webkit-font-smoothing: antialiased;
+  letter-spacing: 0.01em;
+}
+
+.aeon-app-shell,
+.app-shell {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr;
+  min-height: 0;
+}
+
+.aeon-stage,
+.stage {
+  height: 100%;
+  min-height: 0;
+  overflow: auto;
+  padding: 20px clamp(14px, 3vw, 28px) 28px;
+}
+
+@media (max-width: 640px) {
+  .aeon-stage,
+  .stage {
+    padding: 16px 12px 24px;
+  }
+}
+
+.aeon-titlebar,
+.titlebar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--colors-aeon-border);
+  background: color-mix(in srgb, var(--colors-aeon-bg) 88%, transparent);
+  backdrop-filter: blur(12px);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+
+.aeon-titlebar button,
+.aeon-titlebar a,
+.aeon-titlebar input,
+.aeon-titlebar [data-aeon-no-drag],
+.titlebar button,
+.titlebar a,
+.titlebar input,
+.titlebar [data-aeon-no-drag] {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+html.platform-darwin .aeon-titlebar,
+html.platform-darwin .titlebar,
+html[data-aeon-platform='darwin'] .aeon-titlebar,
+html[data-aeon-platform='darwin'] .titlebar {
+  /* hiddenInset traffic lights */
+  padding-top: 36px;
+}
+
+/* Hover-reveal scrollbars for dense nav stages */
+.aeon-scroll-hover,
+[data-aeon-scroll='hover'] {
+  scrollbar-color: transparent transparent;
+}
+
+.aeon-scroll-hover::-webkit-scrollbar-thumb,
+[data-aeon-scroll='hover']::-webkit-scrollbar-thumb {
+  background: transparent;
+}
+
+.aeon-scroll-hover:hover,
+[data-aeon-scroll='hover']:hover {
+  scrollbar-color: var(--aeon-scrollbar-thumb) transparent;
+}
+
+.aeon-scroll-hover:hover::-webkit-scrollbar-thumb,
+[data-aeon-scroll='hover']:hover::-webkit-scrollbar-thumb {
+  background: var(--aeon-scrollbar-thumb);
+}

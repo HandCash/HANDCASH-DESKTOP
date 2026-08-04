@@ -1,0 +1,56 @@
+{
+  "name": "@aeon-ui/schemas",
+  "version": "0.1.0",
+  "description": "Deterministic JSON Schemas and agent prompts for Aeon UI components",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/schemas"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "json",
+    "prompts",
+    "registry",
+    "README.md"
+  ],
+  "keywords": [
+    "aeon-ui",
+    "json-schema",
+    "generative-ui",
+    "llm",
+    "ai-agent"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./json/*": "./json/*",
+    "./prompts/*": "./prompts/*",
+    "./registry/*": "./registry/*",
+    "./catalog.json": "./json/catalog.json"
+  },
+  "scripts": {
+    "build": "tsx scripts/emit.ts && tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@aeon-ui/primitives": "workspace:*",
+    "xstate": "^5.32.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.8"
+  }
+}

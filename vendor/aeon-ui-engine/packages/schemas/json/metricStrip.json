@@ -1,0 +1,132 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/metricStrip.json",
+  "title": "MetricStrip",
+  "description": "Dense value|label chips — cluster or loose density. Generic stats only.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "MetricStrip"
+    },
+    "scope": {
+      "const": "metricStrip"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "chip",
+          "value",
+          "label"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "idle"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "density": {
+          "type": "string",
+          "enum": [
+            "cluster",
+            "loose"
+          ]
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "metricStrip.root",
+          "description": "metricStrip.root"
+        },
+        "Chip": {
+          "const": "metricStrip.chip",
+          "description": "metricStrip.chip"
+        },
+        "Value": {
+          "const": "metricStrip.value",
+          "description": "metricStrip.value"
+        },
+        "Label": {
+          "const": "metricStrip.label",
+          "description": "metricStrip.label"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": null
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "layout"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": []
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "metricStrip",
+    "parts": [
+      "root",
+      "chip",
+      "value",
+      "label"
+    ],
+    "states": [
+      "idle"
+    ],
+    "machine": null,
+    "runtime": "layout",
+    "events": [],
+    "slots": {
+      "Root": "metricStrip.root",
+      "Chip": "metricStrip.chip",
+      "Value": "metricStrip.value",
+      "Label": "metricStrip.label"
+    },
+    "examples": []
+  }
+}

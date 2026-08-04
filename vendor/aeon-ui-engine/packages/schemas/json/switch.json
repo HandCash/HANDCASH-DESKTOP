@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/switch.json",
+  "title": "Switch",
+  "description": "Binary toggle via toggleMachine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Switch"
+    },
+    "scope": {
+      "const": "switch"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "control",
+          "thumb",
+          "label",
+          "hiddenInput"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "checked",
+          "unchecked"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "switch.root",
+          "description": "switch.root"
+        },
+        "Control": {
+          "const": "switch.control",
+          "description": "switch.control"
+        },
+        "Thumb": {
+          "const": "switch.thumb",
+          "description": "switch.thumb"
+        },
+        "Label": {
+          "const": "switch.label",
+          "description": "switch.label"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "toggleMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "TOGGLE",
+          "CHECK",
+          "UNCHECK"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "switch",
+    "parts": [
+      "root",
+      "control",
+      "thumb",
+      "label",
+      "hiddenInput"
+    ],
+    "states": [
+      "checked",
+      "unchecked"
+    ],
+    "machine": "toggleMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "TOGGLE",
+      "CHECK",
+      "UNCHECK"
+    ],
+    "slots": {
+      "Root": "switch.root",
+      "Control": "switch.control",
+      "Thumb": "switch.thumb",
+      "Label": "switch.label"
+    },
+    "examples": []
+  }
+}

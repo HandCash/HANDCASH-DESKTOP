@@ -1,0 +1,138 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/menu.json",
+  "title": "Menu",
+  "description": "Shares popoverMachine with Popover/Select open state.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Menu"
+    },
+    "scope": {
+      "const": "menu"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "trigger",
+          "positioner",
+          "content",
+          "item",
+          "separator"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "open",
+          "closed"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "menu.root",
+          "description": "menu.root"
+        },
+        "Trigger": {
+          "const": "menu.trigger",
+          "description": "menu.trigger"
+        },
+        "Content": {
+          "const": "menu.content",
+          "description": "menu.content"
+        },
+        "Item": {
+          "const": "menu.item",
+          "description": "menu.item"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "popoverMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "OPEN",
+          "CLOSE",
+          "TOGGLE"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "menu",
+    "parts": [
+      "root",
+      "trigger",
+      "positioner",
+      "content",
+      "item",
+      "separator"
+    ],
+    "states": [
+      "open",
+      "closed"
+    ],
+    "machine": "popoverMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "OPEN",
+      "CLOSE",
+      "TOGGLE"
+    ],
+    "slots": {
+      "Root": "menu.root",
+      "Trigger": "menu.trigger",
+      "Content": "menu.content",
+      "Item": "menu.item"
+    },
+    "examples": []
+  }
+}

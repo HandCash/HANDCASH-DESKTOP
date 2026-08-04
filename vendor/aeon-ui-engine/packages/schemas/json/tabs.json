@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/tabs.json",
+  "title": "Tabs",
+  "description": "Selected tab value from tabsMachine.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Tabs"
+    },
+    "scope": {
+      "const": "tabs"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "list",
+          "trigger",
+          "content",
+          "indicator"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "selected"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "value": {
+          "type": "string",
+          "description": "Selected tab id — becomes data-aeon-state"
+        }
+      }
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "tabs.root",
+          "description": "tabs.root"
+        },
+        "List": {
+          "const": "tabs.list",
+          "description": "tabs.list"
+        },
+        "Trigger": {
+          "const": "tabs.trigger",
+          "description": "tabs.trigger"
+        },
+        "Content": {
+          "const": "tabs.content",
+          "description": "tabs.content"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "tabsMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SELECT"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "tabs",
+    "parts": [
+      "root",
+      "list",
+      "trigger",
+      "content",
+      "indicator"
+    ],
+    "states": [
+      "selected"
+    ],
+    "machine": "tabsMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SELECT"
+    ],
+    "slots": {
+      "Root": "tabs.root",
+      "List": "tabs.list",
+      "Trigger": "tabs.trigger",
+      "Content": "tabs.content"
+    },
+    "examples": []
+  }
+}

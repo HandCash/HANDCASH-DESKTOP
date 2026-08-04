@@ -1,0 +1,261 @@
+{
+  "id": "stickyBar",
+  "initial": "resolve",
+  "events": [
+    "DOCK",
+    "COLLAPSE",
+    "HIDE",
+    "SET_OFFSET",
+    "FLOAT",
+    "EXPAND",
+    "SHOW"
+  ],
+  "tree": {
+    "key": "stickyBar",
+    "id": "stickyBar",
+    "type": "compound",
+    "events": [
+      "DOCK",
+      "COLLAPSE",
+      "HIDE",
+      "SET_OFFSET",
+      "FLOAT",
+      "EXPAND",
+      "SHOW"
+    ],
+    "transitions": [],
+    "children": [
+      {
+        "key": "resolve",
+        "id": "stickyBar.resolve",
+        "type": "atomic",
+        "events": [],
+        "transitions": [],
+        "children": []
+      },
+      {
+        "key": "floating",
+        "id": "stickyBar.floating",
+        "type": "atomic",
+        "events": [
+          "DOCK",
+          "COLLAPSE",
+          "HIDE",
+          "SET_OFFSET"
+        ],
+        "transitions": [
+          {
+            "event": "DOCK",
+            "target": [
+              "docked"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "COLLAPSE",
+            "target": [
+              "collapsed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "HIDE",
+            "target": [
+              "hidden"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OFFSET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "docked",
+        "id": "stickyBar.docked",
+        "type": "atomic",
+        "events": [
+          "FLOAT",
+          "COLLAPSE",
+          "HIDE",
+          "SET_OFFSET"
+        ],
+        "transitions": [
+          {
+            "event": "FLOAT",
+            "target": [
+              "floating"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "COLLAPSE",
+            "target": [
+              "collapsed"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "HIDE",
+            "target": [
+              "hidden"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OFFSET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "collapsed",
+        "id": "stickyBar.collapsed",
+        "type": "atomic",
+        "events": [
+          "EXPAND",
+          "DOCK",
+          "FLOAT",
+          "HIDE",
+          "SET_OFFSET"
+        ],
+        "transitions": [
+          {
+            "event": "EXPAND",
+            "target": [
+              "floating"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DOCK",
+            "target": [
+              "docked"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "FLOAT",
+            "target": [
+              "floating"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "HIDE",
+            "target": [
+              "hidden"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OFFSET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      },
+      {
+        "key": "hidden",
+        "id": "stickyBar.hidden",
+        "type": "atomic",
+        "events": [
+          "SHOW",
+          "DOCK",
+          "FLOAT",
+          "SET_OFFSET"
+        ],
+        "transitions": [
+          {
+            "event": "SHOW",
+            "target": [
+              "floating"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "DOCK",
+            "target": [
+              "docked"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "FLOAT",
+            "target": [
+              "floating"
+            ],
+            "guarded": false
+          },
+          {
+            "event": "SET_OFFSET",
+            "target": [],
+            "guarded": false
+          }
+        ],
+        "children": []
+      }
+    ]
+  },
+  "states": {
+    "stickyBar": {
+      "events": [
+        "DOCK",
+        "COLLAPSE",
+        "HIDE",
+        "SET_OFFSET",
+        "FLOAT",
+        "EXPAND",
+        "SHOW"
+      ],
+      "type": "compound"
+    },
+    "stickyBar.resolve": {
+      "events": [],
+      "type": "atomic"
+    },
+    "stickyBar.floating": {
+      "events": [
+        "DOCK",
+        "COLLAPSE",
+        "HIDE",
+        "SET_OFFSET"
+      ],
+      "type": "atomic"
+    },
+    "stickyBar.docked": {
+      "events": [
+        "FLOAT",
+        "COLLAPSE",
+        "HIDE",
+        "SET_OFFSET"
+      ],
+      "type": "atomic"
+    },
+    "stickyBar.collapsed": {
+      "events": [
+        "EXPAND",
+        "DOCK",
+        "FLOAT",
+        "HIDE",
+        "SET_OFFSET"
+      ],
+      "type": "atomic"
+    },
+    "stickyBar.hidden": {
+      "events": [
+        "SHOW",
+        "DOCK",
+        "FLOAT",
+        "SET_OFFSET"
+      ],
+      "type": "atomic"
+    }
+  }
+}

@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/checkbox.json",
+  "title": "Checkbox",
+  "description": "Binary toggle via toggleMachine (same chart family as Switch).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "Checkbox"
+    },
+    "scope": {
+      "const": "checkbox"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "control",
+          "indicator",
+          "label",
+          "hiddenInput"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "checked",
+          "unchecked"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "checkbox.root",
+          "description": "checkbox.root"
+        },
+        "Control": {
+          "const": "checkbox.control",
+          "description": "checkbox.control"
+        },
+        "Indicator": {
+          "const": "checkbox.indicator",
+          "description": "checkbox.indicator"
+        },
+        "Label": {
+          "const": "checkbox.label",
+          "description": "checkbox.label"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "toggleMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "TOGGLE",
+          "CHECK",
+          "UNCHECK"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "checkbox",
+    "parts": [
+      "root",
+      "control",
+      "indicator",
+      "label",
+      "hiddenInput"
+    ],
+    "states": [
+      "checked",
+      "unchecked"
+    ],
+    "machine": "toggleMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "TOGGLE",
+      "CHECK",
+      "UNCHECK"
+    ],
+    "slots": {
+      "Root": "checkbox.root",
+      "Control": "checkbox.control",
+      "Indicator": "checkbox.indicator",
+      "Label": "checkbox.label"
+    },
+    "examples": []
+  }
+}

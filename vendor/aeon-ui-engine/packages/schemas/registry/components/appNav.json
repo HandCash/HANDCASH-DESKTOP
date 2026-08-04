@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aeon-ui.com/schemas/appNav.json",
+  "title": "AppNav",
+  "description": "Section + detail stack via appNavMachine — list→detail, settings drill-in.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "component",
+    "scope"
+  ],
+  "properties": {
+    "component": {
+      "const": "AppNav"
+    },
+    "scope": {
+      "const": "appNav"
+    },
+    "parts": {
+      "type": "array",
+      "description": "Anatomy part keys — map to data-aeon-part",
+      "items": {
+        "type": "string",
+        "enum": [
+          "root",
+          "rail",
+          "section",
+          "stage",
+          "breadcrumb",
+          "crumb",
+          "back"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "states": {
+      "type": "array",
+      "description": "Allowed data-aeon-state values (stable states only)",
+      "items": {
+        "type": "string",
+        "enum": [
+          "section"
+        ]
+      },
+      "uniqueItems": true
+    },
+    "props": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {}
+    },
+    "slots": {
+      "type": "object",
+      "description": "Named composition slots / compound parts",
+      "additionalProperties": {
+        "type": "string"
+      },
+      "properties": {
+        "Root": {
+          "const": "appNav.root",
+          "description": "appNav.root"
+        },
+        "Rail": {
+          "const": "appNav.rail",
+          "description": "appNav.rail"
+        },
+        "Stage": {
+          "const": "appNav.stage",
+          "description": "appNav.stage"
+        },
+        "Back": {
+          "const": "appNav.back",
+          "description": "appNav.back"
+        }
+      }
+    },
+    "machine": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "description": "XState machine export from @aeon-ui/primitives, or null if prop/React driven",
+      "const": "appNavMachine"
+    },
+    "runtime": {
+      "type": "string",
+      "description": "How headless state is driven at runtime",
+      "const": "useAeonMachine"
+    },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "SET_SECTION",
+          "PUSH",
+          "REPLACE",
+          "POP",
+          "POP_TO",
+          "CLEAR",
+          "RESET"
+        ]
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      },
+      "default": []
+    }
+  },
+  "x-aeon": {
+    "scope": "appNav",
+    "parts": [
+      "root",
+      "rail",
+      "section",
+      "stage",
+      "breadcrumb",
+      "crumb",
+      "back"
+    ],
+    "states": [
+      "section"
+    ],
+    "machine": "appNavMachine",
+    "runtime": "useAeonMachine",
+    "events": [
+      "SET_SECTION",
+      "PUSH",
+      "REPLACE",
+      "POP",
+      "POP_TO",
+      "CLEAR",
+      "RESET"
+    ],
+    "slots": {
+      "Root": "appNav.root",
+      "Rail": "appNav.rail",
+      "Stage": "appNav.stage",
+      "Back": "appNav.back"
+    },
+    "examples": []
+  }
+}

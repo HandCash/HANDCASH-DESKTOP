@@ -1,0 +1,33 @@
+{
+  "name": "@aeon-ui/surface",
+  "version": "0.1.0",
+  "description": "CSS texture presets (stone, gravel, brick) for Aeon Scene backgrounds",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/surface"
+  },
+  "publishConfig": { "access": "public" },
+  "files": ["dist", "surface.css", "README.md"],
+  "keywords": ["aeon-ui", "texture", "background", "css"],
+  "type": "module",
+  "sideEffects": ["./surface.css"],
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./surface.css": "./surface.css"
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3"
+  }
+}

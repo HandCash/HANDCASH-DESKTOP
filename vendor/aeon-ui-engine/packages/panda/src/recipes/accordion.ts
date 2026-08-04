@@ -1,0 +1,95 @@
+import { defineSlotRecipe } from '@pandacss/dev'
+
+const slots = ['root', 'item', 'itemTrigger', 'itemContent', 'itemIndicator'] as const
+
+export const accordionRecipe = defineSlotRecipe({
+  className: 'aeonAccordion',
+  description: 'Aeon accordion — content stacks with gap (no stacked padding + margins)',
+  slots,
+  base: {
+    root: {
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 'accordionGap',
+      fontFamily: 'ui',
+    },
+    item: {
+      borderRadius: 'md',
+      borderWidth: '1px',
+      borderStyle: 'solid',
+      borderColor: 'border',
+      bg: 'surface',
+      /* No overflow:hidden — it washes out corners when inner separators exist */
+    },
+    itemTrigger: {
+      width: '100%',
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: 'gapLg',
+      textAlign: 'left',
+      fontSize: 'md',
+      fontWeight: 'medium',
+      lineHeight: 'snug',
+      color: 'fg',
+      px: 'accordionInsetX',
+      py: 'accordionTriggerY',
+      minH: 'accordionTriggerMinH',
+      cursor: 'pointer',
+      appearance: 'none',
+      WebkitAppearance: 'none',
+      font: 'inherit',
+      bg: 'surface',
+      transitionProperty: 'background-color',
+      transitionDuration: 'normal',
+      outline: 'none',
+      borderTopLeftRadius: 'md',
+      borderTopRightRadius: 'md',
+      _aeonClosed: {
+        borderBottomLeftRadius: 'md',
+        borderBottomRightRadius: 'md',
+      },
+      _hover: { bg: 'surfaceRaised' },
+      _focusVisible: { boxShadow: 'focusRing' },
+    },
+    itemContent: {
+      position: 'relative',
+      display: 'flex',
+      flexDirection: 'column',
+      alignItems: 'stretch',
+      gap: 'gapSm',
+      fontSize: 'sm',
+      color: 'muted',
+      lineHeight: '1.55',
+      bg: 'surface',
+      px: 'accordionInsetX',
+      pt: 'padMd',
+      pb: 'padMd',
+      borderBottomLeftRadius: 'md',
+      borderBottomRightRadius: 'md',
+      /* Children supply their own margins in demos — gap is the only rhythm here */
+      '& > *': {
+        margin: '0',
+      },
+      '& .code-example': {
+        margin: '0',
+      },
+      _before: {
+        content: '""',
+        position: 'absolute',
+        top: '0',
+        left: 'accordionInsetX',
+        right: 'accordionInsetX',
+        height: '1px',
+        bg: 'border',
+      },
+    },
+    itemIndicator: {
+      flexShrink: 0,
+      color: 'muted',
+      fontSize: 'sm',
+      lineHeight: '1',
+      px: '1',
+    },
+  },
+})

@@ -1,0 +1,42 @@
+{
+  "name": "@aeon-ui/vue",
+  "version": "0.1.0",
+  "description": "Headless Vue 3 components backed by Aeon XState machines",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/GenericCPU/aeon-ui.git",
+    "directory": "packages/vue"
+  },
+  "private": true,
+  "files": ["dist", "README.md"],
+  "keywords": ["aeon-ui", "vue", "headless", "xstate", "statechart"],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsup src/index.ts --format esm --dts --clean --external vue --external xstate --external @xstate/vue --external @aeon-ui/core --external @aeon-ui/primitives",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aeon-ui/core": "workspace:*",
+    "@aeon-ui/primitives": "workspace:*",
+    "@xstate/vue": "^5.0.0",
+    "xstate": "^5.32.0"
+  },
+  "peerDependencies": {
+    "vue": "^3.4.0"
+  },
+  "devDependencies": {
+    "tsup": "^8.4.0",
+    "typescript": "^5.8.3",
+    "vue": "^3.5.13"
+  }
+}

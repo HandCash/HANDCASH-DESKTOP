@@ -1,0 +1,2 @@
+/* Re-export Panda global styles + tokens. Prefer @aeon-ui/panda/styles.css in apps. */
+@import '@aeon-ui/panda/styles.css';

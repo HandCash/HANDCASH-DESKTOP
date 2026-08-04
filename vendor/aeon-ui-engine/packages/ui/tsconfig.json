@@ -1,0 +1,12 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "paths": {
+      "@aeon-ui/panda/styled-system/css": ["../panda/styled-system/css/index.d.ts"],
+      "@aeon-ui/panda/styled-system/recipes": ["../panda/styled-system/recipes/index.d.ts"]
+    }
+  },
+  "include": ["src"]
+}

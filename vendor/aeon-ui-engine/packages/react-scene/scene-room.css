@@ -1,0 +1,95 @@
+/* Box room — use with SceneRoom; requires .aeon-scene-stage perspective */
+
+.aeon-scene-room-wrap {
+  position: absolute;
+  left: 50%;
+  top: var(--aeon-room-anchor-y, 46%);
+  transform-style: preserve-3d;
+  transform: translate3d(-50%, -50%, var(--aeon-room-offset-z, -120px))
+    rotateX(var(--aeon-room-pitch, 10deg)) rotateY(var(--aeon-room-yaw, 0deg));
+  pointer-events: none;
+}
+
+.aeon-scene-room {
+  position: relative;
+  width: var(--aeon-room-w);
+  height: var(--aeon-room-h);
+  transform-style: preserve-3d;
+}
+
+.aeon-scene-room__face {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform-style: preserve-3d;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.aeon-scene-room__back {
+  width: var(--aeon-room-w);
+  height: var(--aeon-room-h);
+  margin: calc(var(--aeon-room-h) / -2) 0 0 calc(var(--aeon-room-w) / -2);
+  transform: translate3d(0, 0, calc(var(--aeon-room-d) / -2));
+}
+
+.aeon-scene-room__left {
+  width: var(--aeon-room-d);
+  height: var(--aeon-room-h);
+  margin: calc(var(--aeon-room-h) / -2) 0 0 calc(var(--aeon-room-d) / -2);
+  transform: rotateY(-90deg) translate3d(calc(var(--aeon-room-w) / -2), 0, 0);
+  transform-origin: right center;
+}
+
+.aeon-scene-room__right {
+  width: var(--aeon-room-d);
+  height: var(--aeon-room-h);
+  margin: calc(var(--aeon-room-h) / -2) 0 0 calc(var(--aeon-room-d) / -2);
+  transform: rotateY(90deg) translate3d(calc(var(--aeon-room-w) / 2), 0, 0);
+  transform-origin: left center;
+}
+
+.aeon-scene-room__floor {
+  width: var(--aeon-room-w);
+  height: var(--aeon-room-d);
+  margin: calc(var(--aeon-room-d) / -2) 0 0 calc(var(--aeon-room-w) / -2);
+  transform: rotateX(90deg) translate3d(0, calc(var(--aeon-room-h) / 2), 0);
+  transform-origin: center top;
+}
+
+.aeon-scene-room__floor-plane {
+  inset: 0;
+}
+
+.aeon-scene-room__ceiling {
+  width: var(--aeon-room-w);
+  height: var(--aeon-room-d);
+  margin: calc(var(--aeon-room-d) / -2) 0 0 calc(var(--aeon-room-w) / -2);
+  transform: rotateX(-90deg) translate3d(0, calc(var(--aeon-room-h) / -2), 0);
+  transform-origin: center bottom;
+  background: linear-gradient(180deg, #0a0908 0%, #1e1a16 55%, #2a2520 100%);
+}
+
+/* UI on the floor: counter-rotate so controls face the camera */
+.aeon-scene-room__floor-slot {
+  position: absolute;
+  inset: 10% 6% 14% 6%;
+  transform: rotateX(-90deg) translateZ(10px);
+  transform-origin: center center;
+  transform-style: preserve-3d;
+  pointer-events: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.75rem;
+}
+
+.aeon-scene-room__vignette {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(ellipse 90% 70% at 50% 55%, transparent 35%, rgba(0, 0, 0, 0.55) 100%),
+    linear-gradient(180deg, rgba(0, 0, 0, 0.35) 0%, transparent 22%, transparent 72%, rgba(0, 0, 0, 0.5) 100%);
+  z-index: 0;
+}

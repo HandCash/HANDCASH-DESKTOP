@@ -1,0 +1,163 @@
+import { defineSlotRecipe } from '@pandacss/dev'
+
+const slots = [
+  'root',
+  'list',
+  'item',
+  'bubble',
+  'meta',
+  'day',
+  'bind',
+  'card',
+  'cardTitle',
+  'cardBody',
+  'cardActions',
+] as const
+
+/** Thread — message stream + command cards + bind control. */
+export const threadRecipe = defineSlotRecipe({
+  className: 'aeonThread',
+  slots,
+  base: {
+    root: {
+      display: 'flex',
+      flexDir: 'column',
+      flex: '1 1 auto',
+      minH: 0,
+      minW: 0,
+      width: '100%',
+    },
+    list: {
+      display: 'flex',
+      flexDir: 'column',
+      gap: '0.55rem',
+      flex: '1 1 auto',
+      minH: 0,
+      overflow: 'auto',
+      px: '0.15rem',
+      py: '0.35rem',
+    },
+    item: {
+      display: 'flex',
+      flexDir: 'column',
+      gap: '0.2rem',
+      maxW: '85%',
+      '&[data-aeon-state=mine], &[data-aeon-state~=mine]': {
+        alignSelf: 'flex-end',
+        alignItems: 'flex-end',
+      },
+      '&[data-aeon-state=theirs], &[data-aeon-state~=theirs]': {
+        alignSelf: 'flex-start',
+        alignItems: 'flex-start',
+      },
+      '&[data-aeon-state~=pending]': {
+        opacity: 0.7,
+      },
+      '&[data-aeon-state~=failed]': {
+        opacity: 0.9,
+      },
+      '&[data-aeon-state~=command-result]': {
+        maxW: '92%',
+        alignSelf: 'center',
+        alignItems: 'stretch',
+      },
+    },
+    bubble: {
+      px: '0.85rem',
+      py: '0.55rem',
+      borderRadius: 'xl',
+      fontSize: 'sm',
+      lineHeight: '1.45',
+      color: 'fg',
+      bg: 'surfaceRaised',
+      maxW: '100%',
+      wordBreak: 'break-word',
+      '[data-aeon-state=mine] > &, [data-aeon-state~=mine] > &': {
+        bg: 'accentDim',
+        color: 'fg',
+        borderBottomRightRadius: 'sm',
+      },
+      '[data-aeon-state=theirs] > &, [data-aeon-state~=theirs] > &': {
+        bg: 'surface',
+        borderWidth: '1px',
+        borderColor: 'border',
+        borderBottomLeftRadius: 'sm',
+      },
+      '[data-aeon-state~=failed] > &': {
+        borderWidth: '1px',
+        borderColor: 'danger',
+      },
+    },
+    meta: {
+      fontSize: '0.65rem',
+      color: 'muted',
+      px: '0.2rem',
+    },
+    day: {
+      alignSelf: 'center',
+      fontSize: '0.65rem',
+      letterSpacing: '0.06em',
+      textTransform: 'uppercase',
+      color: 'muted',
+      py: '0.5rem',
+    },
+    bind: {
+      alignSelf: 'flex-start',
+      mt: '0.15rem',
+      px: '0.55rem',
+      py: '0.25rem',
+      minH: '2rem',
+      borderRadius: 'md',
+      borderWidth: '1px',
+      borderColor: 'border',
+      bg: 'transparent',
+      color: 'muted',
+      fontSize: '0.7rem',
+      cursor: 'pointer',
+      _hover: { color: 'fg', borderColor: 'accent' },
+    },
+    card: {
+      display: 'grid',
+      gap: '0.35rem',
+      width: '100%',
+      px: '0.85rem',
+      py: '0.7rem',
+      borderRadius: 'xl',
+      borderWidth: '1px',
+      borderColor: 'border',
+      bg: 'surface',
+      '[data-aeon-state~=payment-card] > &': {
+        borderColor: 'accent',
+      },
+      '[data-aeon-state~=request-card] > &': {
+        borderColor: 'border',
+      },
+      '[data-aeon-state~=command-result] > &': {
+        bg: 'surfaceRaised',
+      },
+    },
+    cardTitle: {
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+      gap: '0.5rem',
+      fontSize: '0.72rem',
+      fontWeight: '600',
+      letterSpacing: '0.04em',
+      textTransform: 'uppercase',
+      color: 'muted',
+    },
+    cardBody: {
+      display: 'grid',
+      gap: '0.2rem',
+      fontSize: 'sm',
+      color: 'fg',
+    },
+    cardActions: {
+      display: 'flex',
+      flexWrap: 'wrap',
+      gap: '0.35rem',
+      mt: '0.25rem',
+    },
+  },
+})
