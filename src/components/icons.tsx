@@ -183,6 +183,18 @@ export function FriendsIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `chat` */
+export function MessagesIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" />
+    </Icon>
+  )
+}
+
+/** @deprecated */
+export const ChatIcon = MessagesIcon
+
 /** Material Icons — `person_add` */
 export function PersonAddIcon(props: IconProps) {
   return (

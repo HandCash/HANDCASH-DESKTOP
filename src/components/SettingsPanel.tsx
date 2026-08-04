@@ -16,7 +16,6 @@ type SettingItem = {
   id: SettingId
   label: string
   description: string
-  tag?: string
 }
 
 type SettingGroup = {
@@ -32,19 +31,16 @@ const SETTING_GROUPS: SettingGroup[] = [
         id: 'backup',
         label: 'Keys',
         description: 'Split or phrase',
-        tag: 'BRC-140',
       },
       {
         id: 'device-handoff',
         label: 'Use on another device',
-        description: 'Same BRC-39 URL to link',
-        tag: 'BRC-75',
+        description: 'Same backup URL to link',
       },
       {
         id: 'history-backup',
         label: 'History',
         description: 'Required for recovery',
-        tag: 'BRC-39',
       },
       {
         id: 'change-password',
@@ -108,6 +104,7 @@ function phaseLabel(phase: string, error: string | null): string {
 export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
+  if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
   if (id === 'device-handoff') return 'Use on another device'
   if (id === 'history-backup') return 'History'
@@ -167,7 +164,7 @@ export function SettingsPanel() {
         <section key={group.title} className="settings-group" data-settings-group={group.title}>
           <h3 className="settings-group-title">{group.title}</h3>
           <ul className="settings-list">
-            {group.items.map(({ id, label, description, tag }) => (
+            {group.items.map(({ id, label, description }) => (
               <li key={id} className="settings-row">
                 <button
                   type="button"
@@ -178,10 +175,7 @@ export function SettingsPanel() {
                   }}
                 >
                   <span className="settings-row-body">
-                    <strong className="settings-row-label">
-                      {label}
-                      {tag ? <span className="spec-tag">{tag}</span> : null}
-                    </strong>
+                    <strong className="settings-row-label">{label}</strong>
                     {description ? (
                       <span className="settings-row-desc">{description}</span>
                     ) : null}
@@ -289,13 +283,24 @@ export function SettingsPanel() {
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">App logs</strong>
-                <span className="settings-row-desc">Share with support if something breaks</span>
+                <span className="settings-row-desc">In-wallet viewer · share with support</span>
                 {logPath ? (
                   <span className="settings-row-desc settings-log-path mono" title={logPath}>
                     {logPath}
                   </span>
                 ) : null}
               </span>
+              <button
+                type="button"
+                className="btn btn-ghost settings-check-btn"
+                data-aeon-part="view-logs"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSetting('logs')
+                }}
+              >
+                View
+              </button>
               <button
                 type="button"
                 className="btn btn-ghost settings-check-btn"
@@ -388,11 +393,13 @@ export function SettingsPanel() {
               }}
             >
               <span className="settings-row-body">
-                <strong className="settings-row-label">
-                  HandCash
-                  <span className="spec-tag">BRC-100</span>
-                </strong>
-                <span className="settings-row-desc">Desktop wallet</span>
+                <strong className="settings-row-label">HandCash</strong>
+                <span className="settings-row-desc">
+                  {window.handcash?.platform === 'android' ||
+                  window.handcash?.platform === 'ios'
+                    ? 'Mobile wallet'
+                    : 'Desktop wallet'}
+                </span>
               </span>
             </button>
           </li>

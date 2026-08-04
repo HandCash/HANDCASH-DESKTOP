@@ -97,6 +97,12 @@ interface HandCashBridge {
   openExternal?: (url: string) => Promise<void>
   getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>
   openLogs?: () => Promise<{ ok: true; file: string } | { ok: false; error: string }>
+  readLogs?: (opts?: {
+    maxBytes?: number
+  }) => Promise<
+    | { ok: true; text: string; bytes: number; truncated: boolean }
+    | { ok: false; error: string }
+  >
   uploadLogs?: (
     url: string,
   ) => Promise<

@@ -406,6 +406,32 @@ ipcMain.handle('app:open-logs', async () => {
   }
 })
 
+ipcMain.handle('app:read-logs', async (_event, opts: unknown) => {
+  try {
+    const file = log.transports.file.getFile()
+    const filePath = file.path
+    const maxBytes =
+      opts &&
+      typeof opts === 'object' &&
+      'maxBytes' in opts &&
+      typeof (opts as { maxBytes: unknown }).maxBytes === 'number'
+        ? Math.min(Math.max((opts as { maxBytes: number }).maxBytes, 4_096), 1_048_576)
+        : 256_000
+    const buf = await fs.readFile(filePath)
+    const slice = buf.byteLength > maxBytes ? buf.subarray(buf.byteLength - maxBytes) : buf
+    return {
+      ok: true as const,
+      text: slice.toString('utf8'),
+      bytes: slice.byteLength,
+      truncated: buf.byteLength > maxBytes,
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    log.warn('read-logs failed', err)
+    return { ok: false as const, error: message }
+  }
+})
+
 ipcMain.handle('app:upload-logs', async (_event, url: unknown) => {
   if (typeof url !== 'string' || !url.trim()) {
     return { ok: false as const, error: 'Upload URL required' }

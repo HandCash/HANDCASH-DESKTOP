@@ -5,6 +5,7 @@ import 'aeon-ui-engine/aeon.css'
 import '@aeon-ui/panda/electron.css'
 import './styles/handcash.css'
 import { App } from './App'
+import { installAppLogCapture } from './wallet/appLog'
 
 // Map HandCash brand tokens onto Aeon CSS vars (no parallel token sheet for Aeon).
 applyBrandPalette(
@@ -24,6 +25,8 @@ applyBrandPalette(
   },
   { mode: 'dark', themeId: 'handcash' },
 )
+
+installAppLogCapture()
 
 const platform = window.handcash?.platform
 if (platform === 'darwin') {

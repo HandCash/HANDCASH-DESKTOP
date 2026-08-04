@@ -8,7 +8,7 @@ import {
   updateFriend,
   type Friend,
 } from '../wallet/friends'
-import { clearNavChild } from '../wallet/navStore'
+import { clearNavChild, openMessagesWithFriend } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -119,6 +119,16 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
         ) : null}
 
         <div className="actions friend-details-actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              playWalletSound('soft')
+              openMessagesWithFriend(friend.id)
+            }}
+          >
+            Message
+          </button>
           <button type="submit" className="btn btn-ghost" disabled={!label.trim() || label.trim() === friend.label}>
             Save
           </button>

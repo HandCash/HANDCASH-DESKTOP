@@ -2,9 +2,16 @@
 
 ## [1.2.3] - 2026-08-04
 
+### Added
+
+- Messages tab (BRC-218 compose commands, in-thread `/pay` `/request` `/escrow` cards).
+- BRC-CLOUD messagebox client (send/list/ack) with local-first store.
+- In-wallet log viewer; cloud backup health in the status pill.
+
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Friends → Message opens the Messages thread.
+- Mobile inherits Messages (short tab label: Msgs).
 
 ## [1.2.2] - 2026-08-02
 

@@ -19,6 +19,7 @@ import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
 import { FriendDetailsPanel } from './FriendDetailsPanel'
 import { AddFriendPanel } from './AddFriendPanel'
+import { MessagesPanel } from './MessagesPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
@@ -36,6 +37,7 @@ import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
+import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
@@ -46,6 +48,7 @@ import {
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
+  MessagesIcon,
   SettingsIcon,
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
@@ -64,14 +67,16 @@ type Props = {
 const SECTIONS: {
   value: NavSection
   label: string
+  shortLabel: string
   Icon: ComponentType<IconProps>
 }[] = [
-  { value: 'activity', label: 'Activity', Icon: ActivityIcon },
-  { value: 'apps', label: 'Apps', Icon: AppsIcon },
-  { value: 'collectables', label: 'Collectables', Icon: CollectablesIcon },
-  { value: 'friends', label: 'Friends', Icon: FriendsIcon },
-  { value: 'identity', label: 'Identity', Icon: IdentityIcon },
-  { value: 'settings', label: 'Settings', Icon: SettingsIcon },
+  { value: 'activity', label: 'Activity', shortLabel: 'Activity', Icon: ActivityIcon },
+  { value: 'apps', label: 'Apps', shortLabel: 'Apps', Icon: AppsIcon },
+  { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
+  { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
+  { value: 'messages', label: 'Messages', shortLabel: 'Msgs', Icon: MessagesIcon },
+  { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },
+  { value: 'settings', label: 'Settings', shortLabel: 'Settings', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
@@ -235,6 +240,7 @@ export function WalletNav({
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
+              {child.type === 'setting' && child.settingId === 'logs' && <LogViewerPanel />}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
               )}
@@ -251,6 +257,13 @@ export function WalletNav({
               {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
               {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
+              {nav.section === 'messages' && (
+                <MessagesPanel
+                  chain={profile.chain}
+                  identityKey={profile.identityKey}
+                  onSent={onSent}
+                />
+              )}
               {nav.section === 'identity' && <IdentityPanel profile={profile} />}
               {nav.section === 'settings' && <SettingsPanel />}
             </div>
@@ -259,7 +272,7 @@ export function WalletNav({
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
           <div className="wallet-nav-bar-track">
-            {SECTIONS.map(({ value, label, Icon }) => {
+            {SECTIONS.map(({ value, label, shortLabel, Icon }) => {
               const selected = nav.section === value
               return (
                 <button
@@ -275,6 +288,7 @@ export function WalletNav({
                 >
                   <Icon size={18} />
                   <span className="wallet-nav-tab-label">{label}</span>
+                  <span className="wallet-nav-tab-label-short">{shortLabel}</span>
                 </button>
               )
             })}

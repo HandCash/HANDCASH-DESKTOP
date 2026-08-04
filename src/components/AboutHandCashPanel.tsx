@@ -1,6 +1,7 @@
 import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { APP_VERSION } from '../version'
+import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 export function AboutHandCashPanel() {
   return (
@@ -9,11 +10,8 @@ export function AboutHandCashPanel() {
       data-aeon-scope="about-handcash"
     >
       <p className="settings-hint about-handcash-lead">
-        <span className="spec-tag">BRC-100</span>
-        <span className="settings-hint-after-tag">
-          HandCash Desktop is a self-custodial Bitcoin SV wallet. Keys stay on this device; apps
-          connect through a local BRC-100 bridge, and you approve what they can do.
-        </span>
+        HandCash is a self-custodial Bitcoin SV wallet. Keys stay on this device; apps connect
+        through a local bridge, and you approve what they can do.
       </p>
 
       <div className="about-handcash-body">
@@ -41,6 +39,11 @@ export function AboutHandCashPanel() {
           View statecharts
         </button>
       </div>
+
+      <SettingsFeatureAbout tags={['BRC-100']}>
+        Apps talk to this wallet over the local BRC-100 interface. Signing and permissions stay on
+        your device.
+      </SettingsFeatureAbout>
     </div>
   )
 }

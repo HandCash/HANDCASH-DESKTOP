@@ -2,10 +2,10 @@ import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { readVaultMeta } from '../wallet/vault'
 import { PairDevicePanel } from './PairDevicePanel'
+import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 /**
- * BRC-75 / BRC-140 → same identity → one pot.
- * Multi-device parity requires the same BRC-39 History backup URL on every install.
+ * Same identity → one pot; shared history URL for multi-device parity.
  */
 export function DeviceHandoffPanel() {
   const meta = readVaultMeta()
@@ -22,24 +22,22 @@ export function DeviceHandoffPanel() {
       data-aeon-scope="device-handoff"
     >
       <p className="settings-hint">
-        Restore with <span className="spec-tag">BRC-75</span> /{' '}
-        <span className="spec-tag">BRC-140</span> for the same identity and BSV pot. To keep
+        Restore the same recovery phrase or key slices for the same identity and BSV pot. To keep
         history and friends aligned across devices, set the <strong>same History backup URL</strong>{' '}
-        (<span className="spec-tag">BRC-39</span>) on each install — linking will not work without
-        it.
+        on each install — linking will not work without it.
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
         <li>Restore the same phrase/shares on the other device.</li>
         <li>Set the identical History backup URL on both (below or History settings).</li>
         <li>Link via QR / paste (URL must match).</li>
-        <li>Tap Sync via backup URL (same unlock password) so BRC-39 + friends merge.</li>
+        <li>Tap Sync via backup URL (same unlock password) so history + friends merge.</li>
         <li>Refresh still reconciles spends against the chain. Offline payments are not supported.</li>
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>
         <button type="button" className="btn btn-primary" onClick={openKeys}>
-          {hasPhrase ? 'Open Keys (phrase or slices)' : 'Open Keys (BRC-140 slices)'}
+          {hasPhrase ? 'Open Keys (phrase or slices)' : 'Open Keys (key slices)'}
         </button>
         <button
           type="button"
@@ -56,6 +54,11 @@ export function DeviceHandoffPanel() {
       <div style={{ margin: '20px 0', borderTop: '1px solid hsl(var(--border))' }} />
 
       <PairDevicePanel />
+
+      <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-39']}>
+        Phrase and key slices recover identity. Shared history backup URL keeps device state
+        aligned after you sync.
+      </SettingsFeatureAbout>
     </div>
   )
 }

@@ -17,6 +17,7 @@ import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type BackupKind = 'split' | 'phrase' | 'key'
 type Handoff = 'email' | 'copy' | 'download'
@@ -167,8 +168,8 @@ export function WalletBackupPanel() {
     >
       <p className="settings-hint">
         Without a key backup, losing this device means losing your money. To put this identity
-        on another device, reveal a phrase or BRC-140 slices here, then Restore on the other
-        app (Settings → Use on another device).
+        on another device, reveal a phrase or key slices here, then Restore on the other app
+        (Settings → Use on another device).
         {!hasPhrase
           ? ' This wallet has no phrase — use split key or emergency hex.'
           : ''}
@@ -185,7 +186,6 @@ export function WalletBackupPanel() {
         >
           <span className="backup-choice-title">
             Split key
-            <span className="spec-tag">BRC-140</span>
             <span className="backup-choice-badge">Recommended</span>
           </span>
           <span className="backup-choice-desc">
@@ -215,10 +215,7 @@ export function WalletBackupPanel() {
               disabled={!hasPhrase}
               onClick={() => selectKind('phrase')}
             >
-              <span className="backup-choice-title">
-                Phrase
-                <span className="spec-tag">BRC-75</span>
-              </span>
+              <span className="backup-choice-title">Phrase</span>
               <span className="backup-choice-desc">
                 {hasPhrase ? '12 words' : 'Not on this wallet'}
               </span>
@@ -342,8 +339,7 @@ export function WalletBackupPanel() {
       {shareSet ? (
         <div className="split-backup-shares">
           <p className="settings-hint">
-            <span className="spec-tag">BRC-140</span>{' '}
-            <span className="mono">{shareSet.integrity}</span>
+            Integrity <span className="mono">{shareSet.integrity}</span>
           </p>
 
           <ul className="split-backup-list">
@@ -426,6 +422,11 @@ export function WalletBackupPanel() {
           </div>
         </div>
       ) : null}
+
+      <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
+        Split key slices and recovery phrases restore the same identity on another device. Keep
+        them offline — HandCash never holds them for you.
+      </SettingsFeatureAbout>
     </div>
   )
 }

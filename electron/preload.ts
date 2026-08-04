@@ -100,6 +100,11 @@ const handcash = {
     ipcRenderer.invoke('app:open-logs') as Promise<
       { ok: true; file: string } | { ok: false; error: string }
     >,
+  readLogs: (opts?: { maxBytes?: number }) =>
+    ipcRenderer.invoke('app:read-logs', opts) as Promise<
+      | { ok: true; text: string; bytes: number; truncated: boolean }
+      | { ok: false; error: string }
+    >,
   uploadLogs: (url: string) =>
     ipcRenderer.invoke('app:upload-logs', url) as Promise<
       | { ok: true; bytes: number; status: number }

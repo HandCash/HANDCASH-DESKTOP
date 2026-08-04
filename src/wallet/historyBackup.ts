@@ -4,6 +4,7 @@ import {
   type BRC38ImportResult,
   type StorageProvider,
 } from '@bsv/wallet-toolbox-client'
+import { appendAppLog } from './appLog'
 import {
   getHistoryBackupPrefs,
   historyBackupObjectUrl,
@@ -11,6 +12,7 @@ import {
 } from './historyBackupPrefs'
 import { getActiveWallet } from './session'
 import { revealRootKeyHex } from './vault'
+import { refreshCloudBackupHealth } from './cloudBackupHealth'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
@@ -92,6 +94,7 @@ export async function uploadBrc39Backup(password: string): Promise<{
   const url = historyBackupObjectUrl(active.identityKey, prefs)
   const bytes = asArrayBufferBytes(await createBrc39BackupBytes(password))
   const exportedAt = Date.now()
+  appendAppLog('info', `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url}`)
 
   const res = await fetch(url, {
     method: 'PUT',
@@ -99,16 +102,20 @@ export async function uploadBrc39Backup(password: string): Promise<{
       'Content-Type': BRC39_MEDIA,
       Accept: 'application/json, application/octet-stream, */*',
     },
-    body: bytes,
+    body: new Blob([bytes], { type: BRC39_MEDIA }),
   })
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 200)
     const msg = `Upload failed (${res.status})${detail ? `: ${detail}` : ''}`
+    appendAppLog('error', `[cloud-backup] ${msg}`)
     setHistoryBackupPrefs({ lastError: msg })
+    void refreshCloudBackupHealth()
     throw new Error(msg)
   }
 
   setHistoryBackupPrefs({ lastUploadedAt: exportedAt, lastError: null })
+  appendAppLog('info', '[cloud-backup] upload ok')
+  void refreshCloudBackupHealth()
   return { url, exportedAt }
 }
 
@@ -133,6 +140,8 @@ export async function downloadAndRestoreBrc39Backup(
 
   const buf = new Uint8Array(await res.arrayBuffer())
   const result = await restoreBrc39BackupBytes(buf, password, 'merge')
-  setHistoryBackupPrefs({ lastError: null })
+  setHistoryBackupPrefs({ lastError: null, lastUploadedAt: Date.now() })
+  appendAppLog('info', `[cloud-backup] restored ${buf.byteLength} bytes`)
+  void refreshCloudBackupHealth()
   return result
 }

@@ -1,12 +1,14 @@
 import type { ConnectedApp } from './permissions'
 import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
 import { playWalletSound } from './soundService'
+import { focusMessagePeer } from './messageFocus'
 
 export type NavSection =
   | 'activity'
   | 'apps'
   | 'collectables'
   | 'friends'
+  | 'messages'
   | 'identity'
   | 'settings'
 
@@ -20,6 +22,7 @@ export type SettingId =
   | 'wipe-wallet'
   | 'about-handcash'
   | 'statecharts'
+  | 'logs'
 
 export type NavChild =
   | { type: 'app'; origin: string }
@@ -126,6 +129,14 @@ export function openFriendDetails(friendId: string) {
 export function openAddFriend() {
   openNavChild('friends', { type: 'add-friend' })
 }
+
+export function openMessagesWithFriend(friendId: string) {
+  focusMessagePeer(friendId)
+  setNavSection('messages')
+}
+
+/** @deprecated */
+export const openChatWithFriend = openMessagesWithFriend
 
 export function openCollectableDetails(outpoint: string) {
   openNavChild('collectables', { type: 'collectable', outpoint })

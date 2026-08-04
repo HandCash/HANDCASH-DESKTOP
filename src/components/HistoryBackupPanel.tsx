@@ -10,6 +10,7 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from '../wallet/historyBackupPrefs'
+import { refreshCloudBackupHealth } from '../wallet/cloudBackupHealth'
 import {
   canConfirmHistoryBackup,
   markHistoryBackupConfirmed,
@@ -18,6 +19,7 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 function formatWhen(ts: number | null): string {
   if (!ts) return 'Never'
@@ -33,7 +35,7 @@ export function HistoryBackupPanel() {
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [baseUrl, setBaseUrl] = useState(prefs.baseUrl)
   const [password, setPassword] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | null>(null)
+  const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | 'check' | null>(null)
   const [exportTick, setExportTick] = useState(0)
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
 
@@ -47,6 +49,23 @@ export function HistoryBackupPanel() {
     setPrefs(next)
     playWalletSound('soft')
     toastSuccess(baseUrl.trim() ? 'Backup URL saved' : 'Backup URL cleared')
+    void refreshCloudBackupHealth().then(() => setPrefs(getHistoryBackupPrefs()))
+  }
+
+  const checkCloud = async () => {
+    playWalletSound('soft')
+    setBusy('check')
+    try {
+      setHistoryBackupPrefs({ baseUrl })
+      const health = await refreshCloudBackupHealth()
+      setPrefs(getHistoryBackupPrefs())
+      if (health.phase === 'ok') toastSuccess(health.label, health.message ?? undefined)
+      else if (health.phase === 'pending') toastError(health.label, health.message ?? 'Upload a backup')
+      else if (health.phase === 'error') toastError(health.label, health.message ?? 'Check the URL')
+      else toastSuccess(health.label, health.message ?? undefined)
+    } finally {
+      setBusy(null)
+    }
   }
 
   const confirmHistory = () => {
@@ -134,12 +153,9 @@ export function HistoryBackupPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
-        <span className="spec-tag">BRC-39</span>
-        <span className="settings-hint-after-tag">
-          Shared history backup. The same URL on every device is <strong>required</strong> to link
-          installs (Settings → Use on another device). Pull/push keeps wallet data and friends
-          aligned; Refresh still checks the chain.
-        </span>
+        Shared history backup. The same URL on every device is <strong>required</strong> to link
+        installs (Settings → Use on another device). Pull/push keeps wallet data and friends
+        aligned; Refresh still checks the chain.
       </p>
 
       <div className="settings-form settings-form-compact">
@@ -157,6 +173,14 @@ export function HistoryBackupPanel() {
         <div className="actions">
           <button type="button" className="btn btn-ghost" onClick={saveUrl}>
             Save URL
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy !== null || !baseUrl.trim()}
+            onClick={() => void checkCloud()}
+          >
+            {busy === 'check' ? 'Checking…' : 'Check cloud'}
           </button>
         </div>
         {resolvedUrl ? (
@@ -246,6 +270,11 @@ export function HistoryBackupPanel() {
           {canConfirm ? 'History backup saved' : 'Export first'}
         </button>
       </div>
+
+      <SettingsFeatureAbout tags={['BRC-39']}>
+        Encrypted wallet history blob (outs, labels, baskets). One object per identity on your
+        backup host — used for multi-device parity, not key recovery.
+      </SettingsFeatureAbout>
     </div>
   )
 }

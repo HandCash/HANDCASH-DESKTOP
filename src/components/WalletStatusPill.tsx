@@ -4,6 +4,12 @@ import {
   subscribeSyncHealth,
   type SyncHealth,
 } from '../wallet/walletHealth'
+import {
+  getCloudBackupHealth,
+  refreshCloudBackupHealth,
+  subscribeCloudBackupHealth,
+  type CloudBackupHealth,
+} from '../wallet/cloudBackupHealth'
 
 export type WalletSession =
   | 'boot'
@@ -30,6 +36,7 @@ type StatusView = {
 function resolveStatus(
   session: WalletSession,
   health: SyncHealth,
+  cloud: CloudBackupHealth,
   networkOnline: boolean,
   bridgeOnline: boolean,
 ): StatusView {
@@ -53,11 +60,32 @@ function resolveStatus(
       detail: health.message ?? 'Refreshing funds against the network',
     }
   }
+  if (cloud.phase === 'checking') {
+    return {
+      label: 'Checking backup',
+      tone: 'busy',
+      detail: cloud.message,
+    }
+  }
   if (health.phase === 'error') {
     return {
       label: 'Sync failed',
       tone: 'error',
       detail: health.message ?? 'Refresh to retry chain sync',
+    }
+  }
+  if (cloud.phase === 'error') {
+    return {
+      label: 'Backup failed',
+      tone: 'error',
+      detail: cloud.message ?? 'History backup host error',
+    }
+  }
+  if (cloud.phase === 'pending') {
+    return {
+      label: 'Out of sync',
+      tone: 'warn',
+      detail: cloud.message ?? 'Upload history to the cloud backup URL',
     }
   }
   if (session === 'sending') {
@@ -69,7 +97,6 @@ function resolveStatus(
   if (session === 'onboarding') {
     return { label: 'Setup', tone: 'muted', detail: 'Create or restore a wallet' }
   }
-  // Unlocked wallet — prefer chain truth over vague “online”.
   if (!bridgeOnline) {
     return {
       label: 'Bridge off',
@@ -77,11 +104,25 @@ function resolveStatus(
       detail: 'Local BRC-100 bridge is not listening — apps cannot connect',
     }
   }
+  if (cloud.phase === 'ok' && health.phase === 'ok') {
+    return {
+      label: 'Synced',
+      tone: 'ok',
+      detail: cloud.message ?? health.message ?? 'Chain and cloud backup look healthy',
+    }
+  }
   if (health.phase === 'ok') {
     return {
       label: 'Synced',
       tone: 'ok',
       detail: health.message ?? 'Balance matches the network',
+    }
+  }
+  if (cloud.phase === 'ok') {
+    return {
+      label: 'Cloud synced',
+      tone: 'ok',
+      detail: cloud.message,
     }
   }
   return {
@@ -107,14 +148,16 @@ function sessionFromMachine(value: unknown): WalletSession {
   return 'boot'
 }
 
-/** Titlebar status — precise wallet/network state, not a vague Online/Offline. */
+/** Titlebar status — precise wallet/network/cloud state. */
 export function WalletStatusPill({ session, bridgeOnline }: Props) {
   const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
+  const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
   const [networkOnline, setNetworkOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   )
 
   useEffect(() => subscribeSyncHealth(setHealth), [])
+  useEffect(() => subscribeCloudBackupHealth(setCloud), [])
 
   useEffect(() => {
     const sync = () => setNetworkOnline(navigator.onLine)
@@ -126,7 +169,14 @@ export function WalletStatusPill({ session, bridgeOnline }: Props) {
     }
   }, [])
 
-  const view = resolveStatus(session, health, networkOnline, bridgeOnline)
+  useEffect(() => {
+    if (session !== 'ready' && session !== 'sending') return
+    void refreshCloudBackupHealth()
+    const id = window.setInterval(() => void refreshCloudBackupHealth(), 60_000)
+    return () => window.clearInterval(id)
+  }, [session])
+
+  const view = resolveStatus(session, health, cloud, networkOnline, bridgeOnline)
 
   return (
     <div

@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { appDisplayName } from '../wallet/appIdentity'
 import { WALLET_ACTIVITY_ORIGIN } from '../wallet/appActivity'
 import type {
@@ -32,7 +33,7 @@ function originLabel(opt: PaymentOriginOption): string {
   return opt.label?.trim() || appDisplayName(opt.id)
 }
 
-function Chip({
+function FilterOption({
   label,
   active,
   title,
@@ -46,13 +47,30 @@ function Chip({
   return (
     <button
       type="button"
-      className={active ? 'payment-filter-chip is-active' : 'payment-filter-chip'}
+      className={active ? 'payment-filter-option is-active' : 'payment-filter-option'}
       aria-pressed={active}
       title={title}
       onClick={onClick}
     >
       {label}
     </button>
+  )
+}
+
+function FilterRow({
+  label,
+  children,
+}: {
+  label: string
+  children: ReactNode
+}) {
+  return (
+    <div className="payment-filter-row">
+      <span className="payment-filter-row-label">{label}</span>
+      <div className="payment-filter-options" role="group" aria-label={label}>
+        {children}
+      </div>
+    </div>
   )
 }
 
@@ -64,45 +82,39 @@ export function PaymentFiltersPanel({ id, value, origins, onChange }: Props) {
       data-aeon-scope="payment-filters"
       aria-label="Activity filters"
     >
-      <div className="payment-filter-carousel" role="toolbar" aria-label="Activity filters">
-        <div className="payment-filter-segment" role="group" aria-label="Type">
-          {KIND_OPTIONS.map((opt) => (
-            <Chip
-              key={`kind-${opt.id}`}
-              label={opt.label}
-              active={value.kind === opt.id}
-              onClick={() => onChange({ ...value, kind: opt.id })}
-            />
-          ))}
-        </div>
+      <FilterRow label="Type">
+        {KIND_OPTIONS.map((opt) => (
+          <FilterOption
+            key={`kind-${opt.id}`}
+            label={opt.label}
+            active={value.kind === opt.id}
+            onClick={() => onChange({ ...value, kind: opt.id })}
+          />
+        ))}
+      </FilterRow>
 
-        <span className="payment-filter-sep" aria-hidden />
+      <FilterRow label="App">
+        {origins.map((opt) => (
+          <FilterOption
+            key={`origin-${opt.id}`}
+            label={originLabel(opt)}
+            active={value.origin === opt.id}
+            title={opt.id === 'all' || opt.id === WALLET_ACTIVITY_ORIGIN ? undefined : opt.id}
+            onClick={() => onChange({ ...value, origin: opt.id })}
+          />
+        ))}
+      </FilterRow>
 
-        <div className="payment-filter-segment" role="group" aria-label="App">
-          {origins.map((opt) => (
-            <Chip
-              key={`origin-${opt.id}`}
-              label={originLabel(opt)}
-              active={value.origin === opt.id}
-              title={opt.id === 'all' || opt.id === WALLET_ACTIVITY_ORIGIN ? undefined : opt.id}
-              onClick={() => onChange({ ...value, origin: opt.id })}
-            />
-          ))}
-        </div>
-
-        <span className="payment-filter-sep" aria-hidden />
-
-        <div className="payment-filter-segment" role="group" aria-label="Time">
-          {TIME_OPTIONS.map((opt) => (
-            <Chip
-              key={`time-${opt.id}`}
-              label={opt.label}
-              active={value.time === opt.id}
-              onClick={() => onChange({ ...value, time: opt.id })}
-            />
-          ))}
-        </div>
-      </div>
+      <FilterRow label="When">
+        {TIME_OPTIONS.map((opt) => (
+          <FilterOption
+            key={`time-${opt.id}`}
+            label={opt.label}
+            active={value.time === opt.id}
+            onClick={() => onChange({ ...value, time: opt.id })}
+          />
+        ))}
+      </FilterRow>
     </aside>
   )
 }
