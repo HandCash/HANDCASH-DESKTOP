@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.10] - 2026-08-04
+
+### Fixed
+
+- Pin `@bsv/wallet-toolbox-client` to `2.4.4` so the `listOutputsIdb` patch applies in CI (`npm ci` was resolving 2.5.0).
+
 ## [1.2.9] - 2026-08-04
 
 ### Fixed
