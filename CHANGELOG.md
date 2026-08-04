@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.7] - 2026-08-04
+
+### Fixed
+
+- Pin `aeon-ui-engine` to GitHub `v1.3.9` so CI builds Messages/BRC-218 UI (npm 1.3.5 was missing Thread/Composer/Prompt parts).
+- Mac release workflow YAML (unsigned DMG builds — notarization still later).
+
+### Notes
+
+- **Unsigned Mac BETA:** download DMG from GitHub Releases. If Gatekeeper says “damaged”, run `xattr -cr /Applications/HandCash.app`. Auto-update opens the DMG instead of ShipIt (avoids broken in-place updates).
+
 ## [1.2.6] - 2026-08-04
 
 ### Changed
