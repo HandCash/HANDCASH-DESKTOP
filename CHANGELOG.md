@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.6] - 2026-08-04
+
+### Changed
+
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
+
 ## [1.2.5] - 2026-08-04
 
 ### Added
@@ -74,7 +80,7 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.15] - 2026-07-31
 
@@ -141,37 +147,37 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.5] - 2026-07-31
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.4] - 2026-07-31
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.3] - 2026-07-31
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.2] - 2026-07-30
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 ## [1.1.1] - 2026-07-30
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- Fix Mac release CI workflow YAML so dmg integrity checks run on tag push.
 
 All notable changes to HandCash Desktop are documented here.
 

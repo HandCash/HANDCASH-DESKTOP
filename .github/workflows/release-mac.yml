@@ -107,12 +107,11 @@ jobs:
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
+            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (unsigned; notarize later). If macOS says the app is damaged: run xattr -cr /Applications/HandCash.app then reopen."
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
-              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (unsigned; notarize later).
-
-If macOS says the app is damaged: \`xattr -cr /Applications/HandCash.app\` then reopen. That clears Gatekeeper quarantine on unsigned downloads." \
+              --notes "$NOTES" \
               --prerelease \
               --target "${{ github.sha }}"
           fi
