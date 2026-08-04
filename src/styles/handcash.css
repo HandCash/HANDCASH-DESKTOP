@@ -253,6 +253,69 @@ body {
   line-height: 1.45;
 }
 
+.wallet-setup-config {
+  display: grid;
+  gap: 1rem;
+}
+
+.wallet-setup-config h2 {
+  margin: 0;
+  font-family: var(--hc-display);
+  font-size: 1.25rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.wallet-setup-options {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.wallet-setup-option {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 0.65rem;
+  align-items: start;
+  padding: 0.75rem 0.85rem;
+  border: 1px solid color-mix(in srgb, var(--hc-border, #444) 80%, transparent);
+  border-radius: 10px;
+  cursor: pointer;
+}
+
+.wallet-setup-option.is-selected {
+  border-color: color-mix(in srgb, var(--hc-accent) 55%, transparent);
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
+}
+
+.wallet-setup-option.is-disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.wallet-setup-option-body {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.88rem;
+  color: var(--hc-muted);
+}
+
+.wallet-setup-option-body strong {
+  color: var(--hc-text);
+  font-size: 0.95rem;
+}
+
+.wallet-setup-coming-soon {
+  font-style: normal;
+  color: var(--hc-accent);
+  font-size: 0.8rem;
+}
+
+.wallet-setup-warning {
+  color: color-mix(in srgb, #e8a54b 90%, var(--hc-text));
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
 .auth-unlock-nudge {
   margin: 10px 0 0;
   padding: 8px 10px;
@@ -1990,6 +2053,21 @@ button.wallet-detail-value.is-copied {
   margin-bottom: 12px;
 }
 
+.wallet-hero-title {
+  margin: 0;
+  font-family: var(--hc-display);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  line-height: 28px;
+  height: 28px;
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+}
+
 .wallet-sync-note {
   margin: 8px 0 0;
   color: var(--hc-muted);
@@ -2755,6 +2833,81 @@ a.history-row-link:hover .history-tx-hint {
   margin: 0;
   color: var(--hc-muted);
   font-size: 0.9rem;
+}
+
+.empty-state {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  gap: 10px;
+  min-height: 11rem;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.empty-state-icon {
+  display: grid;
+  place-items: center;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 999px;
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+}
+
+.empty-state-icon svg {
+  display: block;
+}
+
+.empty-state-title {
+  margin: 0;
+  font-family: var(--hc-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hc-text);
+}
+
+.empty-state-body {
+  margin: 0;
+  max-width: 22rem;
+  color: var(--hc-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+}
+
+.empty-state-action {
+  margin-top: 6px;
+}
+
+.confirm-password-gate {
+  display: grid;
+  gap: 14px;
+  padding: 4px 0 8px;
+}
+
+.confirm-password-copy {
+  display: grid;
+  gap: 6px;
+}
+
+.confirm-password-title {
+  margin: 0;
+  font-family: var(--hc-display);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hc-text);
+}
+
+.confirm-password-lede {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  max-width: 28rem;
 }
 
 .connected-app-list {

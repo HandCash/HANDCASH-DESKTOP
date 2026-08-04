@@ -27,12 +27,14 @@ import { TransactionsPanel } from './RecentActivity'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
+import { ScanPanel } from './ScanPanel'
 import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
+import { DeviceHandoffPanel } from './DeviceHandoffPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
@@ -133,6 +135,7 @@ export function WalletNav({
       ]
     }
     if (child.type === 'send') return [root, { label: 'Send' }]
+    if (child.type === 'scan') return [root, { label: 'Scan' }]
     if (child.type === 'receive') return [root, { label: 'Receive' }]
     if (child.type === 'add-friend') return [root, { label: 'Add friend' }]
     if (child.type === 'setting') return [root, { label: settingLabel(child.settingId) }]
@@ -191,11 +194,13 @@ export function WalletNav({
                 <SendPanel
                   chain={profile.chain}
                   balanceSats={balanceSats}
+                  initialRecipient={child.prefill}
                   onSent={onSent}
                   onFail={onFail}
                   onClose={() => clearNavChild()}
                 />
               )}
+              {child.type === 'scan' && <ScanPanel />}
               {child.type === 'receive' && (
                 <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
               )}
@@ -224,6 +229,9 @@ export function WalletNav({
                 (child.settingId === 'backup' ||
                   child.settingId === 'backup-phrase' ||
                   child.settingId === 'split-backup') && <WalletBackupPanel />}
+              {child.type === 'setting' && child.settingId === 'device-handoff' && (
+                <DeviceHandoffPanel />
+              )}
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}

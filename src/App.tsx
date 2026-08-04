@@ -6,6 +6,8 @@ import { hasVault, hasOrphanedToolboxWallet } from './wallet/vault'
 import { clearActiveWallet } from './wallet/session'
 import { finishPendingWalletWipe } from './wallet/wipeWallet'
 import { handleBrc100Request } from './wallet/brc100Handler'
+import { handleDevicePeerRequest } from './wallet/devicePeerHandler'
+import { clearRemoteSnapshots } from './wallet/deviceMesh'
 import {
   resolvePermission,
   cancelPendingPermissions,
@@ -121,6 +123,37 @@ export function App() {
     return off
   }, [])
 
+  useEffect(() => {
+    if (!window.handcash?.onDevicePeerHttpRequest || !window.handcash.respondDevicePeerHttp) {
+      return
+    }
+    const respond = window.handcash.respondDevicePeerHttp.bind(window.handcash)
+    const off = window.handcash.onDevicePeerHttpRequest((event) => {
+      void (async () => {
+        try {
+          const result = await handleDevicePeerRequest(event)
+          respond({
+            request_id: event.request_id,
+            status: result.status,
+            body: result.body,
+          })
+        } catch (err) {
+          const description = err instanceof Error ? err.message : String(err)
+          respond({
+            request_id: event.request_id,
+            status: 500,
+            body: JSON.stringify({
+              status: 'error',
+              code: 'DEVICE_PEER_HANDLER_ERROR',
+              description,
+            }),
+          })
+        }
+      })()
+    })
+    return off
+  }, [])
+
   const pendingConnect = pendingPrompt?.kind === 'connect' ? pendingPrompt : null
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
@@ -176,6 +209,7 @@ export function App() {
               onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
               onLock={() => {
                 clearActiveWallet()
+                clearRemoteSnapshots()
                 cancelPendingPermissions('lock')
                 clearPermissionSession()
                 send({ type: 'LOCK' })

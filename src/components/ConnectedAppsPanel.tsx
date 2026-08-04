@@ -28,6 +28,8 @@ import {
 } from '../wallet/collectionView'
 import { openAppDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { EmptyState } from './EmptyState'
+import { AppsIcon } from './icons'
 
 type Props = {
   apps: ConnectedApp[]
@@ -168,7 +170,11 @@ export function ConnectedAppsPanel({ apps }: Props) {
         <CollectionViewToggle label="Apps view" scope="apps" />
       </div>
       {orderedApps.length === 0 ? (
-        <p className="connected-empty-line">No apps connected</p>
+        <EmptyState
+          icon={<AppsIcon size={28} />}
+          title="No apps connected"
+          body="When a site connects through BRC-100, it shows up here with spend and permission history."
+        />
       ) : view === 'grid' ? (
         <ul className="collection-grid">
           {orderedApps.map((app) => (

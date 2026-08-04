@@ -14,6 +14,7 @@ import {
 import { openAddFriend, openFriendDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectionViewToggle } from './CollectionViewToggle'
+import { EmptyState } from './EmptyState'
 import { PersonAddIcon } from './icons'
 
 type Props = {
@@ -127,7 +128,23 @@ export function FriendsPanel({ chain }: Props) {
       </div>
 
       {friends.length === 0 ? (
-        <p className="connected-empty-line">No friends yet</p>
+        <EmptyState
+          icon={<PersonAddIcon size={28} />}
+          title="No friends yet"
+          body="Add someone by identity key so you can send and recognize them quickly."
+          action={
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                playWalletSound('soft')
+                openAddFriend()
+              }}
+            >
+              Add friend
+            </button>
+          }
+        />
       ) : view === 'grid' ? (
         <ul className="collection-grid">
           {friends.map((friend) => (

@@ -1,12 +1,7 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { sendMachine } from '../machines/sendMachine'
-import {
-  fetchBalanceSats,
-  getActiveWallet,
-} from '../wallet/session'
-import { syncLegacyFunds } from '../wallet/syncFunds'
 import {
   amountToSats,
   formatPrimaryFromSats,
@@ -30,14 +25,22 @@ import {
 } from '../wallet/friends'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
-import { sendSatsToAddress } from '../wallet/sendPayment'
+import {
+  assertSendableBalance,
+  refreshSpendableBalance,
+  sendSatsToAddress,
+} from '../wallet/sendPayment'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
+import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
+import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 
 type Props = {
   chain: Chain
   balanceSats: number
+  /** Prefill from QR scan (PeerPay / identity / address). */
+  initialRecipient?: string
   onSent: (balanceSats: number) => void
   onFail: (error: string) => void
   onClose: () => void
@@ -49,18 +52,38 @@ function shortenAddress(value: string): string {
   return `${v.slice(0, 10)}…${v.slice(-8)}`
 }
 
-export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props) {
+export function SendPanel({
+  chain,
+  balanceSats,
+  initialRecipient,
+  onSent,
+  onFail,
+  onClose,
+}: Props) {
   const [sendSnap, send] = useMachine(sendMachine)
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [recipientQuery, setRecipientQuery] = useState('')
   const [showFriendMatches, setShowFriendMatches] = useState(false)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
+  const [reviewBusy, setReviewBusy] = useState(false)
   const sendState = stateToAttr(sendSnap.value)
+  const appliedPrefill = useRef(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => {
+    const sync = () => setOfflineBlock(offlinePaymentBlockedMessage())
+    sync()
+    window.addEventListener('online', sync)
+    window.addEventListener('offline', sync)
+    return () => {
+      window.removeEventListener('online', sync)
+      window.removeEventListener('offline', sync)
+    }
+  }, [])
 
   const isSuccess = sendSnap.matches('success')
   const isFailure = sendSnap.matches('failure')
@@ -84,9 +107,41 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
     amountSats > 0 ? formatSecondaryFromSats(amountSats, currency, usdPerBsv) : null
 
   const canReview =
+    !offlineBlock &&
+    !reviewBusy &&
     sendSnap.context.to.trim().length > 0 &&
     amountSats > 0 &&
     (currency === 'bsv' || usdPerBsv != null)
+
+  const goReview = async () => {
+    if (reviewBusy || offlineBlock) return
+    setReviewBusy(true)
+    playWalletSound('soft')
+    try {
+      const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+      if (!Number.isFinite(satoshis) || satoshis <= 0) {
+        throw new Error(
+          currency === 'usd' && usdPerBsv == null
+            ? 'USD rate unavailable'
+            : 'Invalid amount',
+        )
+      }
+      const available = await assertSendableBalance(satoshis)
+      onSent(available)
+      send({ type: 'REVIEW' })
+    } catch (err) {
+      playWalletSound('error')
+      onFail(err instanceof Error ? err.message : String(err))
+      try {
+        const available = await refreshSpendableBalance()
+        onSent(available)
+      } catch {
+        // ignore secondary refresh failure
+      }
+    } finally {
+      setReviewBusy(false)
+    }
+  }
 
   const recipientLabel =
     sendSnap.context.friendLabel || shortenAddress(sendSnap.context.to)
@@ -127,8 +182,27 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
         onFail(err instanceof Error ? err.message : String(err))
       }
     }
+    if (parseHandleInput(value)) {
+      void (async () => {
+        try {
+          const resolved = await resolveHandle(value)
+          const address = addressFromIdentityKey(resolved.identityKey, chain)
+          send({ type: 'EDIT', to: address, friendLabel: resolved.display })
+        } catch (err) {
+          onFail(err instanceof Error ? err.message : String(err))
+        }
+      })()
+      return
+    }
     send({ type: 'EDIT', to: value.trim(), friendLabel: null })
   }
+
+  useEffect(() => {
+    if (appliedPrefill.current || !initialRecipient?.trim()) return
+    appliedPrefill.current = true
+    applyRecipientInput(initialRecipient.trim())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [initialRecipient])
 
   const confirmSend = async () => {
     send({ type: 'CONFIRM' })
@@ -143,34 +217,33 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
       }
 
       const to = sendSnap.context.to.trim()
-      const { txid } = await sendSatsToAddress({
+      const { txid, balanceSats: nextBalance } = await sendSatsToAddress({
         to,
         satoshis,
         friendLabel: sendSnap.context.friendLabel,
       })
 
       send({ type: 'SUCCESS', txid })
-      onSent(Math.max(0, balanceSats - satoshis))
-      void syncLegacyFunds({ announceReceive: false })
-        .then((balance) => {
-          if (balance != null) onSent(balance)
-          else {
-            const active = getActiveWallet()
-            if (!active) return
-            return fetchBalanceSats(active.wallet).then((b) => onSent(b))
-          }
-        })
-        .catch((err) => {
-          console.warn('[send] balance refresh failed', err)
-        })
+      onSent(nextBalance)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       send({ type: 'FAIL', error: message })
+      try {
+        const available = await refreshSpendableBalance()
+        onSent(available)
+      } catch {
+        // ignore — still show send failure
+      }
     }
   }
 
   return (
     <div className="nav-child-panel send-panel" data-aeon-scope="send" data-aeon-state={sendState}>
+      {offlineBlock ? (
+        <p className="wallet-sync-note is-error" role="alert">
+          {offlineBlock}
+        </p>
+      ) : null}
       {sendSnap.matches('editing') && (
         <div className="send-stage send-stage-edit">
           <div className="send-layout">
@@ -199,6 +272,7 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
               <p className="send-available">
                 Available {formatPrimaryFromSats(balanceSats, currency, usdPerBsv)} ·{' '}
                 {formatSecondaryFromSats(balanceSats, currency, usdPerBsv)}
+                {reviewBusy ? ' · refreshing…' : ''}
               </p>
               {currency === 'usd' && usdPerBsv == null ? (
                 <p className="send-amount-warning">USD rate unavailable — switch to BSV or refresh</p>
@@ -216,12 +290,12 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                   onBlur={() => {
                     window.setTimeout(() => setShowFriendMatches(false), 120)
                   }}
-                  placeholder="Friend, peerpay:, address, or identity key"
+                  placeholder="Friend, @handle, peerpay:, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <p className="friend-recipient-hint send-recipient-hint">
-                  PeerPay links and identity keys resolve to a payment address on this network.
+                  PeerPay links, @handles, and identity keys resolve to a payment address on this network.
                 </p>
                 {sendSnap.context.friendLabel && (
                   <p className="friend-recipient-hint">
@@ -251,9 +325,9 @@ export function SendPanel({ chain, balanceSats, onSent, onFail, onClose }: Props
                 <button
                   className="btn btn-primary"
                   disabled={!canReview}
-                  onClick={() => send({ type: 'REVIEW' })}
+                  onClick={() => void goReview()}
                 >
-                  Review
+                  {reviewBusy ? 'Checking balance…' : 'Review'}
                 </button>
                 <button className="btn btn-ghost" onClick={onClose}>
                   Cancel

@@ -19,6 +19,8 @@ import {
 } from './migration'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
+import { assertOnlineForPayment } from './paymentPolicy'
+import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
 
 type HttpRequestEvent = {
   method: string
@@ -212,6 +214,24 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 
   if (isActionMethod(method)) {
+    if (method === 'createAction' || method === 'signAction') {
+      try {
+        // Pre-prompt heal so auto-pay / UI amount is based on live outs.
+        assertOnlineForPayment()
+        await prepareBrcActionSpend(method, args)
+      } catch (err) {
+        const description = err instanceof Error ? err.message : String(err)
+        const offline = /offline/i.test(description)
+        return {
+          status: offline ? 503 : 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: offline ? 'OFFLINE_PAYMENTS_DISABLED' : 'INSUFFICIENT_OR_STALE_FUNDS',
+            description,
+          }),
+        }
+      }
+    }
     const actionDecision = await requestActionApproval(originator, method, args)
     if (actionDecision !== 'allow') {
       return {
@@ -246,7 +266,29 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 
   try {
-    let result = await dispatchWalletMethod(active.wallet, method, args, originator)
+    let result: unknown
+    if (method === 'createAction' || method === 'signAction') {
+      try {
+        result = await runExclusiveSpend(async () => {
+          // Second heal under lock immediately before broadcast (cloud-style).
+          await prepareBrcActionSpend(method, args)
+          return dispatchWalletMethod(active.wallet, method, args, originator)
+        })
+      } catch (err) {
+        const description = err instanceof Error ? err.message : String(err)
+        const offline = /offline/i.test(description)
+        return {
+          status: offline ? 503 : 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: offline ? 'OFFLINE_PAYMENTS_DISABLED' : 'INSUFFICIENT_OR_STALE_FUNDS',
+            description,
+          }),
+        }
+      }
+    } else {
+      result = await dispatchWalletMethod(active.wallet, method, args, originator)
+    }
 
     if (method === 'listOutputs') {
       const basket =

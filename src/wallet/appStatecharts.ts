@@ -284,11 +284,15 @@ const SETTINGS = `stateDiagram-v2
   [*] --> settingsHome
   settingsHome --> changePassword : open
   settingsHome --> backupKeys : open
+  settingsHome --> deviceHandoff : open
   settingsHome --> historyBackup : open
   settingsHome --> wipeWallet : open
   settingsHome --> aboutHandCash : open
   changePassword --> settingsHome : back
   backupKeys --> settingsHome : back
+  deviceHandoff --> backupKeys : open keys
+  deviceHandoff --> historyBackup : open history
+  deviceHandoff --> settingsHome : back
   historyBackup --> settingsHome : back
   wipeWallet --> settingsHome : back / done
   aboutHandCash --> settingsHome : back
@@ -298,6 +302,7 @@ const SETTINGS = `stateDiagram-v2
   settingsHome : Settings
   changePassword : Password
   backupKeys : Keys
+  deviceHandoff : Use on another device
   historyBackup : History
   wipeWallet : Wipe
   aboutHandCash : About HandCash

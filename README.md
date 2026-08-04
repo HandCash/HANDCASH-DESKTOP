@@ -2,7 +2,17 @@
 
 Official HandCash **desktop wallet (BETA)** — self-custodial, built on the BSV Association open [BRC-100](https://brc.dev/100) wallet interface (same protocol surface as [bsv-desktop](https://github.com/bsv-blockchain/bsv-desktop)).
 
-> **BETA** — early open-source release. Not Apple-notarized yet; Gatekeeper may require Right-click → Open on macOS.
+> **BETA** — early open-source release. **Not Apple-notarized yet.**
+>
+> If macOS says the app is **“damaged and can’t be opened”**, that is Gatekeeper
+> rejecting an **unsigned** download (quarantine), not a corrupt DMG. Fix:
+>
+> ```bash
+> xattr -cr /Applications/HandCash.app
+> # or, before install: xattr -cr ~/Downloads/HandCash-*-mac.dmg
+> ```
+>
+> Then open the app again. Right-click → Open sometimes works; `xattr` always does.
 
 ## What you get
 

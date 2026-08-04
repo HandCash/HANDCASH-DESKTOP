@@ -15,6 +15,7 @@ export type SettingId =
   | 'backup'
   | 'backup-phrase'
   | 'split-backup'
+  | 'device-handoff'
   | 'history-backup'
   | 'wipe-wallet'
   | 'about-handcash'
@@ -23,7 +24,8 @@ export type SettingId =
 export type NavChild =
   | { type: 'app'; origin: string }
   | { type: 'permission'; origin: string; scopeId: string }
-  | { type: 'send' }
+  | { type: 'send'; prefill?: string }
+  | { type: 'scan' }
   | { type: 'receive' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
@@ -88,13 +90,25 @@ function openRequiredBackup() {
   openSetting(missing === 'history' ? 'history-backup' : 'backup')
 }
 
-export function openSendFlow() {
+export function openSendFlow(prefill?: string) {
   if (!isBackupConfirmed()) {
     playWalletSound('deny')
     openRequiredBackup()
     return
   }
-  openNavChild('activity', { type: 'send' })
+  openNavChild('activity', {
+    type: 'send',
+    ...(prefill?.trim() ? { prefill: prefill.trim() } : {}),
+  })
+}
+
+export function openScanFlow() {
+  if (!isBackupConfirmed()) {
+    playWalletSound('deny')
+    openRequiredBackup()
+    return
+  }
+  openNavChild('activity', { type: 'scan' })
 }
 
 export function openReceiveFlow() {

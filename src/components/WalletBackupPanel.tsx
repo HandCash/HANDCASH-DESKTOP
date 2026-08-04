@@ -1,11 +1,10 @@
-import { useState, type FormEvent } from 'react'
+import { useState } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
   canConfirmKeysBackup,
   markKeysBackupConfirmed,
   noteKeysBackupHandoff,
 } from '../wallet/backupStatus'
-import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import {
   BRC140_DEFAULT_THRESHOLD,
   BRC140_DEFAULT_TOTAL,
@@ -17,6 +16,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 
 type BackupKind = 'split' | 'phrase' | 'key'
 type Handoff = 'email' | 'copy' | 'download'
@@ -57,7 +57,6 @@ export function WalletBackupPanel() {
   const meta = readVaultMeta()
   const hasPhrase = Boolean(meta?.hasMnemonic)
   const [kind, setKind] = useState<BackupKind>('split')
-  const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [mnemonic, setMnemonic] = useState<string | null>(null)
@@ -74,7 +73,6 @@ export function WalletBackupPanel() {
     setRootKey(null)
     setShareSet(null)
     setOpenIndex(null)
-    setPassword('')
     setError(null)
   }
 
@@ -83,8 +81,7 @@ export function WalletBackupPanel() {
     setKind(next)
   }
 
-  const unlock = async (e: FormEvent) => {
-    e.preventDefault()
+  const revealWithPassword = async (password: string) => {
     setError(null)
     setBusy(true)
     setMnemonic(null)
@@ -103,10 +100,9 @@ export function WalletBackupPanel() {
         )
         setOpenIndex(null)
       }
-      playWalletSound('unlock')
     } catch (err) {
-      playWalletSound('error')
       setError(err instanceof Error ? err.message : String(err))
+      throw err
     } finally {
       setBusy(false)
     }
@@ -170,7 +166,9 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Without a key backup, losing this device means losing your money.
+        Without a key backup, losing this device means losing your money. To put this identity
+        on another device, reveal a phrase or BRC-140 slices here, then Restore on the other
+        app (Settings → Use on another device).
         {!hasPhrase
           ? ' This wallet has no phrase — use split key or emergency hex.'
           : ''}
@@ -241,38 +239,28 @@ export function WalletBackupPanel() {
       </div>
 
       {!revealed ? (
-        <form className="settings-form settings-form-compact" onSubmit={(e) => void unlock(e)}>
-          <div className="field">
-            <label htmlFor="wallet-backup-password">Password</label>
-            <input
-              id="wallet-backup-password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-            />
-          </div>
-          {error ? (
-            <p className="error" role="alert">
-              {error}
-            </p>
-          ) : null}
-          <div className="actions">
-            <button
-              type="submit"
-              className="btn btn-primary"
-              disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
-            >
-              {busy
-                ? 'Unlocking…'
-                : kind === 'split'
-                  ? 'Show slices'
-                  : kind === 'phrase'
-                    ? 'Show phrase'
-                    : 'Show key'}
-            </button>
-          </div>
-        </form>
+        <ConfirmPasswordGate
+          key={kind}
+          id="wallet-backup-password"
+          title="Confirm it’s you"
+          lede="Enter your unlock password to reveal recovery secrets on this device."
+          actionLabel={
+            busy
+              ? 'Unlocking…'
+              : kind === 'split'
+                ? 'Show slices'
+                : kind === 'phrase'
+                  ? 'Show phrase'
+                  : 'Show key'
+          }
+          onVerified={revealWithPassword}
+        />
+      ) : null}
+
+      {error && !revealed ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
       ) : null}
 
       {mnemonic ? (

@@ -15,7 +15,14 @@ import {
 } from '../wallet/displayCurrency'
 import { clearAppActivity } from '../wallet/appActivity'
 import type { WalletProfile } from '../machines/appMachine'
-import { SendIcon, ReceiveIcon, LockIcon, RefreshIcon, WarningIcon } from './icons'
+import {
+  SendIcon,
+  ReceiveIcon,
+  LockIcon,
+  RefreshIcon,
+  WarningIcon,
+  ScanQrIcon,
+} from './icons'
 import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
@@ -23,7 +30,7 @@ import {
   subscribeConnectedApps,
   type ConnectedApp,
 } from '../wallet/permissions'
-import { openReceiveFlow, openSendFlow, openSetting } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow, openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
@@ -35,6 +42,8 @@ import {
 } from '../wallet/backupStatus'
 import { subscribeSyncHealth } from '../wallet/walletHealth'
 import { showToast } from '../wallet/toast'
+import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
+import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 
 type Props = {
   profile: WalletProfile
@@ -45,6 +54,7 @@ type Props = {
   onFail: (error: string) => void
 }
 
+/** One identity / one pot (BRC-75). */
 export function Dashboard({
   profile,
   balanceSats,
@@ -53,6 +63,7 @@ export function Dashboard({
   onLock,
   onFail,
 }: Props) {
+  const [appTitle, setAppTitle] = useState('HandCash')
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
@@ -63,9 +74,28 @@ export function Dashboard({
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
+  useEffect(() => {
+    void (async () => {
+      try {
+        const info = await window.handcash?.getAppInfo?.()
+        if (info?.name?.trim()) {
+          setAppTitle(info.name.trim())
+          return
+        }
+      } catch {
+        // fall through
+      }
+      const platform = window.handcash?.platform
+      if (platform === 'android' || platform === 'ios') setAppTitle('HandCash Mobile')
+      else if (platform === 'darwin' || platform === 'win32' || platform === 'linux') {
+        setAppTitle('HandCash Desktop')
+      }
+    })()
+  }, [])
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
   useEffect(
     () =>
       subscribeBackupConfirmed(() => {
@@ -114,9 +144,9 @@ export function Dashboard({
     setRefreshing(true)
     try {
       await refreshUsdPerBsv(true)
-      const sats = await syncLegacyFunds()
+      const sats = await syncLegacyFunds({ forceReview: true })
+      void pollDeviceMeshOnce()
       if (sats != null) {
-        // Receive chime is handled inside sync when balance rises.
         if (sats <= balanceSats) playWalletSound('soft')
         onRefreshBalance(sats)
       } else {
@@ -130,6 +160,17 @@ export function Dashboard({
   }
 
   useEffect(() => {
+    const onOnline = () => {
+      void syncLegacyFunds({ forceReview: true, announceReceive: false }).then((sats) => {
+        if (sats != null) onRefreshBalance(sats)
+      })
+    }
+    window.addEventListener('online', onOnline)
+    return () => window.removeEventListener('online', onOnline)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile.address])
+
+  useEffect(() => {
     let cancelled = false
 
     const sync = async () => {
@@ -138,9 +179,10 @@ export function Dashboard({
     }
 
     void sync()
+    const intervalMs = isDeviceParityEnabled() ? 12_000 : 30_000
     const id = window.setInterval(() => {
       void sync()
-    }, 30_000)
+    }, intervalMs)
     return () => {
       cancelled = true
       window.clearInterval(id)
@@ -153,7 +195,7 @@ export function Dashboard({
       <div className="dashboard-main">
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">
-            <h2>Your wallet</h2>
+            <h2 className="wallet-hero-title">{appTitle}</h2>
             {!backupConfirmed ? (
               <button
                 type="button"
@@ -227,6 +269,19 @@ export function Dashboard({
                 <span className="wallet-action-label">Receive</span>
               </button>
               <button
+                type="button"
+                className="btn btn-ghost btn-icon"
+                aria-label="Scan QR code"
+                title="Scan PeerPay, identity, or address QR"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openScanFlow()
+                }}
+              >
+                <ScanQrIcon size={16} />
+                <span className="wallet-action-label">Scan</span>
+              </button>
+              <button
                 className="btn btn-ghost btn-icon"
                 onClick={() => {
                   playWalletSound('soft')
@@ -239,8 +294,8 @@ export function Dashboard({
               <button
                 type="button"
                 className="btn btn-ghost btn-icon wallet-refresh"
-                aria-label="Refresh balance"
-                title="Refresh"
+                aria-label="Refresh balance from the network"
+                title="Refresh this device from the network (same pot as your other devices)"
                 disabled={refreshing}
                 data-spinning={refreshing ? true : undefined}
                 onClick={() => void refreshWallet()}
@@ -250,7 +305,6 @@ export function Dashboard({
               </button>
             </div>
           </div>
-
         </div>
 
         <WalletNav

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type FormEvent } from 'react'
+import { useMemo, useRef, useState } from 'react'
 import {
   downloadAndRestoreBrc39Backup,
   exportBrc39ToFile,
@@ -15,9 +15,9 @@ import {
   markHistoryBackupConfirmed,
   noteHistoryBackupExport,
 } from '../wallet/backupStatus'
-import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 
 function formatWhen(ts: number | null): string {
   if (!ts) return 'Never'
@@ -32,7 +32,7 @@ export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [baseUrl, setBaseUrl] = useState(prefs.baseUrl)
-  const [password, setPassword] = useState('')
+  const [password, setPassword] = useState<string | null>(null)
   const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | null>(null)
   const [exportTick, setExportTick] = useState(0)
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
@@ -64,8 +64,8 @@ export function HistoryBackupPanel() {
     setExportTick((n) => n + 1)
   }
 
-  const runExportFile = async (e: FormEvent) => {
-    e.preventDefault()
+  const runExportFile = async () => {
+    if (!password) return
     setBusy('file')
     try {
       await exportBrc39ToFile(password)
@@ -81,6 +81,7 @@ export function HistoryBackupPanel() {
   }
 
   const runUpload = async () => {
+    if (!password) return
     setBusy('upload')
     try {
       setHistoryBackupPrefs({ baseUrl })
@@ -99,6 +100,7 @@ export function HistoryBackupPanel() {
   }
 
   const runRestoreUrl = async () => {
+    if (!password) return
     setBusy('restore')
     try {
       setHistoryBackupPrefs({ baseUrl })
@@ -114,7 +116,7 @@ export function HistoryBackupPanel() {
   }
 
   const runImportFile = async (file: File | null) => {
-    if (!file) return
+    if (!file || !password) return
     setBusy('import')
     try {
       const result = await importBrc39FromFile(file, password)
@@ -134,14 +136,15 @@ export function HistoryBackupPanel() {
       <p className="settings-hint">
         <span className="spec-tag">BRC-39</span>
         <span className="settings-hint-after-tag">
-          You will not be able to collect your funds without an up-to-date backup of your
-          transactions. Keys alone are not enough. Download or upload before confirming.
+          Shared history backup. The same URL on every device is <strong>required</strong> to link
+          installs (Settings → Use on another device). Pull/push keeps wallet data and friends
+          aligned; Refresh still checks the chain.
         </span>
       </p>
 
       <div className="settings-form settings-form-compact">
         <div className="field">
-          <label htmlFor="history-backup-url">URL (optional)</label>
+          <label htmlFor="history-backup-url">Backup URL (required to link devices)</label>
           <input
             id="history-backup-url"
             type="url"
@@ -164,60 +167,74 @@ export function HistoryBackupPanel() {
         ) : null}
       </div>
 
-      <form className="settings-form settings-form-compact" onSubmit={(e) => void runExportFile(e)}>
-        <div className="field">
-          <label htmlFor="history-backup-password">Password</label>
-          <input
-            id="history-backup-password"
-            type="password"
-            autoComplete="current-password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-          />
-        </div>
-        <div className="actions">
-          <button
-            type="submit"
-            className="btn btn-primary"
-            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
-          >
-            {busy === 'file' ? 'Exporting…' : 'Download .brc39'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
-            onClick={() => fileRef.current?.click()}
-          >
-            {busy === 'import' ? 'Importing…' : 'Import file'}
-          </button>
-        </div>
-        <div className="actions">
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH || !resolvedUrl}
-            onClick={() => void runUpload()}
-          >
-            {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy !== null || password.length < UNLOCK_PASSWORD_MIN_LENGTH || !resolvedUrl}
-            onClick={() => void runRestoreUrl()}
-          >
-            {busy === 'restore' ? 'Restoring…' : 'Restore from URL'}
-          </button>
-        </div>
-        <input
-          ref={fileRef}
-          type="file"
-          accept=".brc39,application/vnd.brc39.wallet,application/octet-stream"
-          hidden
-          onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
+      {!password ? (
+        <ConfirmPasswordGate
+          id="history-backup-password"
+          title="Confirm it’s you"
+          lede="Export and restore use the same unlock password that encrypts your history backup."
+          actionLabel="Unlock history actions"
+          onVerified={(pw) => setPassword(pw)}
         />
-      </form>
+      ) : (
+        <div className="settings-form settings-form-compact">
+          <p className="settings-row-desc">Unlocked for this session — export or restore below.</p>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy !== null}
+              onClick={() => void runExportFile()}
+            >
+              {busy === 'file' ? 'Exporting…' : 'Download .brc39'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy !== null}
+              onClick={() => fileRef.current?.click()}
+            >
+              {busy === 'import' ? 'Importing…' : 'Import file'}
+            </button>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy !== null || !resolvedUrl}
+              onClick={() => void runUpload()}
+            >
+              {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy !== null || !resolvedUrl}
+              onClick={() => void runRestoreUrl()}
+            >
+              {busy === 'restore' ? 'Restoring…' : 'Restore from URL'}
+            </button>
+          </div>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".brc39,application/vnd.brc39.wallet,application/octet-stream"
+            hidden
+            onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
+          />
+          <div className="actions" style={{ marginTop: 4 }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => {
+                setPassword(null)
+                playWalletSound('soft')
+              }}
+            >
+              Lock again
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="actions" style={{ marginTop: 12 }}>
         <button

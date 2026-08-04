@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { FilterIcon, ReceiveIcon, SendIcon } from './icons'
+import { ActivityIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   listRecentActivity,
@@ -30,6 +30,7 @@ import { subscribeConnectedApps } from '../wallet/permissions'
 import { openPaymentDetails, setNavSection } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
+import { EmptyState } from './EmptyState'
 
 function formatWhen(at: number): string {
   const diff = Math.max(0, Date.now() - at)
@@ -214,9 +215,15 @@ export function ActivityFeed({
 
   const body =
     filtered.length === 0 ? (
-      <p className="connected-empty-line">
-        {entries.length === 0 ? emptyLabel : 'No activity matches these filters'}
-      </p>
+      <EmptyState
+        icon={<ActivityIcon size={28} />}
+        title={entries.length === 0 ? emptyLabel : 'Nothing matches'}
+        body={
+          entries.length === 0
+            ? 'Sends, receives, and app payments will show up here.'
+            : 'Try clearing filters to see more activity.'
+        }
+      />
     ) : (
       <ul className="history-list" ref={listRef}>
         {filtered.map((entry) => (

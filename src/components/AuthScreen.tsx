@@ -11,6 +11,7 @@ import {
   type UnlockedVault,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
+import { syncLegacyFunds } from '../wallet/syncFunds'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
@@ -19,6 +20,8 @@ import {
   subscribeUnlockNudge,
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
+import { getWalletConfigPrefs } from '../wallet/walletConfig'
+import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 
 type Props = {
   mode: 'onboarding' | 'locked'
@@ -93,6 +96,10 @@ export function AuthScreen({
   const [rootKeyInput, setRootKeyInput] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
+  const [pendingCreated, setPendingCreated] = useState<{
+    profile: WalletProfile
+    balanceSats: number
+  } | null>(null)
   const shareFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -116,19 +123,26 @@ export function AuthScreen({
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
     })
-    const balanceSats = await fetchBalanceSats(active.wallet)
+    let balanceSats = await syncLegacyFunds({
+      forceReview: true,
+      announceReceive: false,
+    })
+    if (balanceSats == null) balanceSats = await fetchBalanceSats(active.wallet)
     send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()
-    onCreated(
-      {
-        handle: unlocked.record.handle,
-        identityKey: unlocked.record.identityKey,
-        address: unlocked.record.address,
-        chain: unlocked.record.chain,
-      },
-      balanceSats,
-    )
+    const profile: WalletProfile = {
+      handle: unlocked.record.handle,
+      identityKey: unlocked.record.identityKey,
+      address: unlocked.record.address,
+      chain: unlocked.record.chain,
+    }
+    // First-time create/restore: pick backup configuration before entering the app.
+    if (!getWalletConfigPrefs().mode) {
+      setPendingCreated({ profile, balanceSats })
+      return
+    }
+    onCreated(profile, balanceSats)
   }
 
   const submit = async () => {
@@ -181,24 +195,7 @@ export function AuthScreen({
 
       if (formMode === 'create') {
         const unlocked = await createVault({ password, chain })
-        const active = await bootWallet({
-          rootKeyHex: unlocked.rootKeyHex,
-          handle: unlocked.record.handle,
-          chain: unlocked.record.chain,
-        })
-        const balanceSats = await fetchBalanceSats(active.wallet)
-        send({ type: 'SUCCESS' })
-        playWalletSound('unlock')
-        clearUnlockNudge()
-        onCreated(
-          {
-            handle: unlocked.record.handle,
-            identityKey: unlocked.record.identityKey,
-            address: unlocked.record.address,
-            chain: unlocked.record.chain,
-          },
-          balanceSats,
-        )
+        await finishCreated(unlocked)
         return
       }
 
@@ -208,7 +205,12 @@ export function AuthScreen({
         handle: unlocked.record.handle,
         chain: unlocked.record.chain,
       })
-      const balanceSats = await fetchBalanceSats(active.wallet)
+      // Chain heal on unlock (parity): drop outs spent on other devices.
+      let balanceSats = await syncLegacyFunds({
+        forceReview: true,
+        announceReceive: false,
+      })
+      if (balanceSats == null) balanceSats = await fetchBalanceSats(active.wallet)
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
       clearUnlockNudge()
@@ -258,20 +260,20 @@ export function AuthScreen({
   }
 
   const title = isRestoreMethod(formMode)
-    ? 'Restore wallet'
+    ? 'Restore on this device'
     : formMode === 'create'
       ? 'Create wallet'
       : 'Welcome back'
 
   const lede =
     formMode === 'phrase'
-      ? 'Enter your recovery phrase and choose a password for this device.'
+      ? 'Enter your BRC-75 recovery phrase and choose a password for this device. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
-        ? 'Paste any two BRC-140 key slices and choose a password for this device.'
+        ? 'Paste any two BRC-140 key slices and choose a password for this device. Same slices = same identity.'
         : formMode === 'key'
           ? 'Paste your emergency root key (64 hex chars) and choose a password for this device.'
           : formMode === 'create'
-            ? 'Pick a password. Your keys stay on this device. Back up with a phrase, key slices, or emergency key after unlock.'
+            ? 'Pick a password. Your keys stay on this device. To use another device later, back up with a phrase or BRC-140 slices after unlock.'
             : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
@@ -280,6 +282,20 @@ export function AuthScreen({
     : formMode === 'create'
       ? 'Create'
       : 'Unlock'
+
+  if (pendingCreated) {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="setup-config">
+        <WalletSetupConfigPanel
+          onDone={() => {
+            const pending = pendingCreated
+            setPendingCreated(null)
+            onCreated(pending.profile, pending.balanceSats)
+          }}
+        />
+      </section>
+    )
+  }
 
   return (
     <section className="auth-screen" data-aeon-scope="auth" data-aeon-state={stateAttr}>

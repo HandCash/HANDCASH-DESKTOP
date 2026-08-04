@@ -63,6 +63,42 @@ jobs:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run package:mac -- --publish never
 
+      - name: Verify Mac package integrity
+        run: |
+          set -euo pipefail
+          fail=0
+          for arch_dir in release/mac-arm64 release/mac; do
+            APP="$arch_dir/HandCash.app"
+            if [[ ! -d "$APP" ]]; then
+              echo "MISSING $APP" >&2
+              fail=1
+              continue
+            fi
+            PLIST="$APP/Contents/Info.plist"
+            BIN="$APP/Contents/MacOS/HandCash"
+            ASAR="$APP/Contents/Resources/app.asar"
+            EF="$APP/Contents/Frameworks/Electron Framework.framework/Versions/A/Electron Framework"
+            ID="$(/usr/libexec/PlistBuddy -c 'Print CFBundleIdentifier' "$PLIST" 2>/dev/null || true)"
+            VER="$(/usr/libexec/PlistBuddy -c 'Print CFBundleShortVersionString' "$PLIST" 2>/dev/null || true)"
+            echo "== $APP =="
+            echo "  CFBundleIdentifier=$ID"
+            echo "  version=$VER"
+            [[ "$ID" == "io.handcash.brc100" ]] || { echo "bad bundle id" >&2; fail=1; }
+            [[ -x "$BIN" ]] || { echo "missing binary" >&2; fail=1; }
+            [[ -f "$ASAR" ]] || { echo "missing app.asar" >&2; fail=1; }
+            [[ -f "$EF" ]] || { echo "missing Electron Framework" >&2; fail=1; }
+            # electron-builder --mac dmg/zip should embed updater metadata
+            if [[ ! -f "$APP/Contents/Resources/app-update.yml" ]]; then
+              echo "WARN: app-update.yml missing in $APP — copying from build/" >&2
+              cp build/app-update.yml "$APP/Contents/Resources/app-update.yml"
+            fi
+          done
+          ls -lh release/*.dmg release/*.zip release/latest-mac.yml
+          # Ensure both arch DMGs exist (CI previously succeeded without catching empty apps)
+          test -f release/HandCash-*-arm64-mac.dmg
+          test -f release/HandCash-*-x64-mac.dmg
+          exit "$fail"
+
       - name: Ensure GitHub Release exists
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -74,7 +110,9 @@ jobs:
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
-              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (unsigned; notarize later)." \
+              --notes "HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (unsigned; notarize later).
+
+If macOS says the app is damaged: \`xattr -cr /Applications/HandCash.app\` then reopen. That clears Gatekeeper quarantine on unsigned downloads." \
               --prerelease \
               --target "${{ github.sha }}"
           fi

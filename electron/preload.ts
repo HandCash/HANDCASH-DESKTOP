@@ -18,6 +18,9 @@ export type BridgeStatus = {
   online: boolean
   httpsUrl: string
   httpUrl: string
+  devicePeerPort?: number
+  devicePeerLanUrls?: string[]
+  devicePeerOnline?: boolean
   error: string | null
 }
 
@@ -65,6 +68,13 @@ const handcash = {
     ipcRenderer.on('http-request', listener)
     return () => ipcRenderer.removeListener('http-request', listener)
   },
+  onDevicePeerHttpRequest: (handler: (event: HttpRequestEvent) => void) => {
+    const listener = (_: Electron.IpcRendererEvent, payload: HttpRequestEvent) => {
+      handler(payload)
+    }
+    ipcRenderer.on('device-peer-http-request', listener)
+    return () => ipcRenderer.removeListener('device-peer-http-request', listener)
+  },
   onHttpRequestCancelled: (handler: (payload: { request_id: number; reason: string }) => void) => {
     const listener = (
       _: Electron.IpcRendererEvent,
@@ -75,6 +85,9 @@ const handcash = {
   },
   respondHttp: (response: HttpResponseEvent) => {
     ipcRenderer.send('http-response', response)
+  },
+  respondDevicePeerHttp: (response: HttpResponseEvent) => {
+    ipcRenderer.send('device-peer-http-response', response)
   },
   focusWindow: () => ipcRenderer.invoke('app:focus-window') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,

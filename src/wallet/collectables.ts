@@ -10,6 +10,8 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { resolvePaymentAddress } from './friends'
+import { assertOnlineForPayment } from './paymentPolicy'
+import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -268,8 +270,11 @@ export async function sendCollectable(args: {
   origin?: string
   app?: string
 }): Promise<{ txid: string }> {
-  const wallet = getActiveWallet()
-  if (!wallet) throw new Error('Wallet locked')
+  return runExclusiveSpend(async () => {
+    assertOnlineForPayment()
+    await prepareSpendHeal()
+    const wallet = getActiveWallet()
+    if (!wallet) throw new Error('Wallet locked')
 
   const outpoint = normalizeOutpoint(args.outpoint)
   const to = resolvePaymentAddress(args.toAddress, wallet.chain)
@@ -374,4 +379,5 @@ export async function sendCollectable(args: {
     console.warn('[collectables] post-send refresh failed', err)
   })
   return { txid }
+  })
 }

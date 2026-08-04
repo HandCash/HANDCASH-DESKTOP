@@ -2,8 +2,10 @@ import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
+import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
+import { isDeviceParityEnabled } from './paymentPolicy'
 
 export type SyncLegacyFundsOptions = {
   /**
@@ -12,12 +14,27 @@ export type SyncLegacyFundsOptions = {
    * send so we don't double-chime with payment success.
    */
   announceReceive?: boolean
+  /**
+   * When true, always run spendability review (all baskets, release dead outs).
+   * Use for explicit Refresh. Background polls throttle reviews.
+   */
+  forceReview?: boolean
 }
 
 /** Outpoints we've already chimed for this session — avoids re-import noise. */
 const announcedOneSatOutpoints = new Set<string>()
 let lastReceiveChimeAt = 0
 const RECEIVE_CHIME_COOLDOWN_MS = 12_000
+
+/** Background sync should not hammer UTXO status providers. */
+const REVIEW_THROTTLE_MS = 2 * 60_000
+/** Faster reviews when multi-device BRC-39 parity URL is configured. */
+const REVIEW_THROTTLE_PARITY_MS = 45_000
+let lastSpendableReviewAt = 0
+
+function reviewThrottleMs(): number {
+  return isDeviceParityEnabled() ? REVIEW_THROTTLE_PARITY_MS : REVIEW_THROTTLE_MS
+}
 
 function maybeReceiveChime(): void {
   const now = Date.now()
@@ -27,17 +44,49 @@ function maybeReceiveChime(): void {
 }
 
 /**
- * Quietly scan the legacy receive address and import UTXOs.
- * 1Sat ordinals → basket `1sat` (internalize). Other P2PKH → managed change.
- * Safe to call on an interval; surfaces held/error via walletHealth.
+ * Drop outs that are no longer UTXOs on-chain (e.g. spent on another device
+ * with the same restored identity). Covers default change and basket `1sat`.
+ */
+export async function reviewAndReleaseSpentOutputs(
+  force = false,
+): Promise<{ released: number; skipped: boolean; error?: string }> {
+  const active = getActiveWallet()
+  if (!active) return { released: 0, skipped: true }
+
+  const now = Date.now()
+  if (!force && now - lastSpendableReviewAt < reviewThrottleMs()) {
+    return { released: 0, skipped: true }
+  }
+
+  try {
+    const result = await active.wallet.reviewSpendableOutputs(true, true)
+    lastSpendableReviewAt = Date.now()
+    const released = result.outputs?.length ?? 0
+    if (released > 0) {
+      clearCollectablesCache()
+    }
+    return { released, skipped: false }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    console.warn('[sync] spendable review failed — not releasing', err)
+    // Do not mark outs spent when the provider fails / returns unknown.
+    return { released: 0, skipped: false, error: message }
+  }
+}
+
+/**
+ * Quietly reconcile this device with the chain:
+ * 1) release outs spent elsewhere (same identity on another device)
+ * 2) scan the receive address and import new funding / 1sat tips
  *
- * Important for self-sends: createAction pays your receive address as an
- * "external" output, so balance drops until those UTXOs are imported back.
+ * Refresh = this device’s coins/items from the network — not a custom
+ * Desktop↔Mobile sync pipe. Identity portability is BRC-75 / BRC-140 restore.
  */
 export async function syncLegacyFunds(
   opts?: SyncLegacyFundsOptions,
 ): Promise<number | null> {
   const announceReceive = opts?.announceReceive !== false
+  const forceReview = opts?.forceReview === true
   const active = getActiveWallet()
   if (!active) return null
 
@@ -56,6 +105,16 @@ export async function syncLegacyFunds(
     reconcilePendingSends()
   } catch (err) {
     console.warn('[sync] pending send reconcile skipped', err)
+  }
+
+  const review = await reviewAndReleaseSpentOutputs(forceReview)
+  if (review.error && forceReview) {
+    setSyncHealth({
+      phase: 'error',
+      message: 'Couldn’t verify spent outputs — check network and try Refresh.',
+      heldOneSats: 0,
+    })
+    // Continue to import path; do not abort entirely.
   }
 
   let newOneSatOutpoints: string[] = []
@@ -123,9 +182,18 @@ export async function syncLegacyFunds(
         ? `${heldCount} one-sat output${heldCount === 1 ? '' : 's'} waiting on the index — not spendable as BSV.`
         : null
 
+    const reviewNote =
+      review.released > 0
+        ? `Updated ${review.released} spent output${review.released === 1 ? '' : 's'} from the network.`
+        : null
+
     setSyncHealth({
-      phase: 'ok',
-      message: partialWarn ?? heldMessage,
+      phase: review.error && !partialWarn ? 'error' : 'ok',
+      message:
+        partialWarn ??
+        (review.error
+          ? 'Spend check incomplete — try Refresh.'
+          : (reviewNote ?? heldMessage)),
       heldOneSats: heldCount,
     })
     return balanceAfter

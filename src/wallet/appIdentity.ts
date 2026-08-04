@@ -38,9 +38,9 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
     id: 'items-view',
     label: 'View items',
     description:
-      'See collectables when you approve. Can be limited to a collection or creator.',
+      'See collectables on this device when you approve. Local only — not other phones or desktops.',
     allows: [
-      'List 1Sat inventory',
+      'List 1Sat inventory on this wallet',
       'Optional collection filter',
       'Optional creator filter',
     ],
@@ -90,9 +90,9 @@ export function appDisplayName(origin: string | undefined): string {
   if (host === 'localhost' || host.startsWith('127.0.0.1')) return 'Local app'
 
   const base = host.split(':')[0] ?? host
-  if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash Migrate'
+  if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash'
   if (base === 'market.handcash.io' || base === 'preprod-market.handcash.io') {
-    return 'HandCash Migrate'
+    return 'HandCash'
   }
 
   const parts = base.split('.').filter(Boolean)

@@ -48,6 +48,9 @@ type BridgeStatus = {
   online: boolean
   httpsUrl: string
   httpUrl: string
+  devicePeerPort?: number
+  devicePeerLanUrls?: string[]
+  devicePeerOnline?: boolean
   error: string | null
 }
 
@@ -84,10 +87,12 @@ interface HandCashBridge {
   restartBridge: () => Promise<BridgeStatus>
   onBridgeStatus: (handler: (status: BridgeStatus) => void) => () => void
   onHttpRequest: (handler: (event: HttpRequestEvent) => void) => () => void
+  onDevicePeerHttpRequest?: (handler: (event: HttpRequestEvent) => void) => () => void
   onHttpRequestCancelled: (
     handler: (payload: { request_id: number; reason: string }) => void,
   ) => () => void
   respondHttp: (response: HttpResponseEvent) => void
+  respondDevicePeerHttp?: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
   getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>

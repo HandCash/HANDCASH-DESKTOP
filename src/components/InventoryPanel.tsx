@@ -17,7 +17,8 @@ import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
 import { syncLegacyFunds } from '../wallet/syncFunds'
 import { subscribeSyncHealth } from '../wallet/walletHealth'
 import { playWalletSound } from '../wallet/soundService'
-import { SendIcon } from './icons'
+import { EmptyState } from './EmptyState'
+import { CollectablesIcon, SendIcon } from './icons'
 
 function CollectableGridItem({ item }: { item: Collectable }) {
   return (
@@ -156,7 +157,7 @@ export function InventoryPanel() {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
-        await syncLegacyFunds({ announceReceive: false })
+        await syncLegacyFunds({ announceReceive: false, forceReview: showSpinner })
         await listCollectables()
         if (!cancelled) {
           setReady(areCollectablesHydrated())
@@ -164,7 +165,6 @@ export function InventoryPanel() {
         }
       } catch (err) {
         console.warn('[collectables] refresh failed', err)
-        // Stay on loading copy until we have a real successful read — never flash empty.
         if (!cancelled && areCollectablesHydrated()) {
           setReady(true)
           setAwaitingFirst(false)
@@ -181,6 +181,8 @@ export function InventoryPanel() {
       window.clearInterval(id)
     }
   }, [])
+
+  const showLoading = awaitingFirst || !ready
 
   return (
     <div
@@ -213,10 +215,18 @@ export function InventoryPanel() {
             ))}
           </ul>
         )
-      ) : awaitingFirst || !ready ? (
-        <p className="connected-empty-line">Looking for collectables…</p>
+      ) : showLoading ? (
+        <EmptyState
+          icon={<CollectablesIcon size={28} />}
+          title="Looking for collectables…"
+          body="Checking this device for one-sat items."
+        />
       ) : (
-        <p className="connected-empty-line">No collectables yet</p>
+        <EmptyState
+          icon={<CollectablesIcon size={28} />}
+          title="No collectables here"
+          body="Items live on the install that received them. Refresh updates from the network; send to move them."
+        />
       )}
     </div>
   )

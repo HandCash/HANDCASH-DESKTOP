@@ -3,9 +3,10 @@ import { changeVaultPassword } from '../wallet/vault'
 import { validatePassword } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 
 export function ChangePasswordPanel() {
-  const [currentPassword, setCurrentPassword] = useState('')
+  const [currentPassword, setCurrentPassword] = useState<string | null>(null)
   const [newPassword, setNewPassword] = useState('')
   const [confirmPassword, setConfirmPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -13,6 +14,7 @@ export function ChangePasswordPanel() {
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
+    if (!currentPassword) return
     setError(null)
 
     if (newPassword !== confirmPassword) {
@@ -28,7 +30,7 @@ export function ChangePasswordPanel() {
     setSubmitting(true)
     try {
       await changeVaultPassword(currentPassword, newPassword)
-      setCurrentPassword('')
+      setCurrentPassword(null)
       setNewPassword('')
       setConfirmPassword('')
       playWalletSound('success')
@@ -43,22 +45,38 @@ export function ChangePasswordPanel() {
     }
   }
 
+  if (!currentPassword) {
+    return (
+      <div
+        className="settings-detail settings-detail-compact settings-scroll"
+        data-aeon-scope="settings-change-password"
+      >
+        <ConfirmPasswordGate
+          id="settings-current-password"
+          title="Change password"
+          lede="Confirm your current unlock password, then choose a new one."
+          actionLabel="Continue"
+          onVerified={(password) => setCurrentPassword(password)}
+        />
+      </div>
+    )
+  }
+
   return (
-    <div className="settings-detail settings-detail-compact settings-scroll" data-aeon-scope="settings-change-password">
+    <div
+      className="settings-detail settings-detail-compact settings-scroll"
+      data-aeon-scope="settings-change-password"
+      data-aeon-state="new"
+    >
+      <div className="confirm-password-copy">
+        <h3 className="confirm-password-title">Choose a new password</h3>
+        <p className="confirm-password-lede">
+          Use at least 10 characters with a letter and a number.
+        </p>
+      </div>
       <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
         <div className="field">
-          <label htmlFor="settings-current-password">Current</label>
-          <input
-            id="settings-current-password"
-            type="password"
-            value={currentPassword}
-            onChange={(e) => setCurrentPassword(e.target.value)}
-            autoComplete="current-password"
-            disabled={submitting}
-          />
-        </div>
-        <div className="field">
-          <label htmlFor="settings-new-password">New</label>
+          <label htmlFor="settings-new-password">New password</label>
           <input
             id="settings-new-password"
             type="password"
@@ -66,11 +84,12 @@ export function ChangePasswordPanel() {
             value={newPassword}
             onChange={(e) => setNewPassword(e.target.value)}
             autoComplete="new-password"
+            autoFocus
             disabled={submitting}
           />
         </div>
         <div className="field">
-          <label htmlFor="settings-confirm-password">Confirm</label>
+          <label htmlFor="settings-confirm-password">Confirm new password</label>
           <input
             id="settings-confirm-password"
             type="password"
@@ -91,14 +110,23 @@ export function ChangePasswordPanel() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={
-              submitting ||
-              !currentPassword ||
-              !newPassword ||
-              !confirmPassword
-            }
+            disabled={submitting || !newPassword || !confirmPassword}
           >
-            {submitting ? 'Updating…' : 'Change password'}
+            {submitting ? 'Updating…' : 'Update password'}
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={submitting}
+            onClick={() => {
+              setCurrentPassword(null)
+              setNewPassword('')
+              setConfirmPassword('')
+              setError(null)
+              playWalletSound('soft')
+            }}
+          >
+            Back
           </button>
         </div>
       </form>

@@ -4,6 +4,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
 import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
+import {
+  listLanIpv4Addresses,
+  startDevicePeerServer,
+} from './devicePeerServer.js'
 import { durableGet, durableSafeStorageAvailable, durableSet, durableWipeWallet } from './durableStore.js'
 import {
   checkForUpdates,
@@ -38,6 +42,7 @@ log.transports.file.level = 'info'
 let mainWindow: BrowserWindow | null = null
 let bridge: BridgeServerHandle | null = null
 let bridgeError: string | null = null
+let devicePeer: Awaited<ReturnType<typeof startDevicePeerServer>> | null = null
 let packagedUiOrigin: string | null = null
 
 if (process.platform === 'linux') {
@@ -74,10 +79,16 @@ function isSafeExternalUrl(url: string): boolean {
 }
 
 function bridgeStatus() {
+  const lanUrls =
+    devicePeer?.lanUrls ??
+    listLanIpv4Addresses().map((ip) => `http://${ip}:3340`)
   return {
     online: bridge !== null,
     httpsUrl: bridge?.httpsUrl ?? 'https://127.0.0.1:2121',
     httpUrl: bridge?.httpUrl ?? 'http://127.0.0.1:3321',
+    devicePeerPort: 3340,
+    devicePeerLanUrls: lanUrls,
+    devicePeerOnline: devicePeer !== null,
     error: bridgeError,
   }
 }
@@ -306,6 +317,15 @@ async function ensureBridge(): Promise<void> {
     bridgeError = err instanceof Error ? err.message : String(err)
     log.error('BRC-100 bridge failed to start', bridgeError)
   }
+  try {
+    if (!devicePeer) {
+      devicePeer = await startDevicePeerServer(mainWindow)
+      log.info('Device peer online', devicePeer.lanUrls)
+    }
+  } catch (err) {
+    log.warn('Device peer server failed', err)
+    devicePeer = null
+  }
   notifyBridgeStatus()
 }
 
@@ -346,6 +366,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   void bridge?.stop()
   bridge = null
+  void devicePeer?.stop()
+  devicePeer = null
   void stopPackagedUiServer()
 })
 
@@ -450,6 +472,10 @@ ipcMain.handle('bridge:restart', async () => {
   if (bridge) {
     await bridge.stop()
     bridge = null
+  }
+  if (devicePeer) {
+    await devicePeer.stop()
+    devicePeer = null
   }
   await ensureBridge()
   return bridgeStatus()

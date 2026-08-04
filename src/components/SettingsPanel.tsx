@@ -35,6 +35,12 @@ const SETTING_GROUPS: SettingGroup[] = [
         tag: 'BRC-140',
       },
       {
+        id: 'device-handoff',
+        label: 'Use on another device',
+        description: 'Same BRC-39 URL to link',
+        tag: 'BRC-75',
+      },
+      {
         id: 'history-backup',
         label: 'History',
         description: 'Required for recovery',
@@ -103,6 +109,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
+  if (id === 'device-handoff') return 'Use on another device'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)

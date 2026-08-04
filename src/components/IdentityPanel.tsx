@@ -69,7 +69,8 @@ export function IdentityPanel({ profile }: Props) {
           </button>
           <p className="identity-qr-hint">Tap QR to copy</p>
           <p className="identity-key-note">
-            Identity key — not a payment address. Use Receive for BSV.
+            Identity key — not a payment address. Use Receive for BSV. Same phrase on another
+            device is the same pot (Settings → Use on another device).
           </p>
         </div>
 
