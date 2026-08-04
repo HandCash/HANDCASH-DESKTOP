@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
   canConfirmKeysBackup,
-  getKeysBackupHandoffCount,
+  getKeysSplitHandoffProgress,
   markKeysBackupConfirmed,
   noteKeysBackupHandoff,
 } from '../wallet/backupStatus'
@@ -18,10 +18,10 @@ import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type BackupKind = 'split' | 'phrase' | 'key'
-type Handoff = 'email' | 'copy' | 'download'
 
 function downloadShare(filename: string, contents: string) {
   const blob = new Blob([contents], { type: 'text/plain;charset=utf-8' })
@@ -64,17 +64,16 @@ export function WalletBackupPanel() {
   const [mnemonic, setMnemonic] = useState<string | null>(null)
   const [rootKey, setRootKey] = useState<string | null>(null)
   const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
-  const [openIndex, setOpenIndex] = useState<number | null>(null)
   const [handoffTick, setHandoffTick] = useState(0)
   const revealed = Boolean(mnemonic || rootKey || shareSet)
   const singleSelected = kind === 'phrase' || kind === 'key'
   const canConfirm = handoffTick >= 0 && canConfirmKeysBackup(kind)
+  const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
   const clearReveal = () => {
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
-    setOpenIndex(null)
     setError(null)
   }
 
@@ -100,7 +99,6 @@ export function WalletBackupPanel() {
         setShareSet(
           createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
         )
-        setOpenIndex(null)
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -110,7 +108,7 @@ export function WalletBackupPanel() {
     }
   }
 
-  const handoff = async (index: number, method: Handoff) => {
+  const handoff = async (index: number, method: SliceHandoffMethod) => {
     if (!shareSet?.shares[index]) return
     const share = shareSet.shares[index]!
     try {
@@ -129,7 +127,7 @@ export function WalletBackupPanel() {
         playWalletSound('soft')
         toastSuccess('Slice saved')
       }
-      noteKeysBackupHandoff()
+      noteKeysBackupHandoff(index)
       setHandoffTick((n) => n + 1)
     } catch (err) {
       playWalletSound('error')
@@ -149,7 +147,7 @@ export function WalletBackupPanel() {
       toastError(
         'Backup not complete',
         kind === 'split'
-          ? 'Open two different slices and Copy, Email, or Save file each one.'
+          ? 'Save at least two different slices to separate safe places.'
           : 'Copy your secret first.',
       )
       playWalletSound('deny')
@@ -161,9 +159,7 @@ export function WalletBackupPanel() {
     openSetting('history-backup')
   }
 
-  const savedCount = getKeysBackupHandoffCount()
-  const splitNeed = 2
-  const splitProgress = Math.min(savedCount, splitNeed)
+  const splitNeed = shareSet?.threshold ?? 2
 
   return (
     <div
@@ -352,76 +348,13 @@ export function WalletBackupPanel() {
 
       {shareSet ? (
         <div className="split-backup-shares">
-          <p className="settings-hint">
-            You need any {shareSet.threshold} of these {shareSet.totalShares} slices to restore
-            later. Open a slice, then <strong>Copy</strong>, <strong>Email</strong>, or{' '}
-            <strong>Save file</strong> — do that for at least two slices, then mark done.
-            Integrity <span className="mono">{shareSet.integrity}</span>
-          </p>
-          <p className="settings-row-desc" role="status" aria-live="polite">
-            {canConfirm
-              ? 'Two slices saved — you can mark this backup done.'
-              : `Saved ${splitProgress} of ${splitNeed} slices (copy, email, or save file).`}
-          </p>
-
-          <ul className="split-backup-list">
-            {shareSet.shares.map((share, index) => {
-              const open = openIndex === index
-              return (
-                <li
-                  key={share}
-                  className="split-backup-item"
-                  data-aeon-state={open ? 'open' : 'idle'}
-                >
-                  <button
-                    type="button"
-                    className="split-backup-item-toggle"
-                    aria-expanded={open}
-                    onClick={() => setOpenIndex(open ? null : index)}
-                  >
-                    <strong>
-                      Slice {index + 1} of {shareSet.totalShares}
-                    </strong>
-                    <span className="settings-row-desc">{open ? 'Showing' : 'Hidden'}</span>
-                  </button>
-
-                  {open ? (
-                    <>
-                      <code className="mono split-backup-share">{share}</code>
-                      <div className="actions split-backup-item-actions">
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void handoff(index, 'email')}
-                        >
-                          Email
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void handoff(index, 'copy')}
-                        >
-                          Copy
-                        </button>
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() => void handoff(index, 'download')}
-                        >
-                          Save file
-                        </button>
-                      </div>
-                    </>
-                  ) : (
-                    <code className="mono split-backup-share split-backup-share--masked" aria-hidden>
-                      ••••••••••••••••••••••••••••••••
-                    </code>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-
+          <KeySliceList
+            shares={shareSet.shares}
+            threshold={shareSet.threshold}
+            integrity={shareSet.integrity}
+            savedIndices={splitProgress.savedIndices}
+            onHandoff={handoff}
+          />
           <div className="actions">
             <button
               type="button"
@@ -431,8 +364,8 @@ export function WalletBackupPanel() {
             >
               {canConfirm
                 ? 'I’ve saved my slices'
-                : `Copy or save ${splitNeed - splitProgress} more slice${
-                    splitNeed - splitProgress === 1 ? '' : 's'
+                : `Save ${Math.max(0, splitNeed - splitProgress.saved)} more slice${
+                    splitNeed - splitProgress.saved === 1 ? '' : 's'
                   }`}
             </button>
             <button

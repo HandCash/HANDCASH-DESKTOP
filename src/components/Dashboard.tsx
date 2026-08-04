@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
-import { syncLegacyFunds } from '../wallet/syncFunds'
+import { refreshFromChain } from '../wallet/chainIngest'
 import {
   formatUsdFromSats,
   getCachedUsdPerBsv,
@@ -42,6 +42,8 @@ import {
 } from '../wallet/backupStatus'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
+import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
+import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 
 type Props = {
   profile: WalletProfile
@@ -105,7 +107,11 @@ export function Dashboard({
     setRefreshing(true)
     try {
       await refreshUsdPerBsv(true)
-      const sats = await syncLegacyFunds({ forceReview: true })
+      // Explicit Refresh only: pull newer BRC-39 when multi-device parity is on.
+      if (isDeviceParityEnabled() && getSessionBackupPassword()) {
+        await softPullHistoryIfRemoteNewer()
+      }
+      const sats = await refreshFromChain({ forceReview: true })
       void pollDeviceMeshOnce()
       if (sats != null) {
         if (sats <= balanceSats) playWalletSound('soft')
@@ -122,7 +128,7 @@ export function Dashboard({
 
   useEffect(() => {
     const onOnline = () => {
-      void syncLegacyFunds({ forceReview: true, announceReceive: false }).then((sats) => {
+      void refreshFromChain({ forceReview: true, announceReceive: false }).then((sats) => {
         if (sats != null) onRefreshBalance(sats)
       })
     }
@@ -135,7 +141,7 @@ export function Dashboard({
     let cancelled = false
 
     const sync = async () => {
-      const sats = await syncLegacyFunds()
+      const sats = await refreshFromChain()
       if (!cancelled && sats != null) onRefreshBalance(sats)
     }
 

@@ -10,6 +10,10 @@ const listeners = new Set<Listener>()
 
 /** Session evidence before confirm is allowed (not durable — must re-prove). */
 let keysHandoffs = 0
+/** Distinct BRC-140 slice indices handed off this session (split backup). */
+const keysHandoffSliceIndices = new Set<number>()
+/** Phrase / emergency key copied once. */
+let keysSingleHandoff = false
 let historyExported = false
 
 function notify() {
@@ -36,9 +40,20 @@ export function getMissingBackupStep(): BackupStep | null {
   return null
 }
 
-/** Record a real handoff (email / copy / save) of key material. */
-export function noteKeysBackupHandoff(): void {
-  keysHandoffs += 1
+/**
+ * Record a real handoff (email / copy / save) of key material.
+ * For split backup pass the slice index so progress tracks distinct slices.
+ */
+export function noteKeysBackupHandoff(sliceIndex?: number): void {
+  if (sliceIndex === undefined || sliceIndex < 0) {
+    keysSingleHandoff = true
+    keysHandoffs += 1
+  } else {
+    if (!keysHandoffSliceIndices.has(sliceIndex)) {
+      keysHandoffSliceIndices.add(sliceIndex)
+      keysHandoffs += 1
+    }
+  }
   notify()
 }
 
@@ -46,10 +61,23 @@ export function getKeysBackupHandoffCount(): number {
   return keysHandoffs
 }
 
-/** Split needs ≥2 handoffs; phrase/key needs ≥1. */
+export function isSliceHandedOff(sliceIndex: number): boolean {
+  return keysHandoffSliceIndices.has(sliceIndex)
+}
+
+export function getKeysSplitHandoffProgress(need = 2): {
+  saved: number
+  need: number
+  savedIndices: number[]
+} {
+  const savedIndices = [...keysHandoffSliceIndices].sort((a, b) => a - b)
+  return { saved: savedIndices.length, need, savedIndices }
+}
+
+/** Split needs ≥2 distinct slices; phrase/key needs ≥1 handoff. */
 export function canConfirmKeysBackup(kind: 'split' | 'phrase' | 'key'): boolean {
-  const need = kind === 'split' ? 2 : 1
-  return keysHandoffs >= need
+  if (kind === 'split') return keysHandoffSliceIndices.size >= 2
+  return keysSingleHandoff
 }
 
 export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boolean {
@@ -89,6 +117,8 @@ export function clearBackupConfirmed(): void {
     // ignore
   }
   keysHandoffs = 0
+  keysHandoffSliceIndices.clear()
+  keysSingleHandoff = false
   historyExported = false
   notify()
 }

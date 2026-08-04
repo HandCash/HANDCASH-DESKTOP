@@ -11,7 +11,7 @@ import {
 } from './pendingSend'
 import { resolvePaymentAddress } from './friends'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { syncLegacyFunds } from './syncFunds'
+import { refreshFromChain } from './chainIngest'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   prepareSpendHeal,
@@ -19,6 +19,7 @@ import {
   assertSendableBalance,
   refreshSpendableBalance,
 } from './spendGuard'
+import { scheduleHistoryBackupPush } from './deviceSync'
 
 export type SendSatsResult = {
   txid: string
@@ -82,9 +83,11 @@ export async function sendSatsToAddress(opts: {
       }
       clearPendingSend(pending.id)
 
+      scheduleHistoryBackupPush('send')
+
       let balanceSats = Math.max(0, (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0)
       try {
-        const synced = await syncLegacyFunds({ announceReceive: false })
+        const synced = await refreshFromChain({ announceReceive: false })
         if (synced != null) balanceSats = synced
         else balanceSats = await fetchBalanceSats(active.wallet)
       } catch {

@@ -7,7 +7,7 @@
 import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { syncLegacyFunds } from './syncFunds'
+import { refreshFromChain } from './chainIngest'
 import { acquireSpendLease } from './spendLease'
 
 let spendTail: Promise<unknown> = Promise.resolve()
@@ -42,7 +42,7 @@ export async function refreshSpendableBalance(): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const synced = await syncLegacyFunds({
+  const synced = await refreshFromChain({
     announceReceive: false,
     forceReview: true,
   })

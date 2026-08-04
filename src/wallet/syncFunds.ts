@@ -97,12 +97,12 @@ export async function reviewAndReleaseSpentOutputs(
 }
 
 /**
- * Quietly reconcile this device with the chain:
+ * Quietly reconcile this device with the **chain** (chainIngest layer):
  * 1) release outs spent elsewhere (same identity on another device)
  * 2) scan the receive address and import new funding / 1sat tips
  *
- * Refresh = this device’s coins/items from the network — not a custom
- * Desktop↔Mobile sync pipe. Identity portability is BRC-75 / BRC-140 restore.
+ * Prefer importing as `refreshFromChain` from `./chainIngest`.
+ * Refresh ≠ BRC-39 history backup — see `./layers`.
  */
 export async function syncLegacyFunds(
   opts?: SyncLegacyFundsOptions,

@@ -16,6 +16,7 @@ import {
   hasDeviceLinkBackupUrl,
   syncDevicesViaBackupUrl,
 } from '../wallet/deviceSync'
+import { recomposeWallet } from '../wallet/recompose'
 import {
   getHistoryBackupPrefs,
   resolveHistoryBackupBaseUrl,
@@ -144,6 +145,11 @@ export function PairDevicePanel() {
     playWalletSound('soft')
     try {
       const result = await syncDevicesViaBackupUrl(password)
+      const recomposed = await recomposeWallet({
+        password,
+        history: 'skip',
+        reason: 'pair-sync',
+      })
       const parts = [
         result.pulled
           ? result.brc39
@@ -154,6 +160,7 @@ export function PairDevicePanel() {
             : 'kept local history',
         result.friendsMerged ? `${result.friendsMerged} friends added` : null,
         result.uploaded ? 'uploaded' : null,
+        recomposed.spendableSats != null ? `chain ${recomposed.spendableSats} sats` : null,
       ].filter(Boolean)
       toastSuccess('Devices synced', parts.join(' · '))
       playWalletSound('success')

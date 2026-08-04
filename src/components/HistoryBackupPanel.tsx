@@ -11,6 +11,7 @@ import {
   getHistoryBackupPrefs,
   resolveHistoryBackupBaseUrl,
 } from '../wallet/historyBackupPrefs'
+import { recomposeWallet } from '../wallet/recompose'
 import { refreshCloudBackupHealth } from '../wallet/cloudBackupHealth'
 import {
   canConfirmHistoryBackup,
@@ -115,8 +116,19 @@ export function HistoryBackupPanel() {
     try {
       ensureSuggestedHistoryBackupUrl()
       const result = await downloadAndRestoreBrc39Backup(password)
+      const recomposed = await recomposeWallet({
+        password,
+        history: 'skip',
+        reason: 'restore-url',
+      })
       playWalletSound('success')
-      toastSuccess('Restored from URL', `${result.inserts + result.updates} changes`)
+      toastSuccess(
+        'Restored from history',
+        `${result.inserts + result.updates} changes` +
+          (recomposed.spendableSats != null
+            ? ` · chain ${recomposed.spendableSats} sats`
+            : ''),
+      )
     } catch (err) {
       playWalletSound('error')
       toastError('Restore failed', err instanceof Error ? err.message : String(err))
@@ -130,8 +142,19 @@ export function HistoryBackupPanel() {
     setBusy('import')
     try {
       const result = await importBrc39FromFile(file, password)
+      const recomposed = await recomposeWallet({
+        password,
+        history: 'skip',
+        reason: 'import-file',
+      })
       playWalletSound('success')
-      toastSuccess('Imported', `${result.inserts + result.updates} changes`)
+      toastSuccess(
+        'Imported history',
+        `${result.inserts + result.updates} changes` +
+          (recomposed.spendableSats != null
+            ? ` · chain ${recomposed.spendableSats} sats`
+            : ''),
+      )
     } catch (err) {
       playWalletSound('error')
       toastError('Import failed', err instanceof Error ? err.message : String(err))
@@ -145,8 +168,8 @@ export function HistoryBackupPanel() {
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
         Shared history backup. The same URL on every device is <strong>required</strong> to link
-        installs (Settings → Use on another device). Pull/push keeps wallet data and friends
-        aligned; Refresh still checks the chain.
+        installs (Settings → Use on another device). Restore recomposes from history then checks
+        the chain; Refresh alone cannot rebuild P2P / managed-change state.
       </p>
 
       <HistoryBackupUrlField

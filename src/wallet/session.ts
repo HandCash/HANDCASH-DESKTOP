@@ -2,6 +2,7 @@ import { PrivateKey, type WalletInterface } from '@bsv/sdk'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
+import { clearSessionBackupPassword } from './sessionBackupAuth'
 
 const { specOpWalletBalance } = sdk
 
@@ -24,6 +25,7 @@ export function getActiveWallet(): ActiveWallet | null {
 
 export function clearActiveWallet(): void {
   active = null
+  clearSessionBackupPassword()
 }
 
 export async function bootWallet(args: {
@@ -59,7 +61,7 @@ export async function bootWallet(args: {
   return active
 }
 
-/** Prefer toolbox `Wallet.balance()` (BRC-100 change basket), with safe fallbacks. */
+/** Prefer toolbox `Wallet.balance()` — localState spendable (managed change), not legacy address UTXOs. See `layers.ts`. */
 export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promise<number> {
   const w = wallet ?? getActiveWallet()?.wallet
   if (!w) return 0

@@ -1,5 +1,7 @@
 /**
  * Collectables = outputs in BRC-100 basket `1sat`.
+ * Recursive inscription content (HTML/JS that loads other inscriptions) is still a 1sat tip —
+ * same basket, same customInstructions remittance, same BRC-39 historyReplica. No second basket.
  */
 import { P2PKH } from '@bsv/sdk'
 import { getActiveWallet, type ActiveWallet } from './session'
@@ -12,6 +14,12 @@ import {
 import { resolvePaymentAddress } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
+import { scheduleHistoryBackupPush } from './deviceSync'
+import {
+  buildCollectableCustomInstructions,
+  tryBuildProvenanceV2,
+  verifyProvenanceV2,
+} from './oneSatProvenance'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -31,6 +39,8 @@ export type Collectable = {
   collectionId?: string
   traits: CollectableTrait[]
   extras: CollectableTrait[]
+  /** BRC-150 provenance verified for this tip (false = claim / indexer only). */
+  proven: boolean
 }
 
 type CollectablesListener = (items: Collectable[]) => void
@@ -94,7 +104,12 @@ function parseOrigin(raw: string | undefined, fallbackOutpoint: string): string 
   return source.includes('.') ? source.replace(/\.(\d+)$/, '_$1') : source
 }
 
-function parseCustom(raw: string | undefined): { origin?: string; name?: string; app?: string } {
+function parseCustom(raw: string | undefined): {
+  origin?: string
+  name?: string
+  app?: string
+  provenance?: unknown
+} {
   if (!raw) return {}
   try {
     const o = JSON.parse(raw) as Record<string, unknown>
@@ -102,6 +117,7 @@ function parseCustom(raw: string | undefined): { origin?: string; name?: string;
       origin: typeof o.origin === 'string' ? o.origin : undefined,
       name: typeof o.name === 'string' ? o.name : undefined,
       app: typeof o.app === 'string' ? o.app : undefined,
+      provenance: o.provenance,
     }
   } catch {
     return {}
@@ -126,6 +142,9 @@ function toCollectable(
   const name =
     custom.name ?? tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
   const app = custom.app ?? tagValue(o.tags, 'app:') ?? resolved?.app
+  const proven = verifyProvenanceV2(custom.provenance, o.outpoint).proven
+  // When remittance fails, do not treat sender name/app as authoritative — keep for UX
+  // but proven=false. Indexer-resolved fields remain display aids.
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -139,6 +158,7 @@ function toCollectable(
     collectionId: resolved?.collectionId,
     traits: resolved?.traits ?? [],
     extras: resolved?.extras ?? [],
+    proven,
   }
 }
 
@@ -327,6 +347,17 @@ export async function sendCollectable(args: {
     console.warn('[collectables] inputBEEF fetch skipped', err)
   }
 
+  // BRC-150: build remittance for the tip being spent. Tip on the *new* outpoint is
+  // unknown until after createAction — we attach input-tip provenance when it fits
+  // budget (omit if oversized). Receivers verify against the tip they hold; mismatch
+  // ⇒ unproven (honest) until post-broadcast tip rewrite lands.
+  const provenance = await tryBuildProvenanceV2({
+    tipOutpoint: outpoint,
+    origin,
+    wallet,
+    contentType: item?.mimeType,
+  })
+
   let result: { txid?: string; signableTransaction?: unknown }
   try {
     result = await wallet.wallet.createAction({
@@ -346,10 +377,11 @@ export async function sendCollectable(args: {
           outputDescription: 'Collectable transfer',
           basket: '1sat',
           tags,
-          customInstructions: JSON.stringify({
+          customInstructions: buildCollectableCustomInstructions({
             origin,
             name,
             app,
+            provenance,
           }),
         },
       ],
@@ -375,6 +407,7 @@ export async function sendCollectable(args: {
   }
 
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
+  scheduleHistoryBackupPush('sendCollectable')
   void listCollectables(wallet).catch((err) => {
     console.warn('[collectables] post-send refresh failed', err)
   })

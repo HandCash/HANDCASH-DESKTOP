@@ -11,7 +11,6 @@ import {
   type UnlockedVault,
 } from '../wallet/vault'
 import { bootWallet, fetchBalanceSats } from '../wallet/session'
-import { syncLegacyFunds } from '../wallet/syncFunds'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
@@ -21,7 +20,8 @@ import {
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 import { getWalletConfigPrefs } from '../wallet/walletConfig'
-import { autoPushHistoryBackupIfConfigured } from '../wallet/deviceSync'
+import { recomposeWallet } from '../wallet/recompose'
+import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 
@@ -159,12 +159,13 @@ export function AuthScreen({
     if (!getWalletConfigPrefs().mode) {
       setPendingCreated({ profile, balanceSats, password })
       setPreparing(null)
+      setSessionBackupPassword(password)
       return
     }
     setPreparing(null)
     onCreated(profile, balanceSats)
-    void syncLegacyFunds({ forceReview: true, announceReceive: false })
-    void autoPushHistoryBackupIfConfigured(password)
+    setSessionBackupPassword(password)
+    void recomposeWallet({ password, reason: 'create' })
   }
 
   const needsNewPassword = formMode === 'create' || isRestoreMethod(formMode)
@@ -276,8 +277,8 @@ export function AuthScreen({
         },
         balanceSats,
       )
-      void syncLegacyFunds({ forceReview: true, announceReceive: false })
-      void autoPushHistoryBackupIfConfigured(password)
+      setSessionBackupPassword(password)
+      void recomposeWallet({ password, reason: 'unlock' })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setPreparing(null)
@@ -354,8 +355,8 @@ export function AuthScreen({
             // Enter immediately — cloud push must never block the first unlock.
             setPreparing(null)
             onCreated(pending.profile, pending.balanceSats)
-            void autoPushHistoryBackupIfConfigured(pending.password)
-            void syncLegacyFunds({ forceReview: true, announceReceive: false })
+            setSessionBackupPassword(pending.password)
+            void recomposeWallet({ password: pending.password, reason: 'create' })
           }}
         />
       </section>

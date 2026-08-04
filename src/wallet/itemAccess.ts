@@ -7,7 +7,10 @@
 
 import { normalizeAppHost } from './appIdentity'
 
-/** Baskets that hold collectables — not spendable under normal pay. */
+/** Baskets that hold collectables — not spendable under normal pay.
+ * Recursive inscription content (HTML/JS that references other inscriptions)
+ * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
+ */
 export const ITEM_BASKETS = new Set(['1sat'])
 
 export type ItemAccess = {

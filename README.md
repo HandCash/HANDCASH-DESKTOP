@@ -95,7 +95,7 @@ APPIMAGE_EXTRACT_AND_RUN=1 /home/spidercorp/Projects/handcash-brc100/release/Han
 |-------|------|
 | `electron/` | Window, auto-updater hooks, SSL cert, BRC-100 HTTP(S) server (BSVA pattern) |
 | `src/machines/` | Named statecharts before JSX |
-| `src/wallet/` | Encrypted vault + `@bsv/wallet-toolbox-client` IDB wallet + method dispatch |
+| `src/wallet/` | Layers: custody → localState (IDB) → chainIngest (Refresh) → historyReplica (BRC-39). SSoT: `src/wallet/layers.ts` |
 | `src/components/` | Surfaces that project `data-aeon-state` |
 
 ### Migration methods (HandCash extensions on the BRC bridge)

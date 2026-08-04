@@ -1,10 +1,17 @@
 /**
- * Multi-device parity via shared BRC-39 backup URL (+ friends sidecar).
+ * Multi-device **historyReplica** via shared BRC-39 backup URL (+ friends sidecar).
  * Same base URL on both installs is required to link devices.
  *
+ * This layer replicas `localState` (toolbox IndexedDB). It is not chainIngest —
+ * Refresh cannot substitute for a missing BRC-39. See `layers.ts`.
+ *
  * Rules:
- * - Auto unlock path is **push-only** (never pull). Pulling a stale cloud blob
- *   can reintroduce spent outs and make the balance go backwards.
+ * - Auto unlock: pull only when localState looks empty and a remote blob
+ *   exists (recover P2P / managed-change state). Otherwise push-only so a
+ *   stale cloud blob cannot rewind a live device.
+ * - After createAction / send / internalize: mark dirty and debounce-push so
+ *   remittance packages in IndexedDB are not only on one machine.
+ * - Never auto-overwrite a non-empty remote with an empty local export.
  * - Explicit Sync may pull only when remote is **strictly newer** than local.
  */
 import { listFriends, mergeFriends, type Friend } from './friends'
@@ -20,6 +27,19 @@ import {
   setHistoryBackupPrefs,
 } from './historyBackupPrefs'
 import { getActiveWallet } from './session'
+import { getSessionBackupPassword } from './sessionBackupAuth'
+import { localToolboxStateLooksEmpty } from './layers'
+import {
+  allowEmptyLocalHistoryPull,
+  decideEmptyHistoryOverwrite,
+} from './historyEmptyGuard'
+
+let historyDirty = false
+let pushTimer: ReturnType<typeof setTimeout> | null = null
+let pushInFlight: Promise<void> | null = null
+
+const PUSH_DEBOUNCE_MS = 2_500
+
 
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
@@ -171,11 +191,69 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
 }
 
 /**
- * Best-effort cloud **push** after create/unlock when a history backup URL is configured.
- * Never pulls — unlocking must not rewind local history from a stale cloud blob.
+ * Mark local toolbox history dirty after a P2P spend/receive so BRC-39 can catch up.
  */
-export async function autoPushHistoryBackupIfConfigured(password: string): Promise<void> {
+export function markHistoryBackupDirty(): void {
+  historyDirty = true
+}
+
+/**
+ * Debounced BRC-39 push using the in-memory session password (post-spend path).
+ */
+export function scheduleHistoryBackupPush(reason = 'dirty'): void {
+  if (!hasDeviceLinkBackupUrl()) return
+  if (!getSessionBackupPassword()) {
+    void import('./appLog').then(({ appendAppLog }) =>
+      appendAppLog('info', `[cloud-backup] skip schedule (${reason}): no session password`),
+    )
+    return
+  }
+  markHistoryBackupDirty()
+  if (pushTimer) clearTimeout(pushTimer)
+  pushTimer = setTimeout(() => {
+    pushTimer = null
+    void flushHistoryBackupPush(reason)
+  }, PUSH_DEBOUNCE_MS)
+}
+
+async function flushHistoryBackupPush(reason: string): Promise<void> {
+  if (pushInFlight) {
+    await pushInFlight
+    if (historyDirty) return flushHistoryBackupPush(reason)
+    return
+  }
+  const password = getSessionBackupPassword()
+  if (!password || !historyDirty) return
+  historyDirty = false
+  pushInFlight = autoPushHistoryBackupIfConfigured(password, { reason, allowEmptyPull: false })
+    .catch(() => {
+      /* logged inside */
+    })
+    .finally(() => {
+      pushInFlight = null
+    })
+  await pushInFlight
+}
+
+export type AutoPushOpts = {
+  reason?: string
+  /** On unlock: recover empty local from remote before pushing. */
+  allowEmptyPull?: boolean
+}
+
+/**
+ * Best-effort historyReplica sync after create/unlock (and debounced post-spend push).
+ * Empty-local × remote edge case is isolated in `historyEmptyGuard.ts` — auto paths
+ * never PUT an empty localState over a protected remote blob.
+ */
+export async function autoPushHistoryBackupIfConfigured(
+  password: string,
+  opts: AutoPushOpts = {},
+): Promise<void> {
   if (!password) return
+  const reason = opts.reason ?? 'unlock'
+  const allowEmptyPull =
+    opts.allowEmptyPull ?? allowEmptyLocalHistoryPull(reason)
   try {
     const { ensureHistoryBackupUrlFromConfig } = await import('./cloudBackupHealth')
     ensureHistoryBackupUrlFromConfig()
@@ -185,22 +263,53 @@ export async function autoPushHistoryBackupIfConfigured(password: string): Promi
   if (!hasDeviceLinkBackupUrl()) return
   try {
     const { appendAppLog } = await import('./appLog')
-    appendAppLog('info', '[cloud-backup] auto-push starting (push-only)')
+    appendAppLog('info', `[cloud-backup] auto-sync starting (${reason})`)
     await Promise.race([
       (async () => {
+        const remote = await fetchRemoteBrc39Meta()
+        const emptyLocal = await localToolboxStateLooksEmpty()
+        const remoteExists = Boolean(remote?.exists)
+        const remoteBytes = remote?.bytes ?? null
+
+        if (allowEmptyPull && remoteExists && emptyLocal) {
+          appendAppLog(
+            'info',
+            '[cloud-backup] empty localState + remote BRC-39 — pulling historyReplica',
+          )
+          try {
+            await downloadAndRestoreBrc39Backup(password)
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            appendAppLog('warn', `[cloud-backup] empty-local pull failed: ${msg}`)
+          }
+        }
+
+        const stillEmpty = await localToolboxStateLooksEmpty()
+        const gate = decideEmptyHistoryOverwrite({
+          remoteExists,
+          remoteBytes,
+          localLooksEmpty: stillEmpty,
+        })
+        if (gate.refusePush) {
+          appendAppLog('info', `[cloud-backup] skip push — ${gate.reason}`)
+          await uploadFriendsBackup().catch(() => undefined)
+          return
+        }
+
         await uploadBrc39Backup(password)
         await uploadFriendsBackup()
+        historyDirty = false
       })(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('auto-push timed out')), 20_000),
+        setTimeout(() => reject(new Error('auto-sync timed out')), 45_000),
       ),
     ])
-    appendAppLog('info', '[cloud-backup] auto-push ok')
+    appendAppLog('info', `[cloud-backup] auto-sync ok (${reason})`)
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     try {
       const { appendAppLog } = await import('./appLog')
-      appendAppLog('warn', `[cloud-backup] auto-push failed: ${msg}`)
+      appendAppLog('warn', `[cloud-backup] auto-sync failed (${reason}): ${msg}`)
     } catch {
       /* ignore */
     }
@@ -212,5 +321,57 @@ export function deviceLinkObjectHint(identityKey: string): string | null {
     return historyBackupObjectUrl(identityKey)
   } catch {
     return null
+  }
+}
+
+/**
+ * Soft history pull for explicit Refresh when parity is on.
+ * Pulls only if remote is strictly newer — never pushes, never empty-overwrites.
+ * Background polls must not call this (keeps Refresh ≠ continuous merge).
+ */
+export async function softPullHistoryIfRemoteNewer(): Promise<{
+  pulled: boolean
+  reason: string | null
+}> {
+  const password = getSessionBackupPassword()
+  if (!password) return { pulled: false, reason: 'no session password' }
+  if (!hasDeviceLinkBackupUrl()) return { pulled: false, reason: 'no backup url' }
+
+  try {
+    const prefs = getHistoryBackupPrefs()
+    const remote = await fetchRemoteBrc39Meta()
+    if (!remote?.exists) return { pulled: false, reason: 'no remote history yet' }
+    if (!shouldPullRemoteHistory(remote.exportedAt, prefs.lastUploadedAt)) {
+      return {
+        pulled: false,
+        reason:
+          remote.exportedAt == null
+            ? 'remote age unknown'
+            : 'local history is same or newer',
+      }
+    }
+    await downloadAndRestoreBrc39Backup(password)
+    try {
+      const { clearCollectablesCache } = await import('./collectables')
+      clearCollectablesCache()
+    } catch {
+      /* ignore */
+    }
+    try {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('info', '[cloud-backup] soft pull on Refresh — remote was newer')
+    } catch {
+      /* ignore */
+    }
+    return { pulled: true, reason: null }
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    try {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('warn', `[cloud-backup] soft pull failed: ${msg}`)
+    } catch {
+      /* ignore */
+    }
+    return { pulled: false, reason: msg }
   }
 }

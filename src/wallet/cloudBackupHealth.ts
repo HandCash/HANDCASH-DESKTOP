@@ -1,7 +1,8 @@
 /**
- * Cloud BRC-39 history host health (BRC-CLOUD / compatible servers).
+ * Cloud BRC-39 historyReplica health (BRC-CLOUD / compatible servers).
  * Pending = URL configured but no remote blob yet (optional multi-device parity).
- * This is not chain sync — missing cloud history does not mean missing funds/txs.
+ * This is not chainIngest — missing cloud history does not mean missing on-chain funds.
+ * See `layers.ts`.
  */
 import { appendAppLog } from './appLog'
 import {
@@ -164,14 +165,15 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
       })
     }
     setHistoryBackupPrefs({ lastError: null })
-    if (!prefs.lastUploadedAt) {
-      setHistoryBackupPrefs({ lastUploadedAt: meta.exportedAt ?? Date.now() })
-    }
+    // Do not invent lastUploadedAt from a HEAD probe — that blocks empty-local
+    // recovery pull and lies that this device already pushed.
     appendAppLog('info', '[cloud-backup] remote BRC-39 present')
     return setHealth({
       phase: 'ok',
       label: 'Cloud synced',
-      message: 'Remote history backup is present',
+      message: prefs.lastUploadedAt
+        ? 'Remote history backup is present'
+        : 'Remote history present — unlock sync will merge if this device is empty',
     })
   } catch (err) {
     const msg = `Remote backup check failed: ${err instanceof Error ? err.message : String(err)}`

@@ -11,6 +11,10 @@ import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'
+import {
+  buildCollectableCustomInstructions,
+  tryBuildProvenanceV2,
+} from './oneSatProvenance'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -415,28 +419,41 @@ export async function importOneSatOrdinals(
       const beef = await wallet.services.getBeefForTxid(txid)
       const atomic = beef.toBinaryAtomic(txid)
 
-      await wallet.wallet.internalizeAction({
-        tx: atomic,
-        description: 'Import 1Sat ordinal',
-        labels: ['1sat', 'migration'],
-        outputs: group.map((item) => ({
+      const remittanceOutputs = []
+      for (const item of group) {
+        const origin =
+          item.origin ?? item.outpoint.replace(/\.(\d+)$/, '_$1')
+        const provenance = await tryBuildProvenanceV2({
+          tipOutpoint: item.outpoint,
+          origin,
+          wallet,
+        })
+        remittanceOutputs.push({
           outputIndex: item.vout!,
           protocol: 'basket insertion' as const,
           insertionRemittance: {
             basket: '1sat',
             tags: [
               'ordinal',
-              `origin:${(item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')}`,
+              `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
               ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
               ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
             ],
-            customInstructions: JSON.stringify({
-              origin: item.origin,
-              name: item.name,
+            customInstructions: buildCollectableCustomInstructions({
+              origin,
+              name: item.name ?? 'Collectable',
               app: item.app,
+              provenance,
             }),
           },
-        })),
+        })
+      }
+
+      await wallet.wallet.internalizeAction({
+        tx: atomic,
+        description: 'Import 1Sat ordinal',
+        labels: ['1sat', 'migration'],
+        outputs: remittanceOutputs,
         seekPermission: false,
       })
 

@@ -31,17 +31,26 @@ describe('backupStatus evidence gates', () => {
     clearBackupConfirmed()
   })
 
-  it('requires handoffs before keys confirm (split needs 2)', () => {
+  it('requires handoffs before keys confirm (split needs 2 distinct slices)', () => {
     expect(canConfirmKeysBackup('split')).toBe(false)
     expect(markKeysBackupConfirmed('split')).toBe(false)
 
-    noteKeysBackupHandoff()
+    noteKeysBackupHandoff(0)
     expect(canConfirmKeysBackup('split')).toBe(false)
-    expect(canConfirmKeysBackup('phrase')).toBe(true)
 
-    noteKeysBackupHandoff()
+    noteKeysBackupHandoff(0)
+    expect(canConfirmKeysBackup('split')).toBe(false)
+
+    noteKeysBackupHandoff(1)
     expect(canConfirmKeysBackup('split')).toBe(true)
     expect(markKeysBackupConfirmed('split')).toBe(true)
+  })
+
+  it('phrase/key confirm needs a single handoff without slice index', () => {
+    expect(canConfirmKeysBackup('phrase')).toBe(false)
+    noteKeysBackupHandoff()
+    expect(canConfirmKeysBackup('phrase')).toBe(true)
+    expect(canConfirmKeysBackup('key')).toBe(true)
   })
 
   it('requires history export before history confirm', () => {

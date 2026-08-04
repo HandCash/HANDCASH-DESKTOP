@@ -1,6 +1,6 @@
 /**
- * User-visible wallet health — sync / held 1-sats / bridge unlock nudges.
- * Failures must not stay console-only for BRC-100 rollout.
+ * User-visible **chainIngest** health — review/import outcomes + held 1-sats / unlock nudges.
+ * History replica health lives in `cloudBackupHealth.ts`. See `layers.ts`.
  */
 
 export type SyncHealth = {

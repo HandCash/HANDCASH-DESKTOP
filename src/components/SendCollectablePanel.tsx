@@ -32,7 +32,7 @@ import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
-import { syncLegacyFunds } from '../wallet/syncFunds'
+import { refreshFromChain } from '../wallet/chainIngest'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
@@ -140,7 +140,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
       setStage('success')
       void listCollectables().catch(() => {})
-      void syncLegacyFunds({ announceReceive: false })
+      void refreshFromChain({ announceReceive: false })
         .then(async (balance) => {
           if (balance != null) {
             onSent?.(balance)

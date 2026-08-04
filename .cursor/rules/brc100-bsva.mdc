@@ -39,6 +39,24 @@ Allowed hosts: `handcash.io`, `market.handcash.io`, `preprod-market.handcash.io`
 
 Changing method names, payloads, or origin rules **requires updating both repos in the same change set**.
 
+## Wallet layers (do not conflate)
+
+Canonical SSoT: `src/wallet/layers.ts`.
+
+| Layer | What it is | Not |
+|-------|------------|-----|
+| `chainIngest` | Refresh: review spent + legacy P2PKH scan + 1sat import → IndexedDB | BRC-39 / multi-device history |
+| `localState` | Toolbox IDB: managed change, baskets, `customInstructions` remittance | On-address UTXO set alone |
+| `historyReplica` | BRC-39 upload/download (`deviceSync` / `historyBackup`) | Chain Refresh |
+
+- UI balance = `localState` spendable (`Wallet.balance`), not unswept legacy address UTXOs.
+- After `createAction` / send, schedule historyReplica push — P2P state is not recoverable via Refresh.
+- Empty-local history recovery uses `localToolboxStateLooksEmpty()` (outs **and** actions), not balance alone.
+- Device recovery: `recomposeWallet` (historyReplica then chainIngest) — unlock, History restore, Pair Sync.
+- Explicit Refresh may soft-pull newer BRC-39 when parity URL + session password are set (`softPullHistoryIfRemoteNewer`).
+- Recursive NFT *content* stays basket `1sat`; remittance + BRC-39 are the same path as other 1sat tips.
+- BRC-150 provenance: `oneSatProvenance.ts` — omit when over budget; never truncate.
+
 ## Do not
 
 - Change ports/paths without updating market client + migrate docs.

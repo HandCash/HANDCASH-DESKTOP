@@ -6,6 +6,7 @@ Guidance for Claude Code in this repository. Cursor agents also follow `.cursor/
 
 1. **Aeon UI is the only UI stack** — `aeon-ui-engine` / `@aeon-ui/*`, XState machines in `src/machines/`, `data-aeon-*` projection, brand via `applyBrandPalette`. Details: `.cursor/rules/aeon-ui.mdc`.
 2. **BRC-100 / BSVA bridge** — ports 2121/3321, `electron/httpServer.ts`, `src/wallet/brc100Handler.ts`, permissions, HandCash migrate methods. Keep contract mirrored with items-market. Details: `.cursor/rules/brc100-bsva.mdc`.
+3. **Wallet layers** — Refresh = chain ingest; BRC-39 = history replica of toolbox IndexedDB. Do not conflate. SSoT: `src/wallet/layers.ts`.
 
 ## Upstream Aeon
 

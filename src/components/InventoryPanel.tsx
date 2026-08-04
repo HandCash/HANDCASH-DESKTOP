@@ -14,7 +14,7 @@ import {
   type Collectable,
 } from '../wallet/collectables'
 import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
-import { syncLegacyFunds } from '../wallet/syncFunds'
+import { refreshFromChain } from '../wallet/chainIngest'
 import { subscribeSyncHealth } from '../wallet/walletHealth'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
@@ -157,7 +157,7 @@ export function InventoryPanel() {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
-        await syncLegacyFunds({ announceReceive: false, forceReview: showSpinner })
+        await refreshFromChain({ announceReceive: false, forceReview: showSpinner })
         await listCollectables()
         if (!cancelled) {
           setReady(areCollectablesHydrated())

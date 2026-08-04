@@ -1,3 +1,8 @@
+/**
+ * historyReplica — export/import/upload/download BRC-39 (AES-256-GCM + Argon2id).
+ * Replicates toolbox localState (managed change, baskets, remittance metadata).
+ * Not chainIngest. See `layers.ts`.
+ */
 import {
   exportBRC39,
   importBRC39,

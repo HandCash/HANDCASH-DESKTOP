@@ -9,6 +9,7 @@ import {
 } from './permissions'
 import { isItemBasket } from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
+import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import {
   getLegacyAddressPayload,
@@ -323,6 +324,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       } else {
         playWalletSound('soft')
       }
+      // P2P createAction mutates toolbox outs + remittance metadata — backup BRC-39.
+      scheduleHistoryBackupPush('createAction')
     } else if (method === 'internalizeAction') {
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
@@ -337,6 +340,10 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       } else {
         playWalletSound('soft')
       }
+      scheduleHistoryBackupPush('internalizeAction')
+    } else if (method === 'signAction') {
+      playWalletSound('soft')
+      scheduleHistoryBackupPush('signAction')
     } else if (isActionMethod(method)) {
       playWalletSound('soft')
     }

@@ -14,6 +14,7 @@ import {
   type DepositProgress,
 } from '../wallet/trustholderBackup'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { TrustholderDestinationList } from './KeySliceList'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 function downloadShare(filename: string, contents: string) {
@@ -126,6 +127,19 @@ export function TrustholderBackupPanel() {
   const hc = enrollments.find((e) => e.operator === 'handcash')
   const haste = enrollments.find((e) => e.operator === 'haste')
 
+  const destinations = providers.map((p) => {
+    const enrolled = enrollments.find((e) => e.operator === p.operator)
+    return {
+      id: p.operator,
+      label: p.label,
+      description: enrolled
+        ? `Deposited ${new Date(enrolled.enrolledAt).toLocaleDateString()}`
+        : 'Deposit a slice during enrollment below',
+      state: enrolled ? ('enrolled' as const) : ('pending' as const),
+      enrolledAt: enrolled?.enrolledAt,
+    }
+  })
+
   return (
     <div
       className="nav-section-body settings-scroll"
@@ -137,26 +151,29 @@ export function TrustholderBackupPanel() {
         third slice offline. Any two slices restore your wallet.
       </p>
 
-      <ul className="settings-list" data-aeon-part="enrollment-status">
-        {providers.map((p) => {
-          const enrolled = enrollments.find((e) => e.operator === p.operator)
-          return (
-            <li key={p.operator} className="settings-row settings-row-static">
-              <span className="settings-row-body">
-                <strong className="settings-row-label">{p.label}</strong>
-                <span
-                  className="settings-row-desc"
-                  data-aeon-state={enrolled ? 'ok' : 'pending'}
-                >
-                  {enrolled
-                    ? `Enrolled ${new Date(enrolled.enrolledAt).toLocaleDateString()}`
-                    : 'Not enrolled'}
-                </span>
-              </span>
-            </li>
+      <TrustholderDestinationList
+        destinations={destinations}
+        offlineShare={
+          localShare
+            ? {
+                share: localShare.share,
+                integrity: localShare.integrity,
+                total: localShare.total,
+                index: localShare.total - 1,
+              }
+            : null
+        }
+        onOfflineCopy={() => void copyText(localShare?.share ?? '', { label: 'offline slice' })}
+        onOfflineSave={() => {
+          if (!localShare) return
+          downloadShare(
+            shareDownloadFilename(localShare.total - 1, localShare.total, localShare.integrity),
+            `${localShare.share}\n`,
           )
-        })}
-      </ul>
+          playWalletSound('soft')
+          toastSuccess('Offline slice saved')
+        }}
+      />
 
       {!password ? (
         <ConfirmPasswordGate
@@ -216,41 +233,6 @@ export function TrustholderBackupPanel() {
           </div>
         </div>
       )}
-
-      {localShare ? (
-        <div className="settings-form settings-form-compact" data-aeon-part="local-share">
-          <p className="settings-hint">
-            Offline slice (3 of {localShare.total}). Integrity{' '}
-            <span className="mono">{localShare.integrity}</span>
-          </p>
-          <code className="mono split-backup-share" style={{ display: 'block', wordBreak: 'break-all' }}>
-            {localShare.share}
-          </code>
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => void copyText(localShare.share, { label: 'offline slice' })}
-            >
-              Copy
-            </button>
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                downloadShare(
-                  shareDownloadFilename(2, localShare.total, localShare.integrity),
-                  `${localShare.share}\n`,
-                )
-                playWalletSound('soft')
-                toastSuccess('Offline slice saved')
-              }}
-            >
-              Save file
-            </button>
-          </div>
-        </div>
-      ) : null}
 
       <Prompt.Root
         open={Boolean(otpGate)}

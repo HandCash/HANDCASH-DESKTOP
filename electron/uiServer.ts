@@ -35,13 +35,23 @@ function fileIdbDir(): string {
   return path.join(app.getPath('userData'), 'IndexedDB', 'file__0.indexeddb.leveldb')
 }
 
-/** Prefer localhost origin when the Vite IDB looks like the live wallet store. */
+/** Prefer localhost origin when the Vite IDB looks like the live wallet store.
+ * Isolates the file:// vs localhost IndexedDB edge case: packaged file:// must
+ * not boot an empty-looking partition while remittance history lives on :5173.
+ */
 export function shouldLoadViaLocalhostOrigin(): boolean {
   try {
     const viteBytes = dirBytes(viteIdbDir())
+    const fileBytes = dirBytes(fileIdbDir())
     // Dev-era wallets keep UTXOs here. Packaged file:// writes can inflate file__0
     // without restoring spendable outputs — never let a larger empty-ish file DB win.
-    return viteBytes > 200_000
+    const preferVite = viteBytes > 200_000
+    if (preferVite) {
+      log.info(
+        `IDB origin: prefer localhost (vite=${viteBytes}B file=${fileBytes}B) — remittance history partition`,
+      )
+    }
+    return preferVite
   } catch (err) {
     log.warn('shouldLoadViaLocalhostOrigin failed', err)
     return false
