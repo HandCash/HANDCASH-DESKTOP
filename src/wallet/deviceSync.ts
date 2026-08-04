@@ -1,10 +1,16 @@
 /**
  * Multi-device parity via shared BRC-39 backup URL (+ friends sidecar).
  * Same base URL on both installs is required to link devices.
+ *
+ * Rules:
+ * - Auto unlock path is **push-only** (never pull). Pulling a stale cloud blob
+ *   can reintroduce spent outs and make the balance go backwards.
+ * - Explicit Sync may pull only when remote is **strictly newer** than local.
  */
 import { listFriends, mergeFriends, type Friend } from './friends'
 import {
   downloadAndRestoreBrc39Backup,
+  fetchRemoteBrc39Meta,
   uploadBrc39Backup,
 } from './historyBackup'
 import {
@@ -96,23 +102,64 @@ export async function downloadAndMergeFriendsBackup(): Promise<number> {
 }
 
 /**
- * Pull shared BRC-39 + friends, then push this device’s state.
+ * True when remote history is strictly newer than what this device last pushed.
+ * If age is unknown, refuse to pull (safe default — never go backwards).
+ */
+export function shouldPullRemoteHistory(
+  remoteExportedAt: number | null,
+  localUploadedAt: number | null,
+): boolean {
+  if (remoteExportedAt == null || !Number.isFinite(remoteExportedAt) || remoteExportedAt <= 0) {
+    return false
+  }
+  if (localUploadedAt == null || localUploadedAt <= 0) {
+    // First link on this device — allow pull of a known-timestamp remote.
+    return true
+  }
+  return remoteExportedAt > localUploadedAt
+}
+
+/**
+ * Explicit multi-device sync: pull only if remote is newer, then push local.
  * Requires the vault password (same password on both devices for BRC-39).
  */
 export async function syncDevicesViaBackupUrl(password: string): Promise<{
   brc39: { inserts: number; updates: number } | null
   friendsMerged: number
   uploaded: boolean
+  pulled: boolean
+  skippedPullReason: string | null
 }> {
   assertDeviceLinkBackupUrl()
+  const prefs = getHistoryBackupPrefs()
   let brc39: { inserts: number; updates: number } | null = null
-  try {
-    const result = await downloadAndRestoreBrc39Backup(password)
-    brc39 = { inserts: result.inserts, updates: result.updates }
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    if (!/404|No BRC-39/i.test(msg)) throw err
-    // First device — nothing to pull yet
+  let pulled = false
+  let skippedPullReason: string | null = null
+
+  const remote = await fetchRemoteBrc39Meta()
+  if (!remote || !remote.exists) {
+    skippedPullReason = 'no remote history yet'
+  } else if (!shouldPullRemoteHistory(remote.exportedAt, prefs.lastUploadedAt)) {
+    skippedPullReason =
+      remote.exportedAt == null
+        ? 'remote age unknown — refusing pull to protect local history'
+        : 'local history is same or newer than remote'
+    try {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('info', `[cloud-backup] skip pull: ${skippedPullReason}`)
+    } catch {
+      /* ignore */
+    }
+  } else {
+    try {
+      const result = await downloadAndRestoreBrc39Backup(password)
+      brc39 = { inserts: result.inserts, updates: result.updates }
+      pulled = true
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/404|No BRC-39/i.test(msg)) throw err
+      skippedPullReason = 'no remote history yet'
+    }
   }
 
   const friendsMerged = await downloadAndMergeFriendsBackup()
@@ -120,7 +167,44 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
   await uploadFriendsBackup()
   setHistoryBackupPrefs({ lastError: null })
 
-  return { brc39, friendsMerged, uploaded: true }
+  return { brc39, friendsMerged, uploaded: true, pulled, skippedPullReason }
+}
+
+/**
+ * Best-effort cloud **push** after create/unlock when a history backup URL is configured.
+ * Never pulls — unlocking must not rewind local history from a stale cloud blob.
+ */
+export async function autoPushHistoryBackupIfConfigured(password: string): Promise<void> {
+  if (!password) return
+  try {
+    const { ensureHistoryBackupUrlFromConfig } = await import('./cloudBackupHealth')
+    ensureHistoryBackupUrlFromConfig()
+  } catch {
+    /* ignore */
+  }
+  if (!hasDeviceLinkBackupUrl()) return
+  try {
+    const { appendAppLog } = await import('./appLog')
+    appendAppLog('info', '[cloud-backup] auto-push starting (push-only)')
+    await Promise.race([
+      (async () => {
+        await uploadBrc39Backup(password)
+        await uploadFriendsBackup()
+      })(),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('auto-push timed out')), 20_000),
+      ),
+    ])
+    appendAppLog('info', '[cloud-backup] auto-push ok')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    try {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('warn', `[cloud-backup] auto-push failed: ${msg}`)
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function deviceLinkObjectHint(identityKey: string): string | null {

@@ -42,6 +42,12 @@ vi.mock('./soundService', () => ({
   playWalletSound: vi.fn(),
 }))
 
+vi.mock('./toast', () => ({
+  toastSuccess: vi.fn(),
+  toastError: vi.fn(),
+  showToast: vi.fn(),
+}))
+
 describe('syncLegacyFunds spendable review', () => {
   beforeEach(() => {
     vi.resetModules()
@@ -100,6 +106,24 @@ describe('syncLegacyFunds spendable review', () => {
     expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
     expect(order).toEqual(['review', 'scan'])
     expect(mockClearCollectablesCache).toHaveBeenCalled()
+  })
+
+  it('falls back to default-basket review when all-basket filter rejects undefined', async () => {
+    mockReviewSpendableOutputs
+      .mockRejectedValueOnce(
+        new Error(
+          'WERR_INVALID_PARAMETER: The args.partial.basketId parameter must be not undefined. Passing undefined as a filter value is not supported — omit the key to skip filtering.',
+        ),
+      )
+      .mockResolvedValueOnce({ totalOutputs: 0, outputs: [] })
+
+    const { syncLegacyFunds } = await import('./syncFunds')
+    const sats = await syncLegacyFunds({ forceReview: true, announceReceive: false })
+
+    expect(sats).toBe(1000)
+    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(1, true, true)
+    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(2, false, true)
+    expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 
   it('does not release when spendable review throws', async () => {

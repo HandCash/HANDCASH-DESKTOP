@@ -53,20 +53,7 @@ function resolveStatus(
       detail: 'Device is offline — sends and sync need a connection',
     }
   }
-  if (health.phase === 'syncing') {
-    return {
-      label: 'Syncing',
-      tone: 'busy',
-      detail: health.message ?? 'Refreshing funds against the network',
-    }
-  }
-  if (cloud.phase === 'checking') {
-    return {
-      label: 'Checking backup',
-      tone: 'busy',
-      detail: cloud.message,
-    }
-  }
+  // Soft in-flight sync / backup probes stay quiet — only terminal outcomes matter.
   if (health.phase === 'error') {
     return {
       label: 'Sync failed',
@@ -79,13 +66,6 @@ function resolveStatus(
       label: 'Backup failed',
       tone: 'error',
       detail: cloud.message ?? 'History backup host error',
-    }
-  }
-  if (cloud.phase === 'pending') {
-    return {
-      label: 'Out of sync',
-      tone: 'warn',
-      detail: cloud.message ?? 'Upload history to the cloud backup URL',
     }
   }
   if (session === 'sending') {
@@ -104,18 +84,35 @@ function resolveStatus(
       detail: 'Local BRC-100 bridge is not listening — apps cannot connect',
     }
   }
-  if (cloud.phase === 'ok' && health.phase === 'ok') {
+
+  // Chain truth wins. Cloud history backup is optional parity — never alarm as
+  // "Out of sync" when funds/items are healthy on this device.
+  if (health.phase === 'ok') {
+    if (cloud.phase === 'ok') {
+      return {
+        label: 'Synced',
+        tone: 'ok',
+        detail: cloud.message ?? health.message ?? 'Chain and cloud backup look healthy',
+      }
+    }
     return {
       label: 'Synced',
       tone: 'ok',
-      detail: cloud.message ?? health.message ?? 'Chain and cloud backup look healthy',
+      detail:
+        health.message ??
+        (cloud.phase === 'pending'
+          ? 'Balance matches the network — cloud history backup still uploading'
+          : cloud.phase === 'off'
+            ? 'Balance matches the network — history backup not configured'
+            : 'Balance matches the network'),
     }
   }
-  if (health.phase === 'ok') {
+
+  if (cloud.phase === 'off') {
     return {
-      label: 'Synced',
+      label: 'Ready',
       tone: 'ok',
-      detail: health.message ?? 'Balance matches the network',
+      detail: 'Wallet unlocked — tap Refresh to sync the chain',
     }
   }
   if (cloud.phase === 'ok') {
@@ -123,6 +120,15 @@ function resolveStatus(
       label: 'Cloud synced',
       tone: 'ok',
       detail: cloud.message,
+    }
+  }
+  if (cloud.phase === 'pending') {
+    return {
+      label: 'Ready',
+      tone: 'ok',
+      detail:
+        cloud.message ??
+        'Wallet unlocked — cloud history backup pending (does not affect local balance)',
     }
   }
   return {

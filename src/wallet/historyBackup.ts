@@ -101,6 +101,7 @@ export async function uploadBrc39Backup(password: string): Promise<{
     headers: {
       'Content-Type': BRC39_MEDIA,
       Accept: 'application/json, application/octet-stream, */*',
+      'X-HandCash-Exported-At': String(exportedAt),
     },
     body: new Blob([bytes], { type: BRC39_MEDIA }),
   })
@@ -117,6 +118,41 @@ export async function uploadBrc39Backup(password: string): Promise<{
   appendAppLog('info', '[cloud-backup] upload ok')
   void refreshCloudBackupHealth()
   return { url, exportedAt }
+}
+
+/** Probe remote blob age without downloading/merging. */
+export async function fetchRemoteBrc39Meta(): Promise<{
+  exists: boolean
+  exportedAt: number | null
+  bytes: number | null
+} | null> {
+  const active = getActiveWallet()
+  if (!active) return null
+  const prefs = getHistoryBackupPrefs()
+  let url: string
+  try {
+    url = historyBackupObjectUrl(active.identityKey, prefs)
+  } catch {
+    return null
+  }
+  try {
+    const res = await fetch(url, {
+      method: 'HEAD',
+      headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
+    })
+    if (res.status === 404) return { exists: false, exportedAt: null, bytes: null }
+    if (!res.ok) return null
+    const exportedRaw = res.headers.get('X-HandCash-Exported-At')
+    const exportedAt = exportedRaw ? Number(exportedRaw) : null
+    const len = res.headers.get('Content-Length')
+    return {
+      exists: true,
+      exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
+      bytes: len ? Number(len) : null,
+    }
+  } catch {
+    return null
+  }
 }
 
 export async function downloadAndRestoreBrc39Backup(
@@ -138,9 +174,16 @@ export async function downloadAndRestoreBrc39Backup(
     throw new Error(`Download failed (${res.status})${detail ? `: ${detail}` : ''}`)
   }
 
+  const remoteExportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
   const buf = new Uint8Array(await res.arrayBuffer())
   const result = await restoreBrc39BackupBytes(buf, password, 'merge')
-  setHistoryBackupPrefs({ lastError: null, lastUploadedAt: Date.now() })
+  setHistoryBackupPrefs({
+    lastError: null,
+    lastUploadedAt:
+      Number.isFinite(remoteExportedAt) && remoteExportedAt > 0
+        ? Math.max(remoteExportedAt, prefs.lastUploadedAt ?? 0)
+        : Date.now(),
+  })
   appendAppLog('info', `[cloud-backup] restored ${buf.byteLength} bytes`)
   void refreshCloudBackupHealth()
   return result

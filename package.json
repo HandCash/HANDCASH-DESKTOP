@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -20,6 +20,7 @@
     "package:mac": "npm run build && electron-builder --mac",
     "package:win": "npm run build && electron-builder --win",
     "preview": "vite preview",
+    "postinstall": "patch-package",
     "test": "vitest run",
     "test:watch": "vitest",
     "launch": "bash scripts/launch.sh",
@@ -59,6 +60,7 @@
     "concurrently": "^9.1.2",
     "electron": "^35.2.1",
     "electron-builder": "^26.0.12",
+    "patch-package": "^8.0.1",
     "typescript": "^5.8.3",
     "vite": "^6.3.5",
     "vitest": "^3.2.7",

@@ -6,6 +6,7 @@ import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { isDeviceParityEnabled } from './paymentPolicy'
+import { toastSuccess } from './toast'
 
 export type SyncLegacyFundsOptions = {
   /**
@@ -43,6 +44,15 @@ function maybeReceiveChime(): void {
   playWalletSound('receive')
 }
 
+/** wallet-toolbox StorageIdb: undefined filter values must be omitted, not passed. */
+function isUndefinedPartialFilterError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return (
+    message.includes('must be not undefined') ||
+    message.includes('Passing undefined as a filter value is not supported')
+  )
+}
+
 /**
  * Drop outs that are no longer UTXOs on-chain (e.g. spent on another device
  * with the same restored identity). Covers default change and basket `1sat`.
@@ -59,7 +69,19 @@ export async function reviewAndReleaseSpentOutputs(
   }
 
   try {
-    const result = await active.wallet.reviewSpendableOutputs(true, true)
+    // Prefer all baskets (`all` tag). Older toolbox builds pass `basketId: undefined`
+    // for that path, which StorageIdb rejects — fall back to default basket only.
+    let result
+    try {
+      result = await active.wallet.reviewSpendableOutputs(true, true)
+    } catch (err) {
+      if (!isUndefinedPartialFilterError(err)) throw err
+      console.warn(
+        '[sync] all-basket spendable review unsupported; reviewing default basket only',
+        err instanceof Error ? err.message : err,
+      )
+      result = await active.wallet.reviewSpendableOutputs(false, true)
+    }
     lastSpendableReviewAt = Date.now()
     const released = result.outputs?.length ?? 0
     if (released > 0) {
@@ -90,7 +112,10 @@ export async function syncLegacyFunds(
   const active = getActiveWallet()
   if (!active) return null
 
-  setSyncHealth({ phase: 'syncing', message: 'Refreshing funds against the network' })
+  // Soft / background polls must not flash the titlebar — only explicit Refresh.
+  if (forceReview) {
+    setSyncHealth({ phase: 'syncing', message: 'Refreshing funds against the network' })
+  }
 
   let balanceBefore = 0
   let balanceBeforeOk = false
@@ -174,6 +199,15 @@ export async function syncLegacyFunds(
       const newItems = newOneSatOutpoints.length > 0
       if (balanceRose || newItems) {
         maybeReceiveChime()
+        const gained = balanceRose ? Math.max(0, balanceAfter - balanceBefore) : 0
+        toastSuccess(
+          balanceRose ? 'Payment received' : 'Item received',
+          balanceRose && gained > 0
+            ? `${gained.toLocaleString()} sats${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
+            : newItems
+              ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
+              : undefined,
+        )
       }
     }
 

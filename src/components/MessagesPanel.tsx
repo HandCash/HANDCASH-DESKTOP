@@ -43,6 +43,9 @@ import { subscribeMessageFocus, takeMessageFocus } from '../wallet/messageFocus'
 import { copyText } from '../wallet/clipboard'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { deliverOutbound, pollInbound } from '../wallet/messageTransport'
+import { Composer, Thread } from '@aeon-ui/react'
+import type { ComposerState } from '@aeon-ui/react'
+import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { EmptyState } from './EmptyState'
 import {
   PayIcon,
@@ -54,6 +57,8 @@ import {
 type Props = {
   chain: Chain
   identityKey?: string
+  /** When set, open directly in this friend's thread (Friends → Message). */
+  peerId?: string
   onSent?: (balanceSats: number) => void
 }
 
@@ -151,22 +156,30 @@ function payStatusLabel(msg: ChatMessage): string {
 
 function MessageBubble({
   msg,
+  peerLabel,
   onConfirmPay,
   onCancelPay,
   onEscrowAccept,
   onEscrowDecline,
+  onBindReply,
 }: {
   msg: ChatMessage
+  peerLabel?: string
   onConfirmPay?: (id: string) => void
   onCancelPay?: (id: string) => void
   onEscrowAccept?: (id: string) => void
   onEscrowDecline?: (id: string) => void
+  onBindReply?: (id: string) => void
 }) {
   if (msg.direction === 'system' || msg.kind === 'system' || msg.kind === 'whois') {
     return (
-      <div className="chat-system" role="status">
-        <pre>{msg.text}</pre>
-      </div>
+      <Thread.Item state="command-result" className="chat-system" role="status">
+        <Thread.Card data-aeon-part="command-result">
+          <Thread.CardBody>
+            <pre>{msg.text}</pre>
+          </Thread.CardBody>
+        </Thread.Card>
+      </Thread.Item>
     )
   }
 
@@ -181,132 +194,203 @@ function MessageBubble({
     msg.meta?.sats && msg.meta.sats > 0 && !/\bsats?\b/i.test(amountLabel)
       ? formatSatsLabel(msg.meta.sats)
       : null
+  const label = peerLabel || 'Friend'
+  const initial = label.trim().slice(0, 1).toUpperCase() || '?'
+  const face =
+    msg.kind === 'pay-request'
+      ? 'request-card'
+      : msg.kind === 'pay-sent' || msg.kind === 'escrow'
+        ? 'payment-card'
+        : undefined
+  const itemState = [mine ? 'mine' : 'theirs', face, payStatus === 'failed' ? 'failed' : null]
+    .filter(Boolean)
+    .join(' ')
 
   return (
-    <div className={`chat-bubble-row${mine ? ' is-mine' : ''}`}>
-      <div
-        className={[
-          'chat-bubble',
-          mine ? 'is-mine' : '',
-          isCard ? 'is-card' : '',
-          msg.kind === 'pay-sent' ? 'is-pay' : '',
-          msg.kind === 'pay-request' ? 'is-request' : '',
-          msg.kind === 'escrow' ? 'is-escrow' : '',
-        ]
-          .filter(Boolean)
-          .join(' ')}
-        data-kind={msg.kind}
-        data-pay-status={payStatus || undefined}
-      >
-        {msg.kind === 'pay-request' ? (
-          <>
-            <div className="chat-card-head">
-              <span className="chat-card-badge">Request</span>
-            </div>
-            <p className="chat-card-amount">{amountLabel}</p>
-            {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
-            {msg.meta?.status ? <span className="chat-card-meta">{msg.meta.status}</span> : null}
-          </>
-        ) : msg.kind === 'pay-sent' ? (
-          <>
-            <div className="chat-card-head">
-              <span className="chat-card-badge">Pay</span>
-              {payStatus ? (
-                <span className="chat-card-status" data-status={payStatus}>
-                  {payStatusLabel(msg)}
-                </span>
-              ) : null}
-            </div>
-            <p className="chat-card-amount">{amountLabel}</p>
-            {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
-            {canAct ? (
-              <div className="chat-card-actions">
-                <button
-                  type="button"
-                  className="chat-card-btn chat-card-btn-ghost"
-                  onClick={() => onCancelPay?.(msg.id)}
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  className="chat-card-btn chat-card-btn-primary"
-                  onClick={() => onConfirmPay?.(msg.id)}
-                >
-                  Confirm
-                </button>
-              </div>
+    <Thread.Item state={itemState} className={`chat-msg${mine ? ' is-mine' : ''}`}>
+      {!mine ? (
+        <span className="chat-msg-avatar" aria-hidden>
+          {initial}
+        </span>
+      ) : null}
+      <div className="chat-msg-stack">
+        {!mine ? (
+          <div className="chat-msg-meta">
+            <button type="button" className="chat-msg-name">
+              {label}
+            </button>
+            <span className="chat-msg-origin">HandCash</span>
+            <time dateTime={new Date(msg.createdAt).toISOString()}>{formatTime(msg.createdAt)}</time>
+          </div>
+        ) : null}
+        {isCard ? (
+          <Thread.Card
+            className={[
+              'chat-bubble',
+              'is-card',
+              mine ? 'is-mine' : '',
+              msg.kind === 'pay-sent' ? 'is-pay' : '',
+              msg.kind === 'pay-request' ? 'is-request' : '',
+              msg.kind === 'escrow' ? 'is-escrow' : '',
+            ]
+              .filter(Boolean)
+              .join(' ')}
+            data-kind={msg.kind}
+            data-pay-status={payStatus || undefined}
+          >
+            {msg.kind === 'pay-request' ? (
+              <>
+                <Thread.CardTitle className="chat-card-head">
+                  <span className="chat-card-badge">Request</span>
+                </Thread.CardTitle>
+                <Thread.CardBody>
+                  <p className="chat-card-amount">{amountLabel}</p>
+                  {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+                  {msg.meta?.status ? (
+                    <span className="chat-card-meta">{msg.meta.status}</span>
+                  ) : null}
+                </Thread.CardBody>
+              </>
+            ) : msg.kind === 'pay-sent' ? (
+              <>
+                <Thread.CardTitle className="chat-card-head">
+                  <span className="chat-card-badge">Pay</span>
+                  {payStatus ? (
+                    <span className="chat-card-status" data-status={payStatus}>
+                      {payStatusLabel(msg)}
+                    </span>
+                  ) : null}
+                </Thread.CardTitle>
+                <Thread.CardBody>
+                  <p className="chat-card-amount">{amountLabel}</p>
+                  {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+                </Thread.CardBody>
+                {canAct ? (
+                  <Thread.CardActions className="chat-card-actions">
+                    <button
+                      type="button"
+                      className="chat-card-btn chat-card-btn-ghost"
+                      onClick={() => onCancelPay?.(msg.id)}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-card-btn chat-card-btn-primary"
+                      onClick={() => onConfirmPay?.(msg.id)}
+                    >
+                      Confirm
+                    </button>
+                  </Thread.CardActions>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <Thread.CardTitle className="chat-card-head">
+                  <span className="chat-card-badge">Escrow</span>
+                  {payStatus ? (
+                    <span className="chat-card-status" data-status={payStatus}>
+                      {payStatusLabel(msg)}
+                    </span>
+                  ) : null}
+                </Thread.CardTitle>
+                <Thread.CardBody>
+                  <p className="chat-card-amount">{amountLabel}</p>
+                  {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+                  <p className="chat-card-meta">
+                    {msg.meta?.memo ||
+                      'Both sides in, awaiting the agent. Nothing moves until accept.'}
+                  </p>
+                </Thread.CardBody>
+                {canEscrow ? (
+                  <Thread.CardActions className="chat-card-actions">
+                    <button
+                      type="button"
+                      className="chat-card-btn chat-card-btn-ghost"
+                      onClick={() => onEscrowDecline?.(msg.id)}
+                    >
+                      Decline
+                    </button>
+                    <button
+                      type="button"
+                      className="chat-card-btn chat-card-btn-primary"
+                      onClick={() => onEscrowAccept?.(msg.id)}
+                    >
+                      Accept and hold
+                    </button>
+                  </Thread.CardActions>
+                ) : null}
+              </>
+            )}
+            {mine ? (
+              <time className="chat-bubble-time" dateTime={new Date(msg.createdAt).toISOString()}>
+                {formatTime(msg.createdAt)}
+              </time>
             ) : null}
-          </>
-        ) : msg.kind === 'escrow' ? (
-          <>
-            <div className="chat-card-head">
-              <span className="chat-card-badge">Escrow</span>
-              {payStatus ? (
-                <span className="chat-card-status" data-status={payStatus}>
-                  {payStatusLabel(msg)}
-                </span>
-              ) : null}
-            </div>
-            <p className="chat-card-amount">{amountLabel}</p>
-            {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
-            <p className="chat-card-meta">
-              {msg.meta?.memo ||
-                'Both sides in, awaiting the agent. Nothing moves until accept.'}
-            </p>
-            {canEscrow ? (
-              <div className="chat-card-actions">
-                <button
-                  type="button"
-                  className="chat-card-btn chat-card-btn-ghost"
-                  onClick={() => onEscrowDecline?.(msg.id)}
-                >
-                  Decline
-                </button>
-                <button
-                  type="button"
-                  className="chat-card-btn chat-card-btn-primary"
-                  onClick={() => onEscrowAccept?.(msg.id)}
-                >
-                  Accept and hold
-                </button>
-              </div>
-            ) : null}
-          </>
+          </Thread.Card>
         ) : (
-          <p className="chat-bubble-text">{msg.text}</p>
+          <Thread.Bubble
+            className={['chat-bubble', mine ? 'is-mine' : ''].filter(Boolean).join(' ')}
+            data-kind={msg.kind}
+          >
+            <p className="chat-bubble-text">{msg.text}</p>
+            {mine ? (
+              <time className="chat-bubble-time" dateTime={new Date(msg.createdAt).toISOString()}>
+                {formatTime(msg.createdAt)}
+              </time>
+            ) : null}
+          </Thread.Bubble>
         )}
-        <time className="chat-bubble-time" dateTime={new Date(msg.createdAt).toISOString()}>
-          {formatTime(msg.createdAt)}
-        </time>
+        {!mine && onBindReply ? (
+          <Thread.Bind
+            className="chat-bind-btn"
+            aria-label="Reply to bind tip"
+            onClick={() => onBindReply(msg.id)}
+          >
+            Reply
+          </Thread.Bind>
+        ) : null}
       </div>
-    </div>
+    </Thread.Item>
   )
 }
 
-export function MessagesPanel({ chain, identityKey, onSent }: Props) {
+export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
+  const threadOnly = Boolean(peerId)
   const [peers, setPeers] = useState(() => listMessagePeers())
-  const [activePeerId, setActivePeerId] = useState<string | null>(null)
+  const [activePeerId, setActivePeerId] = useState<string | null>(() => peerId ?? null)
   const [draft, setDraft] = useState('')
   const [hint, setHint] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [showCommands, setShowCommands] = useState(false)
+  const [confirmCmd, setConfirmCmd] = useState<{
+    id: string
+    verb: string
+    amountLabel: string
+    satsLabel: string | null
+  } | null>(null)
+  const [confirming, setConfirming] = useState(false)
   const threadEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
   const refresh = () => setPeers(listMessagePeers())
 
+  useEffect(() => {
+    if (peerId) setActivePeerId(peerId)
+  }, [peerId])
+
   useEffect(() => subscribeFriends(refresh), [])
   useEffect(() => subscribeMessages(refresh), [])
 
   useEffect(() => {
-    return subscribeMessageFocus((peerId) => {
-      if (!peerId) return
-      setActivePeerId(peerId)
+    if (threadOnly) return
+    return subscribeMessageFocus((focused) => {
+      if (!focused) return
+      setActivePeerId(focused)
       takeMessageFocus()
     })
-  }, [])
+  }, [threadOnly])
 
   useEffect(() => {
     if (!activePeerId) return
@@ -350,6 +434,15 @@ export function MessagesPanel({ chain, identityKey, onSent }: Props) {
   }, [peers, query, unreadOnly])
 
   const commandHints = useMemo(() => matchingCommands(draft), [draft])
+  const composerState: ComposerState = useMemo(() => {
+    if (draft.startsWith('/') && !draft.startsWith('//')) {
+      const cmd = parseLocalCommand(draft.trim())
+      if (cmd?.verb === 'whois' || cmd?.verb === 'help') return 'lookup'
+      return 'command'
+    }
+    if (draft.trim()) return 'chat'
+    return 'idle'
+  }, [draft])
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: 'end' })
@@ -710,10 +803,11 @@ export function MessagesPanel({ chain, identityKey, onSent }: Props) {
     <div
       className="chat-shell"
       data-aeon-scope="messages"
-      data-aeon-state={activePeerId ? 'thread' : 'list'}
+      data-aeon-state={threadOnly ? 'thread-only' : activePeerId ? 'thread' : 'list'}
     >
+      {!threadOnly ? (
       <aside className="chat-sidebar">
-        <div className="chat-sidebar-head">
+        <div className="chat-sidebar-head panel-label-bar">
           <h2>Messages</h2>
           <div className="chat-sidebar-tools">
             <label className="chat-unread-toggle" title="Unread only">
@@ -750,17 +844,17 @@ export function MessagesPanel({ chain, identityKey, onSent }: Props) {
               {peers.length === 0 ? 'No chats yet — add a friend' : 'No matches'}
             </li>
           ) : (
-            filteredPeers.map(({ peerId, friend, thread }) => {
+            filteredPeers.map(({ peerId: id, friend, thread }) => {
               const label = friend?.label ?? 'Unknown'
-              const selected = activePeerId === peerId
-              const unread = thread?.unread ?? 0
+              const selected = activePeerId === id
+              const unreadCount = thread?.unread ?? 0
               return (
-                <li key={peerId}>
+                <li key={id}>
                   <button
                     type="button"
                     className="chat-peer-row"
                     data-selected={selected ? '' : undefined}
-                    onClick={() => setActivePeerId(peerId)}
+                    onClick={() => setActivePeerId(id)}
                   >
                     <span className="friend-avatar" aria-hidden>
                       {friendInitial(label)}
@@ -774,9 +868,9 @@ export function MessagesPanel({ chain, identityKey, onSent }: Props) {
                       </strong>
                       <span className="chat-peer-preview">{thread?.lastPreview || ' '}</span>
                     </span>
-                    {unread > 0 ? (
-                      <span className="chat-unread-badge" aria-label={`${unread} unread`}>
-                        {unread > 9 ? '9+' : unread}
+                    {unreadCount > 0 ? (
+                      <span className="chat-unread-badge" aria-label={`${unreadCount} unread`}>
+                        {unreadCount > 9 ? '9+' : unreadCount}
                       </span>
                     ) : null}
                   </button>
@@ -786,126 +880,189 @@ export function MessagesPanel({ chain, identityKey, onSent }: Props) {
           )}
         </ul>
       </aside>
+      ) : null}
 
       <section className="chat-thread">
         {activeFriend ? (
           <>
-            <header className="chat-thread-head">
-              <button
-                type="button"
-                className="chat-back-btn btn btn-ghost btn-icon"
-                aria-label="Back to conversations"
-                onClick={() => setActivePeerId(null)}
-              >
-                ←
-              </button>
-              <span className="friend-avatar" aria-hidden>
+            <header className="chat-thread-head panel-label-bar">
+              {!threadOnly ? (
+                <button
+                  type="button"
+                  className="chat-back-btn btn btn-ghost btn-icon"
+                  aria-label="Back to conversations"
+                  onClick={() => setActivePeerId(null)}
+                >
+                  ←
+                </button>
+              ) : null}
+              <span className="friend-avatar chat-thread-avatar" aria-hidden>
                 {friendInitial(activeFriend.label)}
               </span>
-              <div>
+              <div className="chat-thread-titles">
                 <strong>{activeFriend.label}</strong>
-                <span className="chat-thread-sub mono" title={activeFriend.identityKey}>
-                  {activeFriend.identityKey.slice(0, 18)}…
-                </span>
+                <span className="chat-thread-sub">1:1 · Message · Pay · Request</span>
               </div>
             </header>
+            <nav className="chat-thread-tabs panel-label-bar" aria-label="Thread sections">
+              <button type="button" className="chat-thread-tab" data-active="" aria-current="page">
+                Messages
+              </button>
+              <button type="button" className="chat-thread-tab" disabled title="Coming soon">
+                Files & links
+              </button>
+              <button type="button" className="chat-thread-tab" disabled title="Coming soon">
+                Notes
+              </button>
+            </nav>
 
-            <div className="chat-thread-messages">
-              {messages.length === 0 ? (
-                <EmptyState
-                  title="No messages yet"
-                  body="Say hello, or use /pay and /request for in-thread payments."
-                />
-              ) : (
-                messages.map((m) => (
-                  <MessageBubble
-                    key={m.id}
-                    msg={m}
-                    onConfirmPay={(id) => void confirmPay(id)}
-                    onCancelPay={cancelPay}
-                    onEscrowAccept={onEscrowAccept}
-                    onEscrowDecline={onEscrowDecline}
+            <Thread.Root className="chat-thread-messages">
+              <Thread.List>
+                {messages.length === 0 ? (
+                  <EmptyState
+                    title="No messages yet"
+                    body="Say hello, or use /pay and /request for in-thread payments."
                   />
-                ))
-              )}
-              <div ref={threadEndRef} />
-            </div>
+                ) : (
+                  messages.map((m) => (
+                    <MessageBubble
+                      key={m.id}
+                      msg={m}
+                      peerLabel={activeFriend.label}
+                      onConfirmPay={(id) => {
+                        const m = messages.find((x) => x.id === id)
+                        if (!m) return
+                        setConfirmCmd({
+                          id,
+                          verb: m.kind === 'escrow' ? 'escrow' : 'pay',
+                          amountLabel: m.meta?.amountLabel ?? m.text,
+                          satsLabel:
+                            m.meta?.sats && m.meta.sats > 0
+                              ? formatSatsLabel(m.meta.sats)
+                              : null,
+                        })
+                      }}
+                      onCancelPay={cancelPay}
+                      onEscrowAccept={onEscrowAccept}
+                      onEscrowDecline={onEscrowDecline}
+                      onBindReply={(id) => {
+                        setDraft('/tip ')
+                        setHint(`Bound tip to message ${id.slice(0, 8)}…`)
+                        playWalletSound('soft')
+                        requestAnimationFrame(() => inputRef.current?.focus())
+                      }}
+                    />
+                  ))
+                )}
+                <div ref={threadEndRef} />
+              </Thread.List>
+            </Thread.Root>
 
             {hint ? <p className="chat-hint">{hint}</p> : null}
 
-            {(showCommands || (draft.startsWith('/') && !draft.startsWith('//') && commandHints.length > 0)) && (
-              <ul className="chat-command-menu" role="listbox" aria-label="Commands">
-                {(showCommands ? COMMAND_PALETTE : commandHints).map((c) => (
-                  <li key={c.verb}>
-                    <button type="button" onClick={() => insertCommand(c.verb)}>
-                      <code>/{c.verb}</code>
-                      <span>{c.hint}</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
+            <Composer.Root
+              className="chat-composer"
+              state={composerState}
+              onSubmit={onSubmit}
+              data-aeon-part="brc218-composer"
+            >
+              {(showCommands ||
+                (draft.startsWith('/') && !draft.startsWith('//') && commandHints.length > 0)) && (
+                <Composer.Suggestions className="chat-command-menu" aria-label="Commands">
+                  {(showCommands ? COMMAND_PALETTE : commandHints).map((c) => (
+                    <li key={c.verb}>
+                      <Composer.Suggestion onClick={() => insertCommand(c.verb)}>
+                        <code>/{c.verb}</code>
+                        <span>{c.hint}</span>
+                      </Composer.Suggestion>
+                    </li>
+                  ))}
+                </Composer.Suggestions>
+              )}
 
-            <form className="chat-composer" onSubmit={onSubmit}>
-              <div className="chat-input-bar">
-                <div className="chat-composer-actions" role="toolbar" aria-label="Message actions">
-                  <button
-                    type="button"
-                    className="chat-action-btn"
-                    title="Commands"
-                    aria-label="Commands"
-                    aria-expanded={showCommands}
-                    onClick={() => {
-                      setShowCommands((v) => !v)
-                      if (!draft.startsWith('/')) setDraft('/')
-                      playWalletSound('soft')
-                      requestAnimationFrame(() => inputRef.current?.focus())
-                    }}
-                  >
-                    /
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-action-btn"
-                    title="Pay"
-                    aria-label="Pay"
-                    onClick={() => fillPaymentCommand('pay')}
-                  >
-                    <PayIcon size={20} />
-                  </button>
-                  <button
-                    type="button"
-                    className="chat-action-btn"
-                    title="Request"
-                    aria-label="Request"
-                    onClick={() => fillPaymentCommand('request')}
-                  >
-                    <RequestMoneyIcon size={20} />
-                  </button>
-                </div>
-                <textarea
-                  ref={inputRef}
-                  className="chat-input"
-                  rows={1}
-                  placeholder={`Message ${activeFriend.label}`}
-                  value={draft}
-                  onChange={(e) => {
-                    setDraft(e.target.value)
-                    if (!e.target.value.startsWith('/')) setShowCommands(false)
+              <Composer.Toolbar className="chat-composer-toolbar">
+                <button
+                  type="button"
+                  className="chat-action-btn"
+                  title="Commands"
+                  aria-label="Commands"
+                  aria-expanded={showCommands}
+                  onClick={() => {
+                    setShowCommands((v) => !v)
+                    if (!draft.startsWith('/')) setDraft('/')
+                    playWalletSound('soft')
+                    requestAnimationFrame(() => inputRef.current?.focus())
                   }}
-                  onKeyDown={onKeyDown}
-                  autoComplete="off"
-                />
-              </div>
-              <button
-                type="submit"
-                className="btn btn-primary btn-icon"
-                aria-label="Send"
-                disabled={!draft.trim()}
-              >
-                <SendIcon size={18} />
-              </button>
-            </form>
+                >
+                  /
+                </button>
+                <button
+                  type="button"
+                  className="chat-action-btn"
+                  title="Pay"
+                  aria-label="Pay"
+                  onClick={() => fillPaymentCommand('pay')}
+                >
+                  <PayIcon size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="chat-action-btn"
+                  title="Request"
+                  aria-label="Request"
+                  onClick={() => fillPaymentCommand('request')}
+                >
+                  <RequestMoneyIcon size={18} />
+                </button>
+              </Composer.Toolbar>
+
+              <Composer.Input
+                ref={inputRef}
+                className="chat-input"
+                placeholder={`Message ${activeFriend.label}`}
+                value={draft}
+                onChange={(e) => {
+                  setDraft(e.target.value)
+                  if (!e.target.value.startsWith('/')) setShowCommands(false)
+                }}
+                onKeyDown={onKeyDown}
+                autoComplete="off"
+              />
+              <Composer.Actions>
+                <Composer.Send>
+                  <button
+                    type="submit"
+                    className="chat-send-btn"
+                    aria-label="Send"
+                    disabled={!draft.trim()}
+                  >
+                    <SendIcon size={18} />
+                  </button>
+                </Composer.Send>
+              </Composer.Actions>
+            </Composer.Root>
+
+            <CommandConfirmPrompt
+              open={Boolean(confirmCmd)}
+              verb={confirmCmd?.verb ?? 'pay'}
+              recipient={`@${activeFriend.label.replace(/^@/, '')}@handcash.io`}
+              amountLabel={confirmCmd?.amountLabel ?? ''}
+              satsLabel={confirmCmd?.satsLabel}
+              effect={`Send ${confirmCmd?.amountLabel ?? 'this amount'} to ${activeFriend.label}. This moves value and cannot be undone.`}
+              confirming={confirming}
+              onCancel={() => {
+                setConfirmCmd(null)
+                setConfirming(false)
+              }}
+              onConfirm={() => {
+                if (!confirmCmd) return
+                setConfirming(true)
+                void confirmPay(confirmCmd.id).finally(() => {
+                  setConfirming(false)
+                  setConfirmCmd(null)
+                })
+              }}
+            />
           </>
         ) : (
           <div className="chat-placeholder">

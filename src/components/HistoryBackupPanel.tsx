@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   downloadAndRestoreBrc39Backup,
   exportBrc39ToFile,
@@ -6,9 +6,10 @@ import {
   uploadBrc39Backup,
 } from '../wallet/historyBackup'
 import {
+  displayHistoryBackupBaseUrl,
+  ensureSuggestedHistoryBackupUrl,
   getHistoryBackupPrefs,
   resolveHistoryBackupBaseUrl,
-  setHistoryBackupPrefs,
 } from '../wallet/historyBackupPrefs'
 import { refreshCloudBackupHealth } from '../wallet/cloudBackupHealth'
 import {
@@ -19,6 +20,7 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
+import { HistoryBackupUrlField } from './settings'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 function formatWhen(ts: number | null): string {
@@ -33,34 +35,23 @@ function formatWhen(ts: number | null): string {
 export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
-  const [baseUrl, setBaseUrl] = useState(prefs.baseUrl)
   const [password, setPassword] = useState<string | null>(null)
   const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | 'check' | null>(null)
   const [exportTick, setExportTick] = useState(0)
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
-
-  const resolvedUrl = useMemo(
-    () => resolveHistoryBackupBaseUrl({ ...prefs, baseUrl }),
-    [prefs, baseUrl],
-  )
-
-  const saveUrl = () => {
-    const next = setHistoryBackupPrefs({ baseUrl })
-    setPrefs(next)
-    playWalletSound('soft')
-    toastSuccess(baseUrl.trim() ? 'Backup URL saved' : 'Backup URL cleared')
-    void refreshCloudBackupHealth().then(() => setPrefs(getHistoryBackupPrefs()))
-  }
+  const resolvedUrl = resolveHistoryBackupBaseUrl(prefs)
+  const effectiveUrl = resolvedUrl || displayHistoryBackupBaseUrl(prefs)
 
   const checkCloud = async () => {
     playWalletSound('soft')
     setBusy('check')
     try {
-      setHistoryBackupPrefs({ baseUrl })
+      ensureSuggestedHistoryBackupUrl()
       const health = await refreshCloudBackupHealth()
       setPrefs(getHistoryBackupPrefs())
       if (health.phase === 'ok') toastSuccess(health.label, health.message ?? undefined)
-      else if (health.phase === 'pending') toastError(health.label, health.message ?? 'Upload a backup')
+      else if (health.phase === 'pending')
+        toastSuccess(health.label, health.message ?? 'Upload will retry automatically')
       else if (health.phase === 'error') toastError(health.label, health.message ?? 'Check the URL')
       else toastSuccess(health.label, health.message ?? undefined)
     } finally {
@@ -103,7 +94,7 @@ export function HistoryBackupPanel() {
     if (!password) return
     setBusy('upload')
     try {
-      setHistoryBackupPrefs({ baseUrl })
+      ensureSuggestedHistoryBackupUrl()
       const result = await uploadBrc39Backup(password)
       setPrefs(getHistoryBackupPrefs())
       playWalletSound('success')
@@ -122,7 +113,7 @@ export function HistoryBackupPanel() {
     if (!password) return
     setBusy('restore')
     try {
-      setHistoryBackupPrefs({ baseUrl })
+      ensureSuggestedHistoryBackupUrl()
       const result = await downloadAndRestoreBrc39Backup(password)
       playWalletSound('success')
       toastSuccess('Restored from URL', `${result.inserts + result.updates} changes`)
@@ -158,36 +149,29 @@ export function HistoryBackupPanel() {
         aligned; Refresh still checks the chain.
       </p>
 
-      <div className="settings-form settings-form-compact">
-        <div className="field">
-          <label htmlFor="history-backup-url">Backup URL (required to link devices)</label>
-          <input
-            id="history-backup-url"
-            type="url"
-            placeholder="https://…"
-            value={baseUrl}
-            onChange={(e) => setBaseUrl(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-        <div className="actions">
-          <button type="button" className="btn btn-ghost" onClick={saveUrl}>
-            Save URL
-          </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={busy !== null || !baseUrl.trim()}
-            onClick={() => void checkCloud()}
-          >
-            {busy === 'check' ? 'Checking…' : 'Check cloud'}
-          </button>
-        </div>
-        {resolvedUrl ? (
-          <p className="settings-row-desc">
+      <HistoryBackupUrlField
+        id="history-backup-url"
+        label="Backup URL (required to link devices)"
+        onSaved={(baseUrl) => {
+          setPrefs(getHistoryBackupPrefs())
+          if (baseUrl) void refreshCloudBackupHealth().then(() => setPrefs(getHistoryBackupPrefs()))
+        }}
+      />
+
+      <div className="actions" style={{ marginTop: 8 }}>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          disabled={busy !== null || !effectiveUrl}
+          onClick={() => void checkCloud()}
+        >
+          {busy === 'check' ? 'Checking…' : 'Check cloud'}
+        </button>
+        {effectiveUrl ? (
+          <span className="settings-row-desc">
             Last upload: {formatWhen(prefs.lastUploadedAt)}
             {prefs.lastError ? ` · ${prefs.lastError}` : ''}
-          </p>
+          </span>
         ) : null}
       </div>
 
@@ -224,7 +208,7 @@ export function HistoryBackupPanel() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy !== null || !resolvedUrl}
+              disabled={busy !== null || !effectiveUrl}
               onClick={() => void runUpload()}
             >
               {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
@@ -232,7 +216,7 @@ export function HistoryBackupPanel() {
             <button
               type="button"
               className="btn btn-ghost"
-              disabled={busy !== null || !resolvedUrl}
+              disabled={busy !== null || !effectiveUrl}
               onClick={() => void runRestoreUrl()}
             >
               {busy === 'restore' ? 'Restoring…' : 'Restore from URL'}

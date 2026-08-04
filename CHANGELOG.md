@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.4] - 2026-08-04
+
+### Added
+
+- Cloud key backup (BRC-232) Settings panel for HandCash + Haste trustholder deposits.
+- Modular Settings helpers (History URL field, status rows).
+
+### Changed
+
+- Restore Friends list/grid root (search kept); Message stays on friend details.
+- Status pill: hide soft sync / backup probes; chain health wins over cloud “pending”.
+- Unlock auto cloud sync is push-only; refuse older/unknown remote history pulls.
+- Scan QR always opens the camera (no backup-settings redirect).
+- Clearer Keys backup copy (“copy/save slices”); leaner fixed panel label bars.
+
+### Fixed
+
+- Auth no longer blocks on chain/cloud sync before entering the wallet.
+
 ## [1.2.3] - 2026-08-04
 
 ### Added

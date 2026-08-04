@@ -145,10 +145,15 @@ export function PairDevicePanel() {
     try {
       const result = await syncDevicesViaBackupUrl(password)
       const parts = [
-        result.brc39
-          ? `history ${result.brc39.inserts + result.brc39.updates} changes`
-          : 'history uploaded (first copy)',
+        result.pulled
+          ? result.brc39
+            ? `history ${result.brc39.inserts + result.brc39.updates} changes`
+            : 'history pulled'
+          : result.skippedPullReason
+            ? `kept local history (${result.skippedPullReason})`
+            : 'kept local history',
         result.friendsMerged ? `${result.friendsMerged} friends added` : null,
+        result.uploaded ? 'uploaded' : null,
       ].filter(Boolean)
       toastSuccess('Devices synced', parts.join(' · '))
       playWalletSound('success')
@@ -282,7 +287,7 @@ export function PairDevicePanel() {
             </button>
           </div>
           <p className="settings-row-desc" style={{ marginTop: 8 }}>
-            Pulls BRC-39 + friends from the URL, merges, then uploads this device. Last upload:{' '}
+            Pulls history only if the cloud copy is newer than this device, then uploads. Last upload:{' '}
             {getHistoryBackupPrefs().lastUploadedAt
               ? new Date(getHistoryBackupPrefs().lastUploadedAt!).toLocaleString()
               : 'never'}

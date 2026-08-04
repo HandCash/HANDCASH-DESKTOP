@@ -23,7 +23,7 @@ export function ScanPanel() {
             return
           }
           playWalletSound('soft')
-          openSendFlow(value)
+          openSendFlow(value, { requireBackup: false })
         }}
       />
     </div>

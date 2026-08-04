@@ -59,6 +59,12 @@ export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boole
   return true
 }
 
+/** Cloud trustholder deposit (2 shares) counts as a completed keys backup. */
+export function markCloudKeysBackupConfirmed(): void {
+  durableSetItem(KEYS_KEY, '1')
+  notify()
+}
+
 export function noteHistoryBackupExport(): void {
   historyExported = true
   notify()

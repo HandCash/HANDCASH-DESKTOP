@@ -45,7 +45,7 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
         if (historyUrl.trim()) {
           setHistoryBackupPrefs({ baseUrl: historyUrl.trim(), lastError: null })
         }
-        // Share deposit against live BRC-232 services is a follow-up once auth is real.
+        // Deposit HandCash + Haste shares from Settings → Cloud key backup.
       } else if (selected === 'history') {
         const url = historyUrl.trim()
         if (!url) throw new Error('Enter a history backup URL')

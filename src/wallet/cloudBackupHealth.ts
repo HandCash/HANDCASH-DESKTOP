@@ -1,6 +1,7 @@
 /**
  * Cloud BRC-39 history host health (BRC-CLOUD / compatible servers).
- * “Out of sync” = URL configured but no remote blob (or last upload failed).
+ * Pending = URL configured but no remote blob yet (optional multi-device parity).
+ * This is not chain sync — missing cloud history does not mean missing funds/txs.
  */
 import { appendAppLog } from './appLog'
 import {
@@ -28,8 +29,8 @@ const listeners = new Set<Listener>()
 
 let health: CloudBackupHealth = {
   phase: 'off',
-  label: 'Backup off',
-  message: null,
+  label: 'Not synced',
+  message: 'Inactive',
   checkedAt: 0,
 }
 
@@ -60,11 +61,32 @@ export function ensureHistoryBackupUrlFromConfig(): string {
   const prefs = getHistoryBackupPrefs()
   if (prefs.baseUrl) return prefs.baseUrl
   const cfg = getWalletConfigPrefs()
+  // Explicit "no backup" — do not promote a leftover / setup URL into active sync.
+  if (cfg.mode === 'none') return ''
   if (cfg.historyBaseUrl.trim()) {
     setHistoryBackupPrefs({ baseUrl: cfg.historyBaseUrl.trim(), lastError: null })
     return resolveHistoryBackupBaseUrl()
   }
   return ''
+}
+
+async function probeRemoteBrc39Exists(identityKey: string): Promise<{
+  exists: boolean
+  exportedAt: number | null
+}> {
+  const url = historyBackupObjectUrl(identityKey)
+  const res = await fetch(url, {
+    method: 'HEAD',
+    headers: { Accept: 'application/vnd.brc39.wallet, application/octet-stream, */*' },
+  })
+  if (res.status === 404) return { exists: false, exportedAt: null }
+  if (!res.ok) throw new Error(`Remote backup check failed (${res.status})`)
+  const exportedRaw = res.headers.get('X-HandCash-Exported-At')
+  const exportedAt = exportedRaw ? Number(exportedRaw) : null
+  return {
+    exists: true,
+    exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
+  }
 }
 
 /**
@@ -78,7 +100,7 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
     return setHealth({
       phase: 'off',
       label: 'Backup off',
-      message: 'No history backup URL configured',
+      message: 'Inactive — history backup not configured',
     })
   }
 
@@ -88,13 +110,8 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
       label: 'Backup failed',
       message: prefs.lastError,
     })
-  } else {
-    setHealth({
-      phase: 'checking',
-      label: 'Checking backup',
-      message: `Probing ${base}`,
-    })
   }
+  // Soft probe — keep the last stable label; do not flash "Checking backup".
 
   try {
     const healthUrl = `${base.replace(/\/+$/, '')}/health`
@@ -119,40 +136,36 @@ export async function refreshCloudBackupHealth(): Promise<CloudBackupHealth> {
   if (!active) {
     return setHealth({
       phase: prefs.lastUploadedAt ? 'ok' : 'pending',
-      label: prefs.lastUploadedAt ? 'Cloud ready' : 'Out of sync',
+      label: prefs.lastUploadedAt ? 'Cloud ready' : 'Backup pending',
       message: prefs.lastUploadedAt
         ? 'Host OK — unlock to verify blob'
-        : 'Host OK — upload a BRC-39 backup to sync',
+        : 'Host OK — upload a BRC-39 backup when unlocked',
     })
   }
 
   try {
-    const objectUrl = historyBackupObjectUrl(active.identityKey)
-    const res = await fetch(objectUrl, {
-      method: 'GET',
-      headers: { Accept: 'application/vnd.brc39.wallet, application/octet-stream, */*' },
-    })
-    if (res.status === 404) {
-      appendAppLog('info', '[cloud-backup] no remote BRC-39 yet — out of sync')
+    const meta = await probeRemoteBrc39Exists(active.identityKey)
+    if (!meta.exists) {
+      // Local already pushed — treat as ok even if HEAD briefly lags.
+      if (prefs.lastUploadedAt) {
+        appendAppLog('info', '[cloud-backup] local upload recorded; remote HEAD not found yet')
+        return setHealth({
+          phase: 'ok',
+          label: 'Cloud synced',
+          message: 'History backup uploaded from this device',
+        })
+      }
+      appendAppLog('info', '[cloud-backup] no remote BRC-39 yet — backup pending')
       setHistoryBackupPrefs({ lastError: null })
       return setHealth({
         phase: 'pending',
-        label: 'Out of sync',
-        message: 'No remote history blob yet — upload from Settings → History',
+        label: 'Backup pending',
+        message: 'No remote history blob yet — auto-upload will retry',
       })
     }
-    if (!res.ok) {
-      const detail = (await res.text().catch(() => '')).slice(0, 160)
-      const msg = `Remote backup check failed (${res.status})${detail ? `: ${detail}` : ''}`
-      appendAppLog('warn', `[cloud-backup] ${msg}`)
-      setHistoryBackupPrefs({ lastError: msg })
-      return setHealth({ phase: 'error', label: 'Backup failed', message: msg })
-    }
-    // Touch body so Cap/Electron don't cancel; discard.
-    await res.arrayBuffer()
     setHistoryBackupPrefs({ lastError: null })
     if (!prefs.lastUploadedAt) {
-      setHistoryBackupPrefs({ lastUploadedAt: Date.now() })
+      setHistoryBackupPrefs({ lastUploadedAt: meta.exportedAt ?? Date.now() })
     }
     appendAppLog('info', '[cloud-backup] remote BRC-39 present')
     return setHealth({

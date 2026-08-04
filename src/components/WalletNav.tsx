@@ -37,6 +37,7 @@ import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
+import { TrustholderBackupPanel } from './TrustholderBackupPanel'
 import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
@@ -48,7 +49,6 @@ import {
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
-  MessagesIcon,
   SettingsIcon,
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
@@ -74,9 +74,8 @@ const SECTIONS: {
   { value: 'apps', label: 'Apps', shortLabel: 'Apps', Icon: AppsIcon },
   { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
-  { value: 'messages', label: 'Messages', shortLabel: 'Msgs', Icon: MessagesIcon },
   { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },
-  { value: 'settings', label: 'Settings', shortLabel: 'Settings', Icon: SettingsIcon },
+  { value: 'settings', label: 'Settings', shortLabel: 'Set', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
@@ -148,6 +147,10 @@ export function WalletNav({
       const friend = getFriendById(child.friendId)
       return [root, { label: friend?.label || 'Friend' }]
     }
+    if (child.type === 'messages') {
+      const friend = getFriendById(child.friendId)
+      return [root, { label: friend?.label || 'Message' }]
+    }
     if (child.type === 'collectable') {
       return [root, { label: collectableLabel }]
     }
@@ -181,6 +184,7 @@ export function WalletNav({
           {child ? (
             <div className="wallet-nav-panel nav-child-stage">
               <NavBreadcrumb crumbs={crumbs} />
+              <div className="nav-child-body">
               {child.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === child.origin)
                 if (!app) return <p className="connected-empty-line">App not found</p>
@@ -215,6 +219,14 @@ export function WalletNav({
               {child.type === 'friend' && (
                 <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
               )}
+              {child.type === 'messages' && (
+                <MessagesPanel
+                  chain={profile.chain}
+                  identityKey={profile.identityKey}
+                  peerId={child.friendId}
+                  onSent={onSent}
+                />
+              )}
               {child.type === 'add-friend' && <AddFriendPanel />}
               {child.type === 'collectable' && (
                 <CollectableDetailsPanel outpoint={child.outpoint} />
@@ -240,6 +252,9 @@ export function WalletNav({
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
+              {child.type === 'setting' && child.settingId === 'trustholder-backup' && (
+                <TrustholderBackupPanel />
+              )}
               {child.type === 'setting' && child.settingId === 'logs' && <LogViewerPanel />}
               {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
@@ -250,6 +265,7 @@ export function WalletNav({
               {child.type === 'setting' && child.settingId === 'statecharts' && (
                 <StatechartsPanel />
               )}
+              </div>
             </div>
           ) : (
             <div className="wallet-nav-panel">
@@ -257,13 +273,6 @@ export function WalletNav({
               {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
               {nav.section === 'collectables' && <InventoryPanel />}
               {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
-              {nav.section === 'messages' && (
-                <MessagesPanel
-                  chain={profile.chain}
-                  identityKey={profile.identityKey}
-                  onSent={onSent}
-                />
-              )}
               {nav.section === 'identity' && <IdentityPanel profile={profile} />}
               {nav.section === 'settings' && <SettingsPanel />}
             </div>

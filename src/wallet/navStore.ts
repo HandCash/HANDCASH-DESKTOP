@@ -8,7 +8,6 @@ export type NavSection =
   | 'apps'
   | 'collectables'
   | 'friends'
-  | 'messages'
   | 'identity'
   | 'settings'
 
@@ -17,6 +16,7 @@ export type SettingId =
   | 'backup'
   | 'backup-phrase'
   | 'split-backup'
+  | 'trustholder-backup'
   | 'device-handoff'
   | 'history-backup'
   | 'wipe-wallet'
@@ -33,6 +33,7 @@ export type NavChild =
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend' }
+  | { type: 'messages'; friendId: string }
   | { type: 'collectable'; outpoint: string }
   | { type: 'send-collectable'; outpoint: string }
   | { type: 'setting'; settingId: SettingId }
@@ -93,8 +94,8 @@ function openRequiredBackup() {
   openSetting(missing === 'history' ? 'history-backup' : 'backup')
 }
 
-export function openSendFlow(prefill?: string) {
-  if (!isBackupConfirmed()) {
+export function openSendFlow(prefill?: string, opts?: { requireBackup?: boolean }) {
+  if (opts?.requireBackup !== false && !isBackupConfirmed()) {
     playWalletSound('deny')
     openRequiredBackup()
     return
@@ -106,11 +107,6 @@ export function openSendFlow(prefill?: string) {
 }
 
 export function openScanFlow() {
-  if (!isBackupConfirmed()) {
-    playWalletSound('deny')
-    openRequiredBackup()
-    return
-  }
   openNavChild('activity', { type: 'scan' })
 }
 
@@ -132,7 +128,7 @@ export function openAddFriend() {
 
 export function openMessagesWithFriend(friendId: string) {
   focusMessagePeer(friendId)
-  setNavSection('messages')
+  openNavChild('friends', { type: 'messages', friendId })
 }
 
 /** @deprecated */

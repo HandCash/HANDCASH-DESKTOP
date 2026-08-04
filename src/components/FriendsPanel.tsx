@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
   addressFromIdentityKey,
@@ -97,9 +97,20 @@ function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
 export function FriendsPanel({ chain }: Props) {
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [view, setView] = useState<CollectionView>(() => getCollectionView('friends'))
+  const [query, setQuery] = useState('')
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeCollectionView(setView, 'friends'), [])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return friends
+    return friends.filter(
+      (f) =>
+        f.label.toLowerCase().includes(q) ||
+        f.identityKey.toLowerCase().includes(q),
+    )
+  }, [friends, query])
 
   return (
     <div
@@ -145,18 +156,33 @@ export function FriendsPanel({ chain }: Props) {
             </button>
           }
         />
-      ) : view === 'grid' ? (
-        <ul className="collection-grid">
-          {friends.map((friend) => (
-            <FriendGridItem key={friend.id} friend={friend} chain={chain} />
-          ))}
-        </ul>
       ) : (
-        <ul className="friends-list">
-          {friends.map((friend) => (
-            <FriendListItem key={friend.id} friend={friend} chain={chain} />
-          ))}
-        </ul>
+        <>
+          <div className="friends-search">
+            <input
+              type="search"
+              placeholder="Search friends"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          {filtered.length === 0 ? (
+            <p className="friends-empty">No matches</p>
+          ) : view === 'grid' ? (
+            <ul className="collection-grid">
+              {filtered.map((friend) => (
+                <FriendGridItem key={friend.id} friend={friend} chain={chain} />
+              ))}
+            </ul>
+          ) : (
+            <ul className="friends-list">
+              {filtered.map((friend) => (
+                <FriendListItem key={friend.id} friend={friend} chain={chain} />
+              ))}
+            </ul>
+          )}
+        </>
       )}
     </div>
   )

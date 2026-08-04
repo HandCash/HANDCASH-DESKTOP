@@ -284,14 +284,17 @@ const SETTINGS = `stateDiagram-v2
   [*] --> settingsHome
   settingsHome --> changePassword : open
   settingsHome --> backupKeys : open
+  settingsHome --> trustholderBackup : open
   settingsHome --> deviceHandoff : open
   settingsHome --> historyBackup : open
   settingsHome --> wipeWallet : open
   settingsHome --> aboutHandCash : open
   changePassword --> settingsHome : back
   backupKeys --> settingsHome : back
+  trustholderBackup --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
   deviceHandoff --> historyBackup : open history
+  deviceHandoff --> trustholderBackup : open cloud keys
   deviceHandoff --> settingsHome : back
   historyBackup --> settingsHome : back
   wipeWallet --> settingsHome : back / done
@@ -302,6 +305,7 @@ const SETTINGS = `stateDiagram-v2
   settingsHome : Settings
   changePassword : Password
   backupKeys : Keys
+  trustholderBackup : Cloud key backup
   deviceHandoff : Use on another device
   historyBackup : History
   wipeWallet : Wipe

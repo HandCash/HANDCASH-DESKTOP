@@ -110,11 +110,11 @@ export function RefreshIcon(props: IconProps) {
   )
 }
 
-/** Material Icons — `qr_code_scanner` */
+/** Scan affordance — viewfinder corners (reads clean at 16px). */
 export function ScanQrIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M9.5 6.5v3h-3v-3h3M11 5H5v6h6V5zm-1.5 9.5v3h-3v-3h3M11 13H5v6h6v-6zm6.5-6.5v3h-3v-3h3M19 5h-6v6h6V5zm-6 8h1.5v1.5H13V13zm1.5 1.5H16V16h-1.5v-1.5zm1.5 1.5h1.5V18H16v-1.5zm-3 3H16V19h-3v1.5zm-1.5-3H13V19h-1.5v-2.5zm6-1.5H19v1.5h1.5V16H19v-1.5h-1.5V13zm1.5 4.5V19H19v2.5h2.5V19H23v-1.5h-2.5z" />
+      <path d="M3 3h6v2H5v4H3V3zm12 0h6v6h-2V5h-4V3zM3 15h2v4h4v2H3v-6zm16 4v-4h2v6h-6v-2h4z" />
     </Icon>
   )
 }
@@ -204,6 +204,15 @@ export function PersonAddIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `info` */
+export function InfoIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `person` */
 export function IdentityIcon(props: IconProps) {
   return (
@@ -213,11 +222,11 @@ export function IdentityIcon(props: IconProps) {
   )
 }
 
-/** Material Icons — `qr_code` */
+/** QR mark — three finders + a few modules (no Material pixel soup). */
 export function QrIcon(props: IconProps) {
   return (
     <Icon {...props}>
-      <path d="M3 11h8V3H3v8zm2-6h4v4H5V5zM3 21h8v-8H3v8zm2-6h4v4H5v-4zm8-12v8h8V3h-8zm6 6h-4V5h4v4zm0 10h2v2h-2zm-6-6h2v2h-2zm2 2h2v2h-2zm-2 2h2v2h-2zm2 2h2v2h-2zm2-2h2v2h-2zm0-4h2v2h-2zm2 2h2v2h-2z" />
+      <path d="M3 3h7v7H3V3zm2 2v3h3V5H5zm9-2h7v7h-7V3zm2 2v3h3V5h-3zM3 14h7v7H3v-7zm2 2v3h3v-3H5zm10 0h2v2h-2v-2zm4 0h2v2h-2v-2zm-2 2h2v2h-2v-2zm-2 2h2v2h-2v-2zm4 0h2v2h-2v-2z" />
     </Icon>
   )
 }

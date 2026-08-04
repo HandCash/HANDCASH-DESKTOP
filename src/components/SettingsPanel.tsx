@@ -11,6 +11,9 @@ import {
 import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { subscribeBackupConfirmed } from '../wallet/backupStatus'
+import { subscribeDeviceWallets } from '../wallet/deviceWallets'
+import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
 
 type SettingItem = {
   id: SettingId
@@ -28,19 +31,24 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Security',
     items: [
       {
-        id: 'backup',
-        label: 'Keys',
-        description: 'Split or phrase',
+        id: 'trustholder-backup',
+        label: 'Cloud key backup',
+        description: 'HandCash + Haste',
       },
       {
-        id: 'device-handoff',
-        label: 'Use on another device',
-        description: 'Same backup URL to link',
+        id: 'backup',
+        label: 'Keys',
+        description: 'Phrase or slices offline',
       },
       {
         id: 'history-backup',
         label: 'History',
         description: 'Required for recovery',
+      },
+      {
+        id: 'device-handoff',
+        label: 'Use on another device',
+        description: 'Same identity + History URL',
       },
       {
         id: 'change-password',
@@ -91,7 +99,6 @@ function phaseLabel(phase: string, error: string | null): string {
       return 'Ready to restart'
     case 'not-available':
     case 'notAvailable':
-      // Missing platform artifacts land here with a soft note — not “Up to date”.
       if (error) return error
       return 'Up to date'
     case 'error':
@@ -106,6 +113,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
+  if (id === 'trustholder-backup') return 'Cloud key backup'
   if (id === 'device-handoff') return 'Use on another device'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {
@@ -124,7 +132,7 @@ export function SettingsPanel() {
   const [logPath, setLogPath] = useState<string | null>(null)
   const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
   const [uploadingLogs, setUploadingLogs] = useState(false)
-  // Bundled semver — do not rely on updater IPC race (was briefly 0.0.0).
+  const [, setStatusTick] = useState(0)
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
       ? context.currentVersion
@@ -137,6 +145,16 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
+
+  useEffect(() => {
+    const bump = () => setStatusTick((n) => n + 1)
+    const unsubBackup = subscribeBackupConfirmed(bump)
+    const unsubDevices = subscribeDeviceWallets(() => bump())
+    return () => {
+      unsubBackup()
+      unsubDevices()
+    }
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -161,34 +179,26 @@ export function SettingsPanel() {
       </div>
 
       {SETTING_GROUPS.map((group) => (
-        <section key={group.title} className="settings-group" data-settings-group={group.title}>
-          <h3 className="settings-group-title">{group.title}</h3>
+        <SettingsSection key={group.title} title={group.title}>
           <ul className="settings-list">
-            {group.items.map(({ id, label, description }) => (
-              <li key={id} className="settings-row">
-                <button
-                  type="button"
-                  className="settings-row-main"
-                  onClick={() => {
-                    playWalletSound('soft')
-                    openSetting(id)
-                  }}
-                >
-                  <span className="settings-row-body">
-                    <strong className="settings-row-label">{label}</strong>
-                    {description ? (
-                      <span className="settings-row-desc">{description}</span>
-                    ) : null}
-                  </span>
-                </button>
-              </li>
-            ))}
+            {group.items.map(({ id, label, description }) => {
+              const status = statusForSetting(id)
+              return (
+                <SettingsNavRow
+                  key={id}
+                  label={label}
+                  description={description}
+                  status={status?.text}
+                  statusTone={status?.tone}
+                  onClick={() => openSetting(id)}
+                />
+              )
+            })}
           </ul>
-        </section>
+        </SettingsSection>
       ))}
 
-      <section className="settings-group" data-aeon-part="application">
-        <h3 className="settings-group-title">Application</h3>
+      <SettingsSection title="Application" part="application">
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
@@ -274,10 +284,9 @@ export function SettingsPanel() {
             </div>
           </li>
         </ul>
-      </section>
+      </SettingsSection>
 
-      <section className="settings-group" data-aeon-part="logs" data-settings-group="Logs">
-        <h3 className="settings-group-title">Logs</h3>
+      <SettingsSection title="Logs" part="logs">
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
@@ -378,10 +387,9 @@ export function SettingsPanel() {
             </div>
           </li>
         </ul>
-      </section>
+      </SettingsSection>
 
-      <section className="settings-group" data-aeon-part="about" data-settings-group="About">
-        <h3 className="settings-group-title">About</h3>
+      <SettingsSection title="About" part="about">
         <ul className="settings-list">
           <li className="settings-row">
             <button
@@ -422,7 +430,7 @@ export function SettingsPanel() {
             </div>
           </li>
         </ul>
-      </section>
+      </SettingsSection>
     </div>
   )
 }

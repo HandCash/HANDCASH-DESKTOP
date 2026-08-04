@@ -2,6 +2,7 @@ import { useState } from 'react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
   canConfirmKeysBackup,
+  getKeysBackupHandoffCount,
   markKeysBackupConfirmed,
   noteKeysBackupHandoff,
 } from '../wallet/backupStatus'
@@ -132,7 +133,7 @@ export function WalletBackupPanel() {
       setHandoffTick((n) => n + 1)
     } catch (err) {
       playWalletSound('error')
-      toastError('Couldn’t hand off slice', err instanceof Error ? err.message : undefined)
+      toastError('Couldn’t save slice', err instanceof Error ? err.message : undefined)
     }
   }
 
@@ -148,7 +149,7 @@ export function WalletBackupPanel() {
       toastError(
         'Backup not complete',
         kind === 'split'
-          ? 'Email, copy, or save at least two slices first.'
+          ? 'Open two different slices and Copy, Email, or Save file each one.'
           : 'Copy your secret first.',
       )
       playWalletSound('deny')
@@ -160,6 +161,10 @@ export function WalletBackupPanel() {
     openSetting('history-backup')
   }
 
+  const savedCount = getKeysBackupHandoffCount()
+  const splitNeed = 2
+  const splitProgress = Math.min(savedCount, splitNeed)
+
   return (
     <div
       className="nav-section-body settings-scroll"
@@ -167,9 +172,18 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Without a key backup, losing this device means losing your money. To put this identity
-        on another device, reveal a phrase or key slices here, then Restore on the other app
-        (Settings → Use on another device).
+        Keep recovery material offline on this device. For cloud slices (HandCash + Haste), open{' '}
+        <button
+          type="button"
+          className="settings-inline-link"
+          onClick={() => {
+            playWalletSound('soft')
+            openSetting('trustholder-backup')
+          }}
+        >
+          Cloud key backup
+        </button>
+        .
         {!hasPhrase
           ? ' This wallet has no phrase — use split key or emergency hex.'
           : ''}
@@ -284,7 +298,7 @@ export function WalletBackupPanel() {
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              Saved
+              {canConfirm ? 'I’ve saved my phrase' : 'Copy phrase first'}
             </button>
             <button
               type="button"
@@ -320,7 +334,7 @@ export function WalletBackupPanel() {
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              Saved
+              {canConfirm ? 'I’ve saved my key' : 'Copy key first'}
             </button>
             <button
               type="button"
@@ -339,7 +353,15 @@ export function WalletBackupPanel() {
       {shareSet ? (
         <div className="split-backup-shares">
           <p className="settings-hint">
+            You need any {shareSet.threshold} of these {shareSet.totalShares} slices to restore
+            later. Open a slice, then <strong>Copy</strong>, <strong>Email</strong>, or{' '}
+            <strong>Save file</strong> — do that for at least two slices, then mark done.
             Integrity <span className="mono">{shareSet.integrity}</span>
+          </p>
+          <p className="settings-row-desc" role="status" aria-live="polite">
+            {canConfirm
+              ? 'Two slices saved — you can mark this backup done.'
+              : `Saved ${splitProgress} of ${splitNeed} slices (copy, email, or save file).`}
           </p>
 
           <ul className="split-backup-list">
@@ -407,7 +429,11 @@ export function WalletBackupPanel() {
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              {canConfirm ? 'Saved' : 'Hand off 2 slices first'}
+              {canConfirm
+                ? 'I’ve saved my slices'
+                : `Copy or save ${splitNeed - splitProgress} more slice${
+                    splitNeed - splitProgress === 1 ? '' : 's'
+                  }`}
             </button>
             <button
               type="button"

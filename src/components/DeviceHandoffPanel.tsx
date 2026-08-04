@@ -24,12 +24,12 @@ export function DeviceHandoffPanel() {
       <p className="settings-hint">
         Restore the same recovery phrase or key slices for the same identity and BSV pot. To keep
         history and friends aligned across devices, set the <strong>same History backup URL</strong>{' '}
-        on each install — linking will not work without it.
+        on each install (History settings — suggested cloud host is shown by default).
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
         <li>Restore the same phrase/shares on the other device.</li>
-        <li>Set the identical History backup URL on both (below or History settings).</li>
+        <li>Confirm the identical History backup URL on both (History settings).</li>
         <li>Link via QR / paste (URL must match).</li>
         <li>Tap Sync via backup URL (same unlock password) so history + friends merge.</li>
         <li>Refresh still reconciles spends against the chain. Offline payments are not supported.</li>
@@ -48,6 +48,16 @@ export function DeviceHandoffPanel() {
           }}
         >
           History backup
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            playWalletSound('soft')
+            openSetting('trustholder-backup')
+          }}
+        >
+          Cloud key backup
         </button>
       </div>
 

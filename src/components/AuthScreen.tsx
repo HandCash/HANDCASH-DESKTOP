@@ -21,6 +21,7 @@ import {
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 import { getWalletConfigPrefs } from '../wallet/walletConfig'
+import { autoPushHistoryBackupIfConfigured } from '../wallet/deviceSync'
 import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 
@@ -101,7 +102,10 @@ export function AuthScreen({
   const [pendingCreated, setPendingCreated] = useState<{
     profile: WalletProfile
     balanceSats: number
+    password: string
   } | null>(null)
+  /** Holds the create/unlock form off-screen while vault boots — avoids password flash. */
+  const [preparing, setPreparing] = useState<{ title: string; lede: string } | null>(null)
   const shareFileRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
@@ -123,17 +127,26 @@ export function AuthScreen({
     (mode === 'locked' && offerRestoreOnLock) ||
     recoveryOnly
 
-  const finishCreated = async (unlocked: UnlockedVault) => {
+  const finishCreated = async (unlocked: UnlockedVault, password: string) => {
+    setPreparing({
+      title: 'Almost ready',
+      lede: 'Opening your wallet on this device.',
+    })
     const active = await bootWallet({
       rootKeyHex: unlocked.rootKeyHex,
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
     })
-    let balanceSats = await syncLegacyFunds({
-      forceReview: true,
-      announceReceive: false,
-    })
-    if (balanceSats == null) balanceSats = await fetchBalanceSats(active.wallet)
+    // Never block create/restore on chain/cloud — Dashboard heals in the background.
+    let balanceSats = 0
+    try {
+      balanceSats = await Promise.race([
+        fetchBalanceSats(active.wallet),
+        new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
+      ])
+    } catch {
+      balanceSats = 0
+    }
     send({ type: 'SUCCESS' })
     playWalletSound('unlock')
     clearUnlockNudge()
@@ -143,18 +156,21 @@ export function AuthScreen({
       address: unlocked.record.address,
       chain: unlocked.record.chain,
     }
-    // First-time create/restore: pick backup configuration before entering the app.
     if (!getWalletConfigPrefs().mode) {
-      setPendingCreated({ profile, balanceSats })
+      setPendingCreated({ profile, balanceSats, password })
+      setPreparing(null)
       return
     }
+    setPreparing(null)
     onCreated(profile, balanceSats)
+    void syncLegacyFunds({ forceReview: true, announceReceive: false })
+    void autoPushHistoryBackupIfConfigured(password)
   }
 
   const needsNewPassword = formMode === 'create' || isRestoreMethod(formMode)
 
   const submit = async () => {
-    if (snapshot.matches('submitting')) return
+    if (snapshot.matches('submitting') || preparing) return
     if (needsNewPassword) {
       const pwError = validatePassword(snapshot.context.password)
       if (pwError) {
@@ -172,6 +188,22 @@ export function AuthScreen({
     }
     const password = snapshot.context.password
     send({ type: 'SUBMIT' })
+    setPreparing(
+      formMode === 'create'
+        ? {
+            title: 'Creating wallet',
+            lede: 'Generating keys and sealing them on this device.',
+          }
+        : isRestoreMethod(formMode)
+          ? {
+              title: 'Restoring wallet',
+              lede: 'Verifying your backup and sealing keys on this device.',
+            }
+          : {
+              title: 'Unlocking',
+              lede: 'Opening your wallet on this device.',
+            },
+    )
     try {
       if (formMode === 'phrase') {
         const unlocked = await restoreVaultFromMnemonic({
@@ -180,7 +212,7 @@ export function AuthScreen({
           chain,
           ...(passphrase.trim() ? { passphrase: passphrase.trim() } : {}),
         })
-        await finishCreated(unlocked)
+        await finishCreated(unlocked, password)
         return
       }
 
@@ -191,7 +223,7 @@ export function AuthScreen({
           password,
           chain,
         })
-        await finishCreated(unlocked)
+        await finishCreated(unlocked, password)
         return
       }
 
@@ -201,31 +233,40 @@ export function AuthScreen({
           password,
           chain,
         })
-        await finishCreated(unlocked)
+        await finishCreated(unlocked, password)
         return
       }
 
       if (formMode === 'create') {
         const unlocked = await createVault({ password, chain })
-        await finishCreated(unlocked)
+        await finishCreated(unlocked, password)
         return
       }
 
       const unlocked = await unlockVault(password)
+      setPreparing({
+        title: 'Almost ready',
+        lede: 'Opening your wallet on this device.',
+      })
       const active = await bootWallet({
         rootKeyHex: unlocked.rootKeyHex,
         handle: unlocked.record.handle,
         chain: unlocked.record.chain,
       })
-      // Chain heal on unlock (parity): drop outs spent on other devices.
-      let balanceSats = await syncLegacyFunds({
-        forceReview: true,
-        announceReceive: false,
-      })
-      if (balanceSats == null) balanceSats = await fetchBalanceSats(active.wallet)
+      // Local unlock only — chain sync + history auto-push run after enter (non-blocking).
+      let balanceSats = 0
+      try {
+        balanceSats = await Promise.race([
+          fetchBalanceSats(active.wallet),
+          new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
+        ])
+      } catch {
+        balanceSats = 0
+      }
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
       clearUnlockNudge()
+      setPreparing(null)
       onUnlocked(
         {
           handle: unlocked.record.handle,
@@ -235,8 +276,11 @@ export function AuthScreen({
         },
         balanceSats,
       )
+      void syncLegacyFunds({ forceReview: true, announceReceive: false })
+      void autoPushHistoryBackupIfConfigured(password)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
+      setPreparing(null)
       if (mode === 'locked' && isMismatchError(message)) {
         setOfferRestoreOnLock(true)
         setFormMode('phrase')
@@ -301,10 +345,39 @@ export function AuthScreen({
         <WalletSetupConfigPanel
           onDone={() => {
             const pending = pendingCreated
+            if (!pending) return
+            setPreparing({
+              title: 'Finishing setup',
+              lede: 'Applying your backup preferences.',
+            })
             setPendingCreated(null)
+            // Enter immediately — cloud push must never block the first unlock.
+            setPreparing(null)
             onCreated(pending.profile, pending.balanceSats)
+            void autoPushHistoryBackupIfConfigured(pending.password)
+            void syncLegacyFunds({ forceReview: true, announceReceive: false })
           }}
         />
+      </section>
+    )
+  }
+
+  if (preparing) {
+    return (
+      <section
+        className="auth-screen auth-preparing"
+        data-aeon-scope="auth"
+        data-aeon-state="preparing"
+        aria-busy="true"
+        aria-live="polite"
+      >
+        <div className="auth-copy">
+          <h1 className="auth-title">{preparing.title}</h1>
+          <p className="auth-lede">{preparing.lede}</p>
+        </div>
+        <div className="auth-preparing-bar" aria-hidden>
+          <span className="auth-preparing-bar-fill" />
+        </div>
       </section>
     )
   }

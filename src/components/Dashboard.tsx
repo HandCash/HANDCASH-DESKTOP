@@ -40,8 +40,6 @@ import {
   isBackupConfirmed,
   subscribeBackupConfirmed,
 } from '../wallet/backupStatus'
-import { subscribeSyncHealth } from '../wallet/walletHealth'
-import { showToast } from '../wallet/toast'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 
@@ -69,7 +67,6 @@ export function Dashboard({
   const [refreshing, setRefreshing] = useState(false)
   const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
   const [missingBackup, setMissingBackup] = useState(() => getMissingBackupStep())
-  const lastSyncToastBody = useRef<string | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -82,23 +79,6 @@ export function Dashboard({
       subscribeBackupConfirmed(() => {
         setBackupConfirmed(isBackupConfirmed())
         setMissingBackup(getMissingBackupStep())
-      }),
-    [],
-  )
-  useEffect(
-    () =>
-      subscribeSyncHealth((health) => {
-        if (!health.message) {
-          lastSyncToastBody.current = null
-          return
-        }
-        if (health.message === lastSyncToastBody.current) return
-        lastSyncToastBody.current = health.message
-        showToast({
-          title: health.phase === 'error' ? 'Sync issue' : 'Sync',
-          body: health.message,
-          tone: health.phase === 'error' ? 'error' : 'neutral',
-        })
       }),
     [],
   )
