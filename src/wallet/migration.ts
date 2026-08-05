@@ -15,6 +15,7 @@ import {
   type MigrationItem,
 } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { runOnChainIngestQueue } from './chainIngestQueue'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
 const MAX_TXIDS = 200
@@ -122,8 +123,15 @@ function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
 
 /**
  * Record cloud txids, internalize 1sats → basket `1sat`, sweep remaining as funds.
+ * Shares the chain-ingest queue with Dashboard sync so migrate + poll cannot race.
  */
 export async function refreshLegacyAddressPayload(
+  args?: RefreshLegacyAddressArgs | null,
+): Promise<RefreshLegacyAddressPayload> {
+  return runOnChainIngestQueue(() => refreshLegacyAddressExclusive(args))
+}
+
+async function refreshLegacyAddressExclusive(
   args?: RefreshLegacyAddressArgs | null,
 ): Promise<RefreshLegacyAddressPayload> {
   const active = getActiveWallet()

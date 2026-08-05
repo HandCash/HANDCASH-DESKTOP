@@ -343,6 +343,10 @@ export function deviceLinkObjectHint(identityKey: string): string | null {
   }
 }
 
+export function isHistoryBackupDirty(): boolean {
+  return historyDirty
+}
+
 /**
  * Soft history pull run by the Dashboard poll when parity is on.
  * Pulls only if remote is strictly newer — never pushes, never empty-overwrites.
@@ -355,6 +359,10 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
   const password = getSessionBackupPassword()
   if (!password) return { pulled: false, reason: 'no session password' }
   if (!hasDeviceLinkBackupUrl()) return { pulled: false, reason: 'no backup url' }
+  // Don't merge remote while a local spend/import is waiting to push.
+  if (historyDirty || pushInFlight) {
+    return { pulled: false, reason: 'local history dirty' }
+  }
 
   try {
     const prefs = getHistoryBackupPrefs()
@@ -368,6 +376,10 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
             ? 'remote age unknown'
             : 'local history is same or newer',
       }
+    }
+    // Re-check after the HEAD — a spend may have dirtied meanwhile.
+    if (historyDirty || pushInFlight) {
+      return { pulled: false, reason: 'local history dirty' }
     }
     await downloadAndRestoreBrc39Backup(password)
     try {

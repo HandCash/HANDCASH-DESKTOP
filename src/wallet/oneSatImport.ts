@@ -15,6 +15,11 @@ import {
   buildCollectableCustomInstructions,
   tryBuildProvenanceV2,
 } from './oneSatProvenance'
+import {
+  beginOneSatImport,
+  markOneSatImported,
+  releaseOneSatImport,
+} from './oneSatImportGuard'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -398,8 +403,15 @@ export async function importOneSatOrdinals(
     return { imported: 0, failed: 0, errors: [], outpoints: [] }
   }
 
+  const claimed = beginOneSatImport(normalized.map((i) => i.outpoint))
+  const claimedSet = new Set(claimed)
+  const toImport = normalized.filter((i) => claimedSet.has(i.outpoint.trim().toLowerCase()))
+  if (toImport.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
+  }
+
   const byTxid = new Map<string, MigrationItem[]>()
-  for (const item of normalized) {
+  for (const item of toImport) {
     const txid = item.txid!
     const list = byTxid.get(txid) ?? []
     list.push(item)
@@ -412,6 +424,7 @@ export async function importOneSatOrdinals(
   const outpoints: string[] = []
 
   for (const [txid, group] of byTxid) {
+    const groupOps = group.map((g) => g.outpoint)
     try {
       if (!wallet.services?.getBeefForTxid) {
         throw new Error('Wallet services unavailable for BEEF fetch')
@@ -458,8 +471,10 @@ export async function importOneSatOrdinals(
       })
 
       imported += group.length
-      outpoints.push(...group.map((g) => g.outpoint))
+      outpoints.push(...groupOps)
+      markOneSatImported(groupOps)
     } catch (err) {
+      releaseOneSatImport(groupOps)
       failed += group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const item of group) {

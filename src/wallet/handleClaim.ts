@@ -60,24 +60,32 @@ export function getClaimedCloudHandlePayload(): ClaimedHandleState | null {
   return readClaimedCloudHandle()
 }
 
+let claimInFlight: Promise<ClaimedHandleState> | null = null
+
 export async function claimCloudHandlePayload(args: {
   handle: string
 }): Promise<ClaimedHandleState> {
-  const active = getActiveWallet()
-  if (!active) throw new Error('Wallet locked')
+  if (claimInFlight) return claimInFlight
+  claimInFlight = (async () => {
+    const active = getActiveWallet()
+    if (!active) throw new Error('Wallet locked')
 
-  const handle = normalizeCloudHandle(args.handle)
-  const result = await claimHandle({
-    handle,
-    identityKey: active.identityKey,
+    const handle = normalizeCloudHandle(args.handle)
+    const result = await claimHandle({
+      handle,
+      identityKey: active.identityKey,
+    })
+
+    const state: ClaimedHandleState = {
+      handle,
+      display: result.display,
+      identityKey: active.identityKey.toLowerCase(),
+      claimedAt: Date.now(),
+    }
+    durableSetItem(STORAGE_KEY, JSON.stringify(state))
+    return state
+  })().finally(() => {
+    claimInFlight = null
   })
-
-  const state: ClaimedHandleState = {
-    handle,
-    display: result.display,
-    identityKey: active.identityKey.toLowerCase(),
-    claimedAt: Date.now(),
-  }
-  durableSetItem(STORAGE_KEY, JSON.stringify(state))
-  return state
+  return claimInFlight
 }

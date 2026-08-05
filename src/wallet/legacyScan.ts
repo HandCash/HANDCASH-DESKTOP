@@ -2,6 +2,11 @@ import { P2PKH, PrivateKey } from '@bsv/sdk'
 import { SetupClient, type Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
+import {
+  beginLegacyImport,
+  markLegacyImported,
+  releaseLegacyImport,
+} from './legacyImportGuard'
 
 export type LegacyUtxo = {
   outpoint: string
@@ -97,12 +102,14 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
  * Import scanned legacy P2PKH UTXOs into BRC-100 managed change.
  * Uses SetupClient.fundWalletFromP2PKHOutpoints (builds BEEF + sweeps).
  *
- * HARD RULE: refuses satoshis === 1 (possible ordinals). Pass only funding UTXOs.
+ * HARD RULES:
+ * - refuses satoshis === 1 (possible ordinals)
+ * - same outpoint is never swept twice (durable + in-flight guards)
  */
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
-): Promise<{ imported: number; failed: number; errors: string[]; skippedOneSats: number }> {
+): Promise<{ imported: number; failed: number; errors: string[]; skippedOneSats: number; skippedKnown: number }> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
 
@@ -113,25 +120,56 @@ export async function importLegacyUtxos(
       `[legacy] refused to sweep ${skippedOneSats} one-sat outpoint(s) — possible ordinals`,
     )
   }
-  if (safe.length === 0) return { imported: 0, failed: 0, errors: [], skippedOneSats }
-
-  const outpoints = safe.map((u) => u.outpoint)
-  const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(wallet.rootKeyHex))
-  const results = await SetupClient.fundWalletFromP2PKHOutpoints(
-    wallet.wallet,
-    outpoints,
-    p2pkhKey,
-  )
-
-  const errors: string[] = []
-  let imported = 0
-  let failed = 0
-  for (const r of results) {
-    if (r.success) imported += 1
-    else {
-      failed += 1
-      if (r.error) errors.push(`${r.outpoint}: ${r.error}`)
-    }
+  if (safe.length === 0) {
+    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown: 0 }
   }
-  return { imported, failed, errors, skippedOneSats }
+
+  const candidates = safe.map((u) => u.outpoint)
+  const outpoints = beginLegacyImport(candidates)
+  const skippedKnown = candidates.length - outpoints.length
+  if (skippedKnown > 0) {
+    console.info(`[legacy] skipped ${skippedKnown} already-imported or in-flight outpoint(s)`)
+  }
+  if (outpoints.length === 0) {
+    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown }
+  }
+
+  try {
+    const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(wallet.rootKeyHex))
+    const results = await SetupClient.fundWalletFromP2PKHOutpoints(
+      wallet.wallet,
+      outpoints,
+      p2pkhKey,
+    )
+
+    const errors: string[] = []
+    const succeeded: string[] = []
+    let imported = 0
+    let failed = 0
+    for (const r of results) {
+      const op = String(r.outpoint || '').trim().toLowerCase()
+      if (r.success) {
+        imported += 1
+        if (op) succeeded.push(op)
+      } else {
+        failed += 1
+        if (r.error) errors.push(`${r.outpoint}: ${r.error}`)
+        // Already spent / already ours — treat as known so we never retry forever.
+        const err = (r.error || '').toLowerCase()
+        if (
+          op &&
+          /already|spent|double.?spend|not spendable|missing output|not found/i.test(err)
+        ) {
+          succeeded.push(op)
+        }
+      }
+    }
+    markLegacyImported(succeeded)
+    const succeededSet = new Set(succeeded)
+    releaseLegacyImport(outpoints.filter((op) => !succeededSet.has(op)))
+    return { imported, failed, errors, skippedOneSats, skippedKnown }
+  } catch (err) {
+    releaseLegacyImport(outpoints)
+    throw err
+  }
 }

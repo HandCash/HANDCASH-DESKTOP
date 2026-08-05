@@ -5,8 +5,11 @@ import { classifyLegacyUtxos, importOneSatOrdinals } from './oneSatImport'
 import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
-import { isDeviceParityEnabled } from './paymentPolicy'
+import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 import { toastSuccess } from './toast'
+import { getDisplayCurrency } from './displayCurrency'
+import { formatPrimaryFromSats } from './fx'
+import { runOnChainIngestQueue } from './chainIngestQueue'
 
 export type SyncLegacyFundsOptions = {
   /**
@@ -34,7 +37,7 @@ const REVIEW_THROTTLE_PARITY_MS = 45_000
 let lastSpendableReviewAt = 0
 
 function reviewThrottleMs(): number {
-  return isDeviceParityEnabled() ? REVIEW_THROTTLE_PARITY_MS : REVIEW_THROTTLE_MS
+  return resolveHistoryBackupBaseUrl() ? REVIEW_THROTTLE_PARITY_MS : REVIEW_THROTTLE_MS
 }
 
 function maybeReceiveChime(): void {
@@ -103,8 +106,16 @@ export async function reviewAndReleaseSpentOutputs(
  *
  * Prefer importing as `refreshFromChain` from `./chainIngest`.
  * Refresh ≠ BRC-39 history backup — see `./layers`.
+ *
+ * Concurrent callers are serialized so the same legacy UTXO cannot be swept twice.
  */
 export async function syncLegacyFunds(
+  opts?: SyncLegacyFundsOptions,
+): Promise<number | null> {
+  return runOnChainIngestQueue(() => syncLegacyFundsExclusive(opts))
+}
+
+async function syncLegacyFundsExclusive(
   opts?: SyncLegacyFundsOptions,
 ): Promise<number | null> {
   const announceReceive = opts?.announceReceive !== false
@@ -139,12 +150,12 @@ export async function syncLegacyFunds(
       message: 'Couldn’t verify spent outputs — check your network connection.',
       heldOneSats: 0,
     })
-    // Continue to import path; do not abort entirely.
   }
 
   let newOneSatOutpoints: string[] = []
   let heldCount = 0
   let partialWarn: string | null = null
+  let importedFunding = 0
 
   try {
     const scan = await scanLegacyAddress(active)
@@ -174,6 +185,7 @@ export async function syncLegacyFunds(
       }
       if (funding.length > 0) {
         const result = await importLegacyUtxos(funding, active)
+        importedFunding = result.imported
         if (result.failed > 0) {
           console.warn('[sync] legacy import partial', result)
           partialWarn =
@@ -197,13 +209,17 @@ export async function syncLegacyFunds(
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
       const newItems = newOneSatOutpoints.length > 0
-      if (balanceRose || newItems) {
+      // Announce when we imported funding this tick, balance rose, or new items arrived.
+      // Serialization + outpoint guards prevent the same UTXO from toasting N times.
+      if (importedFunding > 0 || newItems || balanceRose) {
         maybeReceiveChime()
         const gained = balanceRose ? Math.max(0, balanceAfter - balanceBefore) : 0
+        const amountLabel =
+          gained > 0 ? formatPrimaryFromSats(gained, getDisplayCurrency()) : undefined
         toastSuccess(
-          balanceRose ? 'Payment received' : 'Item received',
-          balanceRose && gained > 0
-            ? `${gained.toLocaleString()} sats${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
+          balanceRose || importedFunding > 0 ? 'Payment received' : 'Item received',
+          amountLabel
+            ? `${amountLabel}${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
             : newItems
               ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
               : undefined,

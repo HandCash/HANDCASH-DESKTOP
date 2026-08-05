@@ -134,9 +134,10 @@ export function formatBsv(sats: number): string {
 /** Compact BSV (or sats) with at most `maxSignificant` significant digits. */
 export function formatBsvSignificant(sats: number, maxSignificant = 5): string {
   const safe = Number.isFinite(sats) ? Math.max(0, Math.trunc(sats)) : 0
-  const asSats = () => `${safe.toLocaleString('en-US')} sats`
-  // Keep tiny amounts as sats so lists never show long leading-zero decimals (e.g. 0.00012345).
-  if (safe < 100_000) return asSats()
+  // Tiny amounts only — never show sat labels once the figure has 5+ digits.
+  if (safe < 10_000) {
+    return `${safe.toLocaleString('en-US')} sats`
+  }
 
   const bsv = safe / 1e8
   let raw = bsv.toPrecision(maxSignificant)
@@ -154,8 +155,6 @@ export function formatBsvSignificant(sats: number, maxSignificant = 5): string {
   const [intPart, fracPart] = unsigned.split('.')
   const intGrouped = Number(intPart).toLocaleString('en-US')
   const body = fracPart != null ? `${intGrouped}.${fracPart}` : intGrouped
-  const digitCount = `${intPart}${fracPart ?? ''}`.replace(/^0+/, '') || '0'
-  if (digitCount.length > maxSignificant) return asSats()
   return `${neg ? '-' : ''}${body} BSV`
 }
 

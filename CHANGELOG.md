@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.17] - 2026-08-05
+
+### Fixed
+
+- Prevent double legacy/1sat imports via outpoint guards and a shared chain-ingest queue (migrate + Dashboard sync).
+- Serialize BRC-39 history upload/restore; skip soft-pull while local history is dirty.
+- Receive toasts use the selected display denomination; longer toast duration; CRT toast contrast.
+
+### Changed
+
+- Serialize `internalizeAction` with spends; block collectable-send / handle-claim re-entry; skip overlapping Dashboard poll ticks.
 ## [1.2.16] - 2026-08-05
 
 ### Fixed

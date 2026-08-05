@@ -124,23 +124,31 @@ export function Dashboard({
   useEffect(() => {
     let cancelled = false
     let lastHistoryPull = 0
+    let tickInFlight = false
 
     const sync = async () => {
-      // Parity devices merge strictly-newer cloud history before reading the chain,
-      // so the balance stays current without an explicit Refresh.
-      if (
-        isDeviceParityEnabled() &&
-        getSessionBackupPassword() &&
-        Date.now() - lastHistoryPull >= HISTORY_PULL_INTERVAL_MS
-      ) {
-        lastHistoryPull = Date.now()
-        await softPullHistoryIfRemoteNewer()
+      // Skip overlapping poll ticks — prior soft-pull + chain sync must finish.
+      if (tickInFlight) return
+      tickInFlight = true
+      try {
+        // Parity devices merge strictly-newer cloud history before reading the chain,
+        // so the balance stays current without an explicit Refresh.
+        if (
+          isDeviceParityEnabled() &&
+          getSessionBackupPassword() &&
+          Date.now() - lastHistoryPull >= HISTORY_PULL_INTERVAL_MS
+        ) {
+          lastHistoryPull = Date.now()
+          await softPullHistoryIfRemoteNewer()
+          if (cancelled) return
+        }
+        const sats = await refreshFromChain()
         if (cancelled) return
+        if (sats != null) onRefreshBalance(sats)
+        void pollDeviceMeshOnce()
+      } finally {
+        tickInFlight = false
       }
-      const sats = await refreshFromChain()
-      if (cancelled) return
-      if (sats != null) onRefreshBalance(sats)
-      void pollDeviceMeshOnce()
     }
 
     void sync()

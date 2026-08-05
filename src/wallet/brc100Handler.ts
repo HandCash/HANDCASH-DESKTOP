@@ -304,6 +304,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           }),
         }
       }
+    } else if (method === 'internalizeAction') {
+      // Serialize with spends — concurrent internalize mid-broadcast can thrash outs.
+      result = await runExclusiveSpend(() =>
+        dispatchWalletMethod(active.wallet, method, args, originator),
+      )
     } else {
       result = await dispatchWalletMethod(active.wallet, method, args, originator)
     }

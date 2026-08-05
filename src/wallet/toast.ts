@@ -46,8 +46,9 @@ export function showToast(input: {
 }): string {
   const id = `toast-${Date.now()}-${++seq}`
   const tone = input.tone ?? 'neutral'
+  // Stay up long enough to read amount + tone (2.5× prior defaults).
   const durationMs =
-    input.durationMs ?? (tone === 'error' ? 5600 : tone === 'success' ? 2200 : 4200)
+    input.durationMs ?? (tone === 'error' ? 14_000 : tone === 'success' ? 5500 : 10_500)
   const item: ToastItem = {
     id,
     title: input.title,
@@ -76,6 +77,6 @@ export function toastCopied(what?: string): string {
   return showToast({
     title: what ? `Copied ${what}` : 'Copied',
     tone: 'success',
-    durationMs: 1800,
+    durationMs: 4500,
   })
 }

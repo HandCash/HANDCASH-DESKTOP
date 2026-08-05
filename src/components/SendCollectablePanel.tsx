@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
   getCollectable,
@@ -62,6 +62,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
   const [showMatches, setShowMatches] = useState(false)
   const [stage, setStage] = useState<Stage>('edit')
+  const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [txid, setTxid] = useState<string | null>(null)
 
@@ -137,7 +138,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   }
 
   const confirmSend = async () => {
-    if (!item) return
+    if (!item || sendingRef.current) return
+    sendingRef.current = true
     setStage('sending')
     setError(null)
     let pendingId: string | null = null
@@ -193,6 +195,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       setError(message)
       setStage('failure')
       toastError('Send failed', message)
+      sendingRef.current = false
     }
   }
 
