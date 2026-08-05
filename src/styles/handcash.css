@@ -1141,7 +1141,7 @@ body {
     background-color 200ms ease;
 }
 
-/* Subtle CRT: fine scanlines + soft phosphor grain (Aeon kraft-style layering). */
+/* Soft CRT: sparse scanlines + faint phosphor haze (not a pixel grid). */
 .bsv-toast-cover::before {
   content: '';
   position: absolute;
@@ -1153,16 +1153,21 @@ body {
     repeating-linear-gradient(
       0deg,
       transparent 0,
-      transparent 2px,
-      rgba(0, 0, 0, 0.055) 2px,
-      rgba(0, 0, 0, 0.055) 3px
+      transparent 5px,
+      rgba(0, 0, 0, 0.028) 5px,
+      rgba(0, 0, 0, 0.028) 6px
     ),
-    radial-gradient(circle, rgba(0, 0, 0, 0.045) 0.55px, transparent 0.65px);
+    radial-gradient(
+      ellipse 90% 70% at 50% 45%,
+      rgba(0, 0, 0, 0.04) 0%,
+      transparent 72%
+    );
   background-size:
-    100% 3px,
-    3px 3px;
-  opacity: 0.85;
+    100% 6px,
+    100% 100%;
+  opacity: 0.55;
   mix-blend-mode: multiply;
+  filter: blur(0.35px);
 }
 
 .bsv-toast-cover::after {
@@ -1173,11 +1178,11 @@ body {
   border-radius: inherit;
   pointer-events: none;
   background: radial-gradient(
-    ellipse 120% 80% at 50% 40%,
-    transparent 40%,
-    rgba(0, 0, 0, 0.12) 100%
+    ellipse 130% 90% at 50% 40%,
+    transparent 55%,
+    rgba(0, 0, 0, 0.08) 100%
   );
-  opacity: 0.55;
+  opacity: 0.4;
 }
 
 .bsv-toast-cover > * {

@@ -7,25 +7,35 @@
 import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { refreshFromChainDuringSpend } from './chainIngest'
+import { refreshFromChain, refreshFromChainDuringSpend } from './chainIngest'
 import { acquireSpendLease } from './spendLease'
-import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
+import {
+  getWalletCoordinatorSnapshot,
+  runExclusiveSpend as runExclusiveSpendCoordinated,
+} from './walletCoordinator'
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(fn: () => Promise<T>): Promise<T> {
   return runExclusiveSpendCoordinated(fn, acquireSpendLease)
 }
 
-/** Force chain refresh; return spendable sats. */
+/**
+ * Force chain refresh; return spendable sats.
+ *
+ * Pre-prompt heals (BRC-100 createAction before the permission sheet) run
+ * *outside* a spend session, so they must use the top-level chain ingest path.
+ * Heals under `runExclusiveSpend` nest via `refreshFromChainDuringSpend`.
+ */
 export async function refreshSpendableBalance(): Promise<number> {
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const synced = await refreshFromChainDuringSpend({
-    announceReceive: false,
-    forceReview: true,
-  })
+  const opts = { announceReceive: false, forceReview: true } as const
+  const synced =
+    getWalletCoordinatorSnapshot().spend === 'active'
+      ? await refreshFromChainDuringSpend(opts)
+      : await refreshFromChain(opts)
   if (synced != null) return synced
   return fetchBalanceSats(active.wallet)
 }

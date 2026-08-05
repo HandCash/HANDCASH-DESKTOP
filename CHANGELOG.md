@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.37] - 2026-08-05
+
+### Fixed
+
+- Pre-prompt spend heals no longer throw `runChainIngestDuringSpend requires an active spend session`. Chain refresh uses the top-level ingest path outside a spend lock, and nests only while send is already exclusive.
+- Soften the BSV toast CRT texture — wider scanlines and a haze instead of a dense pixel grid.
+
 ## [1.2.36] - 2026-08-05
 
 ### Fixed

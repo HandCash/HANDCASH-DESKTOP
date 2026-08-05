@@ -100,4 +100,10 @@ describe('walletCoordinator runtime', () => {
       recompose: 'idle',
     })
   })
+
+  it('throws when nested chain ingest is requested without a spend session', () => {
+    expect(() => runChainIngestDuringSpend(async () => 'x')).toThrow(
+      /active spend session/i,
+    )
+  })
 })
