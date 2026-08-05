@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.19] - 2026-08-05
+
+### Changed
+
+- Wallet-layer coordinator (`walletCoordinatorMachine`) — chain ingest, spend, history replica, and recompose cannot overlap illegally.
+- Spend-path chain heal uses nested ingest (no deadlock with in-flight send); Dashboard Refresh waits for active spend.
+
 ## [1.2.18] - 2026-08-05
 
 ### Fixed
