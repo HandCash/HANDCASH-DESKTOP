@@ -5,8 +5,8 @@
  * and **not** Desktop↔Mobile sync. See `layers.ts`.
  *
  * Pipeline:
- * 1. reviewSpendableOutputs (drop outs spent elsewhere)
- * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
+ * 1. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
+ * 2. reviewSpendableOutputs (drop outs spent elsewhere; skipped briefly after import)
  */
 import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
@@ -19,6 +19,7 @@ import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
+import { isLegacyImportGraceActive } from './legacyImportGuard'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -106,6 +107,12 @@ export async function reviewAndReleaseSpentOutputs(
     return { released: 0, skipped: true }
   }
 
+  // Fresh legacy sweeps produce managed change that indexers may not yet treat as
+  // spendable — releasing during this window drops the deposit from balance.
+  if (isLegacyImportGraceActive()) {
+    return { released: 0, skipped: true }
+  }
+
   try {
     let result
     try {
@@ -156,15 +163,6 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
-  const review = await reviewAndReleaseSpentOutputs(forceReview)
-  if (review.error && forceReview) {
-    setSyncHealth({
-      phase: 'error',
-      message: 'Couldn’t verify spent outputs — check your network connection.',
-      heldOneSats: 0,
-    })
-  }
-
   let heldCount = 0
   let partialWarn: string | null = null
   let importedFunding = 0
@@ -191,23 +189,38 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
     return null
   }
 
+  const review = await reviewAndReleaseSpentOutputs(forceReview)
+  if (review.error && forceReview) {
+    setSyncHealth({
+      phase: 'error',
+      message: 'Couldn’t verify spent outputs — check your network connection.',
+      heldOneSats: heldCount,
+    })
+  }
+
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
       const newItems = newOneSatOutpoints.length > 0
-      if (importedFunding > 0 || newItems || balanceRose) {
+      // Only announce when balance actually rose or new collectables arrived — not on
+      // import attempt alone (indexer lag can show a phantom deposit then review drops it).
+      if (balanceRose || newItems) {
         maybeReceiveChime()
         const gained = balanceRose ? Math.max(0, balanceAfter - balanceBefore) : 0
         const amountLabel =
           gained > 0 ? formatPrimaryFromSats(gained, getDisplayCurrency()) : undefined
         toastSuccess(
-          balanceRose || importedFunding > 0 ? 'Payment received' : 'Item received',
+          balanceRose ? 'Payment received' : 'Item received',
           amountLabel
             ? `${amountLabel}${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
             : newItems
               ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
               : undefined,
+        )
+      } else if (importedFunding > 0 && !balanceRose) {
+        console.info(
+          `[chain-ingest] imported ${importedFunding} legacy out(s) but balance unchanged — awaiting indexer`,
         )
       }
     }

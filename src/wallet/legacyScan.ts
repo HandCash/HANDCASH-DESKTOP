@@ -155,7 +155,14 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
-): Promise<{ imported: number; failed: number; errors: string[]; skippedOneSats: number; skippedKnown: number }> {
+): Promise<{
+  imported: number
+  failed: number
+  errors: string[]
+  skippedOneSats: number
+  skippedKnown: number
+  importedOutpoints: string[]
+}> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
 
@@ -167,7 +174,7 @@ export async function importLegacyUtxos(
     )
   }
   if (safe.length === 0) {
-    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown: 0 }
+    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown: 0, importedOutpoints: [] }
   }
 
   // Heal false blacklist: still-unspent outs that were marked imported after a transient error.
@@ -180,7 +187,7 @@ export async function importLegacyUtxos(
     console.info(`[legacy] skipped ${skippedKnown} already-imported or in-flight outpoint(s)`)
   }
   if (outpoints.length === 0) {
-    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown }
+    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown, importedOutpoints: [] }
   }
 
   try {
@@ -219,7 +226,7 @@ export async function importLegacyUtxos(
     markLegacyImported(succeeded)
     const succeededSet = new Set(succeeded)
     releaseLegacyImport(outpoints.filter((op) => !succeededSet.has(op)))
-    return { imported, failed, errors, skippedOneSats, skippedKnown }
+    return { imported, failed, errors, skippedOneSats, skippedKnown, importedOutpoints: succeeded }
   } catch (err) {
     releaseLegacyImport(outpoints)
     throw err

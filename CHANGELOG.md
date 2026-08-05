@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.20] - 2026-08-05
+
+### Fixed
+
+- Legacy balance no longer vanishes after “Payment received” — import runs before spendable review.
+- 2-minute grace window after legacy sweep so indexers can catch up before outputs are released.
+- Heal path when outpoints were marked imported but funds still sit on the legacy address.
+- Receive toast only fires when spendable balance actually rises (not on import attempt alone).
+
 ## [1.2.19] - 2026-08-05
 
 ### Changed

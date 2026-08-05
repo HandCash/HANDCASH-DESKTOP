@@ -43,6 +43,7 @@ describe('legacyImportGuard', () => {
   it('reclaims still-unspent outpoints that were falsely marked imported', async () => {
     const guard = await import('./legacyImportGuard')
     guard.markLegacyImported(['aa.0', 'bb.1'])
+    guard.resetLegacyImportGraceForTests()
     const reclaimed = guard.reclaimStillUnspentLegacyOutpoints([
       { outpoint: 'aa.0', satoshis: 50_000 },
       { outpoint: 'bb.1', satoshis: 1 },
@@ -50,5 +51,16 @@ describe('legacyImportGuard', () => {
     ])
     expect(reclaimed).toEqual(['aa.0'])
     expect(guard.filterNewLegacyOutpoints(['aa.0', 'bb.1', 'cc.2'])).toEqual(['aa.0', 'cc.2'])
+  })
+
+  it('does not reclaim during import grace window', async () => {
+    const guard = await import('./legacyImportGuard')
+    guard.markLegacyImported(['aa.0'])
+    guard.noteLegacyImportSuccess(1)
+    const reclaimed = guard.reclaimStillUnspentLegacyOutpoints([
+      { outpoint: 'aa.0', satoshis: 50_000 },
+    ])
+    expect(reclaimed).toEqual([])
+    expect(guard.isLegacyOutpointKnown('aa.0')).toBe(true)
   })
 })

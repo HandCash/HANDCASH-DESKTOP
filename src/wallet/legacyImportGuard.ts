@@ -7,8 +7,12 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 const STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v1'
 const MAX_ENTRIES = 2000
 
+/** Skip spendable review + stale-indexer reclaim briefly after a successful sweep. */
+const IMPORT_GRACE_MS = 120_000
+
 /** Outpoints currently mid-import on this process. */
 const inFlight = new Set<string>()
+let lastSuccessfulLegacyImportAt = 0
 
 function readImported(): Set<string> {
   try {
@@ -66,6 +70,16 @@ export function markLegacyImported(outpoints: string[]): void {
     inFlight.delete(op)
   }
   writeImported(known)
+  noteLegacyImportSuccess(outpoints.length)
+}
+
+/** Record a successful legacy sweep — pauses aggressive review/reclaim while indexers catch up. */
+export function noteLegacyImportSuccess(count: number): void {
+  if (count > 0) lastSuccessfulLegacyImportAt = Date.now()
+}
+
+export function isLegacyImportGraceActive(): boolean {
+  return lastSuccessfulLegacyImportAt > 0 && Date.now() - lastSuccessfulLegacyImportAt < IMPORT_GRACE_MS
 }
 
 /** Undo a durable mark — used when an “imported” out is still unspent on-chain. */
@@ -90,6 +104,9 @@ export function forgetLegacyImported(outpoints: string[]): void {
 export function reclaimStillUnspentLegacyOutpoints(
   utxos: Array<{ outpoint: string; satoshis: number }>,
 ): string[] {
+  // WoC often lags after a sweep — do not undo a fresh import mark on stale unspent rows.
+  if (isLegacyImportGraceActive()) return []
+
   const known = readImported()
   const reclaimed: string[] = []
   for (const u of utxos) {
@@ -111,4 +128,10 @@ export function releaseLegacyImport(outpoints: string[]): void {
   for (const raw of outpoints) {
     inFlight.delete(raw.trim().toLowerCase())
   }
+}
+
+/** Test-only */
+export function resetLegacyImportGraceForTests(): void {
+  lastSuccessfulLegacyImportAt = 0
+  inFlight.clear()
 }

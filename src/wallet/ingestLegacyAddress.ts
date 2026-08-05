@@ -5,6 +5,7 @@
  */
 import { getActiveWallet, type ActiveWallet } from './session'
 import { scanLegacyAddress, importLegacyUtxos, type LegacyScanResult } from './legacyScan'
+import { forgetLegacyImported } from './legacyImportGuard'
 import {
   classifyLegacyUtxos,
   importOneSatOrdinals,
@@ -18,6 +19,7 @@ export type LegacyAddressIngestResult = {
   fundingFailed: number
   itemsFailed: number
   fundingSkippedKnown: number
+  importedFundingOutpoints: string[]
   heldOneSats: number
   newOneSatOutpoints: string[]
   /** Human-facing retry hint when partial import occurred. */
@@ -49,6 +51,7 @@ export async function ingestLegacyAddressUtxos(
       fundingFailed: 0,
       itemsFailed: 0,
       fundingSkippedKnown: 0,
+      importedFundingOutpoints: [],
       heldOneSats: 0,
       newOneSatOutpoints: [],
       partialWarn: null,
@@ -93,12 +96,33 @@ export async function ingestLegacyAddressUtxos(
   let importedFunding = 0
   let fundingFailed = 0
   let fundingSkippedKnown = 0
+  let importedFundingOutpoints: string[] = []
 
   if (funding.length > 0) {
-    const result = await importLegacyUtxos(funding, active)
+    let result = await importLegacyUtxos(funding, active)
     importedFunding = result.imported
     fundingFailed = result.failed
     fundingSkippedKnown = result.skippedKnown
+    importedFundingOutpoints = result.importedOutpoints
+
+    // Marked imported but still unspent on legacy with nothing swept — heal blacklist.
+    if (
+      result.imported === 0 &&
+      result.skippedKnown > 0 &&
+      scan.sats > 0
+    ) {
+      const knownOps = funding.map((u) => u.outpoint)
+      forgetLegacyImported(knownOps)
+      console.warn(
+        `[chain-ingest] ${result.skippedKnown} legacy out(s) marked imported but ${scan.sats} sats still on address — retrying sweep`,
+      )
+      result = await importLegacyUtxos(funding, active)
+      importedFunding = result.imported
+      fundingFailed = result.failed
+      fundingSkippedKnown = result.skippedKnown
+      importedFundingOutpoints = result.importedOutpoints
+    }
+
     if (result.failed > 0) {
       console.warn('[chain-ingest] legacy funding import partial', result)
       partialWarn =
@@ -118,6 +142,7 @@ export async function ingestLegacyAddressUtxos(
     fundingFailed,
     itemsFailed,
     fundingSkippedKnown,
+    importedFundingOutpoints,
     heldOneSats: heldOneSats.length,
     newOneSatOutpoints,
     partialWarn,

@@ -87,7 +87,7 @@ describe('refreshFromChain spendable review', () => {
     })
   })
 
-  it('reviews all baskets with release before address scan when forced', async () => {
+  it('scans legacy address before spendable review when forced', async () => {
     const order: string[] = []
     mockReviewSpendableOutputs.mockImplementation(async () => {
       order.push('review')
@@ -108,7 +108,7 @@ describe('refreshFromChain spendable review', () => {
     await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
-    expect(order).toEqual(['review', 'scan'])
+    expect(order).toEqual(['scan', 'review'])
     expect(mockClearCollectablesCache).toHaveBeenCalled()
   })
 
@@ -131,14 +131,28 @@ describe('refreshFromChain spendable review', () => {
   })
 
   it('does not release when spendable review throws', async () => {
-    mockReviewSpendableOutputs.mockRejectedValue(new Error('provider down'))
+    const order: string[] = []
+    mockReviewSpendableOutputs.mockImplementation(async () => {
+      order.push('review')
+      throw new Error('provider down')
+    })
+    mockScanLegacyAddress.mockImplementation(async () => {
+      order.push('scan')
+      return {
+        address: 'addr',
+        chain: 'main',
+        sats: 0,
+        utxos: [],
+        source: 'whatsonchain',
+      }
+    })
 
     const { refreshFromChain } = await import('./chainIngest')
     const sats = await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(sats).toBe(1000)
+    expect(order).toEqual(['scan', 'review'])
     expect(mockClearCollectablesCache).not.toHaveBeenCalled()
-    expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 
   it('throttles background review but still scans', async () => {
@@ -150,6 +164,17 @@ describe('refreshFromChain spendable review', () => {
     mockScanLegacyAddress.mockClear()
 
     await refreshFromChain({ announceReceive: false })
+
+    expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
+    expect(mockScanLegacyAddress).toHaveBeenCalled()
+  })
+
+  it('skips spendable review during legacy import grace window', async () => {
+    const guard = await import('./legacyImportGuard')
+    guard.noteLegacyImportSuccess(1)
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
     expect(mockScanLegacyAddress).toHaveBeenCalled()
