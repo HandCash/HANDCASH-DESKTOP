@@ -15,7 +15,7 @@ import { SetupClient } from '@bsv/wallet-toolbox-client'
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
 import { LATCH_DUST_SATS, ONE_SAT_LATCH_BASKET, isLatchDustSats } from './oneSatLatch'
-import { isOneSatInscription } from './oneSatImport'
+import { resolveOneSatInscription } from './oneSatImport'
 
 /** Item baskets that must never hold anything worth more than a satoshi. */
 const ITEM_BASKETS = ['1sat', ONE_SAT_LATCH_BASKET] as const
@@ -30,11 +30,23 @@ export type MisfiledOutput = {
   lockingScript?: string
 }
 
+export type SkipReason = 'foreign-key' | 'inscribed' | 'probe-failed'
+
+export type SkippedOutput = {
+  outpoint: string
+  satoshis: number
+  reason: SkipReason
+}
+
 export type RecoverMisfiledResult = {
   found: MisfiledOutput[]
   recoveredSats: number
   txid?: string
-  skipped: string[]
+  skipped: SkippedOutput[]
+  /** Recoverable sats left in place because the total was below the fee floor. */
+  belowFloorSats: number
+  /** Sweep attempted but failed — surfaced so the user is not left guessing. */
+  error?: string
 }
 
 function normalizeOutpoint(outpoint: string): string {
@@ -88,62 +100,76 @@ export async function recoverMisfiledFunds(
 
   const found = await findMisfiledFunds(wallet)
   if (found.length === 0) {
-    return { found, recoveredSats: 0, skipped: [] }
+    return { found, recoveredSats: 0, skipped: [], belowFloorSats: 0 }
   }
 
   const expectedLock = new P2PKH().lock(wallet.address).toHex().toLowerCase()
-  const skipped: string[] = []
+  const skipped: SkippedOutput[] = []
   const spendable: MisfiledOutput[] = []
   for (const o of found) {
     if (o.lockingScript && o.lockingScript.toLowerCase() !== expectedLock) {
-      skipped.push(o.outpoint)
+      skipped.push({ outpoint: o.outpoint, satoshis: o.satoshis, reason: 'foreign-key' })
       continue
     }
     // Inscriptions on larger outputs exist. Sweeping one would destroy it, which
     // is far worse than leaving the sats out of balance — when in doubt, keep it.
+    // Only this outpoint counts: the ancestor walk resolveOneSatInscription does
+    // by default reports funding outputs descended from an ordinal spend as
+    // inscribed, which held real money in the basket forever.
     const [txid, vout] = o.outpoint.split('.')
-    let inscribed = true
+    let inscribed = false
     try {
-      inscribed = await isOneSatInscription(txid!, Number(vout), wallet.chain)
+      inscribed = (await resolveOneSatInscription(txid!, Number(vout), wallet.chain, 0)) != null
     } catch (err) {
       console.warn('[recover] inscription probe failed — keeping output', o.outpoint, err)
+      skipped.push({ outpoint: o.outpoint, satoshis: o.satoshis, reason: 'probe-failed' })
+      continue
     }
     if (inscribed) {
-      skipped.push(o.outpoint)
+      skipped.push({ outpoint: o.outpoint, satoshis: o.satoshis, reason: 'inscribed' })
       continue
     }
     spendable.push(o)
   }
 
   const recoverableSats = spendable.reduce((s, o) => s + o.satoshis, 0)
-  if (spendable.length === 0 || recoverableSats < MIN_RECOVERABLE_SATS) {
-    return { found, recoveredSats: 0, skipped }
+  if (spendable.length === 0) {
+    return { found, recoveredSats: 0, skipped, belowFloorSats: 0 }
+  }
+  if (recoverableSats < MIN_RECOVERABLE_SATS) {
+    return { found, recoveredSats: 0, skipped, belowFloorSats: recoverableSats }
   }
 
-  const result = await wallet.wallet.createAction({
-    description: 'Recover misfiled funds',
-    labels: ['recover-misfiled'],
-    inputs: spendable.map((o) => ({
-      outpoint: o.outpoint,
-      inputDescription: `Misfiled ${o.basket} funds`,
-      unlockingScriptLength: 108,
-    })),
-    outputs: [],
-    options: {
-      trustSelf: 'known',
-      acceptDelayedBroadcast: false,
-      signAndProcess: true,
-    },
-  })
+  try {
+    const result = await wallet.wallet.createAction({
+      description: 'Recover misfiled funds',
+      labels: ['recover-misfiled'],
+      inputs: spendable.map((o) => ({
+        outpoint: o.outpoint,
+        inputDescription: `Misfiled ${o.basket} funds`,
+        unlockingScriptLength: 108,
+      })),
+      outputs: [],
+      options: {
+        trustSelf: 'known',
+        acceptDelayedBroadcast: false,
+        signAndProcess: true,
+      },
+    })
 
-  let txid = result.txid
-  if (!txid) {
-    const signable = result.signableTransaction
-    if (!signable) throw new Error('Recovery completed without txid')
-    txid = await signWithRootKey(wallet, signable, spendable.map((o) => o.outpoint))
+    let txid = result.txid
+    if (!txid) {
+      const signable = result.signableTransaction
+      if (!signable) throw new Error('Recovery completed without txid')
+      txid = await signWithRootKey(wallet, signable, spendable.map((o) => o.outpoint))
+    }
+
+    return { found, recoveredSats: recoverableSats, txid, skipped, belowFloorSats: 0 }
+  } catch (err) {
+    const error = err instanceof Error ? err.message : String(err)
+    console.warn('[recover] sweep failed', err)
+    return { found, recoveredSats: 0, skipped, belowFloorSats: 0, error }
   }
-
-  return { found, recoveredSats: recoverableSats, txid, skipped }
 }
 
 async function signWithRootKey(

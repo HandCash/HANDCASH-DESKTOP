@@ -15,11 +15,11 @@ import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
-import { toastSuccess } from './toast'
+import { toastError, toastSuccess, showToast } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import { recoverMisfiledFunds } from './recoverMisfiledFunds'
+import { recoverMisfiledFunds, type RecoverMisfiledResult } from './recoverMisfiledFunds'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
@@ -83,6 +83,47 @@ function maybeReceiveChime(): void {
   if (now - lastReceiveChimeAt < RECEIVE_CHIME_COOLDOWN_MS) return
   lastReceiveChimeAt = now
   playWalletSound('receive')
+}
+
+/** Tell the user why item-basket money stayed put — Refresh alone looks like a no-op. */
+function reportUnrecoveredFunds(result: RecoverMisfiledResult): void {
+  const amount = (sats: number) => formatPrimaryFromSats(sats, getDisplayCurrency())
+
+  if (result.error) {
+    toastError('Couldn’t recover misfiled funds', result.error)
+    return
+  }
+  if (result.belowFloorSats > 0) {
+    showToast({
+      title: 'Misfiled funds too small to recover',
+      body: `${amount(result.belowFloorSats)} would cost more in fees than it returns.`,
+      tone: 'neutral',
+    })
+    return
+  }
+
+  const held = result.skipped.filter((s) => s.reason !== 'foreign-key')
+  const foreign = result.skipped.filter((s) => s.reason === 'foreign-key')
+  if (held.length > 0) {
+    const heldSats = held.reduce((sum, s) => sum + s.satoshis, 0)
+    const probeFailed = held.some((s) => s.reason === 'probe-failed')
+    showToast({
+      title: probeFailed ? 'Couldn’t verify collectables' : 'Funds held with collectables',
+      body: probeFailed
+        ? `${amount(heldSats)} kept in place — the ordinals index did not answer. Try Refresh again.`
+        : `${amount(heldSats)} sits on inscribed outputs, so it stays with those collectables.`,
+      tone: 'neutral',
+    })
+    return
+  }
+  if (foreign.length > 0) {
+    const foreignSats = foreign.reduce((sum, s) => sum + s.satoshis, 0)
+    showToast({
+      title: 'Funds locked to another key',
+      body: `${amount(foreignSats)} can only be recovered on the device that holds that key.`,
+      tone: 'neutral',
+    })
+  }
 }
 
 function isUndefinedPartialFilterError(err: unknown): boolean {
@@ -197,15 +238,27 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
       console.info(
         `[chain-ingest] recovered ${recovered.recoveredSats} sats misfiled into item baskets (${recovered.txid})`,
       )
+      toastSuccess(
+        'Funds recovered',
+        `${formatPrimaryFromSats(recovered.recoveredSats, getDisplayCurrency())} moved back to your balance`,
+      )
     }
     if (recovered.skipped.length > 0) {
-      console.warn(
-        '[chain-ingest] misfiled funds locked to another key — not recovered',
-        recovered.skipped,
-      )
+      console.warn('[chain-ingest] misfiled funds not recovered', recovered.skipped)
+    }
+    // Refresh is the user asking directly — say what happened to money we can see
+    // but did not move, instead of leaving them staring at an unchanged balance.
+    if (forceReview && !recovered.txid) {
+      reportUnrecoveredFunds(recovered)
     }
   } catch (err) {
     console.warn('[chain-ingest] misfiled fund recovery skipped', err)
+    if (forceReview) {
+      toastError(
+        'Couldn’t check misfiled funds',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
   }
 
   const review = await reviewAndReleaseSpentOutputs(forceReview)

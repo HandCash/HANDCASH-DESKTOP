@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.33] - 2026-08-05
+
+### Fixed
+
+- Misfiled funds recover again: the inscription probe no longer walks ancestor transactions, so funding outputs descended from an ordinal spend stopped being treated as collectables and left in the item basket.
+- Refresh now reports what happened to item-basket money — recovered, held with an inscription, locked to another key, below the fee floor, or a sweep error — instead of only logging to the console.
+
 ## [1.2.32] - 2026-08-05
 
 ### Fixed
