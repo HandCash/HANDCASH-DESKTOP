@@ -41,6 +41,12 @@ import {
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { isItemSent, markItemsSent } from './sentItemGuard'
+import {
+  getResolvedInscription,
+  rememberResolvedInscription,
+  rememberUnresolved,
+  shouldResolveInscription,
+} from './inscriptionCache'
 import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
 import type { Chain } from './vault'
 
@@ -221,18 +227,92 @@ function dedupeByOrigin(items: Collectable[]): Collectable[] {
   return order.map((key) => best.get(key)!)
 }
 
+type ItemOutput = {
+  outpoint: string
+  satoshis: number
+  tags?: string[]
+  customInstructions?: string
+}
+
+/** Kept so a late resolution can rebuild the list without re-listing outputs. */
+let lastItemOutputs: ItemOutput[] = []
+let lastItemChain: Chain = 'main'
+let resolvingOrigins = false
+
+function isListableItem(o: ItemOutput): boolean {
+  if (o.tags?.includes(LATCH_TAG)) return false
+  // Tips are exactly 1 satoshi. Soft-latch dust or misfiled funds must not list.
+  if ((o.satoshis ?? 1) !== 1) return false
+  // A tip we already spent lingers in the basket until a review runs.
+  if (isItemSent(o.outpoint)) return false
+  return true
+}
+
+/** True when the item carries its own origin, so the indexer has nothing to add here. */
+function hasLocalOrigin(o: ItemOutput): boolean {
+  return !!(parseCustom(o.customInstructions).origin ?? tagValue(o.tags, 'origin:'))
+}
+
+function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
+  const items: Collectable[] = []
+  for (const o of outputs) {
+    if (!isListableItem(o)) continue
+    items.push(toCollectable(o, chain, getResolvedInscription(normalizeOutpoint(o.outpoint))))
+  }
+  return dedupeByOrigin(items)
+}
+
+/**
+ * Fill in origins the outputs did not carry.
+ *
+ * Runs after the list is already on screen, because each miss walks the chain
+ * backwards through two indexers and can cost dozens of requests. Results are
+ * cached for good, so this converges to doing nothing.
+ */
+async function resolveUnknownOrigins(): Promise<void> {
+  if (resolvingOrigins) return
+  const pending = lastItemOutputs.filter(
+    (o) =>
+      isListableItem(o) &&
+      !hasLocalOrigin(o) &&
+      shouldResolveInscription(normalizeOutpoint(o.outpoint)),
+  )
+  if (pending.length === 0) return
+
+  resolvingOrigins = true
+  try {
+    let changed = false
+    for (const o of pending) {
+      const outpoint = normalizeOutpoint(o.outpoint)
+      const [txid, voutStr] = outpoint.split('.')
+      const vout = Number(voutStr)
+      if (!txid || !Number.isInteger(vout)) continue
+      let resolved: ResolvedInscription | null = null
+      try {
+        resolved = await resolveOneSatInscription(txid, vout, lastItemChain, 6)
+      } catch {
+        // keep fallbacks
+      }
+      if (resolved) {
+        rememberResolvedInscription(outpoint, resolved)
+        changed = true
+      } else {
+        rememberUnresolved(outpoint)
+      }
+    }
+    if (changed) setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+  } finally {
+    resolvingOrigins = false
+  }
+}
+
 export async function listCollectables(
   active?: ActiveWallet | null,
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return []
 
-  let outputs: Array<{
-    outpoint: string
-    satoshis: number
-    tags?: string[]
-    customInstructions?: string
-  }> = []
+  let outputs: ItemOutput[] = []
 
   try {
     const result = await wallet.wallet.listOutputs({
@@ -254,33 +334,14 @@ export async function listCollectables(
     return getCachedCollectables()
   }
 
-  const chain: Chain = wallet.chain
-  const items: Collectable[] = []
+  lastItemOutputs = outputs
+  lastItemChain = wallet.chain
 
-  for (const o of outputs) {
-    if (o.tags?.includes(LATCH_TAG)) continue
-    // Tips are exactly 1 satoshi. Soft-latch dust or misfiled funds must not list.
-    if ((o.satoshis ?? 1) !== 1) continue
-    // A tip we already spent lingers in the basket until a review runs.
-    if (isItemSent(o.outpoint)) continue
-    let resolved: ResolvedInscription | null = null
-    const custom = parseCustom(o.customInstructions)
-    const hasName = !!(custom.name ?? tagValue(o.tags, 'name:'))
-    try {
-      const [txid, voutStr] = normalizeOutpoint(o.outpoint).split('.')
-      const vout = Number(voutStr)
-      // Always try resolve for traits when listing is small; skip deep walk if named.
-      if (txid && Number.isInteger(vout)) {
-        resolved = await resolveOneSatInscription(txid, vout, chain, hasName ? 2 : 6)
-      }
-    } catch {
-      // keep fallbacks
-    }
-    items.push(toCollectable(o, chain, resolved))
-  }
-
-  const deduped = dedupeByOrigin(items)
+  // Everything the list renders (name, app, image) comes from the output itself
+  // or the resolution cache, so paint now and let the indexer catch up.
+  const deduped = buildItems(outputs, wallet.chain)
   setCollectablesCache(deduped)
+  void resolveUnknownOrigins()
   return deduped
 }
 
@@ -294,13 +355,17 @@ export async function getCollectable(
   let item = cached ?? (await listCollectables(active)).find((i) => i.outpoint === target) ?? null
   if (!item || !wallet) return item
 
-  // Details view: refresh indexer metadata (traits, etc.) even if list cache is thin.
+  // Details view: traits and mime type are only fetched here, and the walk is
+  // expensive, so reuse the resolution the list already paid for.
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
     if (txid && Number.isInteger(vout)) {
-      const resolved = await resolveOneSatInscription(txid, vout, wallet.chain, 6)
+      const resolved =
+        getResolvedInscription(target) ??
+        (await resolveOneSatInscription(txid, vout, wallet.chain, 6))
       if (resolved) {
+        rememberResolvedInscription(target, resolved)
         item = {
           ...item,
           origin: resolved.origin || item.origin,

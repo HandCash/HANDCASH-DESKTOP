@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.47] - 2026-08-05
+
+### Fixed
+
+- Collect page no longer freezes the phone. Listing items resolved every item
+  through the indexer before painting, and each resolution walks the chain
+  backwards up to 7 hops, spending a GorillaPool lookup plus a WhatsOnChain
+  transaction fetch plus a lookup per input at each hop — hundreds of serial
+  requests per open, repeated every 30s. The list now paints from the output's own
+  tags and `customInstructions`, which is all it renders.
+- Ordinal images are deferred until near the viewport again, so opening the grid
+  no longer fetches every full-size image at once. Deferral is driven by an
+  observer on the frame rather than `loading="lazy"`, which cannot work while the
+  image is hidden.
+
+### Added
+
+- `inscriptionCache.ts` remembers resolved inscription metadata per outpoint, and
+  keeps it across restarts. What an outpoint is inscribed with cannot change, so a
+  resolved item is never walked again; misses back off for 10 minutes.
+
 ## [1.2.46] - 2026-08-05
 
 ### Fixed

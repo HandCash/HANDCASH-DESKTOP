@@ -37,15 +37,25 @@ export function DeferredImage({
   height,
   src,
   alt = '',
-  // Deliberately swallowed: this component hides the img until it loads, and a
-  // `display: none` img never satisfies lazy loading's intersection check — it
-  // would never fetch, never fire onLoad, and sit on the skeleton forever.
+  // Deliberately swallowed. Deferral is this component's job (see `near` below);
+  // the browser's own lazy loading cannot do it here, because the img is hidden
+  // until it loads and a `display: none` element never intersects — it would
+  // never fetch, never fire onLoad, and sit on the skeleton forever.
   loading: _ignoredLoading,
   ...rest
 }: Props) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const readySent = useRef(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
+  const frameRef = useRef<HTMLSpanElement | null>(null)
+  /**
+   * Whether this has come near the viewport. Ordinals are full-size images, so a
+   * grid of them fetched at once stalls a phone — but the browser's own
+   * `loading="lazy"` cannot help while the img is hidden, since a `display: none`
+   * element never intersects. The skeleton keeps the frame in layout, so we defer
+   * off the frame instead and only then hand the img a `src`.
+   */
+  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
 
   useEffect(() => {
     setStatus('loading')
@@ -53,11 +63,28 @@ export function DeferredImage({
   }, [src])
 
   useEffect(() => {
+    if (near) return
+    const frame = frameRef.current
+    if (!frame) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setNear(true)
+          observer.disconnect()
+        }
+      },
+      { rootMargin: '250px' },
+    )
+    observer.observe(frame)
+    return () => observer.disconnect()
+  }, [near])
+
+  useEffect(() => {
     const img = imgRef.current
-    if (!img || !src) return
+    if (!img || !src || !near) return
     const next = markFromElement(img)
     if (next !== 'loading') setStatus(next)
-  }, [src])
+  }, [src, near])
 
   useEffect(() => {
     if (status === 'loading') return
@@ -85,7 +112,7 @@ export function DeferredImage({
   }
 
   return (
-    <span className="deferred-image" data-aeon-state={status}>
+    <span className="deferred-image" data-aeon-state={status} ref={frameRef}>
       {status === 'loading' || (status === 'error' && !revealOnError && !fallback) ? (
         <Skeleton
           className={skeletonClassName}
@@ -99,7 +126,9 @@ export function DeferredImage({
         {...rest}
         ref={imgRef}
         className={className}
-        src={src}
+        // No src until the frame is near the viewport: that, not the `loading`
+        // attribute, is what keeps a grid of ordinals from fetching all at once.
+        src={near ? src : undefined}
         alt={alt}
         width={width}
         height={height}

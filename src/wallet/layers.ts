@@ -47,6 +47,7 @@ export const WALLET_LAYER_MODULES = {
     'oneSatLatch.ts',
     'sentItemGuard.ts',
     'pendingSend.ts',
+    'inscriptionCache.ts',
   ],
   chainIngest: [
     'chainIngest.ts',
