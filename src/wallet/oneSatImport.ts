@@ -20,6 +20,11 @@ import {
   markOneSatImported,
   releaseOneSatImport,
 } from './oneSatImportGuard'
+import {
+  ONE_SAT_LATCH_BASKET,
+  isLatchDustSats,
+  latchOutputTags,
+} from './oneSatLatch'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -41,10 +46,12 @@ export type OneSatImportResult = {
 }
 
 export type ClassifiedLegacyUtxos = {
-  /** satoshis > 1 only — safe to fund-sweep */
+  /** satoshis > 1 and not latch dust — safe to fund-sweep */
   funding: LegacyUtxo[]
   /** Confirmed ordinals — internalize to basket `1sat` */
   oneSats: MigrationItem[]
+  /** Soft-latch dust (exactly LATCH_DUST_SATS) — internalize to `1sat-latch` */
+  latches: LegacyUtxo[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
 }
@@ -325,8 +332,9 @@ export async function isOneSatInscription(
 
 /**
  * Split scanned UTXOs.
- * - funding: only satoshis > 1
- * - oneSats: cloud-known or GorillaPool-confirmed inscriptions
+ * - funding: satoshis > 1 and not latch dust — safe to fund-sweep
+ * - oneSats: cloud-known or GorillaPool-confirmed inscriptions (exactly 1 sat)
+ * - latches: soft-latch dust (exactly LATCH_DUST_SATS) — never funds, never tips
  * - heldOneSats: every other 1-sat — MUST NOT be swept
  */
 export async function classifyLegacyUtxos(
@@ -350,16 +358,14 @@ export async function classifyLegacyUtxos(
     scannedByOutpoint.set(outpointKey(u.outpoint), u)
   }
 
-  const funding: LegacyUtxo[] = []
   const oneSats: MigrationItem[] = []
-  const heldOneSats: LegacyUtxo[] = []
   const claimed = new Set<string>()
 
   for (const [key, item] of knownByOutpoint) {
     const scanned = scannedByOutpoint.get(key)
     if (scanned && scanned.satoshis !== 1) {
       console.warn(
-        `[1sat] cloud item ${key} holds ${scanned.satoshis} sats — treating as funding, not an ordinal`,
+        `[1sat] cloud item ${key} holds ${scanned.satoshis} sats — not treating as an ordinal`,
       )
       continue
     }
@@ -367,8 +373,19 @@ export async function classifyLegacyUtxos(
     claimed.add(key)
   }
 
+  const funding: LegacyUtxo[] = []
+  const latches: LegacyUtxo[] = []
+  const heldOneSats: LegacyUtxo[] = []
+
   for (const u of utxos) {
     if (claimed.has(outpointKey(u.outpoint))) continue
+
+    // Soft-latch dust: never a tip, never spendable funds.
+    if (isLatchDustSats(u.satoshis)) {
+      latches.push(u)
+      claimed.add(outpointKey(u.outpoint))
+      continue
+    }
 
     // HARD RULE: never fund-sweep 1-sat outs.
     if (u.satoshis === 1) {
@@ -406,7 +423,7 @@ export async function classifyLegacyUtxos(
     // satoshis === 0 or weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats, heldOneSats }
+  return { funding, oneSats, latches, heldOneSats }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */
@@ -521,6 +538,114 @@ export async function importOneSatOrdinals(
         errors.push(`${item.outpoint}: ${msg}`)
       }
       console.warn('[1sat] internalize failed', txid, err)
+    }
+  }
+
+  return { imported, failed, errors, outpoints }
+}
+
+/**
+ * Internalize soft-latch dust into basket `1sat-latch`.
+ * Pairs each latch with a tip from the same tx when one is known.
+ */
+export async function importOneSatLatches(
+  latches: LegacyUtxo[],
+  tipOriginsByTxid: Map<string, string>,
+  active?: ActiveWallet | null,
+): Promise<OneSatImportResult> {
+  const wallet = active ?? getActiveWallet()
+  if (!wallet) throw new Error('Wallet locked')
+  if (latches.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
+  }
+
+  const claimed = beginOneSatImport(latches.map((l) => l.outpoint))
+  const claimedSet = new Set(claimed)
+  const toImport = latches.filter((l) => claimedSet.has(l.outpoint.trim().toLowerCase()))
+  if (toImport.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
+  }
+
+  const byTxid = new Map<string, LegacyUtxo[]>()
+  for (const latch of toImport) {
+    const list = byTxid.get(latch.txid) ?? []
+    list.push(latch)
+    byTxid.set(latch.txid, list)
+  }
+
+  let imported = 0
+  let failed = 0
+  const errors: string[] = []
+  const outpoints: string[] = []
+
+  for (const [txid, group] of byTxid) {
+    const groupOps = group.map((g) => g.outpoint)
+    try {
+      if (!wallet.services?.getBeefForTxid) {
+        throw new Error('Wallet services unavailable for BEEF fetch')
+      }
+      const beef = await wallet.services.getBeefForTxid(txid)
+      const atomic = beef.toBinaryAtomic(txid)
+      const sourceTx = beef.findAtomicTransaction(txid)
+      const tipOrigin =
+        tipOriginsByTxid.get(txid.toLowerCase()) ??
+        tipOriginsByTxid.get(txid) ??
+        `${txid}_0`
+
+      const remittanceOutputs = []
+      for (const latch of group) {
+        const sats = sourceTx?.outputs?.[latch.vout]?.satoshis
+        if (typeof sats === 'number' && !isLatchDustSats(sats)) {
+          console.warn(
+            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch dust (${sats})`,
+          )
+          releaseOneSatImport([latch.outpoint])
+          continue
+        }
+        const tipRef = `OUTPUT:0`
+        const originU = tipOrigin.includes('.')
+          ? tipOrigin.replace(/\.(\d+)$/, '_$1')
+          : tipOrigin.includes('_')
+            ? tipOrigin
+            : `${txid}_0`
+        remittanceOutputs.push({
+          outputIndex: latch.vout,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: {
+            basket: ONE_SAT_LATCH_BASKET,
+            tags: latchOutputTags({ origin: originU, tip: tipRef }),
+            customInstructions: JSON.stringify({
+              schema: 1,
+              origin: originU.toLowerCase(),
+              tip: tipRef,
+            }),
+          },
+        })
+      }
+      if (remittanceOutputs.length === 0) continue
+
+      await wallet.wallet.internalizeAction({
+        tx: atomic,
+        description: 'Import 1Sat latch',
+        labels: ['1sat-latch', 'migration'],
+        outputs: remittanceOutputs,
+        seekPermission: false,
+      })
+
+      const importedOps = remittanceOutputs.map(
+        (o) => `${txid}.${o.outputIndex}`,
+      )
+      imported += remittanceOutputs.length
+      outpoints.push(...importedOps)
+      markOneSatImported(importedOps)
+    } catch (err) {
+      releaseOneSatImport(groupOps)
+      failed += group.length
+      const msg = err instanceof Error ? err.message : String(err)
+      for (const latch of group) {
+        errors.push(`${latch.outpoint}: ${msg}`)
+      }
+      console.warn('[1sat-latch] internalize failed', txid, err)
     }
   }
 

@@ -14,7 +14,7 @@ import { Beef, P2PKH, PrivateKey, Transaction, type SignableTransaction } from '
 import { SetupClient } from '@bsv/wallet-toolbox-client'
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
-import { ONE_SAT_LATCH_BASKET } from './oneSatLatch'
+import { LATCH_DUST_SATS, ONE_SAT_LATCH_BASKET, isLatchDustSats } from './oneSatLatch'
 import { isOneSatInscription } from './oneSatImport'
 
 /** Item baskets that must never hold anything worth more than a satoshi. */
@@ -59,7 +59,9 @@ export async function findMisfiledFunds(
       })
       for (const o of result.outputs ?? []) {
         const satoshis = o.satoshis ?? 0
-        if (satoshis <= 1) continue
+        // Soft-latch dust is intentional (2 sats) — leave it in the latch basket.
+        if (satoshis <= LATCH_DUST_SATS) continue
+        if (isLatchDustSats(satoshis)) continue
         found.push({
           outpoint: normalizeOutpoint(o.outpoint),
           basket,

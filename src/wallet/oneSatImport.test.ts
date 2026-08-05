@@ -59,6 +59,22 @@ describe('classifyLegacyUtxos', () => {
     expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_B}.1`])
   })
 
+  it('never sweeps soft-latch dust as funding', async () => {
+    const TXID = 'c'.repeat(64)
+    const result = await classifyLegacyUtxos(
+      [
+        { outpoint: `${TXID}.0`, txid: TXID, vout: 0, satoshis: 1 },
+        { outpoint: `${TXID}.1`, txid: TXID, vout: 1, satoshis: 2 },
+      ],
+      'main',
+      [{ outpoint: `${TXID}.0`, origin: `${TXID}_0` }],
+    )
+
+    expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID}.0`])
+    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID}.1`])
+    expect(result.funding).toEqual([])
+  })
+
   it('never sweeps unresolvable one-sat outputs', async () => {
     vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
     const result = await classifyLegacyUtxos([utxo(`${TXID_B}.0`, 1)], 'main', [])

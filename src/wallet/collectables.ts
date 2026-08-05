@@ -256,6 +256,8 @@ export async function listCollectables(
 
   for (const o of outputs) {
     if (o.tags?.includes(LATCH_TAG)) continue
+    // Tips are exactly 1 satoshi. Soft-latch dust or misfiled funds must not list.
+    if ((o.satoshis ?? 1) !== 1) continue
     let resolved: ResolvedInscription | null = null
     const custom = parseCustom(o.customInstructions)
     const hasName = !!(custom.name ?? tagValue(o.tags, 'name:'))
@@ -563,7 +565,7 @@ export async function sendCollectable(args: {
       description: `Send ${name}`.slice(0, 50),
       labels: [
         '1sat',
-        ...(priorLatch ? ['1sat-latch'] : []),
+        ...(isLatchedSendEnabled() ? ['1sat-latch'] : []),
         'handcash-send-collectable',
       ],
       ...(inputBEEF ? { inputBEEF } : {}),
@@ -582,8 +584,8 @@ export async function sendCollectable(args: {
             provenance,
           }),
         },
-        // A latch output only ships once it carries an on-chain marker; a bare
-        // 1-sat P2PKH latch imports as a duplicate collectable on the receiver.
+        // Soft-latch: P2PKH dust (>1 sat) so address scanners still find it, but
+        // receivers never confuse it with a tip (tips are always exactly 1 sat).
         ...(isLatchedSendEnabled()
           ? [
               {

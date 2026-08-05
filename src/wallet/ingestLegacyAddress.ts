@@ -8,6 +8,7 @@ import { scanLegacyAddress, importLegacyUtxos, type LegacyScanResult } from './l
 import { forgetLegacyImported } from './legacyImportGuard'
 import {
   classifyLegacyUtxos,
+  importOneSatLatches,
   importOneSatOrdinals,
   type MigrationItem,
 } from './oneSatImport'
@@ -58,7 +59,7 @@ export async function ingestLegacyAddressUtxos(
     }
   }
 
-  const { funding, oneSats, heldOneSats } = await classifyLegacyUtxos(
+  const { funding, oneSats, latches, heldOneSats } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,
     opts.knownItems ?? [],
@@ -67,6 +68,11 @@ export async function ingestLegacyAddressUtxos(
   if (heldOneSats.length > 0) {
     console.info(
       `[chain-ingest] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
+    )
+  }
+  if (latches.length > 0) {
+    console.info(
+      `[chain-ingest] routing ${latches.length} soft-latch dust out(s) to basket 1sat-latch`,
     )
   }
 
@@ -90,6 +96,17 @@ export async function ingestLegacyAddressUtxos(
     if (itemResult.failed > 0) {
       console.warn('[chain-ingest] 1sat import partial', itemResult)
       partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
+    }
+  }
+
+  if (latches.length > 0) {
+    const tipOrigins = new Map<string, string>()
+    for (const tip of oneSats) {
+      if (tip.txid && tip.origin) tipOrigins.set(tip.txid.toLowerCase(), tip.origin)
+    }
+    const latchResult = await importOneSatLatches(latches, tipOrigins, active)
+    if (latchResult.failed > 0) {
+      console.warn('[chain-ingest] latch import partial', latchResult)
     }
   }
 

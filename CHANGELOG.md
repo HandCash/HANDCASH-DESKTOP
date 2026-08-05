@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.28] - 2026-08-05
+
+### Changed
+
+- **BRC-153 soft-latch sends are live** again: collectable transfers create tip (1 sat) + latch (**exactly 2** sats, P2PKH), co-spend prior latch when present, attach v3 remittance with relative `OUTPUT:N` tip/latch refs.
+- Soft-latch dust is a protocol constant (`LATCH_DUST_SATS = 2`): never listed as a collectable, never fund-swept, internalized to basket `1sat-latch`. Spec updated accordingly.
+
 ## [1.2.27] - 2026-08-05
 
 ### Fixed

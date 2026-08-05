@@ -19,8 +19,12 @@ export const LATCH_TAG = 'latch:1sat' as const
 
 export const LATCH_SCHEMA_VERSION = 1 as const
 
-/** Satoshis locked in each soft-latch UTXO (not spendable change). */
-export const LATCH_DUST_SATS = 1 as const
+/**
+ * Soft-latch P2PKH latch value ([BRC-153]).
+ * Exactly **2 satoshis** — never 1 (that is a tip) — so address scanners still
+ * find a plain P2PKH latch while receivers can classify it without a script marker.
+ */
+export const LATCH_DUST_SATS = 2 as const
 
 /** Genesis parentLatch sentinel (all-zero outpoint) when bootstrapping from a legacy tip. */
 export const GENESIS_PARENT_LATCH = `${'0'.repeat(64)}_0` as const
@@ -28,6 +32,11 @@ export const GENESIS_PARENT_LATCH = `${'0'.repeat(64)}_0` as const
 /** Relative outpoint refs for remittance built before settle txid is known. */
 export const RELATIVE_TIP = 'OUTPUT:0' as const
 export const RELATIVE_LATCH = 'OUTPUT:1' as const
+
+/** True when an on-chain value is the soft-latch amount (not a tip, not funds). */
+export function isLatchDustSats(satoshis: number): boolean {
+  return satoshis === LATCH_DUST_SATS
+}
 
 export type ProvenanceV3 = {
   v: 3
@@ -79,16 +88,12 @@ export function resolveOutpointRef(ref: string, heldOutpoint: string): string {
 }
 
 /**
- * Latch outputs need an on-chain marker before they can be broadcast.
- *
- * A bare 1-sat P2PKH latch is indistinguishable from an ordinal tip: receivers
- * scan for 1-sat outputs and the origin resolver walks back into the same tx,
- * so the latch imports as a duplicate collectable. Basket tags are local to the
- * sender and never reach the receiver. Re-enable once the latch carries a
- * distinguishable locking script.
+ * Soft-latch sends are live. The latch is a standard P2PKH output (so address
+ * scanners still find it) with value {@link LATCH_DUST_SATS} (> 1). Receivers
+ * must never treat that dust as a tip or as spendable funding.
  */
 export function isLatchedSendEnabled(): boolean {
-  return false
+  return true
 }
 
 export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {

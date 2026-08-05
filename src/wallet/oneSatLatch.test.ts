@@ -93,15 +93,15 @@ describe('BRC-153 latched provenance (soft-latch)', () => {
     expect(isValidOutpoint(GENESIS_PARENT_LATCH)).toBe(true)
   })
 
-  it('holds latched sends until the latch carries an on-chain marker', () => {
-    expect(isLatchedSendEnabled()).toBe(false)
+  it('latched sends are enabled (soft-latch dust > 1 sat)', () => {
+    expect(isLatchedSendEnabled()).toBe(true)
   })
 
   it('advertises BRC-153 capability profile with latchedSend', () => {
     expect(getOneSatBrcCapabilities()).toEqual({
       brcs: ['147', '150', '153'],
       baskets: ['1sat', '1sat-latch'],
-      latchedSend: false,
+      latchedSend: true,
       provenanceVerify: ['v2', 'v3'],
     })
   })
