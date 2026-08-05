@@ -205,140 +205,153 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   return (
     <div
-      className="nav-child-panel send-collectable-panel"
+      className="nav-child-panel send-panel send-collectable-panel"
       data-aeon-scope="send-collectable"
       data-aeon-state={stateToAttr(stage)}
     >
       {stage === 'edit' && (
         <div className="send-stage send-stage-edit">
-          <div className="send-collectable-preview">
-            <div className="collectable-media collectable-media-sm">
-              <DeferredImage
-                src={item.imageUrl}
-                alt={item.name}
-                width={48}
-                height={48}
-                skeletonWidth={48}
-                skeletonHeight={48}
-                skeletonRadius={6}
-                skeletonClassName="skeleton-qr"
-              />
+          <div className="send-layout">
+            <div className="send-amount-hero send-collectable-hero">
+              <div className="send-collectable-preview">
+                <div className="collectable-media collectable-media-sm">
+                  <DeferredImage
+                    src={item.imageUrl}
+                    alt={item.name}
+                    width={48}
+                    height={48}
+                    skeletonWidth={48}
+                    skeletonHeight={48}
+                    skeletonRadius={6}
+                    skeletonClassName="skeleton-qr"
+                  />
+                </div>
+                <div>
+                  <p className="send-eyebrow">Send collectable</p>
+                  <strong className="collectable-details-name">{item.name}</strong>
+                  {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
+                </div>
+              </div>
             </div>
-            <div>
-              <strong className="collectable-details-name">{item.name}</strong>
-              {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
+
+            <div className="send-side">
+              <div className="field friend-recipient-field send-to-field">
+                <label htmlFor="collectable-to">To</label>
+                <input
+                  id="collectable-to"
+                  value={recipientQuery}
+                  onChange={(e) => applyRecipientInput(e.target.value)}
+                  onFocus={() => setShowMatches(true)}
+                  onBlur={() => {
+                    window.setTimeout(() => setShowMatches(false), 120)
+                  }}
+                  placeholder="Friend, @handle, address, or identity key"
+                  autoComplete="off"
+                  spellCheck={false}
+                  autoFocus
+                />
+                <p className="friend-recipient-hint send-recipient-hint">
+                  Handles and identity keys resolve to a payment address on this network.
+                </p>
+                {friendLabel && (
+                  <p className="friend-recipient-hint">
+                    Sending to <strong>{friendLabel}</strong>
+                  </p>
+                )}
+                {error && stage === 'edit' ? (
+                  <p className="error" role="status">
+                    {error}
+                  </p>
+                ) : null}
+                {showMatches && matches.length > 0 && (
+                  <ul className="friend-suggest-list send-friend-suggest" role="listbox">
+                    {matches.map((friend) => (
+                      <li key={friend.id}>
+                        <button
+                          type="button"
+                          className="friend-suggest-item"
+                          onMouseDown={(e) => e.preventDefault()}
+                          onClick={() => selectFriend(friend)}
+                        >
+                          <strong>{friend.label}</strong>
+                          <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+
+              <div className="actions send-actions">
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={!canReview}
+                  onClick={() => {
+                    try {
+                      const address = resolvePaymentAddress(to, chain)
+                      setTo(address)
+                      setError(null)
+                      setStage('confirm')
+                    } catch (err) {
+                      const message = err instanceof Error ? err.message : String(err)
+                      setError(message)
+                      playWalletSound('deny')
+                    }
+                  }}
+                >
+                  Review
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => openCollectableDetails(item.outpoint)}
+                >
+                  Back
+                </button>
+              </div>
             </div>
-          </div>
-
-          <div className="field friend-recipient-field send-to-field">
-            <label htmlFor="collectable-to">To</label>
-            <input
-              id="collectable-to"
-              value={recipientQuery}
-              onChange={(e) => applyRecipientInput(e.target.value)}
-              onFocus={() => setShowMatches(true)}
-              onBlur={() => {
-                window.setTimeout(() => setShowMatches(false), 120)
-              }}
-              placeholder="Friend, @handle, address, or identity key"
-              autoComplete="off"
-              spellCheck={false}
-              autoFocus
-            />
-            <p className="friend-recipient-hint send-recipient-hint">
-              Handles and identity keys resolve to a payment address on this network.
-            </p>
-            {friendLabel && (
-              <p className="friend-recipient-hint">
-                Sending to <strong>{friendLabel}</strong>
-              </p>
-            )}
-            {error && stage === 'edit' ? (
-              <p className="error" role="status">
-                {error}
-              </p>
-            ) : null}
-            {showMatches && matches.length > 0 && (
-              <ul className="friend-suggest-list send-friend-suggest" role="listbox">
-                {matches.map((friend) => (
-                  <li key={friend.id}>
-                    <button
-                      type="button"
-                      className="friend-suggest-item"
-                      onMouseDown={(e) => e.preventDefault()}
-                      onClick={() => selectFriend(friend)}
-                    >
-                      <strong>{friend.label}</strong>
-                      <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          <div className="actions send-actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={!canReview}
-              onClick={() => {
-                try {
-                  const address = resolvePaymentAddress(to, chain)
-                  setTo(address)
-                  setError(null)
-                  setStage('confirm')
-                } catch (err) {
-                  const message = err instanceof Error ? err.message : String(err)
-                  setError(message)
-                  playWalletSound('deny')
-                }
-              }}
-            >
-              Review
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => openCollectableDetails(item.outpoint)}
-            >
-              Back
-            </button>
           </div>
         </div>
       )}
 
       {stage === 'confirm' && (
         <div className="send-stage send-stage-confirm">
-          <div className="send-collectable-preview">
-            <div className="collectable-media collectable-media-sm">
-              <DeferredImage
-                src={item.imageUrl}
-                alt={item.name}
-                width={48}
-                height={48}
-                skeletonWidth={48}
-                skeletonHeight={48}
-                skeletonRadius={6}
-                skeletonClassName="skeleton-qr"
-              />
+          <div className="send-layout send-layout-confirm">
+            <div className="send-amount-hero send-collectable-hero">
+              <div className="send-collectable-preview">
+                <div className="collectable-media collectable-media-sm">
+                  <DeferredImage
+                    src={item.imageUrl}
+                    alt={item.name}
+                    width={48}
+                    height={48}
+                    skeletonWidth={48}
+                    skeletonHeight={48}
+                    skeletonRadius={6}
+                    skeletonClassName="skeleton-qr"
+                  />
+                </div>
+                <div>
+                  <p className="send-eyebrow">You’re sending</p>
+                  <strong className="collectable-details-name">{item.name}</strong>
+                </div>
+              </div>
             </div>
-            <div>
-              <p className="send-eyebrow">You’re sending</p>
-              <strong className="collectable-details-name">{item.name}</strong>
+            <div className="send-side">
+              <p className="send-confirm-to">
+                to <strong>{recipientLabel}</strong>
+              </p>
+              {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
+              <div className="actions send-actions">
+                <button type="button" className="btn btn-primary" onClick={() => void confirmSend()}>
+                  Confirm
+                </button>
+                <button type="button" className="btn btn-ghost" onClick={() => setStage('edit')}>
+                  Back
+                </button>
+              </div>
             </div>
-          </div>
-          <p className="send-confirm-to">
-            to <strong>{recipientLabel}</strong>
-          </p>
-          {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
-          <div className="actions send-actions">
-            <button type="button" className="btn btn-primary" onClick={() => void confirmSend()}>
-              Confirm
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={() => setStage('edit')}>
-              Back
-            </button>
           </div>
         </div>
       )}

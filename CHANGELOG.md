@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.30] - 2026-08-05
+
+### Changed
+
+- Dashboard **Scan** offers **Add as friend** (identity keys) or **Send**, instead of jumping straight to Send.
+- Collectable send uses the same send-panel layout as BSV send so mobile stacking matches Desktop.
+- Removed the “one-sat waiting on the index” note from Collectables / sync status.
+
 ## [1.2.29] - 2026-08-05
 
 ### Fixed

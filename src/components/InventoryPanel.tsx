@@ -15,7 +15,6 @@ import {
 } from '../wallet/collectables'
 import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
 import { refreshFromChain } from '../wallet/chainIngest'
-import { subscribeSyncHealth } from '../wallet/walletHealth'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { CollectablesIcon, SendIcon } from './icons'
@@ -124,20 +123,8 @@ export function InventoryPanel() {
   const [awaitingFirst, setAwaitingFirst] = useState(
     () => !areCollectablesHydrated() && getCachedCollectables().length === 0,
   )
-  const [heldNote, setHeldNote] = useState<string | null>(null)
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
-  useEffect(
-    () =>
-      subscribeSyncHealth((h) => {
-        setHeldNote(
-          h.heldOneSats > 0
-            ? `${h.heldOneSats} one-sat output${h.heldOneSats === 1 ? '' : 's'} waiting on the index.`
-            : null,
-        )
-      }),
-    [],
-  )
   useEffect(
     () =>
       subscribeCollectables((next) => {
@@ -194,12 +181,6 @@ export function InventoryPanel() {
         <h2>Collectables</h2>
         <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
-
-      {heldNote ? (
-        <p className="wallet-sync-note" role="status">
-          {heldNote}
-        </p>
-      ) : null}
 
       {items.length > 0 ? (
         view === 'grid' ? (

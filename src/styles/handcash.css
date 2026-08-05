@@ -5700,9 +5700,12 @@ a.app-details-host:hover {
   flex-shrink: 0;
 }
 
-.send-collectable-panel {
-  display: grid;
-  gap: 16px;
+.send-collectable-panel.send-panel {
+  /* Inherits .send-panel height / container queries used by BSV send. */
+}
+
+.send-collectable-hero {
+  align-content: center;
 }
 
 .send-collectable-preview {
@@ -5710,11 +5713,53 @@ a.app-details-host:hover {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  text-align: left;
 }
 
 .send-collectable-preview .collectable-details-name {
   display: block;
   max-width: 100%;
+}
+
+.scan-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: center;
+  gap: 12px;
+  min-height: 100%;
+  padding: 20px 8px;
+}
+
+.scan-choice-label {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.scan-choice-value {
+  margin: 0 0 8px;
+  padding: 12px 14px;
+  border-radius: var(--hc-radius);
+  border: 1px solid hsl(var(--border));
+  background: rgba(0, 0, 0, 0.28);
+  color: #ffffff;
+  font-size: 0.85rem;
+  word-break: break-all;
+}
+
+.scan-choice-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+
+.scan-choice-actions .btn {
+  width: 100%;
 }
 
 .app-avatar[data-aeon-state='loading'] {

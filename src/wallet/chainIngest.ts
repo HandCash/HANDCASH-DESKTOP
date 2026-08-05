@@ -244,11 +244,6 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
       }
     }
 
-    const heldMessage =
-      heldCount > 0
-        ? `${heldCount} one-sat output${heldCount === 1 ? '' : 's'} waiting on the index — not spendable as BSV.`
-        : null
-
     const reviewNote =
       review.released > 0
         ? `Updated ${review.released} spent output${review.released === 1 ? '' : 's'} from the network.`
@@ -260,7 +255,7 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
         partialWarn ??
         (review.error
           ? 'Spend check incomplete — retrying automatically.'
-          : (reviewNote ?? heldMessage)),
+          : reviewNote),
       heldOneSats: heldCount,
     })
     return balanceAfter

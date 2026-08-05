@@ -1,14 +1,97 @@
-import { clearNavChild, openSendFlow, openSetting } from '../wallet/navStore'
+import { useState } from 'react'
+import { clearNavChild, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
 import { setPendingPairScan } from '../wallet/pendingPairScan'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { identityKeyFromScan, QrScanner } from './QrScanner'
 
+const IDENTITY_KEY_RE = /^(02|03)[0-9a-fA-F]{64}$|^04[0-9a-fA-F]{128}$/
+
+function isIdentityKey(value: string): boolean {
+  return IDENTITY_KEY_RE.test(value.trim())
+}
+
+type PendingScan = {
+  /** Value to prefill Send (identity key, address, peerpay, etc.). */
+  sendValue: string
+  /** When set, Add friend is offered with this key. */
+  identityKey: string | null
+}
+
 /**
- * Dashboard scan — device-link QR → Use on another device; else PeerPay / identity → Send.
+ * Dashboard scan — device-link QR → Use on another device;
+ * else choose Add friend (identity keys) or Send.
  */
 export function ScanPanel() {
+  const [pending, setPending] = useState<PendingScan | null>(null)
+
+  if (pending) {
+    const short =
+      pending.identityKey != null
+        ? `${pending.identityKey.slice(0, 10)}…${pending.identityKey.slice(-8)}`
+        : pending.sendValue.length > 28
+          ? `${pending.sendValue.slice(0, 12)}…${pending.sendValue.slice(-8)}`
+          : pending.sendValue
+
+    return (
+      <div
+        className="nav-child-panel scan-panel scan-choice"
+        data-aeon-scope="scan"
+        data-aeon-state="choice"
+      >
+        <p className="scan-choice-label">Scanned</p>
+        <p className="mono scan-choice-value" title={pending.sendValue}>
+          {short}
+        </p>
+        <div className="actions scan-choice-actions">
+          {pending.identityKey ? (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => {
+                playWalletSound('soft')
+                openAddFriend({ identityKey: pending.identityKey! })
+              }}
+            >
+              Add as friend
+            </button>
+          ) : null}
+          <button
+            type="button"
+            className={pending.identityKey ? 'btn btn-ghost' : 'btn btn-primary'}
+            onClick={() => {
+              playWalletSound('soft')
+              openSendFlow(pending.sendValue, { requireBackup: false })
+            }}
+          >
+            Send
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              playWalletSound('soft')
+              setPending(null)
+            }}
+          >
+            Scan again
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              playWalletSound('soft')
+              clearNavChild()
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   return (
     <div className="nav-child-panel scan-panel" data-aeon-scope="scan">
       <QrScanner
@@ -40,7 +123,10 @@ export function ScanPanel() {
             return
           }
           playWalletSound('soft')
-          openSendFlow(value, { requireBackup: false })
+          setPending({
+            sendValue: value,
+            identityKey: isIdentityKey(value) ? value : null,
+          })
         }}
       />
     </div>

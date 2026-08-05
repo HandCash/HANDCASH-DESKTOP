@@ -1,12 +1,22 @@
 import { useState, type FormEvent } from 'react'
 import { addFriend } from '../wallet/friends'
-import { clearNavChild } from '../wallet/navStore'
+import { clearNavChild, getNavState } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 
+function initialFromNav(): { label: string; identityKey: string } {
+  const child = getNavState().child
+  if (child?.type !== 'add-friend') return { label: '', identityKey: '' }
+  return {
+    label: child.label?.trim() ?? '',
+    identityKey: child.identityKey?.trim() ?? '',
+  }
+}
+
 export function AddFriendPanel() {
-  const [label, setLabel] = useState('')
-  const [identityKey, setIdentityKey] = useState('')
+  const seeded = initialFromNav()
+  const [label, setLabel] = useState(seeded.label)
+  const [identityKey, setIdentityKey] = useState(seeded.identityKey)
   const [error, setError] = useState<string | null>(null)
 
   const onAdd = (e: FormEvent) => {

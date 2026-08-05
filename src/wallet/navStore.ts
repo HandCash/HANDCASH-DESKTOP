@@ -32,7 +32,7 @@ export type NavChild =
   | { type: 'receive' }
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
-  | { type: 'add-friend' }
+  | { type: 'add-friend'; identityKey?: string; label?: string }
   | { type: 'messages'; friendId: string }
   | { type: 'collectable'; outpoint: string }
   | { type: 'send-collectable'; outpoint: string }
@@ -122,8 +122,12 @@ export function openFriendDetails(friendId: string) {
   openNavChild('friends', { type: 'friend', friendId })
 }
 
-export function openAddFriend() {
-  openNavChild('friends', { type: 'add-friend' })
+export function openAddFriend(opts?: { identityKey?: string; label?: string }) {
+  openNavChild('friends', {
+    type: 'add-friend',
+    ...(opts?.identityKey ? { identityKey: opts.identityKey.trim() } : {}),
+    ...(opts?.label ? { label: opts.label.trim() } : {}),
+  })
 }
 
 export function openMessagesWithFriend(friendId: string) {
