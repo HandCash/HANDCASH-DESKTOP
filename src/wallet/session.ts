@@ -1,5 +1,5 @@
 import { PrivateKey, type WalletInterface } from '@bsv/sdk'
-import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
+import { SetupClient, Wallet, sdk, type Monitor, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
@@ -10,6 +10,8 @@ export type ActiveWallet = {
   /** Full toolbox wallet (has balance()). */
   wallet: Wallet
   services: Services
+  /** Background task runner. Held so repairs can run a task on demand. */
+  monitor?: Monitor
   rootKeyHex: string
   identityKey: string
   address: string
@@ -52,6 +54,7 @@ export async function bootWallet(args: {
   active = {
     wallet: setup.wallet,
     services: setup.services as Services,
+    monitor: setup.monitor,
     rootKeyHex: args.rootKeyHex,
     identityKey: setup.identityKey || identityKey,
     address,

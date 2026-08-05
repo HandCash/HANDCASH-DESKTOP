@@ -21,6 +21,7 @@ import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 import { recoverMisfiledFunds, type RecoverMisfiledResult } from './recoverMisfiledFunds'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
+import { diagnoseFailedActions, repairFailedActions } from './failedActions'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -127,38 +128,40 @@ function reportUnrecoveredFunds(result: RecoverMisfiledResult): void {
 }
 
 /**
- * Say when the wallet is holding transactions that never landed.
+ * Hand back coins stranded by transactions that never landed, and say why.
  *
- * A failed action strands whatever it spent, so silence here reads as money
- * vanishing. Explicit Refresh only — read-only, never moves coins.
+ * A failed action holds whatever it spent, so silence here reads as money
+ * vanishing. Explicit Refresh only. The repair promotes anything that really
+ * did land before releasing what is dead, so it never invents a double spend.
  */
-async function reportFailedActions(active: ActiveWallet): Promise<void> {
-  const wallet = active.wallet as ActiveWallet['wallet'] & {
-    listFailedActions?: (args: unknown, unfail?: boolean) => Promise<{
-      totalActions?: number
-      actions?: Array<{ txid?: string; status?: string; satoshis?: number }>
-    }>
-  }
-  if (typeof wallet.listFailedActions !== 'function') return
-
+async function reviewFailedActions(active: ActiveWallet): Promise<void> {
   try {
-    const failed = await wallet.listFailedActions({
-      labels: [],
-      limit: 50,
-      seekPermission: false,
-    })
-    const actions = failed.actions ?? []
-    const count = failed.totalActions ?? actions.length
-    if (count <= 0) return
+    const report = await diagnoseFailedActions(active)
+    if (!report) return
 
     console.warn(
-      `[chain-ingest] ${count} failed action(s) held by the wallet`,
-      actions.map((a) => `${a.txid ?? '?'}:${a.status ?? '?'}:${a.satoshis ?? 0}`),
+      `[chain-ingest] ${report.count} failed action(s): ${report.neverBroadcast} never broadcast, ${report.doubleSpend} double spend`,
+      report.causes,
     )
+
+    const repair = await repairFailedActions(active)
+    if (repair.rescued > 0) {
+      clearCollectablesCache()
+      showToast({
+        title: `${repair.rescued} transaction${repair.rescued === 1 ? '' : 's'} recovered`,
+        body: 'They had already landed on chain — the wallet was behind, not the money.',
+        tone: 'neutral',
+      })
+      return
+    }
+
+    const stranded = repair.repaired ? 'Any coins they held are spendable again.' : ''
     showToast({
-      title: `${count} transaction${count === 1 ? '' : 's'} never confirmed`,
+      title: `${report.count} transaction${report.count === 1 ? '' : 's'} never confirmed`,
       body:
-        'Coins they moved can be stuck until the wallet retires them. Send the app log from Settings if a balance still looks wrong.',
+        report.neverBroadcast >= report.count
+          ? `No miner ever accepted them. ${stranded}`.trim()
+          : `${stranded} Send the app log from Settings if a balance still looks wrong.`.trim(),
       tone: 'neutral',
     })
   } catch (err) {
@@ -307,7 +310,7 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
   // so hold the release even when forced — that is what the grace window is for.
   const review = await reviewAndReleaseSpentOutputs(forceReview && importedFunding === 0)
   if (forceReview) {
-    await reportFailedActions(active)
+    await reviewFailedActions(active)
   }
   if (review.error && forceReview) {
     setSyncHealth({
