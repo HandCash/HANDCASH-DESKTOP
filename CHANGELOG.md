@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.21] - 2026-08-05
+
+### Fixed
+
+- Receive page QR no longer clipped; breadcrumb headers match section header typography.
+
 ## [1.2.20] - 2026-08-05
 
 ### Fixed
