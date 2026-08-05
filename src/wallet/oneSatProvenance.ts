@@ -10,6 +10,12 @@
  */
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
+import {
+  parseProvenanceV3,
+  verifyProvenanceV3,
+  type ProvenanceV3,
+  type ProvenanceVerifyResult,
+} from './oneSatLatch'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -23,10 +29,10 @@ export type ProvenanceV2 = {
   contentType?: string
 }
 
-export type ProvenanceVerifyResult = {
-  proven: boolean
-  reason: string | null
-}
+export type { ProvenanceVerifyResult, ProvenanceV3 } from './oneSatLatch'
+export { parseProvenanceV3, verifyProvenanceV3 } from './oneSatLatch'
+
+export type ProvenanceRemittance = ProvenanceV2 | ProvenanceV3
 
 function toUnderscore(outpoint: string): string {
   const n = outpoint.trim()
@@ -108,6 +114,19 @@ export function verifyProvenanceV2(
 }
 
 /**
+ * Prefer BRC-151 v3 (latched) when present; otherwise BRC-150 v2 BEEF path.
+ */
+export function verifyProvenance(
+  provenance: unknown,
+  heldOutpoint: string,
+): ProvenanceVerifyResult {
+  if (parseProvenanceV3(provenance)) {
+    return verifyProvenanceV3(provenance, heldOutpoint)
+  }
+  return verifyProvenanceV2(provenance, heldOutpoint)
+}
+
+/**
  * Build v2 remittance for a known tip outpoint (usually the UTXO being spent).
  * Returns null when beef unavailable or over budget (omit — do not truncate).
  */
@@ -180,7 +199,7 @@ export function buildCollectableCustomInstructions(args: {
   origin: string
   name: string
   app?: string
-  provenance?: ProvenanceV2 | null
+  provenance?: ProvenanceRemittance | null
 }): string {
   const body: Record<string, unknown> = {
     origin: toUnderscore(args.origin),

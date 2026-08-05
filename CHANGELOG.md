@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.22] - 2026-08-05
+
+### Added
+
+- **BRC-151** latched 1Sat provenance (draft spec + phase 1): v3 remittance parse/verify, `1sat-latch` basket profile, BOLT-inspired O(1) path for collectables.
+- Tap **Synced** status pill to refresh wallet (chain ingest + optional history pull).
+
 ## [1.2.21] - 2026-08-05
 
 ### Fixed

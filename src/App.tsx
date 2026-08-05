@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { appMachine } from './machines/appMachine'
@@ -28,6 +28,11 @@ import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
 import { playWalletSound } from './wallet/soundService'
 import { showToast, toastError } from './wallet/toast'
+import { refreshFromChain } from './wallet/chainIngest'
+import { softPullHistoryIfRemoteNewer } from './wallet/deviceSync'
+import { isDeviceParityEnabled } from './wallet/paymentPolicy'
+import { getSessionBackupPassword } from './wallet/sessionBackupAuth'
+import { refreshCloudBackupHealth } from './wallet/cloudBackupHealth'
 import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
 
 export function App() {
@@ -158,6 +163,23 @@ export function App() {
   const pendingConnect = pendingPrompt?.kind === 'connect' ? pendingPrompt : null
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
+  const walletUnlocked = snapshot.matches('ready') || snapshot.matches('sending')
+
+  const handleManualSync = useCallback(async () => {
+    if (!walletUnlocked) return
+    playWalletSound('soft')
+    try {
+      if (isDeviceParityEnabled() && getSessionBackupPassword()) {
+        await softPullHistoryIfRemoteNewer()
+      }
+      const sats = await refreshFromChain({ forceReview: true, announceReceive: true })
+      if (sats != null) send({ type: 'REFRESHED', balanceSats: sats })
+      void refreshCloudBackupHealth()
+    } catch (err) {
+      toastError('Refresh failed', err instanceof Error ? err.message : String(err))
+    }
+  }, [send, walletUnlocked])
+
   return (
     <UpdateProvider>
       <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
@@ -166,6 +188,7 @@ export function App() {
           <WalletStatusPill
             session={sessionFromMachine(snapshot.value)}
             bridgeOnline={snapshot.context.bridgeOnline}
+            onManualSync={walletUnlocked ? handleManualSync : undefined}
           />
         </header>
 

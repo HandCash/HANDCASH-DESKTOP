@@ -23,6 +23,8 @@ type Props = {
   session: WalletSession
   /** Local BRC-100 HTTP bridge is listening. */
   bridgeOnline: boolean
+  /** Tap Sync / status pill — chain refresh (+ optional history pull from App). */
+  onManualSync?: () => void | Promise<void>
 }
 
 type Tone = 'ok' | 'busy' | 'warn' | 'error' | 'muted'
@@ -154,13 +156,14 @@ function sessionFromMachine(value: unknown): WalletSession {
   return 'boot'
 }
 
-/** Titlebar status — precise wallet/network/cloud state. */
-export function WalletStatusPill({ session, bridgeOnline }: Props) {
+/** Titlebar status — precise wallet/network/cloud state. Tap when unlocked to refresh. */
+export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props) {
   const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
   const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
   const [networkOnline, setNetworkOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   )
+  const [manualBusy, setManualBusy] = useState(false)
 
   useEffect(() => subscribeSyncHealth(setHealth), [])
   useEffect(() => subscribeCloudBackupHealth(setCloud), [])
@@ -183,17 +186,53 @@ export function WalletStatusPill({ session, bridgeOnline }: Props) {
   }, [session])
 
   const view = resolveStatus(session, health, cloud, networkOnline, bridgeOnline)
+  const canManualSync =
+    (session === 'ready' || session === 'sending') && networkOnline && Boolean(onManualSync)
+  const display = manualBusy
+    ? {
+        label: 'Syncing…',
+        tone: 'busy' as const,
+        detail: 'Refreshing funds and history against the network',
+      }
+    : view
+
+  const handleManualSync = () => {
+    if (!canManualSync || manualBusy || !onManualSync) return
+    setManualBusy(true)
+    void Promise.resolve(onManualSync()).finally(() => setManualBusy(false))
+  }
+
+  const pillProps = {
+    className: 'status-pill',
+    'data-aeon-no-drag': true,
+    'data-tone': display.tone,
+    title:
+      canManualSync && !manualBusy
+        ? `${display.detail ?? display.label} — tap to refresh`
+        : (display.detail ?? undefined),
+    'aria-live': 'polite' as const,
+  }
+
+  if (canManualSync) {
+    return (
+      <button
+        type="button"
+        {...pillProps}
+        className="status-pill status-pill-btn"
+        aria-label={`${display.label} — tap to refresh wallet`}
+        disabled={manualBusy}
+        onClick={handleManualSync}
+      >
+        <span className="status-dot" data-tone={display.tone} />
+        {display.label}
+      </button>
+    )
+  }
 
   return (
-    <div
-      className="status-pill"
-      data-aeon-no-drag
-      data-tone={view.tone}
-      title={view.detail ?? undefined}
-      aria-live="polite"
-    >
-      <span className="status-dot" data-tone={view.tone} />
-      {view.label}
+    <div {...pillProps}>
+      <span className="status-dot" data-tone={display.tone} />
+      {display.label}
     </div>
   )
 }

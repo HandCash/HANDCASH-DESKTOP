@@ -22,7 +22,7 @@
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
  * - **Items (1sat / recursive)** → basket `1sat`; remittance + BRC-39 same as funds history.
  *   Recursive inscription *content* does not get a separate basket — tip→origin remittance does
- *   (BRC-150 in `oneSatProvenance.ts`; oversized packages are omitted, never truncated).
+ *   (BRC-150 in `oneSatProvenance.ts`; BRC-151 latched v3 in `oneSatLatch.ts`; oversized packages omitted).
  */
 
 import { fetchBalanceSats, getActiveWallet } from './session'
@@ -39,7 +39,7 @@ export type WalletLayer =
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
   custody: ['vault.ts', 'sessionBackupAuth.ts'],
-  localState: ['session.ts', 'collectables.ts', 'brc100Handler.ts', 'oneSatProvenance.ts'],
+  localState: ['session.ts', 'collectables.ts', 'brc100Handler.ts', 'oneSatProvenance.ts', 'oneSatLatch.ts'],
   chainIngest: [
     'chainIngest.ts',
     'ingestLegacyAddress.ts',

@@ -25,7 +25,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   buildCollectableCustomInstructions,
   tryBuildProvenanceV2,
-  verifyProvenanceV2,
+  verifyProvenance,
 } from './oneSatProvenance'
 import type { Chain } from './vault'
 
@@ -149,7 +149,7 @@ function toCollectable(
   const name =
     custom.name ?? tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
   const app = custom.app ?? tagValue(o.tags, 'app:') ?? resolved?.app
-  const proven = verifyProvenanceV2(custom.provenance, o.outpoint).proven
+  const proven = verifyProvenance(custom.provenance, o.outpoint).proven
   // When remittance fails, do not treat sender name/app as authoritative — keep for UX
   // but proven=false. Indexer-resolved fields remain display aids.
   return {

@@ -200,6 +200,23 @@ body {
   color: hsl(var(--primary));
 }
 
+.status-pill-btn {
+  cursor: pointer;
+  font: inherit;
+  appearance: none;
+  -webkit-app-region: no-drag;
+}
+
+.status-pill-btn:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.45);
+  background: hsl(var(--secondary) / 0.85);
+}
+
+.status-pill-btn:disabled {
+  cursor: wait;
+  opacity: 0.85;
+}
+
 .status-dot {
   width: 7px;
   height: 7px;

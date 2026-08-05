@@ -3,9 +3,11 @@ import {
   parseProvenanceV2,
   provenanceFitsBudget,
   REMITTANCE_MAX_BEEF_B64_CHARS,
+  verifyProvenance,
   verifyProvenanceV2,
   type ProvenanceV2,
 } from './oneSatProvenance'
+import { buildProvenanceV3 } from './oneSatLatch'
 
 describe('BRC-150 remittance budget (isolated edge case)', () => {
   it('rejects oversized beefB64 instead of truncating', () => {
@@ -42,5 +44,17 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
       beefB64: 'QQ==',
     }
     expect(verifyProvenanceV2(p, 'cc.0').reason).toMatch(/tip does not match/i)
+  })
+
+  it('verifyProvenance prefers v3 latched when present', () => {
+    const origin = 'aa'.repeat(32) + '_0'
+    const tip = 'bb'.repeat(32) + '_1'
+    const v3 = buildProvenanceV3({
+      origin,
+      tip,
+      latch: 'cc'.repeat(32) + '_0',
+      parentLatch: 'dd'.repeat(32) + '_0',
+    })
+    expect(verifyProvenance(v3, 'bb'.repeat(32) + '.1').proven).toBe(true)
   })
 })
