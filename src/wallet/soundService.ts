@@ -12,43 +12,80 @@ export type WalletSound =
 
 type Tone = { freq: number; start: number; duration: number; gain?: number; type?: OscillatorType }
 
-function getAudioContext(): AudioContext | null {
+let sharedCtx: AudioContext | null = null
+let unlockBound = false
+
+function getSharedAudioContext(): AudioContext | null {
+  if (sharedCtx) return sharedCtx
   const AudioCtx =
     window.AudioContext ||
     (window as typeof window & { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
   if (!AudioCtx) return null
-  return new AudioCtx()
+  sharedCtx = new AudioCtx()
+  return sharedCtx
 }
 
-function playTones(tones: Tone[]): void {
-  try {
-    const ctx = getAudioContext()
-    if (!ctx) return
-    const t0 = ctx.currentTime + 0.015
-    let end = 0
-    for (const tone of tones) {
-      const start = t0 + tone.start
-      const duration = tone.duration
-      const gain = tone.gain ?? 0.07
-      const osc = ctx.createOscillator()
-      const amp = ctx.createGain()
-      osc.type = tone.type ?? 'sine'
-      osc.frequency.setValueAtTime(tone.freq, start)
-      amp.gain.setValueAtTime(0.0001, start)
-      amp.gain.exponentialRampToValueAtTime(gain, start + 0.015)
-      amp.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-      osc.connect(amp)
-      amp.connect(ctx.destination)
-      osc.start(start)
-      osc.stop(start + duration + 0.02)
-      end = Math.max(end, tone.start + duration)
-    }
-    window.setTimeout(() => {
-      void ctx.close().catch(() => {})
-    }, Math.ceil((end + 0.2) * 1000) + 100)
-  } catch {
-    // Audio unavailable — ignore
+/** Android / iOS WebViews start suspended until a user gesture resumes the context. */
+async function ensureAudioRunning(ctx: AudioContext): Promise<boolean> {
+  if (ctx.state === 'closed') {
+    sharedCtx = null
+    const next = getSharedAudioContext()
+    if (!next) return false
+    return ensureAudioRunning(next)
   }
+  if (ctx.state === 'suspended') {
+    try {
+      await ctx.resume()
+    } catch {
+      return false
+    }
+  }
+  return ctx.state === 'running'
+}
+
+function bindAudioUnlock(): void {
+  if (unlockBound || typeof window === 'undefined') return
+  unlockBound = true
+  const unlock = () => {
+    const ctx = getSharedAudioContext()
+    if (!ctx) return
+    void ensureAudioRunning(ctx)
+  }
+  // Capture phase so we unlock before UI handlers that play SFX on the same tap.
+  for (const type of ['pointerdown', 'touchstart', 'keydown', 'click'] as const) {
+    window.addEventListener(type, unlock, { capture: true, passive: true })
+  }
+}
+
+bindAudioUnlock()
+
+function playTones(tones: Tone[]): void {
+  const ctx = getSharedAudioContext()
+  if (!ctx) return
+  void (async () => {
+    try {
+      if (!(await ensureAudioRunning(ctx))) return
+      const t0 = ctx.currentTime + 0.015
+      for (const tone of tones) {
+        const start = t0 + tone.start
+        const duration = tone.duration
+        const gain = tone.gain ?? 0.07
+        const osc = ctx.createOscillator()
+        const amp = ctx.createGain()
+        osc.type = tone.type ?? 'sine'
+        osc.frequency.setValueAtTime(tone.freq, start)
+        amp.gain.setValueAtTime(0.0001, start)
+        amp.gain.exponentialRampToValueAtTime(gain, start + 0.015)
+        amp.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+        osc.connect(amp)
+        amp.connect(ctx.destination)
+        osc.start(start)
+        osc.stop(start + duration + 0.02)
+      }
+    } catch {
+      // Audio unavailable — ignore
+    }
+  })()
 }
 
 const PATTERNS: Record<WalletSound, Tone[]> = {

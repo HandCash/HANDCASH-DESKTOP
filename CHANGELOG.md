@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.32] - 2026-08-05
+
+### Fixed
+
+- Sound effects play on Android: one shared `AudioContext` that is resumed on the first gesture, instead of a fresh suspended context per beep.
+
 ## [1.2.31] - 2026-08-05
 
 ### Changed
