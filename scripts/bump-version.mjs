@@ -58,6 +58,12 @@ function syncMarket(version) {
     `const VERSION = process.env.NEXT_PUBLIC_DESKTOP_VERSION || '${version}'`,
   )
   if (next === src) {
+    // items-market resolves the version from the GitHub Releases API now, so
+    // there is no pinned constant left to rewrite.
+    if (src.includes('fetchDesktopDownloadsSnapshot')) {
+      console.log('items-market resolves the version live — no sync needed')
+      return true
+    }
     console.warn('items-market VERSION line not updated (pattern mismatch)')
     return false
   }

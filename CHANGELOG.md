@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.11] - 2026-08-04
+
+### Fixed
+
+- macOS “HandCash is damaged and can’t be opened”. With `identity: null` electron-builder skipped signing entirely, so the bundle shipped with only the linker's default signature (`Identifier=Electron`, no sealed resources) and `codesign --verify` failed — Apple Silicon rejects that regardless of quarantine state. `scripts/afterPack.cjs` now ad-hoc signs each packaged `.app` before the DMG/zip is built.
+- Mac release workflow now runs `codesign --verify --deep --strict` and asserts the signature is bound to `io.handcash.brc100`, so a broken signature fails CI instead of shipping.
+
+### Notes
+
+- Still not notarized: first launch is right-click → **Open** → confirm. To repair an install from 1.2.10 or earlier: `xattr -cr /Applications/HandCash.app && codesign --force --deep --sign - /Applications/HandCash.app`.
+
 ## [1.2.10] - 2026-08-04
 
 ### Fixed

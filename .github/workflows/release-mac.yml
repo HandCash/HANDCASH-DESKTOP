@@ -87,6 +87,12 @@ jobs:
             [[ -x "$BIN" ]] || { echo "missing binary" >&2; fail=1; }
             [[ -f "$ASAR" ]] || { echo "missing app.asar" >&2; fail=1; }
             [[ -f "$EF" ]] || { echo "missing Electron Framework" >&2; fail=1; }
+            # A linker-only signature (Identifier=Electron, no sealed resources)
+            # makes Gatekeeper report "damaged" on Apple Silicon. afterPack.cjs
+            # ad-hoc signs the bundle; refuse to ship if that did not stick.
+            codesign --verify --deep --strict "$APP" || { echo "invalid code signature" >&2; fail=1; }
+            codesign -dv --verbose=2 "$APP" 2>&1 | grep -q "Identifier=io.handcash.brc100" \
+              || { echo "signature not bound to app bundle" >&2; fail=1; }
             # electron-builder --mac dmg/zip should embed updater metadata
             if [[ ! -f "$APP/Contents/Resources/app-update.yml" ]]; then
               echo "WARN: app-update.yml missing in $APP — copying from build/" >&2
@@ -107,7 +113,7 @@ jobs:
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
-            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (unsigned; notarize later). If macOS says the app is damaged: run xattr -cr /Applications/HandCash.app then reopen."
+            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (ad-hoc signed, not yet notarized). First launch: right-click HandCash.app and choose Open, then confirm. If macOS still refuses, run xattr -cr /Applications/HandCash.app and reopen."
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \
