@@ -450,6 +450,30 @@ async function findLatchForTip(
 }
 
 /**
+ * Drop what a send just spent from its basket.
+ *
+ * `reviewSpendableOutputs` is throttled and paused right after legacy sweeps, so
+ * relying on it alone leaves a sent tip listed here (and on a parity device) long
+ * after it moved — the item then appears to be in two wallets at once.
+ */
+async function relinquishSpentOutputs(
+  wallet: ActiveWallet,
+  spends: Array<{ outpoint: string; basket: string }>,
+): Promise<void> {
+  for (const spend of spends) {
+    try {
+      await wallet.wallet.relinquishOutput({
+        basket: spend.basket,
+        output: normalizeOutpoint(spend.outpoint),
+      })
+    } catch (err) {
+      // Already marked spent by createAction — nothing left to release.
+      console.warn('[collectables] relinquish after send skipped', spend.outpoint, err)
+    }
+  }
+}
+
+/**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
  * Soft-latch (BRC-153): settle-style single tx spends tip (+ prior latch when
@@ -630,6 +654,11 @@ export async function sendCollectable(args: {
       throw formatSendError(err)
     }
   }
+
+  await relinquishSpentOutputs(wallet, [
+    { outpoint, basket: '1sat' },
+    ...(priorLatch ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }] : []),
+  ])
 
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
   scheduleHistoryBackupPush('sendCollectable')

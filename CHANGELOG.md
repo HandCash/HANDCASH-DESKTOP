@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.34] - 2026-08-05
+
+### Fixed
+
+- Sending a collectable now releases the tip (and its prior latch) from the item basket immediately, so a sent item stops listing in the sending wallet and cannot appear in two wallets at once.
+- The legacy-import grace window no longer blocks a forced spendable review. Outputs this device just spent are released on spend heal and explicit Refresh; the release is only held when the same pass swept legacy funding.
+
 ## [1.2.33] - 2026-08-05
 
 ### Fixed

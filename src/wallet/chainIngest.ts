@@ -151,7 +151,9 @@ export async function reviewAndReleaseSpentOutputs(
 
   // Fresh legacy sweeps produce managed change that indexers may not yet treat as
   // spendable — releasing during this window drops the deposit from balance.
-  if (isLegacyImportGraceActive()) {
+  // A forced review is a spend heal or an explicit Refresh: outputs this device
+  // just spent have to be released, or sent items keep listing here.
+  if (!force && isLegacyImportGraceActive()) {
     return { released: 0, skipped: true }
   }
 
@@ -261,7 +263,9 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
     }
   }
 
-  const review = await reviewAndReleaseSpentOutputs(forceReview)
+  // A sweep in this same pass means the indexer has definitely not caught up yet,
+  // so hold the release even when forced — that is what the grace window is for.
+  const review = await reviewAndReleaseSpentOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',

@@ -169,14 +169,60 @@ describe('refreshFromChain spendable review', () => {
     expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 
-  it('skips spendable review during legacy import grace window', async () => {
+  it('skips background review during legacy import grace window', async () => {
+    const guard = await import('./legacyImportGuard')
+    guard.noteLegacyImportSuccess(1)
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ announceReceive: false })
+
+    expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
+    expect(mockScanLegacyAddress).toHaveBeenCalled()
+  })
+
+  it('still reviews when forced inside the grace window — spends must release', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
     const guard = await import('./legacyImportGuard')
     guard.noteLegacyImportSuccess(1)
 
     const { refreshFromChain } = await import('./chainIngest')
     await refreshFromChain({ forceReview: true, announceReceive: false })
 
+    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
+  })
+
+  it('holds the release when this pass swept legacy funding', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main',
+      sats: 5000,
+      utxos: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
+      source: 'whatsonchain',
+    })
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
+      oneSats: [],
+      latches: [],
+      heldOneSats: [],
+    })
+    const guard = await import('./legacyImportGuard')
+    mockImportLegacyUtxos.mockImplementation(async () => {
+      // A real sweep marks the outpoint imported, which opens the grace window.
+      guard.noteLegacyImportSuccess(1)
+      return {
+        imported: 1,
+        failed: 0,
+        errors: [],
+        skippedOneSats: 0,
+        skippedKnown: 0,
+        importedOutpoints: ['bb.0'],
+      }
+    })
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
-    expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 })
