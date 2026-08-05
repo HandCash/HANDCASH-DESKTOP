@@ -81,6 +81,16 @@ export function hasActivityTxid(txid: string | undefined | null): boolean {
   return readAll().some((e) => e.txid?.toLowerCase() === key)
 }
 
+/** True if we already logged a collectable receive/send for this tip outpoint. */
+export function hasActivityItemOutpoint(outpoint: string | undefined | null): boolean {
+  const key = outpoint?.trim().toLowerCase().replace('_', '.')
+  if (!key) return false
+  return readAll().some((e) => {
+    const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+    return op === key
+  })
+}
+
 export function subscribeAppActivity(cb: ActivityListener): () => void {
   listeners.add(cb)
   return () => {

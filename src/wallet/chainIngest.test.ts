@@ -217,6 +217,9 @@ describe('refreshFromChain spendable review', () => {
         skippedOneSats: 0,
         skippedKnown: 0,
         importedOutpoints: ['bb.0'],
+        importedReceipts: [
+          { outpoint: 'bb.0', satoshis: 5000, receiveTxid: 'bb', sweepTxid: 'cc' },
+        ],
       }
     })
 

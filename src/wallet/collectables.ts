@@ -40,6 +40,7 @@ import {
   type LatchListing,
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
+import { isItemSent, markItemsSent } from './sentItemGuard'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -259,6 +260,8 @@ export async function listCollectables(
     if (o.tags?.includes(LATCH_TAG)) continue
     // Tips are exactly 1 satoshi. Soft-latch dust or misfiled funds must not list.
     if ((o.satoshis ?? 1) !== 1) continue
+    // A tip we already spent lingers in the basket until a review runs.
+    if (isItemSent(o.outpoint)) continue
     let resolved: ResolvedInscription | null = null
     const custom = parseCustom(o.customInstructions)
     const hasName = !!(custom.name ?? tagValue(o.tags, 'name:'))
@@ -485,6 +488,8 @@ async function findLatchForTip(
     for (const o of result.outputs ?? []) {
       const tags = o.tags ?? []
       if (!tags.includes(LATCH_TAG)) continue
+      // Never pair a new send with a latch an earlier send already spent.
+      if (isItemSent(o.outpoint)) continue
       const tagOrigin = tagValue(tags, 'origin:')
       if (tagOrigin && toUnderscoreOutpoint(tagOrigin) !== originU) continue
       const tipTag = tagValue(tags, 'tip:')
@@ -706,6 +711,13 @@ export async function sendCollectable(args: {
       throw formatSendError(err)
     }
   }
+
+  // Hide before relinquishing: relinquish is best-effort, and the basket keeps
+  // listing a spent tip until a spendable review runs.
+  markItemsSent([
+    { outpoint, txid },
+    ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
+  ])
 
   await relinquishSpentOutputs(wallet, [
     { outpoint, basket: '1sat' },

@@ -9,7 +9,7 @@
  * 2. reviewSpendableOutputs (drop outs spent elsewhere; skipped briefly after import)
  */
 import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
-import { getActiveWallet, fetchBalanceSats } from './session'
+import { getActiveWallet, fetchBalanceSats, type ActiveWallet } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
@@ -123,6 +123,46 @@ function reportUnrecoveredFunds(result: RecoverMisfiledResult): void {
       body: `${amount(foreignSats)} can only be recovered on the device that holds that key.`,
       tone: 'neutral',
     })
+  }
+}
+
+/**
+ * Say when the wallet is holding transactions that never landed.
+ *
+ * A failed action strands whatever it spent, so silence here reads as money
+ * vanishing. Explicit Refresh only — read-only, never moves coins.
+ */
+async function reportFailedActions(active: ActiveWallet): Promise<void> {
+  const wallet = active.wallet as ActiveWallet['wallet'] & {
+    listFailedActions?: (args: unknown, unfail?: boolean) => Promise<{
+      totalActions?: number
+      actions?: Array<{ txid?: string; status?: string; satoshis?: number }>
+    }>
+  }
+  if (typeof wallet.listFailedActions !== 'function') return
+
+  try {
+    const failed = await wallet.listFailedActions({
+      labels: [],
+      limit: 50,
+      seekPermission: false,
+    })
+    const actions = failed.actions ?? []
+    const count = failed.totalActions ?? actions.length
+    if (count <= 0) return
+
+    console.warn(
+      `[chain-ingest] ${count} failed action(s) held by the wallet`,
+      actions.map((a) => `${a.txid ?? '?'}:${a.status ?? '?'}:${a.satoshis ?? 0}`),
+    )
+    showToast({
+      title: `${count} transaction${count === 1 ? '' : 's'} never confirmed`,
+      body:
+        'Coins they moved can be stuck until the wallet retires them. Send the app log from Settings if a balance still looks wrong.',
+      tone: 'neutral',
+    })
+  } catch (err) {
+    console.warn('[chain-ingest] failed-action review skipped', err)
   }
 }
 
@@ -266,6 +306,9 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
   // A sweep in this same pass means the indexer has definitely not caught up yet,
   // so hold the release even when forced — that is what the grace window is for.
   const review = await reviewAndReleaseSpentOutputs(forceReview && importedFunding === 0)
+  if (forceReview) {
+    await reportFailedActions(active)
+  }
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',

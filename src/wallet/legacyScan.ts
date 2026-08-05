@@ -40,6 +40,27 @@ function wocBase(chain: Chain): string {
     : 'https://api.whatsonchain.com/v1/bsv/test'
 }
 
+/**
+ * True when the network has heard of `txid` (mempool or mined).
+ *
+ * Used before retrying a sweep: if our earlier funding transaction exists, the
+ * address scan that still lists the input as unspent is stale, and sweeping
+ * again would double-spend it.
+ */
+export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return null
+  try {
+    const res = await fetch(`${wocBase(chain)}/tx/hash/${id}`)
+    if (res.status === 404) return false
+    if (!res.ok) return null
+    return true
+  } catch (err) {
+    console.warn('[legacy-scan] tx lookup failed', err)
+    return null
+  }
+}
+
 /** Scan a legacy P2PKH address for UTXOs via WhatsOnChain REST. */
 export async function scanAddressViaWhatsOnChain(
   address: string,
@@ -153,6 +174,16 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
  * - refuses satoshis === 1 (possible ordinals)
  * - same outpoint is never swept twice (durable + in-flight guards)
  */
+/** A legacy UTXO successfully swept into managed change — drives receive activity. */
+export type LegacyFundingReceipt = {
+  outpoint: string
+  satoshis: number
+  /** Incoming payment txid (source of the UTXO). */
+  receiveTxid: string
+  /** Sweep that internalized the funds, when the toolbox reported one. */
+  sweepTxid?: string
+}
+
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
@@ -163,6 +194,7 @@ export async function importLegacyUtxos(
   skippedOneSats: number
   skippedKnown: number
   importedOutpoints: string[]
+  importedReceipts: LegacyFundingReceipt[]
 }> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
@@ -170,6 +202,7 @@ export async function importLegacyUtxos(
   const skippedOneSats = utxos.filter((u) => u.satoshis === 1).length
   const skippedLatchDust = utxos.filter((u) => isLatchDustSats(u.satoshis)).length
   const safe = utxos.filter((u) => u.satoshis > 1 && !isLatchDustSats(u.satoshis))
+  const byOutpoint = new Map(safe.map((u) => [u.outpoint.trim().toLowerCase(), u]))
   if (skippedOneSats > 0) {
     console.warn(
       `[legacy] refused to sweep ${skippedOneSats} one-sat outpoint(s) — possible ordinals`,
@@ -181,7 +214,15 @@ export async function importLegacyUtxos(
     )
   }
   if (safe.length === 0) {
-    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown: 0, importedOutpoints: [] }
+    return {
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats,
+      skippedKnown: 0,
+      importedOutpoints: [],
+      importedReceipts: [],
+    }
   }
 
   // Heal false blacklist: still-unspent outs that were marked imported after a transient error.
@@ -194,7 +235,15 @@ export async function importLegacyUtxos(
     console.info(`[legacy] skipped ${skippedKnown} already-imported or in-flight outpoint(s)`)
   }
   if (outpoints.length === 0) {
-    return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown, importedOutpoints: [] }
+    return {
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats,
+      skippedKnown,
+      importedOutpoints: [],
+      importedReceipts: [],
+    }
   }
 
   try {
@@ -206,14 +255,27 @@ export async function importLegacyUtxos(
     )
 
     const errors: string[] = []
-    const succeeded: string[] = []
+    const succeeded: Array<{ outpoint: string; txid?: string }> = []
+    const importedReceipts: LegacyFundingReceipt[] = []
     let imported = 0
     let failed = 0
     for (const r of results) {
       const op = String(r.outpoint || '').trim().toLowerCase()
       if (r.success) {
         imported += 1
-        if (op) succeeded.push(op)
+        // Keep the sweep txid: a retry has to prove this transaction never landed.
+        if (op) {
+          succeeded.push({ outpoint: op, txid: r.txid })
+          const source = byOutpoint.get(op)
+          if (source && source.satoshis > 0) {
+            importedReceipts.push({
+              outpoint: op,
+              satoshis: source.satoshis,
+              receiveTxid: source.txid.trim().toLowerCase(),
+              ...(r.txid?.trim() ? { sweepTxid: r.txid.trim().toLowerCase() } : {}),
+            })
+          }
+        }
       } else {
         failed += 1
         if (r.error) errors.push(`${r.outpoint}: ${r.error}`)
@@ -226,14 +288,24 @@ export async function importLegacyUtxos(
             /double.?spend/i.test(err) ||
             /output (?:is )?not spendable/i.test(err))
         ) {
-          succeeded.push(op)
+          // Mark known — not a fresh receive, so leave importedReceipts alone.
+          succeeded.push({ outpoint: op, txid: r.txid })
         }
       }
     }
     markLegacyImported(succeeded)
-    const succeededSet = new Set(succeeded)
+    const importedOutpoints = importedReceipts.map((r) => r.outpoint)
+    const succeededSet = new Set(succeeded.map((s) => s.outpoint))
     releaseLegacyImport(outpoints.filter((op) => !succeededSet.has(op)))
-    return { imported, failed, errors, skippedOneSats, skippedKnown, importedOutpoints: succeeded }
+    return {
+      imported,
+      failed,
+      errors,
+      skippedOneSats,
+      skippedKnown,
+      importedOutpoints,
+      importedReceipts,
+    }
   } catch (err) {
     releaseLegacyImport(outpoints)
     throw err

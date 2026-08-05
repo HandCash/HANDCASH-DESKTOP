@@ -4,10 +4,28 @@
  * See `layers.ts` chainIngest pipeline steps 2–3.
  */
 import { getActiveWallet, type ActiveWallet } from './session'
-import { scanLegacyAddress, importLegacyUtxos, type LegacyScanResult } from './legacyScan'
-import { forgetLegacyImported } from './legacyImportGuard'
+import {
+  scanLegacyAddress,
+  importLegacyUtxos,
+  txExistsOnChain,
+  type LegacyFundingReceipt,
+  type LegacyScanResult,
+} from './legacyScan'
+import {
+  forgetLegacyImported,
+  legacySweepRecord,
+  legacySweepRetryEligible,
+} from './legacyImportGuard'
+import type { Chain } from './vault'
+import {
+  hasActivityItemOutpoint,
+  hasActivityTxid,
+  recordAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+} from './appActivity'
 import {
   classifyLegacyUtxos,
+  contentUrlForOrigin,
   importOneSatLatches,
   importOneSatOrdinals,
   type MigrationItem,
@@ -31,6 +49,86 @@ export type LegacyAddressIngestOptions = {
   /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
   knownItems?: MigrationItem[]
   active?: ActiveWallet | null
+}
+
+/**
+ * Sweeps that are safe to try again: old enough to be genuinely stuck, and with
+ * their recorded transaction provably absent from the chain.
+ *
+ * An address scan still listing the input as unspent proves nothing — providers
+ * lag our own broadcast by minutes. Re-sweeping on that alone double-spends the
+ * first sweep, so the wallet books a second deposit whose change can never be
+ * spent. When the provider will not answer, we leave the mark in place.
+ */
+async function retryableStuckSweeps(
+  utxos: Array<{ outpoint: string }>,
+  chain: Chain,
+): Promise<string[]> {
+  const retryable: string[] = []
+  for (const u of utxos) {
+    const op = u.outpoint.trim().toLowerCase()
+    if (!op || !legacySweepRetryEligible(op)) continue
+    const txid = legacySweepRecord(op)?.txid
+    if (txid && (await txExistsOnChain(txid, chain)) !== false) continue
+    retryable.push(op)
+  }
+  return retryable
+}
+
+/** Activity rows for newly swept funding — one per incoming payment txid. */
+function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
+  const byTx = new Map<string, number>()
+  for (const receipt of receipts) {
+    const txid = receipt.receiveTxid.trim().toLowerCase()
+    if (!txid || !(receipt.satoshis > 0)) continue
+    byTx.set(txid, (byTx.get(txid) ?? 0) + receipt.satoshis)
+  }
+  for (const [txid, sats] of byTx) {
+    if (hasActivityTxid(txid)) continue
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats,
+      method: 'receive',
+      note: 'Received',
+      txid,
+    })
+  }
+}
+
+/** Activity rows for newly internalized collectables. */
+function recordItemReceipts(
+  importedOutpoints: string[],
+  candidates: MigrationItem[],
+  chain: Chain,
+): void {
+  if (importedOutpoints.length === 0) return
+  const byOp = new Map(
+    candidates.map((item) => [item.outpoint.trim().toLowerCase(), item]),
+  )
+  for (const raw of importedOutpoints) {
+    const op = raw.trim().toLowerCase()
+    if (!op || hasActivityItemOutpoint(op)) continue
+    const item = byOp.get(op)
+    const receiveTxid = item?.txid?.trim().toLowerCase() || op.split('.')[0]
+    const origin = item?.origin?.trim() || op.replace(/\.(\d+)$/, '_$1')
+    const name = item?.name?.trim() || 'Collectable'
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: `Received ${name}`,
+      txid: receiveTxid || undefined,
+      item: {
+        name,
+        origin,
+        outpoint: op,
+        imageUrl: contentUrlForOrigin(origin, chain),
+        ...(item?.app?.trim() ? { app: item.app.trim() } : {}),
+      },
+    })
+  }
 }
 
 /**
@@ -93,6 +191,7 @@ export async function ingestLegacyAddressUtxos(
     importedItems = itemResult.imported
     itemsFailed = itemResult.failed
     newOneSatOutpoints = itemResult.outpoints ?? []
+    recordItemReceipts(newOneSatOutpoints, oneSats, active.chain)
     if (itemResult.failed > 0) {
       console.warn('[chain-ingest] 1sat import partial', itemResult)
       partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
@@ -121,23 +220,32 @@ export async function ingestLegacyAddressUtxos(
     fundingFailed = result.failed
     fundingSkippedKnown = result.skippedKnown
     importedFundingOutpoints = result.importedOutpoints
+    recordFundingReceipts(result.importedReceipts)
 
-    // Marked imported but still unspent on legacy with nothing swept — heal blacklist.
+    // Marked imported but still unspent on legacy with nothing swept — heal the
+    // blacklist, but only for sweeps we can prove never landed.
     if (
       result.imported === 0 &&
       result.skippedKnown > 0 &&
       scan.sats > 0
     ) {
-      const knownOps = funding.map((u) => u.outpoint)
-      forgetLegacyImported(knownOps)
-      console.warn(
-        `[chain-ingest] ${result.skippedKnown} legacy out(s) marked imported but ${scan.sats} sats still on address — retrying sweep`,
-      )
-      result = await importLegacyUtxos(funding, active)
-      importedFunding = result.imported
-      fundingFailed = result.failed
-      fundingSkippedKnown = result.skippedKnown
-      importedFundingOutpoints = result.importedOutpoints
+      const retryable = await retryableStuckSweeps(funding, active.chain)
+      if (retryable.length > 0) {
+        forgetLegacyImported(retryable)
+        console.warn(
+          `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${scan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
+        )
+        result = await importLegacyUtxos(funding, active)
+        importedFunding = result.imported
+        fundingFailed = result.failed
+        fundingSkippedKnown = result.skippedKnown
+        importedFundingOutpoints = result.importedOutpoints
+        recordFundingReceipts(result.importedReceipts)
+      } else {
+        console.info(
+          `[chain-ingest] ${result.skippedKnown} legacy out(s) already swept — waiting for the indexer instead of sweeping again`,
+        )
+      }
     }
 
     if (result.failed > 0) {

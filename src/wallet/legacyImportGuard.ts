@@ -1,48 +1,95 @@
 /**
  * Durable + in-flight guards for legacy P2PKH → managed-change sweeps.
  * Same outpoint must never be funded twice (race or indexer lag).
+ *
+ * A second sweep of one outpoint is not a harmless retry: both transactions
+ * spend the same legacy input, so at most one can confirm, and the managed
+ * change the loser recorded is unspendable forever. Marks are therefore durable
+ * and carry the sweep txid and time, so a reload or a lagging indexer cannot
+ * reopen a sweep that already went out.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
-const STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v1'
+const STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v2'
+/** v1 kept a bare outpoint array with no sweep time. */
+const LEGACY_STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v1'
 const MAX_ENTRIES = 2000
 
 /** Skip spendable review + stale-indexer reclaim briefly after a successful sweep. */
 const IMPORT_GRACE_MS = 120_000
 
+/**
+ * How long a swept outpoint stays off limits. Only a sweep this old may be
+ * retried, and only once the chain confirms its transaction never landed —
+ * WhatsOnChain can list a spent output as unspent for minutes.
+ */
+export const SWEEP_RETRY_MS = 15 * 60_000
+
+export type LegacySweepRecord = {
+  /** When the sweep was marked imported. 0 for v1 marks of unknown age. */
+  at: number
+  /** Sweep transaction, when the funding call reported one. */
+  txid?: string
+}
+
 /** Outpoints currently mid-import on this process. */
 const inFlight = new Set<string>()
 let lastSuccessfulLegacyImportAt = 0
 
-function readImported(): Set<string> {
+function readRecords(): Map<string, LegacySweepRecord> {
+  const records = new Map<string, LegacySweepRecord>()
   try {
     const raw = durableGetItem(STORAGE_KEY)
-    if (!raw) return new Set()
-    const parsed = JSON.parse(raw) as unknown
-    if (!Array.isArray(parsed)) return new Set()
-    return new Set(
-      parsed.filter((x): x is string => typeof x === 'string' && x.includes('.')),
-    )
+    if (raw) {
+      const parsed = JSON.parse(raw) as unknown
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+        for (const [op, value] of Object.entries(parsed as Record<string, unknown>)) {
+          if (!op.includes('.')) continue
+          const row = (value ?? {}) as { at?: unknown; txid?: unknown }
+          records.set(op, {
+            at: typeof row.at === 'number' && Number.isFinite(row.at) ? row.at : 0,
+            txid: typeof row.txid === 'string' && row.txid.trim() ? row.txid.trim() : undefined,
+          })
+        }
+        return records
+      }
+    }
   } catch {
-    return new Set()
+    /* fall through to v1 */
   }
+
+  try {
+    const raw = durableGetItem(LEGACY_STORAGE_KEY)
+    if (!raw) return records
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return records
+    for (const op of parsed) {
+      // Unknown sweep age — treat as retry eligible, the chain check still gates it.
+      if (typeof op === 'string' && op.includes('.')) records.set(op, { at: 0 })
+    }
+  } catch {
+    /* no usable state */
+  }
+  return records
 }
 
-function writeImported(set: Set<string>): void {
-  const list = [...set].slice(-MAX_ENTRIES)
-  durableSetItem(STORAGE_KEY, JSON.stringify(list))
+function writeRecords(records: Map<string, LegacySweepRecord>): void {
+  const trimmed = [...records.entries()]
+    .sort((a, b) => a[1].at - b[1].at)
+    .slice(-MAX_ENTRIES)
+  durableSetItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(trimmed)))
 }
 
 export function isLegacyOutpointKnown(outpoint: string): boolean {
   const op = outpoint.trim().toLowerCase()
   if (!op) return false
   if (inFlight.has(op)) return true
-  return readImported().has(op)
+  return readRecords().has(op)
 }
 
 /** Drop outpoints already imported or currently importing. */
 export function filterNewLegacyOutpoints(outpoints: string[]): string[] {
-  const known = readImported()
+  const known = readRecords()
   const seen = new Set<string>()
   const next: string[] = []
   for (const raw of outpoints) {
@@ -60,17 +107,42 @@ export function beginLegacyImport(outpoints: string[]): string[] {
   return allowed
 }
 
-export function markLegacyImported(outpoints: string[]): void {
+export function markLegacyImported(
+  outpoints: Array<string | { outpoint: string; txid?: string }>,
+): void {
   if (outpoints.length === 0) return
-  const known = readImported()
+  const known = readRecords()
+  const at = Date.now()
+  let marked = 0
   for (const raw of outpoints) {
-    const op = raw.trim().toLowerCase()
+    const entry = typeof raw === 'string' ? { outpoint: raw } : raw
+    const op = entry.outpoint.trim().toLowerCase()
     if (!op) continue
-    known.add(op)
+    const txid = entry.txid?.trim().toLowerCase() || known.get(op)?.txid
+    known.set(op, txid ? { at, txid } : { at })
     inFlight.delete(op)
+    marked += 1
   }
-  writeImported(known)
-  noteLegacyImportSuccess(outpoints.length)
+  if (marked === 0) return
+  writeRecords(known)
+  noteLegacyImportSuccess(marked)
+}
+
+/** Sweep record for an outpoint, when one was stored. */
+export function legacySweepRecord(outpoint: string): LegacySweepRecord | null {
+  const op = outpoint.trim().toLowerCase()
+  if (!op) return null
+  return readRecords().get(op) ?? null
+}
+
+/**
+ * True when a swept outpoint has sat long enough that a retry is worth
+ * considering. Callers must still prove the recorded sweep never landed.
+ */
+export function legacySweepRetryEligible(outpoint: string, now = Date.now()): boolean {
+  const record = legacySweepRecord(outpoint)
+  if (!record) return true
+  return now - record.at >= SWEEP_RETRY_MS
 }
 
 /** Record a successful legacy sweep — pauses aggressive review/reclaim while indexers catch up. */
@@ -79,13 +151,21 @@ export function noteLegacyImportSuccess(count: number): void {
 }
 
 export function isLegacyImportGraceActive(): boolean {
-  return lastSuccessfulLegacyImportAt > 0 && Date.now() - lastSuccessfulLegacyImportAt < IMPORT_GRACE_MS
+  const now = Date.now()
+  if (lastSuccessfulLegacyImportAt > 0 && now - lastSuccessfulLegacyImportAt < IMPORT_GRACE_MS) {
+    return true
+  }
+  // A reload must not drop the grace — the sweep is still just as fresh.
+  for (const record of readRecords().values()) {
+    if (record.at > 0 && now - record.at < IMPORT_GRACE_MS) return true
+  }
+  return false
 }
 
 /** Undo a durable mark — used when an “imported” out is still unspent on-chain. */
 export function forgetLegacyImported(outpoints: string[]): void {
   if (outpoints.length === 0) return
-  const known = readImported()
+  const known = readRecords()
   let changed = false
   for (const raw of outpoints) {
     const op = raw.trim().toLowerCase()
@@ -94,25 +174,27 @@ export function forgetLegacyImported(outpoints: string[]): void {
     inFlight.delete(op)
     changed = true
   }
-  if (changed) writeImported(known)
+  if (changed) writeRecords(known)
 }
 
 /**
  * If we previously blacklisted an outpoint but the address scan still shows it
  * unspent with funding sats, clear the mark so import can retry.
+ *
+ * Only sweeps older than {@link SWEEP_RETRY_MS} qualify. Anything newer is far
+ * more likely to be indexer lag than a lost sweep, and re-sweeping it would
+ * double-spend our own funding transaction.
  */
 export function reclaimStillUnspentLegacyOutpoints(
   utxos: Array<{ outpoint: string; satoshis: number }>,
 ): string[] {
-  // WoC often lags after a sweep — do not undo a fresh import mark on stale unspent rows.
-  if (isLegacyImportGraceActive()) return []
-
-  const known = readImported()
+  const known = readRecords()
   const reclaimed: string[] = []
   for (const u of utxos) {
     if (!(u.satoshis > 1)) continue
     const op = u.outpoint.trim().toLowerCase()
     if (!op || !known.has(op) || inFlight.has(op)) continue
+    if (!legacySweepRetryEligible(op)) continue
     reclaimed.push(op)
   }
   if (reclaimed.length > 0) {
