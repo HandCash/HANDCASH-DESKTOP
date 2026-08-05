@@ -83,15 +83,6 @@ interface HandCashBridge {
     isPackaged: boolean
     platform: string
   }>
-  /** HandCash Mobile (Capacitor) — GrapheneOS / sideload profile. */
-  getDeviceInfo?: () => Promise<{
-    grapheneOs: boolean
-    playServicesInstalled: boolean
-    androidSdk: number
-    manufacturer: string
-    model: string
-    sideloadUpdates: boolean
-  }>
   getBridgeStatus: () => Promise<BridgeStatus>
   restartBridge: () => Promise<BridgeStatus>
   onBridgeStatus: (handler: (status: BridgeStatus) => void) => () => void

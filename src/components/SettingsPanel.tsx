@@ -14,7 +14,6 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
-import { MobileGrapheneNote } from './MobileGrapheneNote'
 
 type SettingItem = {
   id: SettingId
@@ -412,7 +411,6 @@ export function SettingsPanel() {
               </span>
             </button>
           </li>
-          <MobileGrapheneNote />
           {window.handcash?.platform !== 'android' && window.handcash?.platform !== 'ios' ? (
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
