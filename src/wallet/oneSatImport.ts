@@ -394,6 +394,9 @@ export async function classifyLegacyUtxos(
     }
 
     // HARD RULE: never fund-sweep 1-sat outs.
+    // GorillaPool only when we have no local claim (knownItems / cloud migrate).
+    // A tip already internalized with remittance never reaches this path again;
+    // unknown dust is walked once and then backed off via inscriptionCache.
     if (u.satoshis === 1) {
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
       let resolved: { origin: string; name?: string; app?: string } | null = null
@@ -405,10 +408,13 @@ export async function classifyLegacyUtxos(
           name: known.name,
           app: known.app,
         }
+      } else if (known) {
+        resolved = {
+          origin: toUnderscoreOutpoint(u.txid, u.vout),
+          name: known.name,
+          app: known.app,
+        }
       } else {
-        // Classification runs on every poll and before every send, and this walk
-        // costs dozens of requests per outpoint. Ask the indexer once, then trust
-        // the cache — and back off on dust that never resolves.
         const cacheKey = `${u.txid}.${u.vout}`
         resolved = getResolvedInscription(cacheKey)
         if (!resolved && shouldResolveInscription(cacheKey)) {

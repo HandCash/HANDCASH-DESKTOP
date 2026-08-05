@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.49] - 2026-08-05
+
+### Fixed
+
+- Collectables paint from a durable cache on open instead of waiting on
+  `listOutputs`. Last session's inventory is shown immediately; the network
+  refresh updates it in the background.
+- Ordinal images load again. Android WebViews often never fire
+  `IntersectionObserver` for elements already on screen; the frame is checked
+  synchronously first, with a short fallback so a broken observer can never leave
+  images on the skeleton forever.
+
+### Changed
+
+- GorillaPool is only consulted for ordinals remittance cannot verify. A P2P tip
+  that already carries `origin:` (and optional BRC-150 provenance) is listed and
+  detailed from local data — no indexer walk. Unverified tips on the receive
+  address are still resolved once, then cached.
+
 ## [1.2.48] - 2026-08-05
 
 ### Fixed

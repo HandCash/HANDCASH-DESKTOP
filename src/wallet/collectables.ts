@@ -47,6 +47,7 @@ import {
   rememberUnresolved,
   shouldResolveInscription,
 } from './inscriptionCache'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
 import type { Chain } from './vault'
 
@@ -73,10 +74,78 @@ export type Collectable = {
 
 type CollectablesListener = (items: Collectable[]) => void
 
+const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
+
 let cachedCollectables: Collectable[] = []
-/** True after at least one successful list (even if empty). */
+/** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
 const collectablesListeners = new Set<CollectablesListener>()
+
+function isCollectableShape(value: unknown): value is Collectable {
+  if (!value || typeof value !== 'object') return false
+  const o = value as Record<string, unknown>
+  return (
+    typeof o.outpoint === 'string' &&
+    typeof o.origin === 'string' &&
+    typeof o.name === 'string' &&
+    typeof o.imageUrl === 'string' &&
+    typeof o.satoshis === 'number'
+  )
+}
+
+function loadDurableList(): Collectable[] {
+  try {
+    const raw = durableGetItem(LIST_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as { items?: unknown }
+    if (!Array.isArray(parsed?.items)) return []
+    return parsed.items.filter(isCollectableShape).map((item) => ({
+      ...item,
+      traits: Array.isArray(item.traits) ? item.traits : [],
+      extras: Array.isArray(item.extras) ? item.extras : [],
+      proven: item.proven === true,
+    }))
+  } catch {
+    return []
+  }
+}
+
+function persistDurableList(items: Collectable[]): void {
+  try {
+    durableSetItem(
+      LIST_CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        items: items.map((item) => ({
+          outpoint: item.outpoint,
+          origin: item.origin,
+          name: item.name,
+          app: item.app,
+          imageUrl: item.imageUrl,
+          satoshis: item.satoshis,
+          mimeType: item.mimeType,
+          type: item.type,
+          subType: item.subType,
+          collectionId: item.collectionId,
+          traits: item.traits,
+          extras: item.extras,
+          proven: item.proven,
+        })),
+      }),
+    )
+  } catch {
+    // Cache is an optimisation.
+  }
+}
+
+// Paint last session's inventory immediately — do not wait on listOutputs.
+{
+  const durable = loadDurableList().filter((item) => !isItemSent(item.outpoint))
+  if (durable.length > 0) {
+    cachedCollectables = durable
+    collectablesHydrated = true
+  }
+}
 
 function notifyCollectables(items: Collectable[]) {
   for (const listener of collectablesListeners) listener(items)
@@ -85,12 +154,14 @@ function notifyCollectables(items: Collectable[]) {
 function setCollectablesCache(items: Collectable[]) {
   cachedCollectables = items
   collectablesHydrated = true
+  persistDurableList(items)
   notifyCollectables(items)
 }
 
 export function clearCollectablesCache(): void {
   cachedCollectables = []
   collectablesHydrated = false
+  durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
 }
 
@@ -248,9 +319,23 @@ function isListableItem(o: ItemOutput): boolean {
   return true
 }
 
-/** True when the item carries its own origin, so the indexer has nothing to add here. */
+/** True when remittance already names the origin — P2P HandCash sends do this. */
 function hasLocalOrigin(o: ItemOutput): boolean {
   return !!(parseCustom(o.customInstructions).origin ?? tagValue(o.tags, 'origin:'))
+}
+
+/**
+ * True when GorillaPool has nothing left to prove.
+ *
+ * A P2P tip carries origin (+ optional BRC-150 provenance) in remittance. Asking
+ * the indexer again is pure latency and the common freeze on Collect / send.
+ * Only unresolved tips — no origin tag, no verified remittance — may walk GP.
+ */
+function needsIndexerResolve(o: ItemOutput): boolean {
+  if (hasLocalOrigin(o)) return false
+  const custom = parseCustom(o.customInstructions)
+  if (verifyProvenance(custom.provenance, o.outpoint).proven) return false
+  return true
 }
 
 function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
@@ -263,18 +348,16 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
 }
 
 /**
- * Fill in origins the outputs did not carry.
+ * Fill in origins only for tips remittance could not verify.
  *
- * Runs after the list is already on screen, because each miss walks the chain
- * backwards through two indexers and can cost dozens of requests. Results are
- * cached for good, so this converges to doing nothing.
+ * Runs after the list is already on screen. P2P items never enter this queue.
  */
 async function resolveUnknownOrigins(): Promise<void> {
   if (resolvingOrigins) return
   const pending = lastItemOutputs.filter(
     (o) =>
       isListableItem(o) &&
-      !hasLocalOrigin(o) &&
+      needsIndexerResolve(o) &&
       shouldResolveInscription(normalizeOutpoint(o.outpoint)),
   )
   if (pending.length === 0) return
@@ -329,7 +412,7 @@ async function listCollectablesNow(
   active?: ActiveWallet | null,
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
-  if (!wallet) return []
+  if (!wallet) return getCachedCollectables()
 
   let outputs: ItemOutput[] = []
 
@@ -374,15 +457,23 @@ export async function getCollectable(
   let item = cached ?? (await listCollectables(active)).find((i) => i.outpoint === target) ?? null
   if (!item || !wallet) return item
 
-  // Details view: traits and mime type are only fetched here, and the walk is
-  // expensive, so reuse the resolution the list already paid for.
+  // Details: traits/mime come from the indexer only when remittance left them
+  // blank. A verified P2P tip already has everything we need on the remittance.
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
     if (txid && Number.isInteger(vout)) {
+      const cachedResolved = getResolvedInscription(target)
+      const shouldAskIndexer =
+        !item.proven &&
+        !cachedResolved &&
+        shouldResolveInscription(target) &&
+        item.traits.length === 0
       const resolved =
-        getResolvedInscription(target) ??
-        (await resolveOneSatInscription(txid, vout, wallet.chain, 6))
+        cachedResolved ??
+        (shouldAskIndexer
+          ? await resolveOneSatInscription(txid, vout, wallet.chain, 6)
+          : null)
       if (resolved) {
         rememberResolvedInscription(target, resolved)
         item = {

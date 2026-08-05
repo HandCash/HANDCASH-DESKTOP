@@ -26,9 +26,9 @@ describe('classifyLegacyUtxos', () => {
     expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_A}.0`])
   })
 
-  it('walks the indexer once for an unknown tip, then backs off', async () => {
-    // Classification runs on every poll and before every send, and each walk costs
-    // dozens of requests — re-walking dust that never resolves is what froze the UI.
+  it('asks GorillaPool once for an unverifiable tip, then backs off', async () => {
+    // Only unverified tips hit the indexer. Classification runs on every poll —
+    // re-walking the same dust is what froze the UI, so misses are remembered.
     const TXID_C = 'c'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)

@@ -20,6 +20,17 @@ function markFromElement(img: HTMLImageElement): 'ready' | 'error' | 'loading' {
   return 'error'
 }
 
+function frameIsNear(frame: HTMLElement, margin = 250): boolean {
+  const rect = frame.getBoundingClientRect()
+  if (rect.width <= 0 && rect.height <= 0) return false
+  return (
+    rect.bottom >= -margin &&
+    rect.top <= (typeof window !== 'undefined' ? window.innerHeight : 0) + margin &&
+    rect.right >= -margin &&
+    rect.left <= (typeof window !== 'undefined' ? window.innerWidth : 0) + margin
+  )
+}
+
 /**
  * App-wide rule: never paint an `<img>` until it has loaded.
  * Shows a skeleton in its place, then reveals the image.
@@ -37,10 +48,9 @@ export function DeferredImage({
   height,
   src,
   alt = '',
-  // Deliberately swallowed. Deferral is this component's job (see `near` below);
-  // the browser's own lazy loading cannot do it here, because the img is hidden
-  // until it loads and a `display: none` element never intersects — it would
-  // never fetch, never fire onLoad, and sit on the skeleton forever.
+  // Swallowed: deferral is this component's job. The browser's `loading="lazy"`
+  // cannot work here — the img is `display: none` until ready, so it never
+  // intersects and would never fetch.
   loading: _ignoredLoading,
   ...rest
 }: Props) {
@@ -49,11 +59,9 @@ export function DeferredImage({
   const imgRef = useRef<HTMLImageElement | null>(null)
   const frameRef = useRef<HTMLSpanElement | null>(null)
   /**
-   * Whether this has come near the viewport. Ordinals are full-size images, so a
-   * grid of them fetched at once stalls a phone — but the browser's own
-   * `loading="lazy"` cannot help while the img is hidden, since a `display: none`
-   * element never intersects. The skeleton keeps the frame in layout, so we defer
-   * off the frame instead and only then hand the img a `src`.
+   * Hand the img a `src` only once its frame is near the viewport. Ordinals are
+   * full-size; fetching a whole grid at once stalls a phone. Deferral is driven
+   * by the frame (which has layout via the skeleton), not the hidden img.
    */
   const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
 
@@ -66,18 +74,42 @@ export function DeferredImage({
     if (near) return
     const frame = frameRef.current
     if (!frame) return
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (entries.some((e) => e.isIntersecting)) {
-          setNear(true)
-          observer.disconnect()
-        }
-      },
-      { rootMargin: '250px' },
-    )
-    observer.observe(frame)
-    return () => observer.disconnect()
-  }, [near])
+
+    // Android WebViews often never fire IntersectionObserver for elements that
+    // were already on screen when observe() ran. Check first, then observe.
+    if (frameIsNear(frame)) {
+      setNear(true)
+      return
+    }
+
+    let cancelled = false
+    const mark = () => {
+      if (!cancelled) setNear(true)
+    }
+
+    const observer =
+      typeof IntersectionObserver !== 'undefined'
+        ? new IntersectionObserver(
+            (entries) => {
+              if (entries.some((e) => e.isIntersecting)) {
+                mark()
+                observer?.disconnect()
+              }
+            },
+            { rootMargin: '250px' },
+          )
+        : null
+    observer?.observe(frame)
+
+    // Absolute fallback — a broken observer must never leave images on the skeleton.
+    const fallbackTimer = window.setTimeout(mark, 350)
+
+    return () => {
+      cancelled = true
+      window.clearTimeout(fallbackTimer)
+      observer?.disconnect()
+    }
+  }, [near, src])
 
   useEffect(() => {
     const img = imgRef.current
@@ -126,13 +158,12 @@ export function DeferredImage({
         {...rest}
         ref={imgRef}
         className={className}
-        // No src until the frame is near the viewport: that, not the `loading`
-        // attribute, is what keeps a grid of ordinals from fetching all at once.
         src={near ? src : undefined}
         alt={alt}
         width={width}
         height={height}
         loading="eager"
+        decoding="async"
         hidden={status !== 'ready'}
         onLoad={() => setStatus('ready')}
         onError={() => setStatus('error')}
