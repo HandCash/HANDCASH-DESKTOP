@@ -11,9 +11,9 @@
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import {
+  buildSoftLatchProvenanceV3,
   parseProvenanceV3,
   verifyProvenanceV3,
-  isLatchedSendEnabled,
   type ProvenanceV3,
   type ProvenanceVerifyResult,
 } from './oneSatLatch'
@@ -196,7 +196,7 @@ export async function tryBuildProvenanceV2(args: {
 }
 
 /**
- * Best remittance for a collectable send: v3 when latched sends ship; v2 BEEF today.
+ * Soft-latch v3 remittance for collectable sends (relative tip/latch OUTPUT:N).
  */
 export async function tryBuildProvenanceForSend(args: {
   tipOutpoint: string
@@ -204,12 +204,16 @@ export async function tryBuildProvenanceForSend(args: {
   wallet: ActiveWallet
   contentType?: string
   path?: string[]
+  parentLatch?: string | null
 }): Promise<ProvenanceRemittance | null> {
-  if (isLatchedSendEnabled()) {
-    // Phase 3: build v3 from held tip + latch pair after Commit/Settle.
-    return null
-  }
-  return tryBuildProvenanceV2(args)
+  void args.tipOutpoint
+  void args.wallet
+  void args.contentType
+  void args.path
+  return buildSoftLatchProvenanceV3({
+    origin: args.origin,
+    parentLatch: args.parentLatch,
+  })
 }
 
 /** Merge display fields + optional provenance into customInstructions JSON. */

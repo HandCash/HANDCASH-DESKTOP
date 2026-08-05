@@ -27,6 +27,18 @@ import {
   tryBuildProvenanceForSend,
   verifyProvenance,
 } from './oneSatProvenance'
+import {
+  GENESIS_PARENT_LATCH,
+  LATCH_DUST_SATS,
+  LATCH_TAG,
+  ONE_SAT_LATCH_BASKET,
+  RELATIVE_TIP,
+  buildSoftLatchProvenanceV3,
+  latchOutputTags,
+  resolveLatchTipClaim,
+  toUnderscoreOutpoint,
+  type LatchListing,
+} from './oneSatLatch'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -303,59 +315,107 @@ function assertOrdinalIsDeviceLocked(
 }
 
 /**
- * BRC-100 only auto-signs the wallet's own BRC-29 change, so an ordinal listed in
- * `inputs` comes back as a signable transaction for us to unlock with the root key.
+ * BRC-100 only auto-signs the wallet's own BRC-29 change, so ordinal / latch
+ * inputs come back as a signable transaction for us to unlock with the root key.
  */
 async function signOrdinalTransfer(args: {
   wallet: ActiveWallet
   signable: SignableTransaction
-  outpoint: string
+  /** Tip + optional latch outpoints we must unlock. */
+  outpoints: string[]
 }): Promise<string> {
-  const [txidIn, voutRaw] = args.outpoint.split('.')
-  const vout = Number(voutRaw)
+  const targets = new Map(
+    args.outpoints.map((op) => {
+      const [txidIn, voutRaw] = normalizeOutpoint(op).split('.')
+      return [`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw)] as const
+    }),
+  )
 
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined
-  let vin = -1
+  const vins: number[] = []
   for (const btx of beef.txs) {
     if (!btx.tx) continue
     for (let i = 0; i < btx.tx.inputs.length; i++) {
       const input = btx.tx.inputs[i]
-      if (
-        String(input?.sourceTXID).toLowerCase() === txidIn?.toLowerCase() &&
-        input?.sourceOutputIndex === vout
-      ) {
+      const key = `${String(input?.sourceTXID).toLowerCase()}.${input?.sourceOutputIndex}`
+      if (targets.has(key)) {
         unsigned = btx.tx
-        vin = i
-        break
+        vins.push(i)
       }
     }
-    if (unsigned) break
+    if (unsigned && vins.length === targets.size) break
   }
-  if (!unsigned || vin < 0) {
+  if (!unsigned || vins.length === 0) {
     throw new Error('Collectable input missing from the signable transaction')
   }
 
   const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
-  unsigned.inputs[vin]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, 1)
+  const spends: Record<number, { unlockingScript: string }> = {}
+  for (const vin of vins) {
+    unsigned.inputs[vin]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, 1)
+  }
   await unsigned.sign()
-  const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
-  if (!unlockingScript) throw new Error('Could not sign the collectable transfer')
+  for (const vin of vins) {
+    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Could not sign the collectable transfer')
+    spends[vin] = { unlockingScript }
+  }
 
   const signed = await args.wallet.wallet.signAction({
     reference: args.signable.reference,
-    spends: { [vin]: { unlockingScript } },
+    spends,
   })
   if (!signed.txid) throw new Error('Collectable transfer returned no txid')
   return signed.txid
 }
 
+/** Find the soft-latch UTXO paired with this tip (same origin, tip: tag match). */
+async function findLatchForTip(
+  wallet: ActiveWallet,
+  tipOutpoint: string,
+  origin: string,
+): Promise<LatchListing | null> {
+  const tip = toUnderscoreOutpoint(tipOutpoint)
+  const originU = toUnderscoreOutpoint(origin)
+  try {
+    const result = await wallet.wallet.listOutputs({
+      basket: ONE_SAT_LATCH_BASKET,
+      limit: 1000,
+      includeTags: true,
+      include: 'locking scripts',
+      seekPermission: false,
+    })
+    for (const o of result.outputs ?? []) {
+      const tags = o.tags ?? []
+      if (!tags.includes(LATCH_TAG)) continue
+      const tagOrigin = tagValue(tags, 'origin:')
+      if (tagOrigin && toUnderscoreOutpoint(tagOrigin) !== originU) continue
+      const tipTag = tagValue(tags, 'tip:')
+      if (!tipTag) continue
+      const claimed = resolveLatchTipClaim(o.outpoint, tipTag)
+      if (claimed !== tip) continue
+      return {
+        outpoint: normalizeOutpoint(o.outpoint),
+        origin: originU,
+        tip,
+        satoshis: o.satoshis ?? LATCH_DUST_SATS,
+        lockingScript: o.lockingScript,
+      }
+    }
+  } catch (err) {
+    console.warn('[collectables] latch list failed', err)
+  }
+  return null
+}
+
 /**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
- * Ordinal sat stays on output 0 (`randomizeOutputs: false`). Fees are funded
- * from the default change basket. Origin/name/app tags match import metadata
- * so recipients (and our activity trail) can resolve the inscription.
+ * Soft-latch (BRC-153): settle-style single tx spends tip (+ prior latch when
+ * present) and creates recipient tip (vout 0) + latch (vout 1). Provenance v3
+ * uses relative OUTPUT:N refs. Ordinal sat stays on output 0 (`randomizeOutputs:
+ * false`). Fees are funded from the default change basket.
  */
 export async function sendCollectable(args: {
   outpoint: string
@@ -410,6 +470,14 @@ export async function sendCollectable(args: {
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
   ]
 
+  const priorLatch = await findLatchForTip(wallet, outpoint, origin)
+  if (priorLatch?.lockingScript) {
+    assertOrdinalIsDeviceLocked(priorLatch.lockingScript, wallet)
+  }
+  const parentLatch = priorLatch
+    ? toUnderscoreOutpoint(priorLatch.outpoint)
+    : GENESIS_PARENT_LATCH
+
   const [txidIn] = outpoint.split('.')
   let inputBEEF: number[] | undefined
   try {
@@ -423,32 +491,40 @@ export async function sendCollectable(args: {
     console.warn('[collectables] inputBEEF fetch skipped', err)
   }
 
-  // BRC-150: build remittance for the tip being spent. Tip on the *new* outpoint is
-  // unknown until after createAction — we attach input-tip provenance when it fits
-  // budget (omit if oversized). Receivers verify against the tip they hold; mismatch
-  // ⇒ unproven (honest) until post-broadcast tip rewrite lands.
-  const provenance = await tryBuildProvenanceForSend({
-    tipOutpoint: outpoint,
-    origin,
-    wallet,
-    contentType: item?.mimeType,
-  })
+  const provenance =
+    (await tryBuildProvenanceForSend({
+      tipOutpoint: outpoint,
+      origin,
+      wallet,
+      contentType: item?.mimeType,
+      parentLatch,
+    })) ?? buildSoftLatchProvenanceV3({ origin, parentLatch })
+
+  const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
+  const inputs = [
+    {
+      outpoint,
+      inputDescription: '1sat collectable',
+      unlockingScriptLength: 108,
+    },
+    ...(priorLatch
+      ? [
+          {
+            outpoint: priorLatch.outpoint,
+            inputDescription: '1sat latch',
+            unlockingScriptLength: 108,
+          },
+        ]
+      : []),
+  ]
 
   let result: { txid?: string; signableTransaction?: SignableTransaction }
   try {
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
-      labels: ['1sat', 'handcash-send-collectable'],
+      labels: ['1sat', '1sat-latch', 'handcash-send-collectable'],
       ...(inputBEEF ? { inputBEEF } : {}),
-      inputs: [
-        {
-          outpoint,
-          inputDescription: '1sat collectable',
-          // P2PKH sig + pubkey. Required by BRC-100 validation, and it makes the
-          // ordinal a caller-signed input (see signOrdinalTransfer).
-          unlockingScriptLength: 108,
-        },
-      ],
+      inputs,
       outputs: [
         {
           lockingScript,
@@ -463,12 +539,24 @@ export async function sendCollectable(args: {
             provenance,
           }),
         },
+        {
+          lockingScript,
+          satoshis: LATCH_DUST_SATS,
+          outputDescription: '1sat proof latch',
+          basket: ONE_SAT_LATCH_BASKET,
+          tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
+          customInstructions: JSON.stringify({
+            schema: 1,
+            origin: toUnderscoreOutpoint(origin),
+            tip: RELATIVE_TIP,
+            parentLatch,
+          }),
+        },
       ],
       options: {
         trustSelf: 'known',
         ...(txidIn ? { knownTxids: [txidIn] } : {}),
         randomizeOutputs: false,
-        // Surface broadcast errors immediately for ordinal transfers.
         acceptDelayedBroadcast: false,
         signAndProcess: true,
       },
@@ -484,7 +572,7 @@ export async function sendCollectable(args: {
       txid = await signOrdinalTransfer({
         wallet,
         signable: result.signableTransaction,
-        outpoint,
+        outpoints: spendOutpoints,
       })
     } catch (err) {
       throw formatSendError(err)

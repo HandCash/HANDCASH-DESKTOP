@@ -28,7 +28,7 @@
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
 - BRC-150: `oneSatProvenance.ts` (build/verify v2; omit oversized remittance).
-- BRC-153: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0153.md` — latched v3 parse/verify (phase 1); Commit/Settle sends gated until testnet scripts.
+- BRC-153: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0153.md` — soft-latch sends live (tip+latch P2PKH, v3 remittance with OUTPUT:N refs).
 ## Read first
 
 | Topic | Path |

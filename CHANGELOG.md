@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.24] - 2026-08-05
+
+### Changed
+
+- **BRC-153 soft-latch sends are live** (no feature gate): collectable transfers create tip + `1sat-latch` latch, co-spend prior latch when present, attach v3 remittance with relative `OUTPUT:N` tip/latch refs.
+
 ## [1.2.23] - 2026-08-05
 
 ### Changed

@@ -1,8 +1,10 @@
 /**
  * BRC-153 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
  *
- * Phase 1: parse / structural verify / remittance build helpers.
- * Commit+Settle broadcast remains behind `isLatchedSendEnabled()` until script templates ship.
+ * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
+ * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
+ * the held tip's txid (so remittance can be built before the settle txid is known).
+ * Full BOLT covenant Commit/Settle remains a future hardening path.
  */
 
 export type ProvenanceVerifyResult = {
@@ -17,6 +19,16 @@ export const LATCH_TAG = 'latch:1sat' as const
 
 export const LATCH_SCHEMA_VERSION = 1 as const
 
+/** Satoshis locked in each soft-latch UTXO (not spendable change). */
+export const LATCH_DUST_SATS = 1 as const
+
+/** Genesis parentLatch sentinel (all-zero outpoint) when bootstrapping from a legacy tip. */
+export const GENESIS_PARENT_LATCH = `${'0'.repeat(64)}_0` as const
+
+/** Relative outpoint refs for remittance built before settle txid is known. */
+export const RELATIVE_TIP = 'OUTPUT:0' as const
+export const RELATIVE_LATCH = 'OUTPUT:1' as const
+
 export type ProvenanceV3 = {
   v: 3
   mode: 'latched'
@@ -29,6 +41,7 @@ export type ProvenanceV3 = {
 }
 
 const OUTPOINT_RE = /^[0-9a-f]{64}([._]\d+)?$/i
+const RELATIVE_RE = /^OUTPUT:(\d+)$/i
 
 export function toUnderscoreOutpoint(outpoint: string): string {
   const n = outpoint.trim()
@@ -36,16 +49,38 @@ export function toUnderscoreOutpoint(outpoint: string): string {
   return n.replace(/\.(\d+)$/, '_$1').toLowerCase()
 }
 
+export function isRelativeOutpointRef(ref: string): boolean {
+  return RELATIVE_RE.test(ref.trim())
+}
+
+export function isGenesisParentLatch(outpoint: string): boolean {
+  return toUnderscoreOutpoint(outpoint) === GENESIS_PARENT_LATCH
+}
+
 export function isValidOutpoint(outpoint: string): boolean {
+  if (isRelativeOutpointRef(outpoint)) return true
   const n = toUnderscoreOutpoint(outpoint)
   if (!OUTPOINT_RE.test(n)) return false
   const [txid, vout] = n.split('_')
   return Boolean(txid && txid.length === 64 && vout != null && /^\d+$/.test(vout))
 }
 
-/** Phase 3 gate — Commit/Settle sends disabled until script template is on testnet. */
+/**
+ * Resolve `OUTPUT:N` against the held tip's txid. Absolute outpoints pass through.
+ */
+export function resolveOutpointRef(ref: string, heldOutpoint: string): string {
+  const raw = ref.trim()
+  const m = RELATIVE_RE.exec(raw)
+  if (!m) return toUnderscoreOutpoint(raw)
+  const held = toUnderscoreOutpoint(heldOutpoint)
+  const txid = held.split('_')[0]
+  if (!txid || txid.length !== 64) return toUnderscoreOutpoint(raw)
+  return `${txid}_${m[1]}`.toLowerCase()
+}
+
+/** Latched collectable sends are live (soft P2PKH latch). */
 export function isLatchedSendEnabled(): boolean {
-  return false
+  return true
 }
 
 export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
@@ -57,12 +92,17 @@ export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
   if ('beefB64' in o && o.beefB64 != null) return null
   if ('path' in o && Array.isArray(o.path)) return null
 
+  const tip = isRelativeOutpointRef(o.tip) ? o.tip.trim().toUpperCase() : toUnderscoreOutpoint(o.tip)
+  const latch = isRelativeOutpointRef(o.latch)
+    ? o.latch.trim().toUpperCase()
+    : toUnderscoreOutpoint(o.latch)
+
   return {
     v: 3,
     mode: 'latched',
     origin: toUnderscoreOutpoint(o.origin),
-    tip: toUnderscoreOutpoint(o.tip),
-    latch: toUnderscoreOutpoint(o.latch),
+    tip,
+    latch,
     parentLatch: toUnderscoreOutpoint(o.parentLatch),
     commitTxid: typeof o.commitTxid === 'string' ? o.commitTxid.trim().toLowerCase() : undefined,
     settleTxid: typeof o.settleTxid === 'string' ? o.settleTxid.trim().toLowerCase() : undefined,
@@ -71,7 +111,7 @@ export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
 
 /**
  * Structural O(1) verify for v3 remittance (BRC-153).
- * On-chain latch co-spend rules are enforced when Commit/Settle sends ship.
+ * Relative tip/latch refs resolve against the held tip's txid.
  */
 export function verifyProvenanceV3(
   provenance: unknown,
@@ -80,18 +120,29 @@ export function verifyProvenanceV3(
   const p = parseProvenanceV3(provenance)
   if (!p) return { proven: false, reason: 'missing or non-v3 latched provenance' }
 
-  for (const op of [p.origin, p.tip, p.latch, p.parentLatch]) {
-    if (!isValidOutpoint(op)) {
-      return { proven: false, reason: 'invalid outpoint in v3 provenance' }
-    }
+  if (!isValidOutpoint(p.origin)) {
+    return { proven: false, reason: 'invalid origin in v3 provenance' }
+  }
+  if (!isValidOutpoint(p.parentLatch)) {
+    return { proven: false, reason: 'invalid parentLatch in v3 provenance' }
   }
 
   const held = toUnderscoreOutpoint(heldOutpoint)
-  if (p.tip !== held) {
+  const tip = resolveOutpointRef(p.tip, held)
+  const latch = resolveOutpointRef(p.latch, held)
+
+  if (!isValidOutpoint(tip) || isRelativeOutpointRef(tip)) {
+    return { proven: false, reason: 'invalid tip in v3 provenance' }
+  }
+  if (!isValidOutpoint(latch) || isRelativeOutpointRef(latch)) {
+    return { proven: false, reason: 'invalid latch in v3 provenance' }
+  }
+
+  if (tip !== held) {
     return { proven: false, reason: 'tip does not match held outpoint' }
   }
 
-  if (p.latch === p.tip || p.latch === p.parentLatch) {
+  if (latch === tip || latch === p.parentLatch) {
     return { proven: false, reason: 'latch must differ from tip and parentLatch' }
   }
 
@@ -113,27 +164,51 @@ export function buildProvenanceV3(args: {
   commitTxid?: string
   settleTxid?: string
 }): ProvenanceV3 {
+  const tip = isRelativeOutpointRef(args.tip)
+    ? args.tip.trim().toUpperCase()
+    : toUnderscoreOutpoint(args.tip)
+  const latch = isRelativeOutpointRef(args.latch)
+    ? args.latch.trim().toUpperCase()
+    : toUnderscoreOutpoint(args.latch)
   return {
     v: 3,
     mode: 'latched',
     origin: toUnderscoreOutpoint(args.origin),
-    tip: toUnderscoreOutpoint(args.tip),
-    latch: toUnderscoreOutpoint(args.latch),
+    tip,
+    latch,
     parentLatch: toUnderscoreOutpoint(args.parentLatch),
     ...(args.commitTxid ? { commitTxid: args.commitTxid.trim().toLowerCase() } : {}),
     ...(args.settleTxid ? { settleTxid: args.settleTxid.trim().toLowerCase() } : {}),
   }
 }
 
-/** Tags for a latch output per BRC-153. */
+/** Remittance for a settle-style soft-latch send (relative tip/latch). */
+export function buildSoftLatchProvenanceV3(args: {
+  origin: string
+  parentLatch?: string | null
+}): ProvenanceV3 {
+  return buildProvenanceV3({
+    origin: args.origin,
+    tip: RELATIVE_TIP,
+    latch: RELATIVE_LATCH,
+    parentLatch: args.parentLatch?.trim()
+      ? toUnderscoreOutpoint(args.parentLatch)
+      : GENESIS_PARENT_LATCH,
+  })
+}
+
+/** Tags for a latch output per BRC-153 (tip may be relative pre-txid). */
 export function latchOutputTags(args: {
   origin: string
   tip: string
 }): string[] {
+  const tipTag = isRelativeOutpointRef(args.tip)
+    ? args.tip.trim().toUpperCase()
+    : toUnderscoreOutpoint(args.tip)
   return [
     LATCH_TAG,
     `origin:${toUnderscoreOutpoint(args.origin)}`,
-    `tip:${toUnderscoreOutpoint(args.tip)}`,
+    `tip:${tipTag}`,
   ]
 }
 
@@ -141,11 +216,29 @@ export function isProvenanceV3(raw: unknown): boolean {
   return parseProvenanceV3(raw) != null
 }
 
+export type LatchListing = {
+  outpoint: string
+  origin: string
+  tip: string
+  satoshis: number
+  lockingScript?: string
+}
+
+/**
+ * Resolve which tip outpoint a latch listing claims (absolute or OUTPUT:N vs latch txid).
+ */
+export function resolveLatchTipClaim(latchOutpoint: string, tipTag: string): string {
+  if (isRelativeOutpointRef(tipTag)) {
+    return resolveOutpointRef(tipTag, latchOutpoint)
+  }
+  return toUnderscoreOutpoint(tipTag)
+}
+
 /** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-153). */
 export type OneSatBrcCapabilities = {
   brcs: readonly string[]
   baskets: readonly string[]
-  /** Commit+Settle latched sends (phase 3). */
+  /** Soft-latch settle sends (tip + latch P2PKH). */
   latchedSend: boolean
   /** Provenance remittance versions this wallet can verify. */
   provenanceVerify: readonly string[]
