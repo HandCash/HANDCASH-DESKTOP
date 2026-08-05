@@ -28,6 +28,8 @@ import {
   clearPendingSend,
   completePendingSend,
 } from '../wallet/pendingSend'
+import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
+import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
@@ -87,6 +89,38 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const canReview = to.trim().length > 0
+
+  /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, @handle. */
+  const applyRecipientInput = (value: string) => {
+    setRecipientQuery(value)
+    setShowMatches(true)
+    setTo(value.trim())
+    setFriendLabel(null)
+
+    const peer = tryParsePeerPayUri(value)
+    if (peer) {
+      try {
+        setTo(addressFromIdentityKey(peer.identityKey, chain))
+        setError(null)
+      } catch (err) {
+        setError(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    if (parseHandleInput(value)) {
+      void (async () => {
+        try {
+          const resolved = await resolveHandle(value)
+          setTo(addressFromIdentityKey(resolved.identityKey, chain))
+          setFriendLabel(resolved.display)
+          setError(null)
+        } catch (err) {
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      })()
+    }
+  }
 
   const selectFriend = (friend: Friend) => {
     try {
@@ -198,24 +232,18 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
             <input
               id="collectable-to"
               value={recipientQuery}
-              onChange={(e) => {
-                const value = e.target.value
-                setRecipientQuery(value)
-                setShowMatches(true)
-                setTo(value.trim())
-                setFriendLabel(null)
-              }}
+              onChange={(e) => applyRecipientInput(e.target.value)}
               onFocus={() => setShowMatches(true)}
               onBlur={() => {
                 window.setTimeout(() => setShowMatches(false), 120)
               }}
-              placeholder="Friend, address, or identity key"
+              placeholder="Friend, @handle, address, or identity key"
               autoComplete="off"
               spellCheck={false}
               autoFocus
             />
             <p className="friend-recipient-hint send-recipient-hint">
-              Identity keys resolve to a payment address on this network.
+              Handles and identity keys resolve to a payment address on this network.
             </p>
             {friendLabel && (
               <p className="friend-recipient-hint">

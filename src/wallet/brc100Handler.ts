@@ -12,6 +12,12 @@ import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import {
+  claimCloudHandlePayload,
+  getClaimedCloudHandlePayload,
+  isHandleClaimMethod,
+  isHandleClaimOrigin,
+} from './handleClaim'
+import {
   getLegacyAddressPayload,
   isMigrationMethod,
   isMigrationOrigin,
@@ -75,6 +81,14 @@ async function dispatchWalletMethod(
       )
     case 'listMigrationTxids':
       return listMigrationTxids()
+    case 'claimCloudHandle':
+      return claimCloudHandlePayload(
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? (args as { handle: string })
+          : { handle: '' },
+      )
+    case 'getClaimedCloudHandle':
+      return getClaimedCloudHandlePayload()
     case 'getVersion':
       return wallet.getVersion({})
     case 'getNetwork':
@@ -203,13 +217,16 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
   }
 
-  if (isMigrationMethod(method) && !isMigrationOrigin(originator)) {
+  if (
+    (isMigrationMethod(method) || isHandleClaimMethod(method)) &&
+    !(isMigrationOrigin(originator) || isHandleClaimOrigin(originator))
+  ) {
     return {
       status: 403,
       body: JSON.stringify({
         status: 'error',
         code: 'MIGRATION_ORIGIN_DENIED',
-        description: 'Migration methods are only available to HandCash migrate hosts.',
+        description: 'Migration and handle-claim methods are only available to HandCash web hosts.',
       }),
     }
   }

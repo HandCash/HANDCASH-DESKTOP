@@ -2,7 +2,7 @@
  * HandCash migration helpers exposed over the BRC-100 HTTP bridge.
  * Hosts: handcash.io / market.handcash.io (+ localhost / preprod).
  * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids.
- * (items-market Desktop migrate UI was removed from main; keep this surface stable for re-enable.)
+ * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'

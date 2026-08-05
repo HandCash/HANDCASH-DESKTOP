@@ -3,7 +3,14 @@
  * Recursive inscription content (HTML/JS that loads other inscriptions) is still a 1sat tip —
  * same basket, same customInstructions remittance, same BRC-39 historyReplica. No second basket.
  */
-import { P2PKH } from '@bsv/sdk'
+import {
+  Beef,
+  P2PKH,
+  PrivateKey,
+  type SignableTransaction,
+  type Transaction,
+} from '@bsv/sdk'
+import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
   contentUrlForOrigin,
@@ -268,12 +275,79 @@ function formatSendError(err: unknown): Error {
     if (name.includes('INSUFFICIENT_FUNDS') || /insufficient.?funds/i.test(msg)) {
       return new Error('Not enough BSV to cover the network fee for this transfer')
     }
-    if (/invalid.*address|lockingScript|P2PKH/i.test(msg)) {
+    // Must not match `unlockingScript` — that is a signing fault, not a bad recipient.
+    if (/invalid.*(address|identity key)/i.test(msg) || /outputs\[\d+]\.lockingScript/i.test(msg)) {
       return new Error('Invalid recipient address or identity key')
     }
     return err
   }
   return new Error(String(err))
+}
+
+/**
+ * Ordinals reach basket `1sat` locked to this device's root-key address — both the
+ * migration sweep and peer transfers pay `addressFromIdentityKey`. Anything else
+ * cannot be unlocked here, so say so instead of failing inside the signer.
+ */
+function assertOrdinalIsDeviceLocked(
+  lockingScript: string | undefined,
+  wallet: ActiveWallet,
+): void {
+  if (!lockingScript) return
+  const expected = new P2PKH().lock(wallet.address).toHex()
+  if (lockingScript.toLowerCase() !== expected.toLowerCase()) {
+    throw new Error(
+      'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.',
+    )
+  }
+}
+
+/**
+ * BRC-100 only auto-signs the wallet's own BRC-29 change, so an ordinal listed in
+ * `inputs` comes back as a signable transaction for us to unlock with the root key.
+ */
+async function signOrdinalTransfer(args: {
+  wallet: ActiveWallet
+  signable: SignableTransaction
+  outpoint: string
+}): Promise<string> {
+  const [txidIn, voutRaw] = args.outpoint.split('.')
+  const vout = Number(voutRaw)
+
+  const beef = Beef.fromBinary(args.signable.tx)
+  let unsigned: Transaction | undefined
+  let vin = -1
+  for (const btx of beef.txs) {
+    if (!btx.tx) continue
+    for (let i = 0; i < btx.tx.inputs.length; i++) {
+      const input = btx.tx.inputs[i]
+      if (
+        String(input?.sourceTXID).toLowerCase() === txidIn?.toLowerCase() &&
+        input?.sourceOutputIndex === vout
+      ) {
+        unsigned = btx.tx
+        vin = i
+        break
+      }
+    }
+    if (unsigned) break
+  }
+  if (!unsigned || vin < 0) {
+    throw new Error('Collectable input missing from the signable transaction')
+  }
+
+  const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
+  unsigned.inputs[vin]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, 1)
+  await unsigned.sign()
+  const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
+  if (!unlockingScript) throw new Error('Could not sign the collectable transfer')
+
+  const signed = await args.wallet.wallet.signAction({
+    reference: args.signable.reference,
+    spends: { [vin]: { unlockingScript } },
+  })
+  if (!signed.txid) throw new Error('Collectable transfer returned no txid')
+  return signed.txid
 }
 
 /**
@@ -311,6 +385,7 @@ export async function sendCollectable(args: {
     limit: 1000,
     includeTags: true,
     includeCustomInstructions: true,
+    include: 'locking scripts',
     seekPermission: false,
   })
   const match = (held.outputs ?? []).find(
@@ -320,6 +395,7 @@ export async function sendCollectable(args: {
   if ((match.satoshis ?? 1) !== 1) {
     throw new Error('Collectable UTXO is not a 1-sat ordinal')
   }
+  assertOrdinalIsDeviceLocked(match.lockingScript, wallet)
 
   const item = (await getCollectable(outpoint, wallet)) ?? null
   const origin = parseOrigin(args.origin ?? item?.origin, outpoint)
@@ -358,7 +434,7 @@ export async function sendCollectable(args: {
     contentType: item?.mimeType,
   })
 
-  let result: { txid?: string; signableTransaction?: unknown }
+  let result: { txid?: string; signableTransaction?: SignableTransaction }
   try {
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
@@ -368,6 +444,9 @@ export async function sendCollectable(args: {
         {
           outpoint,
           inputDescription: '1sat collectable',
+          // P2PKH sig + pubkey. Required by BRC-100 validation, and it makes the
+          // ordinal a caller-signed input (see signOrdinalTransfer).
+          unlockingScriptLength: 108,
         },
       ],
       outputs: [
@@ -398,12 +477,18 @@ export async function sendCollectable(args: {
     throw formatSendError(err)
   }
 
-  const txid = result.txid
+  let txid = result.txid
   if (!txid) {
-    if (result.signableTransaction) {
-      throw new Error('Collectable send needs additional signatures')
+    if (!result.signableTransaction) throw new Error('Send completed without txid')
+    try {
+      txid = await signOrdinalTransfer({
+        wallet,
+        signable: result.signableTransaction,
+        outpoint,
+      })
+    } catch (err) {
+      throw formatSendError(err)
     }
-    throw new Error('Send completed without txid')
   }
 
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))

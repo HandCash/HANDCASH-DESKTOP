@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.16] - 2026-08-05
+
+### Fixed
+
+- **Peer-to-peer collectable send.** Basket `1sat` transfers now declare `unlockingScriptLength` and complete signing with the device root key. A too-broad error map had been rewriting the BRC-100 validation failure as "Invalid recipient address or identity key."
+- **Sticky panel labels.** Solid background extends through the scroll-stage top padding so list content no longer peeks above the box label.
+
+### Added
+
+- **Handle claim (separate from balance migration).** BRC-100 `claimCloudHandle` / `getClaimedCloudHandle` bind a cloud `$alias` to the Desktop identity key via BRC-CLOUD.
+- **GrapheneOS note** in Settings → About when HandCash Mobile detects GrapheneOS (sideload updates, no Play Services, backup disabled).
+
 ## [1.2.15] - 2026-08-04
 
 ### Changed
