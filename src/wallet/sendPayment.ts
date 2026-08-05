@@ -11,7 +11,6 @@ import {
 } from './pendingSend'
 import { resolvePaymentAddress } from './friends'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { refreshFromChainDuringSpend } from './chainIngest'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   prepareSpendHeal,
@@ -67,11 +66,11 @@ export async function sendSatsToAddress(opts: {
         ],
       })
 
-      const txid =
-        (result as { txid?: string })?.txid ?? `local-${Date.now().toString(16)}`
+      const realTxid = (result as { txid?: string })?.txid
+      const txid = realTxid ?? `local-${Date.now().toString(16)}`
       // Before any heal runs: this send's change must not be written off as dead
       // while the indexer is still catching up on it.
-      noteSendBroadcast((result as { txid?: string })?.txid)
+      if (realTxid) noteSendBroadcast(realTxid)
       completePendingSend(pending.id, txid)
 
       const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
@@ -89,15 +88,8 @@ export async function sendSatsToAddress(opts: {
 
       scheduleHistoryBackupPush('send')
 
-      let balanceSats = Math.max(0, (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0)
-      try {
-        const synced = await refreshFromChainDuringSpend({ announceReceive: false })
-        if (synced != null) balanceSats = synced
-        else balanceSats = await fetchBalanceSats(active.wallet)
-      } catch {
-        // keep optimistic / last fetch
-      }
-
+      // Pre-send heal already ran; background poll + settle grace reconcile the rest.
+      const balanceSats = Math.max(0, (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0)
       return { txid, balanceSats }
     } catch (err) {
       clearPendingSend(pending.id)

@@ -39,7 +39,15 @@ export type WalletLayer =
 /** Canonical module map for agents and reviews. */
 export const WALLET_LAYER_MODULES = {
   custody: ['vault.ts', 'sessionBackupAuth.ts'],
-  localState: ['session.ts', 'collectables.ts', 'brc100Handler.ts', 'oneSatProvenance.ts', 'oneSatLatch.ts'],
+  localState: [
+    'session.ts',
+    'collectables.ts',
+    'brc100Handler.ts',
+    'oneSatProvenance.ts',
+    'oneSatLatch.ts',
+    'sentItemGuard.ts',
+    'pendingSend.ts',
+  ],
   chainIngest: [
     'chainIngest.ts',
     'ingestLegacyAddress.ts',
@@ -47,6 +55,7 @@ export const WALLET_LAYER_MODULES = {
     'oneSatImport.ts',
     'legacyImportGuard.ts',
     'oneSatImportGuard.ts',
+    'sendSettleGuard.ts',
   ],
   historyReplica: [
     'historyBackup.ts',
@@ -55,9 +64,14 @@ export const WALLET_LAYER_MODULES = {
     'historyEmptyGuard.ts',
     'recompose.ts',
   ],
-  balanceView: ['session.ts#fetchBalanceSats', 'layers.ts#getBalanceView'],
+  balanceView: ['session.ts#fetchBalanceSats', 'layers.ts#inspectLocalToolboxState'],
   health: ['walletHealth.ts', 'cloudBackupHealth.ts', 'backupStatus.ts'],
-  coordinator: ['walletCoordinatorMachine.ts', 'walletCoordinator.ts'],
+  coordinator: [
+    'walletCoordinatorMachine.ts',
+    'walletCoordinator.ts',
+    'spendGuard.ts',
+    'spendLease.ts',
+  ],
 } as const satisfies Record<WalletLayer | 'coordinator', readonly string[]>
 
 /**
@@ -80,13 +94,6 @@ export type LocalToolboxState = {
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
   looksEmpty: boolean
-}
-
-export type BalanceView = {
-  /** Managed change / toolbox spendable (what the hero shows). */
-  spendableSats: number
-  /** localState emptiness for history recovery decisions. */
-  local: LocalToolboxState
 }
 
 async function countOutputs(basket: string): Promise<number> {
@@ -151,10 +158,4 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
 
 export async function localToolboxStateLooksEmpty(): Promise<boolean> {
   return (await inspectLocalToolboxState()).looksEmpty
-}
-
-/** UI / sync decision balance view — spendable from localState only. */
-export async function getBalanceView(): Promise<BalanceView> {
-  const local = await inspectLocalToolboxState()
-  return { spendableSats: local.spendableSats, local }
 }

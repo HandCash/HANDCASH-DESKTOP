@@ -5,7 +5,6 @@ import type { Chain } from './vault'
 import {
   beginLegacyImport,
   markLegacyImported,
-  reclaimStillUnspentLegacyOutpoints,
   releaseLegacyImport,
 } from './legacyImportGuard'
 import { isLatchDustSats } from './oneSatLatch'
@@ -203,9 +202,6 @@ export async function importLegacyUtxos(
       importedReceipts: [],
     }
   }
-
-  // Heal false blacklist: still-unspent outs that were marked imported after a transient error.
-  reclaimStillUnspentLegacyOutpoints(safe)
 
   const candidates = safe.map((u) => u.outpoint)
   const outpoints = beginLegacyImport(candidates)

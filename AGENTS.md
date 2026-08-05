@@ -17,7 +17,7 @@
 | localState | Toolbox IndexedDB (managed change, baskets, remittance) | `session.ts` |
 | chainIngest | Network → localState (Refresh) | `chainIngest.ts` → `refreshFromChain` |
 | historyReplica | BRC-39 backup / multi-device | `deviceSync.ts`, `historyBackup.ts` |
-| balanceView | Spendable from localState | `fetchBalanceSats` / `getBalanceView` |
+| balanceView | Spendable from localState | `fetchBalanceSats` / `inspectLocalToolboxState` |
 
 - **Refresh** = chainIngest only. It will not restore P2P/managed-change history.
 - **History backup** = historyReplica. That is how remittance / managed change leaves the device.

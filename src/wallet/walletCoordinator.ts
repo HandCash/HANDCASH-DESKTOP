@@ -177,9 +177,3 @@ export function runRecompose<T>(fn: () => Promise<T>): Promise<T> {
     }
   })
 }
-
-/** @deprecated use runChainIngest */
-export const runOnChainIngestQueue = runChainIngest
-
-/** @deprecated use runHistoryReplica */
-export const runOnHistoryReplicaQueue = runHistoryReplica

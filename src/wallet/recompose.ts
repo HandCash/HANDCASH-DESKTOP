@@ -112,10 +112,10 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   let chainError: string | null = null
   if (runChain) {
     try {
-      spendableSats = await refreshFromChainExclusive({
+      spendableSats = (await refreshFromChainExclusive({
         forceReview: true,
         announceReceive: false,
-      })
+      })).balanceSats
       if (spendableSats == null) {
         const active = getActiveWallet()
         spendableSats = active ? await fetchBalanceSats(active.wallet) : 0

@@ -14,7 +14,6 @@ import {
   type Collectable,
 } from '../wallet/collectables'
 import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
-import { refreshFromChain } from '../wallet/chainIngest'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { CollectablesIcon, SendIcon } from './icons'
@@ -150,7 +149,7 @@ export function InventoryPanel() {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
-        await refreshFromChain({ announceReceive: false, forceReview: showSpinner })
+        // Dashboard owns chain ingest. This panel only refreshes the item list.
         await listCollectables()
         if (!cancelled) {
           setReady(areCollectablesHydrated())

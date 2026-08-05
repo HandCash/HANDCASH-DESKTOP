@@ -23,18 +23,12 @@ import {
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from '../wallet/appActivity'
-import {
-  beginPendingSend,
-  clearPendingSend,
-  completePendingSend,
-} from '../wallet/pendingSend'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
-import { refreshFromChain } from '../wallet/chainIngest'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
@@ -142,15 +136,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     sendingRef.current = true
     setStage('sending')
     setError(null)
-    let pendingId: string | null = null
     try {
-      const pending = beginPendingSend({
-        to: to.trim(),
-        sats: 1,
-        friendLabel,
-      })
-      pendingId = pending.id
-
       const result = await sendCollectable({
         outpoint: item.outpoint,
         toAddress: to,
@@ -158,7 +144,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
         origin: item.origin,
         app: item.app,
       })
-      completePendingSend(pending.id, result.txid)
       setTxid(result.txid)
       const noteTo = friendLabel ? `${friendLabel} (${to})` : to
       if (!hasActivityTxid(result.txid)) {
@@ -178,26 +163,18 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
           },
         })
       }
-      clearPendingSend(pending.id)
-      pendingId = null
 
       setStage('success')
       void listCollectables().catch(() => {})
-      void refreshFromChain({ announceReceive: false })
-        .then(async (balance) => {
-          if (balance != null) {
-            onSent?.(balance)
-            return
-          }
-          const active = getActiveWallet()
-          if (!active) return
-          onSent?.(await fetchBalanceSats(active.wallet))
+      // Pre-send heal already ran; Dashboard poll + settle grace reconcile the rest.
+      void fetchBalanceSats(getActiveWallet()?.wallet)
+        .then((balance) => {
+          onSent?.(balance)
         })
         .catch((err) => {
           console.warn('[send-collectable] balance refresh failed', err)
         })
     } catch (err) {
-      if (pendingId) clearPendingSend(pendingId)
       const message = err instanceof Error ? err.message : String(err)
       setError(message)
       setStage('failure')

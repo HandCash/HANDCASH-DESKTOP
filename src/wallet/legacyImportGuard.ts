@@ -5,8 +5,9 @@
  * A second sweep of one outpoint is not a harmless retry: both transactions
  * spend the same legacy input, so at most one can confirm, and the managed
  * change the loser recorded is unspendable forever. Marks are therefore durable
- * and carry the sweep txid and time, so a reload or a lagging indexer cannot
- * reopen a sweep that already went out.
+ * and carry the sweep txid and time. Once marked, an outpoint stays marked —
+ * an address scan that still lists it as unspent is indexer lag, not a lost
+ * sweep, and reclaiming it would reopen the double-deposit hole.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
@@ -15,15 +16,8 @@ const STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v2'
 const LEGACY_STORAGE_KEY = 'handcash.brc100.importedLegacyOutpoints.v1'
 const MAX_ENTRIES = 2000
 
-/** Skip spendable review + stale-indexer reclaim briefly after a successful sweep. */
+/** Skip spendable review briefly after a successful sweep while indexers catch up. */
 const IMPORT_GRACE_MS = 120_000
-
-/**
- * How long a swept outpoint stays off limits. Only a sweep this old may be
- * retried, and only once the chain confirms its transaction never landed —
- * WhatsOnChain can list a spent output as unspent for minutes.
- */
-export const SWEEP_RETRY_MS = 15 * 60_000
 
 export type LegacySweepRecord = {
   /** When the sweep was marked imported. 0 for v1 marks of unknown age. */
@@ -64,7 +58,6 @@ function readRecords(): Map<string, LegacySweepRecord> {
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return records
     for (const op of parsed) {
-      // Unknown sweep age — treat as retry eligible, the chain check still gates it.
       if (typeof op === 'string' && op.includes('.')) records.set(op, { at: 0 })
     }
   } catch {
@@ -135,17 +128,7 @@ export function legacySweepRecord(outpoint: string): LegacySweepRecord | null {
   return readRecords().get(op) ?? null
 }
 
-/**
- * True when a swept outpoint has sat long enough that a retry is worth
- * considering. Callers must still prove the recorded sweep never landed.
- */
-export function legacySweepRetryEligible(outpoint: string, now = Date.now()): boolean {
-  const record = legacySweepRecord(outpoint)
-  if (!record) return true
-  return now - record.at >= SWEEP_RETRY_MS
-}
-
-/** Record a successful legacy sweep — pauses aggressive review/reclaim while indexers catch up. */
+/** Record a successful legacy sweep — pauses aggressive review while indexers catch up. */
 export function noteLegacyImportSuccess(count: number): void {
   if (count > 0) lastSuccessfulLegacyImportAt = Date.now()
 }
@@ -160,50 +143,6 @@ export function isLegacyImportGraceActive(): boolean {
     if (record.at > 0 && now - record.at < IMPORT_GRACE_MS) return true
   }
   return false
-}
-
-/** Undo a durable mark — used when an “imported” out is still unspent on-chain. */
-export function forgetLegacyImported(outpoints: string[]): void {
-  if (outpoints.length === 0) return
-  const known = readRecords()
-  let changed = false
-  for (const raw of outpoints) {
-    const op = raw.trim().toLowerCase()
-    if (!op || !known.has(op)) continue
-    known.delete(op)
-    inFlight.delete(op)
-    changed = true
-  }
-  if (changed) writeRecords(known)
-}
-
-/**
- * If we previously blacklisted an outpoint but the address scan still shows it
- * unspent with funding sats, clear the mark so import can retry.
- *
- * Only sweeps older than {@link SWEEP_RETRY_MS} qualify. Anything newer is far
- * more likely to be indexer lag than a lost sweep, and re-sweeping it would
- * double-spend our own funding transaction.
- */
-export function reclaimStillUnspentLegacyOutpoints(
-  utxos: Array<{ outpoint: string; satoshis: number }>,
-): string[] {
-  const known = readRecords()
-  const reclaimed: string[] = []
-  for (const u of utxos) {
-    if (!(u.satoshis > 1)) continue
-    const op = u.outpoint.trim().toLowerCase()
-    if (!op || !known.has(op) || inFlight.has(op)) continue
-    if (!legacySweepRetryEligible(op)) continue
-    reclaimed.push(op)
-  }
-  if (reclaimed.length > 0) {
-    forgetLegacyImported(reclaimed)
-    console.info(
-      `[legacy] reclaimed ${reclaimed.length} still-unspent outpoint(s) previously marked imported`,
-    )
-  }
-  return reclaimed
 }
 
 export function releaseLegacyImport(outpoints: string[]): void {

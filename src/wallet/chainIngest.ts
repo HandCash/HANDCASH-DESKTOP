@@ -5,8 +5,10 @@
  * and **not** Desktop↔Mobile sync. See `layers.ts`.
  *
  * Pipeline:
- * 1. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
- * 2. reviewSpendableOutputs (drop outs spent elsewhere; skipped briefly after import)
+ * 1. reconcile interrupted pending sends
+ * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
+ * 3. reviewSpendableOutputs (release gated by import + send-settle grace)
+ * 4. refresh spendable balance
  */
 import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
@@ -19,32 +21,12 @@ import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
+import type { MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isSendSettleGraceActive } from './sendSettleGuard'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
-
-/** Serialize all chain-ingest work (Refresh, migrate refresh, spend heal). */
-export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
-  return runChainIngest(() => refreshFromChainExclusive(opts))
-}
-
-/**
- * Chain heal while a spend session holds the spend region.
- * Used by spendGuard — do not call from Dashboard Refresh.
- */
-export async function refreshFromChainDuringSpend(
-  opts?: ChainIngestOptions,
-): Promise<number | null> {
-  return runChainIngestDuringSpend(() => refreshFromChainExclusive(opts))
-}
-
-/** @deprecated prefer refreshFromChain */
-export const syncLegacyFunds = refreshFromChain
-
-/** @deprecated prefer runChainIngest from walletCoordinator */
-export { runChainIngest as runOnChainIngestQueue } from './walletCoordinator'
 
 export type ChainIngestOptions = {
   /**
@@ -58,10 +40,43 @@ export type ChainIngestOptions = {
    * Use for explicit Refresh. Background polls throttle reviews.
    */
   forceReview?: boolean
+  /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
+  knownItems?: MigrationItem[]
 }
 
-/** @deprecated alias — prefer ChainIngestOptions */
-export type SyncLegacyFundsOptions = ChainIngestOptions
+/** Full result of one exclusive ingest pass — migration needs the counts. */
+export type ChainIngestRunResult = {
+  balanceSats: number | null
+  importedFunding: number
+  importedItems: number
+  scannedTxids: string[]
+}
+
+export type SpendableReviewResult = {
+  released: number
+  /** True when review did not run (throttle, no wallet, import grace). */
+  skipped: boolean
+  /** True when review ran but release was held (send still settling). */
+  held?: boolean
+  error?: string
+}
+
+/** Serialize all chain-ingest work (Refresh, migrate refresh, spend heal). */
+export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
+  return runChainIngest(async () => (await refreshFromChainExclusive(opts)).balanceSats)
+}
+
+/**
+ * Chain heal while a spend session holds the spend region.
+ * Used by spendGuard — do not call from Dashboard Refresh.
+ */
+export async function refreshFromChainDuringSpend(
+  opts?: ChainIngestOptions,
+): Promise<number | null> {
+  return runChainIngestDuringSpend(
+    async () => (await refreshFromChainExclusive(opts)).balanceSats,
+  )
+}
 
 /** Outpoints we've already chimed for this session — avoids re-import noise. */
 const announcedOneSatOutpoints = new Set<string>()
@@ -99,7 +114,7 @@ function isUndefinedPartialFilterError(err: unknown): boolean {
  */
 export async function reviewAndReleaseSpentOutputs(
   force = false,
-): Promise<{ released: number; skipped: boolean; error?: string }> {
+): Promise<SpendableReviewResult> {
   const active = getActiveWallet()
   if (!active) return { released: 0, skipped: true }
 
@@ -141,7 +156,7 @@ export async function reviewAndReleaseSpentOutputs(
           `[chain-ingest] ${invalid} output(s) look unspent but a send is still settling — holding`,
         )
       }
-      return { released: 0, skipped: false }
+      return { released: 0, skipped: false, held: true }
     }
     if (invalid > 0) {
       clearCollectablesCache()
@@ -154,11 +169,24 @@ export async function reviewAndReleaseSpentOutputs(
   }
 }
 
-export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Promise<number | null> {
+const emptyRun = (): ChainIngestRunResult => ({
+  balanceSats: null,
+  importedFunding: 0,
+  importedItems: 0,
+  scannedTxids: [],
+})
+
+/**
+ * Exclusive chain-ingest body. Callers that already hold the ingest lock
+ * (recompose, migration via runChainIngest) use this directly.
+ */
+export async function refreshFromChainExclusive(
+  opts?: ChainIngestOptions,
+): Promise<ChainIngestRunResult> {
   const announceReceive = opts?.announceReceive !== false
   const forceReview = opts?.forceReview === true
   const active = getActiveWallet()
-  if (!active) return null
+  if (!active) return emptyRun()
 
   if (forceReview) {
     setSyncHealth({ phase: 'syncing', message: 'Refreshing funds against the network' })
@@ -182,13 +210,22 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
   let heldCount = 0
   let partialWarn: string | null = null
   let importedFunding = 0
+  let importedItems = 0
+  let scannedTxids: string[] = []
   let newOneSatOutpoints: string[] = []
 
   try {
-    const ingest = await ingestLegacyAddressUtxos({ active })
+    const ingest = await ingestLegacyAddressUtxos({
+      active,
+      knownItems: opts?.knownItems,
+    })
     heldCount = ingest.heldOneSats
     partialWarn = ingest.partialWarn
     importedFunding = ingest.importedFunding
+    importedItems = ingest.importedItems
+    scannedTxids = [
+      ...new Set(ingest.scan.utxos.map((u) => u.txid).filter((t): t is string => !!t)),
+    ]
     newOneSatOutpoints = ingest.newOneSatOutpoints.filter(
       (op) => !announcedOneSatOutpoints.has(op),
     )
@@ -202,7 +239,7 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
       message: 'Couldn’t refresh funds — check your network connection.',
       heldOneSats: heldCount,
     })
-    return null
+    return emptyRun()
   }
 
   // A sweep in this same pass means the indexer has definitely not caught up yet,
@@ -246,7 +283,9 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
     const reviewNote =
       review.released > 0
         ? `Updated ${review.released} spent output${review.released === 1 ? '' : 's'} from the network.`
-        : null
+        : review.held
+          ? 'Send still settling — spent-output release held.'
+          : null
 
     setSyncHealth({
       phase: review.error && !partialWarn ? 'error' : 'ok',
@@ -257,7 +296,12 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
           : reviewNote),
       heldOneSats: heldCount,
     })
-    return balanceAfter
+    return {
+      balanceSats: balanceAfter,
+      importedFunding,
+      importedItems,
+      scannedTxids,
+    }
   } catch (err) {
     console.warn('[chain-ingest] balance refresh failed', err)
     setSyncHealth({
@@ -265,6 +309,11 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
       message: 'Balance refresh failed — check your network connection.',
       heldOneSats: heldCount,
     })
-    return null
+    return {
+      balanceSats: null,
+      importedFunding,
+      importedItems,
+      scannedTxids,
+    }
   }
 }

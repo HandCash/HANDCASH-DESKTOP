@@ -27,9 +27,6 @@ import { runHistoryReplica } from './walletCoordinator'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
-/** @deprecated prefer runHistoryReplica from walletCoordinator */
-export { runHistoryReplica as runOnHistoryReplicaQueue } from './walletCoordinator'
-
 function asArrayBufferBytes(bytes: number[] | Uint8Array): Uint8Array<ArrayBuffer> {
   const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const out = new Uint8Array(src.byteLength)

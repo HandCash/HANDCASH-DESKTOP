@@ -4,13 +4,11 @@
  * Methods: getLegacyAddress, refreshLegacyAddress, listMigrationTxids.
  * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
-import { getActiveWallet, fetchBalanceSats } from './session'
-import { reconcilePendingSends } from './pendingSend'
+import { getActiveWallet } from './session'
 import { normalizeAppHost } from './appIdentity'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
-import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import { reviewAndReleaseSpentOutputs } from './chainIngest'
+import { refreshFromChainExclusive } from './chainIngest'
 import { runChainIngest } from './walletCoordinator'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
@@ -118,8 +116,9 @@ function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
 }
 
 /**
- * Record cloud txids, internalize 1sats → basket `1sat`, sweep remaining as funds.
- * Uses the same chain-ingest pipeline as Refresh (review + ingestLegacyAddress).
+ * Record cloud txids, then run the same chain-ingest body as Refresh
+ * (ingest → review-with-funding-hold → balance). knownItems ride along so
+ * migrate tips the indexer has not classified yet still import.
  */
 export async function refreshLegacyAddressPayload(
   args?: RefreshLegacyAddressArgs | null,
@@ -138,38 +137,23 @@ async function refreshLegacyAddressExclusive(
     recordMigrationTxids(reportedTxids)
   }
 
-  try {
-    reconcilePendingSends()
-  } catch (err) {
-    console.warn('[migration] pending send reconcile skipped', err)
-  }
-
-  await reviewAndReleaseSpentOutputs(true)
-
-  const ingest = await ingestLegacyAddressUtxos({
-    active,
+  const run = await refreshFromChainExclusive({
+    forceReview: true,
+    announceReceive: false,
     knownItems: reportedItems,
   })
 
-  const scannedTxids = [...new Set(ingest.scan.utxos.map((u) => u.txid).filter(Boolean))]
-  if (scannedTxids.length > 0) {
-    recordMigrationTxids(scannedTxids)
+  if (run.scannedTxids.length > 0) {
+    recordMigrationTxids(run.scannedTxids)
   }
 
-  let satoshis = 0
-  try {
-    satoshis = await fetchBalanceSats(active.wallet)
-  } catch (err) {
-    console.warn('[migration] balance refresh failed', err)
-  }
-
-  const txids = [...new Set([...reportedTxids, ...scannedTxids])]
+  const txids = [...new Set([...reportedTxids, ...run.scannedTxids])]
 
   return {
     address: active.address,
-    satoshis,
-    importedCount: ingest.importedFunding,
-    importedItemsCount: ingest.importedItems,
+    satoshis: run.balanceSats ?? 0,
+    importedCount: run.importedFunding,
+    importedItemsCount: run.importedItems,
     txids,
   }
 }

@@ -207,6 +207,20 @@ describe('refreshFromChain spendable review', () => {
     expect(mockClearCollectablesCache).not.toHaveBeenCalled()
   })
 
+  it('marks the review as held when settle grace blocks release', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({
+      totalOutputs: 1,
+      outputs: [{ outpoint: 'cc.1', satoshis: 4000 }],
+    })
+    const { noteSendBroadcast } = await import('./sendSettleGuard')
+    noteSendBroadcast('d'.repeat(64))
+
+    const { reviewAndReleaseSpentOutputs } = await import('./chainIngest')
+    const result = await reviewAndReleaseSpentOutputs(true)
+
+    expect(result).toEqual({ released: 0, skipped: false, held: true })
+  })
+
   it('releases again once the settle window has passed', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
     const { noteSendBroadcast, SEND_SETTLE_MS } = await import('./sendSettleGuard')

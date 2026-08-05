@@ -111,9 +111,6 @@ export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promi
   }
 }
 
-/** @deprecated use fetchBalanceSats */
-export const estimateBalanceSats = fetchBalanceSats
-
 /** Below this, amounts display as sats; at/above, as BSV. */
 export const SATS_DISPLAY_THRESHOLD = 9999
 

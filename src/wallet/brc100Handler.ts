@@ -28,6 +28,7 @@ import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import { noteSendBroadcast } from './sendSettleGuard'
 
 type HttpRequestEvent = {
   method: string
@@ -346,6 +347,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       if (funds > 0 || items > 0) playWalletSound('receive')
       else playWalletSound('soft')
     } else if (method === 'createAction') {
+      const txid = extractTxid(result)
+      if (txid) noteSendBroadcast(txid)
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
         recordAppActivity({
@@ -356,7 +359,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           note: typeof (args as { description?: string })?.description === 'string'
             ? (args as { description: string }).description
             : undefined,
-          txid: extractTxid(result),
+          txid,
         })
         playWalletSound('success')
       } else {
@@ -364,6 +367,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       }
       // P2P createAction mutates toolbox outs + remittance metadata — backup BRC-39.
       scheduleHistoryBackupPush('createAction')
+    } else if (method === 'signAction') {
+      const txid = extractTxid(result)
+      if (txid) noteSendBroadcast(txid)
+      playWalletSound('soft')
+      scheduleHistoryBackupPush('signAction')
     } else if (method === 'internalizeAction') {
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
@@ -379,9 +387,6 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         playWalletSound('soft')
       }
       scheduleHistoryBackupPush('internalizeAction')
-    } else if (method === 'signAction') {
-      playWalletSound('soft')
-      scheduleHistoryBackupPush('signAction')
     } else if (isActionMethod(method)) {
       playWalletSound('soft')
     }
