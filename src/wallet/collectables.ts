@@ -33,7 +33,7 @@ import {
   LATCH_TAG,
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
-  buildSoftLatchProvenanceV3,
+  isLatchedSendEnabled,
   latchOutputTags,
   resolveLatchTipClaim,
   toUnderscoreOutpoint,
@@ -181,6 +181,43 @@ function toCollectable(
   }
 }
 
+/**
+ * An origin has exactly one live tip. Stray 1-sat outputs from the same
+ * transfer (e.g. an unmarked latch) resolve to the tip's origin through the
+ * indexer walk and would otherwise list as duplicates. Keep the best candidate:
+ * proven remittance first, then sender-supplied metadata, then lowest vout.
+ */
+function dedupeByOrigin(items: Collectable[]): Collectable[] {
+  const rank = (c: Collectable): number => {
+    let score = 0
+    if (c.proven) score += 4
+    if (c.name && c.name !== shortOrigin(c.origin)) score += 2
+    if (c.app) score += 1
+    return score
+  }
+  const vout = (c: Collectable): number => {
+    const n = Number(c.outpoint.split('.')[1])
+    return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER
+  }
+
+  const best = new Map<string, Collectable>()
+  const order: string[] = []
+  for (const item of items) {
+    const key = item.origin.toLowerCase()
+    const prior = best.get(key)
+    if (!prior) {
+      best.set(key, item)
+      order.push(key)
+      continue
+    }
+    const better =
+      rank(item) > rank(prior) ||
+      (rank(item) === rank(prior) && vout(item) < vout(prior))
+    if (better) best.set(key, item)
+  }
+  return order.map((key) => best.get(key)!)
+}
+
 export async function listCollectables(
   active?: ActiveWallet | null,
 ): Promise<Collectable[]> {
@@ -218,6 +255,7 @@ export async function listCollectables(
   const items: Collectable[] = []
 
   for (const o of outputs) {
+    if (o.tags?.includes(LATCH_TAG)) continue
     let resolved: ResolvedInscription | null = null
     const custom = parseCustom(o.customInstructions)
     const hasName = !!(custom.name ?? tagValue(o.tags, 'name:'))
@@ -234,8 +272,9 @@ export async function listCollectables(
     items.push(toCollectable(o, chain, resolved))
   }
 
-  setCollectablesCache(items)
-  return items
+  const deduped = dedupeByOrigin(items)
+  setCollectablesCache(deduped)
+  return deduped
 }
 
 export async function getCollectable(
@@ -469,7 +508,9 @@ export async function sendCollectable(args: {
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
   ]
 
-  const priorLatch = await findLatchForTip(wallet, outpoint, origin)
+  const priorLatch = isLatchedSendEnabled()
+    ? await findLatchForTip(wallet, outpoint, origin)
+    : null
   if (priorLatch?.lockingScript) {
     assertOrdinalIsDeviceLocked(priorLatch.lockingScript, wallet)
   }
@@ -490,14 +531,13 @@ export async function sendCollectable(args: {
     console.warn('[collectables] inputBEEF fetch skipped', err)
   }
 
-  const provenance =
-    (await tryBuildProvenanceForSend({
-      tipOutpoint: outpoint,
-      origin,
-      wallet,
-      contentType: item?.mimeType,
-      parentLatch,
-    })) ?? buildSoftLatchProvenanceV3({ origin, parentLatch })
+  const provenance = await tryBuildProvenanceForSend({
+    tipOutpoint: outpoint,
+    origin,
+    wallet,
+    contentType: item?.mimeType,
+    parentLatch,
+  })
 
   const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
   const inputs = [
@@ -521,7 +561,11 @@ export async function sendCollectable(args: {
   try {
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
-      labels: ['1sat', '1sat-latch', 'handcash-send-collectable'],
+      labels: [
+        '1sat',
+        ...(priorLatch ? ['1sat-latch'] : []),
+        'handcash-send-collectable',
+      ],
       ...(inputBEEF ? { inputBEEF } : {}),
       inputs,
       outputs: [
@@ -538,19 +582,25 @@ export async function sendCollectable(args: {
             provenance,
           }),
         },
-        {
-          lockingScript,
-          satoshis: LATCH_DUST_SATS,
-          outputDescription: '1sat proof latch',
-          basket: ONE_SAT_LATCH_BASKET,
-          tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
-          customInstructions: JSON.stringify({
-            schema: 1,
-            origin: toUnderscoreOutpoint(origin),
-            tip: RELATIVE_TIP,
-            parentLatch,
-          }),
-        },
+        // A latch output only ships once it carries an on-chain marker; a bare
+        // 1-sat P2PKH latch imports as a duplicate collectable on the receiver.
+        ...(isLatchedSendEnabled()
+          ? [
+              {
+                lockingScript,
+                satoshis: LATCH_DUST_SATS,
+                outputDescription: '1sat proof latch',
+                basket: ONE_SAT_LATCH_BASKET,
+                tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
+                customInstructions: JSON.stringify({
+                  schema: 1,
+                  origin: toUnderscoreOutpoint(origin),
+                  tip: RELATIVE_TIP,
+                  parentLatch,
+                }),
+              },
+            ]
+          : []),
       ],
       options: {
         trustSelf: 'known',

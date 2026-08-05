@@ -78,9 +78,17 @@ export function resolveOutpointRef(ref: string, heldOutpoint: string): string {
   return `${txid}_${m[1]}`.toLowerCase()
 }
 
-/** Latched collectable sends are live (soft P2PKH latch). */
+/**
+ * Latch outputs need an on-chain marker before they can be broadcast.
+ *
+ * A bare 1-sat P2PKH latch is indistinguishable from an ordinal tip: receivers
+ * scan for 1-sat outputs and the origin resolver walks back into the same tx,
+ * so the latch imports as a duplicate collectable. Basket tags are local to the
+ * sender and never reach the receiver. Re-enable once the latch carries a
+ * distinguishable locking script.
+ */
 export function isLatchedSendEnabled(): boolean {
-  return true
+  return false
 }
 
 export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {

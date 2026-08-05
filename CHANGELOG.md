@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.26] - 2026-08-05
+
+### Fixed
+
+- **Receiving a collectable no longer shows a duplicate item.** The BRC-153 soft-latch shipped the latch as a bare 1-sat P2PKH output, which is indistinguishable from an ordinal tip on chain — receivers imported it as a second collectable with the same origin.
+- Collectables listing skips latch-tagged outputs and deduplicates basket `1sat` by origin, so wallets already holding a phantom item heal on refresh.
+
+### Changed
+
+- Latched sends are held (`isLatchedSendEnabled()` → `false`) until the latch carries an on-chain marker script and a non-1-satoshi value; sends fall back to BRC-150 v2 remittance. v3 verify stays live.
+- BRC-153 spec records the requirement that latch outputs be identifiable from the transaction alone.
+
 ## [1.2.25] - 2026-08-05
 
 ### Fixed

@@ -12,6 +12,7 @@ import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import {
   buildSoftLatchProvenanceV3,
+  isLatchedSendEnabled,
   parseProvenanceV3,
   verifyProvenanceV3,
   type ProvenanceV3,
@@ -196,7 +197,8 @@ export async function tryBuildProvenanceV2(args: {
 }
 
 /**
- * Soft-latch v3 remittance for collectable sends (relative tip/latch OUTPUT:N).
+ * Remittance for a collectable send: v3 latched when latch outputs ship,
+ * otherwise the BRC-150 v2 BEEF package.
  */
 export async function tryBuildProvenanceForSend(args: {
   tipOutpoint: string
@@ -206,14 +208,13 @@ export async function tryBuildProvenanceForSend(args: {
   path?: string[]
   parentLatch?: string | null
 }): Promise<ProvenanceRemittance | null> {
-  void args.tipOutpoint
-  void args.wallet
-  void args.contentType
-  void args.path
-  return buildSoftLatchProvenanceV3({
-    origin: args.origin,
-    parentLatch: args.parentLatch,
-  })
+  if (isLatchedSendEnabled()) {
+    return buildSoftLatchProvenanceV3({
+      origin: args.origin,
+      parentLatch: args.parentLatch,
+    })
+  }
+  return tryBuildProvenanceV2(args)
 }
 
 /** Merge display fields + optional provenance into customInstructions JSON. */

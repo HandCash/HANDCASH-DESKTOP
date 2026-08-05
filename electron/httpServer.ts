@@ -111,7 +111,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
         oneSat: {
           brcs: ['147', '150', '153'],
           baskets: ['1sat', '1sat-latch'],
-          latchedSend: true,
+          latchedSend: false,
           provenanceVerify: ['v2', 'v3'],
         },
       },
@@ -128,7 +128,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
       oneSat: {
         brcs: ['147', '150', '153'],
         baskets: ['1sat', '1sat-latch'],
-        latchedSend: true,
+        latchedSend: false,
         provenanceVerify: ['v2', 'v3'],
       },
     })
