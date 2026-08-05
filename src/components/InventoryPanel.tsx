@@ -31,6 +31,8 @@ function CollectableGridItem({ item }: { item: Collectable }) {
         }}
       >
         <div className="collectable-media">
+          {/* A grid of ordinals is a grid of full-size images; decoding them on
+              the main thread locks up a phone while the panel opens. */}
           <DeferredImage
             src={item.imageUrl}
             alt={item.name}
@@ -40,6 +42,8 @@ function CollectableGridItem({ item }: { item: Collectable }) {
             skeletonHeight={120}
             skeletonRadius={8}
             skeletonClassName="skeleton-qr"
+            loading="lazy"
+            decoding="async"
           />
         </div>
         <strong className="collection-grid-name" title={item.name}>
@@ -90,6 +94,8 @@ function CollectableListItem({ item }: { item: Collectable }) {
             skeletonHeight={48}
             skeletonRadius={6}
             skeletonClassName="skeleton-qr"
+            loading="lazy"
+            decoding="async"
           />
         </div>
         <div className="connected-app-body">

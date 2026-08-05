@@ -121,6 +121,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             skeletonHeight={96}
             skeletonRadius={10}
             skeletonClassName="skeleton-qr"
+            decoding="async"
           />
         </div>
         <div className="collectable-details-copy">

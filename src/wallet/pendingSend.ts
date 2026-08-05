@@ -88,6 +88,11 @@ function activityAlreadyHas(pending: PendingSend): boolean {
 /**
  * After unlock / refresh: turn interrupted sends into activity rows so history
  * matches what the wallet already spent.
+ *
+ * A send is only real once it has a txid — that is the point the wallet
+ * committed. A pending without one never got that far, so it is dropped rather
+ * than written into history: a row for money that never moved is worse than no
+ * row at all, because the user cannot tell it apart from a real payment.
  */
 export function reconcilePendingSends(): number {
   const pending = readPending()
@@ -99,6 +104,12 @@ export function reconcilePendingSends(): number {
     // Keep very fresh pendings (send may still be in flight).
     if (ageMs < 5_000) {
       keep.push(entry)
+      continue
+    }
+    if (!entry.txid) {
+      console.info(
+        `[pending-send] discarding ${entry.sats} sat send to ${entry.to} — it never reached a txid`,
+      )
       continue
     }
     if (!activityAlreadyHas(entry) && entry.sats > 0) {

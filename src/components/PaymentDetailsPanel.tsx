@@ -23,6 +23,7 @@ import {
 } from '../wallet/displayCurrency'
 import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
+import { DeferredImage } from './DeferredImage'
 
 type Props = {
   entryId: string
@@ -75,10 +76,16 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       <div className="payment-details-hero">
         <div className="history-icon">
           {item && entry.item?.imageUrl ? (
-            <img
+            <DeferredImage
               className="history-item-thumb"
               src={entry.item.imageUrl}
               alt=""
+              width={32}
+              height={32}
+              skeletonWidth={32}
+              skeletonHeight={32}
+              skeletonRadius={6}
+              decoding="async"
             />
           ) : isWallet ? (
             spent ? <SendIcon size={16} /> : <ReceiveIcon size={16} />
@@ -138,7 +145,13 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
           {item && entry.item?.imageUrl ? (
             <div className="payment-details-item-media collectable-media collectable-media-md">
-              <img src={entry.item.imageUrl} alt={entry.item.name} />
+              <DeferredImage
+                src={entry.item.imageUrl}
+                alt={entry.item.name}
+                skeletonRadius={8}
+                skeletonClassName="skeleton-qr"
+                decoding="async"
+              />
             </div>
           ) : null}
 

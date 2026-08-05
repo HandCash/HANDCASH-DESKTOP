@@ -33,6 +33,7 @@ import { openPaymentDetails, setNavSection } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
+import { DeferredImage } from './DeferredImage'
 
 function formatWhen(at: number): string {
   const diff = Math.max(0, Date.now() - at)
@@ -96,11 +97,19 @@ function HistoryRow({
       >
         <div className="history-icon">
           {item && entry.item?.imageUrl ? (
-            <img
+            // Ordinal content is full size whatever we display it at, so keep the
+            // decode off the main thread — a list of them freezes a phone.
+            <DeferredImage
               className="history-item-thumb"
               src={entry.item.imageUrl}
               alt=""
+              width={28}
+              height={28}
+              skeletonWidth={28}
+              skeletonHeight={28}
+              skeletonRadius={6}
               loading="lazy"
+              decoding="async"
             />
           ) : isWallet ? (
             spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
