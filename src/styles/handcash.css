@@ -2426,6 +2426,33 @@ button.wallet-detail-value.is-copied {
   border-top: 1px solid color-mix(in srgb, hsl(var(--border)) 70%, transparent);
 }
 
+.key-slice-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+
+.key-slice-dest-cycle {
+  display: grid;
+  gap: 6px;
+}
+
+.key-slice-dest-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.key-slice-dest-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: 0.86rem;
+  font-weight: 600;
+  color: var(--hc-fg, inherit);
+}
+
 .key-slice-static-list {
   list-style: none;
   margin: 0;

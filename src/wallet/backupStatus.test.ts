@@ -46,6 +46,16 @@ describe('backupStatus evidence gates', () => {
     expect(markKeysBackupConfirmed('split')).toBe(true)
   })
 
+  it('clearKeysHandoffEvidence resets split progress after rotate', async () => {
+    const { clearKeysHandoffEvidence, getKeysSplitHandoffProgress } = await import('./backupStatus')
+    noteKeysBackupHandoff(0)
+    noteKeysBackupHandoff(1)
+    expect(canConfirmKeysBackup('split')).toBe(true)
+    clearKeysHandoffEvidence()
+    expect(canConfirmKeysBackup('split')).toBe(false)
+    expect(getKeysSplitHandoffProgress().saved).toBe(0)
+  })
+
   it('phrase/key confirm needs a single handoff without slice index', () => {
     expect(canConfirmKeysBackup('phrase')).toBe(false)
     noteKeysBackupHandoff()

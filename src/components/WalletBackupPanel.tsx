@@ -1,10 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
+import { Prompt } from '@aeon-ui/react'
 import { revealMnemonic, revealRootKeyHex, readVaultMeta } from '../wallet/vault'
 import {
   canConfirmKeysBackup,
+  clearKeysHandoffEvidence,
   getKeysSplitHandoffProgress,
   markKeysBackupConfirmed,
   noteKeysBackupHandoff,
+  subscribeBackupConfirmed,
 } from '../wallet/backupStatus'
 import {
   BRC140_DEFAULT_THRESHOLD,
@@ -38,10 +41,12 @@ async function emailShareToSelf(
   index: number,
   total: number,
   integrity: string,
+  destination: string,
 ): Promise<void> {
   const subject = `HandCash key slice ${index + 1} of ${total}`
   const body = [
     `HandCash key slice ${index + 1}/${total}`,
+    `Suggested place: ${destination}`,
     `Integrity: ${integrity}`,
     '',
     share,
@@ -61,19 +66,25 @@ export function WalletBackupPanel() {
   const [kind, setKind] = useState<BackupKind>('split')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [sessionPassword, setSessionPassword] = useState<string | null>(null)
   const [mnemonic, setMnemonic] = useState<string | null>(null)
   const [rootKey, setRootKey] = useState<string | null>(null)
   const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
-  const [handoffTick, setHandoffTick] = useState(0)
+  const [rotatePromptOpen, setRotatePromptOpen] = useState(false)
+  const [, setStatusTick] = useState(0)
+
+  useEffect(() => subscribeBackupConfirmed(() => setStatusTick((n) => n + 1)), [])
+
   const revealed = Boolean(mnemonic || rootKey || shareSet)
   const singleSelected = kind === 'phrase' || kind === 'key'
-  const canConfirm = handoffTick >= 0 && canConfirmKeysBackup(kind)
+  const canConfirm = canConfirmKeysBackup(kind)
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
   const clearReveal = () => {
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
+    setSessionPassword(null)
     setError(null)
   }
 
@@ -89,12 +100,14 @@ export function WalletBackupPanel() {
     setRootKey(null)
     setShareSet(null)
     try {
+      setSessionPassword(password)
       if (kind === 'phrase') {
         if (!hasPhrase) throw new Error('This wallet has no recovery phrase.')
         setMnemonic(await revealMnemonic(password))
       } else if (kind === 'key') {
         setRootKey(await revealRootKeyHex(password))
       } else {
+        clearKeysHandoffEvidence()
         const rootKeyHex = await revealRootKeyHex(password)
         setShareSet(
           createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
@@ -102,33 +115,73 @@ export function WalletBackupPanel() {
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
+      setSessionPassword(null)
       throw err
     } finally {
       setBusy(false)
     }
   }
 
-  const handoff = async (index: number, method: SliceHandoffMethod) => {
+  const rotateShares = async () => {
+    if (!sessionPassword) {
+      toastError('Unlock again', 'Confirm your password to rotate slices.')
+      return
+    }
+    setBusy(true)
+    setRotatePromptOpen(false)
+    try {
+      clearKeysHandoffEvidence()
+      const rootKeyHex = await revealRootKeyHex(sessionPassword)
+      const next = createBrc140Shares(
+        rootKeyHex,
+        BRC140_DEFAULT_THRESHOLD,
+        BRC140_DEFAULT_TOTAL,
+      )
+      setShareSet(next)
+      playWalletSound('soft')
+      toastSuccess(
+        'New slice set',
+        `Integrity ${next.integrity} — old slices from the previous set will not combine with these.`,
+      )
+    } catch (err) {
+      playWalletSound('error')
+      toastError('Rotate failed', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const handoff = async (
+    index: number,
+    method: SliceHandoffMethod,
+    destination: string,
+  ) => {
     if (!shareSet?.shares[index]) return
     const share = shareSet.shares[index]!
     try {
       if (method === 'email') {
-        await emailShareToSelf(share, index, shareSet.totalShares, shareSet.integrity)
+        await emailShareToSelf(
+          share,
+          index,
+          shareSet.totalShares,
+          shareSet.integrity,
+          destination,
+        )
         playWalletSound('soft')
-        toastSuccess('Opened email')
+        toastSuccess('Opened email', destination)
       } else if (method === 'copy') {
         const ok = await copyText(share, { label: `slice ${index + 1}` })
         if (!ok) return
+        toastSuccess('Copied', destination)
       } else {
         downloadShare(
           shareDownloadFilename(index, shareSet.totalShares, shareSet.integrity),
-          `${share}\n`,
+          `# ${destination}\n# integrity ${shareSet.integrity}\n${share}\n`,
         )
         playWalletSound('soft')
-        toastSuccess('Slice saved')
+        toastSuccess('Slice saved', destination)
       }
       noteKeysBackupHandoff(index)
-      setHandoffTick((n) => n + 1)
     } catch (err) {
       playWalletSound('error')
       toastError('Couldn’t save slice', err instanceof Error ? err.message : undefined)
@@ -139,7 +192,6 @@ export function WalletBackupPanel() {
     const ok = await copyText(text, { label })
     if (!ok) return
     noteKeysBackupHandoff()
-    setHandoffTick((n) => n + 1)
   }
 
   const confirmKeys = () => {
@@ -147,7 +199,7 @@ export function WalletBackupPanel() {
       toastError(
         'Backup not complete',
         kind === 'split'
-          ? 'Save at least two different slices to separate safe places.'
+          ? 'Hand off at least two different slices (email, copy, or save file).'
           : 'Copy your secret first.',
       )
       playWalletSound('deny')
@@ -155,11 +207,9 @@ export function WalletBackupPanel() {
     }
     clearReveal()
     playWalletSound('success')
-    toastSuccess('Keys backup saved')
+    toastSuccess('Keys backup saved', 'History backup is next if you have not done it yet.')
     openSetting('history-backup')
   }
-
-  const splitNeed = shareSet?.threshold ?? 2
 
   return (
     <div
@@ -168,7 +218,8 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Keep recovery material offline on this device. For cloud slices (HandCash + Haste), open{' '}
+        Split your key into movable slices, assign each a destination, then hand them off. Prefer
+        cloud deposit?{' '}
         <button
           type="button"
           className="settings-inline-link"
@@ -179,10 +230,7 @@ export function WalletBackupPanel() {
         >
           Cloud key backup
         </button>
-        .
-        {!hasPhrase
-          ? ' This wallet has no phrase — use split key or emergency hex.'
-          : ''}
+        {!hasPhrase ? ' · This wallet has no phrase — use slices or emergency hex.' : null}
       </p>
 
       <div className="backup-choice-list" role="radiogroup" aria-label="Key backup method">
@@ -195,11 +243,11 @@ export function WalletBackupPanel() {
           onClick={() => selectKind('split')}
         >
           <span className="backup-choice-title">
-            Split key
+            Key slices
             <span className="backup-choice-badge">Recommended</span>
           </span>
           <span className="backup-choice-desc">
-            {BRC140_DEFAULT_THRESHOLD}-of-{BRC140_DEFAULT_TOTAL}
+            {BRC140_DEFAULT_THRESHOLD}-of-{BRC140_DEFAULT_TOTAL} · cycle destinations · rotate anytime
           </span>
         </button>
 
@@ -212,10 +260,10 @@ export function WalletBackupPanel() {
             className="backup-choice-group-head"
             onClick={() => selectKind(hasPhrase ? 'phrase' : 'key')}
           >
-            <span className="backup-choice-title">Single key</span>
-            <span className="backup-choice-desc">Less secure · one secret unlocks everything</span>
+            <span className="backup-choice-title">Single secret</span>
+            <span className="backup-choice-desc">Less flexible · one secret unlocks everything</span>
           </button>
-          <div className="backup-subchoice-list" role="group" aria-label="Single key options">
+          <div className="backup-subchoice-list" role="group" aria-label="Single secret options">
             <button
               type="button"
               role="radio"
@@ -250,7 +298,7 @@ export function WalletBackupPanel() {
           key={kind}
           id="wallet-backup-password"
           title="Confirm it’s you"
-          lede="Enter your unlock password to reveal recovery secrets on this device."
+          lede="Enter your unlock password to reveal recovery material on this device."
           actionLabel={
             busy
               ? 'Unlocking…'
@@ -294,7 +342,7 @@ export function WalletBackupPanel() {
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              {canConfirm ? 'I’ve saved my phrase' : 'Copy phrase first'}
+              I’ve saved my phrase
             </button>
             <button
               type="button"
@@ -330,7 +378,7 @@ export function WalletBackupPanel() {
               onClick={confirmKeys}
               disabled={!canConfirm}
             >
-              {canConfirm ? 'I’ve saved my key' : 'Copy key first'}
+              I’ve saved my key
             </button>
             <button
               type="button"
@@ -354,6 +402,8 @@ export function WalletBackupPanel() {
             integrity={shareSet.integrity}
             savedIndices={splitProgress.savedIndices}
             onHandoff={handoff}
+            onRotateShares={() => setRotatePromptOpen(true)}
+            rotateBusy={busy}
           />
           <div className="actions">
             <button
@@ -361,12 +411,13 @@ export function WalletBackupPanel() {
               className="btn btn-primary"
               onClick={confirmKeys}
               disabled={!canConfirm}
+              title={
+                canConfirm
+                  ? 'Mark keys backup complete on this device'
+                  : `Hand off ${Math.max(0, splitProgress.need - splitProgress.saved)} more distinct slice(s) first`
+              }
             >
-              {canConfirm
-                ? 'I’ve saved my slices'
-                : `Save ${Math.max(0, splitNeed - splitProgress.saved)} more slice${
-                    splitNeed - splitProgress.saved === 1 ? '' : 's'
-                  }`}
+              Done — slices saved
             </button>
             <button
               type="button"
@@ -382,9 +433,51 @@ export function WalletBackupPanel() {
         </div>
       ) : null}
 
+      <Prompt.Root
+        open={rotatePromptOpen}
+        status={rotatePromptOpen ? 'pending' : 'dismissed'}
+        onOpenChange={(open) => {
+          if (!open) setRotatePromptOpen(false)
+        }}
+      >
+        <Prompt.Portal>
+          <Prompt.Backdrop className="permission-backdrop" />
+          <Prompt.Positioner className="permission-positioner">
+            <Prompt.Content className="panel modal permission-modal">
+              <Prompt.Title>Rotate all slices?</Prompt.Title>
+              <Prompt.Description>
+                This creates a brand-new {BRC140_DEFAULT_THRESHOLD}-of-{BRC140_DEFAULT_TOTAL} set
+                with a new integrity tag. Slices from the previous set will not combine with these —
+                deposit or save the new ones before discarding the old.
+              </Prompt.Description>
+              <Prompt.Actions className="actions">
+                <Prompt.Secondary
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={() => {
+                    setRotatePromptOpen(false)
+                    playWalletSound('soft')
+                  }}
+                >
+                  Keep current
+                </Prompt.Secondary>
+                <Prompt.Primary
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => void rotateShares()}
+                >
+                  Rotate
+                </Prompt.Primary>
+              </Prompt.Actions>
+            </Prompt.Content>
+          </Prompt.Positioner>
+        </Prompt.Portal>
+      </Prompt.Root>
+
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
-        Split key slices and recovery phrases restore the same identity on another device. Keep
-        them offline — HandCash never holds them for you.
+        Cycle destinations so each slice lives somewhere different. Rotate when a place is
+        compromised — never mix integrity tags across sets.
       </SettingsFeatureAbout>
     </div>
   )

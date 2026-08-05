@@ -31,14 +31,14 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Security',
     items: [
       {
-        id: 'trustholder-backup',
-        label: 'Cloud key backup',
-        description: 'HandCash + Haste',
+        id: 'backup',
+        label: 'Key slices',
+        description: '2-of-3 · cycle destinations · rotate',
       },
       {
-        id: 'backup',
-        label: 'Keys',
-        description: 'Phrase or slices offline',
+        id: 'trustholder-backup',
+        label: 'Cloud key backup',
+        description: 'Deposit slices to HandCash + Haste',
       },
       {
         id: 'history-backup',
@@ -112,7 +112,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Logs'
-  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Keys'
+  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'trustholder-backup') return 'Cloud key backup'
   if (id === 'device-handoff') return 'Use on another device'
   if (id === 'history-backup') return 'History'

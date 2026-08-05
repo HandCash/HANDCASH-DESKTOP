@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.15] - 2026-08-04
+
+### Changed
+
+- **Key slices backup UX.** Settings → Key slices is a flexible slice manager: per-slice destination cycling (←/→), bulk destination shift, rotate-all with a confirm prompt (new integrity set), and a single progress header. Removed the awkward “Save N more slice(s)” primary label — confirm is **Done — slices saved** once two distinct handoffs exist. Cloud deposit stays a separate entry for HandCash + Haste.
+
 ## [1.2.14] - 2026-08-04
 
 ### Added

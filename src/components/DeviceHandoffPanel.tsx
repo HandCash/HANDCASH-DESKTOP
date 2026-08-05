@@ -40,7 +40,7 @@ export function DeviceHandoffPanel() {
 
       <div className="actions" style={{ marginTop: 16 }}>
         <button type="button" className="btn btn-primary" onClick={openKeys}>
-          {hasPhrase ? 'Open Keys (phrase or slices)' : 'Open Keys (key slices)'}
+          {hasPhrase ? 'Open key slices (or phrase)' : 'Open key slices'}
         </button>
         <button
           type="button"

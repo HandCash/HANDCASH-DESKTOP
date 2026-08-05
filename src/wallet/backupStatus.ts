@@ -57,6 +57,14 @@ export function noteKeysBackupHandoff(sliceIndex?: number): void {
   notify()
 }
 
+/** Clear session handoff evidence (e.g. after rotating to a new share set). */
+export function clearKeysHandoffEvidence(): void {
+  keysHandoffs = 0
+  keysHandoffSliceIndices.clear()
+  keysSingleHandoff = false
+  notify()
+}
+
 export function getKeysBackupHandoffCount(): number {
   return keysHandoffs
 }

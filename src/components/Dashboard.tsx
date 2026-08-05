@@ -175,7 +175,7 @@ export function Dashboard({
                 <span className="wallet-backup-warn-mark" aria-hidden>
                   <WarningIcon size={14} />
                 </span>
-                {missingBackup === 'history' ? 'Backup history' : 'Backup keys'}
+                {missingBackup === 'history' ? 'Backup history' : 'Backup key slices'}
               </button>
             ) : null}
           </div>
