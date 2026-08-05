@@ -31,7 +31,9 @@ export async function refreshSpendableBalance(): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const opts = { announceReceive: false, forceReview: true } as const
+  // No audit: a send needs fresh funds and a current balance, and the audit only
+  // reports — paying a request per output here is what made sending feel frozen.
+  const opts = { announceReceive: false, audit: false } as const
   const synced =
     getWalletCoordinatorSnapshot().spend === 'active'
       ? await refreshFromChainDuringSpend(opts)

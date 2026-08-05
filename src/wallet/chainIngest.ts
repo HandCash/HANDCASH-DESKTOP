@@ -37,11 +37,16 @@ export type ChainIngestOptions = {
    * send so we don't double-chime with payment success.
    */
   announceReceive?: boolean
-  /**
-   * When true, always run spendability review (all baskets, release dead outs).
-   * Use for explicit Refresh. Background polls throttle reviews.
-   */
+  /** When true, bypass the audit throttle. Background polls throttle instead. */
   forceReview?: boolean
+  /**
+   * Pass false to skip the spendable audit entirely.
+   *
+   * The audit costs one UTXO-status request per spendable output and cannot change
+   * anything (it never releases), so it has no business on the critical path of a
+   * send — it only reports. See `auditSpendableOutputs`.
+   */
+  audit?: boolean
   /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
   knownItems?: MigrationItem[]
 }
@@ -237,7 +242,10 @@ export async function refreshFromChainExclusive(
 
   // A sweep in this same pass means the indexer has definitely not caught up,
   // so its answers are noise — skip the round trips rather than log them.
-  const review = await auditSpendableOutputs(forceReview && importedFunding === 0)
+  const review =
+    opts?.audit === false
+      ? { suspect: 0, skipped: true }
+      : await auditSpendableOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',

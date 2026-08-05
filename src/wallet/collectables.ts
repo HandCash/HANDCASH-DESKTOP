@@ -306,7 +306,26 @@ async function resolveUnknownOrigins(): Promise<void> {
   }
 }
 
-export async function listCollectables(
+let listInFlight: Promise<Collectable[]> | null = null
+
+/**
+ * Every visit to the Collect panel lists the basket, so flipping through the nav
+ * bar would otherwise stack identical `listOutputs` queries. Callers all share the
+ * one session wallet, so joining the in-flight read is the same answer.
+ */
+export function listCollectables(active?: ActiveWallet | null): Promise<Collectable[]> {
+  if (listInFlight) return listInFlight
+  const run = listCollectablesNow(active)
+  listInFlight = run
+  void run
+    .catch(() => {})
+    .then(() => {
+      if (listInFlight === run) listInFlight = null
+    })
+  return run
+}
+
+async function listCollectablesNow(
   active?: ActiveWallet | null,
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()

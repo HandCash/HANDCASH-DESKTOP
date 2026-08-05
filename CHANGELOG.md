@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.48] - 2026-08-05
+
+### Fixed
+
+- Tapping the nav bar no longer degrades the app click by click. Each sound left
+  its oscillator and gain node wired to the destination, so the audio graph grew
+  by a node per tap and was reprocessed every quantum. Nodes are now disconnected
+  when the tone ends.
+- Sending money no longer stalls on work it cannot use. The pre-send heal forced
+  the spendable audit, which spends one UTXO-status request per output and, now
+  that it never releases, only reports. Sends skip it.
+- Classifying scanned UTXOs no longer re-walks the indexer for the same outpoint.
+  Any 1-sat output that could not be resolved was walked again — up to ~100 serial
+  requests each — on every background poll and before every send. Results come
+  from `inscriptionCache` now, with a back-off for dust that never resolves.
+- Flipping through the nav bar no longer stacks duplicate `listOutputs` queries;
+  concurrent collectable listings join the in-flight read.
+
 ## [1.2.47] - 2026-08-05
 
 ### Fixed

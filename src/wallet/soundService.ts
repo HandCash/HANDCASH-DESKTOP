@@ -79,6 +79,17 @@ function playTones(tones: Tone[]): void {
         amp.gain.exponentialRampToValueAtTime(0.0001, start + duration)
         osc.connect(amp)
         amp.connect(ctx.destination)
+        // Every tone leaves a gain node wired to the destination, and the graph
+        // reprocesses all of them each quantum. The nav bar plays a tone per tap,
+        // so without this the UI degrades click by click until it locks up.
+        osc.onended = () => {
+          try {
+            osc.disconnect()
+            amp.disconnect()
+          } catch {
+            // already torn down
+          }
+        }
         osc.start(start)
         osc.stop(start + duration + 0.02)
       }

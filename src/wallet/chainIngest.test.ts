@@ -204,6 +204,18 @@ describe('refreshFromChain spendable review', () => {
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalledWith(true, true)
   })
 
+  it('skips the audit entirely when asked — sends must not pay for it', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
+
+    const { refreshFromChain } = await import('./chainIngest')
+    const sats = await refreshFromChain({ audit: false, announceReceive: false })
+
+    // The audit costs a request per output and only reports, so a spend skips it.
+    expect(sats).toBe(1000)
+    expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
+    expect(mockScanLegacyAddress).toHaveBeenCalled()
+  })
+
   it('reports unindexed outputs as suspect without condemning them', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({
       totalOutputs: 1,

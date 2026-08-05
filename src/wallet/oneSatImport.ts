@@ -21,6 +21,12 @@ import {
   releaseOneSatImport,
 } from './oneSatImportGuard'
 import {
+  getResolvedInscription,
+  rememberResolvedInscription,
+  rememberUnresolved,
+  shouldResolveInscription,
+} from './inscriptionCache'
+import {
   ONE_SAT_LATCH_BASKET,
   isLatchDustSats,
   latchOutputTags,
@@ -390,16 +396,31 @@ export async function classifyLegacyUtxos(
     // HARD RULE: never fund-sweep 1-sat outs.
     if (u.satoshis === 1) {
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
-      const resolved =
-        known?.origin != null
-          ? {
-              origin: known.origin.includes('.')
-                ? known.origin.replace(/\.(\d+)$/, '_$1')
-                : known.origin,
-              name: known.name,
-              app: known.app,
-            }
-          : await resolveOneSatInscription(u.txid, u.vout, chain)
+      let resolved: { origin: string; name?: string; app?: string } | null = null
+      if (known?.origin != null) {
+        resolved = {
+          origin: known.origin.includes('.')
+            ? known.origin.replace(/\.(\d+)$/, '_$1')
+            : known.origin,
+          name: known.name,
+          app: known.app,
+        }
+      } else {
+        // Classification runs on every poll and before every send, and this walk
+        // costs dozens of requests per outpoint. Ask the indexer once, then trust
+        // the cache — and back off on dust that never resolves.
+        const cacheKey = `${u.txid}.${u.vout}`
+        resolved = getResolvedInscription(cacheKey)
+        if (!resolved && shouldResolveInscription(cacheKey)) {
+          const fetched = await resolveOneSatInscription(u.txid, u.vout, chain)
+          if (fetched) {
+            rememberResolvedInscription(cacheKey, fetched)
+            resolved = fetched
+          } else {
+            rememberUnresolved(cacheKey)
+          }
+        }
+      }
 
       if (resolved || known) {
         oneSats.push({
