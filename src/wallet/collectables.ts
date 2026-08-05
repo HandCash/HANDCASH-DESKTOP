@@ -41,6 +41,7 @@ import {
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { isItemSent, markItemsSent } from './sentItemGuard'
+import { noteSendBroadcast } from './sendSettleGuard'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -711,6 +712,10 @@ export async function sendCollectable(args: {
       throw formatSendError(err)
     }
   }
+
+  // Before any heal runs: this send's change must not be written off as dead
+  // while the indexer is still catching up on it.
+  noteSendBroadcast(txid)
 
   // Hide before relinquishing: relinquish is best-effort, and the basket keeps
   // listing a spent tip until a spendable review runs.

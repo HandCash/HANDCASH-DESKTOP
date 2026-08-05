@@ -20,6 +20,7 @@ import {
   refreshSpendableBalance,
 } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
+import { noteSendBroadcast } from './sendSettleGuard'
 
 export type SendSatsResult = {
   txid: string
@@ -68,6 +69,9 @@ export async function sendSatsToAddress(opts: {
 
       const txid =
         (result as { txid?: string })?.txid ?? `local-${Date.now().toString(16)}`
+      // Before any heal runs: this send's change must not be written off as dead
+      // while the indexer is still catching up on it.
+      noteSendBroadcast((result as { txid?: string })?.txid)
       completePendingSend(pending.id, txid)
 
       const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to

@@ -20,6 +20,7 @@ import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
+import { isSendSettleGraceActive } from './sendSettleGuard'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -115,24 +116,37 @@ export async function reviewAndReleaseSpentOutputs(
     return { released: 0, skipped: true }
   }
 
+  // Releasing writes `spendable: false` for good, and the toolbox reads any
+  // non-affirmative UTXO answer as death — including change from a send the
+  // indexer has not seen. Look, but do not write off, while a send settles.
+  const release = !isSendSettleGraceActive()
+
   try {
     let result
     try {
-      result = await active.wallet.reviewSpendableOutputs(true, true)
+      result = await active.wallet.reviewSpendableOutputs(true, release)
     } catch (err) {
       if (!isUndefinedPartialFilterError(err)) throw err
       console.warn(
         '[chain-ingest] all-basket spendable review unsupported; reviewing default basket only',
         err instanceof Error ? err.message : err,
       )
-      result = await active.wallet.reviewSpendableOutputs(false, true)
+      result = await active.wallet.reviewSpendableOutputs(false, release)
     }
     lastSpendableReviewAt = Date.now()
-    const released = result.outputs?.length ?? 0
-    if (released > 0) {
+    const invalid = result.outputs?.length ?? 0
+    if (!release) {
+      if (invalid > 0) {
+        console.info(
+          `[chain-ingest] ${invalid} output(s) look unspent but a send is still settling — holding`,
+        )
+      }
+      return { released: 0, skipped: false }
+    }
+    if (invalid > 0) {
       clearCollectablesCache()
     }
-    return { released, skipped: false }
+    return { released: invalid, skipped: false }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
     console.warn('[chain-ingest] spendable review failed — not releasing', err)

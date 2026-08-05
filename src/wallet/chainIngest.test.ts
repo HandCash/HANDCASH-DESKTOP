@@ -191,6 +191,35 @@ describe('refreshFromChain spendable review', () => {
     expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
   })
 
+  it('reviews without releasing while a send is still settling', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({
+      totalOutputs: 1,
+      outputs: [{ outpoint: 'cc.1', satoshis: 4000 }],
+    })
+    const { noteSendBroadcast } = await import('./sendSettleGuard')
+    noteSendBroadcast('d'.repeat(64))
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
+    // Change from that send may not be indexed yet, and releasing is permanent.
+    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, false)
+    expect(mockClearCollectablesCache).not.toHaveBeenCalled()
+  })
+
+  it('releases again once the settle window has passed', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
+    const { noteSendBroadcast, SEND_SETTLE_MS } = await import('./sendSettleGuard')
+    noteSendBroadcast('e'.repeat(64))
+    vi.setSystemTime(Date.now() + SEND_SETTLE_MS + 1)
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
+    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
+    vi.useRealTimers()
+  })
+
   it('holds the release when this pass swept legacy funding', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
     mockScanLegacyAddress.mockResolvedValue({
