@@ -5,17 +5,12 @@
  * Handle claim (separate): claimCloudHandle, getClaimedCloudHandle — see handleClaim.ts.
  */
 import { getActiveWallet, fetchBalanceSats } from './session'
-import { scanLegacyAddress, importLegacyUtxos } from './legacyScan'
 import { reconcilePendingSends } from './pendingSend'
 import { normalizeAppHost } from './appIdentity'
-import {
-  classifyLegacyUtxos,
-  importOneSatOrdinals,
-  normalizeMigrationItem,
-  type MigrationItem,
-} from './oneSatImport'
+import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
-import { runOnChainIngestQueue } from './chainIngestQueue'
+import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
+import { reviewAndReleaseSpentOutputs, runOnChainIngestQueue } from './chainIngest'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
 const MAX_TXIDS = 200
@@ -123,7 +118,7 @@ function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
 
 /**
  * Record cloud txids, internalize 1sats → basket `1sat`, sweep remaining as funds.
- * Shares the chain-ingest queue with Dashboard sync so migrate + poll cannot race.
+ * Uses the same chain-ingest pipeline as Refresh (review + ingestLegacyAddress).
  */
 export async function refreshLegacyAddressPayload(
   args?: RefreshLegacyAddressArgs | null,
@@ -148,39 +143,14 @@ async function refreshLegacyAddressExclusive(
     console.warn('[migration] pending send reconcile skipped', err)
   }
 
-  const scan = await scanLegacyAddress(active)
-  const scannedTxids = [...new Set(scan.utxos.map((u) => u.txid).filter(Boolean))]
+  await reviewAndReleaseSpentOutputs(true)
 
-  const { funding, oneSats, heldOneSats } = await classifyLegacyUtxos(
-    scan.utxos,
-    active.chain,
-    reportedItems,
-  )
+  const ingest = await ingestLegacyAddressUtxos({
+    active,
+    knownItems: reportedItems,
+  })
 
-  if (heldOneSats.length > 0) {
-    console.info(
-      `[migration] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
-    )
-  }
-
-  let importedItemsCount = 0
-  if (oneSats.length > 0) {
-    const itemResult = await importOneSatOrdinals(oneSats, active)
-    importedItemsCount = itemResult.imported
-    if (itemResult.failed > 0) {
-      console.warn('[migration] 1sat import partial', itemResult)
-    }
-  }
-
-  let importedCount = 0
-  if (funding.length > 0) {
-    const result = await importLegacyUtxos(funding, active)
-    importedCount = result.imported
-    if (result.failed > 0) {
-      console.warn('[migration] legacy import partial', result)
-    }
-  }
-
+  const scannedTxids = [...new Set(ingest.scan.utxos.map((u) => u.txid).filter(Boolean))]
   if (scannedTxids.length > 0) {
     recordMigrationTxids(scannedTxids)
   }
@@ -197,8 +167,8 @@ async function refreshLegacyAddressExclusive(
   return {
     address: active.address,
     satoshis,
-    importedCount,
-    importedItemsCount,
+    importedCount: ingest.importedFunding,
+    importedItemsCount: ingest.importedItems,
     txids,
   }
 }

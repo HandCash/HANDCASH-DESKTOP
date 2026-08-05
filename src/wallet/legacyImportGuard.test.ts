@@ -39,4 +39,16 @@ describe('legacyImportGuard', () => {
     expect(guard2.isLegacyOutpointKnown('deadbeef.0')).toBe(true)
     expect(guard2.filterNewLegacyOutpoints(['deadbeef.0', 'cafe.1'])).toEqual(['cafe.1'])
   })
+
+  it('reclaims still-unspent outpoints that were falsely marked imported', async () => {
+    const guard = await import('./legacyImportGuard')
+    guard.markLegacyImported(['aa.0', 'bb.1'])
+    const reclaimed = guard.reclaimStillUnspentLegacyOutpoints([
+      { outpoint: 'aa.0', satoshis: 50_000 },
+      { outpoint: 'bb.1', satoshis: 1 },
+      { outpoint: 'cc.2', satoshis: 10_000 },
+    ])
+    expect(reclaimed).toEqual(['aa.0'])
+    expect(guard.filterNewLegacyOutpoints(['aa.0', 'bb.1', 'cc.2'])).toEqual(['aa.0', 'cc.2'])
+  })
 })

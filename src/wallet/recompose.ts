@@ -2,7 +2,7 @@
  * Device recompose tool — **isolated** from Dashboard Refresh / spend heal.
  *
  * Only call from unlock/create, History restore/import, and Pair Sync.
- * Never import this from `syncFunds` / `chainIngest` / spend paths.
+ * Never import this from `chainIngest` / spend paths.
  *
  * Empty-local × remote-BRC-39 clobber edge case is delegated to
  * `historyEmptyGuard.ts` via `autoPushHistoryBackupIfConfigured` — this module

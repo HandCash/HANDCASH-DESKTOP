@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.18] - 2026-08-05
+
+### Fixed
+
+- Unify chain ingest under `chainIngest.ts` + `ingestLegacyAddress.ts` (Refresh and migrate share one pipeline).
+- Legacy receive scan prefers WhatsOnChain; reclaim falsely blacklisted UTXOs still unspent on-chain.
+- Migration runs spendable review before legacy import (same as Refresh).
+
+### Changed
+
+- Remove `syncFunds.ts` — use `refreshFromChain()` from `chainIngest.ts`.
+
 ## [1.2.17] - 2026-08-05
 
 ### Fixed

@@ -68,6 +68,45 @@ export function markLegacyImported(outpoints: string[]): void {
   writeImported(known)
 }
 
+/** Undo a durable mark — used when an “imported” out is still unspent on-chain. */
+export function forgetLegacyImported(outpoints: string[]): void {
+  if (outpoints.length === 0) return
+  const known = readImported()
+  let changed = false
+  for (const raw of outpoints) {
+    const op = raw.trim().toLowerCase()
+    if (!op || !known.has(op)) continue
+    known.delete(op)
+    inFlight.delete(op)
+    changed = true
+  }
+  if (changed) writeImported(known)
+}
+
+/**
+ * If we previously blacklisted an outpoint but the address scan still shows it
+ * unspent with funding sats, clear the mark so import can retry.
+ */
+export function reclaimStillUnspentLegacyOutpoints(
+  utxos: Array<{ outpoint: string; satoshis: number }>,
+): string[] {
+  const known = readImported()
+  const reclaimed: string[] = []
+  for (const u of utxos) {
+    if (!(u.satoshis > 1)) continue
+    const op = u.outpoint.trim().toLowerCase()
+    if (!op || !known.has(op) || inFlight.has(op)) continue
+    reclaimed.push(op)
+  }
+  if (reclaimed.length > 0) {
+    forgetLegacyImported(reclaimed)
+    console.info(
+      `[legacy] reclaimed ${reclaimed.length} still-unspent outpoint(s) previously marked imported`,
+    )
+  }
+  return reclaimed
+}
+
 export function releaseLegacyImport(outpoints: string[]): void {
   for (const raw of outpoints) {
     inFlight.delete(raw.trim().toLowerCase())

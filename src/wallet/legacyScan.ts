@@ -5,6 +5,7 @@ import type { Chain } from './vault'
 import {
   beginLegacyImport,
   markLegacyImported,
+  reclaimStillUnspentLegacyOutpoints,
   releaseLegacyImport,
 } from './legacyImportGuard'
 
@@ -84,18 +85,63 @@ export async function scanAddressViaServices(
   return { address, chain, sats, utxos, source: 'services' }
 }
 
-/** Prefer Services, fall back to WhatsOnChain REST. */
+/** Prefer WhatsOnChain (has sat amounts); fall back to toolbox Services. */
 export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<LegacyScanResult> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
+
+  let wocError: unknown
+  try {
+    const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+    // Enrich zero-sat rows from services if WoC omitted values (rare).
+    if (woc.utxos.some((u) => !(u.satoshis > 0)) && wallet.services) {
+      try {
+        const viaServices = await scanAddressViaServices(
+          wallet.services,
+          wallet.address,
+          wallet.chain,
+        )
+        const byOp = new Map(viaServices.utxos.map((u) => [u.outpoint.toLowerCase(), u]))
+        const merged = woc.utxos.map((u) => {
+          if (u.satoshis > 0) return u
+          const alt = byOp.get(u.outpoint.toLowerCase())
+          return alt && alt.satoshis > 0 ? { ...u, satoshis: alt.satoshis } : u
+        })
+        const sats = merged.reduce((s, u) => s + u.satoshis, 0)
+        return { ...woc, utxos: merged, sats }
+      } catch {
+        /* keep WoC */
+      }
+    }
+    return woc
+  } catch (err) {
+    wocError = err
+    console.warn('[legacy-scan] WhatsOnChain failed, trying services', err)
+  }
+
   try {
     if (wallet.services) {
-      return await scanAddressViaServices(wallet.services, wallet.address, wallet.chain)
+      const viaServices = await scanAddressViaServices(
+        wallet.services,
+        wallet.address,
+        wallet.chain,
+      )
+      // Services sometimes omit satoshis (0) — those cannot be classified as funding.
+      if (viaServices.utxos.length > 0 && viaServices.utxos.every((u) => !(u.satoshis > 0))) {
+        console.warn(
+          '[legacy-scan] services returned UTXOs without sat amounts — cannot import funding',
+        )
+      }
+      return viaServices
     }
   } catch (err) {
-    console.warn('[legacy-scan] services failed, trying WhatsOnChain', err)
+    console.warn('[legacy-scan] services failed', err)
+    if (wocError) throw wocError
+    throw err
   }
-  return scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+
+  if (wocError) throw wocError
+  throw new Error('No UTXO scan provider available')
 }
 
 /**
@@ -123,6 +169,9 @@ export async function importLegacyUtxos(
   if (safe.length === 0) {
     return { imported: 0, failed: 0, errors: [], skippedOneSats, skippedKnown: 0 }
   }
+
+  // Heal false blacklist: still-unspent outs that were marked imported after a transient error.
+  reclaimStillUnspentLegacyOutpoints(safe)
 
   const candidates = safe.map((u) => u.outpoint)
   const outpoints = beginLegacyImport(candidates)
@@ -154,11 +203,14 @@ export async function importLegacyUtxos(
       } else {
         failed += 1
         if (r.error) errors.push(`${r.outpoint}: ${r.error}`)
-        // Already spent / already ours — treat as known so we never retry forever.
+        // Only permanently skip on clear “already ours / already spent” — never on
+        // transient “not found” / indexer lag (that blacklisted live deposits).
         const err = (r.error || '').toLowerCase()
         if (
           op &&
-          /already|spent|double.?spend|not spendable|missing output|not found/i.test(err)
+          (/already (?:spent|imported|internalized|in (?:the )?wallet|ours)/i.test(err) ||
+            /double.?spend/i.test(err) ||
+            /output (?:is )?not spendable/i.test(err))
         ) {
           succeeded.push(op)
         }

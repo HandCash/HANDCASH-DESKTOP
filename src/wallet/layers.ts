@@ -39,7 +39,14 @@ export type WalletLayer =
 export const WALLET_LAYER_MODULES = {
   custody: ['vault.ts', 'sessionBackupAuth.ts'],
   localState: ['session.ts', 'collectables.ts', 'brc100Handler.ts', 'oneSatProvenance.ts'],
-  chainIngest: ['chainIngest.ts', 'syncFunds.ts', 'legacyScan.ts', 'oneSatImport.ts'],
+  chainIngest: [
+    'chainIngest.ts',
+    'ingestLegacyAddress.ts',
+    'legacyScan.ts',
+    'oneSatImport.ts',
+    'legacyImportGuard.ts',
+    'oneSatImportGuard.ts',
+  ],
   historyReplica: [
     'historyBackup.ts',
     'deviceSync.ts',

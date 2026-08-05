@@ -48,7 +48,11 @@ vi.mock('./toast', () => ({
   showToast: vi.fn(),
 }))
 
-describe('syncLegacyFunds spendable review', () => {
+vi.mock('./historyBackupPrefs', () => ({
+  resolveHistoryBackupBaseUrl: () => null,
+}))
+
+describe('refreshFromChain spendable review', () => {
   beforeEach(() => {
     vi.resetModules()
     mockReviewSpendableOutputs.mockReset()
@@ -100,8 +104,8 @@ describe('syncLegacyFunds spendable review', () => {
       }
     })
 
-    const { syncLegacyFunds } = await import('./syncFunds')
-    await syncLegacyFunds({ forceReview: true, announceReceive: false })
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
     expect(order).toEqual(['review', 'scan'])
@@ -117,8 +121,8 @@ describe('syncLegacyFunds spendable review', () => {
       )
       .mockResolvedValueOnce({ totalOutputs: 0, outputs: [] })
 
-    const { syncLegacyFunds } = await import('./syncFunds')
-    const sats = await syncLegacyFunds({ forceReview: true, announceReceive: false })
+    const { refreshFromChain } = await import('./chainIngest')
+    const sats = await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(sats).toBe(1000)
     expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(1, true, true)
@@ -129,8 +133,8 @@ describe('syncLegacyFunds spendable review', () => {
   it('does not release when spendable review throws', async () => {
     mockReviewSpendableOutputs.mockRejectedValue(new Error('provider down'))
 
-    const { syncLegacyFunds } = await import('./syncFunds')
-    const sats = await syncLegacyFunds({ forceReview: true, announceReceive: false })
+    const { refreshFromChain } = await import('./chainIngest')
+    const sats = await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(sats).toBe(1000)
     expect(mockClearCollectablesCache).not.toHaveBeenCalled()
@@ -140,12 +144,12 @@ describe('syncLegacyFunds spendable review', () => {
   it('throttles background review but still scans', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
 
-    const { syncLegacyFunds } = await import('./syncFunds')
-    await syncLegacyFunds({ forceReview: true, announceReceive: false })
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
     mockReviewSpendableOutputs.mockClear()
     mockScanLegacyAddress.mockClear()
 
-    await syncLegacyFunds({ announceReceive: false })
+    await refreshFromChain({ announceReceive: false })
 
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
     expect(mockScanLegacyAddress).toHaveBeenCalled()
