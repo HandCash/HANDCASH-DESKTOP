@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.27] - 2026-08-05
+
+### Fixed
+
+- **Legacy balance could be filed into the collectables basket.** The migration trusted the cloud item list outright, so any outpoint it named was excluded from the funding sweep and internalized into basket `1sat` — regardless of how many satoshis it actually held. Basket `1sat` is not counted toward spendable balance, so that money disappeared from the wallet.
+- Cloud-named items are now cross-checked against the live UTXO: anything that is not exactly 1 satoshi is swept as funding. Outpoint matching is case-insensitive.
+- `internalizeAction` verifies output value from the fetched BEEF before filing to basket `1sat`, covering every import path.
+
+### Added
+
+- Recovery on refresh: item-basket outputs worth more than a satoshi are swept back into spendable change. Outputs that resolve as inscriptions, or that are locked to another key, are reported and left alone.
+
 ## [1.2.26] - 2026-08-05
 
 ### Fixed

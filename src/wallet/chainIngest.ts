@@ -19,6 +19,7 @@ import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
+import { recoverMisfiledFunds } from './recoverMisfiledFunds'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
@@ -187,6 +188,24 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
       heldOneSats: heldCount,
     })
     return null
+  }
+
+  // Funds that earlier builds filed into item baskets are invisible to balance.
+  try {
+    const recovered = await recoverMisfiledFunds(active)
+    if (recovered.txid) {
+      console.info(
+        `[chain-ingest] recovered ${recovered.recoveredSats} sats misfiled into item baskets (${recovered.txid})`,
+      )
+    }
+    if (recovered.skipped.length > 0) {
+      console.warn(
+        '[chain-ingest] misfiled funds locked to another key — not recovered',
+        recovered.skipped,
+      )
+    }
+  } catch (err) {
+    console.warn('[chain-ingest] misfiled fund recovery skipped', err)
   }
 
   const review = await reviewAndReleaseSpentOutputs(forceReview)

@@ -334,23 +334,45 @@ export async function classifyLegacyUtxos(
   chain: Chain,
   knownItems: MigrationItem[] = [],
 ): Promise<ClassifiedLegacyUtxos> {
+  const outpointKey = (outpoint: string): string => outpoint.trim().toLowerCase()
+
   const knownByOutpoint = new Map<string, MigrationItem>()
   for (const item of knownItems) {
     const n = normalizeMigrationItem(item)
-    if (n) knownByOutpoint.set(n.outpoint, n)
+    if (n) knownByOutpoint.set(outpointKey(n.outpoint), n)
+  }
+
+  // A cloud-named item is only an ordinal if the live UTXO is worth 1 satoshi.
+  // Trusting the payload alone diverts real funds into basket `1sat`, where they
+  // are neither swept nor counted toward spendable balance.
+  const scannedByOutpoint = new Map<string, LegacyUtxo>()
+  for (const u of utxos) {
+    scannedByOutpoint.set(outpointKey(u.outpoint), u)
   }
 
   const funding: LegacyUtxo[] = []
-  const oneSats: MigrationItem[] = [...knownByOutpoint.values()]
+  const oneSats: MigrationItem[] = []
   const heldOneSats: LegacyUtxo[] = []
-  const claimed = new Set(knownByOutpoint.keys())
+  const claimed = new Set<string>()
+
+  for (const [key, item] of knownByOutpoint) {
+    const scanned = scannedByOutpoint.get(key)
+    if (scanned && scanned.satoshis !== 1) {
+      console.warn(
+        `[1sat] cloud item ${key} holds ${scanned.satoshis} sats — treating as funding, not an ordinal`,
+      )
+      continue
+    }
+    oneSats.push(item)
+    claimed.add(key)
+  }
 
   for (const u of utxos) {
-    if (claimed.has(u.outpoint)) continue
+    if (claimed.has(outpointKey(u.outpoint))) continue
 
     // HARD RULE: never fund-sweep 1-sat outs.
     if (u.satoshis === 1) {
-      const known = knownByOutpoint.get(u.outpoint)
+      const known = knownByOutpoint.get(outpointKey(u.outpoint))
       const resolved =
         known?.origin != null
           ? {
@@ -371,7 +393,7 @@ export async function classifyLegacyUtxos(
           name: resolved?.name ?? known?.name,
           app: resolved?.app ?? known?.app,
         })
-        claimed.add(u.outpoint)
+        claimed.add(outpointKey(u.outpoint))
       } else {
         heldOneSats.push(u)
       }
@@ -432,8 +454,26 @@ export async function importOneSatOrdinals(
       const beef = await wallet.services.getBeefForTxid(txid)
       const atomic = beef.toBinaryAtomic(txid)
 
+      // Last line of defence: basket `1sat` is not counted as spendable balance,
+      // so anything worth more than a satoshi must never be filed there.
+      const sourceTx = beef.findAtomicTransaction(txid)
+      const notOrdinal = group.filter((item) => {
+        const sats = sourceTx?.outputs?.[item.vout!]?.satoshis
+        return typeof sats === 'number' && sats !== 1
+      })
+      if (notOrdinal.length > 0) {
+        for (const item of notOrdinal) {
+          console.warn(
+            `[1sat] refusing to internalize ${item.outpoint} — output is not 1 satoshi`,
+          )
+        }
+        releaseOneSatImport(notOrdinal.map((i) => i.outpoint))
+      }
+      const ordinals = group.filter((item) => !notOrdinal.includes(item))
+      if (ordinals.length === 0) continue
+
       const remittanceOutputs = []
-      for (const item of group) {
+      for (const item of ordinals) {
         const origin =
           item.origin ?? item.outpoint.replace(/\.(\d+)$/, '_$1')
         const provenance = await tryBuildProvenanceV2({
@@ -470,9 +510,9 @@ export async function importOneSatOrdinals(
         seekPermission: false,
       })
 
-      imported += group.length
-      outpoints.push(...groupOps)
-      markOneSatImported(groupOps)
+      imported += ordinals.length
+      outpoints.push(...ordinals.map((i) => i.outpoint))
+      markOneSatImported(ordinals.map((i) => i.outpoint))
     } catch (err) {
       releaseOneSatImport(groupOps)
       failed += group.length
