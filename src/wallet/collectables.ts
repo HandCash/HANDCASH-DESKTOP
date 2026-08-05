@@ -24,7 +24,7 @@ import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   buildCollectableCustomInstructions,
-  tryBuildProvenanceV2,
+  tryBuildProvenanceForSend,
   verifyProvenance,
 } from './oneSatProvenance'
 import type { Chain } from './vault'
@@ -427,7 +427,7 @@ export async function sendCollectable(args: {
   // unknown until after createAction — we attach input-tip provenance when it fits
   // budget (omit if oversized). Receivers verify against the tip they hold; mismatch
   // ⇒ unproven (honest) until post-broadcast tip rewrite lands.
-  const provenance = await tryBuildProvenanceV2({
+  const provenance = await tryBuildProvenanceForSend({
     tipOutpoint: outpoint,
     origin,
     wallet,

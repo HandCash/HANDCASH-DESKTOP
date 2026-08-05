@@ -1,5 +1,5 @@
 /**
- * BRC-151 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
+ * BRC-153 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
  *
  * Phase 1: parse / structural verify / remittance build helpers.
  * Commit+Settle broadcast remains behind `isLatchedSendEnabled()` until script templates ship.
@@ -10,7 +10,7 @@ export type ProvenanceVerifyResult = {
   reason: string | null
 }
 
-/** Companion basket for proof latch UTXOs ([BRC-151]). */
+/** Companion basket for proof latch UTXOs ([BRC-153]). */
 export const ONE_SAT_LATCH_BASKET = '1sat-latch' as const
 
 export const LATCH_TAG = 'latch:1sat' as const
@@ -70,7 +70,7 @@ export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
 }
 
 /**
- * Structural O(1) verify for v3 remittance (BRC-151).
+ * Structural O(1) verify for v3 remittance (BRC-153).
  * On-chain latch co-spend rules are enforced when Commit/Settle sends ship.
  */
 export function verifyProvenanceV3(
@@ -125,7 +125,7 @@ export function buildProvenanceV3(args: {
   }
 }
 
-/** Tags for a latch output per BRC-151. */
+/** Tags for a latch output per BRC-153. */
 export function latchOutputTags(args: {
   origin: string
   tip: string
@@ -139,4 +139,23 @@ export function latchOutputTags(args: {
 
 export function isProvenanceV3(raw: unknown): boolean {
   return parseProvenanceV3(raw) != null
+}
+
+/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-153). */
+export type OneSatBrcCapabilities = {
+  brcs: readonly string[]
+  baskets: readonly string[]
+  /** Commit+Settle latched sends (phase 3). */
+  latchedSend: boolean
+  /** Provenance remittance versions this wallet can verify. */
+  provenanceVerify: readonly string[]
+}
+
+export function getOneSatBrcCapabilities(): OneSatBrcCapabilities {
+  return {
+    brcs: ['147', '150', '153'],
+    baskets: ['1sat', ONE_SAT_LATCH_BASKET],
+    latchedSend: isLatchedSendEnabled(),
+    provenanceVerify: ['v2', 'v3'],
+  }
 }

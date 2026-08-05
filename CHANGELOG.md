@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.23] - 2026-08-05
+
+### Changed
+
+- **BRC-153** latched 1Sat provenance (renumbered from draft 151 — official registry reserves 151 for opinions).
+- Manifest `/health` advertise 1Sat BRC capabilities (`147`, `150`, `153`; v2/v3 verify; latched send gated).
+- Collectable sends use `tryBuildProvenanceForSend` (v2 today; v3 when Commit/Settle ships).
+
 ## [1.2.22] - 2026-08-05
 
 ### Added

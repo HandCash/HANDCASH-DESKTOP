@@ -13,6 +13,7 @@ import type { ActiveWallet } from './session'
 import {
   parseProvenanceV3,
   verifyProvenanceV3,
+  isLatchedSendEnabled,
   type ProvenanceV3,
   type ProvenanceVerifyResult,
 } from './oneSatLatch'
@@ -114,7 +115,7 @@ export function verifyProvenanceV2(
 }
 
 /**
- * Prefer BRC-151 v3 (latched) when present; otherwise BRC-150 v2 BEEF path.
+ * Prefer BRC-153 v3 (latched) when present; otherwise BRC-150 v2 BEEF path.
  */
 export function verifyProvenance(
   provenance: unknown,
@@ -192,6 +193,23 @@ export async function tryBuildProvenanceV2(args: {
     console.warn('[brc-150] build provenance failed', err)
     return null
   }
+}
+
+/**
+ * Best remittance for a collectable send: v3 when latched sends ship; v2 BEEF today.
+ */
+export async function tryBuildProvenanceForSend(args: {
+  tipOutpoint: string
+  origin: string
+  wallet: ActiveWallet
+  contentType?: string
+  path?: string[]
+}): Promise<ProvenanceRemittance | null> {
+  if (isLatchedSendEnabled()) {
+    // Phase 3: build v3 from held tip + latch pair after Commit/Settle.
+    return null
+  }
+  return tryBuildProvenanceV2(args)
 }
 
 /** Merge display fields + optional provenance into customInstructions JSON. */

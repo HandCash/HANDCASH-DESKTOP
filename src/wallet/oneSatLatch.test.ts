@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   buildProvenanceV3,
+  getOneSatBrcCapabilities,
   isLatchedSendEnabled,
   isValidOutpoint,
   latchOutputTags,
@@ -13,7 +14,7 @@ const TIP = 'bb'.repeat(32) + '_1'
 const LATCH = 'cc'.repeat(32) + '_0'
 const PARENT = 'dd'.repeat(32) + '_0'
 
-describe('BRC-151 latched provenance (phase 1)', () => {
+describe('BRC-153 latched provenance (phase 1)', () => {
   it('parseProvenanceV3 rejects v2 and hybrid objects', () => {
     expect(parseProvenanceV3({ v: 2, origin: ORIGIN, tip: TIP, path: [TIP], beefB64: 'x' })).toBeNull()
     expect(
@@ -64,5 +65,14 @@ describe('BRC-151 latched provenance (phase 1)', () => {
 
   it('latched sends disabled until script template ships', () => {
     expect(isLatchedSendEnabled()).toBe(false)
+  })
+
+  it('advertises BRC-153 capability profile', () => {
+    expect(getOneSatBrcCapabilities()).toEqual({
+      brcs: ['147', '150', '153'],
+      baskets: ['1sat', '1sat-latch'],
+      latchedSend: false,
+      provenanceVerify: ['v2', 'v3'],
+    })
   })
 })
