@@ -9,19 +9,17 @@
  * 2. reviewSpendableOutputs (drop outs spent elsewhere; skipped briefly after import)
  */
 import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
-import { getActiveWallet, fetchBalanceSats, type ActiveWallet } from './session'
+import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
-import { toastError, toastSuccess, showToast } from './toast'
+import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import { recoverMisfiledFunds, type RecoverMisfiledResult } from './recoverMisfiledFunds'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
-import { diagnoseFailedActions, repairFailedActions } from './failedActions'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -84,89 +82,6 @@ function maybeReceiveChime(): void {
   if (now - lastReceiveChimeAt < RECEIVE_CHIME_COOLDOWN_MS) return
   lastReceiveChimeAt = now
   playWalletSound('receive')
-}
-
-/** Tell the user why item-basket money stayed put — Refresh alone looks like a no-op. */
-function reportUnrecoveredFunds(result: RecoverMisfiledResult): void {
-  const amount = (sats: number) => formatPrimaryFromSats(sats, getDisplayCurrency())
-
-  if (result.error) {
-    toastError('Couldn’t recover misfiled funds', result.error)
-    return
-  }
-  if (result.belowFloorSats > 0) {
-    showToast({
-      title: 'Misfiled funds too small to recover',
-      body: `${amount(result.belowFloorSats)} would cost more in fees than it returns.`,
-      tone: 'neutral',
-    })
-    return
-  }
-
-  const held = result.skipped.filter((s) => s.reason !== 'foreign-key')
-  const foreign = result.skipped.filter((s) => s.reason === 'foreign-key')
-  if (held.length > 0) {
-    const heldSats = held.reduce((sum, s) => sum + s.satoshis, 0)
-    const probeFailed = held.some((s) => s.reason === 'probe-failed')
-    showToast({
-      title: probeFailed ? 'Couldn’t verify collectables' : 'Funds held with collectables',
-      body: probeFailed
-        ? `${amount(heldSats)} kept in place — the ordinals index did not answer. Try Refresh again.`
-        : `${amount(heldSats)} sits on inscribed outputs, so it stays with those collectables.`,
-      tone: 'neutral',
-    })
-    return
-  }
-  if (foreign.length > 0) {
-    const foreignSats = foreign.reduce((sum, s) => sum + s.satoshis, 0)
-    showToast({
-      title: 'Funds locked to another key',
-      body: `${amount(foreignSats)} can only be recovered on the device that holds that key.`,
-      tone: 'neutral',
-    })
-  }
-}
-
-/**
- * Hand back coins stranded by transactions that never landed, and say why.
- *
- * A failed action holds whatever it spent, so silence here reads as money
- * vanishing. Explicit Refresh only. The repair promotes anything that really
- * did land before releasing what is dead, so it never invents a double spend.
- */
-async function reviewFailedActions(active: ActiveWallet): Promise<void> {
-  try {
-    const report = await diagnoseFailedActions(active)
-    if (!report) return
-
-    console.warn(
-      `[chain-ingest] ${report.count} failed action(s): ${report.neverBroadcast} never broadcast, ${report.doubleSpend} double spend`,
-      report.causes,
-    )
-
-    const repair = await repairFailedActions(active)
-    if (repair.rescued > 0) {
-      clearCollectablesCache()
-      showToast({
-        title: `${repair.rescued} transaction${repair.rescued === 1 ? '' : 's'} recovered`,
-        body: 'They had already landed on chain — the wallet was behind, not the money.',
-        tone: 'neutral',
-      })
-      return
-    }
-
-    const stranded = repair.repaired ? 'Any coins they held are spendable again.' : ''
-    showToast({
-      title: `${report.count} transaction${report.count === 1 ? '' : 's'} never confirmed`,
-      body:
-        report.neverBroadcast >= report.count
-          ? `No miner ever accepted them. ${stranded}`.trim()
-          : `${stranded} Send the app log from Settings if a balance still looks wrong.`.trim(),
-      tone: 'neutral',
-    })
-  } catch (err) {
-    console.warn('[chain-ingest] failed-action review skipped', err)
-  }
 }
 
 function isUndefinedPartialFilterError(err: unknown): boolean {
@@ -276,42 +191,9 @@ export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Prom
     return null
   }
 
-  // Funds that earlier builds filed into item baskets are invisible to balance.
-  try {
-    const recovered = await recoverMisfiledFunds(active)
-    if (recovered.txid) {
-      console.info(
-        `[chain-ingest] recovered ${recovered.recoveredSats} sats misfiled into item baskets (${recovered.txid})`,
-      )
-      toastSuccess(
-        'Funds recovered',
-        `${formatPrimaryFromSats(recovered.recoveredSats, getDisplayCurrency())} moved back to your balance`,
-      )
-    }
-    if (recovered.skipped.length > 0) {
-      console.warn('[chain-ingest] misfiled funds not recovered', recovered.skipped)
-    }
-    // Refresh is the user asking directly — say what happened to money we can see
-    // but did not move, instead of leaving them staring at an unchanged balance.
-    if (forceReview && !recovered.txid) {
-      reportUnrecoveredFunds(recovered)
-    }
-  } catch (err) {
-    console.warn('[chain-ingest] misfiled fund recovery skipped', err)
-    if (forceReview) {
-      toastError(
-        'Couldn’t check misfiled funds',
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-  }
-
   // A sweep in this same pass means the indexer has definitely not caught up yet,
   // so hold the release even when forced — that is what the grace window is for.
   const review = await reviewAndReleaseSpentOutputs(forceReview && importedFunding === 0)
-  if (forceReview) {
-    await reviewFailedActions(active)
-  }
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',
