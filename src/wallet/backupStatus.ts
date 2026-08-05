@@ -1,4 +1,4 @@
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
 const KEYS_KEY = 'handcash.brc100.backupConfirmed'
 const HISTORY_KEY = 'handcash.brc100.historyBackupConfirmed'
@@ -118,12 +118,8 @@ export function markHistoryBackupConfirmed(): boolean {
 }
 
 export function clearBackupConfirmed(): void {
-  try {
-    localStorage.removeItem(KEYS_KEY)
-    localStorage.removeItem(HISTORY_KEY)
-  } catch {
-    // ignore
-  }
+  durableRemoveItem(KEYS_KEY)
+  durableRemoveItem(HISTORY_KEY)
   keysHandoffs = 0
   keysHandoffSliceIndices.clear()
   keysSingleHandoff = false

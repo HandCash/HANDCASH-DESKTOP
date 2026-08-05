@@ -42,13 +42,24 @@ type ActivityListener = () => void
 const listeners = new Set<ActivityListener>()
 const DAY_MS = 24 * 60 * 60_000
 
+/**
+ * Last parse, keyed by the exact stored string.
+ *
+ * History runs to 2000 rows and nearly every read here scans the whole list, so
+ * re-parsing per call showed up as UI stall. Callers must treat the result as
+ * read-only — it is shared.
+ */
+let parsedRaw: string | null = null
+let parsedEntries: ActivityEntry[] = []
+
 function readAll(): ActivityEntry[] {
   try {
     const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return []
+    if (raw === parsedRaw) return parsedEntries
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed
+    const entries = parsed
       .filter(
         (e): e is ActivityEntry =>
           !!e &&
@@ -62,6 +73,9 @@ function readAll(): ActivityEntry[] {
         const item = normalizeActivityItem((e as ActivityEntry).item)
         return item ? { ...e, item } : { ...e, item: undefined }
       })
+    parsedRaw = raw
+    parsedEntries = entries
+    return entries
   } catch {
     return []
   }
@@ -113,19 +127,21 @@ export function recordAppActivity(args: {
   // because the money amount is dust.
   if (sats <= 0 && !item) return
   const origin = normalizeAppHost(args.origin)
-  const entries = readAll()
-  entries.push({
-    id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
-    origin,
-    kind: args.kind,
-    sats,
-    at: Date.now(),
-    method: args.method,
-    note: args.note,
-    txid: args.txid?.trim() || undefined,
-    ...(item ? { item } : {}),
-  })
-  writeAll(entries)
+  // readAll shares its array — append to a copy rather than mutating the cache.
+  writeAll([
+    ...readAll(),
+    {
+      id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
+      origin,
+      kind: args.kind,
+      sats,
+      at: Date.now(),
+      method: args.method,
+      note: args.note,
+      txid: args.txid?.trim() || undefined,
+      ...(item ? { item } : {}),
+    },
+  ])
 }
 
 function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | undefined {
@@ -244,7 +260,7 @@ export function getActivityById(id: string): ActivityEntry | null {
 
 /** Export full local activity (storage-capped) for history backup. */
 export function exportAllActivity(): ActivityEntry[] {
-  return readAll()
+  return [...readAll()]
 }
 
 /** Merge remote activity into local history (idempotent by id / txid). */

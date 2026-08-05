@@ -6,6 +6,7 @@ import { unlockVault } from './vault'
 import { clearActiveWallet } from './session'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
+import { durableForgetCached } from './durableStorage'
 
 const KEY_PREFIX = 'handcash.brc100'
 const PENDING_IDB_WIPE = 'handcash.brc100.pendingIdbWipe'
@@ -25,6 +26,8 @@ function wipeLocalStorage(): number {
   } catch {
     // private mode / quota
   }
+  // A wipe must not leave cached reads answering for keys that no longer exist.
+  durableForgetCached()
   return removed
 }
 

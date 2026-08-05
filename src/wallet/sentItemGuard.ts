@@ -25,11 +25,20 @@ export type SentItemRecord = {
   txid?: string
 }
 
+/**
+ * Last parse, keyed by the exact stored string. `listCollectables` asks about
+ * every output it lists, so this must not re-parse per item. Shared — mutators
+ * copy before writing.
+ */
+let cachedRaw: string | null = null
+let cachedRecords = new Map<string, SentItemRecord>()
+
 function readSent(): Map<string, SentItemRecord> {
   const records = new Map<string, SentItemRecord>()
   try {
     const raw = durableGetItem(STORAGE_KEY)
     if (!raw) return records
+    if (raw === cachedRaw) return cachedRecords
     const parsed = JSON.parse(raw) as unknown
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return records
     for (const [op, value] of Object.entries(parsed as Record<string, unknown>)) {
@@ -41,6 +50,8 @@ function readSent(): Map<string, SentItemRecord> {
         txid: typeof row.txid === 'string' && row.txid.trim() ? row.txid.trim() : undefined,
       })
     }
+    cachedRaw = raw
+    cachedRecords = records
   } catch {
     /* no usable state */
   }
@@ -65,7 +76,7 @@ export function markItemsSent(
   outpoints: Array<string | { outpoint: string; txid?: string }>,
 ): void {
   if (outpoints.length === 0) return
-  const records = readSent()
+  const records = new Map(readSent())
   const at = Date.now()
   let marked = 0
   for (const raw of outpoints) {
@@ -89,7 +100,7 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
 /** Un-hide — for a send that turned out not to have spent these after all. */
 export function forgetItemsSent(outpoints: string[]): void {
   if (outpoints.length === 0) return
-  const records = readSent()
+  const records = new Map(readSent())
   let changed = false
   for (const raw of outpoints) {
     if (records.delete(key(raw))) changed = true

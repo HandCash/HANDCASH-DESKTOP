@@ -10,6 +10,7 @@ import {
   type LegacyFundingReceipt,
   type LegacyScanResult,
 } from './legacyScan'
+import type { Chain } from './vault'
 import {
   hasActivityItemOutpoint,
   hasActivityTxid,

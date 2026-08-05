@@ -26,8 +26,11 @@ import {
 } from './backupStatus'
 
 describe('backupStatus evidence gates', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     store.clear()
+    // Clearing the backing map behind durableStorage bypasses its read cache.
+    const { durableForgetCached } = await import('./durableStorage')
+    durableForgetCached()
     clearBackupConfirmed()
   })
 
