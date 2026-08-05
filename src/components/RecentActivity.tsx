@@ -4,6 +4,8 @@ import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import { ActivityIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
+  activityEntryTitle,
+  isItemActivity,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -56,15 +58,6 @@ function formatWhen(at: number): string {
   return `${years} years ago`
 }
 
-function entryTitle(entry: ActivityEntry): string {
-  if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    return entry.kind === 'spent' ? 'Sent' : 'Received'
-  }
-  const name = appDisplayName(entry.origin)
-  if (entry.kind === 'spent') return entry.note?.trim() || `Paid ${name}`
-  return entry.note?.trim() || `From ${name}`
-}
-
 function HistoryRow({
   entry,
   currency,
@@ -78,9 +71,14 @@ function HistoryRow({
 }) {
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const spent = entry.kind === 'spent'
-  const amountLabel = formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const signed =
-    currency === 'usd' && usdPerBsv == null
+  const item = isItemActivity(entry)
+  const title = activityEntryTitle(entry)
+  const amountLabel = item
+    ? entry.item?.name || 'Collectable'
+    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+  const signed = item
+    ? 'Item'
+    : currency === 'usd' && usdPerBsv == null
       ? '—'
       : spent
         ? `−${amountLabel}`
@@ -97,7 +95,14 @@ function HistoryRow({
         }}
       >
         <div className="history-icon">
-          {isWallet ? (
+          {item && entry.item?.imageUrl ? (
+            <img
+              className="history-item-thumb"
+              src={entry.item.imageUrl}
+              alt=""
+              loading="lazy"
+            />
+          ) : isWallet ? (
             spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
           ) : (
             <AppAvatar
@@ -108,10 +113,16 @@ function HistoryRow({
           )}
         </div>
         <div className="history-body">
-          <strong className="history-title">{entryTitle(entry)}</strong>
+          <strong className="history-title">{title}</strong>
+          {item && entry.item?.app ? (
+            <span className="history-when">{entry.item.app}</span>
+          ) : null}
         </div>
         <div className="history-amount-block">
-          <span className="history-amount" title={amountLabel}>
+          <span
+            className={item ? 'history-amount history-amount-item' : 'history-amount'}
+            title={amountLabel}
+          >
             {signed}
           </span>
           {showWhen ? <span className="history-when">{formatWhen(entry.at)}</span> : null}

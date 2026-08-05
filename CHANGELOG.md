@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.35] - 2026-08-05
+
+### Added
+
+- Activity history for collectables shows the item name and thumbnail instead of a 1-sat payment amount.
+- BRC-99 `p 1sat <scope>` baskets for item permissions (`*`, `collection:`, `creator:`, `origin:`); plain `1sat` remains the coarse fallback. Unsupported `p` schemes are rejected.
+
 ## [1.2.34] - 2026-08-05
 
 ### Fixed

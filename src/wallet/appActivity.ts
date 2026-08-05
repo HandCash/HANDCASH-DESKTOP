@@ -1,9 +1,18 @@
-import { normalizeAppHost } from './appIdentity'
+import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
 export type ActivityKind = 'spent' | 'earned'
+
+/** Collectable / NFT remittance attached to an activity row. */
+export type ActivityItem = {
+  name: string
+  origin: string
+  outpoint?: string
+  imageUrl?: string
+  app?: string
+}
 
 export type ActivityEntry = {
   id: string
@@ -14,6 +23,8 @@ export type ActivityEntry = {
   method: string
   note?: string
   txid?: string
+  /** Present when this row is an item transfer, not a BSV payment. */
+  item?: ActivityItem
 }
 
 export type AppMoneySummary = {
@@ -22,6 +33,9 @@ export type AppMoneySummary = {
   spentAll: number
   earnedAll: number
 }
+
+/** Origin used for in-wallet Send / Receive (not a connected app). */
+export const WALLET_ACTIVITY_ORIGIN = 'handcash'
 
 type ActivityListener = () => void
 
@@ -34,15 +48,20 @@ function readAll(): ActivityEntry[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (e): e is ActivityEntry =>
-        !!e &&
-        typeof e === 'object' &&
-        typeof (e as ActivityEntry).origin === 'string' &&
-        typeof (e as ActivityEntry).sats === 'number' &&
-        typeof (e as ActivityEntry).at === 'number' &&
-        ((e as ActivityEntry).kind === 'spent' || (e as ActivityEntry).kind === 'earned'),
-    )
+    return parsed
+      .filter(
+        (e): e is ActivityEntry =>
+          !!e &&
+          typeof e === 'object' &&
+          typeof (e as ActivityEntry).origin === 'string' &&
+          typeof (e as ActivityEntry).sats === 'number' &&
+          typeof (e as ActivityEntry).at === 'number' &&
+          ((e as ActivityEntry).kind === 'spent' || (e as ActivityEntry).kind === 'earned'),
+      )
+      .map((e) => {
+        const item = normalizeActivityItem((e as ActivityEntry).item)
+        return item ? { ...e, item } : { ...e, item: undefined }
+      })
   } catch {
     return []
   }
@@ -76,9 +95,13 @@ export function recordAppActivity(args: {
   method: string
   note?: string
   txid?: string
+  item?: ActivityItem
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
-  if (sats <= 0) return
+  const item = normalizeActivityItem(args.item)
+  // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
+  // because the money amount is dust.
+  if (sats <= 0 && !item) return
   const origin = normalizeAppHost(args.origin)
   const entries = readAll()
   entries.push({
@@ -90,8 +113,32 @@ export function recordAppActivity(args: {
     method: args.method,
     note: args.note,
     txid: args.txid?.trim() || undefined,
+    ...(item ? { item } : {}),
   })
   writeAll(entries)
+}
+
+function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+  const origin = typeof raw.origin === 'string' ? raw.origin.trim() : ''
+  if (!name || !origin) return undefined
+  return {
+    name: name.slice(0, 80),
+    origin,
+    ...(typeof raw.outpoint === 'string' && raw.outpoint.trim()
+      ? { outpoint: raw.outpoint.trim() }
+      : {}),
+    ...(typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
+      ? { imageUrl: raw.imageUrl.trim() }
+      : {}),
+    ...(typeof raw.app === 'string' && raw.app.trim() ? { app: raw.app.trim().slice(0, 40) } : {}),
+  }
+}
+
+/** True when this row is a collectable transfer (not a BSV payment). */
+export function isItemActivity(entry: ActivityEntry): boolean {
+  return Boolean(entry.item) || entry.method === 'send-collectable' || /collectable|1sat|ordinal/i.test(entry.method)
 }
 
 export function clearAppActivity(origin?: string): void {
@@ -112,6 +159,8 @@ export function getAppMoneySummary(origin: string): AppMoneySummary {
   let earnedAll = 0
   for (const e of readAll()) {
     if (e.origin !== key) continue
+    // Collectable tip sats are not BSV payment volume.
+    if (isItemActivity(e)) continue
     if (e.kind === 'spent') {
       spentAll += e.sats
       if (e.at >= cutoff) spent24h += e.sats
@@ -146,9 +195,30 @@ export function getSpentSatsSince(origin: string | undefined, sinceMs: number): 
   let total = 0
   for (const e of readAll()) {
     if (e.origin !== key || e.kind !== 'spent') continue
+    if (isItemActivity(e)) continue
     if (e.at >= sinceMs) total += e.sats
   }
   return total
+}
+
+/** Human title for an activity row (payment or collectable). */
+export function activityEntryTitle(entry: ActivityEntry): string {
+  if (entry.item?.name) {
+    const name = entry.item.name
+    if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
+      return entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`
+    }
+    return entry.note?.trim() || (entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`)
+  }
+  if (entry.method === 'send-collectable' && entry.note?.trim()) {
+    return entry.note.trim()
+  }
+  if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
+    return entry.kind === 'spent' ? 'Sent' : 'Received'
+  }
+  const name = appDisplayName(entry.origin)
+  if (entry.kind === 'spent') return entry.note?.trim() || `Paid ${name}`
+  return entry.note?.trim() || `From ${name}`
 }
 
 /** Newest-first activity feed for the history panel. */
@@ -186,9 +256,6 @@ export function mergeActivityEntries(incoming: ActivityEntry[]): number {
   writeAll([...byId.values()].sort((a, b) => a.at - b.at))
   return added
 }
-
-/** Origin used for in-wallet Send / Receive (not a connected app). */
-export const WALLET_ACTIVITY_ORIGIN = 'handcash'
 
 /** Sum satoshis from common BRC-100 payment payloads. */
 export function extractSatsFromArgs(method: string, args: unknown): number {

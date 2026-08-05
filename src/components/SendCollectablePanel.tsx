@@ -169,6 +169,13 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
           method: 'send-collectable',
           note: `Sent ${item.name} to ${noteTo}`,
           txid: result.txid,
+          item: {
+            name: item.name,
+            origin: item.origin,
+            outpoint: item.outpoint,
+            imageUrl: item.imageUrl,
+            ...(item.app ? { app: item.app } : {}),
+          },
         })
       }
       clearPendingSend(pending.id)

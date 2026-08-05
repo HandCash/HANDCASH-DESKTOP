@@ -7,7 +7,7 @@ import {
   requestActionApproval,
   requestItemViewApproval,
 } from './permissions'
-import { isItemBasket } from './itemAccess'
+import { isItemBasket, prepareItemBasketArgs } from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
@@ -188,6 +188,22 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     } catch {
       args = event.body
     }
+  }
+
+  // BRC-99: rewrite `p 1sat <scope>` → storage basket `1sat`; reject unknown schemes.
+  {
+    const prepared = prepareItemBasketArgs(args)
+    if (prepared.error) {
+      return {
+        status: 400,
+        body: JSON.stringify({
+          status: 'error',
+          code: prepared.error.code,
+          description: prepared.error.description,
+        }),
+      }
+    }
+    args = prepared.args
   }
 
   const originator = parseOrigin(event.headers)

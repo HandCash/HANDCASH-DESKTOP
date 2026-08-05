@@ -4,7 +4,9 @@ import { ReceiveIcon, SendIcon } from './icons'
 import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
+  activityEntryTitle,
   getActivityById,
+  isItemActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from '../wallet/appActivity'
@@ -25,15 +27,6 @@ import type { Chain } from '../wallet/vault'
 type Props = {
   entryId: string
   chain: Chain
-}
-
-function entryTitle(entry: ActivityEntry): string {
-  if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    return entry.kind === 'spent' ? 'Sent' : 'Received'
-  }
-  const name = appDisplayName(entry.origin)
-  if (entry.kind === 'spent') return entry.note?.trim() || `Paid ${name}`
-  return entry.note?.trim() || `From ${name}`
 }
 
 function openExplorer(url: string) {
@@ -62,11 +55,16 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   }
 
   const spent = entry.kind === 'spent'
-  const primary = formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const secondary = formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
+  const item = isItemActivity(entry)
+  const primary = item
+    ? entry.item?.name || 'Collectable'
+    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+  const secondary = item
+    ? entry.item?.app || '1Sat collectable'
+    : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
-  const ready = isWallet || iconReady
+  const ready = isWallet || item || iconReady
 
   return (
     <div
@@ -76,7 +74,13 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     >
       <div className="payment-details-hero">
         <div className="history-icon">
-          {isWallet ? (
+          {item && entry.item?.imageUrl ? (
+            <img
+              className="history-item-thumb"
+              src={entry.item.imageUrl}
+              alt=""
+            />
+          ) : isWallet ? (
             spent ? <SendIcon size={16} /> : <ReceiveIcon size={16} />
           ) : (
             <AppAvatar
@@ -90,7 +94,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         {ready ? (
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
-              <strong className="payment-details-title">{entryTitle(entry)}</strong>
+              <strong className="payment-details-title">{activityEntryTitle(entry)}</strong>
               {explorer ? (
                 <button
                   type="button"
@@ -127,10 +131,16 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         <>
           <div className="payment-details-amount">
             <strong>
-              {spent ? `−${primary}` : `+${primary}`}
+              {item ? primary : spent ? `−${primary}` : `+${primary}`}
             </strong>
             <span className="payment-details-secondary">{secondary}</span>
           </div>
+
+          {item && entry.item?.imageUrl ? (
+            <div className="payment-details-item-media collectable-media collectable-media-md">
+              <img src={entry.item.imageUrl} alt={entry.item.name} />
+            </div>
+          ) : null}
 
           <dl className="payment-details-meta">
             {!isWallet && (
@@ -139,6 +149,20 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                 <dd>{appDisplayName(entry.origin)}</dd>
               </>
             )}
+            {entry.item ? (
+              <>
+                <dt>Item</dt>
+                <dd>{entry.item.name}</dd>
+                <dt>Origin</dt>
+                <dd className="mono">{entry.item.origin}</dd>
+                {entry.item.outpoint ? (
+                  <>
+                    <dt>Outpoint</dt>
+                    <dd className="mono">{entry.item.outpoint}</dd>
+                  </>
+                ) : null}
+              </>
+            ) : null}
             <dt>Method</dt>
             <dd className="mono">{entry.method}</dd>
             {entry.note ? (

@@ -654,6 +654,7 @@ function summarizeItemView(request: ItemViewRequest): {
   }
   for (const c of request.collections) details.push(`Collection: ${c}`)
   for (const c of request.creators) details.push(`Creator: ${c}`)
+  for (const o of request.origins) details.push(`Origin: ${o}`)
   return {
     title: 'View items',
     summary: 'See specific collectables in this wallet',

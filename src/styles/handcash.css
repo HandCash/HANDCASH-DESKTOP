@@ -3212,6 +3212,25 @@ a.history-row-link:hover .history-tx-hint {
   padding: 10%;
 }
 
+.history-item-thumb {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.history-amount-item {
+  color: var(--hc-muted);
+  font-weight: 600;
+  font-size: 0.78rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.payment-details-item-media {
+  margin: 4px 0 12px;
+}
+
 .history-body {
   min-width: 0;
   display: grid;
