@@ -41,7 +41,6 @@ function CollectableGridItem({ item }: { item: Collectable }) {
             skeletonHeight={120}
             skeletonRadius={8}
             skeletonClassName="skeleton-qr"
-            loading="lazy"
             decoding="async"
           />
         </div>
@@ -93,7 +92,6 @@ function CollectableListItem({ item }: { item: Collectable }) {
             skeletonHeight={48}
             skeletonRadius={6}
             skeletonClassName="skeleton-qr"
-            loading="lazy"
             decoding="async"
           />
         </div>

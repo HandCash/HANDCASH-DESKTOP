@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.45] - 2026-08-05
+
+### Fixed
+
+- Ordinal images never loaded: `DeferredImage` hides the `<img>` until it loads, and a
+  `display: none` image never satisfies lazy loading's intersection check, so it never
+  fetched and sat on the skeleton forever. The component now always loads eagerly and
+  ignores a caller's `loading` prop. Off-thread decoding (`decoding="async"`) is kept.
+
 ## [1.2.39] - 2026-08-05
 
 ### Changed

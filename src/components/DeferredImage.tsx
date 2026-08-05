@@ -37,6 +37,10 @@ export function DeferredImage({
   height,
   src,
   alt = '',
+  // Deliberately swallowed: this component hides the img until it loads, and a
+  // `display: none` img never satisfies lazy loading's intersection check — it
+  // would never fetch, never fire onLoad, and sit on the skeleton forever.
+  loading: _ignoredLoading,
   ...rest
 }: Props) {
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -99,6 +103,7 @@ export function DeferredImage({
         alt={alt}
         width={width}
         height={height}
+        loading="eager"
         hidden={status !== 'ready'}
         onLoad={() => setStatus('ready')}
         onError={() => setStatus('error')}

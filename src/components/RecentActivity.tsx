@@ -108,7 +108,6 @@ function HistoryRow({
               skeletonWidth={28}
               skeletonHeight={28}
               skeletonRadius={6}
-              loading="lazy"
               decoding="async"
             />
           ) : isWallet ? (
