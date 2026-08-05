@@ -293,6 +293,17 @@ export function parsePairPayload(raw: string): DevicePairPayload {
   }
 }
 
+/** True when raw QR text looks like a device-link payload (cheap, non-throwing). */
+export function tryParsePairPayload(raw: string): DevicePairPayload | null {
+  const text = raw.trim()
+  if (!text.startsWith('{') || !text.includes('"identityKey"')) return null
+  try {
+    return parsePairPayload(text)
+  } catch {
+    return null
+  }
+}
+
 export function pairPayloadToQrText(payload: DevicePairPayload): string {
   return JSON.stringify(payload)
 }

@@ -6,18 +6,41 @@ type Props = {
   hint?: string
 }
 
-function supportsBarcodeDetector(): boolean {
-  return typeof BarcodeDetector === 'function'
+type BarcodeDetectorLike = {
+  detect: (source: ImageBitmapSource) => Promise<Array<{ rawValue?: string }>>
 }
 
+function getBarcodeDetector(): (new (opts?: { formats: string[] }) => BarcodeDetectorLike) | null {
+  const ctor = (globalThis as { BarcodeDetector?: unknown }).BarcodeDetector
+  return typeof ctor === 'function'
+    ? (ctor as new (opts?: { formats: string[] }) => BarcodeDetectorLike)
+    : null
+}
+
+async function openCamera(): Promise<MediaStream> {
+  return navigator.mediaDevices.getUserMedia({
+    audio: false,
+    video: {
+      facingMode: { ideal: 'environment' },
+      width: { ideal: 1280 },
+      height: { ideal: 720 },
+    },
+  })
+}
+
+/**
+ * Camera QR scanner. Prefers native BarcodeDetector; falls back to @zxing/browser
+ * so Android WebView / Capacitor still works for scan-to-link.
+ */
 export function QrScanner({
   onScan,
   onCancel,
-  hint = 'Point your camera at an identity QR',
+  hint = 'Point your camera at a QR code',
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const onScanRef = useRef(onScan)
+  const zxingControlsRef = useRef<{ stop: () => void } | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [active, setActive] = useState(false)
   const handled = useRef(false)
@@ -29,10 +52,12 @@ export function QrScanner({
   useEffect(() => {
     let cancelled = false
     let raf = 0
-    let detector: BarcodeDetector | null = null
+    let detector: BarcodeDetectorLike | null = null
 
-    const stop = () => {
+    const stopTracks = () => {
       cancelAnimationFrame(raf)
+      zxingControlsRef.current?.stop()
+      zxingControlsRef.current = null
       const stream = streamRef.current
       streamRef.current = null
       stream?.getTracks().forEach((t) => t.stop())
@@ -40,12 +65,21 @@ export function QrScanner({
       if (video) video.srcObject = null
     }
 
-    const tick = async () => {
+    const finish = (value: string) => {
+      if (handled.current || cancelled) return
+      const trimmed = value.trim()
+      if (!trimmed) return
+      handled.current = true
+      stopTracks()
+      onScanRef.current(trimmed)
+    }
+
+    const tickNative = async () => {
       if (cancelled || handled.current || !detector) return
       const video = videoRef.current
       if (!video || video.readyState < 2) {
         raf = requestAnimationFrame(() => {
-          void tick()
+          void tickNative()
         })
         return
       }
@@ -53,61 +87,98 @@ export function QrScanner({
         const codes = await detector.detect(video)
         const value = codes[0]?.rawValue?.trim()
         if (value) {
-          handled.current = true
-          stop()
-          onScanRef.current(value)
+          finish(value)
           return
         }
       } catch {
         // keep scanning
       }
       raf = requestAnimationFrame(() => {
-        void tick()
+        void tickNative()
       })
     }
 
-    const start = async () => {
-      if (!supportsBarcodeDetector()) {
-        setError('QR scanning is not supported in this build. Paste the identity key instead.')
+    const startWithZxing = async (stream: MediaStream) => {
+      const { BrowserMultiFormatReader } = await import('@zxing/browser')
+      const reader = new BrowserMultiFormatReader()
+      const video = videoRef.current
+      if (!video || cancelled) {
+        stream.getTracks().forEach((t) => t.stop())
         return
       }
+      streamRef.current = stream
+      video.srcObject = stream
+      await video.play()
+      if (cancelled) {
+        stopTracks()
+        return
+      }
+      setActive(true)
+      const controls = await reader.decodeFromStream(stream, video, (result, _err, ctrl) => {
+        if (result) {
+          ctrl.stop()
+          finish(result.getText())
+        }
+      })
+      zxingControlsRef.current = controls
+    }
+
+    const start = async () => {
+      if (!navigator.mediaDevices?.getUserMedia) {
+        setError('Camera is not available. Paste the pair code or identity key instead.')
+        return
+      }
+
+      const Detector = getBarcodeDetector()
       try {
-        detector = new BarcodeDetector({ formats: ['qr_code'] })
-        const stream = await navigator.mediaDevices.getUserMedia({
-          audio: false,
-          video: {
-            facingMode: { ideal: 'environment' },
-            width: { ideal: 1280 },
-            height: { ideal: 720 },
-          },
-        })
+        const stream = await openCamera()
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
           return
         }
-        streamRef.current = stream
-        const video = videoRef.current
-        if (video) {
-          video.srcObject = stream
-          await video.play()
+
+        if (Detector) {
+          try {
+            detector = new Detector({ formats: ['qr_code'] })
+            streamRef.current = stream
+            const video = videoRef.current
+            if (video) {
+              video.srcObject = stream
+              await video.play()
+            }
+            if (cancelled) {
+              stopTracks()
+              return
+            }
+            setActive(true)
+            raf = requestAnimationFrame(() => {
+              void tickNative()
+            })
+            return
+          } catch {
+            // Native detector unavailable for this stream — use zxing on the same stream.
+            detector = null
+          }
         }
-        setActive(true)
-        raf = requestAnimationFrame(() => {
-          void tick()
-        })
+
+        await startWithZxing(stream)
       } catch (err) {
-        setError(
-          err instanceof Error
-            ? err.message
-            : 'Camera access was denied. Paste the identity key instead.',
-        )
+        if (cancelled) return
+        const msg = err instanceof Error ? err.message : String(err)
+        if (/NotAllowed|Permission|denied/i.test(msg)) {
+          setError('Camera access was denied. Paste the code instead.')
+        } else if (/NotFound|DevicesNotFound/i.test(msg)) {
+          setError('No camera found. Paste the code instead.')
+        } else {
+          setError(`${msg || 'Camera failed'}. Paste the code instead.`)
+        }
       }
     }
 
     void start()
     return () => {
       cancelled = true
-      stop()
+      stopTracks()
     }
   }, [])
 

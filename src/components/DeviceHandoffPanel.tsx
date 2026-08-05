@@ -29,10 +29,13 @@ export function DeviceHandoffPanel() {
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
         <li>Restore the same phrase/shares on the other device.</li>
-        <li>Confirm the identical History backup URL on both (History settings).</li>
-        <li>Link via QR / paste (URL must match).</li>
+        <li>Confirm the identical History backup URL on both.</li>
+        <li>
+          On one device show the link QR; on the other tap <strong>Scan to link</strong> (or use
+          Dashboard Scan).
+        </li>
         <li>Tap Sync via backup URL (same unlock password) so history + friends merge.</li>
-        <li>Spends still reconcile against the chain automatically. Offline payments are not supported.</li>
+        <li>Spends reconcile against the chain automatically. Offline payments are not supported.</li>
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>

@@ -55,6 +55,24 @@ describe('deviceWallets pair + backup URL', () => {
     expect(roundTrip.backupBaseUrl).toBe('https://backup.example')
   })
 
+  it('tryParsePairPayload accepts v2 and rejects junk', async () => {
+    const { tryParsePairPayload, buildPairPayload, pairPayloadToQrText } = await import(
+      './deviceWallets'
+    )
+    const ik =
+      '02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const text = pairPayloadToQrText(
+      buildPairPayload({
+        identityKey: ik,
+        backupBaseUrl: 'https://backup.example',
+        platform: 'android',
+      }),
+    )
+    expect(tryParsePairPayload(text)?.deviceId).toBeTruthy()
+    expect(tryParsePairPayload('02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')).toBeNull()
+    expect(tryParsePairPayload('not json')).toBeNull()
+  })
+
   it('rejects link when local backup URL differs', async () => {
     store.set(
       'handcash.brc100.historyBackup.v1',

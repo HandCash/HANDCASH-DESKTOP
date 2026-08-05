@@ -22,17 +22,19 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from '../wallet/historyBackupPrefs'
+import { takePendingPairScan } from '../wallet/pendingPairScan'
 import { openSetting } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
+import { QrScanner } from './QrScanner'
 import { SkeletonQr } from './Skeleton'
 
 /**
  * Link devices: same identity + same BRC-39 backup URL (required).
- * QR carries backupBaseUrl; mismatch rejects. Sync = pull/push BRC-39 + friends.
+ * Show QR on one device, Scan to link (or paste) on the other, then Sync.
  */
 export function PairDevicePanel() {
   const [backupUrl, setBackupUrl] = useState(() => resolveHistoryBackupBaseUrl())
@@ -42,6 +44,7 @@ export function PairDevicePanel() {
   const [pairText, setPairText] = useState('')
   const [paste, setPaste] = useState('')
   const [busy, setBusy] = useState(false)
+  const [scanning, setScanning] = useState(false)
   const [peers, setPeers] = useState<DeviceWallet[]>(() =>
     listDeviceWallets().filter((w) => !w.isLocal),
   )
@@ -91,28 +94,21 @@ export function PairDevicePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [backupUrl])
 
-  const saveUrl = () => {
-    const next = setHistoryBackupPrefs({ baseUrl: urlDraft })
-    setBackupUrl(next.baseUrl)
-    playWalletSound('soft')
-    toastSuccess(next.baseUrl ? 'Backup URL saved' : 'Backup URL cleared')
-  }
-
-  const pairFromPaste = async () => {
+  const linkFromRaw = async (raw: string, opts?: { fromScan?: boolean }) => {
     const active = getActiveWallet()
     if (!active) {
       toastError('Locked', 'Unlock this wallet first.')
-      return
+      return false
     }
     if (!hasDeviceLinkBackupUrl()) {
       toastError('Backup URL required', 'Set the same History URL on both devices first.')
-      return
+      return false
     }
-    if (busy) return
+    if (busy) return false
     setBusy(true)
     playWalletSound('soft')
     try {
-      const enriched = await verifyAndEnrichPair(paste, active.identityKey)
+      const enriched = await verifyAndEnrichPair(raw, active.identityKey)
       upsertPeerDevice({
         deviceId: enriched.deviceId,
         label: enriched.label,
@@ -124,16 +120,36 @@ export function PairDevicePanel() {
       })
       void pollDeviceMeshOnce()
       setPaste('')
+      setScanning(false)
       toastSuccess(
-        'Device linked',
-        'Same backup URL — use Sync below so wallet history and friends match.',
+        opts?.fromScan ? 'Scanned & linked' : 'Device linked',
+        'Enter the same unlock password below and tap Sync.',
       )
+      playWalletSound('success')
+      return true
     } catch (err) {
       playWalletSound('error')
       toastError('Link failed', err instanceof Error ? err.message : String(err))
+      return false
     } finally {
       setBusy(false)
     }
+  }
+
+  // Dashboard Scan → device-handoff handoff of a pending pair QR.
+  useEffect(() => {
+    const pending = takePendingPairScan()
+    if (!pending) return
+    setPaste(pending)
+    void linkFromRaw(pending, { fromScan: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const saveUrl = () => {
+    const next = setHistoryBackupPrefs({ baseUrl: urlDraft })
+    setBackupUrl(next.baseUrl)
+    playWalletSound('soft')
+    toastSuccess(next.baseUrl ? 'Backup URL saved' : 'Backup URL cleared')
   }
 
   const runSync = async () => {
@@ -176,13 +192,33 @@ export function PairDevicePanel() {
     if (!backupUrl) {
       return 'Set the same History backup URL on every device. Linking will not work without it.'
     }
-    return `Linked devices share ${backupUrl} for BRC-39 history + friends. Use the same unlock password on both.`
+    return 'Show this QR on one device. On the other, tap Scan to link — then Sync with the same unlock password.'
   }, [backupUrl])
+
+  if (scanning) {
+    return (
+      <div className="pair-device-block" data-aeon-scope="pair-device" data-aeon-state="scanning">
+        <h3 className="settings-row-label" style={{ marginTop: 8 }}>
+          Scan to link
+        </h3>
+        <QrScanner
+          hint="Point at the other device’s HandCash link QR"
+          onCancel={() => {
+            playWalletSound('soft')
+            setScanning(false)
+          }}
+          onScan={(raw) => {
+            void linkFromRaw(raw, { fromScan: true })
+          }}
+        />
+      </div>
+    )
+  }
 
   return (
     <div className="pair-device-block" data-aeon-scope="pair-device">
       <h3 className="settings-row-label" style={{ marginTop: 8 }}>
-        Link devices (shared backup URL)
+        Link devices (scan QR)
       </h3>
       <p className="settings-hint">{hint}</p>
 
@@ -219,8 +255,11 @@ export function PairDevicePanel() {
         </p>
       ) : (
         <>
-          <div className="identity-layout" style={{ marginTop: 16 }}>
+          <div className="identity-layout link-device-qr" style={{ marginTop: 16 }}>
             <div className="identity-qr">
+              <p className="settings-row-desc" style={{ marginBottom: 8 }}>
+                This device’s link QR
+              </p>
               {qrUrl ? (
                 <DeferredImage
                   src={qrUrl}
@@ -248,11 +287,27 @@ export function PairDevicePanel() {
             </div>
 
             <div className="identity-info">
+              <p className="settings-row-desc" style={{ marginBottom: 8 }}>
+                Other device
+              </p>
+              <div className="actions" style={{ marginBottom: 12 }}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    setScanning(true)
+                  }}
+                >
+                  Scan to link
+                </button>
+              </div>
               <div className="field" data-aeon-part="field">
-                <label htmlFor="pair-paste">Paste their pair code</label>
+                <label htmlFor="pair-paste">Or paste their pair code</label>
                 <textarea
                   id="pair-paste"
-                  rows={5}
+                  rows={4}
                   value={paste}
                   placeholder='{"v":2,"backupBaseUrl":"https://…","identityKey":"…"}'
                   onChange={(e) => setPaste(e.target.value)}
@@ -263,11 +318,11 @@ export function PairDevicePanel() {
               <div className="actions" style={{ marginTop: 8 }}>
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-ghost"
                   disabled={busy || !paste.trim()}
-                  onClick={() => void pairFromPaste()}
+                  onClick={() => void linkFromRaw(paste)}
                 >
-                  {busy ? 'Linking…' : 'Link device'}
+                  {busy ? 'Linking…' : 'Link from paste'}
                 </button>
               </div>
             </div>

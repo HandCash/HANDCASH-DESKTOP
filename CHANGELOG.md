@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.14] - 2026-08-04
+
+### Added
+
+- **Scan to link** for multi-device pairing. Pair settings has a primary **Scan to link** camera flow; Dashboard Scan routes device-link QRs to Use on another device. QR scanning falls back to `@zxing/browser` when `BarcodeDetector` is missing (Android WebView / Capacitor).
+
 ## [1.2.13] - 2026-08-04
 
 ### Added
