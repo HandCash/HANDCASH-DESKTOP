@@ -1,10 +1,14 @@
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import {
   downloadAndRestoreBrc39Backup,
   exportBrc39ToFile,
   importBrc39FromFile,
+  listLocalBrc39Archive,
+  restoreLocalBrc39Archive,
   uploadBrc39Backup,
 } from '../wallet/historyBackup'
+import type { LocalBrc39ArchiveMeta } from '../wallet/brc39LocalArchive'
+import { getActiveWallet } from '../wallet/session'
 import {
   displayHistoryBackupBaseUrl,
   ensureSuggestedHistoryBackupUrl,
@@ -37,11 +41,27 @@ export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [password, setPassword] = useState<string | null>(null)
-  const [busy, setBusy] = useState<'file' | 'upload' | 'restore' | 'import' | 'check' | null>(null)
+  const [busy, setBusy] = useState<
+    'file' | 'upload' | 'restore' | 'import' | 'check' | 'local' | null
+  >(null)
   const [exportTick, setExportTick] = useState(0)
+  const [localSnaps, setLocalSnaps] = useState<LocalBrc39ArchiveMeta[]>([])
   const canConfirm = exportTick >= 0 && canConfirmHistoryBackup()
   const resolvedUrl = resolveHistoryBackupBaseUrl(prefs)
   const effectiveUrl = resolvedUrl || displayHistoryBackupBaseUrl(prefs)
+
+  const refreshLocalArchive = async () => {
+    const id = getActiveWallet()?.identityKey
+    if (!id) {
+      setLocalSnaps([])
+      return
+    }
+    setLocalSnaps(await listLocalBrc39Archive(id))
+  }
+
+  useEffect(() => {
+    void refreshLocalArchive()
+  }, [password, exportTick])
 
   const checkCloud = async () => {
     playWalletSound('soft')
@@ -75,6 +95,30 @@ export function HistoryBackupPanel() {
     setExportTick((n) => n + 1)
   }
 
+  const runRestoreLocal = async (snapshotId: string) => {
+    if (!password) return
+    setBusy('local')
+    try {
+      const result = await restoreLocalBrc39Archive(password, snapshotId)
+      const recomposed = await recomposeWallet({
+        password,
+        history: 'skip',
+        chain: true,
+      })
+      playWalletSound('success')
+      toastSuccess(
+        'Restored local UTXO snapshot',
+        `${result.inserts + result.updates} changes · balance ${recomposed.spendableSats ?? '—'} sats`,
+      )
+      await refreshLocalArchive()
+    } catch (err) {
+      playWalletSound('error')
+      toastError('Local restore failed', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(null)
+    }
+  }
+
   const runExportFile = async () => {
     if (!password) return
     setBusy('file')
@@ -83,6 +127,7 @@ export function HistoryBackupPanel() {
       playWalletSound('success')
       toastSuccess('Downloaded wallet.brc39')
       markExported()
+      await refreshLocalArchive()
     } catch (err) {
       playWalletSound('error')
       toastError('Export failed', err instanceof Error ? err.message : String(err))
@@ -101,6 +146,7 @@ export function HistoryBackupPanel() {
       playWalletSound('success')
       toastSuccess('Uploaded', formatWhen(result.exportedAt))
       markExported()
+      await refreshLocalArchive()
     } catch (err) {
       playWalletSound('error')
       toastError('Upload failed', err instanceof Error ? err.message : String(err))
@@ -168,8 +214,10 @@ export function HistoryBackupPanel() {
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
         Shared history backup. The same URL on every device is <strong>required</strong> to link
-        installs (Settings → Use on another device). Restore recomposes from history then checks
-        the chain; chain ingest alone cannot rebuild P2P / managed-change state.
+        installs (Settings → Use on another device). Every export also writes a{' '}
+        <strong>write-once</strong> UTXO snapshot on this device (never overwritten). Restore
+        recomposes from history then checks the chain; chain ingest alone cannot rebuild P2P /
+        managed-change state.
       </p>
 
       <HistoryBackupUrlField
@@ -252,6 +300,49 @@ export function HistoryBackupPanel() {
             hidden
             onChange={(e) => void runImportFile(e.target.files?.[0] ?? null)}
           />
+
+          {localSnaps.length > 0 ? (
+            <div className="settings-form settings-form-compact" style={{ marginTop: 12 }}>
+              <p className="settings-row-label">On-device UTXO snapshots (immutable)</p>
+              <p className="settings-row-desc">
+                Write-once copies under this install. Survives cloud overwrite and factory reset
+                of IndexedDB. Newest first — restore merges into the live wallet.
+              </p>
+              <ul className="settings-list" style={{ margin: '8px 0 0', padding: 0, listStyle: 'none' }}>
+                {localSnaps.slice(0, 8).map((snap) => (
+                  <li
+                    key={snap.id}
+                    className="settings-row"
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      gap: 8,
+                      padding: '6px 0',
+                    }}
+                  >
+                    <span className="settings-row-desc">
+                      {formatWhen(snap.exportedAt)} · {(snap.bytes / 1024).toFixed(1)} KB
+                    </span>
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy !== null}
+                      onClick={() => void runRestoreLocal(snap.id)}
+                    >
+                      {busy === 'local' ? 'Restoring…' : 'Restore'}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          ) : (
+            <p className="settings-row-desc" style={{ marginTop: 8 }}>
+              No local UTXO snapshots yet — download or upload once, or spend so an automatic
+              snapshot is written.
+            </p>
+          )}
+
           <div className="actions" style={{ marginTop: 4 }}>
             <button
               type="button"
@@ -279,8 +370,9 @@ export function HistoryBackupPanel() {
       </div>
 
       <SettingsFeatureAbout tags={['BRC-39']}>
-        Encrypted wallet history blob (outs, labels, baskets). One object per identity on your
-        backup host — used for multi-device parity, not key recovery.
+        Encrypted wallet history blob (outs, labels, baskets). Cloud keeps one mutable object per
+        identity for multi-device parity. This device also keeps write-once UTXO snapshots under
+        userData so a bad cloud PUT or empty IndexedDB cannot erase the only copy.
       </SettingsFeatureAbout>
     </div>
   )

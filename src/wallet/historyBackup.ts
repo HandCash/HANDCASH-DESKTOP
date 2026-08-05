@@ -18,6 +18,11 @@ import {
 import { getActiveWallet } from './session'
 import { revealRootKeyHex } from './vault'
 import { refreshCloudBackupHealth } from './cloudBackupHealth'
+import {
+  archiveBrc39Locally,
+  listLocalBrc39Archive,
+  readLocalBrc39Archive,
+} from './brc39LocalArchive'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
@@ -44,10 +49,19 @@ async function withActiveStorageProvider<T>(
 /** Verify unlock password, then export canonical BRC-39 bytes (AES-256-GCM + Argon2id). */
 export async function createBrc39BackupBytes(password: string): Promise<Uint8Array> {
   await revealRootKeyHex(password)
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
   const bytes = await withActiveStorageProvider((storage, identityKey) =>
     exportBRC39(storage, identityKey, password),
   )
-  return asArrayBufferBytes(bytes)
+  const out = asArrayBufferBytes(bytes)
+  // Every export is also a write-once on-device snapshot (never overwritten).
+  await archiveBrc39Locally({
+    identityKey: active.identityKey,
+    bytes: out,
+    exportedAt: Date.now(),
+  })
+  return out
 }
 
 export async function restoreBrc39BackupBytes(
@@ -193,3 +207,22 @@ export async function downloadAndRestoreBrc39Backup(
   void refreshCloudBackupHealth()
   return result
 }
+
+/** Merge a write-once on-device UTXO snapshot back into localState. */
+export async function restoreLocalBrc39Archive(
+  password: string,
+  snapshotId: string,
+): Promise<BRC38ImportResult> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
+  const buf = await readLocalBrc39Archive({
+    identityKey: active.identityKey,
+    id: snapshotId,
+  })
+  if (buf.length < 64) throw new Error('Local UTXO archive is too small')
+  const result = await restoreBrc39BackupBytes(buf, password, 'merge')
+  appendAppLog('info', `[utxo-archive] restored local snapshot ${snapshotId}`)
+  return result
+}
+
+export { listLocalBrc39Archive }

@@ -121,6 +121,46 @@ const handcash = {
     ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
   wipeWalletStorage: () =>
     ipcRenderer.invoke('storage:wipe-wallet') as Promise<{ removed: number }>,
+  archiveBrc39Snapshot: (payload: {
+    identityKey: string
+    bytesBase64: string
+    exportedAt?: number
+  }) =>
+    ipcRenderer.invoke('brc39-archive:write', payload) as Promise<{
+      created: boolean
+      meta: {
+        id: string
+        identityKey: string
+        exportedAt: number
+        bytes: number
+        sha256: string
+        path: string
+      }
+    }>,
+  listBrc39Archive: (identityKey: string) =>
+    ipcRenderer.invoke('brc39-archive:list', identityKey) as Promise<
+      Array<{
+        id: string
+        identityKey: string
+        exportedAt: number
+        bytes: number
+        sha256: string
+        path: string
+      }>
+    >,
+  readBrc39Archive: (payload: { identityKey: string; id: string }) =>
+    ipcRenderer.invoke('brc39-archive:read', payload) as Promise<{
+      meta: {
+        id: string
+        identityKey: string
+        exportedAt: number
+        bytes: number
+        sha256: string
+        path: string
+      }
+      bytesBase64: string
+    }>,
+  brc39ArchiveRoot: () => ipcRenderer.invoke('brc39-archive:root') as Promise<string>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
   copyScreenshot: () =>
     ipcRenderer.invoke('clipboard:screenshot') as Promise<

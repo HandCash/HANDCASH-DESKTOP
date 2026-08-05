@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.13] - 2026-08-04
+
+### Added
+
+- **Immutable on-device UTXO archive.** Every BRC-39 export (download, cloud upload, or post-spend snapshot) also writes a write-once file under `userData/brc39-archive/{identity}/`. Existing snapshots are never overwritten (`wx` exclusive create); identical content is deduped. History settings lists local snapshots and can merge-restore them. Survives cloud PUT overwrite and IndexedDB factory wipe.
+
 ## [1.2.12] - 2026-08-04
 
 ### Added

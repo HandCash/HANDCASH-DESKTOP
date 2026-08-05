@@ -199,9 +199,10 @@ export function markHistoryBackupDirty(): void {
 
 /**
  * Debounced BRC-39 push using the in-memory session password (post-spend path).
+ * Always archives a write-once local UTXO snapshot first — even when no cloud URL
+ * is configured — so on-device history cannot be lost by an empty IndexedDB wipe.
  */
 export function scheduleHistoryBackupPush(reason = 'dirty'): void {
-  if (!hasDeviceLinkBackupUrl()) return
   if (!getSessionBackupPassword()) {
     void import('./appLog').then(({ appendAppLog }) =>
       appendAppLog('info', `[cloud-backup] skip schedule (${reason}): no session password`),
@@ -225,7 +226,25 @@ async function flushHistoryBackupPush(reason: string): Promise<void> {
   const password = getSessionBackupPassword()
   if (!password || !historyDirty) return
   historyDirty = false
-  pushInFlight = autoPushHistoryBackupIfConfigured(password, { reason, allowEmptyPull: false })
+  pushInFlight = (async () => {
+    if (hasDeviceLinkBackupUrl()) {
+      await autoPushHistoryBackupIfConfigured(password, { reason, allowEmptyPull: false })
+      return
+    }
+    // No cloud URL — still write an immutable local UTXO snapshot.
+    try {
+      const { createBrc39BackupBytes } = await import('./historyBackup')
+      await createBrc39BackupBytes(password)
+    } catch (err) {
+      try {
+        const { appendAppLog } = await import('./appLog')
+        const msg = err instanceof Error ? err.message : String(err)
+        appendAppLog('warn', `[utxo-archive] local snapshot failed (${reason}): ${msg}`)
+      } catch {
+        /* ignore */
+      }
+    }
+  })()
     .catch(() => {
       /* logged inside */
     })

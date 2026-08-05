@@ -10,6 +10,12 @@ import {
 } from './devicePeerServer.js'
 import { durableGet, durableSafeStorageAvailable, durableSet, durableWipeWallet } from './durableStore.js'
 import {
+  brc39ArchiveRootPath,
+  listArchiveForIdentity,
+  readBrc39ArchiveSnapshot,
+  writeBrc39ArchiveSnapshot,
+} from './brc39Archive.js'
+import {
   checkForUpdates,
   downloadUpdate,
   getUpdateStatus,
@@ -542,6 +548,48 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
 ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
 
 ipcMain.handle('storage:wipe-wallet', () => durableWipeWallet())
+
+ipcMain.handle('brc39-archive:write', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid UTXO archive payload')
+  }
+  const body = payload as {
+    identityKey?: unknown
+    exportedAt?: unknown
+    bytesBase64?: unknown
+  }
+  if (typeof body.identityKey !== 'string' || typeof body.bytesBase64 !== 'string') {
+    throw new Error('Invalid UTXO archive payload')
+  }
+  const bytes = Buffer.from(body.bytesBase64, 'base64')
+  return writeBrc39ArchiveSnapshot({
+    identityKey: body.identityKey,
+    bytes,
+    exportedAt: typeof body.exportedAt === 'number' ? body.exportedAt : undefined,
+  })
+})
+
+ipcMain.handle('brc39-archive:list', (_event, identityKey: unknown) => {
+  if (typeof identityKey !== 'string') return []
+  return listArchiveForIdentity(identityKey)
+})
+
+ipcMain.handle('brc39-archive:read', (_event, payload: unknown) => {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    throw new Error('Invalid UTXO archive read')
+  }
+  const body = payload as { identityKey?: unknown; id?: unknown }
+  if (typeof body.identityKey !== 'string' || typeof body.id !== 'string') {
+    throw new Error('Invalid UTXO archive read')
+  }
+  const { bytes, meta } = readBrc39ArchiveSnapshot({
+    identityKey: body.identityKey,
+    id: body.id,
+  })
+  return { meta, bytesBase64: bytes.toString('base64') }
+})
+
+ipcMain.handle('brc39-archive:root', () => brc39ArchiveRootPath())
 
 ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')

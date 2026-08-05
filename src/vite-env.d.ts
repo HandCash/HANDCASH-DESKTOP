@@ -116,6 +116,43 @@ interface HandCashBridge {
   ) => boolean
   safeStorageAvailable?: () => Promise<boolean>
   wipeWalletStorage?: () => Promise<{ removed: number }>
+  archiveBrc39Snapshot?: (payload: {
+    identityKey: string
+    bytesBase64: string
+    exportedAt?: number
+  }) => Promise<{
+    created: boolean
+    meta: {
+      id: string
+      identityKey: string
+      exportedAt: number
+      bytes: number
+      sha256: string
+      path: string
+    }
+  }>
+  listBrc39Archive?: (identityKey: string) => Promise<
+    Array<{
+      id: string
+      identityKey: string
+      exportedAt: number
+      bytes: number
+      sha256: string
+      path: string
+    }>
+  >
+  readBrc39Archive?: (payload: { identityKey: string; id: string }) => Promise<{
+    meta: {
+      id: string
+      identityKey: string
+      exportedAt: number
+      bytes: number
+      sha256: string
+      path: string
+    }
+    bytesBase64: string
+  }>
+  brc39ArchiveRoot?: () => Promise<string>
   clipboardWrite?: (text: string) => Promise<void>
   copyScreenshot?: () => Promise<{ ok: true; version: string } | { ok: false; error: string }>
   onScreenshotCopied?: (handler: (payload: { at: number; version: string }) => void) => () => void

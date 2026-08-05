@@ -8,6 +8,7 @@
  * localState     toolbox IndexedDB — managed change, baskets, remittance / customInstructions
  * chainIngest    network → localState (spendable review + legacy P2PKH + 1sat import)
  * historyReplica BRC-39 blob — replica of localState for recovery / multi-device
+ *              + write-once on-device archive under userData/brc39-archive (never overwritten)
  * balanceView    what UI shows (spendable from localState; never legacy-unimported alone)
  * health         chain ingest health ⊕ history replica health ⊕ bridge
  * ```
