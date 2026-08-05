@@ -55,7 +55,7 @@ export const WALLET_LAYER_MODULES = {
     'oneSatImport.ts',
     'legacyImportGuard.ts',
     'oneSatImportGuard.ts',
-    'sendSettleGuard.ts',
+    'staleOutputRelease.ts',
   ],
   historyReplica: [
     'historyBackup.ts',

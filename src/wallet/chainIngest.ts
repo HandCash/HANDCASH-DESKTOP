@@ -7,13 +7,15 @@
  * Pipeline:
  * 1. reconcile interrupted pending sends
  * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
- * 3. reviewSpendableOutputs (release gated by import + send-settle grace)
+ * 3. audit spendable outputs — report only, never write off (`auditSpendableOutputs`)
  * 4. refresh spendable balance
+ *
+ * Sync never marks an output unspendable. Only a spend the network rejected can
+ * do that, via `releaseStaleSpendableOutputs`.
  */
 import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
-import { clearCollectablesCache } from './collectables'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
@@ -23,7 +25,7 @@ import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 import type { MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
-import { isSendSettleGraceActive } from './sendSettleGuard'
+import { isUndefinedPartialFilterError } from './staleOutputRelease'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -53,11 +55,13 @@ export type ChainIngestRunResult = {
 }
 
 export type SpendableReviewResult = {
-  released: number
-  /** True when review did not run (throttle, no wallet, import grace). */
+  /**
+   * Outputs the indexer would not affirm as unspent. Suspect, not condemned:
+   * the audit never writes them off. See `auditSpendableOutputs`.
+   */
+  suspect: number
+  /** True when the audit did not run (throttle, no wallet, import grace). */
   skipped: boolean
-  /** True when review ran but release was held (send still settling). */
-  held?: boolean
   error?: string
 }
 
@@ -100,74 +104,63 @@ function maybeReceiveChime(): void {
   playWalletSound('receive')
 }
 
-function isUndefinedPartialFilterError(err: unknown): boolean {
-  const message = err instanceof Error ? err.message : String(err)
-  return (
-    message.includes('must be not undefined') ||
-    message.includes('Passing undefined as a filter value is not supported')
-  )
-}
-
 /**
- * Drop outs that are no longer UTXOs on-chain (e.g. spent on another device
- * with the same restored identity). Covers default change and basket `1sat`.
+ * Report outputs the indexer will not affirm as unspent — without writing any off.
+ *
+ * `reviewSpendableOutputs(all, release)` is never called here with `release`, and
+ * that is deliberate. The toolbox decides an output is dead via
+ * `services.isUtxo`, which is `or.isUtxo === true`: an indexer that has not seen
+ * our unconfirmed change, or a UTXO service that simply errored, both answer
+ * `false`, and `release` then sets `spendable: false` for good. Silence is not
+ * evidence of a spend, and the two costs are not symmetric — a stale spendable
+ * output costs one failed send, which is visible and recoverable, while a wrong
+ * release destroys live coins permanently.
+ *
+ * Genuinely spent outputs (e.g. spent on another device sharing this identity)
+ * are cleared by `releaseStaleSpendableOutputs`, on evidence, instead.
  */
-export async function reviewAndReleaseSpentOutputs(
-  force = false,
-): Promise<SpendableReviewResult> {
+export async function auditSpendableOutputs(force = false): Promise<SpendableReviewResult> {
   const active = getActiveWallet()
-  if (!active) return { released: 0, skipped: true }
+  if (!active) return { suspect: 0, skipped: true }
 
   const now = Date.now()
   if (!force && now - lastSpendableReviewAt < reviewThrottleMs()) {
-    return { released: 0, skipped: true }
+    return { suspect: 0, skipped: true }
   }
 
-  // Fresh legacy sweeps produce managed change that indexers may not yet treat as
-  // spendable — releasing during this window drops the deposit from balance.
-  // A forced review is a spend heal or an explicit Refresh: outputs this device
-  // just spent have to be released, or sent items keep listing here.
+  // A fresh sweep guarantees the indexer is behind, so the answers would be
+  // noise. Nothing is written off either way; this just saves the round trips.
   if (!force && isLegacyImportGraceActive()) {
-    return { released: 0, skipped: true }
+    return { suspect: 0, skipped: true }
   }
-
-  // Releasing writes `spendable: false` for good, and the toolbox reads any
-  // non-affirmative UTXO answer as death — including change from a send the
-  // indexer has not seen. Look, but do not write off, while a send settles.
-  const release = !isSendSettleGraceActive()
 
   try {
     let result
     try {
-      result = await active.wallet.reviewSpendableOutputs(true, release)
+      result = await active.wallet.reviewSpendableOutputs(true, false)
     } catch (err) {
       if (!isUndefinedPartialFilterError(err)) throw err
       console.warn(
         '[chain-ingest] all-basket spendable review unsupported; reviewing default basket only',
         err instanceof Error ? err.message : err,
       )
-      result = await active.wallet.reviewSpendableOutputs(false, release)
+      result = await active.wallet.reviewSpendableOutputs(false, false)
     }
     lastSpendableReviewAt = Date.now()
-    const invalid = result.outputs?.length ?? 0
-    if (!release) {
-      if (invalid > 0) {
-        console.info(
-          `[chain-ingest] ${invalid} output(s) look unspent but a send is still settling — holding`,
-        )
-      }
-      return { released: 0, skipped: false, held: true }
+    const suspect = result.outputs?.length ?? 0
+    if (suspect > 0) {
+      console.info(
+        `[chain-ingest] ${suspect} output(s) unconfirmed by the indexer — keeping them spendable`,
+      )
     }
-    if (invalid > 0) {
-      clearCollectablesCache()
-    }
-    return { released: invalid, skipped: false }
+    return { suspect, skipped: false }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
-    console.warn('[chain-ingest] spendable review failed — not releasing', err)
-    return { released: 0, skipped: false, error: message }
+    console.warn('[chain-ingest] spendable audit failed', err)
+    return { suspect: 0, skipped: false, error: message }
   }
 }
+
 
 const emptyRun = (): ChainIngestRunResult => ({
   balanceSats: null,
@@ -242,9 +235,9 @@ export async function refreshFromChainExclusive(
     return emptyRun()
   }
 
-  // A sweep in this same pass means the indexer has definitely not caught up yet,
-  // so hold the release even when forced — that is what the grace window is for.
-  const review = await reviewAndReleaseSpentOutputs(forceReview && importedFunding === 0)
+  // A sweep in this same pass means the indexer has definitely not caught up,
+  // so its answers are noise — skip the round trips rather than log them.
+  const review = await auditSpendableOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',
@@ -281,11 +274,9 @@ export async function refreshFromChainExclusive(
     }
 
     const reviewNote =
-      review.released > 0
-        ? `Updated ${review.released} spent output${review.released === 1 ? '' : 's'} from the network.`
-        : review.held
-          ? 'Send still settling — spent-output release held.'
-          : null
+      review.suspect > 0
+        ? `${review.suspect} output${review.suspect === 1 ? '' : 's'} still awaiting the indexer.`
+        : null
 
     setSyncHealth({
       phase: review.error && !partialWarn ? 'error' : 'ok',

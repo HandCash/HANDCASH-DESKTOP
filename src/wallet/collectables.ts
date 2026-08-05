@@ -41,7 +41,7 @@ import {
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { isItemSent, markItemsSent } from './sentItemGuard'
-import { noteSendBroadcast } from './sendSettleGuard'
+import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -696,6 +696,8 @@ export async function sendCollectable(args: {
       },
     })
   } catch (err) {
+    // A rejected input is proof this basket is stale; clear it so a retry works.
+    if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
     throw formatSendError(err)
   }
 
@@ -709,13 +711,10 @@ export async function sendCollectable(args: {
         outpoints: spendOutpoints,
       })
     } catch (err) {
+      if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
       throw formatSendError(err)
     }
   }
-
-  // Before any heal runs: this send's change must not be written off as dead
-  // while the indexer is still catching up on it.
-  noteSendBroadcast(txid)
 
   // Hide before relinquishing: relinquish is best-effort, and the basket keeps
   // listing a spent tip until a spendable review runs.

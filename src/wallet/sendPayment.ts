@@ -19,7 +19,7 @@ import {
   refreshSpendableBalance,
 } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { noteSendBroadcast } from './sendSettleGuard'
+import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
 
 export type SendSatsResult = {
   txid: string
@@ -68,9 +68,6 @@ export async function sendSatsToAddress(opts: {
 
       const realTxid = (result as { txid?: string })?.txid
       const txid = realTxid ?? `local-${Date.now().toString(16)}`
-      // Before any heal runs: this send's change must not be written off as dead
-      // while the indexer is still catching up on it.
-      if (realTxid) noteSendBroadcast(realTxid)
       completePendingSend(pending.id, txid)
 
       const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
@@ -93,6 +90,9 @@ export async function sendSatsToAddress(opts: {
       return { txid, balanceSats }
     } catch (err) {
       clearPendingSend(pending.id)
+      // The network rejecting an input is the only proof our spendable set is
+      // stale. Clear those outputs now so the next attempt picks live coins.
+      if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
       throw err
     }
   })

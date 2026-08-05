@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.46] - 2026-08-05
+
+### Fixed
+
+- Change no longer disappears after a send. Sync called `reviewSpendableOutputs`
+  with `release`, which writes `spendable: false` permanently based on
+  `services.isUtxo` — and that returns `or.isUtxo === true`, so an indexer that
+  has not yet seen our unconfirmed change, or a UTXO service that merely errored,
+  both read as "spent". Sync now audits and reports only; it can no longer write
+  off a single output.
+
+### Changed
+
+- Outputs are written off only on affirmative evidence: a spend the network
+  rejected because an input was already spent (`staleOutputRelease.ts`). That
+  still clears outputs spent on another device sharing the identity, which is
+  what release was for, without the collateral damage.
+- Removed `sendSettleGuard`. Its 10-minute window only delayed the write-off, so
+  change from a transaction that took longer to confirm was destroyed anyway.
+
 ## [1.2.45] - 2026-08-05
 
 ### Fixed

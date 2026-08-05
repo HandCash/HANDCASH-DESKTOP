@@ -28,8 +28,6 @@ import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
-import { noteSendBroadcast } from './sendSettleGuard'
-
 type HttpRequestEvent = {
   method: string
   path: string
@@ -348,7 +346,6 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       else playWalletSound('soft')
     } else if (method === 'createAction') {
       const txid = extractTxid(result)
-      if (txid) noteSendBroadcast(txid)
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
         recordAppActivity({
@@ -368,8 +365,6 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       // P2P createAction mutates toolbox outs + remittance metadata — backup BRC-39.
       scheduleHistoryBackupPush('createAction')
     } else if (method === 'signAction') {
-      const txid = extractTxid(result)
-      if (txid) noteSendBroadcast(txid)
       playWalletSound('soft')
       scheduleHistoryBackupPush('signAction')
     } else if (method === 'internalizeAction') {

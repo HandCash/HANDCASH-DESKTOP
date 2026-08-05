@@ -107,9 +107,8 @@ describe('refreshFromChain spendable review', () => {
     const { refreshFromChain } = await import('./chainIngest')
     await refreshFromChain({ forceReview: true, announceReceive: false })
 
-    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
+    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, false)
     expect(order).toEqual(['scan', 'review'])
-    expect(mockClearCollectablesCache).toHaveBeenCalled()
   })
 
   it('falls back to default-basket review when all-basket filter rejects undefined', async () => {
@@ -125,12 +124,12 @@ describe('refreshFromChain spendable review', () => {
     const sats = await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(sats).toBe(1000)
-    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(1, true, true)
-    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(2, false, true)
+    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(1, true, false)
+    expect(mockReviewSpendableOutputs).toHaveBeenNthCalledWith(2, false, false)
     expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 
-  it('does not release when spendable review throws', async () => {
+  it('survives a spendable audit that throws', async () => {
     const order: string[] = []
     mockReviewSpendableOutputs.mockImplementation(async () => {
       order.push('review')
@@ -180,7 +179,7 @@ describe('refreshFromChain spendable review', () => {
     expect(mockScanLegacyAddress).toHaveBeenCalled()
   })
 
-  it('still reviews when forced inside the grace window — spends must release', async () => {
+  it('still audits when forced inside the grace window', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
     const guard = await import('./legacyImportGuard')
     guard.noteLegacyImportSuccess(1)
@@ -188,53 +187,36 @@ describe('refreshFromChain spendable review', () => {
     const { refreshFromChain } = await import('./chainIngest')
     await refreshFromChain({ forceReview: true, announceReceive: false })
 
-    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
-  })
-
-  it('reviews without releasing while a send is still settling', async () => {
-    mockReviewSpendableOutputs.mockResolvedValue({
-      totalOutputs: 1,
-      outputs: [{ outpoint: 'cc.1', satoshis: 4000 }],
-    })
-    const { noteSendBroadcast } = await import('./sendSettleGuard')
-    noteSendBroadcast('d'.repeat(64))
-
-    const { refreshFromChain } = await import('./chainIngest')
-    await refreshFromChain({ forceReview: true, announceReceive: false })
-
-    // Change from that send may not be indexed yet, and releasing is permanent.
     expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, false)
-    expect(mockClearCollectablesCache).not.toHaveBeenCalled()
   })
 
-  it('marks the review as held when settle grace blocks release', async () => {
+  it('never releases during sync, however hard it is forced', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({
       totalOutputs: 1,
       outputs: [{ outpoint: 'cc.1', satoshis: 4000 }],
     })
-    const { noteSendBroadcast } = await import('./sendSettleGuard')
-    noteSendBroadcast('d'.repeat(64))
-
-    const { reviewAndReleaseSpentOutputs } = await import('./chainIngest')
-    const result = await reviewAndReleaseSpentOutputs(true)
-
-    expect(result).toEqual({ released: 0, skipped: false, held: true })
-  })
-
-  it('releases again once the settle window has passed', async () => {
-    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
-    const { noteSendBroadcast, SEND_SETTLE_MS } = await import('./sendSettleGuard')
-    noteSendBroadcast('e'.repeat(64))
-    vi.setSystemTime(Date.now() + SEND_SETTLE_MS + 1)
 
     const { refreshFromChain } = await import('./chainIngest')
     await refreshFromChain({ forceReview: true, announceReceive: false })
 
-    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, true)
-    vi.useRealTimers()
+    // An unindexed output is not a spent output, and releasing is permanent.
+    expect(mockReviewSpendableOutputs).toHaveBeenCalledWith(true, false)
+    expect(mockReviewSpendableOutputs).not.toHaveBeenCalledWith(true, true)
   })
 
-  it('holds the release when this pass swept legacy funding', async () => {
+  it('reports unindexed outputs as suspect without condemning them', async () => {
+    mockReviewSpendableOutputs.mockResolvedValue({
+      totalOutputs: 1,
+      outputs: [{ outpoint: 'cc.1', satoshis: 4000 }],
+    })
+
+    const { auditSpendableOutputs } = await import('./chainIngest')
+    const result = await auditSpendableOutputs(true)
+
+    expect(result).toEqual({ suspect: 1, skipped: false })
+  })
+
+  it('skips the audit when this pass swept legacy funding', async () => {
     mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
     mockScanLegacyAddress.mockResolvedValue({
       address: 'addr',
