@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.36] - 2026-08-05
+
+### Fixed
+
+- Sending a collectable no longer fails with "Every signableTransaction input must have a sourceTransaction". The input BEEF now covers every outpoint the send spends, so a tip and a latch from different transactions are both provable.
+- The proof latch is signed with its own satoshi value instead of the tip's 1 sat, so latched transfers produce valid signatures.
+- A collectable whose tip still carries its inscription envelope is recognised as spendable instead of reporting "locked to a key this device cannot sign".
+
 ## [1.2.35] - 2026-08-05
 
 ### Added

@@ -39,6 +39,7 @@ import {
   toUnderscoreOutpoint,
   type LatchListing,
 } from './oneSatLatch'
+import { scriptPaysAddress } from './ordinalOwnership'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -341,18 +342,65 @@ function formatSendError(err: unknown): Error {
  * Ordinals reach basket `1sat` locked to this device's root-key address — both the
  * migration sweep and peer transfers pay `addressFromIdentityKey`. Anything else
  * cannot be unlocked here, so say so instead of failing inside the signer.
+ *
+ * An inscribed tip keeps its `ord` envelope alongside the P2PKH branch, so match
+ * the branch rather than the whole script.
  */
 function assertOrdinalIsDeviceLocked(
   lockingScript: string | undefined,
   wallet: ActiveWallet,
 ): void {
   if (!lockingScript) return
-  const expected = new P2PKH().lock(wallet.address).toHex()
-  if (lockingScript.toLowerCase() !== expected.toLowerCase()) {
+  if (!scriptPaysAddress(lockingScript, wallet.address)) {
     throw new Error(
       'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.',
     )
   }
+}
+
+/**
+ * BEEF covering every outpoint this send spends.
+ *
+ * `buildSignableTransaction` reads each user input's source transaction out of
+ * the BEEF we pass, so a tip and a latch from different transactions both have to
+ * be in it — otherwise the toolbox fails with "Every signableTransaction input
+ * must have a sourceTransaction". The raw source is also what gives the signer the
+ * real locking script and satoshi value for each input.
+ */
+async function buildInputBeefForSpends(
+  wallet: ActiveWallet,
+  outpoints: string[],
+): Promise<number[]> {
+  if (!wallet.services?.getBeefForTxid) {
+    throw new Error('Cannot prove the collectable input offline. Try again when connected.')
+  }
+
+  const txids = [
+    ...new Set(
+      outpoints
+        .map((op) => normalizeOutpoint(op).split('.')[0]?.toLowerCase())
+        .filter((txid): txid is string => !!txid),
+    ),
+  ]
+
+  const merged = new Beef()
+  for (const txid of txids) {
+    try {
+      const beef = await wallet.services.getBeefForTxid(txid)
+      merged.mergeBeef(beef.toBinary())
+    } catch (err) {
+      console.warn('[collectables] inputBEEF fetch failed', txid, err)
+    }
+  }
+
+  const missing = txids.filter((txid) => merged.findTxid(txid)?.tx == null)
+  if (missing.length > 0) {
+    throw new Error(
+      'Could not load the transaction that holds this collectable. Refresh, then send again.',
+    )
+  }
+
+  return merged.toBinary()
 }
 
 /**
@@ -393,7 +441,15 @@ async function signOrdinalTransfer(args: {
   const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
   const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
-    unsigned.inputs[vin]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, 1)
+    const input = unsigned.inputs[vin]!
+    // The sighash covers the source value, and a latch is not 1 sat like the tip,
+    // so read each value from its source transaction instead of assuming one.
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
+    if (typeof satoshis !== 'number') {
+      throw new Error('Collectable input is missing its source transaction')
+    }
+    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, satoshis)
   }
   await unsigned.sign()
   for (const vin of vins) {
@@ -545,18 +601,15 @@ export async function sendCollectable(args: {
     ? toUnderscoreOutpoint(priorLatch.outpoint)
     : GENESIS_PARENT_LATCH
 
-  const [txidIn] = outpoint.split('.')
-  let inputBEEF: number[] | undefined
-  try {
-    if (txidIn && wallet.services?.getBeefForTxid) {
-      const beef = await wallet.services.getBeefForTxid(txidIn)
-      if (beef && typeof beef.toBinary === 'function') {
-        inputBEEF = beef.toBinary()
-      }
-    }
-  } catch (err) {
-    console.warn('[collectables] inputBEEF fetch skipped', err)
-  }
+  const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
+  const inputBEEF = await buildInputBeefForSpends(wallet, spendOutpoints)
+  const knownTxids = [
+    ...new Set(
+      spendOutpoints
+        .map((op) => normalizeOutpoint(op).split('.')[0])
+        .filter((txid): txid is string => !!txid),
+    ),
+  ]
 
   const provenance = await tryBuildProvenanceForSend({
     tipOutpoint: outpoint,
@@ -566,7 +619,6 @@ export async function sendCollectable(args: {
     parentLatch,
   })
 
-  const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
   const inputs = [
     {
       outpoint,
@@ -593,7 +645,7 @@ export async function sendCollectable(args: {
         ...(isLatchedSendEnabled() ? ['1sat-latch'] : []),
         'handcash-send-collectable',
       ],
-      ...(inputBEEF ? { inputBEEF } : {}),
+      inputBEEF,
       inputs,
       outputs: [
         {
@@ -631,7 +683,7 @@ export async function sendCollectable(args: {
       ],
       options: {
         trustSelf: 'known',
-        ...(txidIn ? { knownTxids: [txidIn] } : {}),
+        ...(knownTxids.length > 0 ? { knownTxids } : {}),
         randomizeOutputs: false,
         acceptDelayedBroadcast: false,
         signAndProcess: true,
