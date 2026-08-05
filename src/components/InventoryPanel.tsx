@@ -225,7 +225,7 @@ export function InventoryPanel() {
         <EmptyState
           icon={<CollectablesIcon size={28} />}
           title="No collectables here"
-          body="Items live on the install that received them. Refresh updates from the network; send to move them."
+          body="Items live on the install that received them. This device updates from the network automatically; send to move them."
         />
       )}
     </div>

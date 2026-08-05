@@ -12,7 +12,7 @@
  * - After createAction / send / internalize: mark dirty and debounce-push so
  *   remittance packages in IndexedDB are not only on one machine.
  * - Never auto-overwrite a non-empty remote with an empty local export.
- * - Explicit Sync may pull only when remote is **strictly newer** than local.
+ * - Auto and explicit Sync may pull only when remote is **strictly newer** than local.
  */
 import { listFriends, mergeFriends, type Friend } from './friends'
 import {
@@ -325,9 +325,9 @@ export function deviceLinkObjectHint(identityKey: string): string | null {
 }
 
 /**
- * Soft history pull for explicit Refresh when parity is on.
+ * Soft history pull run by the Dashboard poll when parity is on.
  * Pulls only if remote is strictly newer — never pushes, never empty-overwrites.
- * Background polls must not call this (keeps Refresh ≠ continuous merge).
+ * Rate-limited by the caller; it is a network round trip, not a chain read.
  */
 export async function softPullHistoryIfRemoteNewer(): Promise<{
   pulled: boolean
@@ -359,7 +359,7 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
     }
     try {
       const { appendAppLog } = await import('./appLog')
-      appendAppLog('info', '[cloud-backup] soft pull on Refresh — remote was newer')
+      appendAppLog('info', '[cloud-backup] soft pull — remote was newer')
     } catch {
       /* ignore */
     }

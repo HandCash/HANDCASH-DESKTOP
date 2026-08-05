@@ -32,7 +32,7 @@ export function DeviceHandoffPanel() {
         <li>Confirm the identical History backup URL on both (History settings).</li>
         <li>Link via QR / paste (URL must match).</li>
         <li>Tap Sync via backup URL (same unlock password) so history + friends merge.</li>
-        <li>Refresh still reconciles spends against the chain. Offline payments are not supported.</li>
+        <li>Spends still reconcile against the chain automatically. Offline payments are not supported.</li>
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>

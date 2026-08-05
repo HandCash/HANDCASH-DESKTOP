@@ -58,7 +58,7 @@ function resolveStatus(
     return {
       label: 'Chain failed',
       tone: 'error',
-      detail: health.message ?? 'Refresh to retry chain ingest (not history backup)',
+      detail: health.message ?? 'Chain ingest failed — retrying (not history backup)',
     }
   }
   if (cloud.phase === 'error') {
@@ -112,7 +112,7 @@ function resolveStatus(
     return {
       label: 'Ready',
       tone: 'ok',
-      detail: 'Wallet unlocked — Refresh = chain ingest only',
+      detail: 'Wallet unlocked — chain ingest only, no history replica',
     }
   }
   if (cloud.phase === 'ok') {
@@ -134,7 +134,7 @@ function resolveStatus(
   return {
     label: 'Ready',
     tone: 'ok',
-    detail: 'Wallet unlocked — Refresh = chain ingest only',
+    detail: 'Wallet unlocked — chain ingest only, no history replica',
   }
 }
 

@@ -19,7 +19,7 @@ import {
   SendIcon,
   ReceiveIcon,
   LockIcon,
-  RefreshIcon,
+  AddMoneyIcon,
   WarningIcon,
   ScanQrIcon,
 } from './icons'
@@ -44,6 +44,10 @@ import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
+import { ADD_MONEY_URL } from '../wallet/walletConfig'
+
+/** Cloud history is merged far less often than the chain poll — it is a network round trip. */
+const HISTORY_PULL_INTERVAL_MS = 60_000
 
 type Props = {
   profile: WalletProfile
@@ -66,7 +70,6 @@ export function Dashboard({
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [refreshing, setRefreshing] = useState(false)
   const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
   const [missingBackup, setMissingBackup] = useState(() => getMissingBackupStep())
   const balanceSlotRef = useRef<HTMLDivElement>(null)
@@ -102,28 +105,9 @@ export function Dashboard({
     watch: `${currency}|${usdLabel}|${bsvLabel}`,
   })
 
-  const refreshWallet = async () => {
-    if (refreshing) return
-    setRefreshing(true)
-    try {
-      await refreshUsdPerBsv(true)
-      // Explicit Refresh only: pull newer BRC-39 when multi-device parity is on.
-      if (isDeviceParityEnabled() && getSessionBackupPassword()) {
-        await softPullHistoryIfRemoteNewer()
-      }
-      const sats = await refreshFromChain({ forceReview: true })
-      void pollDeviceMeshOnce()
-      if (sats != null) {
-        if (sats <= balanceSats) playWalletSound('soft')
-        onRefreshBalance(sats)
-      } else {
-        playWalletSound('soft')
-      }
-    } catch (err) {
-      onFail(err instanceof Error ? err.message : String(err))
-    } finally {
-      setRefreshing(false)
-    }
+  const addMoney = () => {
+    playWalletSound('soft')
+    void window.handcash?.openExternal?.(ADD_MONEY_URL)
   }
 
   useEffect(() => {
@@ -139,10 +123,24 @@ export function Dashboard({
 
   useEffect(() => {
     let cancelled = false
+    let lastHistoryPull = 0
 
     const sync = async () => {
+      // Parity devices merge strictly-newer cloud history before reading the chain,
+      // so the balance stays current without an explicit Refresh.
+      if (
+        isDeviceParityEnabled() &&
+        getSessionBackupPassword() &&
+        Date.now() - lastHistoryPull >= HISTORY_PULL_INTERVAL_MS
+      ) {
+        lastHistoryPull = Date.now()
+        await softPullHistoryIfRemoteNewer()
+        if (cancelled) return
+      }
       const sats = await refreshFromChain()
-      if (!cancelled && sats != null) onRefreshBalance(sats)
+      if (cancelled) return
+      if (sats != null) onRefreshBalance(sats)
+      void pollDeviceMeshOnce()
     }
 
     void sync()
@@ -238,6 +236,16 @@ export function Dashboard({
               <button
                 type="button"
                 className="btn btn-ghost btn-icon"
+                aria-label="Add money — buy BSV with other crypto"
+                title="Buy BSV with other crypto (opens handcash.io in your browser)"
+                onClick={addMoney}
+              >
+                <AddMoneyIcon size={16} />
+                <span className="wallet-action-label">Add money</span>
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon"
                 aria-label="Scan QR code"
                 title="Scan PeerPay, identity, or address QR"
                 onClick={() => {
@@ -257,18 +265,6 @@ export function Dashboard({
               >
                 <LockIcon size={16} />
                 <span className="wallet-action-label">Lock</span>
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon wallet-refresh"
-                aria-label="Refresh balance from the network"
-                title="Refresh this device from the network (same pot as your other devices)"
-                disabled={refreshing}
-                data-spinning={refreshing ? true : undefined}
-                onClick={() => void refreshWallet()}
-              >
-                <RefreshIcon size={16} />
-                <span className="wallet-action-label">Refresh</span>
               </button>
             </div>
           </div>

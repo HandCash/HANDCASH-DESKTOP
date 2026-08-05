@@ -982,23 +982,6 @@ body {
   }
 }
 
-.wallet-refresh {
-  position: static;
-  margin-top: 0;
-  flex-shrink: 0;
-  z-index: 2;
-}
-
-.wallet-refresh[data-spinning] svg {
-  animation: refresh-spin 0.85s linear infinite;
-}
-
-@keyframes refresh-spin {
-  to {
-    transform: rotate(360deg);
-  }
-}
-
 .wallet-balance:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--hc-accent) 55%, transparent);
   outline-offset: 4px;

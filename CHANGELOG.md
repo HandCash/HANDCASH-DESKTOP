@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.12] - 2026-08-04
+
+### Added
+
+- **Add money** action on the dashboard — opens the Exolix swap at `handcash.io/wallet/swap`, which pays BSV back into this device over the BRC-100 bridge. Override the host with `VITE_MARKET_BASE_URL`.
+
+### Removed
+
+- Manual **Refresh** button. The dashboard already polls the chain every 12s (parity) or 30s, and now also merges strictly-newer BRC-39 history on a 60s cadence, so there is nothing left for the button to do. Spend paths still force a full spendability review before broadcasting.
+
 ## [1.2.11] - 2026-08-04
 
 ### Fixed

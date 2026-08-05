@@ -169,7 +169,7 @@ export function HistoryBackupPanel() {
       <p className="settings-hint">
         Shared history backup. The same URL on every device is <strong>required</strong> to link
         installs (Settings → Use on another device). Restore recomposes from history then checks
-        the chain; Refresh alone cannot rebuild P2P / managed-change state.
+        the chain; chain ingest alone cannot rebuild P2P / managed-change state.
       </p>
 
       <HistoryBackupUrlField

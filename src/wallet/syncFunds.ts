@@ -136,7 +136,7 @@ export async function syncLegacyFunds(
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',
-      message: 'Couldn’t verify spent outputs — check network and try Refresh.',
+      message: 'Couldn’t verify spent outputs — check your network connection.',
       heldOneSats: 0,
     })
     // Continue to import path; do not abort entirely.
@@ -163,7 +163,7 @@ export async function syncLegacyFunds(
         const itemResult = await importOneSatOrdinals(oneSats, active)
         if (itemResult.failed > 0) {
           console.warn('[sync] 1sat import partial', itemResult)
-          partialWarn = `Some items didn’t import (${itemResult.failed}). Try Refresh.`
+          partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
         }
         newOneSatOutpoints = (itemResult.outpoints ?? []).filter(
           (op) => !announcedOneSatOutpoints.has(op),
@@ -178,7 +178,7 @@ export async function syncLegacyFunds(
           console.warn('[sync] legacy import partial', result)
           partialWarn =
             partialWarn ??
-            `Some funds didn’t import (${result.failed}). Try Refresh.`
+            `Some funds didn’t import (${result.failed}). Retrying automatically.`
         }
       }
     }
@@ -186,7 +186,7 @@ export async function syncLegacyFunds(
     console.warn('[sync] legacy scan/import skipped', err)
     setSyncHealth({
       phase: 'error',
-      message: 'Couldn’t refresh funds — check network and try Refresh.',
+      message: 'Couldn’t refresh funds — check your network connection.',
       heldOneSats: heldCount,
     })
     return null
@@ -226,7 +226,7 @@ export async function syncLegacyFunds(
       message:
         partialWarn ??
         (review.error
-          ? 'Spend check incomplete — try Refresh.'
+          ? 'Spend check incomplete — retrying automatically.'
           : (reviewNote ?? heldMessage)),
       heldOneSats: heldCount,
     })
@@ -235,7 +235,7 @@ export async function syncLegacyFunds(
     console.warn('[sync] balance refresh failed', err)
     setSyncHealth({
       phase: 'error',
-      message: 'Balance refresh failed — try Refresh.',
+      message: 'Balance refresh failed — check your network connection.',
       heldOneSats: heldCount,
     })
     return null

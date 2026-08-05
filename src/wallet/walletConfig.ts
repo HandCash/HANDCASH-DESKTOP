@@ -42,6 +42,16 @@ export const HANDCASH_BACKUP_SERVICE_URL =
     import.meta.env.VITE_HANDCASH_BACKUP_SERVICE_URL.trim()) ||
   `${DEFAULT_BRC_CLOUD_BASE_URL}/trustholders/handcash`
 
+/** items-market origin that hosts the Desktop swap ("Add money") flow. */
+export const DEFAULT_MARKET_BASE_URL =
+  (typeof import.meta !== 'undefined' &&
+    typeof import.meta.env?.VITE_MARKET_BASE_URL === 'string' &&
+    import.meta.env.VITE_MARKET_BASE_URL.trim()) ||
+  'https://handcash.io'
+
+/** Buy BSV with other crypto; pays into this device over the BRC-100 bridge. */
+export const ADD_MONEY_URL = `${DEFAULT_MARKET_BASE_URL.replace(/\/+$/, '')}/wallet/swap`
+
 export const HASTE_BACKUP_SERVICE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_HASTE_BACKUP_SERVICE_URL === 'string' &&
