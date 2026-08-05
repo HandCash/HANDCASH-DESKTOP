@@ -1,11 +1,19 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import { aeonUiOptimizeDeps, aeonUiViteAliases } from 'aeon-ui-engine/vite'
+import fs from 'node:fs'
 import path from 'node:path'
+
+const pkg = JSON.parse(
+  fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8'),
+) as { version: string }
 
 export default defineConfig({
   plugins: [react()],
   base: './',
+  define: {
+    __APP_VERSION__: JSON.stringify(pkg.version),
+  },
   resolve: {
     alias: [
       ...aeonUiViteAliases(),

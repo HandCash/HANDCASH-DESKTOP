@@ -3,7 +3,6 @@ import {
   normalizeAppHost,
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
-import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
 import {
   DEFAULT_ITEM_ACCESS,
   isItemBasket,
@@ -17,19 +16,8 @@ import {
   type ItemAccess,
   type ItemViewRequest,
 } from './itemAccess'
-import { openSetting } from './navStore'
 import { formatBsvSignificant } from './session'
-import { playWalletSound } from './soundService'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
-
-/** Block connect / spend until keys + history backups are confirmed. */
-function denyUntilBackupConfirmed(): Promise<PermissionDecision> {
-  playWalletSound('deny')
-  void window.handcash?.focusWindow?.()
-  const missing = getMissingBackupStep()
-  openSetting(missing === 'history' ? 'history-backup' : 'backup')
-  return Promise.resolve('deny')
-}
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -354,8 +342,6 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
 export function requestOriginPermission(origin: string | undefined, method: string): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
 
-  if (!isBackupConfirmed()) return denyUntilBackupConfirmed()
-
   if (isOriginAllowed(key)) return Promise.resolve('allow')
 
   if (current?.request.kind === 'connect' && current.request.origin === key) {
@@ -563,13 +549,6 @@ export function requestActionApproval(
   const itemSpend = isItemSpendArgs(method, args)
   const itemReceive = isItemReceiveArgs(method, args)
 
-  if (
-    (method === 'createAction' || method === 'signAction') &&
-    !isBackupConfirmed()
-  ) {
-    return denyUntilBackupConfirmed()
-  }
-
   // Item send / receive are never covered by Pay or Auto-pay.
   // Send always prompts (each transfer). Receive may reuse a prior grant.
   if (itemSpend) {
@@ -693,8 +672,6 @@ export async function requestItemViewApproval(
   const key = normalizeOrigin(origin)
   const body = asRecord(args)
   if (!isItemBasket(body.basket)) return 'allow'
-
-  if (!isBackupConfirmed()) return denyUntilBackupConfirmed()
 
   const request = parseItemViewRequest(args)
   const access = getItemAccess(key)

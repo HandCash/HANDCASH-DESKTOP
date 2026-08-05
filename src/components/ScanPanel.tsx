@@ -62,7 +62,7 @@ export function ScanPanel() {
             className={pending.identityKey ? 'btn btn-ghost' : 'btn btn-primary'}
             onClick={() => {
               playWalletSound('soft')
-              openSendFlow(pending.sendValue, { requireBackup: false })
+              openSendFlow(pending.sendValue)
             }}
           >
             Send

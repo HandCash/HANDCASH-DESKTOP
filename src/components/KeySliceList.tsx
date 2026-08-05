@@ -1,6 +1,4 @@
-import { useMemo, useState } from 'react'
 import { Accordion, ListRow, Progress } from '@aeon-ui/react'
-import { BRC140_DESTINATION_HINTS } from '../wallet/brc140Backup'
 
 export type SliceHandoffMethod = 'email' | 'copy' | 'download'
 
@@ -9,7 +7,7 @@ export type KeySliceListProps = {
   threshold: number
   integrity: string
   savedIndices: readonly number[]
-  /** Optional destination labels — defaults to BRC-140 transport hints. */
+  /** Optional short labels for the slices. */
   destinations?: readonly string[]
   onHandoff: (
     index: number,
@@ -21,22 +19,16 @@ export type KeySliceListProps = {
   rotateBusy?: boolean
 }
 
-function rotateArray<T>(items: readonly T[], offset: number): T[] {
-  if (items.length === 0) return []
-  const n = ((offset % items.length) + items.length) % items.length
-  return [...items.slice(n), ...items.slice(0, n)]
-}
-
 /**
- * Flexible BRC-140 slice manager — destinations cycle per row, bulk cycle,
- * rotate-all for a new integrity set, and handoff actions per slice.
+ * Simple BRC-140 slice manager. Email is the primary handoff; copy and file
+ * remain available without asking the user to design a storage plan.
  */
 export function KeySliceList({
   shares,
   threshold,
   integrity,
   savedIndices,
-  destinations = BRC140_DESTINATION_HINTS,
+  destinations = [],
   onHandoff,
   onRotateShares,
   rotateBusy = false,
@@ -46,33 +38,8 @@ export function KeySliceList({
   const complete = savedCount >= threshold
   const total = shares.length
 
-  /** Global destination rotation (cycle all assignments together). */
-  const [destOffset, setDestOffset] = useState(0)
-  /** Extra per-slice nudge on top of the global offset. */
-  const [sliceNudge, setSliceNudge] = useState<number[]>(() => shares.map(() => 0))
-
-  const destPool = useMemo(
-    () => (destinations.length > 0 ? [...destinations] : [...BRC140_DESTINATION_HINTS]),
-    [destinations],
-  )
-
   const assignmentFor = (index: number): string => {
-    const nudge = sliceNudge[index] ?? 0
-    const pool = rotateArray(destPool, destOffset + nudge)
-    return pool[index % pool.length] ?? `Safe place ${index + 1}`
-  }
-
-  const cycleAll = (dir: 1 | -1) => {
-    setDestOffset((n) => n + dir)
-  }
-
-  const cycleSlice = (index: number, dir: 1 | -1) => {
-    setSliceNudge((prev) => {
-      const next = [...prev]
-      while (next.length < total) next.push(0)
-      next[index] = (next[index] ?? 0) + dir
-      return next
-    })
+    return destinations[index] ?? `Slice ${index + 1}`
   }
 
   return (
@@ -99,38 +66,8 @@ export function KeySliceList({
         </Progress.Root>
         <p className="settings-row-desc">
           Integrity <span className="mono">{integrity}</span> · any {threshold} of {total} restore the
-          wallet · assign each slice a different place
+          wallet
         </p>
-      </div>
-
-      <div className="key-slice-toolbar" role="toolbar" aria-label="Slice tools">
-        <button
-          type="button"
-          className="btn btn-ghost"
-          title="Shift every destination assignment"
-          onClick={() => cycleAll(-1)}
-        >
-          ← Destinations
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          title="Shift every destination assignment the other way"
-          onClick={() => cycleAll(1)}
-        >
-          Destinations →
-        </button>
-        {onRotateShares ? (
-          <button
-            type="button"
-            className="btn btn-ghost"
-            disabled={rotateBusy}
-            title="Create a brand-new share set. Old slices will not mix with these."
-            onClick={() => void onRotateShares()}
-          >
-            {rotateBusy ? 'Rotating…' : 'Rotate all slices'}
-          </button>
-        ) : null}
       </div>
 
       <Accordion.Root collapsible className="key-slice-accordion">
@@ -169,44 +106,14 @@ export function KeySliceList({
                 </ListRow.Root>
               </Accordion.ItemTrigger>
               <Accordion.ItemContent value={itemId} className="key-slice-body">
-                <div className="key-slice-dest-cycle">
-                  <span className="settings-row-desc">Destination</span>
-                  <div className="actions key-slice-dest-actions">
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      aria-label="Previous destination"
-                      title="Previous destination"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        cycleSlice(index, -1)
-                      }}
-                    >
-                      ←
-                    </button>
-                    <span className="key-slice-dest-label">{destination}</span>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      aria-label="Next destination"
-                      title="Next destination"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        cycleSlice(index, 1)
-                      }}
-                    >
-                      →
-                    </button>
-                  </div>
-                </div>
                 <code className="mono split-backup-share">{share}</code>
                 <div className="actions split-backup-item-actions">
                   <button
                     type="button"
-                    className="btn btn-ghost"
+                    className="btn btn-primary"
                     onClick={() => void onHandoff(index, 'email', destination)}
                   >
-                    Email
+                    Email this slice
                   </button>
                   <button
                     type="button"
@@ -217,7 +124,7 @@ export function KeySliceList({
                   </button>
                   <button
                     type="button"
-                    className="btn btn-primary"
+                    className="btn btn-ghost"
                     onClick={() => void onHandoff(index, 'download', destination)}
                   >
                     Save file
@@ -228,6 +135,19 @@ export function KeySliceList({
           )
         })}
       </Accordion.Root>
+      {onRotateShares ? (
+        <div className="actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={rotateBusy}
+            title="Replace this set. Old and new slices cannot be mixed."
+            onClick={() => void onRotateShares()}
+          >
+            {rotateBusy ? 'Replacing…' : 'Replace slice set'}
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

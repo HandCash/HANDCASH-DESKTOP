@@ -1,6 +1,4 @@
 import type { ConnectedApp } from './permissions'
-import { getMissingBackupStep, isBackupConfirmed } from './backupStatus'
-import { playWalletSound } from './soundService'
 import { focusMessagePeer } from './messageFocus'
 
 export type NavSection =
@@ -89,17 +87,7 @@ export function openPermissionDetails(origin: string, scopeId: string) {
   openNavChild('apps', { type: 'permission', origin, scopeId })
 }
 
-function openRequiredBackup() {
-  const missing = getMissingBackupStep()
-  openSetting(missing === 'history' ? 'history-backup' : 'backup')
-}
-
-export function openSendFlow(prefill?: string, opts?: { requireBackup?: boolean }) {
-  if (opts?.requireBackup !== false && !isBackupConfirmed()) {
-    playWalletSound('deny')
-    openRequiredBackup()
-    return
-  }
+export function openSendFlow(prefill?: string) {
   openNavChild('activity', {
     type: 'send',
     ...(prefill?.trim() ? { prefill: prefill.trim() } : {}),
@@ -143,11 +131,6 @@ export function openCollectableDetails(outpoint: string) {
 }
 
 export function openSendCollectable(outpoint: string) {
-  if (!isBackupConfirmed()) {
-    playWalletSound('deny')
-    openRequiredBackup()
-    return
-  }
   openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 

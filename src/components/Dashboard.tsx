@@ -20,7 +20,6 @@ import {
   ReceiveIcon,
   LockIcon,
   AddMoneyIcon,
-  WarningIcon,
   ScanQrIcon,
 } from './icons'
 import { useFitFontSize } from './FitSlot'
@@ -30,16 +29,11 @@ import {
   subscribeConnectedApps,
   type ConnectedApp,
 } from '../wallet/permissions'
-import { openReceiveFlow, openScanFlow, openSendFlow, openSetting } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
-import {
-  getMissingBackupStep,
-  isBackupConfirmed,
-  subscribeBackupConfirmed,
-} from '../wallet/backupStatus'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
@@ -70,8 +64,6 @@ export function Dashboard({
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [backupConfirmed, setBackupConfirmed] = useState(() => isBackupConfirmed())
-  const [missingBackup, setMissingBackup] = useState(() => getMissingBackupStep())
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
@@ -79,14 +71,6 @@ export function Dashboard({
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
-  useEffect(
-    () =>
-      subscribeBackupConfirmed(() => {
-        setBackupConfirmed(isBackupConfirmed())
-        setMissingBackup(getMissingBackupStep())
-      }),
-    [],
-  )
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -169,23 +153,6 @@ export function Dashboard({
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">
             <h2 className="wallet-hero-title">Your balance</h2>
-            {!backupConfirmed ? (
-              <button
-                type="button"
-                className="wallet-backup-warn"
-                data-aeon-scope="backup-reminder"
-                data-aeon-state={missingBackup ?? 'needed'}
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSetting(missingBackup === 'history' ? 'history-backup' : 'backup')
-                }}
-              >
-                <span className="wallet-backup-warn-mark" aria-hidden>
-                  <WarningIcon size={14} />
-                </span>
-                {missingBackup === 'history' ? 'Backup history' : 'Backup key slices'}
-              </button>
-            ) : null}
           </div>
           <div className="wallet-hero-main">
             <div className="wallet-balance-slot" ref={balanceSlotRef}>

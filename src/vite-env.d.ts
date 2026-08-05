@@ -1,5 +1,8 @@
 /// <reference types="vite/client" />
 
+/** Injected by the host shell's Vite config (Desktop or Mobile package.json version). */
+declare const __APP_VERSION__: string | undefined
+
 declare module '*.png' {
   const src: string
   export default src

@@ -76,7 +76,6 @@ export function WalletBackupPanel() {
   useEffect(() => subscribeBackupConfirmed(() => setStatusTick((n) => n + 1)), [])
 
   const revealed = Boolean(mnemonic || rootKey || shareSet)
-  const singleSelected = kind === 'phrase' || kind === 'key'
   const canConfirm = canConfirmKeysBackup(kind)
   const splitProgress = getKeysSplitHandoffProgress(shareSet?.threshold ?? 2)
 
@@ -218,79 +217,47 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Split your key into movable slices, assign each a destination, then hand them off. Prefer
-        cloud deposit?{' '}
-        <button
-          type="button"
-          className="settings-inline-link"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('trustholder-backup')
-          }}
-        >
-          Cloud key backup
-        </button>
-        {!hasPhrase ? ' · This wallet has no phrase — use slices or emergency hex.' : null}
+        Save any two of three slices to recover your wallet. Email is the easiest option.
       </p>
 
-      <div className="backup-choice-list" role="radiogroup" aria-label="Key backup method">
+      <button
+        type="button"
+        className="backup-choice"
+        data-aeon-state="idle"
+        onClick={() => {
+          playWalletSound('soft')
+          openSetting('trustholder-backup')
+        }}
+      >
+        <span className="backup-choice-title">Add trustholder backup</span>
+        <span className="backup-choice-desc">
+          Optional · store slices with recovery providers
+        </span>
+      </button>
+
+      <div className="actions backup-alternate-actions" aria-label="Other recovery formats">
         <button
           type="button"
-          role="radio"
-          aria-checked={kind === 'split'}
-          className="backup-choice"
-          data-aeon-state={kind === 'split' ? 'selected' : 'idle'}
+          className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}
           onClick={() => selectKind('split')}
         >
-          <span className="backup-choice-title">
-            Key slices
-            <span className="backup-choice-badge">Recommended</span>
-          </span>
-          <span className="backup-choice-desc">
-            {BRC140_DEFAULT_THRESHOLD}-of-{BRC140_DEFAULT_TOTAL} · cycle destinations · rotate anytime
-          </span>
+          Key slices
         </button>
-
-        <div
-          className="backup-choice backup-choice-group"
-          data-aeon-state={singleSelected ? 'selected' : 'idle'}
+        <button
+          type="button"
+          className={kind === 'phrase' ? 'btn btn-primary' : 'btn btn-ghost'}
+          disabled={!hasPhrase}
+          onClick={() => selectKind('phrase')}
         >
-          <button
-            type="button"
-            className="backup-choice-group-head"
-            onClick={() => selectKind(hasPhrase ? 'phrase' : 'key')}
-          >
-            <span className="backup-choice-title">Single secret</span>
-            <span className="backup-choice-desc">Less flexible · one secret unlocks everything</span>
-          </button>
-          <div className="backup-subchoice-list" role="group" aria-label="Single secret options">
-            <button
-              type="button"
-              role="radio"
-              aria-checked={kind === 'phrase'}
-              className="backup-subchoice"
-              data-aeon-state={kind === 'phrase' ? 'selected' : 'idle'}
-              disabled={!hasPhrase}
-              onClick={() => selectKind('phrase')}
-            >
-              <span className="backup-choice-title">Phrase</span>
-              <span className="backup-choice-desc">
-                {hasPhrase ? '12 words' : 'Not on this wallet'}
-              </span>
-            </button>
-            <button
-              type="button"
-              role="radio"
-              aria-checked={kind === 'key'}
-              className="backup-subchoice"
-              data-aeon-state={kind === 'key' ? 'selected' : 'idle'}
-              onClick={() => selectKind('key')}
-            >
-              <span className="backup-choice-title">Key</span>
-              <span className="backup-choice-desc">Emergency hex</span>
-            </button>
-          </div>
-        </div>
+          Recovery phrase
+        </button>
+        <button
+          type="button"
+          className={kind === 'key' ? 'btn btn-primary' : 'btn btn-ghost'}
+          onClick={() => selectKind('key')}
+        >
+          Emergency key
+        </button>
       </div>
 
       {!revealed ? (
@@ -476,8 +443,7 @@ export function WalletBackupPanel() {
       </Prompt.Root>
 
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
-        Cycle destinations so each slice lives somewhere different. Rotate when a place is
-        compromised — never mix integrity tags across sets.
+        Any two slices restore the wallet. Keep them in separate accounts or places.
       </SettingsFeatureAbout>
     </div>
   )

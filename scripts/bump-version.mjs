@@ -74,10 +74,13 @@ function syncMarket(version) {
 
 function syncVersionTs(version) {
   if (!fs.existsSync(versionTsPath)) return
-  fs.writeFileSync(
-    versionTsPath,
-    `/** App semver — mirrors package.json (electron-builder / updater source of truth). */\nexport const APP_VERSION = '${version}' as const\n`,
+  const src = fs.readFileSync(versionTsPath, 'utf8')
+  const next = src.replace(
+    /const PACKAGED_VERSION = '[^']+'/,
+    `const PACKAGED_VERSION = '${version}'`,
   )
+  if (next === src) throw new Error('src/version.ts PACKAGED_VERSION line not found')
+  fs.writeFileSync(versionTsPath, next)
 }
 
 function prependChangelog(version, note) {

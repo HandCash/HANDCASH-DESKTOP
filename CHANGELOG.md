@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.31] - 2026-08-05
+
+### Changed
+
+- Remove backup gating from send, BRC-100 permissions, and the Dashboard nag — backup stays optional in Settings.
+- Simplify key-slice backup UI (email-first, trustholder choice above slices).
+- Mobile top bar / Settings version comes from the Mobile package, not Desktop’s semver.
+
 ## [1.2.30] - 2026-08-05
 
 ### Changed
