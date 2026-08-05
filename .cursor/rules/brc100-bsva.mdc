@@ -56,7 +56,7 @@ Canonical SSoT: `src/wallet/layers.ts`.
 - Explicit Refresh may soft-pull newer BRC-39 when parity URL + session password are set (`softPullHistoryIfRemoteNewer`).
 - Recursive NFT *content* stays basket `1sat`; remittance + BRC-39 are the same path as other 1sat tips.
 - BRC-150 provenance: `oneSatProvenance.ts` — omit when over budget; never truncate.
-- BRC-153 latched provenance: `oneSatLatch.ts` — soft-latch sends live (2-sat P2PKH latch) + v3 parse/verify (OUTPUT:N remittance).
+- BRC-153 latched provenance: `oneSatLatch.ts` — soft-latch companion (2-sat P2PKH) + v3 parse. Authenticity = BRC-150 v2 until Phase 3 induction.
 
 ## Do not
 

@@ -11,10 +11,7 @@
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import {
-  buildSoftLatchProvenanceV3,
-  isLatchedSendEnabled,
   parseProvenanceV3,
-  verifyProvenanceV3,
   type ProvenanceV3,
   type ProvenanceVerifyResult,
 } from './oneSatLatch'
@@ -116,16 +113,27 @@ export function verifyProvenanceV2(
 }
 
 /**
- * Prefer BRC-153 v3 (latched) when present; otherwise BRC-150 v2 BEEF path.
+ * Authenticity verify for collectables.
+ *
+ * Soft-latch v3 remittance is structural only (outpoint shape / tip match) — it is
+ * NOT lossless tip→origin proof. Prefer BRC-150 v2 whenever present. Bare v3 does
+ * not mark an item as proven until Phase 3 inductive latch verify exists.
  */
 export function verifyProvenance(
   provenance: unknown,
   heldOutpoint: string,
 ): ProvenanceVerifyResult {
-  if (parseProvenanceV3(provenance)) {
-    return verifyProvenanceV3(provenance, heldOutpoint)
+  if (parseProvenanceV2(provenance)) {
+    return verifyProvenanceV2(provenance, heldOutpoint)
   }
-  return verifyProvenanceV2(provenance, heldOutpoint)
+  if (parseProvenanceV3(provenance)) {
+    return {
+      proven: false,
+      reason:
+        'v3 soft-latch remittance is not authenticity proof — need v2 BEEF or hardened latch induction',
+    }
+  }
+  return { proven: false, reason: 'missing provenance' }
 }
 
 /**
@@ -197,8 +205,11 @@ export async function tryBuildProvenanceV2(args: {
 }
 
 /**
- * Remittance for a collectable send: v3 latched when latch outputs ship,
- * otherwise the BRC-150 v2 BEEF package.
+ * Remittance for a collectable send.
+ *
+ * Soft-latch still creates the companion 2-sat latch UTXO, but authenticity is
+ * BRC-150 v2 (full tip→origin BEEF). Shipping structural v3 alone was a fake
+ * "proven" flag — do not do that.
  */
 export async function tryBuildProvenanceForSend(args: {
   tipOutpoint: string
@@ -208,12 +219,7 @@ export async function tryBuildProvenanceForSend(args: {
   path?: string[]
   parentLatch?: string | null
 }): Promise<ProvenanceRemittance | null> {
-  if (isLatchedSendEnabled()) {
-    return buildSoftLatchProvenanceV3({
-      origin: args.origin,
-      parentLatch: args.parentLatch,
-    })
-  }
+  void args.parentLatch
   return tryBuildProvenanceV2(args)
 }
 

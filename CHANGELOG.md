@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.29] - 2026-08-05
+
+### Fixed
+
+- **Authenticity is lossless again on collectable sends.** Soft-latch was attaching structural v3 remittance and marking items `proven` without tip→origin BEEF or on-chain induction. Sends now attach BRC-150 v2 remittance; the 2-sat latch companion UTXO still ships for the latch profile. Bare v3 no longer counts as proven.
+
 ## [1.2.28] - 2026-08-05
 
 ### Changed

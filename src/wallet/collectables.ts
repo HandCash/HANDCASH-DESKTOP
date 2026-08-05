@@ -453,9 +453,10 @@ async function findLatchForTip(
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
  * Soft-latch (BRC-153): settle-style single tx spends tip (+ prior latch when
- * present) and creates recipient tip (vout 0) + latch (vout 1). Provenance v3
- * uses relative OUTPUT:N refs. Ordinal sat stays on output 0 (`randomizeOutputs:
- * false`). Fees are funded from the default change basket.
+ * present) and creates recipient tip (vout 0) + latch (vout 1). Authenticity is
+ * BRC-150 v2 remittance on the tip (not structural v3). Ordinal sat stays on
+ * output 0 (`randomizeOutputs: false`). Fees are funded from the default change
+ * basket.
  */
 export async function sendCollectable(args: {
   outpoint: string

@@ -46,7 +46,7 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
     expect(verifyProvenanceV2(p, 'cc.0').reason).toMatch(/tip does not match/i)
   })
 
-  it('verifyProvenance prefers v3 latched when present', () => {
+  it('verifyProvenance does not treat bare v3 soft-latch as authenticity', () => {
     const origin = 'aa'.repeat(32) + '_0'
     const tip = 'bb'.repeat(32) + '_1'
     const v3 = buildProvenanceV3({
@@ -55,6 +55,8 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
       latch: 'cc'.repeat(32) + '_0',
       parentLatch: 'dd'.repeat(32) + '_0',
     })
-    expect(verifyProvenance(v3, 'bb'.repeat(32) + '.1').proven).toBe(true)
+    const r = verifyProvenance(v3, 'bb'.repeat(32) + '.1')
+    expect(r.proven).toBe(false)
+    expect(r.reason).toMatch(/not authenticity|v2|hardened/i)
   })
 })
