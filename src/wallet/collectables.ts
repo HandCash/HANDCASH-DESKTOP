@@ -324,12 +324,11 @@ async function signOrdinalTransfer(args: {
   /** Tip + optional latch outpoints we must unlock. */
   outpoints: string[]
 }): Promise<string> {
-  const targets = new Map(
-    args.outpoints.map((op) => {
-      const [txidIn, voutRaw] = normalizeOutpoint(op).split('.')
-      return [`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw)] as const
-    }),
-  )
+  const targets = new Map<string, number>()
+  for (const op of args.outpoints) {
+    const [txidIn, voutRaw] = normalizeOutpoint(op).split('.')
+    targets.set(`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw))
+  }
 
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.25] - 2026-08-05
+
+### Fixed
+
+- Soft-latch send TypeScript build (signable input map typing).
+
 ## [1.2.24] - 2026-08-05
 
 ### Changed
