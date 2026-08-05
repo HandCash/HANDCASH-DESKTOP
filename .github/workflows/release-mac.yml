@@ -113,7 +113,7 @@ jobs:
           if gh release view "$TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
             echo "Release $TAG already exists"
           else
-            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (ad-hoc signed, not yet notarized). First launch: right-click HandCash.app and choose Open, then confirm. If macOS still refuses, run xattr -cr /Applications/HandCash.app and reopen."
+            NOTES="HandCash Desktop ${{ steps.meta.outputs.version }} (BETA) — macOS build from CI (ad-hoc signed, not yet notarized). Drag to Applications, then run: xattr -cr /Applications/HandCash.app — and open it. Clearing quarantine is needed because the build is not notarized; on macOS 15+ right-click to Open no longer bypasses Gatekeeper."
             gh release create "$TAG" \
               --repo "${{ github.repository }}" \
               --title "HandCash Desktop ${{ steps.meta.outputs.version }} BETA" \

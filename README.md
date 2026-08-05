@@ -8,16 +8,19 @@ Official HandCash **desktop wallet (BETA)** — self-custodial, built on the BSV
 
 1. Download **HandCash-*-mac.dmg** from [GitHub Releases](https://github.com/HandCash/HANDCASH-DESKTOP/releases) (arm64 or x64).
 2. Drag HandCash into **Applications**.
-3. **Right-click HandCash → Open**, then confirm. macOS warns that the developer cannot be verified because the build is not notarized yet; this is expected.
-4. Open HandCash. **Check for updates** in Settings opens a new DMG — do not use “Restart to update” until the app is notarized (ShipIt is disabled on purpose).
-
-If macOS still says **“damaged and can’t be opened”**, the quarantine flag is stuck. Clear it and reopen:
+3. Clear the download quarantine flag, then open the app:
 
 ```bash
 xattr -cr /Applications/HandCash.app
 ```
 
-Builds before v1.2.11 shipped with only the linker's default signature, which Apple Silicon rejects as damaged no matter what. Repair one in place with:
+4. **Check for updates** in Settings opens a new DMG — do not use “Restart to update” until the app is notarized (ShipIt is disabled on purpose).
+
+Step 3 is required because the build is not notarized yet. The alternative is to open it once, dismiss the warning, then allow it under **System Settings → Privacy & Security → Open Anyway**. On macOS 15 and later, right-click → Open no longer bypasses Gatekeeper, so prefer `xattr`.
+
+### Repairing a build older than v1.2.11
+
+Those builds shipped with only the linker's default signature, which Apple Silicon rejects as **“damaged”** no matter how often you clear quarantine. Re-sign in place, or just install v1.2.11+:
 
 ```bash
 xattr -cr /Applications/HandCash.app
