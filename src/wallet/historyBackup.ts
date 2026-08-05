@@ -23,16 +23,12 @@ import {
   listLocalBrc39Archive,
   readLocalBrc39Archive,
 } from './brc39LocalArchive'
-import { createSerialQueue } from './serialQueue'
+import { runHistoryReplica } from './walletCoordinator'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
-/** One historyReplica mutation at a time (upload / restore / soft-pull / pair sync). */
-const runExclusiveHistoryReplica = createSerialQueue()
-
-export function runOnHistoryReplicaQueue<T>(fn: () => Promise<T>): Promise<T> {
-  return runExclusiveHistoryReplica(fn)
-}
+/** @deprecated prefer runHistoryReplica from walletCoordinator */
+export { runHistoryReplica as runOnHistoryReplicaQueue } from './walletCoordinator'
 
 function asArrayBufferBytes(bytes: number[] | Uint8Array): Uint8Array<ArrayBuffer> {
   const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
@@ -114,7 +110,7 @@ export async function uploadBrc39Backup(password: string): Promise<{
   url: string
   exportedAt: number
 }> {
-  return runExclusiveHistoryReplica(() => uploadBrc39BackupExclusive(password))
+  return runHistoryReplica(() => uploadBrc39BackupExclusive(password))
 }
 
 async function uploadBrc39BackupExclusive(password: string): Promise<{
@@ -192,7 +188,7 @@ export async function fetchRemoteBrc39Meta(): Promise<{
 export async function downloadAndRestoreBrc39Backup(
   password: string,
 ): Promise<BRC38ImportResult> {
-  return runExclusiveHistoryReplica(() => downloadAndRestoreBrc39BackupExclusive(password))
+  return runHistoryReplica(() => downloadAndRestoreBrc39BackupExclusive(password))
 }
 
 async function downloadAndRestoreBrc39BackupExclusive(

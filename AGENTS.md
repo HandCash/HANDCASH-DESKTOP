@@ -25,6 +25,7 @@
 - Explicit **Refresh** may soft-pull newer BRC-39 when parity is configured (`softPullHistoryIfRemoteNewer`).
 - Empty-local × remote overwrite is isolated in `historyEmptyGuard.ts` (auto paths refuse; manual Upload may force).
 - Prefer `refreshFromChain` from `chainIngest.ts` — single entry for network → localState.
+- Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
 - BRC-150: `oneSatProvenance.ts` (build/verify; omit oversized remittance).
 ## Read first

@@ -10,7 +10,8 @@ import { normalizeAppHost } from './appIdentity'
 import { normalizeMigrationItem, type MigrationItem } from './oneSatImport'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import { reviewAndReleaseSpentOutputs, runOnChainIngestQueue } from './chainIngest'
+import { reviewAndReleaseSpentOutputs } from './chainIngest'
+import { runChainIngest } from './walletCoordinator'
 
 const TXID_STORAGE_KEY = 'handcash.brc100.migrationTxids'
 const MAX_TXIDS = 200
@@ -123,7 +124,7 @@ function parseRefreshArgs(args?: RefreshLegacyAddressArgs | null): {
 export async function refreshLegacyAddressPayload(
   args?: RefreshLegacyAddressArgs | null,
 ): Promise<RefreshLegacyAddressPayload> {
-  return runOnChainIngestQueue(() => refreshLegacyAddressExclusive(args))
+  return runChainIngest(() => refreshLegacyAddressExclusive(args))
 }
 
 async function refreshLegacyAddressExclusive(

@@ -8,7 +8,7 @@
  * 1. reviewSpendableOutputs (drop outs spent elsewhere)
  * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
  */
-import { createSerialQueue } from './serialQueue'
+import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { clearCollectablesCache } from './collectables'
@@ -24,11 +24,25 @@ export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
 
 /** Serialize all chain-ingest work (Refresh, migrate refresh, spend heal). */
-const runExclusiveChainIngest = createSerialQueue()
-
-export function runOnChainIngestQueue<T>(fn: () => Promise<T>): Promise<T> {
-  return runExclusiveChainIngest(fn)
+export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
+  return runChainIngest(() => refreshFromChainExclusive(opts))
 }
+
+/**
+ * Chain heal while a spend session holds the spend region.
+ * Used by spendGuard — do not call from Dashboard Refresh.
+ */
+export async function refreshFromChainDuringSpend(
+  opts?: ChainIngestOptions,
+): Promise<number | null> {
+  return runChainIngestDuringSpend(() => refreshFromChainExclusive(opts))
+}
+
+/** @deprecated prefer refreshFromChain */
+export const syncLegacyFunds = refreshFromChain
+
+/** @deprecated prefer runChainIngest from walletCoordinator */
+export { runChainIngest as runOnChainIngestQueue } from './walletCoordinator'
 
 export type ChainIngestOptions = {
   /**
@@ -117,18 +131,7 @@ export async function reviewAndReleaseSpentOutputs(
   }
 }
 
-/**
- * Reconcile this device with the chain (Refresh / background poll).
- * Concurrent callers are serialized on `runOnChainIngestQueue`.
- */
-export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
-  return runOnChainIngestQueue(() => refreshFromChainExclusive(opts))
-}
-
-/** @deprecated prefer refreshFromChain */
-export const syncLegacyFunds = refreshFromChain
-
-async function refreshFromChainExclusive(opts?: ChainIngestOptions): Promise<number | null> {
+export async function refreshFromChainExclusive(opts?: ChainIngestOptions): Promise<number | null> {
   const announceReceive = opts?.announceReceive !== false
   const forceReview = opts?.forceReview === true
   const active = getActiveWallet()

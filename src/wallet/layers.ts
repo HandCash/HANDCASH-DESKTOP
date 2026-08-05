@@ -11,6 +11,7 @@
  *              + write-once on-device archive under userData/brc39-archive (never overwritten)
  * balanceView    what UI shows (spendable from localState; never legacy-unimported alone)
  * health         chain ingest health ⊕ history replica health ⊕ bridge
+ * coordinator    walletCoordinatorMachine — legal overlaps between layers (UTXO safety)
  * ```
  *
  * Glossary:
@@ -56,7 +57,8 @@ export const WALLET_LAYER_MODULES = {
   ],
   balanceView: ['session.ts#fetchBalanceSats', 'layers.ts#getBalanceView'],
   health: ['walletHealth.ts', 'cloudBackupHealth.ts', 'backupStatus.ts'],
-} as const satisfies Record<WalletLayer, readonly string[]>
+  coordinator: ['walletCoordinatorMachine.ts', 'walletCoordinator.ts'],
+} as const satisfies Record<WalletLayer | 'coordinator', readonly string[]>
 
 /**
  * Composed recovery entry — prefer over calling history + chain separately.

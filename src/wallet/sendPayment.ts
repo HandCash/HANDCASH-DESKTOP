@@ -11,7 +11,7 @@ import {
 } from './pendingSend'
 import { resolvePaymentAddress } from './friends'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { refreshFromChain } from './chainIngest'
+import { refreshFromChainDuringSpend } from './chainIngest'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   prepareSpendHeal,
@@ -87,7 +87,7 @@ export async function sendSatsToAddress(opts: {
 
       let balanceSats = Math.max(0, (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0)
       try {
-        const synced = await refreshFromChain({ announceReceive: false })
+        const synced = await refreshFromChainDuringSpend({ announceReceive: false })
         if (synced != null) balanceSats = synced
         else balanceSats = await fetchBalanceSats(active.wallet)
       } catch {

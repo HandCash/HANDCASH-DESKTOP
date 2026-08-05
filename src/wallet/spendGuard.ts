@@ -1,39 +1,19 @@
 /**
  * Parity-oriented spend guard (cloud-inspired, local):
- * - serialize spends on this device
+ * - serialize spends on this device (wallet coordinator spend region)
  * - advisory lease on shared backup URL across devices
- * - force chain heal before pay
+ * - force chain heal before pay (nested chain ingest during spend)
  */
 import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { refreshFromChain } from './chainIngest'
+import { refreshFromChainDuringSpend } from './chainIngest'
 import { acquireSpendLease } from './spendLease'
-
-let spendTail: Promise<unknown> = Promise.resolve()
+import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(fn: () => Promise<T>): Promise<T> {
-  const run = spendTail.then(async () => {
-    const release = await acquireSpendLease()
-    try {
-      return await fn()
-    } finally {
-      await release()
-    }
-  }, async () => {
-    const release = await acquireSpendLease()
-    try {
-      return await fn()
-    } finally {
-      await release()
-    }
-  })
-  spendTail = run.then(
-    () => undefined,
-    () => undefined,
-  )
-  return run
+  return runExclusiveSpendCoordinated(fn, acquireSpendLease)
 }
 
 /** Force chain refresh; return spendable sats. */
@@ -42,7 +22,7 @@ export async function refreshSpendableBalance(): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const synced = await refreshFromChain({
+  const synced = await refreshFromChainDuringSpend({
     announceReceive: false,
     forceReview: true,
   })

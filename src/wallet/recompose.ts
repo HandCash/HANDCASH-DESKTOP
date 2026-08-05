@@ -15,7 +15,11 @@
  * History failure does not skip chain; chain failure does not roll back history.
  */
 import { clearCollectablesCache } from './collectables'
-import { refreshFromChain } from './chainIngest'
+import { refreshFromChainExclusive } from './chainIngest'
+import {
+  isRecomposeCoordinatorActive,
+  runRecompose,
+} from './walletCoordinator'
 import {
   autoPushHistoryBackupIfConfigured,
   hasDeviceLinkBackupUrl,
@@ -49,7 +53,7 @@ export type RecomposeResult = {
 let inFlight: Promise<RecomposeResult> | null = null
 
 export function isRecomposeInFlight(): boolean {
-  return inFlight != null
+  return inFlight != null || isRecomposeCoordinatorActive()
 }
 
 /**
@@ -67,13 +71,13 @@ export async function recomposeWallet(opts: RecomposeOpts = {}): Promise<Recompo
     return inFlight
   }
 
-  inFlight = runRecompose(opts).finally(() => {
+  inFlight = runRecompose(() => runRecomposeBody(opts)).finally(() => {
     inFlight = null
   })
   return inFlight
 }
 
-async function runRecompose(opts: RecomposeOpts): Promise<RecomposeResult> {
+async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   const reason = opts.reason ?? 'recompose'
   const historyMode = opts.history ?? 'auto'
   const runChain = opts.chain !== false
@@ -108,7 +112,7 @@ async function runRecompose(opts: RecomposeOpts): Promise<RecomposeResult> {
   let chainError: string | null = null
   if (runChain) {
     try {
-      spendableSats = await refreshFromChain({
+      spendableSats = await refreshFromChainExclusive({
         forceReview: true,
         announceReceive: false,
       })
