@@ -131,7 +131,18 @@ export function formatUsd(
 ): string {
   const safe = Number.isFinite(amount) ? amount : 0
   const abs = Math.abs(safe)
-  const digits = abs >= 1000 || opts?.compact ? 2 : abs >= 1 ? 2 : abs >= 0.01 ? 2 : 4
+  // A positive value must never be rendered as "$0.00". Tips routinely carry
+  // one or a few satoshis, so cent precision erases the entire meaning of the
+  // card. Compact affects large numbers only; small values earn enough decimal
+  // places to preserve their first significant digit.
+  const digits =
+    abs === 0 || abs >= 0.01
+      ? 2
+      : abs >= 0.0001
+        ? 4
+        : abs >= 0.000001
+          ? 6
+          : 8
   const body = abs.toLocaleString('en-US', {
     style: 'currency',
     currency: 'USD',

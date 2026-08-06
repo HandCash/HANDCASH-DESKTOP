@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.76] - 2026-08-06
+
+### Added
+
+- **Chat file transfer.** Attach a file (up to 8 MB) in a thread; it uploads to
+  the messagebox and lands as a downloadable card for the recipient. Shared
+  files also appear under the Files tab.
+
+### Improved
+
+- **Chat bubbles and tip cards.** Sent and received bubbles are more distinct;
+  tips use their own gold-accented card with sat and fiat amounts instead of a
+  generic Pay label. Sub-cent tips no longer display as `$0.00`.
+
+- **Activity icons.** BSV transfers use the same logo as the price panel. Send
+  badges are directional blue (not error red); receive stays green.
+
 ## [1.2.75] - 2026-08-06
 
 ### Fixed

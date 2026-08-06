@@ -3,6 +3,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ChangeEvent,
   type FormEvent,
   type KeyboardEvent,
 } from 'react'
@@ -34,7 +35,7 @@ import {
   type ParsedAmount,
 } from '../wallet/brc218'
 import { openAddFriend } from '../wallet/navStore'
-import { amountToSats, getCachedUsdPerBsv } from '../wallet/fx'
+import { amountToSats, formatUsdFromSats, getCachedUsdPerBsv } from '../wallet/fx'
 import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
@@ -42,12 +43,20 @@ import { sendSatsToAddress } from '../wallet/sendPayment'
 import { subscribeMessageFocus, takeMessageFocus } from '../wallet/messageFocus'
 import { copyText } from '../wallet/clipboard'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
-import { deliverOutbound, pollInbound } from '../wallet/messageTransport'
+import {
+  deliverOutbound,
+  encodeMessageBody,
+  MAX_CHAT_FILE_BYTES,
+  pollInbound,
+  uploadChatFile,
+} from '../wallet/messageTransport'
 import { Composer, Thread } from '@aeon-ui/react'
 import type { ComposerState } from '@aeon-ui/react'
 import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { EmptyState } from './EmptyState'
 import {
+  AttachFileIcon,
+  FileIcon,
   PayIcon,
   PersonAddIcon,
   RequestMoneyIcon,
@@ -86,6 +95,12 @@ function formatDay(ts: number): string {
 function shortenTxid(txid: string): string {
   if (txid.length <= 16) return txid
   return `${txid.slice(0, 8)}…${txid.slice(-6)}`
+}
+
+function formatFileSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${Math.max(0.1, bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
 }
 
 function resolveAmountSats(amount: ParsedAmount | undefined): {
@@ -145,7 +160,8 @@ function payStatusLabel(msg: ChatMessage): string {
   if (st === 'pending') return 'Confirm to send'
   if (st === 'sending') return 'Sending…'
   if (st === 'sent') {
-    return msg.meta?.txid ? `Sent · ${shortenTxid(msg.meta.txid)}` : 'Sent'
+    const action = msg.direction === 'in' ? 'Received' : 'Sent'
+    return msg.meta?.txid ? `${action} · ${shortenTxid(msg.meta.txid)}` : action
   }
   if (st === 'failed') return msg.meta?.error ? `Failed · ${msg.meta.error}` : 'Failed'
   if (st === 'cancelled') return 'Cancelled'
@@ -185,13 +201,21 @@ function MessageBubble({
 
   const mine = msg.direction === 'out'
   const payStatus = msg.meta?.payStatus
-  const canAct = msg.kind === 'pay-sent' && payStatus === 'pending'
+  const canAct = (msg.kind === 'pay-sent' || msg.kind === 'tip') && payStatus === 'pending'
   const canEscrow = msg.kind === 'escrow' && payStatus === 'pending'
   const isCard =
-    msg.kind === 'pay-request' || msg.kind === 'pay-sent' || msg.kind === 'escrow'
+    msg.kind === 'pay-request' ||
+    msg.kind === 'pay-sent' ||
+    msg.kind === 'tip' ||
+    msg.kind === 'escrow'
   const amountLabel = msg.meta?.amountLabel ?? msg.text
+  const fiatValue =
+    msg.meta?.sats && msg.meta.sats > 0
+      ? formatUsdFromSats(msg.meta.sats, getCachedUsdPerBsv())
+      : null
+  const primaryAmount = fiatValue && fiatValue !== '—' ? fiatValue : amountLabel
   const satsLine =
-    msg.meta?.sats && msg.meta.sats > 0 && !/\bsats?\b/i.test(amountLabel)
+    msg.meta?.sats && msg.meta.sats > 0
       ? formatSatsLabel(msg.meta.sats)
       : null
   const label = peerLabel || 'Friend'
@@ -199,7 +223,7 @@ function MessageBubble({
   const face =
     msg.kind === 'pay-request'
       ? 'request-card'
-      : msg.kind === 'pay-sent' || msg.kind === 'escrow'
+      : msg.kind === 'pay-sent' || msg.kind === 'tip' || msg.kind === 'escrow'
         ? 'payment-card'
         : undefined
   const itemState = [mine ? 'mine' : 'theirs', face, payStatus === 'failed' ? 'failed' : null]
@@ -230,6 +254,7 @@ function MessageBubble({
               'is-card',
               mine ? 'is-mine' : '',
               msg.kind === 'pay-sent' ? 'is-pay' : '',
+              msg.kind === 'tip' ? 'is-tip' : '',
               msg.kind === 'pay-request' ? 'is-request' : '',
               msg.kind === 'escrow' ? 'is-escrow' : '',
             ]
@@ -251,19 +276,33 @@ function MessageBubble({
                   ) : null}
                 </Thread.CardBody>
               </>
-            ) : msg.kind === 'pay-sent' ? (
+            ) : msg.kind === 'pay-sent' || msg.kind === 'tip' ? (
               <>
                 <Thread.CardTitle className="chat-card-head">
-                  <span className="chat-card-badge">Pay</span>
+                  <span className="chat-card-badge">
+                    {msg.kind === 'tip'
+                      ? mine
+                        ? 'Tip sent'
+                        : 'Tip received'
+                      : mine
+                        ? 'Payment'
+                        : 'Payment received'}
+                  </span>
                   {payStatus ? (
                     <span className="chat-card-status" data-status={payStatus}>
                       {payStatusLabel(msg)}
                     </span>
                   ) : null}
                 </Thread.CardTitle>
-                <Thread.CardBody>
-                  <p className="chat-card-amount">{amountLabel}</p>
-                  {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+                <Thread.CardBody className="chat-value-body">
+                  <span className="chat-value-mark" aria-hidden>
+                    <PayIcon size={20} />
+                  </span>
+                  <div>
+                    <p className="chat-card-amount">{primaryAmount}</p>
+                    {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
+                    {msg.meta?.memo ? <p className="chat-card-memo">{msg.meta.memo}</p> : null}
+                  </div>
                 </Thread.CardBody>
                 {canAct ? (
                   <Thread.CardActions className="chat-card-actions">
@@ -328,6 +367,30 @@ function MessageBubble({
               </time>
             ) : null}
           </Thread.Card>
+        ) : msg.kind === 'file' && msg.meta?.attachment ? (
+          <a
+            className={['chat-bubble', 'chat-file-card', mine ? 'is-mine' : '']
+              .filter(Boolean)
+              .join(' ')}
+            href={msg.meta.attachment.url}
+            target="_blank"
+            rel="noreferrer"
+            download={msg.meta.attachment.name}
+          >
+            <span className="chat-file-icon" aria-hidden>
+              <FileIcon size={22} />
+            </span>
+            <span className="chat-file-copy">
+              <strong>{msg.meta.attachment.name}</strong>
+              <span>
+                {formatFileSize(msg.meta.attachment.size)} ·{' '}
+                {mine ? 'Sent file' : 'Download file'}
+              </span>
+            </span>
+            <time className="chat-bubble-time" dateTime={new Date(msg.createdAt).toISOString()}>
+              {formatTime(msg.createdAt)}
+            </time>
+          </a>
         ) : (
           <Thread.Bubble
             className={['chat-bubble', mine ? 'is-mine' : ''].filter(Boolean).join(' ')}
@@ -364,6 +427,8 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   const [query, setQuery] = useState('')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [showCommands, setShowCommands] = useState(false)
+  const [threadSection, setThreadSection] = useState<'messages' | 'files'>('messages')
+  const [fileBusy, setFileBusy] = useState(false)
   const [confirmCmd, setConfirmCmd] = useState<{
     id: string
     verb: string
@@ -373,6 +438,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   const [confirming, setConfirming] = useState(false)
   const threadEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const refresh = () => setPeers(listMessagePeers())
 
@@ -421,6 +487,10 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- peers tick refreshes store
     [activePeerId, peers],
   )
+  const visibleMessages = useMemo(
+    () => (threadSection === 'files' ? messages.filter((m) => m.kind === 'file') : messages),
+    [messages, threadSection],
+  )
 
   const filteredPeers = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -446,9 +516,14 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
 
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [messages.length, activePeerId, peers])
+  }, [visibleMessages.length, activePeerId, peers])
 
-  const queuePay = (friend: Friend, amount: ParsedAmount, memo?: string) => {
+  const queuePay = (
+    friend: Friend,
+    amount: ParsedAmount,
+    memo?: string,
+    kind: 'pay-sent' | 'tip' = 'pay-sent',
+  ) => {
     let address = ''
     try {
       address = addressFromIdentityKey(friend.identityKey, chain)
@@ -469,8 +544,8 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     }
     appendMessage(friend.id, {
       direction: 'out',
-      kind: 'pay-sent',
-      text: `Pay ${resolved.amountLabel ?? amount.label}`,
+      kind,
+      text: kind === 'tip' ? memo || 'Tip' : `Pay ${resolved.amountLabel ?? amount.label}`,
       meta: {
         amountLabel: resolved.amountLabel ?? amount.label,
         sats: resolved.sats,
@@ -510,7 +585,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           ? `HandCash messages: ${msg.meta.memo}`
           : `HandCash messages pay to ${to}`,
       })
-      updateMessage(messageId, {
+      const sent = updateMessage(messageId, {
         meta: {
           payStatus: 'sent',
           status: 'Sent',
@@ -518,6 +593,15 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           error: undefined,
         },
       })
+      const recipient = getFriendById(msg.peerId)
+      if (sent && recipient && identityKey) {
+        void deliverOutbound({
+          recipientIdentityKey: recipient.identityKey,
+          senderIdentityKey: identityKey,
+          body: encodeMessageBody(sent),
+          peerId: msg.peerId,
+        })
+      }
       playPaymentSuccessSound()
       onSent?.(balanceSats)
     } catch (err) {
@@ -656,6 +740,50 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     playWalletSound('soft')
   }
 
+  const sendFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0]
+    event.target.value = ''
+    if (!file || !activeFriend || !identityKey || fileBusy) return
+    if (file.size > MAX_CHAT_FILE_BYTES) {
+      setHint('Files are limited to 8 MB.')
+      playWalletSound('error')
+      return
+    }
+
+    setFileBusy(true)
+    setHint(`Uploading ${file.name}…`)
+    try {
+      const attachment = await uploadChatFile({
+        file,
+        recipientIdentityKey: activeFriend.identityKey,
+        senderIdentityKey: identityKey,
+      })
+      const outbound = {
+        kind: 'file',
+        text: attachment.name,
+        meta: { attachment, status: 'Sent file' },
+      } as const
+      const delivered = await deliverOutbound({
+        recipientIdentityKey: activeFriend.identityKey,
+        senderIdentityKey: identityKey,
+        body: encodeMessageBody(outbound),
+        peerId: activeFriend.id,
+      })
+      if (delivered.delivered !== 'cloud') {
+        throw new Error('File uploaded, but the message could not be delivered')
+      }
+      appendMessage(activeFriend.id, { direction: 'out', ...outbound })
+      setHint(null)
+      setThreadSection('messages')
+      playWalletSound('soft')
+    } catch (err) {
+      setHint(err instanceof Error ? err.message : String(err))
+      playWalletSound('error')
+    } finally {
+      setFileBusy(false)
+    }
+  }
+
   const sendText = (rawLine: string) => {
     const line = rawLine.trim()
     if (!line || !activePeerId || !activeFriend) return
@@ -676,7 +804,12 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         playWalletSound('error')
         return
       }
-      queuePay(activeFriend, amount, cmd.verb === 'pay' ? cmd.memo : undefined)
+      queuePay(
+        activeFriend,
+        amount,
+        cmd.verb === 'pay' ? cmd.memo : undefined,
+        cmd.verb === 'tip' ? 'tip' : 'pay-sent',
+      )
       setDraft('')
       return
     }
@@ -687,7 +820,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         return
       }
       const resolved = resolveAmountSats(cmd.amount)
-      appendMessage(activeFriend.id, {
+      const request = appendMessage(activeFriend.id, {
         direction: 'out',
         kind: 'pay-request',
         text: cmd.memo || cmd.amount.label,
@@ -697,6 +830,14 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           status: 'Request',
         },
       })
+      if (identityKey) {
+        void deliverOutbound({
+          recipientIdentityKey: activeFriend.identityKey,
+          senderIdentityKey: identityKey,
+          body: encodeMessageBody(request),
+          peerId: activeFriend.id,
+        })
+      }
       playWalletSound('soft')
       setDraft('')
       return
@@ -903,14 +1044,26 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
               </span>
               <div className="chat-thread-titles">
                 <strong>{activeFriend.label}</strong>
-                <span className="chat-thread-sub">1:1 · Message · Pay · Request</span>
+                <span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>
               </div>
             </header>
             <nav className="chat-thread-tabs panel-label-bar" aria-label="Thread sections">
-              <button type="button" className="chat-thread-tab" data-active="" aria-current="page">
+              <button
+                type="button"
+                className="chat-thread-tab"
+                data-active={threadSection === 'messages' ? '' : undefined}
+                aria-current={threadSection === 'messages' ? 'page' : undefined}
+                onClick={() => setThreadSection('messages')}
+              >
                 Messages
               </button>
-              <button type="button" className="chat-thread-tab" disabled title="Coming soon">
+              <button
+                type="button"
+                className="chat-thread-tab"
+                data-active={threadSection === 'files' ? '' : undefined}
+                aria-current={threadSection === 'files' ? 'page' : undefined}
+                onClick={() => setThreadSection('files')}
+              >
                 Files & links
               </button>
               <button type="button" className="chat-thread-tab" disabled title="Coming soon">
@@ -920,13 +1073,17 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
 
             <Thread.Root className="chat-thread-messages">
               <Thread.List>
-                {messages.length === 0 ? (
+                {visibleMessages.length === 0 ? (
                   <EmptyState
-                    title="No messages yet"
-                    body="Say hello, or use /pay and /request for in-thread payments."
+                    title={threadSection === 'files' ? 'No shared files' : 'No messages yet'}
+                    body={
+                      threadSection === 'files'
+                        ? 'Files shared in this conversation will appear here.'
+                        : 'Say hello, attach a file, or send an in-thread tip.'
+                    }
                   />
                 ) : (
-                  messages.map((m) => (
+                  visibleMessages.map((m) => (
                     <MessageBubble
                       key={m.id}
                       msg={m}
@@ -936,7 +1093,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
                         if (!m) return
                         setConfirmCmd({
                           id,
-                          verb: m.kind === 'escrow' ? 'escrow' : 'pay',
+                          verb: m.kind === 'escrow' ? 'escrow' : m.kind === 'tip' ? 'tip' : 'pay',
                           amountLabel: m.meta?.amountLabel ?? m.text,
                           satsLabel:
                             m.meta?.sats && m.meta.sats > 0
@@ -983,6 +1140,24 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
               )}
 
               <Composer.Toolbar className="chat-composer-toolbar">
+                <input
+                  ref={fileInputRef}
+                  className="chat-file-input"
+                  type="file"
+                  tabIndex={-1}
+                  aria-hidden
+                  onChange={(event) => void sendFile(event)}
+                />
+                <button
+                  type="button"
+                  className="chat-action-btn"
+                  title="Attach file (up to 8 MB)"
+                  aria-label="Attach file"
+                  disabled={fileBusy || !identityKey}
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <AttachFileIcon size={18} />
+                </button>
                 <button
                   type="button"
                   className="chat-action-btn"

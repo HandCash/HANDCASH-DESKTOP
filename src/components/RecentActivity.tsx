@@ -15,7 +15,7 @@ import {
   subscribeAppActivity,
   type ActivityEntry,
 } from '../wallet/appActivity'
-import bsvLogo from '../assets/brand/bsv-logo.svg'
+import bsvLogo from '../assets/brand/bsv-logo.png'
 import {
   DEFAULT_PAYMENT_FILTERS,
   filterPaymentActivity,

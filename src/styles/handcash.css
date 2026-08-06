@@ -3273,7 +3273,7 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-action-badge.is-send {
-  background: #df5b5b;
+  background: #4d88d8;
 }
 
 .history-action-badge.is-receive {
@@ -6972,9 +6972,9 @@ html.platform-mobile .chat-back-btn {
 
 /* —— Messages · Nexus-inspired layout (Aeon / HandCash tokens) —— */
 .chat-shell {
-  --chat-mine: color-mix(in srgb, var(--hc-accent, #57ff97) 78%, #0a1a12);
-  --chat-mine-fg: #04140a;
-  --chat-theirs: color-mix(in srgb, #161c19 92%, #2a3330);
+  --chat-mine: color-mix(in srgb, var(--hc-accent, #57ff97) 17%, #14231b);
+  --chat-mine-fg: #effff6;
+  --chat-theirs: color-mix(in srgb, #171d1a 94%, #334039);
   --chat-rail: color-mix(in srgb, #080c0a 96%, #111);
   background: radial-gradient(900px 420px at 70% -10%, rgba(87, 255, 151, 0.06), transparent 55%),
     var(--chat-rail);
@@ -7103,15 +7103,15 @@ html.platform-mobile .chat-back-btn {
 }
 
 .chat-thread-messages {
-  gap: 10px;
-  padding: 16px 16px 12px;
+  gap: 13px;
+  padding: 20px 18px 14px;
 }
 
 .chat-msg {
   display: flex;
   align-items: flex-start;
   gap: 10px;
-  max-width: min(92%, 560px);
+  max-width: min(88%, 560px);
 }
 
 .chat-msg.is-mine {
@@ -7159,17 +7159,25 @@ html.platform-mobile .chat-back-btn {
 
 .chat-bubble {
   max-width: min(100%, 420px);
-  border-radius: 16px;
-  background: var(--chat-theirs);
-  border: 1px solid color-mix(in srgb, #ffffff 6%, transparent);
-  padding: 10px 12px 8px;
+  position: relative;
+  border-radius: 6px 18px 18px 18px;
+  background: linear-gradient(145deg, color-mix(in srgb, #fff 3%, var(--chat-theirs)), var(--chat-theirs));
+  border: 1px solid color-mix(in srgb, #ffffff 8%, transparent);
+  padding: 11px 13px 8px;
+  box-shadow:
+    0 6px 18px rgba(0, 0, 0, 0.18),
+    inset 0 1px 0 rgba(255, 255, 255, 0.025);
 }
 
 .chat-bubble.is-mine {
-  background: var(--chat-mine);
+  background: linear-gradient(
+    145deg,
+    color-mix(in srgb, var(--hc-accent, #57ff97) 24%, #1b2b22),
+    var(--chat-mine)
+  );
   color: var(--chat-mine-fg);
-  border-color: transparent;
-  border-radius: 16px 16px 6px 16px;
+  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 22%, transparent);
+  border-radius: 18px 6px 18px 18px;
 }
 
 .chat-bubble.is-mine .chat-bubble-text,
@@ -7183,19 +7191,121 @@ html.platform-mobile .chat-back-btn {
 }
 
 .chat-bubble:not(.is-mine) {
-  border-radius: 6px 16px 16px 16px;
+  border-radius: 6px 18px 18px 18px;
 }
 
 .chat-bubble.is-card {
   min-width: min(78%, 280px);
-  background: color-mix(in srgb, #0e1411 88%, #1c2e24);
+  overflow: hidden;
+  background: linear-gradient(155deg, #17211c, #0e1511);
   border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 28%, transparent);
   color: var(--hc-text, #e8f5ef);
+  padding: 12px 14px 10px;
 }
 
 .chat-bubble.is-mine.is-card {
-  background: color-mix(in srgb, var(--hc-accent, #57ff97) 12%, #101a14);
+  background: linear-gradient(
+    155deg,
+    color-mix(in srgb, var(--hc-accent, #57ff97) 14%, #17231c),
+    #101713
+  );
   color: var(--hc-text, #e8f5ef);
+}
+
+.chat-bubble.is-tip {
+  border-color: color-mix(in srgb, #f2bd52 52%, transparent);
+  background:
+    radial-gradient(circle at 12% 8%, rgba(242, 189, 82, 0.16), transparent 38%),
+    linear-gradient(155deg, #211c12, #12130f);
+}
+
+.chat-bubble.is-tip.is-mine {
+  background:
+    radial-gradient(circle at 88% 8%, rgba(242, 189, 82, 0.18), transparent 38%),
+    linear-gradient(155deg, #211d13, #141611);
+}
+
+.chat-bubble.is-tip .chat-card-badge {
+  color: #ffd983;
+  background: rgba(242, 189, 82, 0.13);
+}
+
+.chat-value-body {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+
+.chat-value-mark {
+  display: grid;
+  place-items: center;
+  width: 38px;
+  height: 38px;
+  flex: 0 0 38px;
+  border-radius: 50%;
+  color: #ffe3a0;
+  background: linear-gradient(145deg, #d79b2e, #8d5c11);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.35),
+    0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.chat-card-memo {
+  margin: 4px 0 0;
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.chat-file-input {
+  display: none;
+}
+
+.chat-file-card {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: center;
+  min-width: min(78%, 270px);
+  color: inherit;
+  text-decoration: none;
+}
+
+.chat-file-card:hover {
+  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 35%, transparent);
+  transform: translateY(-1px);
+}
+
+.chat-file-icon {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+  color: var(--hc-accent, #57ff97);
+  background: color-mix(in srgb, var(--hc-accent, #57ff97) 12%, transparent);
+}
+
+.chat-file-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.chat-file-copy strong {
+  overflow: hidden;
+  font-size: 0.86rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.chat-file-copy span {
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+}
+
+.chat-file-card .chat-bubble-time {
+  grid-column: 2;
 }
 
 .chat-composer {

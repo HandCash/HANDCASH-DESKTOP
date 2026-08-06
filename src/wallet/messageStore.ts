@@ -23,8 +23,19 @@ export type MessageKind =
   | 'command'
   | 'pay-request'
   | 'pay-sent'
+  | 'tip'
+  | 'file'
   | 'escrow'
   | 'whois'
+
+export type ChatAttachment = {
+  id: string
+  name: string
+  contentType: string
+  size: number
+  url: string
+  expiresAt?: number
+}
 
 export type ChatMessage = {
   id: string
@@ -51,6 +62,7 @@ export type ChatMessage = {
     messagebox?: string | null
     escrowAsset?: string
     origin?: string
+    attachment?: ChatAttachment
   }
 }
 
@@ -124,7 +136,11 @@ export function listThreads(): ChatThread[] {
     const unreadInc =
       m.direction === 'in' && !m.readAt && m.kind !== 'system' && m.kind !== 'whois' ? 1 : 0
     const preview =
-      m.kind === 'system' || m.kind === 'whois'
+      m.kind === 'file' && m.meta?.attachment
+        ? `${m.direction === 'out' ? 'You: ' : ''}File · ${m.meta.attachment.name}`
+        : m.kind === 'tip'
+          ? `${m.direction === 'out' ? 'You tipped' : 'Tip received'} · ${m.meta?.amountLabel ?? m.text}`
+          : m.kind === 'system' || m.kind === 'whois'
         ? m.text.split('\n')[0]!.slice(0, 120)
         : m.direction === 'out'
           ? `You: ${m.text}`

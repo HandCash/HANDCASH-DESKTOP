@@ -47,6 +47,24 @@ export function ReceiveIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `attach_file` */
+export function AttachFileIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M16.5 6v11.5a4.5 4.5 0 0 1-9 0V5a3 3 0 0 1 6 0v10.5a1.5 1.5 0 0 1-3 0V6H9v9.5a3 3 0 0 0 6 0V5a4.5 4.5 0 0 0-9 0v12.5a6 6 0 0 0 12 0V6z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `insert_drive_file` */
+export function FileIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6 2h7l5 5v15H6V2zm7 1.5V8h4.5L13 3.5zM8 12v2h8v-2H8zm0 4v2h6v-2H8z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `add_circle` */
 export function AddMoneyIcon(props: IconProps) {
   return (
