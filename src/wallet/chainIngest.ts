@@ -110,6 +110,8 @@ const REVIEW_THROTTLE_MS = 2 * 60_000
 /** Faster reviews when multi-device BRC-39 parity URL is configured. */
 const REVIEW_THROTTLE_PARITY_MS = 45_000
 let lastSpendableReviewAt = 0
+/** Cleared for the session once storage rejects an all-basket review. */
+let allBasketReviewSupported = true
 
 function reviewThrottleMs(): number {
   return resolveHistoryBackupBaseUrl() ? REVIEW_THROTTLE_PARITY_MS : REVIEW_THROTTLE_MS
@@ -154,16 +156,20 @@ export async function auditSpendableOutputs(force = false): Promise<SpendableRev
 
   try {
     let result
-    try {
-      result = await active.wallet.reviewSpendableOutputs(true, false)
-    } catch (err) {
-      if (!isUndefinedPartialFilterError(err)) throw err
-      console.warn(
-        '[chain-ingest] all-basket spendable review unsupported; reviewing default basket only',
-        err instanceof Error ? err.message : err,
-      )
-      result = await active.wallet.reviewSpendableOutputs(false, false)
+    if (allBasketReviewSupported) {
+      try {
+        result = await active.wallet.reviewSpendableOutputs(true, false)
+      } catch (err) {
+        if (!isUndefinedPartialFilterError(err)) throw err
+        // This storage build cannot filter on an undefined basket. Remember it,
+        // so every later sync goes straight to the default basket.
+        allBasketReviewSupported = false
+        console.info(
+          '[chain-ingest] all-basket spendable review unsupported here; auditing default basket only',
+        )
+      }
     }
+    if (!result) result = await active.wallet.reviewSpendableOutputs(false, false)
     lastSpendableReviewAt = Date.now()
     const suspect = result.outputs?.length ?? 0
     if (suspect > 0) {

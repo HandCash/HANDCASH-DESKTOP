@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.52] - 2026-08-06
+
+### Changed
+
+- An address holding only ordinals no longer logs a scary "no funding
+  classified" warning. Only UTXOs that matched no class at all are reported.
+- The all-basket spendable audit is attempted once per session. Storage builds
+  that cannot filter on an undefined basket are remembered, so each sync goes
+  straight to the default basket instead of throwing and retrying.
+
 ## [1.2.51] - 2026-08-06
 
 ### Fixed

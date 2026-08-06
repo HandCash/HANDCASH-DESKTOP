@@ -144,10 +144,22 @@ export async function ingestLegacyAddressUtxos(
     )
   }
 
-  if (funding.length === 0 && scan.sats > 0) {
+  // An address holding only ordinals classifies no funding, and that is correct —
+  // only UTXOs that landed in no bucket at all are worth a warning. Cloud items
+  // can name their outpoint in underscore form, so compare on a normal key.
+  const outpointKey = (outpoint: string): string =>
+    outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  const accounted = new Set<string>([
+    ...funding.map((u) => outpointKey(u.outpoint)),
+    ...oneSats.map((i) => outpointKey(i.outpoint)),
+    ...latches.map((u) => outpointKey(u.outpoint)),
+    ...heldOneSats.map((u) => outpointKey(u.outpoint)),
+  ])
+  const unclassified = scan.utxos.filter((u) => !accounted.has(outpointKey(u.outpoint)))
+  if (unclassified.length > 0) {
     console.warn(
-      `[chain-ingest] address has ${scan.sats} sats across ${scan.utxos.length} UTXO(s) but no funding classified (source=${scan.source})`,
-      scan.utxos.map((u) => `${u.outpoint}:${u.satoshis}`),
+      `[chain-ingest] ${unclassified.length} UTXO(s) matched no class (source=${scan.source})`,
+      unclassified.map((u) => `${u.outpoint}:${u.satoshis}`),
     )
   }
 
