@@ -83,6 +83,7 @@ import {
   shouldAttemptGenesis,
   type AuthenticityTier,
 } from './provenCache'
+import { listRecentActivity } from './appActivity'
 import { proveGenesisLineage, type GenesisProof } from './oneSatGenesisProof'
 import { getWalletCoordinatorSnapshot } from './walletCoordinator'
 import {
@@ -563,6 +564,8 @@ async function resolveUnknownOrigins(): Promise<void> {
  * few hundred requests.
  */
 const GENESIS_SESSION_BUDGET = 3
+/** Activity rows scanned for tips this wallet no longer holds. */
+const ACTIVITY_REPAIR_DEPTH = 50
 let genesisWalksThisSession = 0
 let provingGenesis = false
 
@@ -578,10 +581,23 @@ async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
   // A walk is never worth competing with a payment for the network.
   if (getWalletCoordinatorSnapshot().spend === 'active') return
 
-  const candidates = lastItemOutputs
+  const held = lastItemOutputs
     .filter(isListableItem)
     .map((o) => normalizeOutpoint(o.outpoint))
-    .filter((outpoint) => shouldAttemptGenesis(outpoint))
+  // A tip already sent on is gone from the basket, but the transfer that sent it
+  // is still on screen in Activity, wearing whatever wrong origin it was recorded
+  // with. Its lineage is chain data, so being spent does not make it unprovable.
+  const inActivity = [
+    ...new Set(
+      listRecentActivity(ACTIVITY_REPAIR_DEPTH)
+        .map((entry) => entry.item?.outpoint)
+        .filter((outpoint): outpoint is string => !!outpoint)
+        .map(normalizeOutpoint),
+    ),
+  ].filter((outpoint) => !held.includes(outpoint))
+  const candidates = [...held, ...inActivity].filter((outpoint) =>
+    shouldAttemptGenesis(outpoint),
+  )
   if (candidates.length === 0) return
 
   provingGenesis = true

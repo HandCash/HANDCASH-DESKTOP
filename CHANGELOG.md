@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.92] - 2026-08-06
+
+### Fixed
+
+- **The sending wallet's record of a transferred collectable stayed broken.** Once
+  a tip is sent on it leaves the basket, and its cached identity was too thin to
+  repair the row, so the transfer that sent the item away — the only trace of it
+  left in this wallet — kept the wrong origin and a 404 thumbnail. Records now heal
+  from the lineage verdict, which outlives the output it judged, and tips that
+  survive only in the activity feed get their own lineage walk: being spent does
+  not make chain data unprovable.
+
 ## [1.2.91] - 2026-08-06
 
 ### Fixed

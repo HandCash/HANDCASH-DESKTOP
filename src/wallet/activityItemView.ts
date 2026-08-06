@@ -11,6 +11,7 @@ import type { ActivityItem } from './appActivity'
 import { getCachedCollectables } from './collectables'
 import { getResolvedInscription, isThinResolution } from './inscriptionCache'
 import { contentUrlForOrigin } from './oneSatImport'
+import { getProvenVerdict } from './provenCache'
 import { getActiveWallet } from './session'
 
 const asOutpoint = (v: string) => v.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
@@ -32,14 +33,19 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
     }
   }
 
-  // A tip since sent on is gone from the list, but its identity is not.
+  // A tip since sent on is gone from the list, but its identity is not. A verdict
+  // outlives the output it judged, so a lineage proof earned while the item was
+  // still held keeps repairing the record of the transfer that sent it away —
+  // which is the only trace of it left in this wallet.
   const resolved = getResolvedInscription(outpoint)
-  if (!resolved || isThinResolution(resolved)) return item
+  const usable = resolved && !isThinResolution(resolved) ? resolved : null
+  const origin = getProvenVerdict(outpoint)?.origin ?? (usable ? asOrigin(usable.origin) : null)
+  if (!origin) return item
   return {
     ...item,
-    name: resolved.name?.trim() || item.name,
-    origin: asOrigin(resolved.origin),
-    imageUrl: contentUrlForOrigin(resolved.origin, getActiveWallet()?.chain ?? 'main'),
-    ...(resolved.app ? { app: resolved.app } : {}),
+    name: usable?.name?.trim() || item.name,
+    origin,
+    imageUrl: contentUrlForOrigin(origin, getActiveWallet()?.chain ?? 'main'),
+    ...(usable?.app ? { app: usable.app } : {}),
   }
 }
