@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.53] - 2026-08-06
+
+### Added
+
+- Logs survive a crash. The tail is mirrored to durable storage (immediately on
+  any error) and reloaded on the next start, so the log viewer opens with the
+  previous session's final lines instead of only the fresh restart.
+- The session banner records the running version, heap use and device, which is
+  what pins a crash to a build.
+- Heap pressure is sampled while visible and logged past 70% of the JS heap
+  limit. An OOM kill raises no error, so this is the only footprint it leaves.
+
 ## [1.2.52] - 2026-08-06
 
 ### Changed
