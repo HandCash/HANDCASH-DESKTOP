@@ -167,6 +167,16 @@ export function isItemActivity(entry: ActivityEntry): boolean {
   return Boolean(entry.item) || entry.method === 'send-collectable' || /collectable|1sat|ordinal/i.test(entry.method)
 }
 
+/**
+ * Breadcrumb / empty-state label for an activity detail.
+ * Prefer "Transaction" — reserve "Payment" for explicit BSV payments (app money).
+ */
+export function activityDetailLabel(entry: ActivityEntry): 'Payment' | 'Transaction' {
+  if (isItemActivity(entry)) return 'Transaction'
+  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return 'Payment'
+  return 'Transaction'
+}
+
 export function clearAppActivity(origin?: string): void {
   if (!origin) {
     writeAll([])

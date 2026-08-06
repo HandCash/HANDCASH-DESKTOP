@@ -4,6 +4,7 @@ import { ReceiveIcon, SendIcon } from './icons'
 import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
+  activityDetailLabel,
   activityEntryTitle,
   getActivityById,
   isItemActivity,
@@ -24,6 +25,9 @@ import {
 import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
+import { getCachedCollectables, normalizeOutpoint } from '../wallet/collectables'
+import { openCollectableDetails } from '../wallet/navStore'
+import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
   entryId: string
@@ -36,6 +40,22 @@ function openExplorer(url: string) {
   } else {
     window.open(url, '_blank', 'noopener,noreferrer')
   }
+}
+
+/** Prefer a tip we still hold for this origin; fall back to a received outpoint. */
+function itemLinkOutpoint(entry: ActivityEntry): string | null {
+  const item = entry.item
+  if (!item) return null
+  const originKey = item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const held = getCachedCollectables().find(
+    (c) => c.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === originKey,
+  )
+  if (held) return held.outpoint
+  // A receive may not be in the Collect cache yet — the activity outpoint is live.
+  if (entry.kind === 'earned' && item.outpoint?.trim()) {
+    return normalizeOutpoint(item.outpoint)
+  }
+  return null
 }
 
 export function PaymentDetailsPanel({ entryId, chain }: Props) {
@@ -52,11 +72,19 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   }, [entryId])
 
   if (!entry) {
-    return <p className="connected-empty-line">Payment not found</p>
+    return <p className="connected-empty-line">Transaction not found</p>
   }
 
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
+  const detailLabel = activityDetailLabel(entry)
+  const itemOutpoint = itemLinkOutpoint(entry)
+  const openItem = itemOutpoint
+    ? () => {
+        playWalletSound('soft')
+        openCollectableDetails(itemOutpoint)
+      }
+    : null
   const primary = item
     ? entry.item?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
@@ -76,17 +104,38 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       <div className="payment-details-hero">
         <div className="history-icon">
           {item && entry.item?.imageUrl ? (
-            <DeferredImage
-              className="history-item-thumb"
-              src={entry.item.imageUrl}
-              alt=""
-              width={32}
-              height={32}
-              skeletonWidth={32}
-              skeletonHeight={32}
-              skeletonRadius={6}
-              decoding="async"
-            />
+            openItem ? (
+              <button
+                type="button"
+                className="payment-details-item-thumb-btn"
+                onClick={openItem}
+                aria-label={`Open ${entry.item.name}`}
+              >
+                <DeferredImage
+                  className="history-item-thumb"
+                  src={entry.item.imageUrl}
+                  alt=""
+                  width={32}
+                  height={32}
+                  skeletonWidth={32}
+                  skeletonHeight={32}
+                  skeletonRadius={6}
+                  decoding="async"
+                />
+              </button>
+            ) : (
+              <DeferredImage
+                className="history-item-thumb"
+                src={entry.item.imageUrl}
+                alt=""
+                width={32}
+                height={32}
+                skeletonWidth={32}
+                skeletonHeight={32}
+                skeletonRadius={6}
+                decoding="async"
+              />
+            )
           ) : isWallet ? (
             spent ? <SendIcon size={16} /> : <ReceiveIcon size={16} />
           ) : (
@@ -144,18 +193,37 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           </div>
 
           {item && entry.item?.imageUrl ? (
-            <div className="payment-details-item-media collectable-media collectable-media-md">
-              <DeferredImage
-                src={entry.item.imageUrl}
-                alt={entry.item.name}
-                skeletonRadius={8}
-                skeletonClassName="skeleton-qr"
-                decoding="async"
-              />
-            </div>
+            openItem ? (
+              <button
+                type="button"
+                className="payment-details-item-media collectable-media collectable-media-md payment-details-item-link"
+                onClick={openItem}
+                aria-label={`Open ${entry.item.name}`}
+              >
+                <DeferredImage
+                  src={entry.item.imageUrl}
+                  alt={entry.item.name}
+                  skeletonRadius={8}
+                  skeletonClassName="skeleton-qr"
+                  decoding="async"
+                />
+              </button>
+            ) : (
+              <div className="payment-details-item-media collectable-media collectable-media-md">
+                <DeferredImage
+                  src={entry.item.imageUrl}
+                  alt={entry.item.name}
+                  skeletonRadius={8}
+                  skeletonClassName="skeleton-qr"
+                  decoding="async"
+                />
+              </div>
+            )
           ) : null}
 
           <dl className="payment-details-meta">
+            <dt>Type</dt>
+            <dd>{detailLabel}</dd>
             {!isWallet && (
               <>
                 <dt>App</dt>
@@ -165,7 +233,19 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             {entry.item ? (
               <>
                 <dt>Item</dt>
-                <dd>{entry.item.name}</dd>
+                <dd>
+                  {openItem ? (
+                    <button
+                      type="button"
+                      className="payment-details-item-name"
+                      onClick={openItem}
+                    >
+                      {entry.item.name}
+                    </button>
+                  ) : (
+                    entry.item.name
+                  )}
+                </dd>
                 <dt>Origin</dt>
                 <dd className="mono">{entry.item.origin}</dd>
                 {entry.item.outpoint ? (

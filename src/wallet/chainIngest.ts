@@ -261,6 +261,17 @@ export async function refreshFromChainExclusive(
     for (const op of ingest.newOneSatOutpoints) {
       noteAnnouncedOneSat(op)
     }
+    // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
+    // spent tip cannot linger and a just-imported tip does not wait on the panel.
+    try {
+      const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
+      rememberLiveOneSatOutpoints(ingest.scan.utxos)
+      void listCollectables(active).catch((err) => {
+        console.warn('[chain-ingest] collectables refresh failed', err)
+      })
+    } catch (err) {
+      console.warn('[chain-ingest] collectables refresh skipped', err)
+    }
   } catch (err) {
     console.warn('[chain-ingest] legacy address ingest skipped', err)
     setSyncHealth({

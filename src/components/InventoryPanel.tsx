@@ -200,11 +200,9 @@ export function InventoryPanel() {
       }
     }
 
-    // CRITICAL: when we already have a durable cache, do NOT call listOutputs on
-    // mount. The previous idle-timeout (2.5s) fired listOutputs while the user was
-    // looking at the grid and blocked the main thread for ~3s — that is the freeze
-    // in the latest crash log. Refresh only on a long interval after the panel has
-    // been open a while.
+    // CRITICAL: paint from durable cache immediately, then reconcile against
+    // live address UTXOs within a beat. Waiting 15s left spent tips on screen.
+    // Network work is async — it must not block the first paint.
     const hasCache = getCachedCollectables().length > 0 || areCollectablesHydrated()
     let intervalId = 0
     let deferTimer = 0
@@ -212,11 +210,11 @@ export function InventoryPanel() {
     if (hasCache) {
       deferTimer = window.setTimeout(() => {
         if (cancelled) return
-        void refresh('deferred')
+        void refresh('ownership')
         intervalId = window.setInterval(() => {
           void refresh('interval')
         }, 60_000)
-      }, 15_000)
+      }, 750)
       return () => {
         cancelled = true
         window.clearTimeout(deferTimer)

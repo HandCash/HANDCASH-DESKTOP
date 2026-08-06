@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.2.73] - 2026-08-06
+
+### Fixed
+
+- **Collectables are now the tips this address still holds — nothing else.** The
+  panel was painting from basket `1sat` plus a durable cache, and basket rows
+  outlive a spend until something releases them. Sending an item (or spending it
+  elsewhere) left a ghost card on screen; opening Collect before a refresh could
+  show last session's tips even when the UTXOs were gone.
+
+  The list is now basket tips ∩ live 1-sat outpoints on the receive address. Tips
+  missing from that set are dropped and relinquished. Chain ingest feeds the
+  same scan into the filter so a just-imported tip appears and a spent tip does
+  not wait on the Collect panel timer. Details also re-check ownership before
+  opening. A failed address scan keeps the prior basket list rather than wiping
+  the grid.
+
+### Changed
+
+- **Activity detail prefers "Transaction", and item rows link into Collect.**
+  The subcontext breadcrumb said "Payment" for every history row. It now says
+  "Transaction" unless the row is an explicit app BSV payment. Collectable
+  transfers open the item (thumbnail, media, and name) when the tip is still
+  held — or, for a receive, by the recorded outpoint.
+
 ## [1.2.72] - 2026-08-06
 
 ### Fixed

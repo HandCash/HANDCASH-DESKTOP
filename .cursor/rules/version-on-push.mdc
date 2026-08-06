@@ -1,18 +1,34 @@
 ---
-description: Every push to master must bump Desktop semver and tag
+description: Ship via git tags + CI; always publish the Android APK
 alwaysApply: true
 ---
 
-# Version on every push
+# Ship: CI for Desktop, always push the droid build
 
-Do **not** `git push` to `master` without a new semver.
+## Desktop (`HANDCASH-DESKTOP`)
+
+Do **not** wait on local `package:mac` / `package:win` / `package:linux` for a release.
+Push the version bump + tag and let GitHub Actions attach installers:
 
 ```bash
-npm run version:push          # patch bump + tag + push
-# or
-npm run version:minor -- --push
+# bump package.json + src/version.ts + CHANGELOG, commit, then:
+git push origin master
+git tag vX.Y.Z
+git push origin vX.Y.Z
+# optional: gh release create with notes first — CI uploads assets either way
 ```
 
 `scripts/require-version-bump.mjs` and `.githooks/pre-push` enforce `package.json` version > latest remote `v*` tag.
 
-After tagging, Linux AppImage CI runs automatically. Sync the website with `--sync-market` when downloads should move.
+Workflows on `v*` tags: `release-mac.yml`, `release-windows.yml`, `release-linux.yml`.
+
+## Mobile (`HANDCASH-MOBILE`)
+
+There is **no** APK CI. After every Desktop wallet fix that should reach phones:
+
+1. Bump `package.json` (+ `android/app/build.gradle` versionCode/Name locally; `android/` is gitignored)
+2. `bash scripts/build-apk.sh`
+3. Commit/push master + tag `v0.1.x`
+4. **Always** `gh release create` with the APK + `.sha256` (publish, not draft)
+
+Never leave a mobile release as an untagged draft with a missing APK.

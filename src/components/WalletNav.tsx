@@ -9,6 +9,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
 import type { ConnectedApp } from '../wallet/permissions'
 import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
+import { activityDetailLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
 import {
   clearNavChild,
@@ -189,7 +190,11 @@ export function WalletNav({
         { label: 'Send' },
       ]
     }
-    return [root, { label: 'Payment' }]
+    if (child.type === 'payment') {
+      const entry = getActivityById(child.entryId)
+      return [root, { label: entry ? activityDetailLabel(entry) : 'Transaction' }]
+    }
+    return [root, { label: 'Transaction' }]
   })()
 
   const selectSection = (next: NavSection) => {

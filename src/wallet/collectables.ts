@@ -1,7 +1,12 @@
 /**
- * Collectables = outputs in BRC-100 basket `1sat`.
- * Recursive inscription content (HTML/JS that loads other inscriptions) is still a 1sat tip —
- * same basket, same customInstructions remittance, same BRC-39 historyReplica. No second basket.
+ * Collectables = tips this device still holds as 1-sat UTXOs on its receive
+ * address, surfaced through BRC-100 basket `1sat`.
+ *
+ * Basket rows alone are not ownership — they outlive a spend until something
+ * releases them. The list is therefore basket tips ∩ live address 1-sat UTXOs.
+ * Recursive inscription content (HTML/JS that loads other inscriptions) is still
+ * a 1sat tip — same basket, same customInstructions remittance, same BRC-39
+ * historyReplica. No second basket.
  */
 import {
   Beef,
@@ -40,6 +45,12 @@ import {
   type LatchListing,
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
+import {
+  liveOneSatKeys,
+  outpointKey,
+  partitionByLiveUtxos,
+} from './collectableOwnership'
+import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
@@ -86,6 +97,25 @@ let cachedCollectables: Collectable[] = []
 /** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
 const collectablesListeners = new Set<CollectablesListener>()
+
+/**
+ * Address UTXO scan is the ownership oracle. Cache it briefly so Collect and
+ * chain ingest do not double-fetch the same tip set in one tick.
+ */
+const LIVE_ONE_SAT_TTL_MS = 20_000
+let cachedLiveOneSats: { at: number; keys: Set<string> } | null = null
+
+/** Feed a fresh address scan into the ownership filter (chain ingest). */
+export function rememberLiveOneSatOutpoints(
+  utxos: Array<{ outpoint: string; satoshis: number }>,
+): void {
+  cachedLiveOneSats = { at: Date.now(), keys: liveOneSatKeys(utxos) }
+}
+
+/** Drop a cached address scan so the next list re-checks the chain. */
+export function invalidateLiveOneSatOutpoints(): void {
+  cachedLiveOneSats = null
+}
 
 function isCollectableShape(value: unknown): value is Collectable {
   if (!value || typeof value !== 'object') return false
@@ -167,6 +197,7 @@ function setCollectablesCache(items: Collectable[]) {
 export function clearCollectablesCache(): void {
   cachedCollectables = []
   collectablesHydrated = false
+  cachedLiveOneSats = null
   durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
 }
@@ -312,6 +343,23 @@ type ItemOutput = {
 let lastItemOutputs: ItemOutput[] = []
 let lastItemChain: Chain = 'main'
 let resolvingOrigins = false
+
+async function resolveLiveOneSatKeys(
+  wallet: ActiveWallet,
+): Promise<Set<string> | null> {
+  const now = Date.now()
+  if (cachedLiveOneSats && now - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS) {
+    return cachedLiveOneSats.keys
+  }
+  try {
+    const scan = await scanLegacyAddress(wallet)
+    rememberLiveOneSatOutpoints(scan.utxos)
+    return cachedLiveOneSats!.keys
+  } catch (err) {
+    console.warn('[collectables] address UTXO scan failed — keeping basket list', err)
+    return null
+  }
+}
 
 function isListableItem(o: ItemOutput): boolean {
   if (o.tags?.includes(LATCH_TAG)) return false
@@ -492,6 +540,31 @@ async function listCollectablesNow(
     return getCachedCollectables()
   }
 
+  // Basket rows are necessary but not sufficient. Drop anything the address no
+  // longer holds as a 1-sat UTXO, and write those ghosts out of the basket so
+  // the next list cannot resurrect them. A failed scan must not empty the grid.
+  const live = await resolveLiveOneSatKeys(wallet)
+  if (live) {
+    const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live)
+    const ghosts = spentOrMissing.filter(
+      (o) => (o.satoshis ?? 1) === 1 && !o.tags?.includes(LATCH_TAG),
+    )
+    if (ghosts.length > 0) {
+      console.info(
+        `[collectables] dropping ${ghosts.length} tip(s) not in the address UTXO set`,
+        ghosts.map((g) => outpointKey(g.outpoint)),
+      )
+      void relinquishSpentOutputs(
+        wallet,
+        ghosts.map((g) => ({
+          outpoint: normalizeOutpoint(g.outpoint),
+          basket: '1sat',
+        })),
+      )
+    }
+    outputs = owned
+  }
+
   lastItemOutputs = outputs
   lastItemChain = wallet.chain
 
@@ -509,8 +582,10 @@ export async function getCollectable(
 ): Promise<Collectable | null> {
   const target = normalizeOutpoint(outpoint)
   const wallet = active ?? getActiveWallet()
-  const cached = cachedCollectables.find((i) => i.outpoint === target)
-  let item = cached ?? (await listCollectables(active)).find((i) => i.outpoint === target) ?? null
+  // Always reconcile against live UTXOs before opening details — a durable
+  // cache hit must not show a tip we already spent or never held.
+  const listed = await listCollectables(active)
+  let item = listed.find((i) => i.outpoint === target) ?? null
   if (!item || !wallet) return item
 
   // Details: traits/mime come from the indexer only when remittance left them
@@ -961,6 +1036,9 @@ export async function sendCollectable(args: {
     { outpoint, txid },
     ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
   ])
+  // The address scan still lists the tip until the send is seen — drop the
+  // ownership cache so a post-send list cannot paint it from a stale live set.
+  invalidateLiveOneSatOutpoints()
 
   await relinquishSpentOutputs(wallet, [
     { outpoint, basket: '1sat' },

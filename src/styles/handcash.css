@@ -3266,6 +3266,49 @@ a.history-row-link:hover .history-tx-hint {
   margin: 4px 0 12px;
 }
 
+button.payment-details-item-link {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  text-align: left;
+}
+
+button.payment-details-item-link:hover {
+  opacity: 0.92;
+}
+
+button.payment-details-item-thumb-btn {
+  display: block;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  line-height: 0;
+  border-radius: 6px;
+}
+
+button.payment-details-item-thumb-btn:hover {
+  opacity: 0.92;
+}
+
+.payment-details-item-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  cursor: pointer;
+}
+
+.payment-details-item-name:hover {
+  opacity: 0.85;
+}
+
 .history-body {
   min-width: 0;
   display: grid;
