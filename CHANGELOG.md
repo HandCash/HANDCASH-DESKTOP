@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.88] - 2026-08-06
+
+### Fixed
+
+- **Collectable names keep their casing in inventory and on send.** The BSV SDK
+  lowercases every output tag, so painting the Collect grid from `name:` tags
+  showed "pixel foxes" even when history still had "Pixel Foxes". The list and
+  remittance now prefer the resolution cache / tip remittance (which preserve
+  case), and imports seed that cache with the proper name.
+- **Unindexed 1-sat tips are no longer adopted as their own origin.** GorillaPool
+  answers "unknown sat" with a self-referential empty origin; treating that as
+  identity left items stuck on a 404 image and handed the same broken claim to
+  whoever received them next.
+
 ## [1.2.87] - 2026-08-06
 
 ### Changed

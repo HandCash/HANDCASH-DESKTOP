@@ -300,12 +300,17 @@ function toCollectable(
   chain: Chain,
   resolved?: Partial<ResolvedInscription> | null,
 ): Collectable {
+  const custom = parseCustom(o.customInstructions)
   const origin = parseOrigin(
-    tagValue(o.tags, 'origin:') ?? resolved?.origin,
+    tagValue(o.tags, 'origin:') ?? custom.origin ?? resolved?.origin,
     o.outpoint,
   )
-  const name = tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
-  const app = tagValue(o.tags, 'app:') ?? resolved?.app
+  // Tags are not display text: @bsv/sdk validateTag lowercases them, so a
+  // `name:` / `app:` tag is only a flattened search key. Prefer the resolution
+  // cache and remittance, which keep the original casing.
+  const name =
+    resolved?.name ?? custom.name ?? tagValue(o.tags, 'name:') ?? shortOrigin(origin)
+  const app = resolved?.app ?? custom.app ?? tagValue(o.tags, 'app:')
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
   // Provenance verdict comes from durable cache; detail view verifies on demand.
   const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
@@ -1180,10 +1185,20 @@ export async function sendCollectable(args: {
   assertOrdinalIsDeviceLocked(match.lockingScript, wallet)
 
   const item = cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
-  const origin = parseOrigin(args.origin ?? item?.origin, outpoint)
+  // Remittance identity must not come from tags — the SDK lowercases them, and
+  // after the signing-speed path we paint the list from those flattened tags.
+  // Resolution cache + tip remittance keep the case the recipient should see.
+  const resolvedMeta = getResolvedInscription(outpoint)
+  const tipCustom = parseCustom(match.customInstructions)
+  const origin = parseOrigin(
+    resolvedMeta?.origin ?? tipCustom.origin ?? args.origin ?? item?.origin,
+    outpoint,
+  )
   const name =
-    (args.name ?? item?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
-  const app = args.app ?? item?.app
+    (resolvedMeta?.name ?? tipCustom.name ?? args.name ?? item?.name ?? 'Collectable')
+      .trim()
+      .slice(0, 40) || 'Collectable'
+  const app = resolvedMeta?.app ?? tipCustom.app ?? args.app ?? item?.app
   const tags = [
     'ordinal',
     `origin:${origin.replace(/_(\d+)$/, '.$1')}`,

@@ -5,6 +5,7 @@ import {
   classifyLegacyUtxos,
   fetchRawTxHex,
   peekRawTxHex,
+  resolveOneSatInscription,
 } from './oneSatImport'
 import { PENDING_RETRY_MS, shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
@@ -288,6 +289,51 @@ describe('classifyLegacyUtxos', () => {
     // pass picks it up instead of it being written off as unresolvable.
     const walked = ids.filter((id) => !shouldResolveInscription(`${id}.0`))
     expect(walked).toHaveLength(MAX_UNKNOWN_RESOLVES_PER_PASS)
+  })
+})
+
+describe('resolveOneSatInscription', () => {
+  const TIP = 'c'.repeat(64)
+  const ORIGIN = 'd'.repeat(64)
+
+  const bareTxo = (outpoint: string) =>
+    JSON.stringify({ outpoint, satoshis: 1, origin: { outpoint }, data: null })
+
+  const inscribedTxo = (outpoint: string) =>
+    JSON.stringify({
+      outpoint,
+      origin: {
+        outpoint,
+        data: {
+          map: { name: 'Pixel Foxes #2437906', app: 'Bubblemint' },
+          insc: { file: { type: 'image/png' } },
+        },
+      },
+    })
+
+  it('walks past a satoshi the indexer only knows as its own origin', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes(`/api/txos/${TIP}_0`)) {
+        return new Response(bareTxo(`${TIP}_0`), { status: 200 })
+      }
+      if (url.includes(`/tx/${TIP}`)) {
+        return new Response(JSON.stringify({ vin: [{ txid: ORIGIN, vout: 7 }] }), {
+          status: 200,
+        })
+      }
+      if (url.includes(`/api/txos/${ORIGIN}_7`)) {
+        return new Response(inscribedTxo(`${ORIGIN}_7`), { status: 200 })
+      }
+      return new Response('null', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resolved = await resolveOneSatInscription(TIP, 0, 'main', 2)
+    vi.unstubAllGlobals()
+
+    expect(resolved?.origin).toBe(`${ORIGIN}_7`)
+    expect(resolved?.name).toBe('Pixel Foxes #2437906')
+    expect(resolved?.mimeType).toBe('image/png')
   })
 })
 

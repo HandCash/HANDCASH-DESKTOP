@@ -127,13 +127,32 @@ function persist(map: Map<string, ResolvedInscription>): void {
 }
 
 export function getResolvedInscription(outpoint: string): ResolvedInscription | null {
-  return load().get(outpoint) ?? null
+  const hit = load().get(outpoint) ?? null
+  if (!hit) return null
+  // A self-origin with no content is an indexer placeholder we must not treat
+  // as a final identity — it blocks re-walks and paints a broken image forever.
+  if (isPlaceholderResolution(outpoint, hit)) return null
+  return hit
+}
+
+/**
+ * True when a cached hit is only "this tip is its own origin" with no inscription
+ * metadata — the answer GorillaPool gives for unindexed 1-sat outputs.
+ */
+export function isPlaceholderResolution(
+  outpoint: string,
+  resolved: ResolvedInscription,
+): boolean {
+  const key = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  if (key(resolved.origin) !== key(outpoint)) return false
+  return !resolved.mimeType && (resolved.traits?.length ?? 0) === 0
 }
 
 export function rememberResolvedInscription(
   outpoint: string,
   resolved: ResolvedInscription,
 ): void {
+  if (isPlaceholderResolution(outpoint, resolved)) return
   const map = load()
   // Re-insert so a refreshed hit is treated as newest when we trim from the front.
   map.delete(outpoint)
@@ -163,7 +182,8 @@ export function shouldResolveInscription(
   now = Date.now(),
   retryMs = RESOLVE_RETRY_MS,
 ): boolean {
-  if (load().has(outpoint)) return false
+  const hit = load().get(outpoint)
+  if (hit && !isPlaceholderResolution(outpoint, hit)) return false
   const map = loadMisses()
   const missed = map.get(outpoint)
   if (missed != null && now - missed < retryMs) return false

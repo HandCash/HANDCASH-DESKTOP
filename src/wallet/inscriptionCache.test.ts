@@ -86,6 +86,19 @@ describe('inscriptionCache', () => {
     expect(cache.getResolvedInscription('aa.0')).not.toBeNull()
   })
 
+  it('ignores a self-origin placeholder so the indexer can be asked again', async () => {
+    const cache = await import('./inscriptionCache')
+    cache.rememberResolvedInscription('aa.0', {
+      origin: 'aa_0',
+      name: 'pixel foxes #1',
+      traits: [],
+      extras: [],
+    })
+
+    expect(cache.getResolvedInscription('aa.0')).toBeNull()
+    expect(cache.shouldResolveInscription('aa.0')).toBe(true)
+  })
+
   it('lists normally when the stored blob is corrupt', async () => {
     store.set('handcash.inscriptionResolution.v1', '{not json')
     const cache = await import('./inscriptionCache')

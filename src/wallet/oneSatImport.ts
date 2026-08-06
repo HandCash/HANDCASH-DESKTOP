@@ -203,7 +203,10 @@ function parseTraits(raw: unknown): CollectableTrait[] {
   return traits
 }
 
-function extractResolved(meta: GpTxo): ResolvedInscription | null {
+function extractResolved(
+  meta: GpTxo,
+  requestedOutpoint?: string,
+): ResolvedInscription | null {
   const originRaw =
     typeof meta.origin === 'string'
       ? meta.origin
@@ -219,6 +222,16 @@ function extractResolved(meta: GpTxo): ResolvedInscription | null {
   const map = (originData?.map ?? meta.data?.map ?? {}) as GpMap
   const insc = originData?.insc ?? meta.data?.insc
   const fileType = asString(insc?.file?.type)
+
+  // Unindexed 1-sats answer with themselves as origin and no inscription data.
+  // Adopting that invents a lineage the item does not have (404 image forever).
+  const hasIdentity = Boolean(
+    originData?.map ?? originData?.insc ?? meta.data?.map ?? meta.data?.insc,
+  )
+  if (requestedOutpoint && !hasIdentity) {
+    const key = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    if (key(origin) === key(requestedOutpoint)) return null
+  }
 
   const subTypeData =
     map.subTypeData && typeof map.subTypeData === 'object'
@@ -476,7 +489,7 @@ export async function resolveOneSatInscription(
 
     const meta = await fetchGpTxo(key, chain)
     if (meta) {
-      const resolved = extractResolved(meta)
+      const resolved = extractResolved(meta, key)
       if (resolved) return resolved
     }
 
@@ -497,7 +510,7 @@ export async function resolveOneSatInscription(
       if (seen.has(prevKey)) continue
       const prevMeta = await fetchGpTxo(prevKey, chain)
       if (prevMeta) {
-        const resolved = extractResolved(prevMeta)
+        const resolved = extractResolved(prevMeta, prevKey)
         if (resolved) return resolved
       }
       if (!next) next = { txid: vin.txid, vout: vin.vout! }
@@ -1126,6 +1139,20 @@ export async function importOneSatOrdinals(
       imported += ordinals.length
       outpoints.push(...ordinals.map((i) => i.outpoint))
       markOneSatImported(ordinals.map((i) => i.outpoint))
+      // Tags lose casing under the SDK validator; keep the display name where
+      // the inventory list already reads it from.
+      for (const item of ordinals) {
+        if (!item.name) continue
+        const op = item.outpoint.trim().toLowerCase()
+        if (getResolvedInscription(op)) continue
+        rememberResolvedInscription(op, {
+          origin: item.origin ?? op.replace(/\.(\d+)$/, '_$1'),
+          name: item.name,
+          ...(item.app ? { app: item.app } : {}),
+          traits: [],
+          extras: [],
+        })
+      }
     } catch (err) {
       markOneSatImportFailed(groupOps)
       failed += group.length
