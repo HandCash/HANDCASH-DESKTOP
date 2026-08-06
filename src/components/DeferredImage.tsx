@@ -20,7 +20,15 @@ function markFromElement(img: HTMLImageElement): 'ready' | 'error' | 'loading' {
   return 'error'
 }
 
-function frameIsNear(frame: HTMLElement, margin = 250): boolean {
+/** Load slightly ahead of the viewport. */
+const LOAD_MARGIN_PX = 250
+/**
+ * Release well behind it. The gap between the two is hysteresis: without it,
+ * a frame parked on the boundary would load and unload on every scroll tick.
+ */
+const RELEASE_MARGIN_PX = 1500
+
+function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
   const rect = frame.getBoundingClientRect()
   if (rect.width <= 0 && rect.height <= 0) return false
   return (
@@ -29,6 +37,25 @@ function frameIsNear(frame: HTMLElement, margin = 250): boolean {
     rect.right >= -margin &&
     rect.left <= (typeof window !== 'undefined' ? window.innerWidth : 0) + margin
   )
+}
+
+/**
+ * Decoded bitmaps live in native memory, not the JS heap, and ordinals are
+ * served at full resolution — a 2000px square costs ~16MB decoded. Android kills
+ * the WebView for that with no JS error and no heap warning, so the count of
+ * live images is worth having in the log when a crash is being chased.
+ */
+const LIVE_IMAGE_WARN = 40
+let liveImages = 0
+let warnedLive = false
+
+function noteImageLive(delta: 1 | -1): void {
+  liveImages += delta
+  if (liveImages > LIVE_IMAGE_WARN && !warnedLive) {
+    warnedLive = true
+    console.warn(`[images] ${liveImages} decoded images held at once`)
+  }
+  if (liveImages <= LIVE_IMAGE_WARN / 2) warnedLive = false
 }
 
 /**
@@ -71,45 +98,62 @@ export function DeferredImage({
   }, [src])
 
   useEffect(() => {
-    if (near) return
     const frame = frameRef.current
     if (!frame) return
 
+    let cancelled = false
+    const mark = (value: boolean) => {
+      if (!cancelled) setNear(value)
+    }
+
     // Android WebViews often never fire IntersectionObserver for elements that
     // were already on screen when observe() ran. Check first, then observe.
-    if (frameIsNear(frame)) {
-      setNear(true)
-      return
+    if (!near && frameIsNear(frame)) mark(true)
+
+    if (typeof IntersectionObserver === 'undefined') {
+      const fallbackTimer = window.setTimeout(() => mark(true), 350)
+      return () => {
+        cancelled = true
+        window.clearTimeout(fallbackTimer)
+      }
     }
 
-    let cancelled = false
-    const mark = () => {
-      if (!cancelled) setNear(true)
-    }
-
-    const observer =
-      typeof IntersectionObserver !== 'undefined'
-        ? new IntersectionObserver(
-            (entries) => {
-              if (entries.some((e) => e.isIntersecting)) {
-                mark()
-                observer?.disconnect()
-              }
-            },
-            { rootMargin: '250px' },
-          )
-        : null
-    observer?.observe(frame)
+    const loadObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) mark(true)
+      },
+      { rootMargin: `${LOAD_MARGIN_PX}px` },
+    )
+    // Dropping src frees the decoded bitmap; scrolling back re-fetches from cache.
+    const releaseObserver = new IntersectionObserver(
+      (entries) => {
+        if (entries.every((e) => !e.isIntersecting)) mark(false)
+      },
+      { rootMargin: `${RELEASE_MARGIN_PX}px` },
+    )
+    loadObserver.observe(frame)
+    releaseObserver.observe(frame)
 
     // Absolute fallback — a broken observer must never leave images on the skeleton.
-    const fallbackTimer = window.setTimeout(mark, 350)
+    const fallbackTimer = near ? null : window.setTimeout(() => mark(true), 350)
 
     return () => {
       cancelled = true
-      window.clearTimeout(fallbackTimer)
-      observer?.disconnect()
+      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
+      loadObserver.disconnect()
+      releaseObserver.disconnect()
     }
   }, [near, src])
+
+  useEffect(() => {
+    if (!near) setStatus('loading')
+  }, [near])
+
+  useEffect(() => {
+    if (status !== 'ready') return
+    noteImageLive(1)
+    return () => noteImageLive(-1)
+  }, [status])
 
   useEffect(() => {
     const img = imgRef.current

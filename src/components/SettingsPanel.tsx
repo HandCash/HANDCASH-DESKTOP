@@ -9,6 +9,7 @@ import {
   subscribeWalletSfx,
 } from '../wallet/soundPrefs'
 import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
+import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
@@ -354,7 +355,7 @@ export function SettingsPanel() {
                   type="button"
                   className="btn btn-ghost settings-check-btn"
                   data-aeon-part="upload-logs"
-                  disabled={uploadingLogs || !window.handcash?.uploadLogs}
+                  disabled={uploadingLogs}
                   onClick={() => {
                     playWalletSound('soft')
                     const url = setLogUploadUrl(logUploadUrl)
@@ -363,20 +364,15 @@ export function SettingsPanel() {
                       toastError('Set an upload URL first')
                       return
                     }
-                    if (!window.handcash?.uploadLogs) {
-                      toastError('Log upload unavailable')
-                      return
-                    }
                     setUploadingLogs(true)
-                    void window.handcash
-                      .uploadLogs(url)
+                    void shipAppLogs(url)
                       .then((result) => {
                         if (!result.ok) {
                           playWalletSound('error')
                           toastError('Upload failed', result.error)
                           return
                         }
-                        toastSuccess('Logs sent', `${result.bytes} bytes`)
+                        toastSuccess('Logs sent', 'bytes' in result ? `${result.bytes} bytes` : '')
                       })
                       .finally(() => setUploadingLogs(false))
                   }}

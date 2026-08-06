@@ -48,6 +48,9 @@ const listeners = new Set<Listener>()
 let state: NavState = { section: 'activity', child: null }
 
 function emit() {
+  // Breadcrumb: an OS-killed WebView logs nothing on its way out, so the last
+  // screen the user reached is what tells us where to look.
+  console.info(`[nav] ${state.section}${state.child ? `/${state.child.type}` : ''}`)
   for (const cb of listeners) cb(state)
 }
 

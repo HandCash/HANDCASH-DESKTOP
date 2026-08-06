@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.54] - 2026-08-06
+
+### Fixed
+
+- Ordinal images are released once they scroll well clear of the viewport.
+  Decoded bitmaps live in native memory rather than the JS heap, and ordinals are
+  served at full resolution, so a grid of them could get the WebView killed by
+  the OS while the JS heap still looked idle.
+
+### Added
+
+- Logs can be uploaded from Mobile, not just Desktop, and a recovered crash log
+  is sent automatically at boot when an upload URL is configured.
+- Navigation breadcrumbs and a warning past 40 simultaneously decoded images, so
+  a crash log shows which screen the app was on and how much it was holding.
+
 ## [1.2.53] - 2026-08-06
 
 ### Added

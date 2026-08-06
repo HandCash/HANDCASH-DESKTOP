@@ -6,6 +6,7 @@ import '@aeon-ui/panda/electron.css'
 import './styles/handcash.css'
 import { App } from './App'
 import { installAppLogCapture } from './wallet/appLog'
+import { shipPreviousSessionLogs } from './wallet/logShip'
 
 // Map HandCash brand tokens onto Aeon CSS vars (no parallel token sheet for Aeon).
 applyBrandPalette(
@@ -27,6 +28,8 @@ applyBrandPalette(
 )
 
 installAppLogCapture()
+// A crash log is only useful if it leaves the device on its own.
+void shipPreviousSessionLogs()
 
 const platform = window.handcash?.platform
 if (platform === 'darwin') {
