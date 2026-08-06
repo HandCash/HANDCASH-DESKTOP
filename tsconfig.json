@@ -27,7 +27,8 @@
       "@aeon-ui/panda/styled-system/recipes": [
         "./node_modules/aeon-ui-engine/packages/panda/styled-system/recipes/index.d.ts"
       ]
-    }
+    },
+    "experimentalDecorators": true
   },
-  "include": ["src"]
+  "include": ["src", "artifacts/brc156Covenant.json"]
 }

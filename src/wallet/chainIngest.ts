@@ -23,7 +23,10 @@ import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import type { MigrationItem } from './oneSatImport'
+import {
+  discoverHardenedTipsFromBeacons,
+  type MigrationItem,
+} from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
@@ -265,7 +268,11 @@ export async function refreshFromChainExclusive(
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
     try {
       const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
-      rememberLiveOneSatOutpoints(ingest.scan.utxos)
+      const hardenedTips = await discoverHardenedTipsFromBeacons(
+        ingest.scan.utxos,
+        active.chain,
+      )
+      rememberLiveOneSatOutpoints([...ingest.scan.utxos, ...hardenedTips])
       void listCollectables(active).catch((err) => {
         console.warn('[chain-ingest] collectables refresh failed', err)
       })

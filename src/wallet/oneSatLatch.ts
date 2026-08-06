@@ -4,8 +4,9 @@
  * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
  * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
  * the held tip's txid (so remittance can be built before the settle txid is known).
- * Full BOLT covenant Commit/Settle remains a future hardening path.
+ * Hardened Commit/Settle uses the scrypt-ts covenant in `src/contracts/brc156Covenant.ts`.
  */
+import { Hash, Utils } from '@bsv/sdk'
 
 export type ProvenanceVerifyResult = {
   proven: boolean
@@ -19,8 +20,11 @@ export const LATCH_TAG = 'latch:1sat' as const
 
 export const LATCH_SCHEMA_VERSION = 1 as const
 
+/** Hardened inductive latch state (Commit/Settle + originScriptHash binding). */
+export const LATCH_SCHEMA_HARDENED = 2 as const
+
 /**
- * Soft-latch P2PKH latch value ([BRC-156]).
+ * Soft-latch P2PKH latch value / hardened discovery beacon ([BRC-156]).
  * Exactly **2 satoshis** — never 1 (that is a tip) — so address scanners still
  * find a plain P2PKH latch while receivers can classify it without a script marker.
  */
@@ -28,6 +32,19 @@ export const LATCH_DUST_SATS = 2 as const
 
 /** Genesis parentLatch sentinel (all-zero outpoint) when bootstrapping from a legacy tip. */
 export const GENESIS_PARENT_LATCH = `${'0'.repeat(64)}_0` as const
+
+/** Immutable SHA-256 commitment to the origin locking script. */
+export function originScriptHash(scriptHex: string): string {
+  const normalized = scriptHex.trim()
+  if (!normalized || normalized.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(normalized)) {
+    throw new Error('Invalid origin locking script')
+  }
+  return Utils.toHex(Hash.sha256(Utils.toArray(normalized, 'hex')))
+}
+
+export function isValidOriginScriptHash(hash: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(hash.trim())
+}
 
 /** Relative outpoint refs for remittance built before settle txid is known. */
 export const RELATIVE_TIP = 'OUTPUT:0' as const
@@ -255,6 +272,22 @@ export type LatchState = {
   app?: string
   /** Content type of the inscription at origin, when the sender knows it. */
   mimeType?: string
+  /** Schema 2: `"hardened"` when using the consensus covenant. */
+  mode?: 'hardened'
+  /** Schema 2: current hardened proof/latch outpoint (`OUTPUT:N` allowed). */
+  latch?: string
+  /** Schema 2: 2-sat P2PKH discovery beacon (`OUTPUT:N` allowed). */
+  beacon?: string
+  /** Schema 2: delayed proof from the previous owner's Commit. */
+  proofOutpoint?: string
+  /** Schema 2: lowercase SHA-256 of the origin locking script. Immutable. */
+  originScriptHash?: string
+  /** Schema 2: HASH160 of the recipient identity public key. */
+  ownerKeyHash?: string
+  /** Schema 2: Commit transaction id for the current pair. */
+  commitTxid?: string
+  /** Schema 2: `"SELF"` or settle txid once known. */
+  settleTxid?: string
 }
 
 function pushData(bytes: number[]): string {
@@ -279,14 +312,55 @@ function utf8Bytes(text: string): number[] {
  * and never competes with the tip or the latch dust.
  */
 export function buildLatchStateScript(state: LatchState): string {
+  const schema = state.schema
+  const tip = isRelativeOutpointRef(state.tip)
+    ? state.tip.trim().toUpperCase()
+    : toUnderscoreOutpoint(state.tip)
   const payload: Record<string, unknown> = {
-    schema: state.schema,
+    schema,
     origin: toUnderscoreOutpoint(state.origin),
-    tip: isRelativeOutpointRef(state.tip)
-      ? state.tip.trim().toUpperCase()
-      : toUnderscoreOutpoint(state.tip),
+    tip,
     parentLatch: toUnderscoreOutpoint(state.parentLatch),
   }
+
+  if (schema >= LATCH_SCHEMA_HARDENED) {
+    if (!state.originScriptHash || !isValidOriginScriptHash(state.originScriptHash)) {
+      throw new Error('schema-2 latch state requires originScriptHash')
+    }
+    payload.mode = 'hardened'
+    payload.originScriptHash = state.originScriptHash.trim().toLowerCase()
+    if (!state.proofOutpoint || !isValidOutpoint(state.proofOutpoint)) {
+      throw new Error('schema-2 latch state requires proofOutpoint')
+    }
+    payload.proofOutpoint = toUnderscoreOutpoint(state.proofOutpoint)
+    if (state.latch) {
+      payload.latch = isRelativeOutpointRef(state.latch)
+        ? state.latch.trim().toUpperCase()
+        : toUnderscoreOutpoint(state.latch)
+    }
+    if (state.beacon) {
+      payload.beacon = isRelativeOutpointRef(state.beacon)
+        ? state.beacon.trim().toUpperCase()
+        : toUnderscoreOutpoint(state.beacon)
+    }
+    if (state.ownerKeyHash) {
+      if (!/^[0-9a-f]{40}$/i.test(state.ownerKeyHash.trim())) {
+        throw new Error('invalid ownerKeyHash')
+      }
+      payload.ownerKeyHash = state.ownerKeyHash.trim().toLowerCase()
+    }
+    if (state.commitTxid) {
+      if (state.commitTxid.trim().length !== 64) throw new Error('invalid commitTxid')
+      payload.commitTxid = state.commitTxid.trim().toLowerCase()
+    }
+    if (state.settleTxid) {
+      const s = state.settleTxid.trim()
+      if (s.toUpperCase() === 'SELF') payload.settleTxid = 'SELF'
+      else if (s.length !== 64) throw new Error('invalid settleTxid')
+      else payload.settleTxid = s.toLowerCase()
+    }
+  }
+
   if (state.name) payload.name = state.name.slice(0, 80)
   if (state.app) payload.app = state.app.slice(0, 40)
   if (state.mimeType) payload.mimeType = state.mimeType.slice(0, 60)
@@ -365,8 +439,57 @@ export function parseLatchStateScript(scriptHex: string): LatchState | null {
       ? toUnderscoreOutpoint(o.parentLatch)
       : GENESIS_PARENT_LATCH
 
+  const schema = typeof o.schema === 'number' ? o.schema : LATCH_SCHEMA_VERSION
+  const originScriptHash =
+    typeof o.originScriptHash === 'string' && isValidOriginScriptHash(o.originScriptHash)
+      ? o.originScriptHash.trim().toLowerCase()
+      : undefined
+  if (schema >= LATCH_SCHEMA_HARDENED && !originScriptHash) return null
+
+  const latch =
+    typeof o.latch === 'string'
+      ? isRelativeOutpointRef(o.latch)
+        ? o.latch.trim().toUpperCase()
+        : isValidOutpoint(o.latch)
+          ? toUnderscoreOutpoint(o.latch)
+          : undefined
+      : undefined
+
+  const beacon =
+    typeof o.beacon === 'string'
+      ? isRelativeOutpointRef(o.beacon)
+        ? o.beacon.trim().toUpperCase()
+        : isValidOutpoint(o.beacon)
+          ? toUnderscoreOutpoint(o.beacon)
+          : undefined
+      : undefined
+
+  const ownerKeyHash =
+    typeof o.ownerKeyHash === 'string' && /^[0-9a-f]{40}$/i.test(o.ownerKeyHash.trim())
+      ? o.ownerKeyHash.trim().toLowerCase()
+      : undefined
+
+  const proofOutpoint =
+    typeof o.proofOutpoint === 'string' &&
+    isValidOutpoint(o.proofOutpoint)
+      ? toUnderscoreOutpoint(o.proofOutpoint)
+      : undefined
+  if (schema >= LATCH_SCHEMA_HARDENED && !proofOutpoint) return null
+
+  const commitTxid =
+    typeof o.commitTxid === 'string' && o.commitTxid.trim().length === 64
+      ? o.commitTxid.trim().toLowerCase()
+      : undefined
+
+  let settleTxid: string | undefined
+  if (typeof o.settleTxid === 'string') {
+    const s = o.settleTxid.trim()
+    if (s.toUpperCase() === 'SELF') settleTxid = 'SELF'
+    else if (s.length === 64) settleTxid = s.toLowerCase()
+  }
+
   return {
-    schema: typeof o.schema === 'number' ? o.schema : LATCH_SCHEMA_VERSION,
+    schema,
     origin: toUnderscoreOutpoint(o.origin),
     tip,
     parentLatch,
@@ -376,6 +499,18 @@ export function parseLatchStateScript(scriptHex: string): LatchState | null {
       typeof o.mimeType === 'string' && o.mimeType.trim()
         ? o.mimeType.trim().slice(0, 60)
         : undefined,
+    ...(schema >= LATCH_SCHEMA_HARDENED
+      ? {
+          mode: 'hardened' as const,
+          originScriptHash,
+          proofOutpoint,
+          ...(latch ? { latch } : {}),
+          ...(beacon ? { beacon } : {}),
+          ...(ownerKeyHash ? { ownerKeyHash } : {}),
+          ...(commitTxid ? { commitTxid } : {}),
+          ...(settleTxid ? { settleTxid } : {}),
+        }
+      : {}),
   }
 }
 

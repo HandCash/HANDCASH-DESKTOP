@@ -9,6 +9,7 @@ import {
   isLatchedSendEnabled,
   isValidOutpoint,
   latchOutputTags,
+  originScriptHash,
   parseProvenanceV3,
   resolveLatchTipClaim,
   resolveOutpointRef,
@@ -22,6 +23,13 @@ const PARENT = 'dd'.repeat(32) + '_0'
 const SETTLE_TX = 'ee'.repeat(32)
 
 describe('BRC-156 latched provenance (soft-latch)', () => {
+  it('commits deterministically to the origin locking script', () => {
+    expect(originScriptHash('51')).toBe(
+      '4ae81572f06e1b88fd5ced7a1a000945432e83e1551e6f721ee9c00b8cc33260',
+    )
+    expect(() => originScriptHash('xyz')).toThrow(/invalid/i)
+  })
+
   it('parseProvenanceV3 rejects v2 and hybrid objects', () => {
     expect(parseProvenanceV3({ v: 2, origin: ORIGIN, tip: TIP, path: [TIP], beefB64: 'x' })).toBeNull()
     expect(

@@ -13,3 +13,7 @@ out/
 /httpServer.js
 /main.js
 /preload.js
+/artifacts/*
+!/artifacts/brc156Covenant.json
+scrypt.index.json
+tools/scrypt/node_modules/

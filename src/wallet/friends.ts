@@ -97,6 +97,25 @@ export function resolvePaymentAddress(recipient: string, chain: Chain): string {
   }
 }
 
+/**
+ * Return the recipient public key when the supplied target carries one.
+ *
+ * A bare P2PKH address deliberately returns null: its HASH160 cannot be
+ * reversed into the public key required by a hardened BRC-156 covenant. The
+ * send path then falls back to BRC-150 instead of pretending it hardened.
+ */
+export function identityKeyFromRecipient(recipient: string): string | null {
+  const value = recipient.trim()
+  if (!value) return null
+  const peer = tryParsePeerPayUri(value)
+  if (peer) return normalizeIdentityKey(peer.identityKey)
+  try {
+    return PublicKey.fromString(value).toString()
+  } catch {
+    return null
+  }
+}
+
 export function normalizeIdentityKey(identityKey: string): string {
   return identityKey.trim()
 }

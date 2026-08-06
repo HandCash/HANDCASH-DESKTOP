@@ -8,6 +8,7 @@ import {
 } from '../wallet/collectables'
 import {
   addressFromIdentityKey,
+  identityKeyFromRecipient,
   listFriends,
   resolvePaymentAddress,
   searchFriends,
@@ -54,6 +55,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [recipientQuery, setRecipientQuery] = useState('')
   const [to, setTo] = useState('')
   const [friendLabel, setFriendLabel] = useState<string | null>(null)
+  const [recipientIdentityKey, setRecipientIdentityKey] = useState<string | null>(null)
   const [showMatches, setShowMatches] = useState(false)
   const [stage, setStage] = useState<Stage>('edit')
   const sendingRef = useRef(false)
@@ -91,11 +93,13 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     setShowMatches(true)
     setTo(value.trim())
     setFriendLabel(null)
+    setRecipientIdentityKey(identityKeyFromRecipient(value))
 
     const peer = tryParsePeerPayUri(value)
     if (peer) {
       try {
         setTo(addressFromIdentityKey(peer.identityKey, chain))
+        setRecipientIdentityKey(peer.identityKey)
         setError(null)
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
@@ -108,6 +112,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
         try {
           const resolved = await resolveHandle(value)
           setTo(addressFromIdentityKey(resolved.identityKey, chain))
+          setRecipientIdentityKey(resolved.identityKey)
           setFriendLabel(resolved.display)
           setError(null)
         } catch (err) {
@@ -123,6 +128,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       setRecipientQuery(friend.label)
       setShowMatches(false)
       setTo(address)
+      setRecipientIdentityKey(friend.identityKey)
       setFriendLabel(friend.label)
       setError(null)
     } catch (err) {
@@ -140,6 +146,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       const result = await sendCollectable({
         outpoint: item.outpoint,
         toAddress: to,
+        recipientIdentityKey,
         name: item.name,
         origin: item.origin,
         app: item.app,

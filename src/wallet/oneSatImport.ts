@@ -17,7 +17,9 @@ import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'
 import {
   buildInternalizeCustomInstructions,
+  rebuildProvenanceV2FromBeef,
 } from './oneSatProvenance'
+import { rememberProvenVerdict } from './provenCache'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -38,7 +40,15 @@ import {
   findLatchStateForTip,
   isLatchDustSats,
   latchOutputTags,
+  parseLatchStateScript,
+  resolveOutpointRef,
 } from './oneSatLatch'
+import { verifyHardenedReceive, resolveAlternatingProofContext } from './oneSatHardenedLatch'
+import {
+  authenticityResultToVerdict,
+  verifyAuthenticityLadder,
+  verifyOriginScriptCommitment,
+} from './oneSatAuthenticity'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -291,7 +301,7 @@ async function fetchWocTx(txid: string, chain: Chain): Promise<WocTx | null> {
 /** Inputs probed per hop before the walk commits to descending. */
 const VIN_PROBE_LIMIT = 4
 
-async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
+export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
   // Prefer the toolbox provider: it has raw-transaction failover installed and
   // verifies the body hashes to the txid.
   try {
@@ -420,6 +430,297 @@ export async function isOneSatInscription(
 }
 
 /**
+ * Hardened tips are covenant locked, so an address UTXO query cannot see them.
+ * Their 2-sat P2PKH discovery beacon is in the same Settle transaction. Confirm
+ * schema-2 state and the actual one-sat output before synthesizing a candidate
+ * for normal BEEF internalization.
+ */
+const HARDENED_DISCOVERY_TTL_MS = 20_000
+const hardenedDiscoveryCache = new Map<
+  string,
+  { at: number; tips: LegacyUtxo[] }
+>()
+
+export async function discoverHardenedTipsFromBeacons(
+  utxos: LegacyUtxo[],
+  chain: Chain,
+): Promise<LegacyUtxo[]> {
+  const discovered: LegacyUtxo[] = []
+  const visibleTipTxids = new Set(
+    utxos
+      .filter((utxo) => utxo.satoshis === 1)
+      .map((utxo) => utxo.txid.trim().toLowerCase()),
+  )
+  for (const beacon of utxos) {
+    if (!isLatchDustSats(beacon.satoshis)) continue
+    // Soft-latch tips are already present in the same address scan.
+    if (visibleTipTxids.has(beacon.txid.trim().toLowerCase())) continue
+    const cacheKey = beacon.txid.trim().toLowerCase()
+    const cached = hardenedDiscoveryCache.get(cacheKey)
+    if (cached && Date.now() - cached.at < HARDENED_DISCOVERY_TTL_MS) {
+      discovered.push(...cached.tips)
+      continue
+    }
+    const hex = await fetchRawTxHex(beacon.txid, chain)
+    if (!hex) {
+      hardenedDiscoveryCache.set(cacheKey, { at: Date.now(), tips: [] })
+      continue
+    }
+
+    let tx: Transaction
+    try {
+      tx = Transaction.fromHex(hex)
+    } catch {
+      hardenedDiscoveryCache.set(cacheKey, { at: Date.now(), tips: [] })
+      continue
+    }
+    const outputScripts = tx.outputs.map((output) => ({
+      lockingScript: output.lockingScript?.toHex(),
+    }))
+    const txTips: LegacyUtxo[] = []
+
+    // Hardened settle: tip@0 (covenant) + beacon@1 (2-sat P2PKH) + proof@2 (covenant).
+    // Address scans see only the beacon; synthesize tip + proof for internalization.
+    for (const output of outputScripts) {
+      if (!output.lockingScript) continue
+      const state = parseLatchStateScript(output.lockingScript)
+      const beaconClaim = state?.beacon ?? state?.latch
+      if (state?.schema !== 2 || state.mode !== 'hardened' || !beaconClaim) continue
+      let claimedLatch: string
+      try {
+        claimedLatch = resolveOutpointRef(beaconClaim, beacon.outpoint)
+      } catch {
+        continue
+      }
+      if (
+        claimedLatch.toLowerCase().replace(/_(\d+)$/, '.$1') !==
+        beacon.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
+      ) {
+        continue
+      }
+      const tip = parseOutpoint(state.tip)
+      if (!tip || tip.txid.toLowerCase() === beacon.txid.toLowerCase()) continue
+      const settleHex = await fetchRawTxHex(tip.txid, chain)
+      if (!settleHex) continue
+      try {
+        const settle = Transaction.fromHex(settleHex)
+        if (settle.outputs[tip.vout]?.satoshis !== 1) continue
+      } catch {
+        continue
+      }
+      rememberResolvedInscription(`${tip.txid}.${tip.vout}`, {
+        origin: state.origin,
+        name: state.name,
+        app: state.app,
+        mimeType: state.mimeType,
+        traits: [],
+        extras: [],
+      })
+      txTips.push({
+        outpoint: `${tip.txid}.${tip.vout}`,
+        txid: tip.txid,
+        vout: tip.vout,
+        satoshis: 1,
+        height: beacon.height,
+      })
+      // Paired 3-sat proof — never fund-sweep; internalize to 1sat-latch.
+      if (state.latch) {
+        try {
+          const proofOp = resolveOutpointRef(state.latch, `${tip.txid}.0`)
+          const [pTxid, pVout] = proofOp.replace('_', '.').split('.')
+          if (pTxid && pVout != null) {
+            txTips.push({
+              outpoint: `${pTxid}.${pVout}`,
+              txid: pTxid,
+              vout: Number(pVout),
+              satoshis: 3,
+              height: beacon.height,
+            })
+          }
+        } catch {
+          // proof ref optional for tip listing
+        }
+      }
+    }
+
+    for (let tipVout = 0; tipVout < tx.outputs.length; tipVout++) {
+      if (tx.outputs[tipVout]?.satoshis !== 1) continue
+      const state = findLatchStateForTip(outputScripts, tipVout)
+      if (state?.schema !== 2 || state.mode !== 'hardened') continue
+      const discoveryRef = state.beacon ?? state.latch
+      if (!discoveryRef) continue
+      let claimedBeacon: string
+      try {
+        claimedBeacon = resolveOutpointRef(discoveryRef, beacon.outpoint)
+      } catch {
+        continue
+      }
+      if (
+        claimedBeacon.toLowerCase().replace(/_(\d+)$/, '.$1') !==
+        beacon.outpoint.toLowerCase().replace(/_(\d+)$/, '.$1')
+      ) {
+        continue
+      }
+      rememberResolvedInscription(`${beacon.txid}.${tipVout}`, {
+        origin: state.origin,
+        name: state.name,
+        app: state.app,
+        mimeType: state.mimeType,
+        traits: [],
+        extras: [],
+      })
+      txTips.push({
+        outpoint: `${beacon.txid}.${tipVout}`,
+        txid: beacon.txid,
+        vout: tipVout,
+        satoshis: 1,
+        height: beacon.height,
+      })
+      // Same-tx proof at OUTPUT:2
+      if (tx.outputs[2]?.satoshis === 3) {
+        txTips.push({
+          outpoint: `${beacon.txid}.2`,
+          txid: beacon.txid,
+          vout: 2,
+          satoshis: 3,
+          height: beacon.height,
+        })
+      }
+    }
+    hardenedDiscoveryCache.set(cacheKey, { at: Date.now(), tips: txTips })
+    discovered.push(...txTips)
+  }
+  return discovered
+}
+
+async function rebuildBrc150Identity(
+  txid: string,
+  vout: number,
+): Promise<ResolvedInscription | null> {
+  const services = getActiveWallet()?.services
+  if (!services?.getBeefForTxid) return null
+  try {
+    const beef = await services.getBeefForTxid(txid)
+    const held = `${txid}.${vout}`
+    const proof = rebuildProvenanceV2FromBeef(beef, held)
+    if (!proof) return null
+    rememberProvenVerdict(held, 'brc150')
+    return {
+      origin: proof.origin,
+      traits: [],
+      extras: [],
+    }
+  } catch (err) {
+    console.warn('[brc-150] receive ancestry rebuild failed', `${txid}.${vout}`, err)
+    return null
+  }
+}
+
+/**
+ * Attempt schema-2 hardened induction before BRC-150 / indexer.
+ * On success caches `brc156` + originScriptHash.
+ */
+async function tryHardenedReceiveIdentity(
+  txid: string,
+  vout: number,
+  chain: Chain,
+): Promise<ResolvedInscription | null> {
+  const hex = await fetchRawTxHex(txid, chain)
+  if (!hex) return null
+  let tx: Transaction
+  try {
+    tx = Transaction.fromHex(hex)
+  } catch {
+    return null
+  }
+  const outputs = tx.outputs.map((o) => ({
+    lockingScript: o.lockingScript?.toHex(),
+  }))
+  const state = findLatchStateForTip(outputs, vout)
+  if (!state || state.schema < 2 || state.mode !== 'hardened' || !state.commitTxid) {
+    return null
+  }
+
+  const commitHex = await fetchRawTxHex(state.commitTxid, chain)
+  if (!commitHex) return null
+
+  const wallet = getActiveWallet()
+  const recipientKey = wallet?.identityKey
+  if (!recipientKey) return null
+
+  let priorSettleTxHex: string | undefined
+  let proofCommitTxHex: string | undefined
+  if (state.proofOutpoint) {
+    const ctx = resolveAlternatingProofContext({
+      commitTxHex: commitHex,
+      proofOutpoint: state.proofOutpoint,
+    })
+    if (ctx) {
+      const [prior, proof] = await Promise.all([
+        fetchRawTxHex(ctx.priorSettleTxid, chain),
+        fetchRawTxHex(ctx.proofCommitTxid, chain),
+      ])
+      priorSettleTxHex = prior ?? undefined
+      proofCommitTxHex = proof ?? undefined
+    }
+  }
+  // Without the delayed-proof Tx set, fall through to BRC-150 / indexer.
+  if (!priorSettleTxHex || !proofCommitTxHex) return null
+
+  const bounded = verifyHardenedReceive({
+    settleTxHex: hex,
+    tipVout: vout,
+    recipientPublicKeyHex: recipientKey,
+    state,
+    commitTxHex: commitHex,
+    priorSettleTxHex,
+    proofCommitTxHex,
+    trustProvidedTxs: true,
+  })
+
+  let originPin = bounded
+  if (bounded.proven && state.originScriptHash) {
+    originPin = await verifyOriginScriptCommitment({
+      origin: state.origin,
+      expectedScriptHash: state.originScriptHash,
+      chain,
+    })
+  }
+
+  const ladder = verifyAuthenticityLadder({
+    heldOutpoint: `${txid}.${vout}`,
+    hardened: {
+      proven: Boolean(bounded.proven && originPin.proven),
+      reason: !bounded.proven
+        ? bounded.reason
+        : !originPin.proven
+          ? originPin.reason
+          : null,
+      originScriptHash: state.originScriptHash,
+    },
+  })
+  rememberProvenVerdict(`${txid}.${vout}`, authenticityResultToVerdict(ladder))
+
+  if (!ladder.proven) {
+    console.warn(
+      '[brc-156] hardened receive verify failed',
+      `${txid}.${vout}`,
+      ladder.reason,
+    )
+    return null
+  }
+
+  return {
+    origin: state.origin,
+    name: state.name,
+    app: state.app,
+    mimeType: state.mimeType,
+    traits: [],
+    extras: [],
+  }
+}
+
+/**
  * Split scanned UTXOs.
  * - funding: satoshis > 1 and not latch dust — safe to fund-sweep
  * - oneSats: cloud-known or GorillaPool-confirmed inscriptions (exactly 1 sat)
@@ -450,8 +751,18 @@ export async function classifyLegacyUtxos(
   // A cloud-named item is only an ordinal if the live UTXO is worth 1 satoshi.
   // Trusting the payload alone diverts real funds into basket `1sat`, where they
   // are neither swept nor counted toward spendable balance.
+  const hardenedTips = opts.fundingOnly
+    ? []
+    : await discoverHardenedTipsFromBeacons(utxos, chain)
+  const hardenedProofKeys = new Set(
+    hardenedTips
+      .filter((u) => u.satoshis === 3)
+      .map((u) => outpointKey(u.outpoint)),
+  )
+  const candidates = [...utxos, ...hardenedTips.filter((u) => u.satoshis === 1)]
+
   const scannedByOutpoint = new Map<string, LegacyUtxo>()
-  for (const u of utxos) {
+  for (const u of candidates) {
     scannedByOutpoint.set(outpointKey(u.outpoint), u)
   }
 
@@ -477,21 +788,31 @@ export async function classifyLegacyUtxos(
 
   // BRC-156 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
   // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
-  // latch paying us is therefore local proof that output 0 of the same
-  // transaction is an ordinal tip. It cannot tell us *which* origin the tip
-  // carries — that lives in sender-side remittance, not in the script — so the
-  // indexer is still needed for identity, just not to know an item arrived.
+  // latch paying us is therefore discovery evidence for a same-transaction
+  // tip. Schema 2 may synthesize that tip because its covenant script is not
+  // visible to an address scan; the bounded verifier decides authenticity.
   const latchTxids = new Set<string>()
-  for (const u of utxos) {
+  for (const u of candidates) {
     if (isLatchDustSats(u.satoshis)) latchTxids.add(u.txid.trim().toLowerCase())
   }
+  // Hardened 3-sat proofs discovered beside beacons — never fund-sweep.
+  for (const u of hardenedTips) {
+    if (u.satoshis === 3) latches.push(u)
+  }
 
-  for (const u of utxos) {
+  for (const u of candidates) {
     if (claimed.has(outpointKey(u.outpoint))) continue
 
     // Soft-latch dust: never a tip, never spendable funds.
     if (isLatchDustSats(u.satoshis)) {
       latches.push(u)
+      claimed.add(outpointKey(u.outpoint))
+      continue
+    }
+
+    // Never treat a discovered hardened proof as funding if it also appeared
+    // in the address scan (should not — covenant scripts are not P2PKH).
+    if (hardenedProofKeys.has(outpointKey(u.outpoint))) {
       claimed.add(outpointKey(u.outpoint))
       continue
     }
@@ -536,14 +857,19 @@ export async function classifyLegacyUtxos(
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
         if (!resolved && shouldResolveInscription(cacheKey, Date.now(), retryMs)) {
-          // BRC-156 first: a latched transfer names itself on chain, so this
-          // resolves in one fetch without any indexer having seen the transfer.
-          // The ancestry walk below is the bootstrap path for legacy unlatched
-          // tips only — it must never be what a latched receive waits on.
-          const fetched = latchProven
-            ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
-              (await resolveOneSatInscription(u.txid, u.vout, chain)))
-            : await resolveOneSatInscription(u.txid, u.vout, chain)
+          // Ordered authenticity/identity fallback:
+          // 1. schema-2 BRC-156 bounded verifier;
+          // 2. rebuild complete BRC-150 ancestry from wallet BEEF;
+          // 3. only then ask indexers/chain walkers, which remains unproven.
+          const hardened = await tryHardenedReceiveIdentity(u.txid, u.vout, chain)
+          const brc150 = hardened ? null : await rebuildBrc150Identity(u.txid, u.vout)
+          const fetched =
+            hardened ??
+            brc150 ??
+            (latchProven
+              ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
+                (await resolveOneSatInscription(u.txid, u.vout, chain)))
+              : await resolveOneSatInscription(u.txid, u.vout, chain))
           if (fetched) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
@@ -755,9 +1081,10 @@ export async function importOneSatLatches(
       const remittanceOutputs = []
       for (const latch of group) {
         const sats = sourceTx?.outputs?.[latch.vout]?.satoshis
-        if (typeof sats === 'number' && !isLatchDustSats(sats)) {
+        // Soft-latch dust is exactly 2; hardened proof covenant is exactly 3.
+        if (typeof sats === 'number' && !isLatchDustSats(sats) && sats !== 3) {
           console.warn(
-            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch dust (${sats})`,
+            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch/proof dust (${sats})`,
           )
           releaseOneSatImport([latch.outpoint])
           continue

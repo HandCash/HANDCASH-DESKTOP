@@ -5700,6 +5700,26 @@ a.app-details-host:hover {
   line-height: 1.25;
 }
 
+.collectable-authenticity {
+  width: fit-content;
+  margin: 0;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 78%, transparent);
+  border-radius: 999px;
+  color: var(--hc-muted);
+  background: color-mix(in srgb, var(--hc-panel) 88%, transparent);
+  font-size: 0.68rem;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+.collectable-authenticity-brc156,
+.collectable-authenticity-brc150 {
+  color: var(--hc-positive);
+  border-color: color-mix(in srgb, var(--hc-positive) 36%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-positive) 9%, var(--hc-panel));
+}
+
 .collectable-origin-value {
   display: block;
   width: 100%;

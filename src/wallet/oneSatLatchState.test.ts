@@ -11,6 +11,7 @@ import {
 
 const ORIGIN = `${'a'.repeat(64)}_0`
 const PARENT = `${'b'.repeat(64)}_1`
+const PROOF = `${'c'.repeat(64)}_1`
 
 describe('BRC-156 on-chain latch state', () => {
   it('round-trips state a receiver needs to name the item', () => {
@@ -35,6 +36,52 @@ describe('BRC-156 on-chain latch state', () => {
     })
   })
 
+  it('round-trips hardened schema-2 delayed-proof commitments', () => {
+    const script = buildLatchStateScript({
+      schema: 2,
+      mode: 'hardened',
+      origin: ORIGIN,
+      tip: 'OUTPUT:0',
+      latch: 'OUTPUT:2',
+      beacon: 'OUTPUT:1',
+      parentLatch: PARENT,
+      proofOutpoint: PROOF,
+      originScriptHash: 'ab'.repeat(32),
+      ownerKeyHash: 'cd'.repeat(20),
+      commitTxid: 'de'.repeat(32),
+      settleTxid: 'SELF',
+    })
+
+    expect(parseLatchStateScript(script)).toMatchObject({
+      schema: 2,
+      mode: 'hardened',
+      origin: ORIGIN,
+      tip: 'OUTPUT:0',
+      latch: 'OUTPUT:2',
+      beacon: 'OUTPUT:1',
+      parentLatch: PARENT,
+      proofOutpoint: PROOF,
+      originScriptHash: 'ab'.repeat(32),
+      ownerKeyHash: 'cd'.repeat(20),
+      commitTxid: 'de'.repeat(32),
+      settleTxid: 'SELF',
+    })
+  })
+
+  it('rejects hardened schema-2 without delayed proofOutpoint', () => {
+    expect(() =>
+      buildLatchStateScript({
+        schema: 2,
+        mode: 'hardened',
+        origin: ORIGIN,
+        tip: 'OUTPUT:0',
+        latch: 'OUTPUT:2',
+        parentLatch: PARENT,
+        originScriptHash: 'ab'.repeat(32),
+      }),
+    ).toThrow(/proofOutpoint/)
+  })
+
   it('is provably unspendable so it never lands in an address scan', () => {
     const script = buildLatchStateScript({
       schema: LATCH_SCHEMA_VERSION,
@@ -47,8 +94,6 @@ describe('BRC-156 on-chain latch state', () => {
   })
 
   it('survives a real transaction serialize and parse', () => {
-    // The receiver reads this back out of the settle tx, not out of local
-    // metadata, so it has to survive the wire round trip.
     const script = buildLatchStateScript({
       schema: LATCH_SCHEMA_VERSION,
       origin: ORIGIN,
@@ -85,8 +130,6 @@ describe('BRC-156 on-chain latch state', () => {
   })
 
   it('names a latched tip from the settle tx alone, with no indexer call', async () => {
-    // The point of latching: the transfer carries its own identity, so a
-    // receiver never waits on GorillaPool having indexed it.
     const state = buildLatchStateScript({
       schema: LATCH_SCHEMA_VERSION,
       origin: ORIGIN,

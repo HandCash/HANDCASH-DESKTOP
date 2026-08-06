@@ -167,6 +167,22 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>
           {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
+          <p
+            className={`collectable-authenticity collectable-authenticity-${item.authenticity}`}
+            title={
+              item.authenticity === 'brc156'
+                ? 'Hardened BRC-156 covenant induction verified in constant time'
+                : item.authenticity === 'brc150'
+                  ? 'BRC-150 full tip-to-origin BEEF path verified'
+                  : 'Identity is a chain/indexer claim and has not been cryptographically proven'
+            }
+          >
+            {item.authenticity === 'brc156'
+              ? 'Verified · BRC-156'
+              : item.authenticity === 'brc150'
+                ? 'Verified · BRC-150'
+                : 'Unverified identity'}
+          </p>
           <div className="actions collectable-details-actions">
             <button type="button" className="btn btn-primary btn-icon" onClick={startSend}>
               <SendIcon size={14} />

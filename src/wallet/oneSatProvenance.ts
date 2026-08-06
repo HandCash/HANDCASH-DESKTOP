@@ -15,6 +15,7 @@ import {
   type ProvenanceV3,
   type ProvenanceVerifyResult,
 } from './oneSatLatch'
+import { hasOrdEnvelope } from './ordinalOwnership'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -32,6 +33,142 @@ export type { ProvenanceVerifyResult, ProvenanceV3 } from './oneSatLatch'
 export { parseProvenanceV3, verifyProvenanceV3 } from './oneSatLatch'
 
 export type ProvenanceRemittance = ProvenanceV2 | ProvenanceV3
+
+/**
+ * Recover the actual one-sat spend path already present in a BEEF.
+ *
+ * This is the deliberately O(N) BRC-150 fallback. It runs on the sender when
+ * hardened BRC-156 is unavailable; receivers then verify the explicit path.
+ * Returning `[tip, origin]` for a deep transfer is not a shortcut — it is an
+ * invalid proof because the tip transaction does not directly spend genesis.
+ */
+export function deriveOneSatPathFromBeef(
+  beef: Beef,
+  tipOutpoint: string,
+  originOutpoint: string,
+): string[] | null {
+  const tip = toUnderscore(tipOutpoint).toLowerCase()
+  const origin = toUnderscore(originOutpoint).toLowerCase()
+  const pointRe = /^([0-9a-f]{64})_(\d+)$/
+  if (!pointRe.test(tip) || !pointRe.test(origin)) return null
+  if (tip === origin) return [tip]
+
+  const memo = new Map<string, string[] | null>()
+  const visiting = new Set<string>()
+
+  const walk = (point: string): string[] | null => {
+    if (point === origin) return [origin]
+    if (memo.has(point)) return memo.get(point) ?? null
+    if (visiting.has(point)) return null
+    visiting.add(point)
+
+    const match = pointRe.exec(point)
+    if (!match) return null
+    const tx = beef.findTxid(match[1]!)?.tx
+    if (!tx) return null
+
+    for (const input of tx.inputs) {
+      const parentTxid = String(input.sourceTXID).toLowerCase()
+      const parentVout = input.sourceOutputIndex
+      if (!/^[0-9a-f]{64}$/.test(parentTxid) || !Number.isSafeInteger(parentVout)) continue
+      const parentTx = beef.findTxid(parentTxid)?.tx
+      const parentOutput = parentTx?.outputs[parentVout]
+      if (!parentOutput || parentOutput.satoshis !== 1) continue
+      const parent = `${parentTxid}_${parentVout}`
+      const suffix = walk(parent)
+      if (suffix) {
+        const result = [point, ...suffix]
+        memo.set(point, result)
+        visiting.delete(point)
+        return result
+      }
+    }
+
+    visiting.delete(point)
+    memo.set(point, null)
+    return null
+  }
+
+  return walk(tip)
+}
+
+/**
+ * Rebuild a legacy BRC-150 path without trusting an indexer identity.
+ *
+ * Every candidate edge must be an exact one-sat input. If independent one-sat
+ * parents lead to different `ord` origins the sat path is ambiguous and this
+ * returns null rather than choosing whichever input an indexer happens to name.
+ */
+export function rebuildProvenanceV2FromBeef(
+  beef: Beef,
+  tipOutpoint: string,
+): ProvenanceV2 | null {
+  const tip = toUnderscore(tipOutpoint).toLowerCase()
+  const pointRe = /^([0-9a-f]{64})_(\d+)$/
+  if (!pointRe.test(tip)) return null
+
+  type Candidate = { origin: string; path: string[] }
+  const memo = new Map<string, Candidate | null>()
+  const visiting = new Set<string>()
+
+  const walk = (point: string): Candidate | null => {
+    if (memo.has(point)) return memo.get(point) ?? null
+    if (visiting.has(point)) return null
+    visiting.add(point)
+
+    const match = pointRe.exec(point)
+    const tx = match ? beef.findTxid(match[1]!)?.tx : undefined
+    const output = tx?.outputs[Number(match?.[2])]
+    if (!tx || !output || output.satoshis !== 1) {
+      visiting.delete(point)
+      memo.set(point, null)
+      return null
+    }
+
+    const parents: Candidate[] = []
+    for (const input of tx.inputs) {
+      const parentTxid = String(input.sourceTXID).toLowerCase()
+      const parentVout = input.sourceOutputIndex
+      const parentOutput = beef.findTxid(parentTxid)?.tx?.outputs[parentVout]
+      if (!parentOutput || parentOutput.satoshis !== 1) continue
+      const candidate = walk(`${parentTxid}_${parentVout}`)
+      if (candidate) parents.push(candidate)
+    }
+
+    const origins = new Set(parents.map((candidate) => candidate.origin))
+    let result: Candidate | null = null
+    if (origins.size === 1) {
+      const longest = parents
+        .slice()
+        .sort((a, b) => b.path.length - a.path.length)[0]!
+      result = { origin: longest.origin, path: [point, ...longest.path] }
+    } else if (origins.size === 0 && hasOrdEnvelope(output.lockingScript?.toHex())) {
+      result = { origin: point, path: [point] }
+    }
+
+    visiting.delete(point)
+    memo.set(point, result)
+    return result
+  }
+
+  const candidate = walk(tip)
+  if (!candidate) return null
+  const tipTxid = tip.slice(0, 64)
+  let binary: number[]
+  try {
+    binary = beef.toBinaryAtomic(tipTxid)
+  } catch {
+    return null
+  }
+  const provenance: ProvenanceV2 = {
+    v: 2,
+    origin: candidate.origin,
+    tip,
+    path: candidate.path,
+    beefB64: bytesToBase64(binary),
+  }
+  return verifyProvenanceV2(provenance, tip).proven ? provenance : null
+}
 
 function toUnderscore(outpoint: string): string {
   const n = outpoint.trim()
@@ -101,8 +238,71 @@ export function verifyProvenanceV2(
 
   try {
     const beef = Beef.fromBinary(base64ToBytes(p.beefB64))
-    const { valid } = beef.verifyValid(true)
+    // A txid-only entry is only legal when the receiver independently trusts
+    // that transaction. This verifier has no such trust input, so every path
+    // transaction must be present and structurally proven by the BEEF.
+    const { valid } = beef.verifyValid(false)
     if (!valid) return { proven: false, reason: 'beef structurally invalid' }
+
+    const tipTxid = p.tip.slice(0, 64).toLowerCase()
+    if (beef.atomicTxid && beef.atomicTxid.toLowerCase() !== tipTxid) {
+      return { proven: false, reason: 'AtomicBEEF subject is not the tip transaction' }
+    }
+    if (beef.atomicTxid && !beef.isAtomic(tipTxid)) {
+      return { proven: false, reason: 'AtomicBEEF dependency graph is invalid' }
+    }
+
+    const parsedPath: Array<{ normalized: string; txid: string; vout: number }> = []
+    for (const outpoint of p.path) {
+      const normalized = toUnderscore(outpoint).toLowerCase()
+      const match = /^([0-9a-f]{64})_(\d+)$/.exec(normalized)
+      if (!match) return { proven: false, reason: `invalid path outpoint: ${outpoint}` }
+      const vout = Number(match[2])
+      if (!Number.isSafeInteger(vout)) {
+        return { proven: false, reason: `invalid path output index: ${outpoint}` }
+      }
+      parsedPath.push({ normalized, txid: match[1]!, vout })
+    }
+
+    for (const point of parsedPath) {
+      const tx = beef.findTxid(point.txid)?.tx
+      if (!tx) return { proven: false, reason: `path transaction missing: ${point.txid}` }
+      const output = tx.outputs[point.vout]
+      if (!output) {
+        return { proven: false, reason: `path output missing: ${point.normalized}` }
+      }
+      if (output.satoshis !== 1) {
+        return { proven: false, reason: `path output is not one satoshi: ${point.normalized}` }
+      }
+    }
+
+    // `path` is ordered tip → origin. Every child transaction must spend the
+    // exact parent outpoint; merely including both txs in a valid BEEF does not
+    // prove the ordinal sat moved between them.
+    for (let i = 0; i + 1 < parsedPath.length; i++) {
+      const child = parsedPath[i]!
+      const parent = parsedPath[i + 1]!
+      if (child.txid === parent.txid) continue
+      const childTx = beef.findTxid(child.txid)?.tx
+      const spendsParent = childTx?.inputs.some(
+        (input) =>
+          String(input.sourceTXID).toLowerCase() === parent.txid &&
+          input.sourceOutputIndex === parent.vout,
+      )
+      if (!spendsParent) {
+        return {
+          proven: false,
+          reason: `${child.normalized} does not spend parent ${parent.normalized}`,
+        }
+      }
+    }
+
+    const origin = parsedPath[parsedPath.length - 1]!
+    const originTx = beef.findTxid(origin.txid)?.tx
+    const originScript = originTx?.outputs[origin.vout]?.lockingScript?.toHex()
+    if (!hasOrdEnvelope(originScript)) {
+      return { proven: false, reason: 'origin output has no valid ord envelope' }
+    }
   } catch (err) {
     return {
       proven: false,
@@ -154,15 +354,6 @@ export async function tryBuildProvenanceV2(args: {
   const [txid] = tipDot.split('.')
   if (!txid) return null
 
-  const path =
-    args.path && args.path.length > 0
-      ? args.path.map(toUnderscore)
-      : tip === origin
-        ? [tip]
-        : [tip, origin]
-
-  if (path[0] !== tip || path[path.length - 1] !== origin) return null
-
   try {
     if (!args.wallet.services?.getBeefForTxid) return null
     const beef = await args.wallet.services.getBeefForTxid(txid)
@@ -174,6 +365,14 @@ export async function tryBuildProvenanceV2(args: {
       bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
     }
     if (!bin.length) return null
+    const path =
+      args.path && args.path.length > 0
+        ? args.path.map(toUnderscore)
+        : deriveOneSatPathFromBeef(beef, tip, origin)
+    if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
+      console.warn('[brc-150] omit provenance — no complete one-sat path to origin')
+      return null
+    }
     const beefB64 = bytesToBase64(bin)
     const provenance: ProvenanceV2 = {
       v: 2,

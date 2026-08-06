@@ -12,6 +12,7 @@ import {
   Beef,
   P2PKH,
   PrivateKey,
+  Utils,
   type SignableTransaction,
   type Transaction,
 } from '@bsv/sdk'
@@ -19,6 +20,7 @@ import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
   contentUrlForOrigin,
+  discoverHardenedTipsFromBeacons,
   resolveOneSatInscription,
   type CollectableTrait,
   type ResolvedInscription,
@@ -29,9 +31,15 @@ import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   buildCollectableCustomInstructions,
+  rebuildProvenanceV2FromBeef,
   tryBuildProvenanceForSend,
-  verifyProvenance,
 } from './oneSatProvenance'
+import {
+  authenticityResultToVerdict,
+  verifyAuthenticityLadder,
+  verifyOriginScriptCommitment,
+  type AuthenticityResult,
+} from './oneSatAuthenticity'
 import {
   GENESIS_PARENT_LATCH,
   LATCH_DUST_SATS,
@@ -40,12 +48,22 @@ import {
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
   buildLatchStateScript,
+  findLatchStateForTip,
   isLatchedSendEnabled,
   latchOutputTags,
   resolveLatchTipClaim,
   toUnderscoreOutpoint,
   type LatchListing,
 } from './oneSatLatch'
+import {
+  canUseHardenedLatch,
+  isHardenedCovenantLockingScript,
+  isHardenedSendEnabled,
+  parseHardenedTipInstructions,
+  resolveAlternatingProofContext,
+  verifyHardenedReceive,
+} from './oneSatHardenedLatch'
+import { sendHardenedCollectable } from './oneSatHardenedSend'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
   liveOneSatKeys,
@@ -56,9 +74,10 @@ import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
+  getProvenVerdict,
   hasProvenVerdict,
-  isItemProven,
   rememberProvenVerdict,
+  type AuthenticityTier,
 } from './provenCache'
 import {
   getResolvedInscription,
@@ -87,8 +106,10 @@ export type Collectable = {
   collectionId?: string
   traits: CollectableTrait[]
   extras: CollectableTrait[]
-  /** BRC-150 provenance verified for this tip (false = claim / indexer only). */
+  /** Hardened BRC-156 or complete BRC-150 proof verified. */
   proven: boolean
+  /** Exact proof tier used for this verdict. */
+  authenticity: AuthenticityTier
 }
 
 type CollectablesListener = (items: Collectable[]) => void
@@ -142,6 +163,10 @@ function loadDurableList(): Collectable[] {
       traits: Array.isArray(item.traits) ? item.traits : [],
       extras: Array.isArray(item.extras) ? item.extras : [],
       proven: item.proven === true,
+      authenticity:
+        item.authenticity === 'brc156' || item.authenticity === 'brc150'
+          ? item.authenticity
+          : 'unproven',
     }))
   } catch {
     return []
@@ -168,6 +193,7 @@ function persistDurableList(items: Collectable[]): void {
           traits: item.traits,
           extras: item.extras,
           proven: item.proven,
+          authenticity: item.authenticity,
         })),
       }),
     )
@@ -281,7 +307,9 @@ function toCollectable(
   const app = tagValue(o.tags, 'app:') ?? resolved?.app
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
   // Provenance verdict comes from durable cache; detail view verifies on demand.
-  const proven = isItemProven(normalizeOutpoint(o.outpoint))
+  const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
+  const authenticity = verdict?.tier ?? 'unproven'
+  const proven = authenticity === 'brc156' || authenticity === 'brc150'
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -296,6 +324,7 @@ function toCollectable(
     traits: resolved?.traits ?? [],
     extras: resolved?.extras ?? [],
     proven,
+    authenticity,
   }
 }
 
@@ -353,8 +382,9 @@ let liveScan: Promise<void> | null = null
 function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
   if (liveScan != null) return
   liveScan = scanLegacyAddress(wallet)
-    .then((scan) => {
-      rememberLiveOneSatOutpoints(scan.utxos)
+    .then(async (scan) => {
+      const hardened = await discoverHardenedTipsFromBeacons(scan.utxos, wallet.chain)
+      rememberLiveOneSatOutpoints([...scan.utxos, ...hardened])
       // The rows on screen were filtered against a stale set (or none) — list
       // again now that the chain has answered, so ghosts leave without a tap.
       void listCollectables(wallet)
@@ -480,56 +510,193 @@ let listInFlight: Promise<Collectable[]> | null = null
 const LIST_TIMEOUT_MS = 20_000
 
 /**
- * Verify one tip's BRC-150 remittance and remember the verdict.
+ * Verify one tip's authenticity ladder and remember the verdict.
  *
- * Scoped to a single outpoint: remittance holds the BEEF (~400k chars) that
- * proves tip → origin. Never pull that for a whole basket at once.
+ * Order: BRC-156 hardened bounded proof → BRC-150 v2 → unproven.
+ * Scoped to a single outpoint so remittance BEEF never loads for a whole basket.
  */
 export async function verifyItemAuthenticity(
   outpoint: string,
   originTag: string,
   active?: ActiveWallet | null,
-): Promise<boolean> {
+): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
-  if (hasProvenVerdict(target)) return isItemProven(target)
+  const cached = getProvenVerdict(target)
+  if (cached) {
+    return {
+      tier: cached.tier,
+      proven: cached.tier === 'brc156' || cached.tier === 'brc150',
+      reason: cached.tier === 'unproven' ? 'No cryptographic proof was available' : null,
+      originScriptHash: cached.originScriptHash,
+    }
+  }
 
   const wallet = active ?? getActiveWallet()
   const tag = originTag.trim().replace(/_(\d+)$/, '.$1')
-  if (!wallet || !tag) return false
+  if (!wallet || !tag) {
+    return {
+      tier: 'unproven',
+      proven: false,
+      reason: !wallet ? 'Wallet locked' : 'Origin missing',
+    }
+  }
 
   try {
-    const result = await wallet.wallet.listOutputs({
+    const listed = await wallet.wallet.listOutputs({
       basket: '1sat',
       tags: [`origin:${tag}`],
       tagQueryMode: 'all',
       limit: 10,
       includeCustomInstructions: true,
+      include: 'locking scripts',
       seekPermission: false,
     })
-    const match = (result.outputs ?? []).find(
+    const match = (listed.outputs ?? []).find(
       (o) => normalizeOutpoint(o.outpoint) === target,
     )
-    if (!match) return false
+    if (!match) {
+      return { tier: 'unproven', proven: false, reason: 'Collectable output not found' }
+    }
 
-    // BEEF parse + verifyValid is sync CPU on the main thread — yield first.
     await yieldToUi()
+
+    // 1) Hardened schema-2 when settle state + commit are available.
+    let hardened: {
+      proven: boolean
+      reason: string | null
+      originScriptHash?: string
+    } | null = null
+    const tipTxid = target.split('.')[0]
+    const tipVout = Number(target.split('.')[1])
+    const hardenedMeta = parseHardenedTipInstructions(match.customInstructions)
+    if (
+      tipTxid &&
+      Number.isInteger(tipVout) &&
+      (hardenedMeta || isHardenedCovenantLockingScript(match.lockingScript)) &&
+      wallet.services?.getBeefForTxid
+    ) {
+      try {
+        const settleBeef = await wallet.services.getBeefForTxid(tipTxid)
+        const settleTx = settleBeef.findAtomicTransaction(tipTxid)
+        if (settleTx) {
+          const outputs = settleTx.outputs.map((o) => ({
+            lockingScript: o.lockingScript?.toHex(),
+          }))
+          const state = findLatchStateForTip(outputs, tipVout)
+          if (state?.schema === 2 && state.mode === 'hardened' && state.commitTxid) {
+            const commitBeef = await wallet.services.getBeefForTxid(state.commitTxid)
+            const commitTx = commitBeef.findAtomicTransaction(state.commitTxid)
+            if (commitTx) {
+              let priorSettleTxHex: string | undefined
+              let proofCommitTxHex: string | undefined
+              if (state.proofOutpoint) {
+                const ctx = resolveAlternatingProofContext({
+                  commitTxHex: commitTx.toHex(),
+                  proofOutpoint: state.proofOutpoint,
+                })
+                if (ctx && wallet.services?.getBeefForTxid) {
+                  try {
+                    const [priorBeef, proofBeef] = await Promise.all([
+                      wallet.services.getBeefForTxid(ctx.priorSettleTxid),
+                      wallet.services.getBeefForTxid(ctx.proofCommitTxid),
+                    ])
+                    priorSettleTxHex = priorBeef
+                      .findAtomicTransaction(ctx.priorSettleTxid)
+                      ?.toHex()
+                    proofCommitTxHex = proofBeef
+                      .findAtomicTransaction(ctx.proofCommitTxid)
+                      ?.toHex()
+                  } catch {
+                    // Fall through — ladder continues with BRC-150.
+                  }
+                }
+              }
+              if (!priorSettleTxHex || !proofCommitTxHex) {
+                hardened = {
+                  proven: false,
+                  reason: 'alternating proof context unavailable',
+                }
+              } else {
+                const bounded = verifyHardenedReceive({
+                  settleTxHex: settleTx.toHex(),
+                  tipVout,
+                  recipientPublicKeyHex: wallet.identityKey,
+                  state,
+                  commitTxHex: commitTx.toHex(),
+                  priorSettleTxHex,
+                  proofCommitTxHex,
+                  trustProvidedTxs: true,
+                })
+                if (bounded.proven && state.originScriptHash) {
+                  const pin = await verifyOriginScriptCommitment({
+                    origin: state.origin,
+                    expectedScriptHash: state.originScriptHash,
+                    chain: wallet.chain,
+                  })
+                  hardened = {
+                    proven: pin.proven,
+                    reason: pin.reason,
+                    originScriptHash: state.originScriptHash,
+                  }
+                } else {
+                  hardened = bounded
+                }
+              }
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[brc-156] authenticity verify failed', target, err)
+      }
+    }
+
+    // 2) BRC-150 remittance / BEEF rebuild.
     const custom = parseCustom(match.customInstructions)
-    const proven = verifyProvenance(custom.provenance, target).proven
-    rememberProvenVerdict(target, proven)
-    return proven
+    let provenance = custom.provenance
+    if (provenance == null && wallet.services?.getBeefForTxid) {
+      try {
+        if (tipTxid) {
+          const beef = await wallet.services.getBeefForTxid(tipTxid)
+          provenance = rebuildProvenanceV2FromBeef(beef, target)
+        }
+      } catch (err) {
+        console.warn('[brc-150] legacy ancestry rebuild failed', target, err)
+      }
+    }
+    const authenticity = verifyAuthenticityLadder({
+      heldOutpoint: target,
+      hardened,
+      provenance,
+      indexerResolved: true,
+    })
+    rememberProvenVerdict(target, authenticityResultToVerdict(authenticity))
+    return authenticity
   } catch (err) {
     console.warn('[collectables] authenticity check failed', err)
-    return false
+    return {
+      tier: 'unproven',
+      proven: false,
+      reason: err instanceof Error ? err.message : String(err),
+    }
   }
 }
 
-function applyProvenFlag(outpoint: string, proven: boolean): void {
-  if (!proven) return
+function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): void {
   const target = normalizeOutpoint(outpoint)
-  if (!cachedCollectables.some((c) => c.outpoint === target && !c.proven)) return
+  if (
+    !cachedCollectables.some(
+      (c) =>
+        c.outpoint === target &&
+        (c.proven !== result.proven || c.authenticity !== result.tier),
+    )
+  ) {
+    return
+  }
   setCollectablesCache(
     cachedCollectables.map((c) =>
-      c.outpoint === target ? { ...c, proven: true } : c,
+      c.outpoint === target
+        ? { ...c, proven: result.proven, authenticity: result.tier }
+        : c,
     ),
   )
 }
@@ -698,7 +865,7 @@ export async function getCollectable(
 
   if (!hasProvenVerdict(target)) {
     void verifyItemAuthenticity(target, item.origin, wallet)
-      .then((proven) => applyProvenFlag(target, proven))
+      .then((result) => applyAuthenticityResult(target, result))
       .catch(() => {})
   }
 
@@ -734,6 +901,8 @@ function assertOrdinalIsDeviceLocked(
   wallet: ActiveWallet,
 ): void {
   if (!lockingScript) return
+  // Hardened covenant tips are owned by the identity key, not a P2PKH template.
+  if (isHardenedCovenantLockingScript(lockingScript)) return
   if (!scriptPaysAddress(lockingScript, wallet.address)) {
     throw new Error(
       'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.',
@@ -789,6 +958,8 @@ async function buildInputBeefForSpends(
 /**
  * BRC-100 only auto-signs the wallet's own BRC-29 change, so ordinal / latch
  * inputs come back as a signable transaction for us to unlock with the root key.
+ *
+ * Hardened covenant tips MUST NOT use the P2PKH unlock template.
  */
 async function signOrdinalTransfer(args: {
   wallet: ActiveWallet
@@ -819,6 +990,18 @@ async function signOrdinalTransfer(args: {
   }
   if (!unsigned || vins.length === 0) {
     throw new Error('Collectable input missing from the signable transaction')
+  }
+
+  for (const vin of vins) {
+    const input = unsigned.inputs[vin]!
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    const locking =
+      input.sourceTransaction?.outputs[input.sourceOutputIndex]?.lockingScript?.toHex()
+    if (isHardenedCovenantLockingScript(locking)) {
+      throw new Error(
+        'This collectable uses a hardened BRC-156 covenant and cannot be spent with a P2PKH unlock. Use the hardened Commit/Settle send path.',
+      )
+    }
   }
 
   const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
@@ -922,10 +1105,16 @@ async function relinquishSpentOutputs(
  * BRC-150 v2 remittance on the tip (not structural v3). Ordinal sat stays on
  * output 0 (`randomizeOutputs: false`). Fees are funded from the default change
  * basket.
+ *
+ * Hardened (BRC-156 schema 2): when `recipientIdentityKey` is present, Commit +
+ * Settle (+ 2-sat P2PKH beacon) via noSend/sendWith. Bare addresses fall through
+ * to the soft / BRC-150 path below.
  */
 export async function sendCollectable(args: {
   outpoint: string
   toAddress: string
+  /** Enables hardened BRC-156; a bare address intentionally falls back to BRC-150. */
+  recipientIdentityKey?: string | null
   name?: string
   origin?: string
   app?: string
@@ -952,7 +1141,7 @@ export async function sendCollectable(args: {
     includeTags: true,
     // Locking script and satoshis are all this needs; remittance BEEF for every
     // held item would be tens of megabytes on a full wallet.
-    includeCustomInstructions: false,
+    includeCustomInstructions: true,
     include: 'locking scripts',
     seekPermission: false,
   })
@@ -997,6 +1186,96 @@ export async function sendCollectable(args: {
         .filter((txid): txid is string => !!txid),
     ),
   ]
+
+  // Hardened path — identity key required. Bare address falls through.
+  // Soft-latch remains live until the alternating createAction bridge ships.
+  if (
+    isHardenedSendEnabled() &&
+    canUseHardenedLatch({ publicKey: args.recipientIdentityKey })
+  ) {
+    let originLockingScriptHex: string | undefined
+    let legacyParentOutpoint: string | undefined
+    const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
+    if (!tipIsCovenant) {
+      const tipTx = Beef.fromBinary(inputBEEF).findTxid(outpoint.split('.')[0]!)?.tx
+      const parentIn = tipTx?.inputs[0]
+      if (parentIn?.sourceTXID != null) {
+        legacyParentOutpoint = `${String(parentIn.sourceTXID)}_${parentIn.sourceOutputIndex}`
+      }
+      const [originTxid, originVoutRaw] = origin.split(/[_.]/)
+      const originVout = Number(originVoutRaw)
+      if (originTxid && Number.isInteger(originVout) && wallet.services?.getBeefForTxid) {
+        try {
+          const originBeef = await wallet.services.getBeefForTxid(originTxid)
+          originLockingScriptHex = originBeef
+            .findTxid(originTxid)
+            ?.tx?.outputs[originVout]?.lockingScript?.toHex()
+        } catch (err) {
+          console.warn('[collectables] origin script fetch failed', err)
+        }
+      }
+      if (!originLockingScriptHex) {
+        const custom = parseCustom(match.customInstructions)
+        const prov = custom.provenance as { beefB64?: string; path?: string[] } | undefined
+        if (typeof prov?.beefB64 === 'string') {
+          try {
+            const bin = Utils.toArray(prov.beefB64, 'base64')
+            const beef = Beef.fromBinary(bin)
+            originLockingScriptHex = beef
+              .findTxid(originTxid!)
+              ?.tx?.outputs[originVout]?.lockingScript?.toHex()
+          } catch {
+            // Fall through — sendHardenedCollectable will require the script.
+          }
+        }
+      }
+    }
+    try {
+      const result = await sendHardenedCollectable({
+        wallet,
+        outpoint,
+        recipientIdentityKey: args.recipientIdentityKey!.trim(),
+        toAddress: to,
+        origin,
+        name,
+        app,
+        mimeType: item?.mimeType,
+        tipLockingScript: match.lockingScript,
+        tipCustomInstructions: match.customInstructions,
+        priorProofOutpoint: priorLatch?.outpoint ?? null,
+        priorProofLockingScript: priorLatch?.lockingScript,
+        originLockingScriptHex,
+        legacyParentOutpoint,
+        inputBEEF,
+        knownTxids,
+        buildInputBeefForSpends,
+        normalizeOutpoint,
+        formatSendError,
+        isAlreadySpentInputError,
+        releaseStaleSpendableOutputs,
+      })
+      markItemsSent([
+        { outpoint, txid: result.txid },
+        ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid: result.txid }] : []),
+      ])
+      invalidateLiveOneSatOutpoints()
+      await relinquishSpentOutputs(wallet, [
+        { outpoint, basket: '1sat' },
+        ...(priorLatch
+          ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
+          : []),
+      ])
+      setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
+      scheduleHistoryBackupPush('sendCollectable')
+      void listCollectables(wallet).catch((err) => {
+        console.warn('[collectables] post-send refresh failed', err)
+      })
+      return result
+    } catch (err) {
+      if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+      throw formatSendError(err)
+    }
+  }
 
   const provenance = await tryBuildProvenanceForSend({
     tipOutpoint: outpoint,

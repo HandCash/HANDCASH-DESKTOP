@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.82] - 2026-08-06
+
+### Added
+
+- **Authenticity ladder** — collectables evaluate BRC-156 hardened → BRC-150 v2 →
+  indexer (always `unproven`). Versioned proven cache + UI badge.
+- **Complete BRC-150 receive path** — full tip→origin path, AtomicBEEF subject,
+  `ord` envelope check; receive can rebuild from wallet BEEF before indexer.
+- **Clean-room BRC-156 alternating delayed-proof covenant** (`scrypt-ts`) with
+  Tx1→Tx6 script-exec tests and bounded receive verifier. Schema-2 latch state
+  uses `proofOutpoint` (not a sliding grandparent window).
+
+### Changed
+
+- Soft-latch remains the **live send** path. Hardened wallet send stays gated
+  (`isHardenedSendEnabled() === false`) until the createAction unlock bridge
+  lands — no false O(1) hardened-send claim.
+- Spec (`docs/bsva/brcs/tokens/0156.md`) documents alternating delayed proofs
+  and rejects marker+CHECKSIG / sliding-window forgeries.
+
 ## [1.2.81] - 2026-08-06
 
 ### Changed

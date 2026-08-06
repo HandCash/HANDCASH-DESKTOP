@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
-import { p2pkhScriptHex, scriptPaysAddress } from './ordinalOwnership'
+import { hasOrdEnvelope, p2pkhScriptHex, scriptPaysAddress } from './ordinalOwnership'
 
 const ADDRESS = PrivateKey.fromRandom().toAddress()
 const OTHER = PrivateKey.fromRandom().toAddress()
@@ -39,5 +39,10 @@ describe('ordinal ownership', () => {
   it('rejects empty or missing scripts', () => {
     expect(scriptPaysAddress(undefined, ADDRESS)).toBe(false)
     expect(scriptPaysAddress('', ADDRESS)).toBe(false)
+  })
+
+  it('recognizes a complete ord envelope and rejects a truncated one', () => {
+    expect(hasOrdEnvelope(ORD_ENVELOPE)).toBe(true)
+    expect(hasOrdEnvelope(ORD_ENVELOPE.slice(0, -2))).toBe(false)
   })
 })
