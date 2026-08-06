@@ -33,6 +33,11 @@ import {
   allowEmptyLocalHistoryPull,
   decideEmptyHistoryOverwrite,
 } from './historyEmptyGuard'
+import {
+  backupBlockedReason,
+  closeBackupAttempt,
+  openBackupAttempt,
+} from './backupWatchdog'
 
 let historyDirty = false
 let pushTimer: ReturnType<typeof setTimeout> | null = null
@@ -231,11 +236,21 @@ async function flushHistoryBackupPush(reason: string): Promise<void> {
       await autoPushHistoryBackupIfConfigured(password, { reason, allowEmptyPull: false })
       return
     }
-    // No cloud URL — still write an immutable local UTXO snapshot.
+    // No cloud URL — still write an immutable local UTXO snapshot. Same Argon2id
+    // cost as a cloud push, so it answers to the same crash-loop guard.
+    const blocked = backupBlockedReason()
+    if (blocked) {
+      const { appendAppLog } = await import('./appLog')
+      appendAppLog('info', `[utxo-archive] skip local snapshot (${reason}) — ${blocked}`)
+      return
+    }
+    openBackupAttempt()
     try {
       const { createBrc39BackupBytes } = await import('./historyBackup')
-      await createBrc39BackupBytes(password)
+      await createBrc39BackupBytes(password, { passwordAlreadyVerified: true })
+      closeBackupAttempt(true)
     } catch (err) {
+      closeBackupAttempt(false)
       try {
         const { appendAppLog } = await import('./appLog')
         const msg = err instanceof Error ? err.message : String(err)
@@ -280,8 +295,16 @@ export async function autoPushHistoryBackupIfConfigured(
     /* ignore */
   }
   if (!hasDeviceLinkBackupUrl()) return
+
+  const { appendAppLog } = await import('./appLog')
+  const blocked = backupBlockedReason()
+  if (blocked) {
+    appendAppLog('info', `[cloud-backup] skip auto-sync (${reason}) — ${blocked}`)
+    return
+  }
+
+  let attemptOpen = false
   try {
-    const { appendAppLog } = await import('./appLog')
     appendAppLog('info', `[cloud-backup] auto-sync starting (${reason})`)
     await Promise.race([
       (async () => {
@@ -315,19 +338,26 @@ export async function autoPushHistoryBackupIfConfigured(
           return
         }
 
-        await uploadBrc39Backup(password)
+        // Marked durably before the export: if the app dies inside Argon2id,
+        // the next launch sees an unclosed attempt and backs off instead of
+        // repeating the crash.
+        openBackupAttempt()
+        attemptOpen = true
+        await uploadBrc39Backup(password, { passwordAlreadyVerified: true })
+        closeBackupAttempt(true)
+        attemptOpen = false
         await uploadFriendsBackup()
         historyDirty = false
       })(),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('auto-sync timed out')), 45_000),
+        setTimeout(() => reject(new Error('auto-sync timed out')), 180_000),
       ),
     ])
     appendAppLog('info', `[cloud-backup] auto-sync ok (${reason})`)
   } catch (err) {
+    if (attemptOpen) closeBackupAttempt(false)
     const msg = err instanceof Error ? err.message : String(err)
     try {
-      const { appendAppLog } = await import('./appLog')
       appendAppLog('warn', `[cloud-backup] auto-sync failed (${reason}): ${msg}`)
     } catch {
       /* ignore */

@@ -4,12 +4,13 @@
  * Not chainIngest. See `layers.ts`.
  */
 import {
-  exportBRC39,
+  exportBRC38Json,
   importBRC39,
   type BRC38ImportResult,
   type StorageProvider,
 } from '@bsv/wallet-toolbox-client'
 import { appendAppLog } from './appLog'
+import { encryptBrc39Document } from './brc39Encrypt'
 import {
   getHistoryBackupPrefs,
   historyBackupObjectUrl,
@@ -47,15 +48,30 @@ async function withActiveStorageProvider<T>(
   )
 }
 
+export type CreateBrc39Opts = {
+  /**
+   * Skip the vault re-check. The session password was already proven at unlock,
+   * and `revealRootKeyHex` costs a second 210k-iteration PBKDF2 on the UI thread
+   * for no extra safety on automatic paths.
+   */
+  passwordAlreadyVerified?: boolean
+}
+
 /** Verify unlock password, then export canonical BRC-39 bytes (AES-256-GCM + Argon2id). */
-export async function createBrc39BackupBytes(password: string): Promise<Uint8Array> {
-  await revealRootKeyHex(password)
+export async function createBrc39BackupBytes(
+  password: string,
+  opts: CreateBrc39Opts = {},
+): Promise<Uint8Array> {
+  if (!opts.passwordAlreadyVerified) await revealRootKeyHex(password)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
-  const bytes = await withActiveStorageProvider((storage, identityKey) =>
-    exportBRC39(storage, identityKey, password),
+
+  // Dump and encrypt as two steps so the Argon2id half can run in a worker.
+  const json = await withActiveStorageProvider((storage, identityKey) =>
+    exportBRC38Json(storage, identityKey),
   )
-  const out = asArrayBufferBytes(bytes)
+  appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
+  const out = asArrayBufferBytes(await encryptBrc39Document(json, password))
   // Every export is also a write-once on-device snapshot (never overwritten).
   await archiveBrc39Locally({
     identityKey: active.identityKey,
@@ -103,14 +119,20 @@ export async function importBrc39FromFile(
   return restoreBrc39BackupBytes(buf, password, 'merge')
 }
 
-export async function uploadBrc39Backup(password: string): Promise<{
+export async function uploadBrc39Backup(
+  password: string,
+  opts: CreateBrc39Opts = {},
+): Promise<{
   url: string
   exportedAt: number
 }> {
-  return runHistoryReplica(() => uploadBrc39BackupExclusive(password))
+  return runHistoryReplica(() => uploadBrc39BackupExclusive(password, opts))
 }
 
-async function uploadBrc39BackupExclusive(password: string): Promise<{
+async function uploadBrc39BackupExclusive(
+  password: string,
+  opts: CreateBrc39Opts,
+): Promise<{
   url: string
   exportedAt: number
 }> {
@@ -119,7 +141,7 @@ async function uploadBrc39BackupExclusive(password: string): Promise<{
 
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)
-  const bytes = asArrayBufferBytes(await createBrc39BackupBytes(password))
+  const bytes = asArrayBufferBytes(await createBrc39BackupBytes(password, opts))
   const exportedAt = Date.now()
   appendAppLog('info', `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url}`)
 

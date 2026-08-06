@@ -8,6 +8,7 @@ import {
   uploadBrc39Backup,
 } from '../wallet/historyBackup'
 import type { LocalBrc39ArchiveMeta } from '../wallet/brc39LocalArchive'
+import { clearBackupBackoff } from '../wallet/backupWatchdog'
 import { getActiveWallet } from '../wallet/session'
 import {
   displayHistoryBackupBaseUrl,
@@ -141,6 +142,8 @@ export function HistoryBackupPanel() {
     setBusy('upload')
     try {
       ensureSuggestedHistoryBackupUrl()
+      // The operator asked for this one — never make them wait out a backoff.
+      clearBackupBackoff()
       const result = await uploadBrc39Backup(password)
       setPrefs(getHistoryBackupPrefs())
       playWalletSound('success')

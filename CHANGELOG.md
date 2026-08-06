@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.63] - 2026-08-06
+
+### Fixed
+
+- The crash was the BRC-39 cloud backup, and it was a self-sustaining loop.
+  Auto-sync runs on every unlock and encrypts the whole wallet with Argon2id at
+  the canonical BRC-39 parameters — 7 passes over 128 MiB — on the UI thread.
+  That is the ~3s block in every log, which is why the stall followed whichever
+  tab happened to be tapped and why `[cloud-backup] auto-sync ok` never once
+  appears: the WebView was killed mid-KDF, so the upload never recorded success,
+  so the next launch tried again. New NFTs made it worse by enlarging the
+  BRC-38 document that gets encrypted.
+- Argon2id and AES-GCM now run in a dedicated worker, which is terminated after
+  each backup so its 128 MiB WASM heap is returned instead of held for the
+  session. The UI thread no longer blocks on a backup.
+- Added a durable crash-loop breaker. An attempt is marked open before the
+  export and reconciled at boot; an attempt that never closed counts as a
+  failure and delays the retry (5m → 30m → 2h → 12h → 24h). A success clears
+  the streak, and a manual "Back up now" ignores the hold.
+- Automatic backups no longer re-derive the vault key. `createBrc39BackupBytes`
+  was running a second 210k-iteration PBKDF2 to re-check a password the session
+  had already proven at unlock.
+
 ## [1.2.62] - 2026-08-06
 
 ### Fixed
