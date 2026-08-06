@@ -167,6 +167,74 @@ export function verifyAlternatingProofBounded(
   }
 }
 
+export type InductionVerifyArgs = {
+  currentOutpoint: string
+  currentSettleTxHex: string
+  currentCommitTxHex: string
+  /** Txids whose chain inclusion was verified by headers + Merkle proofs. */
+  spvVerifiedTxids: ReadonlySet<string>
+  recipientPublicKeyHex: string
+}
+
+/**
+ * O(1) verifier for the induction hop: the first hardened transfer of a tip that
+ * was not yet a covenant.
+ *
+ * Its Settle spends only the Commit token — the sibling proof is left unspent for
+ * the next send — so the alternating triangle cannot apply and this shape needs
+ * its own check. What it establishes is that the covenant the recipient now holds
+ * was minted by a Settle over a Commit that consumed one specific single-satoshi
+ * tip, and that the beacon pays the recipient.
+ *
+ * It deliberately says nothing about which ordinal that tip is. Covenant
+ * continuity can only carry forward what induction bound, so the caller must
+ * still prove the inducted tip's lineage and match it against the state's pinned
+ * `originScriptHash`. `inductedTipOutpoint` is returned for exactly that.
+ */
+export function verifyInductionBounded(
+  args: InductionVerifyArgs,
+): ProvenanceVerifyResult & { inductedTipOutpoint?: string } {
+  try {
+    const settle = Transaction.fromHex(args.currentSettleTxHex)
+    const commit = Transaction.fromHex(args.currentCommitTxHex)
+    const settleId = settle.id('hex').toLowerCase()
+    const commitId = commit.id('hex').toLowerCase()
+    const currentTxid = toUnderscoreOutpoint(args.currentOutpoint).split('_')[0]!
+
+    for (const id of [settleId, commitId]) {
+      if (!args.spvVerifiedTxids.has(id)) {
+        return { proven: false, reason: `missing SPV inclusion for ${id}` }
+      }
+    }
+    if (settleId !== currentTxid.toLowerCase()) {
+      return { proven: false, reason: 'current settle txid mismatch' }
+    }
+    // One input only. A Settle that also consumes a delayed proof is an
+    // alternating transfer and must be held to that stronger check instead.
+    if (settle.inputs.length !== 1) {
+      return { proven: false, reason: 'induction settle must spend only the Commit token' }
+    }
+    if (inputOutpoint(settle, 0) !== `${commitId}_0`) {
+      return { proven: false, reason: 'settle does not spend current Commit token' }
+    }
+    if (settle.outputs[0]?.satoshis !== 1 || settle.outputs[1]?.satoshis !== 2) {
+      return { proven: false, reason: 'invalid tip/beacon values' }
+    }
+    if (!isHardenedCovenantLockingScript(settle.outputs[0]?.lockingScript?.toHex())) {
+      return { proven: false, reason: 'settled tip is not a covenant' }
+    }
+    const expectedBeacon = new P2PKH()
+      .lock(PublicKey.fromString(args.recipientPublicKeyHex).toHash())
+      .toHex()
+    if (settle.outputs[1]!.lockingScript.toHex() !== expectedBeacon) {
+      return { proven: false, reason: 'beacon recipient mismatch' }
+    }
+    return { proven: true, reason: null, inductedTipOutpoint: inputOutpoint(commit, 0) }
+  } catch (e) {
+    return { proven: false, reason: e instanceof Error ? e.message : String(e) }
+  }
+}
+
 /**
  * Derive the two delayed-proof context txids from the current Commit + state.
  * proofCommit = tx that created proofOutpoint; priorSettle = Commit vin0.

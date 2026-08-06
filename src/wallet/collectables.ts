@@ -54,6 +54,7 @@ import {
   resolveLatchTipClaim,
   toUnderscoreOutpoint,
   type LatchListing,
+  type LatchState,
 } from './oneSatLatch'
 import {
   canUseHardenedLatch,
@@ -63,6 +64,7 @@ import {
   parseHardenedTipInstructions,
   resolveAlternatingProofContext,
   verifyHardenedReceive,
+  verifyInductionBounded,
 } from './oneSatHardenedReceive'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
@@ -354,7 +356,20 @@ function toCollectable(
  * indexer walk and would otherwise list as duplicates. Keep the best candidate:
  * proven remittance first, then sender-supplied metadata, then lowest vout.
  */
-function dedupeByOrigin(items: Collectable[]): Collectable[] {
+/**
+ * One ordinal, one card — keeping the tip the wallet holds now.
+ *
+ * A satoshi cannot sit in two outputs, so two listed tips sharing an origin means
+ * one of them is basket residue the live-UTXO review has not judged yet. Which is
+ * which is a question about time, not about metadata: the tip seen most recently
+ * is the transfer that just landed. Ranking by metadata first is how a freshly
+ * received item disappeared behind a richer-looking stale sibling as soon as
+ * lineage proofs started giving both of them the same, correct origin.
+ */
+export function dedupeByOrigin(
+  items: Collectable[],
+  seenAtFor: (outpoint: string) => number = () => 0,
+): Collectable[] {
   const rank = (c: Collectable): number => {
     let score = 0
     if (c.proven) score += 4
@@ -366,6 +381,7 @@ function dedupeByOrigin(items: Collectable[]): Collectable[] {
     const n = Number(c.outpoint.split('.')[1])
     return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER
   }
+  const seenAt = (c: Collectable): number => seenAtFor(c.outpoint)
 
   const best = new Map<string, Collectable>()
   const order: string[] = []
@@ -378,8 +394,10 @@ function dedupeByOrigin(items: Collectable[]): Collectable[] {
       continue
     }
     const better =
-      rank(item) > rank(prior) ||
-      (rank(item) === rank(prior) && vout(item) < vout(prior))
+      seenAt(item) !== seenAt(prior)
+        ? seenAt(item) > seenAt(prior)
+        : rank(item) > rank(prior) ||
+          (rank(item) === rank(prior) && vout(item) < vout(prior))
     if (better) best.set(key, item)
   }
   return order.map((key) => best.get(key)!)
@@ -473,7 +491,7 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
     if (!isListableItem(o)) continue
     items.push(toCollectable(o, chain, getResolvedInscription(normalizeOutpoint(o.outpoint))))
   }
-  return dedupeByOrigin(items)
+  return dedupeByOrigin(items, (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0)
 }
 
 /**
@@ -592,7 +610,7 @@ async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
         origin: proof.origin,
         verifiedAt: Date.now(),
       })
-      adoptProvenOrigin(outpoint, proof.origin)
+      await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
       await yieldToUi()
     }
@@ -602,19 +620,35 @@ async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
 }
 
 /**
- * Keep display metadata only while it belongs to the origin we just proved.
+ * Adopt a proven origin without emptying the card.
  *
- * A name and image cached against an origin the sender got wrong describe some
- * other item. Dropping them leaves the tip thin, which is precisely what the
- * indexer upgrade pass exists to fill back in — against the right origin.
+ * A name and traits cached against an origin the sender got wrong describe some
+ * other item, so they cannot be kept. Blanking them is just as wrong: the panel
+ * then shows a nameless, traitless item until the upgrade pass happens to run.
+ * Ask the indexer about the origin we just proved instead.
  */
-function adoptProvenOrigin(outpoint: string, origin: string): void {
+async function adoptProvenOrigin(
+  outpoint: string,
+  origin: string,
+  chain: Chain,
+): Promise<void> {
   const existing = getResolvedInscription(outpoint)
-  const sameOrigin =
-    existing != null &&
+  if (
+    existing &&
     existing.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === origin
+  ) {
+    rememberResolvedInscription(outpoint, { ...existing, origin })
+    return
+  }
+  const [originTxid, originVout] = origin.split('_')
+  const resolved =
+    originTxid && originVout != null
+      ? await resolveOneSatInscription(originTxid, Number(originVout), chain).catch(
+          () => null,
+        )
+      : null
   rememberResolvedInscription(outpoint, {
-    ...(sameOrigin ? existing : { traits: [], extras: [] }),
+    ...(resolved ?? { traits: [], extras: [] }),
     origin,
   })
 }
@@ -744,10 +778,19 @@ export async function verifyItemAuthenticity(
                 }
               }
               if (!priorSettleTxHex || !proofCommitTxHex) {
-                hardened = {
-                  proven: false,
-                  reason: 'alternating proof context unavailable',
-                }
+                // An induction settle spends only its Commit token, so there is
+                // no alternating triangle to check. Verify that shape instead,
+                // then prove the lineage of the tip it inducted — continuity can
+                // only carry forward whatever induction bound.
+                hardened = await verifyInduction({
+                  wallet,
+                  settleTxHex: settleTx.toHex(),
+                  settleTxid: tipTxid,
+                  commitTxHex: commitTx.toHex(),
+                  commitTxid: state.commitTxid,
+                  target,
+                  state,
+                })
               } else {
                 const bounded = verifyHardenedReceive({
                   settleTxHex: settleTx.toHex(),
@@ -809,7 +852,7 @@ export async function verifyItemAuthenticity(
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: provenOrigin } : {}),
     })
-    if (provenOrigin) adoptProvenOrigin(target, provenOrigin)
+    if (provenOrigin) await adoptProvenOrigin(target, provenOrigin, wallet.chain)
     return authenticity
   } catch (err) {
     console.warn('[collectables] authenticity check failed', err)
@@ -818,6 +861,64 @@ export async function verifyItemAuthenticity(
       proven: false,
       reason: err instanceof Error ? err.message : String(err),
     }
+  }
+}
+
+/**
+ * Verify the induction hop and bind it to a real ordinal.
+ *
+ * The covenant checks alone say a tip was minted over a Commit that consumed one
+ * particular satoshi; they cannot say that satoshi descends from the inscription
+ * the state names. Nothing later in the covenant chain can supply that either, so
+ * it is established once, here, by walking the inducted tip's lineage and holding
+ * it to the pinned origin commitment.
+ */
+async function verifyInduction(args: {
+  wallet: ActiveWallet
+  settleTxHex: string
+  settleTxid: string
+  commitTxHex: string
+  commitTxid: string
+  target: string
+  state: LatchState
+}): Promise<{ proven: boolean; reason: string | null; originScriptHash?: string }> {
+  const { wallet, state } = args
+  // Both bodies came from BEEFs the toolbox verified against headers.
+  const spv = new Set([args.settleTxid.toLowerCase(), args.commitTxid.toLowerCase()])
+  const bounded = verifyInductionBounded({
+    currentOutpoint: args.target,
+    currentSettleTxHex: args.settleTxHex,
+    currentCommitTxHex: args.commitTxHex,
+    spvVerifiedTxids: spv,
+    recipientPublicKeyHex: wallet.identityKey,
+  })
+  if (!bounded.proven || !bounded.inductedTipOutpoint) {
+    return { proven: false, reason: `induction: ${bounded.reason}` }
+  }
+  if (!state.originScriptHash) {
+    return { proven: false, reason: 'induction: state pins no originScriptHash' }
+  }
+
+  const lineage = await proveGenesisLineage({
+    tipOutpoint: bounded.inductedTipOutpoint,
+    getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+  }).catch(() => null)
+  if (!lineage) {
+    return { proven: false, reason: 'induction: inducted tip lineage unproven' }
+  }
+  if (lineage.origin !== toUnderscoreOutpoint(state.origin)) {
+    return { proven: false, reason: 'induction: proven origin is not the claimed origin' }
+  }
+
+  const pin = await verifyOriginScriptCommitment({
+    origin: state.origin,
+    expectedScriptHash: state.originScriptHash,
+    chain: wallet.chain,
+  })
+  return {
+    proven: pin.proven,
+    reason: pin.proven ? null : `induction: ${pin.reason}`,
+    originScriptHash: state.originScriptHash,
   }
 }
 
@@ -1386,11 +1487,22 @@ export async function sendCollectable(args: {
   const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
   const tipVerdict = getProvenVerdict(outpoint)
   const genesisReady = tipVerdict?.tier === 'brc150' || tipVerdict?.tier === 'brc156'
-  if (
+  const hardenedEligible =
     isHardenedSendEnabled() &&
     canUseHardenedLatch({ publicKey: args.recipientIdentityKey }) &&
     (tipIsCovenant || genesisReady)
-  ) {
+  // Which rung a transfer takes is invisible in the UI and decides what the
+  // recipient can prove, so say it once per send instead of guessing later.
+  console.info(
+    hardenedEligible
+      ? `[brc-156] hardened send: ${tipIsCovenant ? 'covenant tip' : 'genesis induction'}`
+      : `[brc-156] soft-latch send: ${
+          !canUseHardenedLatch({ publicKey: args.recipientIdentityKey })
+            ? 'recipient identity key unknown'
+            : `tip is not a covenant and its verdict is ${tipVerdict?.tier ?? 'none'}`
+        }`,
+  )
+  if (hardenedEligible) {
     let originLockingScriptHex: string | undefined
     let legacyParentOutpoint: string | undefined
     if (!tipIsCovenant) {

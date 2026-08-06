@@ -59,6 +59,20 @@ const SLOT_STUCK_MS = 10_000
 let liveImages = 0
 let warnedLive = false
 
+/**
+ * URLs that have decoded successfully in this session.
+ *
+ * Deferral costs a skeleton frame: the img gets no `src` until its frame is near
+ * the viewport and a decode slot comes back from a promise. That is the right
+ * trade for a first paint, but it also means re-mounting over an image the
+ * browser already holds — switching to Activity, reopening a panel — blinks a
+ * skeleton for a frame or two. The blink reads as the top row flashing, because
+ * rows painting a bundled asset have nothing to re-fetch while a remote ordinal
+ * thumbnail does. A URL known to have decoded is served straight from cache, so
+ * it can be painted without the ceremony.
+ */
+const decodedOnce = new Set<string>()
+
 function noteImageLive(delta: 1 | -1): void {
   liveImages += delta
   if (liveImages > LIVE_IMAGE_WARN && !warnedLive) {
@@ -91,7 +105,10 @@ export function DeferredImage({
   loading: _ignoredLoading,
   ...rest
 }: Props) {
-  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
+  const cached = typeof src === 'string' && src !== '' && decodedOnce.has(src)
+  const [status, setStatus] = useState<'loading' | 'ready' | 'error'>(
+    cached ? 'ready' : 'loading',
+  )
   const readySent = useRef(false)
   const imgRef = useRef<HTMLImageElement | null>(null)
   const frameRef = useRef<HTMLSpanElement | null>(null)
@@ -100,12 +117,14 @@ export function DeferredImage({
    * full-size; fetching a whole grid at once stalls a phone. Deferral is driven
    * by the frame (which has layout via the skeleton), not the hidden img.
    */
-  const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
-  const [loadSlot, setLoadSlot] = useState(false)
+  const [near, setNear] = useState(
+    () => cached || typeof IntersectionObserver === 'undefined',
+  )
+  const [loadSlot, setLoadSlot] = useState(cached)
   const slotHeld = useRef(false)
 
   useEffect(() => {
-    setStatus('loading')
+    setStatus(typeof src === 'string' && decodedOnce.has(src) ? 'ready' : 'loading')
     readySent.current = false
   }, [src])
 
@@ -171,6 +190,12 @@ export function DeferredImage({
   useEffect(() => {
     if (!near) {
       setLoadSlot(false)
+      return
+    }
+    // Already decoded once: it is coming from cache, so it neither needs nor
+    // should occupy a slot in the decode queue ahead of images that do.
+    if (typeof src === 'string' && decodedOnce.has(src)) {
+      setLoadSlot(true)
       return
     }
     let cancelled = false
@@ -264,8 +289,14 @@ export function DeferredImage({
         loading="eager"
         decoding="async"
         hidden={status !== 'ready'}
-        onLoad={() => setStatus('ready')}
-        onError={() => setStatus('error')}
+        onLoad={() => {
+          if (typeof src === 'string' && src !== '') decodedOnce.add(src)
+          setStatus('ready')
+        }}
+        onError={() => {
+          if (typeof src === 'string') decodedOnce.delete(src)
+          setStatus('error')
+        }}
       />
     </span>
   )

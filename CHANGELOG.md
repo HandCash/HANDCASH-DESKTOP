@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.2.91] - 2026-08-06
+
+### Fixed
+
+- **A received collectable could vanish from the inventory once its lineage was
+  proven.** Two listed tips sharing an origin are deduplicated to one card, and the
+  survivor was picked by whichever row carried richer metadata. That was harmless
+  while every mis-resolved tip claimed itself as its own origin, and wrong the
+  moment proofs gave both the same correct origin: a transfer that had just landed
+  lost to stale basket residue. The tip seen most recently now wins, since a
+  satoshi cannot sit in two outputs. Nothing was ever spent or relinquished — the
+  item was only hidden from the list.
+- **The top activity row no longer blinks on every visit.** Deferred images reset
+  to a skeleton on mount, so a remote ordinal thumbnail flashed while rows painting
+  a bundled asset did not. URLs already decoded this session paint straight from
+  cache.
+- **Adopting a proven origin no longer empties the card.** The indexer is asked
+  about the origin just proven, instead of blanking the name and traits until the
+  upgrade pass happened to run.
+
+### Added
+
+- **The induction hop can now earn BRC-156.** A first hardened transfer settles
+  over its Commit token alone, so the alternating-proof triangle cannot apply and
+  it scored 150. It is now verified in its own right — covenant tip, Commit link,
+  beacon to the recipient — and bound to a real ordinal by proving the lineage of
+  the tip it inducted, since covenant continuity can only carry forward what
+  induction established.
+- Sends log which rung they took (`hardened send: genesis induction` or
+  `soft-latch send:` with the reason).
+
 ## [1.2.90] - 2026-08-06
 
 ### Added
