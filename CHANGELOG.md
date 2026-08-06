@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.67] - 2026-08-06
+
+### Fixed
+
+- Release build for 1.2.66 failed typecheck on a new test file's mock types.
+  Same payment fixes as 1.2.66, shipped.
+
 ## [1.2.66] - 2026-08-06
 
 ### Fixed
