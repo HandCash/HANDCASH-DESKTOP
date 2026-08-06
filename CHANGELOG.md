@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.79] - 2026-08-06
+
+### Fixed
+
+- **Sent direction badge fits its circle.** The overlaid send arrow is 75% of
+  its previous size; the badge and receive icon remain unchanged.
+
 ## [1.2.78] - 2026-08-06
 
 ### Improved

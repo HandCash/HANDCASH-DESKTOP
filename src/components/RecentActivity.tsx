@@ -181,7 +181,7 @@ function HistoryRow({
             aria-label={spent ? 'Send' : 'Receive'}
             title={spent ? 'Send' : 'Receive'}
           >
-            {spent ? <SendIcon size={9} /> : <ReceiveIcon size={9} />}
+            {spent ? <SendIcon size={6.75} /> : <ReceiveIcon size={9} />}
           </span>
         </div>
         <div className="history-body">
