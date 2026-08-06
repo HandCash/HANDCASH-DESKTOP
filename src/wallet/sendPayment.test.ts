@@ -1,19 +1,23 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
-const createAction = vi.fn(async () => ({ txid: 'a'.repeat(64) }))
-const prepareSpendHeal = vi.fn(async () => 100_000)
+type CreateActionArgs = { options?: { acceptDelayedBroadcast?: boolean } }
+
+const createAction = vi.fn(async (_args: CreateActionArgs) => ({
+  txid: 'a'.repeat(64),
+}))
+const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
-    wallet: { createAction: (args: unknown) => createAction(args as never) },
+    wallet: { createAction: (args: CreateActionArgs) => createAction(args) },
   }),
   fetchBalanceSats: async () => 90_000,
 }))
 
 vi.mock('./spendGuard', () => ({
   runExclusiveSpend: <T>(fn: () => Promise<T>) => fn(),
-  prepareSpendHeal: (sats?: number) => prepareSpendHeal(sats as never),
+  prepareSpendHeal: (sats?: number) => prepareSpendHeal(sats),
   assertSendableBalance: async () => 100_000,
   refreshSpendableBalance: async () => 100_000,
 }))
@@ -52,9 +56,7 @@ describe('sendSatsToAddress', () => {
     await sendSatsToAddress({ to: ADDRESS, satoshis: 1_000 })
 
     expect(createAction).toHaveBeenCalledTimes(1)
-    const args = createAction.mock.calls[0]![0] as unknown as {
-      options?: { acceptDelayedBroadcast?: boolean }
-    }
-    expect(args.options?.acceptDelayedBroadcast).toBe(false)
+    const args = createAction.mock.calls[0]?.[0]
+    expect(args?.options?.acceptDelayedBroadcast).toBe(false)
   })
 })
