@@ -1,5 +1,37 @@
 # Changelog
 
+## [1.2.70] - 2026-08-06
+
+### Fixed
+
+- **One bad deposit threw away every other deposit in the scan.** Legacy sweeps
+  let `SetupClient.fundWalletFromP2PKHOutpoints` build its own input BEEF. That
+  builder reads raw transactions from two hardcoded URLs and asks GorillaPool
+  alone for merkle proofs; when a proof comes back empty it walks every parent
+  input instead. So one silent proof miss fans out into a request per ancestor
+  per level against the same two hosts it depends on — they rate-limit, the
+  throttled response carries no CORS headers so the browser reports
+  `TypeError: Failed to fetch`, and the resulting throw is raised *outside* the
+  per-outpoint `try`. The whole batch died with it, which is why a P2P payment
+  could simply never arrive. The wallet now builds the BEEF itself
+  (`legacyBeef.ts`) through the toolbox's multi-provider service rotation,
+  caches raw transactions and proofs (neither can change), spaces requests out,
+  and contains a failure to the one outpoint it belongs to. Unprovable outpoints
+  stay retryable instead of being marked done.
+- **`Services.getHeight()` had no failover.** It reaches past `getChainTracker()`
+  into `services.options.chaintracks`, so 1.2.69's fallback never saw the call
+  and every height lookup still failed against the dead Chaintracks host. The
+  monitor holds that same object, so patching it covers both callers.
+
+### Removed
+
+- **`ReviewProvenTxs` monitor task.** It is a lagged backup audit for reorgs that
+  `TaskReorg` already handles from header events, and it resumes from the last
+  height it recorded — a wallet that has never completed a run starts at block 0
+  and issues 100 header lookups a minute, forever, about transactions that are
+  not ours. That load was competing with deposit lookups on the same
+  rate-limited providers.
+
 ## [1.2.69] - 2026-08-06
 
 ### Fixed

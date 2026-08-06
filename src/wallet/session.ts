@@ -49,6 +49,32 @@ function installFallbackChainTracker(services: Services, chain: Chain): void {
   }
 }
 
+/**
+ * Give the chain tip its own failover.
+ *
+ * `Services.getHeight()` does not go through `getChainTracker()` — it reaches
+ * past it into `services.options.chaintracks` — and the monitor holds that same
+ * object. So when the Chaintracks host answers "At least one bulk ingestor must
+ * implement getPresentHeight", the wrapper above never sees the call and every
+ * height lookup in the wallet fails. Patching the shared object covers both
+ * callers at once.
+ */
+function installHeightFailover(services: Services, chain: Chain): void {
+  try {
+    const chaintracks = services.options.chaintracks as
+      | { currentHeight?: () => Promise<number> }
+      | undefined
+    if (typeof chaintracks?.currentHeight !== 'function') return
+    const tracker = createFallbackChainTracker(chain, {
+      isValidRootForHeight: async () => false,
+      currentHeight: chaintracks.currentHeight.bind(chaintracks),
+    })
+    chaintracks.currentHeight = () => tracker.currentHeight()
+  } catch (err) {
+    console.warn('[chaintracker] could not install height failover', err)
+  }
+}
+
 export function getActiveWallet(): ActiveWallet | null {
   return active
 }
@@ -74,12 +100,19 @@ export async function bootWallet(args: {
   })
 
   installFallbackChainTracker(setup.services as Services, args.chain)
+  installHeightFailover(setup.services as Services, args.chain)
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes
     // it to IndexedDB on every first runAfter unlock. That blocked the WebView for
     // ~3s while the user tapped nav (every crash log: TaskMonitorCallHistory → stall).
     setup.monitor?.removeTask?.('MonitorCallHistory')
+    // ReviewProvenTxs is a lagged backup audit for reorgs that TaskReorg already
+    // handles from header events. It resumes from the last height it recorded,
+    // and a wallet that has never completed a run starts at block 0 — 100 header
+    // lookups a minute, forever, none of them about our transactions. That load
+    // competes with deposit lookups on the same rate-limited providers.
+    setup.monitor?.removeTask?.('ReviewProvenTxs')
   } catch {
     // optional task
   }
