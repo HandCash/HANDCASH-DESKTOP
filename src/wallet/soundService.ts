@@ -164,12 +164,21 @@ const PATTERNS: Record<WalletSound, Tone[]> = {
   soft: [{ freq: 880, start: 0, duration: 0.08, gain: 0.04 }],
 }
 
+/** Soft UI ticks stack into audible mush + audio-graph work under rapid taps. */
+const SOFT_MIN_GAP_MS = 90
+let lastSoftAt = 0
+
 /**
  * Play a wallet sound effect. No-op unless Settings → Sound effects is on.
  * Pass `{ force: true }` to preview from Settings while enabling.
  */
 export function playWalletSound(kind: WalletSound, opts?: { force?: boolean }): void {
   if (!opts?.force && !isWalletSfxEnabled()) return
+  if (kind === 'soft' && !opts?.force) {
+    const now = Date.now()
+    if (now - lastSoftAt < SOFT_MIN_GAP_MS) return
+    lastSoftAt = now
+  }
   const tones = PATTERNS[kind]
   if (tones) playTones(tones)
 }

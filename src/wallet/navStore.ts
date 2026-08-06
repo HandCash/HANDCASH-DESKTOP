@@ -47,10 +47,21 @@ const listeners = new Set<Listener>()
 
 let state: NavState = { section: 'activity', child: null }
 
+let navLogTimer: ReturnType<typeof setTimeout> | null = null
+let pendingNavLog: string | null = null
+
 function emit() {
-  // Breadcrumb: an OS-killed WebView logs nothing on its way out, so the last
-  // screen the user reached is what tells us where to look.
-  console.info(`[nav] ${state.section}${state.child ? `/${state.child.type}` : ''}`)
+  // Breadcrumb: a freeze raises no error, so the last settled screen is what
+  // tells us where to look. Debounced — rapid tab tapping must not itself
+  // flood the log path (append + durable flush) on every intermediate flip.
+  pendingNavLog = `[nav] ${state.section}${state.child ? `/${state.child.type}` : ''}`
+  if (!navLogTimer) {
+    navLogTimer = setTimeout(() => {
+      navLogTimer = null
+      if (pendingNavLog) console.info(pendingNavLog)
+      pendingNavLog = null
+    }, 120)
+  }
   for (const cb of listeners) cb(state)
 }
 

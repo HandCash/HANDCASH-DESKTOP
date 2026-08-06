@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.56] - 2026-08-06
+
+### Fixed
+
+- Rapid nav-bar tapping no longer freezes the UI. Root section panels stay
+  mounted and are shown/hidden instead of remounting whole trees on every tap.
+  Soft SFX is rate-limited, and nav breadcrumbs are debounced so the log path
+  itself cannot pile up during a burst of taps.
+
 ## [1.2.55] - 2026-08-06
 
 ### Added

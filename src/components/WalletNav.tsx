@@ -1,4 +1,10 @@
-import { useEffect, useState, type ComponentType, type SVGProps } from 'react'
+import {
+  startTransition,
+  useEffect,
+  useState,
+  type ComponentType,
+  type SVGProps,
+} from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
 import type { ConnectedApp } from '../wallet/permissions'
@@ -169,8 +175,12 @@ export function WalletNav({
 
   const selectSection = (next: NavSection) => {
     playWalletSound('soft')
-    if (next !== nav.section) setNavSection(next)
-    else clearNavChild()
+    // Panel trees stay mounted (see below). startTransition still lets the tap
+    // highlight update before any remaining layout work from the section swap.
+    startTransition(() => {
+      if (next !== nav.section) setNavSection(next)
+      else clearNavChild()
+    })
   }
 
   return (
@@ -269,12 +279,30 @@ export function WalletNav({
             </div>
           ) : (
             <div className="wallet-nav-panel">
-              {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
-              {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
-              {nav.section === 'collectables' && <InventoryPanel />}
-              {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
-              {nav.section === 'identity' && <IdentityPanel profile={profile} />}
-              {nav.section === 'settings' && <SettingsPanel />}
+              {/*
+                Keep every root section mounted. Rapid tab taps used to remount
+                whole panel trees (QR, settings status, collectable grid) on the
+                main thread and freeze the UI for seconds — see stall logs.
+                `hidden` is display:none, so off-section work stays inert.
+              */}
+              <div hidden={nav.section !== 'activity'}>
+                <TransactionsPanel chain={profile.chain} />
+              </div>
+              <div hidden={nav.section !== 'apps'}>
+                <ConnectedAppsPanel apps={apps} />
+              </div>
+              <div hidden={nav.section !== 'collectables'}>
+                <InventoryPanel />
+              </div>
+              <div hidden={nav.section !== 'friends'}>
+                <FriendsPanel chain={profile.chain} />
+              </div>
+              <div hidden={nav.section !== 'identity'}>
+                <IdentityPanel profile={profile} />
+              </div>
+              <div hidden={nav.section !== 'settings'}>
+                <SettingsPanel />
+              </div>
             </div>
           )}
         </div>
