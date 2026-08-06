@@ -1,5 +1,34 @@
 # Changelog
 
+## [1.2.71] - 2026-08-06
+
+### Fixed
+
+- **A chain tracker that was merely behind was rejecting real payments.**
+  `Beef.verify` asks "is this the real merkle root at this height?" and the
+  interface only permits `true` or `false` — so a tracker whose header store has
+  not reached that height answers `false`, which the caller cannot tell apart
+  from "this proof is forged". The Chaintracks host sat at block 961039 while the
+  user's deposit was mined at 961052, so every recent payment was declared
+  invalid and surfaced as `valid AtomicBEEF` or `valid Beef when factoring
+  options.trustSelf` — wording that blames the data for what was really a stale
+  index. It also drove the "Chain failed" pill.
+
+  A `false` is now only believed from a source that demonstrably holds the height
+  being asked about. An error, a timeout, a height past the source's tip, a 404,
+  or a denial the primary cannot corroborate are all "unknown", and the question
+  moves to the next source. `true` still requires a source to affirmatively
+  confirm the root, so nothing is waved through unverified; when nothing can
+  answer the tracker throws instead of denying, because a denial is permanent and
+  discards the deposit while a throw is retried on the next sync.
+- **Added Bitails as a header source, ahead of WhatsOnChain.** The toolbox's
+  service rotation already leans on WhatsOnChain for raw transactions, UTXO scans
+  and exchange rates, so by the time a merkle root needs checking the device is
+  often rate-limited there — and a throttled response carries no CORS headers, so
+  a WebView reports it as `TypeError: Failed to fetch`, indistinguishable from the
+  host being down. Verified roots are also cached per height, since they cannot
+  change, instead of being re-fetched for every BEEF.
+
 ## [1.2.70] - 2026-08-06
 
 ### Fixed
