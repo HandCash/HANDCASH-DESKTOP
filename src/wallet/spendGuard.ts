@@ -31,9 +31,10 @@ export async function refreshSpendableBalance(): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  // No audit: a send needs fresh funds and a current balance, and the audit only
-  // reports — paying a request per output here is what made sending feel frozen.
-  const opts = { announceReceive: false, audit: false } as const
+  // No audit: it only reports, and paying a request per output here is what made
+  // sending feel frozen. fundingOnly for the same reason — a payment cannot spend
+  // an ordinal, so identifying one mid-send is pure latency.
+  const opts = { announceReceive: false, audit: false, fundingOnly: true } as const
   const synced =
     getWalletCoordinatorSnapshot().spend === 'active'
       ? await refreshFromChainDuringSpend(opts)

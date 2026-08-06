@@ -355,6 +355,14 @@ export async function classifyLegacyUtxos(
   utxos: LegacyUtxo[],
   chain: Chain,
   knownItems: MigrationItem[] = [],
+  opts: {
+    /**
+     * Skip every indexer round trip used to name a tip. Funding and latch dust
+     * are decided from the satoshi value alone, so a send can still tell what it
+     * may spend without waiting on ordinal lookups it will never use.
+     */
+    fundingOnly?: boolean
+  } = {},
 ): Promise<ClassifiedLegacyUtxos> {
   const outpointKey = (outpoint: string): string => outpoint.trim().toLowerCase()
 
@@ -418,6 +426,12 @@ export async function classifyLegacyUtxos(
     // A tip already internalized with remittance never reaches this path again;
     // unknown dust is walked once and then backed off via inscriptionCache.
     if (u.satoshis === 1) {
+      // A send never spends a tip, so it does not need one identified. Hold it
+      // and move on rather than paying for an indexer walk mid-payment.
+      if (opts.fundingOnly) {
+        heldOneSats.push(u)
+        continue
+      }
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
       let resolved: { origin: string; name?: string; app?: string } | null = null
       if (known?.origin != null) {

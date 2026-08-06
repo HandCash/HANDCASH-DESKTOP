@@ -67,6 +67,28 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('fundingOnly classifies funds without any indexer call', async () => {
+    // The pre-send heal runs this. A payment cannot spend a tip, so naming one
+    // is pure latency on the path where the user is waiting to send.
+    const TXID_F = 'f'.repeat(64)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await classifyLegacyUtxos(
+      [utxo(`${TXID_F}.0`, 1), utxo(`${TXID_F}.1`, 2), utxo(`${TXID_F}.2`, 50_000)],
+      'main',
+      [],
+      { fundingOnly: true },
+    )
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_F}.2`])
+    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID_F}.1`])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_F}.0`])
+    expect(result.oneSats).toEqual([])
+    vi.unstubAllGlobals()
+  })
+
   it('never treats the latch itself as a tip or as funds', async () => {
     const TXID_E = 'e'.repeat(64)
     const result = await classifyLegacyUtxos([utxo(`${TXID_E}.1`, 2)], 'main')

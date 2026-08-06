@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.66] - 2026-08-06
+
+### Fixed
+
+- **BSV payments were never broadcast by the send itself.** `acceptDelayedBroadcast`
+  defaults to **true** in the SDK, and `sendSatsToAddress` passed no options — so
+  `createAction` only queued the transaction for the monitor's `TaskSendWaiting`
+  loop. Worse, the toolbox skips `throwIfAnyUnsuccessfulCreateActions` in delayed
+  mode, so a broadcast that never happened returned a txid and looked like a
+  success. Payments now send undelayed and a failure is an error. Collectable
+  sends already did this, which is why items went out and money did not.
+- Pre-send "checking balance" was running the full chain ingest, including an
+  indexer walk for every unidentified one-sat. A payment cannot spend an ordinal,
+  so the spend heal now sweeps funding only — no tip lookups, no item or latch
+  internalization on the path where the user is waiting.
+
 ## [1.2.65] - 2026-08-06
 
 ### Fixed

@@ -50,6 +50,12 @@ export type ChainIngestOptions = {
   audit?: boolean
   /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
   knownItems?: MigrationItem[]
+  /**
+   * Sweep funding and skip all ordinal work. The pre-send heal needs a current
+   * spendable balance; naming tips costs indexer round trips it cannot use, and
+   * that is what made "checking balance" feel like a hang before a payment.
+   */
+  fundingOnly?: boolean
 }
 
 /** Full result of one exclusive ingest pass — migration needs the counts. */
@@ -239,6 +245,7 @@ export async function refreshFromChainExclusive(
     const ingest = await ingestLegacyAddressUtxos({
       active,
       knownItems: opts?.knownItems,
+      fundingOnly: opts?.fundingOnly === true,
     })
     heldCount = ingest.heldOneSats
     pendingTips = ingest.pendingTips

@@ -47,6 +47,12 @@ export type LegacyAddressIngestOptions = {
   /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
   knownItems?: MigrationItem[]
   active?: ActiveWallet | null
+  /**
+   * Sweep funding only — no ordinal identification, no item internalization.
+   * Used by the pre-send heal, which needs a trustworthy spendable balance and
+   * nothing else.
+   */
+  fundingOnly?: boolean
 }
 
 /** Activity rows for newly swept funding — one per incoming payment txid. */
@@ -132,10 +138,12 @@ export async function ingestLegacyAddressUtxos(
     }
   }
 
+  const fundingOnly = opts.fundingOnly === true
   const { funding, oneSats, latches, heldOneSats, pendingTips } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,
     opts.knownItems ?? [],
+    { fundingOnly },
   )
 
   // Latch dust stays on the address after basket insertion, so every poll still
@@ -147,7 +155,8 @@ export async function ingestLegacyAddressUtxos(
     return fresh.length > 0
   })
 
-  if (heldOneSats.length > 0) {
+  // In fundingOnly mode every 1-sat is held by design, so the count says nothing.
+  if (heldOneSats.length > 0 && !fundingOnly) {
     console.info(
       `[chain-ingest] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping` +
         (pendingTips.length > 0 ? ` (${pendingTips.length} latch-proven, awaiting origin)` : ''),
@@ -197,7 +206,8 @@ export async function ingestLegacyAddressUtxos(
     }
   }
 
-  if (newLatches.length > 0) {
+  // Latch dust is never spendable, so its BEEF work has no place in a send.
+  if (newLatches.length > 0 && !fundingOnly) {
     const tipOrigins = new Map<string, string>()
     for (const tip of oneSats) {
       if (tip.txid && tip.origin) tipOrigins.set(tip.txid.toLowerCase(), tip.origin)

@@ -64,6 +64,17 @@ export async function sendSatsToAddress(opts: {
             outputDescription: 'Payment',
           },
         ],
+        // `acceptDelayedBroadcast` defaults to TRUE in the SDK, which queues the
+        // transaction for the monitor's TaskSendWaiting loop instead of sending
+        // it here — and in delayed mode the toolbox deliberately does not throw
+        // on a failed broadcast. A send that only reached local storage then
+        // looks identical to one that reached a miner. The user is standing in
+        // front of this, so it goes out now and a failure is an error.
+        // Collectable sends have always done this; payments were the odd one out.
+        options: {
+          acceptDelayedBroadcast: false,
+          signAndProcess: true,
+        },
       })
 
       const realTxid = (result as { txid?: string })?.txid
