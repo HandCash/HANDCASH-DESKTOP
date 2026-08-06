@@ -98,8 +98,24 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
+  /**
+   * Sections mount on first visit and then stay mounted. Remounting on every
+   * tap froze the UI; mounting all six up front just moves that cost to launch.
+   */
+  const [mountedSections, setMountedSections] = useState<Set<NavSection>>(
+    () => new Set([getNavState().section]),
+  )
 
   useEffect(() => subscribeNav(setNav), [])
+
+  useEffect(() => {
+    setMountedSections((prev) => {
+      if (prev.has(nav.section)) return prev
+      const next = new Set(prev)
+      next.add(nav.section)
+      return next
+    })
+  }, [nav.section])
 
   useEffect(() => {
     const child = nav.child
@@ -191,7 +207,7 @@ export function WalletNav({
     >
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          {child ? (
+          {child && (
             <div className="wallet-nav-panel nav-child-stage">
               <NavBreadcrumb crumbs={crumbs} />
               <div className="nav-child-body">
@@ -277,34 +293,46 @@ export function WalletNav({
               )}
               </div>
             </div>
-          ) : (
-            <div className="wallet-nav-panel">
-              {/*
-                Keep every root section mounted. Rapid tab taps used to remount
-                whole panel trees (QR, settings status, collectable grid) on the
-                main thread and freeze the UI for seconds — see stall logs.
-                `hidden` is display:none, so off-section work stays inert.
-              */}
-              <div hidden={nav.section !== 'activity'}>
+          )}
+
+          {/*
+            Once visited, a section is never torn down: remounting whole panel
+            trees on every tap blocked the main thread for seconds. A slot is
+            `display: contents` while visible, so each panel keeps its place in
+            the stage's flex chain, and `display: none` once hidden.
+          */}
+          <div className="wallet-nav-panel" hidden={child != null}>
+            {mountedSections.has('activity') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'activity'}>
                 <TransactionsPanel chain={profile.chain} />
               </div>
-              <div hidden={nav.section !== 'apps'}>
+            )}
+            {mountedSections.has('apps') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'apps'}>
                 <ConnectedAppsPanel apps={apps} />
               </div>
-              <div hidden={nav.section !== 'collectables'}>
+            )}
+            {mountedSections.has('collectables') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'collectables'}>
                 <InventoryPanel />
               </div>
-              <div hidden={nav.section !== 'friends'}>
+            )}
+            {mountedSections.has('friends') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'friends'}>
                 <FriendsPanel chain={profile.chain} />
               </div>
-              <div hidden={nav.section !== 'identity'}>
+            )}
+            {mountedSections.has('identity') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'identity'}>
                 <IdentityPanel profile={profile} />
               </div>
-              <div hidden={nav.section !== 'settings'}>
+            )}
+            {mountedSections.has('settings') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'settings'}>
                 <SettingsPanel />
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.57] - 2026-08-06
+
+### Fixed
+
+- Sections scroll again. Keeping panels mounted put a wrapper element between
+  the stage and each panel, which broke the flex chain the panels size against:
+  nothing could scroll, and the longest list — Settings — froze on open while
+  the layout tried to resolve a percentage height against an unbounded parent.
+  A slot is now `display: contents`, so a visible panel sits in the stage's flex
+  chain exactly as it did before it stayed mounted.
+- The stage picks its layout mode from the section on screen. With every visited
+  section mounted, a background panel's empty state was reflowing the visible
+  one.
+- Opening a friend, an app or a setting no longer tears down every mounted
+  section, so coming back does not remount them all at once.
+
 ## [1.2.56] - 2026-08-06
 
 ### Fixed
