@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react'
-import QRCode from 'qrcode'
 import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
+import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
-import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
 type Props = {
@@ -11,16 +10,11 @@ type Props = {
 }
 
 export function IdentityPanel({ profile }: Props) {
-  const [dataUrl, setDataUrl] = useState<string | null>(null)
+  const [dataUrl, setDataUrl] = useState(() => peekIdentityQrDataUrl(profile.identityKey))
 
   useEffect(() => {
     let cancelled = false
-    void QRCode.toDataURL(profile.identityKey, {
-      width: 220,
-      margin: 2,
-      color: { dark: '#000000', light: '#FFFFFF' },
-      errorCorrectionLevel: 'M',
-    })
+    void identityQrDataUrl(profile.identityKey)
       .then((url) => {
         if (!cancelled) setDataUrl(url)
       })
@@ -53,15 +47,12 @@ export function IdentityPanel({ profile }: Props) {
             onClick={() => void copyIdentity()}
           >
             {dataUrl ? (
-              <DeferredImage
+              <img
                 src={dataUrl}
                 alt="Identity key QR code"
                 width={180}
                 height={180}
-                skeletonWidth={180}
-                skeletonHeight={180}
-                skeletonRadius={4}
-                skeletonClassName="skeleton-qr"
+                decoding="async"
               />
             ) : (
               <SkeletonQr size={180} />

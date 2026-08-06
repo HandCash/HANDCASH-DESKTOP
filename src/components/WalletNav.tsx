@@ -98,8 +98,27 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
+  /**
+   * Light tabs stay mounted once visited — remounting Activity/Identity on every
+   * tap was the 2.6s stall in the latest log. Collectables never stays mounted:
+   * ordinal images are what exhaust native memory.
+   */
+  const [mountedLight, setMountedLight] = useState<Set<NavSection>>(() => {
+    const initial = getNavState().section
+    return initial === 'collectables' ? new Set() : new Set([initial])
+  })
 
   useEffect(() => subscribeNav(setNav), [])
+
+  useEffect(() => {
+    if (nav.section === 'collectables') return
+    setMountedLight((prev) => {
+      if (prev.has(nav.section)) return prev
+      const next = new Set(prev)
+      next.add(nav.section)
+      return next
+    })
+  }, [nav.section])
 
   useEffect(() => {
     const child = nav.child
@@ -174,6 +193,7 @@ export function WalletNav({
   })()
 
   const selectSection = (next: NavSection) => {
+    if (next === nav.section && !nav.child) return
     playWalletSound('soft')
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
@@ -275,16 +295,36 @@ export function WalletNav({
               )}
               </div>
             </div>
-          ) : (
-            <div className="wallet-nav-panel">
-              {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
-              {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
-              {nav.section === 'collectables' && <InventoryPanel />}
-              {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
-              {nav.section === 'identity' && <IdentityPanel profile={profile} />}
-              {nav.section === 'settings' && <SettingsPanel />}
-            </div>
-          )}
+          ) : null}
+
+          <div className="wallet-nav-panel" hidden={child != null}>
+            {mountedLight.has('activity') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'activity'}>
+                <TransactionsPanel chain={profile.chain} />
+              </div>
+            )}
+            {mountedLight.has('apps') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'apps'}>
+                <ConnectedAppsPanel apps={apps} />
+              </div>
+            )}
+            {nav.section === 'collectables' && <InventoryPanel />}
+            {mountedLight.has('friends') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'friends'}>
+                <FriendsPanel chain={profile.chain} />
+              </div>
+            )}
+            {mountedLight.has('identity') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'identity'}>
+                <IdentityPanel profile={profile} />
+              </div>
+            )}
+            {mountedLight.has('settings') && (
+              <div className="wallet-nav-slot" hidden={nav.section !== 'settings'}>
+                <SettingsPanel />
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">

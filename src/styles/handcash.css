@@ -1957,7 +1957,9 @@ button.wallet-detail-value.is-copied {
 }
 
 .wallet-nav-stage:has(.nav-child-stage),
-.wallet-nav-stage:has(.history-with-filters) {
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .history-with-filters
+  ) {
   overflow: hidden;
   display: flex;
   flex-direction: column;
@@ -1973,12 +1975,27 @@ button.wallet-detail-value.is-copied {
   min-height: 100%;
 }
 
-.wallet-nav-stage:has(.empty-state) {
+.wallet-nav-slot {
+  display: contents;
+}
+
+.wallet-nav-slot[hidden] {
+  display: none;
+}
+
+.wallet-nav-stage:has(.nav-child-stage .empty-state),
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .empty-state
+  ) {
   display: flex;
   flex-direction: column;
 }
 
-.wallet-nav-stage:has(.empty-state) > .wallet-nav-panel {
+.wallet-nav-stage:has(.nav-child-stage .empty-state) > .wallet-nav-panel,
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .empty-state
+  )
+  > .wallet-nav-panel {
   flex: 1 1 auto;
   min-height: 100%;
   display: flex;
@@ -2005,7 +2022,11 @@ button.wallet-detail-value.is-copied {
   flex: 1 1 auto;
 }
 
-.wallet-nav-stage:has(.history-with-filters) > .wallet-nav-panel {
+.wallet-nav-stage:has(.nav-child-stage .history-with-filters) > .wallet-nav-panel,
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .history-with-filters
+  )
+  > .wallet-nav-panel {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
