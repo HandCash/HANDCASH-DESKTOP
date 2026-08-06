@@ -45,8 +45,9 @@ function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
  * the WebView for that with no JS error and no heap warning, so the count of
  * live images is worth having in the log when a crash is being chased.
  */
-const LIVE_IMAGE_WARN = 24
-const MAX_CONCURRENT_LOADS = 6
+const LIVE_IMAGE_WARN = 16
+/** Full-res ordinal decode is native-memory heavy — keep this tiny on phones. */
+const MAX_CONCURRENT_LOADS = 3
 let liveImages = 0
 let warnedLive = false
 let loadingNow = 0
@@ -138,7 +139,8 @@ export function DeferredImage({
     if (frameIsNear(frame)) mark(true)
 
     if (typeof IntersectionObserver === 'undefined') {
-      const fallbackTimer = window.setTimeout(() => mark(true), 350)
+      // No observer support — stagger so a grid does not decode everything at once.
+      const fallbackTimer = window.setTimeout(() => mark(true), 1_200)
       return () => {
         cancelled = true
         window.clearTimeout(fallbackTimer)
@@ -161,8 +163,9 @@ export function DeferredImage({
     loadObserver.observe(frame)
     releaseObserver.observe(frame)
 
-    // Absolute fallback — a broken observer must never leave images on the skeleton.
-    const fallbackTimer = window.setTimeout(() => mark(true), 350)
+    // Long safety net only. A short timeout used to force-decode every card in
+    // a grid ~350ms after mount and freeze Android WebViews.
+    const fallbackTimer = window.setTimeout(() => mark(true), 8_000)
 
     return () => {
       cancelled = true

@@ -19,7 +19,7 @@ import { EmptyState } from './EmptyState'
 import { CollectablesIcon, SendIcon } from './icons'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
-const RENDER_CHUNK = 12
+const RENDER_CHUNK = 6
 
 function useChunkedCount(total: number): number {
   const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))
@@ -61,8 +61,6 @@ function CollectableGridItem({ item }: { item: Collectable }) {
         }}
       >
         <div className="collectable-media">
-          {/* A grid of ordinals is a grid of full-size images; decoding them on
-              the main thread locks up a phone while the panel opens. */}
           <DeferredImage
             src={item.imageUrl}
             alt={item.name}
@@ -172,13 +170,23 @@ export function InventoryPanel() {
   )
 
   useEffect(() => {
+    const cached = getCachedCollectables().length
+    console.info(`[collectables] open cache=${cached} hydrated=${areCollectablesHydrated()}`)
+  }, [])
+
+  useEffect(() => {
     let cancelled = false
 
-    const refresh = async () => {
+    const refresh = async (reason: string) => {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
+        console.info(`[collectables] listOutputs start (${reason})`)
+        const started = performance.now()
         await listCollectables()
+        console.info(
+          `[collectables] listOutputs done (${reason}) ${Math.round(performance.now() - started)}ms`,
+        )
         if (!cancelled) {
           setReady(areCollectablesHydrated())
           setAwaitingFirst(false)
@@ -192,42 +200,40 @@ export function InventoryPanel() {
       }
     }
 
-    const startRefresh = () => {
-      void refresh()
-    }
-
+    // CRITICAL: when we already have a durable cache, do NOT call listOutputs on
+    // mount. The previous idle-timeout (2.5s) fired listOutputs while the user was
+    // looking at the grid and blocked the main thread for ~3s — that is the freeze
+    // in the latest crash log. Refresh only on a long interval after the panel has
+    // been open a while.
+    const hasCache = getCachedCollectables().length > 0 || areCollectablesHydrated()
     let intervalId = 0
+    let deferTimer = 0
 
-    // Cached inventory paints immediately; network refresh can wait.
-    if (getCachedCollectables().length > 0) {
-      if (typeof requestIdleCallback === 'function') {
-        const idle = requestIdleCallback(startRefresh, { timeout: 2500 })
+    if (hasCache) {
+      deferTimer = window.setTimeout(() => {
+        if (cancelled) return
+        void refresh('deferred')
         intervalId = window.setInterval(() => {
-          void refresh()
-        }, 30_000)
-        return () => {
-          cancelled = true
-          cancelIdleCallback(idle)
-          window.clearInterval(intervalId)
-        }
-      }
-      const defer = window.setTimeout(startRefresh, 400)
-      intervalId = window.setInterval(() => {
-        void refresh()
-      }, 30_000)
+          void refresh('interval')
+        }, 60_000)
+      }, 15_000)
       return () => {
         cancelled = true
-        window.clearTimeout(defer)
-        window.clearInterval(intervalId)
+        window.clearTimeout(deferTimer)
+        if (intervalId) window.clearInterval(intervalId)
       }
     }
 
-    startRefresh()
+    // Cold start only — nothing to show until the basket is read once.
+    deferTimer = window.setTimeout(() => {
+      if (!cancelled) void refresh('cold')
+    }, 2_500)
     intervalId = window.setInterval(() => {
-      void refresh()
-    }, 30_000)
+      void refresh('interval')
+    }, 60_000)
     return () => {
       cancelled = true
+      window.clearTimeout(deferTimer)
       window.clearInterval(intervalId)
     }
   }, [])

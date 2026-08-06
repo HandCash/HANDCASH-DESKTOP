@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { ActivityIcon, CollectablesIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
+import { ActivityIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
+import { DeferredImage } from './DeferredImage'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   activityEntryTitle,
@@ -149,11 +150,18 @@ function HistoryRow({
         }}
       >
         <div className="history-icon">
-          {item ? (
-            // List rows stay icon-only — full ordinal decode belongs on the detail view.
-            <span className="history-item-thumb history-item-thumb-icon" aria-hidden>
-              <CollectablesIcon size={14} />
-            </span>
+          {item && entry.item?.imageUrl ? (
+            <DeferredImage
+              className="history-item-thumb"
+              src={entry.item.imageUrl}
+              alt=""
+              width={28}
+              height={28}
+              skeletonWidth={28}
+              skeletonHeight={28}
+              skeletonRadius={6}
+              decoding="async"
+            />
           ) : isWallet ? (
             spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
           ) : (

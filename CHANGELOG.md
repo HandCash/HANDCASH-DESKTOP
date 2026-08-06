@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.62] - 2026-08-06
+
+### Fixed
+
+- True freeze was wallet-toolbox `TaskMonitorCallHistory`: on every unlock it
+  JSON.stringifies the entire services call log and writes it to IndexedDB on the
+  main thread. Every crash log showed that line right before a ~3s stall while
+  tapping Friends/Apps/Identity/Settings — not Collect-specific. That task is
+  removed, and the rest of the monitor loop starts only after idle.
+- Activity NFT thumbnails restored (lazy DeferredImage).
+- DeferredImage no longer force-loads every card 350ms after mount.
+
 ## [1.2.61] - 2026-08-06
 
 ### Fixed

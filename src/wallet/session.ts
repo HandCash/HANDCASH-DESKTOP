@@ -44,9 +44,27 @@ export async function bootWallet(args: {
   })
 
   try {
-    void setup.monitor?.startTasks?.()
+    // MonitorCallHistory JSON.stringifies the entire services call log and writes
+    // it to IndexedDB on every first runAfter unlock. That blocked the WebView for
+    // ~3s while the user tapped nav (every crash log: TaskMonitorCallHistory → stall).
+    setup.monitor?.removeTask?.('MonitorCallHistory')
   } catch {
-    // optional
+    // optional task
+  }
+
+  // Defer the remaining monitor loop so unlock + first taps are not racing
+  // TaskNewHeader / proofs / IDB writes on the UI thread.
+  const startMonitor = () => {
+    try {
+      void setup.monitor?.startTasks?.()
+    } catch {
+      // optional
+    }
+  }
+  if (typeof requestIdleCallback === 'function') {
+    requestIdleCallback(startMonitor, { timeout: 8_000 })
+  } else {
+    setTimeout(startMonitor, 3_000)
   }
 
   active = {

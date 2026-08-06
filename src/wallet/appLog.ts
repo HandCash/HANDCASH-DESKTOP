@@ -251,16 +251,22 @@ export function installAppLogCapture(): void {
       try {
         const msg = args
           .map((a) => {
-            if (typeof a === 'string') return a
+            if (typeof a === 'string') return a.length > 500 ? `${a.slice(0, 500)}…` : a
             if (a instanceof Error) return a.stack || a.message
             try {
-              return JSON.stringify(a)
+              const s = JSON.stringify(a)
+              return s.length > 500 ? `${s.slice(0, 500)}…` : s
             } catch {
               return String(a)
             }
           })
           .join(' ')
-        appendAppLog(level, msg)
+        // Toolbox monitor dumps can be huge; never let log capture itself stall UI.
+        if (msg.includes('TaskMonitorCallHistory') && msg.length > 80) {
+          appendAppLog(level, 'TaskMonitorCallHistory …')
+        } else {
+          appendAppLog(level, msg)
+        }
       } catch {
         // ignore
       }
