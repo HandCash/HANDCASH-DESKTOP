@@ -35,7 +35,7 @@ import {
   type ParsedAmount,
 } from '../wallet/brc218'
 import { openAddFriend } from '../wallet/navStore'
-import { amountToSats, formatUsdFromSats, getCachedUsdPerBsv } from '../wallet/fx'
+import { amountToSats, formatPrimaryFromSats, getCachedUsdPerBsv } from '../wallet/fx'
 import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
@@ -160,13 +160,17 @@ function payStatusLabel(msg: ChatMessage): string {
   if (st === 'pending') return 'Confirm to send'
   if (st === 'sending') return 'Sending…'
   if (st === 'sent') {
-    const action = msg.direction === 'in' ? 'Received' : 'Sent'
-    return msg.meta?.txid ? `${action} · ${shortenTxid(msg.meta.txid)}` : action
+    return msg.meta?.txid ? `Sent · ${shortenTxid(msg.meta.txid)}` : 'Sent'
   }
   if (st === 'failed') return msg.meta?.error ? `Failed · ${msg.meta.error}` : 'Failed'
   if (st === 'cancelled') return 'Cancelled'
   if (st === 'accepted') return 'Accepted'
   if (st === 'declined') return 'Declined'
+  if (msg.direction === 'in' && (msg.kind === 'tip' || msg.kind === 'pay-sent')) {
+    return msg.meta?.txid
+      ? `Claimed · unverified · ${shortenTxid(msg.meta.txid)}`
+      : 'Claimed · unverified'
+  }
   return msg.meta?.status ?? ''
 }
 
@@ -209,13 +213,18 @@ function MessageBubble({
     msg.kind === 'tip' ||
     msg.kind === 'escrow'
   const amountLabel = msg.meta?.amountLabel ?? msg.text
-  const fiatValue =
+  const displayCurrency = getDisplayCurrency()
+  const primaryFromSats =
     msg.meta?.sats && msg.meta.sats > 0
-      ? formatUsdFromSats(msg.meta.sats, getCachedUsdPerBsv())
+      ? formatPrimaryFromSats(msg.meta.sats, displayCurrency, getCachedUsdPerBsv())
       : null
-  const primaryAmount = fiatValue && fiatValue !== '—' ? fiatValue : amountLabel
+  const primaryAmount =
+    primaryFromSats && primaryFromSats !== '—' ? primaryFromSats : amountLabel
   const satsLine =
-    msg.meta?.sats && msg.meta.sats > 0
+    msg.meta?.sats &&
+    msg.meta.sats > 0 &&
+    primaryAmount !== formatSatsLabel(msg.meta.sats) &&
+    !/\bsats?\b/i.test(primaryAmount)
       ? formatSatsLabel(msg.meta.sats)
       : null
   const label = peerLabel || 'Friend'
@@ -283,13 +292,16 @@ function MessageBubble({
                     {msg.kind === 'tip'
                       ? mine
                         ? 'Tip sent'
-                        : 'Tip received'
+                        : 'Tip claimed'
                       : mine
                         ? 'Payment'
-                        : 'Payment received'}
+                        : 'Payment claimed'}
                   </span>
-                  {payStatus ? (
-                    <span className="chat-card-status" data-status={payStatus}>
+                  {(payStatus || (!mine && (msg.kind === 'tip' || msg.kind === 'pay-sent'))) ? (
+                    <span
+                      className="chat-card-status"
+                      data-status={payStatus || 'claimed'}
+                    >
                       {payStatusLabel(msg)}
                     </span>
                   ) : null}
@@ -302,6 +314,11 @@ function MessageBubble({
                     <p className="chat-card-amount">{primaryAmount}</p>
                     {satsLine ? <p className="chat-card-sats">{satsLine}</p> : null}
                     {msg.meta?.memo ? <p className="chat-card-memo">{msg.meta.memo}</p> : null}
+                    {msg.meta?.boundMessageId ? (
+                      <p className="chat-card-memo">
+                        Bound to {msg.meta.boundMessageId.slice(0, 8)}…
+                      </p>
+                    ) : null}
                   </div>
                 </Thread.CardBody>
                 {canAct ? (
@@ -429,6 +446,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   const [showCommands, setShowCommands] = useState(false)
   const [threadSection, setThreadSection] = useState<'messages' | 'files'>('messages')
   const [fileBusy, setFileBusy] = useState(false)
+  const [boundMessageId, setBoundMessageId] = useState<string | null>(null)
   const [confirmCmd, setConfirmCmd] = useState<{
     id: string
     verb: string
@@ -445,6 +463,11 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   useEffect(() => {
     if (peerId) setActivePeerId(peerId)
   }, [peerId])
+
+  useEffect(() => {
+    setBoundMessageId(null)
+    setThreadSection('messages')
+  }, [activePeerId])
 
   useEffect(() => subscribeFriends(refresh), [])
   useEffect(() => subscribeMessages(refresh), [])
@@ -523,6 +546,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     amount: ParsedAmount,
     memo?: string,
     kind: 'pay-sent' | 'tip' = 'pay-sent',
+    bindId?: string | null,
   ) => {
     let address = ''
     try {
@@ -552,10 +576,12 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         to: address,
         friendLabel: friend.label,
         memo,
+        boundMessageId: kind === 'tip' ? bindId || undefined : undefined,
         payStatus: 'pending',
         status: 'Confirm to send',
       },
     })
+    if (kind === 'tip') setBoundMessageId(null)
     playWalletSound('soft')
   }
 
@@ -595,12 +621,15 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
       })
       const recipient = getFriendById(msg.peerId)
       if (sent && recipient && identityKey) {
-        void deliverOutbound({
+        const delivered = await deliverOutbound({
           recipientIdentityKey: recipient.identityKey,
           senderIdentityKey: identityKey,
           body: encodeMessageBody(sent),
           peerId: msg.peerId,
         })
+        if (delivered.delivered !== 'cloud') {
+          setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
+        }
       }
       playPaymentSuccessSound()
       onSent?.(balanceSats)
@@ -809,6 +838,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         amount,
         cmd.verb === 'pay' ? cmd.memo : undefined,
         cmd.verb === 'tip' ? 'tip' : 'pay-sent',
+        cmd.verb === 'tip' ? boundMessageId : null,
       )
       setDraft('')
       return
@@ -1064,7 +1094,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
                 aria-current={threadSection === 'files' ? 'page' : undefined}
                 onClick={() => setThreadSection('files')}
               >
-                Files & links
+                Files
               </button>
               <button type="button" className="chat-thread-tab" disabled title="Coming soon">
                 Notes
@@ -1105,6 +1135,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
                       onEscrowAccept={onEscrowAccept}
                       onEscrowDecline={onEscrowDecline}
                       onBindReply={(id) => {
+                        setBoundMessageId(id)
                         setDraft('/tip ')
                         setHint(`Bound tip to message ${id.slice(0, 8)}…`)
                         playWalletSound('soft')

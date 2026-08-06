@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.77] - 2026-08-06
+
+### Fixed
+
+- **Inbound tip/pay cards are claims, not confirmed receipts.** Messagebox
+  tip cards no longer show as “Received”; they mark **Claimed · unverified**
+  until chain verification exists. Attachment links must come from the
+  messagebox host. Tip binding now stores `boundMessageId`, and delivery
+  failures after an on-chain tip surface a hint.
+
 ## [1.2.76] - 2026-08-06
 
 ### Added

@@ -41,6 +41,7 @@ type WireMessage = {
     status?: string
     memo?: string
     txid?: string
+    boundMessageId?: string
     attachment?: ChatAttachment
   }
 }
@@ -69,10 +70,15 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       status: message.meta?.status,
       memo: message.meta?.memo,
       txid: message.meta?.txid,
+      boundMessageId: message.meta?.boundMessageId,
       attachment: message.meta?.attachment,
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
+}
+
+function isMessageboxFileUrl(url: string): boolean {
+  return url.startsWith(`${messageboxUrl()}/files/`)
 }
 
 function validAttachment(value: unknown): value is ChatAttachment {
@@ -86,7 +92,7 @@ function validAttachment(value: unknown): value is ChatAttachment {
     file.size >= 0 &&
     file.size <= MAX_CHAT_FILE_BYTES &&
     typeof file.url === 'string' &&
-    file.url.startsWith(`${messageboxUrl()}/files/`)
+    isMessageboxFileUrl(file.url)
   )
 }
 
@@ -126,6 +132,10 @@ export function decodeMessageBody(body: string): {
         status: typeof parsed.meta?.status === 'string' ? parsed.meta.status : undefined,
         memo: typeof parsed.meta?.memo === 'string' ? parsed.meta.memo : undefined,
         txid: typeof parsed.meta?.txid === 'string' ? parsed.meta.txid : undefined,
+        boundMessageId:
+          typeof parsed.meta?.boundMessageId === 'string'
+            ? parsed.meta.boundMessageId
+            : undefined,
         attachment: validAttachment(parsed.meta?.attachment)
           ? parsed.meta.attachment
           : undefined,
@@ -159,7 +169,7 @@ export async function uploadChatFile(args: {
   const data = (await res.json().catch(() => null)) as
     | { file?: ChatAttachment; error?: string }
     | null
-  if (!res.ok || !data?.file) {
+  if (!res.ok || !data?.file || !validAttachment(data.file)) {
     throw new Error(data?.error || `File upload failed (${res.status})`)
   }
   return data.file
@@ -221,8 +231,11 @@ export async function pollInbound(args: {
           ...decoded.meta,
           identityKey: m.senderIdentityKey,
           origin: 'messagebox',
-          payStatus:
-            decoded.kind === 'tip' || decoded.kind === 'pay-sent' ? 'sent' : undefined,
+          // Wire tip/pay cards are claims until chain verification exists.
+          status:
+            decoded.kind === 'tip' || decoded.kind === 'pay-sent'
+              ? 'Claimed · unverified'
+              : decoded.meta?.status,
         },
       })
       n += 1

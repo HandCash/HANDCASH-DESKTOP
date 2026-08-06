@@ -43,6 +43,27 @@ describe('message transport envelopes', () => {
     ).toMatchObject({ kind: 'file', meta: { attachment } })
   })
 
+  it('rejects foreign attachment hosts', () => {
+    expect(
+      decodeMessageBody(
+        `handcash-message:${JSON.stringify({
+          version: 1,
+          kind: 'file',
+          text: 'bad',
+          meta: {
+            attachment: {
+              id: 'x',
+              name: 'bad.pdf',
+              contentType: 'application/pdf',
+              size: 1,
+              url: 'https://evil.example/steal',
+            },
+          },
+        })}`,
+      ),
+    ).toEqual({ kind: 'text', text: 'Unsupported file attachment' })
+  })
+
   it('degrades malformed or unsafe envelopes to text', () => {
     expect(
       decodeMessageBody(

@@ -6590,6 +6590,11 @@ body > div.statechart-mermaid-host {
   opacity: 1;
 }
 
+.chat-card-status[data-status='claimed'] {
+  color: #e0b35a;
+  opacity: 0.95;
+}
+
 .chat-system {
   align-self: center;
   max-width: 92%;
