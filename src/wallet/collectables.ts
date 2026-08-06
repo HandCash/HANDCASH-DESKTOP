@@ -917,7 +917,7 @@ async function relinquishSpentOutputs(
 /**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
- * Soft-latch (BRC-154): settle-style single tx spends tip (+ prior latch when
+ * Soft-latch (BRC-156): settle-style single tx spends tip (+ prior latch when
  * present) and creates recipient tip (vout 0) + latch (vout 1). Authenticity is
  * BRC-150 v2 remittance on the tip (not structural v3). Ordinal sat stays on
  * output 0 (`randomizeOutputs: false`). Fees are funded from the default change
@@ -1065,7 +1065,7 @@ export async function sendCollectable(args: {
                   parentLatch,
                 }),
               },
-              // Latch state on chain (BRC-154). Baskets, tags and
+              // Latch state on chain (BRC-156). Baskets, tags and
               // customInstructions above are local to this wallet and never
               // reach the recipient, so without this output the recipient can
               // prove an item landed but has to ask an indexer which item it

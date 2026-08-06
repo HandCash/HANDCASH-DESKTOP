@@ -47,7 +47,7 @@ describe('classifyLegacyUtxos', () => {
   })
 
   it('retries a latch-proven tip on the pending window, not on every poll', async () => {
-    // BRC-154 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
+    // BRC-156 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
     // local proof an item landed, so the ten-minute dust backoff would keep a
     // real transfer invisible. Retrying on every poll is the opposite failure:
     // the poll drops to 8s while a tip is pending and each walk costs a request

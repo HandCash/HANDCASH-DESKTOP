@@ -1,5 +1,5 @@
 /**
- * BRC-154 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
+ * BRC-156 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
  *
  * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
  * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
@@ -12,7 +12,7 @@ export type ProvenanceVerifyResult = {
   reason: string | null
 }
 
-/** Companion basket for proof latch UTXOs ([BRC-154]). */
+/** Companion basket for proof latch UTXOs ([BRC-156]). */
 export const ONE_SAT_LATCH_BASKET = '1sat-latch' as const
 
 export const LATCH_TAG = 'latch:1sat' as const
@@ -20,7 +20,7 @@ export const LATCH_TAG = 'latch:1sat' as const
 export const LATCH_SCHEMA_VERSION = 1 as const
 
 /**
- * Soft-latch P2PKH latch value ([BRC-154]).
+ * Soft-latch P2PKH latch value ([BRC-156]).
  * Exactly **2 satoshis** — never 1 (that is a tip) — so address scanners still
  * find a plain P2PKH latch while receivers can classify it without a script marker.
  */
@@ -123,7 +123,7 @@ export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
 }
 
 /**
- * Structural O(1) verify for v3 remittance (BRC-154).
+ * Structural O(1) verify for v3 remittance (BRC-156).
  * Relative tip/latch refs resolve against the held tip's txid.
  */
 export function verifyProvenanceV3(
@@ -210,7 +210,7 @@ export function buildSoftLatchProvenanceV3(args: {
   })
 }
 
-/** Tags for a latch output per BRC-154 (tip may be relative pre-txid). */
+/** Tags for a latch output per BRC-156 (tip may be relative pre-txid). */
 export function latchOutputTags(args: {
   origin: string
   tip: string
@@ -240,7 +240,7 @@ export function isProvenanceV3(raw: unknown): boolean {
  * the settle transaction closes that gap: the receiver already fetches the
  * transaction to internalize it, so identity costs no extra round trip.
  */
-export const LATCH_DATA_PROTOCOL = 'BRC154' as const
+export const LATCH_DATA_PROTOCOL = 'BRC156' as const
 
 /** `OP_FALSE OP_RETURN` — provably unspendable, so this output carries no value. */
 const OP_FALSE_OP_RETURN = '006a'
@@ -274,7 +274,7 @@ function utf8Bytes(text: string): number[] {
 }
 
 /**
- * Build the `OP_FALSE OP_RETURN BRC154 <json>` locking script for a latch state
+ * Build the `OP_FALSE OP_RETURN BRC156 <json>` locking script for a latch state
  * output. Carried at 0 satoshis, so it never appears in an address UTXO scan
  * and never competes with the tip or the latch dust.
  */
@@ -422,7 +422,7 @@ export function resolveLatchTipClaim(latchOutpoint: string, tipTag: string): str
   return toUnderscoreOutpoint(tipTag)
 }
 
-/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-154). */
+/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-156). */
 export type OneSatBrcCapabilities = {
   brcs: readonly string[]
   baskets: readonly string[]
@@ -434,7 +434,7 @@ export type OneSatBrcCapabilities = {
 
 export function getOneSatBrcCapabilities(): OneSatBrcCapabilities {
   return {
-    brcs: ['147', '150', '154'],
+    brcs: ['147', '150', '156'],
     baskets: ['1sat', ONE_SAT_LATCH_BASKET],
     latchedSend: isLatchedSendEnabled(),
     provenanceVerify: ['v2', 'v3'],

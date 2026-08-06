@@ -4,7 +4,7 @@
  * HARD RULE: never pass satoshis === 1 through fundWalletFromP2PKHOutpoints.
  * Unrecognized 1-sat outs stay on the address until classified (cloud items or GorillaPool).
  *
- * A BRC-154 latched transfer names itself: the settle transaction carries latch
+ * A BRC-156 latched transfer names itself: the settle transaction carries latch
  * state on chain, so `resolveLatchedTip` identifies the item in one fetch with no
  * indexer involved. The GorillaPool/WhatsOnChain ancestry walk below it is the
  * bootstrap path for legacy unlatched tips, where nothing on chain says what the
@@ -319,7 +319,7 @@ async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null>
 /**
  * Resolve a latched tip's identity from the transaction that delivered it.
  *
- * This is the BRC-154 fast path and the whole point of latching: the settle
+ * This is the BRC-156 fast path and the whole point of latching: the settle
  * transaction carries its own latch state, so identity costs one fetch of chain
  * data the receiver needs anyway — no ancestry replay, no ordinal indexer, and
  * no dependence on anyone having indexed the transfer yet.
@@ -475,7 +475,7 @@ export async function classifyLegacyUtxos(
   const heldOneSats: LegacyUtxo[] = []
   const pendingTips: LegacyUtxo[] = []
 
-  // BRC-154 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
+  // BRC-156 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
   // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
   // latch paying us is therefore local proof that output 0 of the same
   // transaction is an ordinal tip. It cannot tell us *which* origin the tip
@@ -536,7 +536,7 @@ export async function classifyLegacyUtxos(
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
         if (!resolved && shouldResolveInscription(cacheKey, Date.now(), retryMs)) {
-          // BRC-154 first: a latched transfer names itself on chain, so this
+          // BRC-156 first: a latched transfer names itself on chain, so this
           // resolves in one fetch without any indexer having seen the transfer.
           // The ancestry walk below is the bootstrap path for legacy unlatched
           // tips only — it must never be what a latched receive waits on.

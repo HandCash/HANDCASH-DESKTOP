@@ -20,9 +20,9 @@ This is not a rejection of the series. Documenting live 1Sat behavior is overdue
 | BSV-21 JSON / binary | Fungible BRCs (305 / 306) | Keep; underscore token ids stay |
 | Sigma | Sigma BRC (307) | Keep; verify test vector independently |
 | Offline tip→origin proof | BRC-150 | Scope to storage class `1sat`; proof format unchanged |
-| Optional O(1) latch companion | BRC-154 (not 153) | Tip 1 + latch **exactly 2**; authenticity remains 150 until induction lands |
+| Optional O(1) latch companion | BRC-156 (not 153) | Tip 1 + latch **exactly 2**; authenticity remains 150 until induction lands |
 
-**Numbering note.** Official `wallet/0153` is already *Action References*. Soft-latch MUST NOT use 153. Use **BRC-154** (or next free token slot). Placeholder 300–307 → lowest free allocations at merge time.
+**Numbering note.** Official `wallet/0153` is already *Action References*. Soft-latch MUST NOT use 153. Use **BRC-156** (or next free token slot). Placeholder 300–307 → lowest free allocations at merge time.
 
 ---
 
@@ -52,7 +52,7 @@ Scoped app access is solved entirely by (2)–(3). Storage does not need a `p` s
 - Tag / display fields are **non-authoritative**.
 - Offline authenticity is **BRC-150 v2** (`provenance` in `customInstructions`).
 - Indexer metadata keyed by a **verified** origin is display only.
-- Structural latch remittance (v3) is not authenticity until induction is specified (BRC-154).
+- Structural latch remittance (v3) is not authenticity until induction is specified (BRC-156).
 
 ### 2.3 `customInstructions` = display + spend + proof
 
@@ -90,7 +90,7 @@ Show tips that are **both** in storage basket `1sat` **and** live 1-sat UTXOs on
 
 ### 2.8 Soft-latch is optional acceleration
 
-BRC-154: tip = 1 sat, latch = exactly 2 sats; companion basket `1sat-latch`; never list latch as a collectable. Latch may signal “arriving”; authenticity remains BRC-150 until induction lands.
+BRC-156: tip = 1 sat, latch = exactly 2 sats; companion basket `1sat-latch`; never list latch as a collectable. Latch may signal “arriving”; authenticity remains BRC-150 until induction lands.
 
 ---
 
@@ -100,7 +100,7 @@ BRC-154: tip = 1 sat, latch = exactly 2 sats; companion basket `1sat-latch`; nev
 2. **BRC-150:** Keep proof format; target storage class `1sat`.
 3. **CI field map:** display + spend + `provenance` in one object.
 4. **`id:` tags:** optional for interop.
-5. **BRC-154** (not 153) for optional latch; cite or mark out of scope in 303.
+5. **BRC-156** (not 153) for optional latch; cite or mark out of scope in 303.
 6. **Co-authorship on 303:** confirm with Brandon before listing; credit 147 authorship either way.
 7. **Sigma test vector:** independent verify before merge.
 

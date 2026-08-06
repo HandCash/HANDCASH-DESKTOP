@@ -1,13 +1,21 @@
 # Changelog
 
+## [1.2.81] - 2026-08-06
+
+### Changed
+
+- **Latched 1Sat BRC number is 156** (upstream merge of PR #198), not 154.
+  Protocol marker is `BRC156`. Spec: `docs/bsva/brcs/tokens/0156.md`.
+
+
 ## [1.2.80] - 2026-08-06
 
 ### Added
 
-- **BRC-154 Phase 1b — on-chain latch state.** Soft-latch Settle now writes tip (1) +
-  latch (2-sat P2PKH) + `OP_FALSE OP_RETURN "BRC154" {origin, tip, parentLatch, …}`.
+- **BRC-156 Phase 1b — on-chain latch state.** Soft-latch Settle now writes tip (1) +
+  latch (2-sat P2PKH) + `OP_FALSE OP_RETURN "BRC156" {origin, tip, parentLatch, …}`.
   Receivers name latched items from the settle tx itself — no ordinal indexer and
-  no ancestry walk. Spec: `docs/bsva/brcs/tokens/0154.md`.
+  no ancestry walk. Spec: `docs/bsva/brcs/tokens/0156.md`.
 
 ### Fixed
 

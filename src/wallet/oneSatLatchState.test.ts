@@ -12,7 +12,7 @@ import {
 const ORIGIN = `${'a'.repeat(64)}_0`
 const PARENT = `${'b'.repeat(64)}_1`
 
-describe('BRC-154 on-chain latch state', () => {
+describe('BRC-156 on-chain latch state', () => {
   it('round-trips state a receiver needs to name the item', () => {
     const script = buildLatchStateScript({
       schema: LATCH_SCHEMA_VERSION,
