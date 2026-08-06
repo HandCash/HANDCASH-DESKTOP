@@ -1,6 +1,4 @@
 /** Clean-room BRC-156 BOLT-style alternating proof builders and verifier. */
-import path from 'node:path'
-import { fileURLToPath } from 'node:url'
 import {
   bsv,
   DummyProvider,
@@ -14,6 +12,7 @@ import {
 } from 'scrypt-ts'
 import { PublicKey, Utils } from '@bsv/sdk'
 import { Brc156Covenant } from '../contracts/brc156Covenant'
+import brc156Artifact from '../../artifacts/brc156Covenant.json'
 import {
   LATCH_DUST_SATS,
   LATCH_SCHEMA_HARDENED,
@@ -42,20 +41,25 @@ export {
   type HardenedReceiveArgs,
 } from './oneSatHardenedReceive'
 
-const ARTIFACT_PATH = path.resolve(
-  path.dirname(fileURLToPath(import.meta.url)),
-  '../../artifacts/brc156Covenant.json',
-)
 const BASE_LINK = HARDENED_BASE_LINK
 let artifactLoaded = false
 
 export const HARDENED_TIP_SATS = 1
 export const HARDENED_BEACON_SATS = LATCH_DUST_SATS
 export const HARDENED_PROOF_SATS = 3
+/** Generous vin unlocking length for tip/proof embeds in settle. */
+export const HARDENED_UNLOCKING_SCRIPT_LENGTH = 12_000
+/** Alias for {@link LATCH_SCHEMA_HARDENED}. */
+export const HARDENED_LATCH_SCHEMA_VERSION = LATCH_SCHEMA_HARDENED
+/**
+ * Relative ref for the OP_RETURN latch-state output on Settle
+ * (tip@0, beacon@1, state@2).
+ */
+export const RELATIVE_HARDENED_PROOF = 'OUTPUT:2' as const
 
 export function loadBrc156CovenantArtifact(): void {
   if (artifactLoaded) return
-  Brc156Covenant.loadArtifact(ARTIFACT_PATH)
+  Brc156Covenant.loadArtifact(brc156Artifact)
   artifactLoaded = true
 }
 
@@ -88,6 +92,11 @@ export function encodeLineageOutpoint(outpoint: string): string {
 
 function pubKey(publicKeyHex: string): PubKey {
   return PubKey(toByteString(PublicKey.fromString(publicKeyHex).toString()))
+}
+
+/** PubKey from compressed identity key hex for scrypt-ts method calls. */
+export function pubKeyHexToScrypt(publicKeyHex: string): PubKey {
+  return pubKey(publicKeyHex)
 }
 
 function sha256Prop(hash: string): Sha256 {
@@ -176,13 +185,16 @@ export function buildHardenedLatchState(args: {
   delayedProofOutpoint: string
   ownerPublicKeyHex: string
   commitTxid?: string
+  name?: string
+  app?: string
+  mimeType?: string
 }): LatchState {
   return {
     schema: LATCH_SCHEMA_HARDENED,
     mode: 'hardened',
     origin: toUnderscoreOutpoint(args.origin),
     tip: RELATIVE_TIP,
-    latch: 'OUTPUT:2',
+    latch: RELATIVE_HARDENED_PROOF,
     beacon: 'OUTPUT:1',
     parentLatch: toUnderscoreOutpoint(args.delayedProofOutpoint),
     proofOutpoint: toUnderscoreOutpoint(args.delayedProofOutpoint),
@@ -190,7 +202,71 @@ export function buildHardenedLatchState(args: {
     ownerKeyHash: ownerKeyHashFromPubkey(args.ownerPublicKeyHex),
     commitTxid: args.commitTxid,
     settleTxid: 'SELF',
+    ...(args.name ? { name: args.name } : {}),
+    ...(args.app ? { app: args.app } : {}),
+    ...(args.mimeType ? { mimeType: args.mimeType } : {}),
   }
+}
+
+/**
+ * Settle-state alias used by the wallet bridge. `proofOutpoint` /
+ * `parentLatch` point at the delayed proof (Commit vout1), never a
+ * same-tx sibling.
+ */
+export function buildHardenedSettleState(args: {
+  origin: string
+  originScriptHash: string
+  /** Delayed proof outpoint (typically `${commitTxid}_1` after base settle). */
+  delayedProofOutpoint?: string
+  parentLatch?: string
+  grandparentOutpoint?: string
+  ownerPublicKeyHex: string
+  commitTxid?: string
+  name?: string
+  app?: string
+  mimeType?: string
+  proofOutpoint?: string
+}): LatchState {
+  const delayed =
+    args.proofOutpoint ??
+    args.delayedProofOutpoint ??
+    args.parentLatch ??
+    BASE_LINK
+  void args.grandparentOutpoint
+  return buildHardenedLatchState({
+    origin: args.origin,
+    originScriptHash: args.originScriptHash,
+    delayedProofOutpoint: delayed,
+    ownerPublicKeyHex: args.ownerPublicKeyHex,
+    commitTxid: args.commitTxid,
+    name: args.name,
+    app: args.app,
+    mimeType: args.mimeType,
+  })
+}
+
+/** Tip `customInstructions` JSON for hardened covenant outputs. */
+export function hardenedTipCustomInstructions(args: {
+  origin: string
+  name: string
+  app?: string
+  originScriptHash: string
+  ownerPublicKeyHex: string
+  proofOutpoint?: string
+  commitTxid?: string
+}): string {
+  return JSON.stringify({
+    mode: 'hardened',
+    origin: toUnderscoreOutpoint(args.origin),
+    name: args.name.slice(0, 80),
+    ...(args.app ? { app: args.app.slice(0, 40) } : {}),
+    originScriptHash: args.originScriptHash.toLowerCase(),
+    ownerKeyHash: ownerKeyHashFromPubkey(args.ownerPublicKeyHex),
+    ...(args.proofOutpoint
+      ? { proofOutpoint: toUnderscoreOutpoint(args.proofOutpoint) }
+      : {}),
+    ...(args.commitTxid ? { commitTxid: args.commitTxid.toLowerCase() } : {}),
+  })
 }
 
 export function createTestSigner(key?: bsv.PrivateKey): {
@@ -277,6 +353,7 @@ export async function runBaseSettleWithScriptExec(args: {
   recipientPublicKeyHex: string
   commitTx: bsv.Transaction
   genesisTx: bsv.Transaction
+  stateScriptHex?: string
 }): Promise<{ settleTx: bsv.Transaction; tip: Brc156Covenant }> {
   await args.committedTip.connect(args.signer)
   const next = args.committedTip.next()
@@ -287,11 +364,24 @@ export async function runBaseSettleWithScriptExec(args: {
   const beacon = bsv.Script.buildPublicKeyHashOut(
     bsv.PublicKey.fromString(args.recipientPublicKeyHex).toAddress(),
   )
+  const stateHex =
+    args.stateScriptHex ??
+    buildLatchStateScript(
+      buildHardenedLatchState({
+        origin: decodeOrigin(args.committedTip.origin),
+        originScriptHash: String(args.committedTip.originScriptHash),
+        delayedProofOutpoint: `${args.commitTx.id}_1`,
+        ownerPublicKeyHex: args.recipientPublicKeyHex,
+        commitTxid: args.commitTx.id,
+      }),
+    )
+  const stateScript = bsv.Script.fromHex(stateHex)
   args.committedTip.bindTxBuilder('settleBase', async (instance, options) => {
     const tx = new bsv.Transaction()
       .addInput(instance.buildContractInput())
       .addOutput(new bsv.Transaction.Output({ script: next.lockingScript, satoshis: 1 }))
       .addOutput(new bsv.Transaction.Output({ script: beacon, satoshis: 2 }))
+      .addOutput(new bsv.Transaction.Output({ script: stateScript, satoshis: 0 }))
     if (options.changeAddress) tx.change(options.changeAddress)
     return {
       tx,
@@ -304,6 +394,7 @@ export async function runBaseSettleWithScriptExec(args: {
     pubKey(args.recipientPublicKeyHex),
     toByteString(args.commitTx.toString()),
     toByteString(args.genesisTx.toString()),
+    toByteString(stateHex),
     {
       pubKeyOrAddrToSign: args.signerKey.publicKey,
       changeAddress: args.signerKey.toAddress(),
@@ -327,6 +418,7 @@ export async function runAlternatingSettleWithScriptExec(args: {
   priorSettleTx: bsv.Transaction
   proofCommitTx: bsv.Transaction
   mutateOutputs?: boolean
+  stateScriptHex?: string
 }): Promise<{ settleTx: bsv.Transaction; tip: Brc156Covenant }> {
   await args.committedTip.connect(args.signer)
   await args.delayedProof.connect(args.signer)
@@ -338,6 +430,18 @@ export async function runAlternatingSettleWithScriptExec(args: {
   const beacon = bsv.Script.buildPublicKeyHashOut(
     bsv.PublicKey.fromString(args.recipientPublicKeyHex).toAddress(),
   )
+  const stateHex =
+    args.stateScriptHex ??
+    buildLatchStateScript(
+      buildHardenedLatchState({
+        origin: decodeOrigin(args.committedTip.origin),
+        originScriptHash: String(args.committedTip.originScriptHash),
+        delayedProofOutpoint: `${args.proofCommitTx.id}_1`,
+        ownerPublicKeyHex: args.recipientPublicKeyHex,
+        commitTxid: args.currentCommitTx.id,
+      }),
+    )
+  const stateScript = bsv.Script.fromHex(stateHex)
   const build = () => {
     const tx = new bsv.Transaction()
       .addInput(args.committedTip.buildContractInput())
@@ -345,6 +449,7 @@ export async function runAlternatingSettleWithScriptExec(args: {
       .addOutput(new bsv.Transaction.Output({ script: next.lockingScript, satoshis: 1 }))
     if (!args.mutateOutputs) {
       tx.addOutput(new bsv.Transaction.Output({ script: beacon, satoshis: 2 }))
+      tx.addOutput(new bsv.Transaction.Output({ script: stateScript, satoshis: 0 }))
     }
     tx.change(args.signerKey.toAddress())
     return tx
@@ -363,6 +468,7 @@ export async function runAlternatingSettleWithScriptExec(args: {
     toByteString(args.currentCommitTx.toString()),
     toByteString(args.priorSettleTx.toString()),
     toByteString(args.proofCommitTx.toString()),
+    toByteString(stateHex),
   ] as const
   const partial = await args.committedTip.methods.settle(
     (sigs: SignatureResponse[]) => findSig(sigs, args.signerKey.publicKey),
@@ -413,9 +519,15 @@ function decodeLineage(bytes: string): string {
   return `${txid}_${vout}`
 }
 
+/** Decode tip/proof `linkOutpoint` state to `txid_vout`. */
+export function decodeHardenedLinkOutpoint(bytes: string): string {
+  return decodeLineage(String(bytes).replace(/^0x/i, ''))
+}
+
 function decodeOrigin(bytes: string): string {
-  const txid = bytes.slice(0, 64)
-  const vout = Buffer.from(bytes.slice(64), 'hex').readUInt32LE(0)
+  const raw = String(bytes).replace(/^0x/i, '')
+  const txid = raw.slice(0, 64)
+  const vout = Buffer.from(raw.slice(64), 'hex').readUInt32LE(0)
   return `${txid}_${vout}`
 }
 

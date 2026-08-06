@@ -1186,8 +1186,7 @@ export async function sendCollectable(args: {
     ),
   ]
 
-  // Hardened path — identity key required. Bare address falls through.
-  // Soft-latch remains live until the alternating createAction bridge ships.
+  // Hardened path — identity key required. Bare address falls through to soft-latch.
   if (
     isHardenedSendEnabled() &&
     canUseHardenedLatch({ publicKey: args.recipientIdentityKey })

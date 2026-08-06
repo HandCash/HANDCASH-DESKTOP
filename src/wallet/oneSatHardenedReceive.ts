@@ -13,11 +13,11 @@ import {
 export const BASE_LINK = `${'00'.repeat(32)}_0`
 
 /**
- * Live wallet sends stay on soft-latch until the alternating Commit/Settle
- * createAction(noSend)/signAction unlock bridge is finished.
+ * Live wallet hardened Commit/Settle is enabled. Soft-latch remains the
+ * fallback when the recipient has no identity key.
  */
 export function isHardenedSendEnabled(): boolean {
-  return false
+  return true
 }
 
 export function canUseHardenedLatch(recipient: {

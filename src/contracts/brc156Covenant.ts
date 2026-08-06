@@ -52,13 +52,19 @@ export class Brc156Covenant extends SmartContract {
     assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
   }
 
-  /** Tx2 base case: Tx0 must directly spend the verified legacy tip. */
+  /**
+   * Tx2 base case. Supports:
+   * - Classic: Commit spent genesis tip; genesis spent verified legacy tip
+   * - Direct: Commit itself spent the verified legacy tip (wallet genesis)
+   * Settle layout: tip@0 + beacon@1 + OP_RETURN state@2 + change
+   */
   @method()
   public settleBase(
     sig: Sig,
     newOwner: PubKey,
     commitTx: ByteString,
     genesisTx: ByteString,
+    stateScript: ByteString,
   ) {
     assert(this.checkSig(sig, this.owner), 'bad owner sig')
     assert(this.role == Brc156Covenant.ROLE_TIP, 'settleBase requires tip')
@@ -69,18 +75,22 @@ export class Brc156Covenant extends SmartContract {
       'not base token',
     )
     this.assertCanonicalTx(commitTx)
-    this.assertCanonicalTx(genesisTx)
+    this.assertOpReturnState(stateScript)
     assert(hash256(commitTx) == this.ctx.utxo.outpoint.txid, 'commit txid mismatch')
-    const genesisToken = slice(commitTx, 5n, 41n)
-    assert(hash256(genesisTx) == slice(genesisToken, 0n, 32n), 'genesis txid mismatch')
-    assert(
-      slice(genesisTx, 5n, 41n) == this.legacyTipOutpoint,
-      'genesis did not spend verified legacy tip',
-    )
+    const spent = slice(commitTx, 5n, 41n)
+    if (spent != this.legacyTipOutpoint) {
+      this.assertCanonicalTx(genesisTx)
+      assert(hash256(genesisTx) == slice(spent, 0n, 32n), 'genesis txid mismatch')
+      assert(
+        slice(genesisTx, 5n, 41n) == this.legacyTipOutpoint,
+        'genesis did not spend verified legacy tip',
+      )
+    }
     this.linkOutpoint = this.ctx.utxo.outpoint.txid + int2ByteString(1n, 4n)
     this.owner = newOwner
     let outputs = this.buildStateOutput(Brc156Covenant.TIP_SATS)
     outputs += Utils.buildAddressOutput(pubKey2Addr(newOwner), Brc156Covenant.BEACON_SATS)
+    outputs += Utils.buildOutput(stateScript, 0n)
     outputs += this.buildChangeOutput()
     assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
   }
@@ -93,12 +103,14 @@ export class Brc156Covenant extends SmartContract {
     currentCommitTx: ByteString,
     priorSettleTx: ByteString,
     proofCommitTx: ByteString,
+    stateScript: ByteString,
   ) {
     assert(this.checkSig(sig, this.owner), 'bad owner sig')
     assert(this.role == Brc156Covenant.ROLE_TIP, 'settle requires tip')
     this.assertCanonicalTx(currentCommitTx)
     this.assertCanonicalTx(priorSettleTx)
     this.assertCanonicalTx(proofCommitTx)
+    this.assertOpReturnState(stateScript)
     const self = this.ctx.utxo.outpoint.txid +
       int2ByteString(this.ctx.utxo.outpoint.outputIndex, 4n)
     assert(slice(this.prevouts, 0n, 36n) == self, 'tip must be vin0')
@@ -122,6 +134,7 @@ export class Brc156Covenant extends SmartContract {
     this.owner = newOwner
     let outputs = this.buildStateOutput(Brc156Covenant.TIP_SATS)
     outputs += Utils.buildAddressOutput(pubKey2Addr(newOwner), Brc156Covenant.BEACON_SATS)
+    outputs += Utils.buildOutput(stateScript, 0n)
     outputs += this.buildChangeOutput()
     assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
   }
@@ -135,10 +148,12 @@ export class Brc156Covenant extends SmartContract {
     currentCommitTx: ByteString,
     priorSettleTx: ByteString,
     proofCommitTx: ByteString,
+    stateScript: ByteString,
   ) {
     assert(this.checkSig(sig, this.owner), 'bad proof owner sig')
     assert(this.role == Brc156Covenant.ROLE_PROOF, 'requires proof')
     assert(this.ctx.utxo.value == Brc156Covenant.PROOF_SATS, 'proof must be 3 sats')
+    this.assertOpReturnState(stateScript)
     const self = this.ctx.utxo.outpoint.txid +
       int2ByteString(this.ctx.utxo.outpoint.outputIndex, 4n)
     assert(slice(this.prevouts, 36n, 72n) == self, 'proof must be vin1')
@@ -156,17 +171,43 @@ export class Brc156Covenant extends SmartContract {
       'proof does not latch prior settle')
     let outputs = Utils.buildOutput(nextTipScript, Brc156Covenant.TIP_SATS)
     outputs += Utils.buildAddressOutput(pubKey2Addr(newOwner), Brc156Covenant.BEACON_SATS)
+    outputs += Utils.buildOutput(stateScript, 0n)
     outputs += this.buildChangeOutput()
     assert(this.ctx.hashOutputs == hash256(outputs), 'hashOutputs mismatch')
   }
 
   @method()
-  private assertCanonicalTx(tx: ByteString): void {
-    assert(len(tx) > 41n, 'transaction too short')
+  private assertOpReturnState(stateScript: ByteString): void {
+    assert(len(stateScript) >= 2n, 'state script too short')
     assert(
-      slice(tx, 4n, 5n) == toByteString('01') ||
-      slice(tx, 4n, 5n) == toByteString('02') ||
-      slice(tx, 4n, 5n) == toByteString('03'),
+      slice(stateScript, 0n, 2n) == toByteString('006a'),
+      'state must be OP_FALSE OP_RETURN',
+    )
+  }
+
+  @method()
+  private assertCanonicalTx(tx: ByteString): void {
+    // Single-byte VarInt input count only (offsets below assume that).
+    // Allow up to 16 inputs so wallet funding UTXOs fit Commit/Settle.
+    assert(len(tx) > 41n, 'transaction too short')
+    const nIn = slice(tx, 4n, 5n)
+    assert(
+      nIn == toByteString('01') ||
+        nIn == toByteString('02') ||
+        nIn == toByteString('03') ||
+        nIn == toByteString('04') ||
+        nIn == toByteString('05') ||
+        nIn == toByteString('06') ||
+        nIn == toByteString('07') ||
+        nIn == toByteString('08') ||
+        nIn == toByteString('09') ||
+        nIn == toByteString('0a') ||
+        nIn == toByteString('0b') ||
+        nIn == toByteString('0c') ||
+        nIn == toByteString('0d') ||
+        nIn == toByteString('0e') ||
+        nIn == toByteString('0f') ||
+        nIn == toByteString('10'),
       'input count outside profile',
     )
   }

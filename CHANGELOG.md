@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.84] - 2026-08-06
+
+### Added
+
+- **Live hardened BRC-156 send** for identity-key peers: Commit (`noSend`) →
+  Settle (`sendWith`) unlocks the clean-room alternating delayed-proof covenant
+  against the wallet-built AtomicBEEF txs. Genesis from BRC-150 P2PKH tips and
+  covenant re-spends both work. Soft-latch remains the fallback for bare addresses.
+
+### Changed
+
+- Covenant `assertCanonicalTx` allows up to 16 inputs so wallet funding fits.
+- Settle hashOutputs includes the 0-sat OP_RETURN latch state.
+
 ## [1.2.83] - 2026-08-06
 
 ### Fixed
