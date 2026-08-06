@@ -3214,6 +3214,12 @@ a.history-row-link:hover .history-tx-hint {
   font-weight: 500;
 }
 
+.history-icon-wrap {
+  position: relative;
+  width: 36px;
+  height: 36px;
+}
+
 .history-icon {
   width: 36px;
   height: 36px;
@@ -3250,6 +3256,28 @@ a.history-row-link:hover .history-tx-hint {
   width: 32px;
   height: 32px;
   border-radius: 50%;
+}
+
+.history-action-badge {
+  position: absolute;
+  right: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  display: grid;
+  place-items: center;
+  border: 2px solid hsl(var(--background));
+  border-radius: 50%;
+  color: #fff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.history-action-badge.is-send {
+  background: #df5b5b;
+}
+
+.history-action-badge.is-receive {
+  background: #2da76f;
 }
 
 .history-item-thumb-icon {

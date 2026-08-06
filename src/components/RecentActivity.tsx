@@ -1,8 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { ActivityIcon, CollectablesIcon, FilterIcon } from './icons'
+import {
+  ActivityIcon,
+  CollectablesIcon,
+  FilterIcon,
+  ReceiveIcon,
+  SendIcon,
+} from './icons'
 import { DeferredImage } from './DeferredImage'
 import {
+  activityEntryTitle,
   isItemActivity,
   listRecentActivity,
   subscribeAppActivity,
@@ -123,9 +130,7 @@ function HistoryRow({
 }) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
-  // Subject is primary; transfer direction is supporting context.
-  const title = item ? entry.item?.name || 'Collectable' : 'BSV'
-  const action = spent ? 'Send' : 'Receive'
+  const title = activityEntryTitle(entry)
   const amountLabel = item
     ? entry.item?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
@@ -147,30 +152,41 @@ function HistoryRow({
           openPaymentDetails(entry.id)
         }}
       >
-        <div className="history-icon">
-          {item && entry.item?.imageUrl ? (
-            <DeferredImage
-              className="history-item-thumb"
-              src={entry.item.imageUrl}
-              alt=""
-              width={28}
-              height={28}
-              skeletonWidth={28}
-              skeletonHeight={28}
-              skeletonRadius={6}
-              decoding="async"
-            />
-          ) : item ? (
-            <span className="history-item-thumb-icon">
-              <CollectablesIcon size={18} />
-            </span>
-          ) : (
-            <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
-          )}
+        <div className="history-icon-wrap">
+          <div className="history-icon">
+            {item && entry.item?.imageUrl ? (
+              <DeferredImage
+                className="history-item-thumb"
+                src={entry.item.imageUrl}
+                alt=""
+                width={28}
+                height={28}
+                skeletonWidth={28}
+                skeletonHeight={28}
+                skeletonRadius={6}
+                decoding="async"
+              />
+            ) : item ? (
+              <span className="history-item-thumb-icon">
+                <CollectablesIcon size={18} />
+              </span>
+            ) : (
+              <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
+            )}
+          </div>
+          <span
+            className={`history-action-badge ${spent ? 'is-send' : 'is-receive'}`}
+            aria-label={spent ? 'Send' : 'Receive'}
+            title={spent ? 'Send' : 'Receive'}
+          >
+            {spent ? <SendIcon size={9} /> : <ReceiveIcon size={9} />}
+          </span>
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          <span className="history-when">{action}</span>
+          {item && entry.item?.app ? (
+            <span className="history-when">{entry.item.app}</span>
+          ) : null}
         </div>
         <div className="history-amount-block">
           <span

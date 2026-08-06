@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.75] - 2026-08-06
+
+### Fixed
+
+- **Activity icons now show the asset with direction as a subscript.** An NFT's
+  image is the main icon and BSV transfers use the BSV logo. A small send or
+  receive badge overlays the corner, so the icon identifies both what moved and
+  which way without replacing the asset with a generic action glyph.
+
 ## [1.2.74] - 2026-08-06
 
 ### Fixed
