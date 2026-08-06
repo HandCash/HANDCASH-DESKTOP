@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { ActivityIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
+import { ActivityIcon, CollectablesIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
   activityEntryTitle,
@@ -33,7 +33,60 @@ import { openPaymentDetails, setNavSection } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
-import { DeferredImage } from './DeferredImage'
+
+/** Paint a few rows per frame so Activity does not block the UI on open. */
+const RENDER_CHUNK = 16
+
+function useChunkedCount(total: number): number {
+  const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))
+
+  useEffect(() => {
+    setShown(Math.min(RENDER_CHUNK, total))
+    if (total <= RENDER_CHUNK) return
+
+    let cancelled = false
+    let next = RENDER_CHUNK
+    let handle = 0
+
+    const step = () => {
+      if (cancelled) return
+      next = Math.min(total, next + RENDER_CHUNK)
+      setShown(next)
+      if (next < total) handle = window.requestAnimationFrame(step)
+    }
+
+    handle = window.requestAnimationFrame(step)
+    return () => {
+      cancelled = true
+      if (handle) window.cancelAnimationFrame(handle)
+    }
+  }, [total])
+
+  return shown
+}
+
+type ActivityFeedSnapshot = {
+  entries: ActivityEntry[]
+  origins: PaymentOriginOption[]
+}
+
+const feedCache = new Map<number, ActivityFeedSnapshot>()
+
+function readActivityFeed(limit: number): ActivityFeedSnapshot {
+  const hit = feedCache.get(limit)
+  if (hit) return hit
+  const snapshot = {
+    entries: listRecentActivity(limit),
+    origins: listPaymentOriginOptions(limit),
+  }
+  feedCache.set(limit, snapshot)
+  return snapshot
+}
+
+function invalidateActivityFeed(limit?: number): void {
+  if (limit == null) feedCache.clear()
+  else feedCache.delete(limit)
+}
 
 function formatWhen(at: number): string {
   const diff = Math.max(0, Date.now() - at)
@@ -96,20 +149,11 @@ function HistoryRow({
         }}
       >
         <div className="history-icon">
-          {item && entry.item?.imageUrl ? (
-            // Ordinal content is full size whatever we display it at, so keep the
-            // decode off the main thread — a list of them freezes a phone.
-            <DeferredImage
-              className="history-item-thumb"
-              src={entry.item.imageUrl}
-              alt=""
-              width={28}
-              height={28}
-              skeletonWidth={28}
-              skeletonHeight={28}
-              skeletonRadius={6}
-              decoding="async"
-            />
+          {item ? (
+            // List rows stay icon-only — full ordinal decode belongs on the detail view.
+            <span className="history-item-thumb history-item-thumb-icon" aria-hidden>
+              <CollectablesIcon size={14} />
+            </span>
           ) : isWallet ? (
             spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
           ) : (
@@ -155,17 +199,19 @@ type FeedProps = {
 }
 
 function useActivityFeed(limit: number) {
-  const [entries, setEntries] = useState<ActivityEntry[]>(() => listRecentActivity(limit))
+  const [entries, setEntries] = useState<ActivityEntry[]>(() => readActivityFeed(limit).entries)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [origins, setOrigins] = useState<PaymentOriginOption[]>(() => listPaymentOriginOptions(limit))
+  const [origins, setOrigins] = useState<PaymentOriginOption[]>(() => readActivityFeed(limit).origins)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => {
     const refresh = () => {
-      setEntries(listRecentActivity(limit))
-      setOrigins(listPaymentOriginOptions(limit))
+      invalidateActivityFeed(limit)
+      const snapshot = readActivityFeed(limit)
+      setEntries(snapshot.entries)
+      setOrigins(snapshot.origins)
     }
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
@@ -219,6 +265,8 @@ export function ActivityFeed({
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
     [entries, filters, showFilters],
   )
+  const shownCount = useChunkedCount(filtered.length)
+  const visibleEntries = filtered.slice(0, shownCount)
 
   const filtersActive =
     filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
@@ -245,7 +293,7 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
-        {filtered.map((entry) => (
+        {visibleEntries.map((entry) => (
           <HistoryRow
             key={entry.id}
             entry={entry}

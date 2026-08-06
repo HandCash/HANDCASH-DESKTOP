@@ -1,10 +1,26 @@
 # Changelog
 
-## [1.2.59] - 2026-08-06
+## [1.2.60] - 2026-08-06
 
 ### Changed
 
 - Patch release (every push must ship a new version).
+
+## [1.2.60] - 2026-08-06
+
+### Fixed
+
+- Activity had the same remount cost as Identity. The feed snapshot is cached per
+  limit, rows render in batches, and NFT activity lines use an icon in the list —
+  full ordinal images only on the payment detail view, not 200 decodes at once.
+
+## [1.2.59] - 2026-08-06
+
+### Fixed
+
+- Latest crash log was rapid Activity ↔ Identity tab taps. Identity regenerated its
+  QR on every mount; it is now cached per identity key. Light tabs stay mounted
+  once visited; Collectables still unmounts when you leave it.
 
 ## [1.2.58] - 2026-08-06
 

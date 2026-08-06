@@ -39,6 +39,7 @@ import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { ADD_MONEY_URL } from '../wallet/walletConfig'
+import { identityQrDataUrl } from '../wallet/identityQr'
 
 /** Cloud history is merged far less often than the chain poll — it is a network round trip. */
 const HISTORY_PULL_INTERVAL_MS = 60_000
@@ -71,6 +72,10 @@ export function Dashboard({
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
+  useEffect(() => {
+    // First Identity tab visit used to block ~3s generating this QR on a phone.
+    void identityQrDataUrl(profile.identityKey)
+  }, [profile.identityKey])
 
   useEffect(() => {
     void refreshUsdPerBsv()
