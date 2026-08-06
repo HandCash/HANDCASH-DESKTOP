@@ -3,7 +3,8 @@
  * Same outpoint must never be imported twice (migration ↔ chain sync race).
  *
  * Failed imports get a short backoff so a bad latch cannot re-fetch BEEF and
- * block the UI on every Dashboard poll.
+ * block the UI on every Dashboard poll — but keep it short enough that a
+ * transient Chaintracks/header miss does not hide a real ordinal for minutes.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
@@ -11,7 +12,7 @@ const STORAGE_KEY = 'handcash.brc100.importedOneSatOutpoints.v1'
 const FAIL_KEY = 'handcash.brc100.failedOneSatOutpoints.v1'
 const MAX_ENTRIES = 4000
 /** Do not retry a failed internalization until this elapses. */
-const FAIL_BACKOFF_MS = 5 * 60_000
+export const FAIL_BACKOFF_MS = 45_000
 
 const inFlight = new Set<string>()
 

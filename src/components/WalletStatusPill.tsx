@@ -56,18 +56,24 @@ function resolveStatus(
     }
   }
   // Soft in-flight sync / backup probes stay quiet — only terminal outcomes matter.
+  // "Chain failed" read as though the blockchain itself had broken. This is only
+  // the read path: local funds and keys are untouched, the balance is just stale.
   if (health.phase === 'error') {
     return {
-      label: 'Chain failed',
+      label: 'Sync failed',
       tone: 'error',
-      detail: health.message ?? 'Chain ingest failed — retrying (not history backup)',
+      detail: `${
+        health.message ?? 'Couldn’t reach the network to refresh funds.'
+      } Balance may be out of date — your coins and keys are safe. Retrying.`,
     }
   }
   if (cloud.phase === 'error') {
     return {
-      label: 'History failed',
+      label: 'Backup failed',
       tone: 'error',
-      detail: cloud.message ?? 'BRC-39 history backup host error',
+      detail: `${
+        cloud.message ?? 'History backup host (BRC-39) is not responding.'
+      } This device is fine — only the off-device history copy is behind.`,
     }
   }
   if (session === 'sending') {
@@ -133,7 +139,7 @@ function resolveStatus(
   }
   if (cloud.phase === 'ok') {
     return {
-      label: 'History synced',
+      label: 'Backup synced',
       tone: 'ok',
       detail: cloud.message,
     }

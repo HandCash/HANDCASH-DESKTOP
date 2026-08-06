@@ -40,10 +40,17 @@ describe('oneSatImportGuard', () => {
   })
 
   it('backs off failed imports so polls do not re-fetch BEEF immediately', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-06T12:00:00Z'))
     const guard = await import('./oneSatImportGuard')
     guard.markOneSatImportFailed(['latch.0'])
     expect(guard.filterNewOneSatOutpoints(['latch.0', 'other.1'])).toEqual(['other.1'])
     expect(guard.beginOneSatImport(['latch.0'])).toEqual([])
+
+    // Transient BEEF/header misses should clear within a minute, not five.
+    vi.advanceTimersByTime(guard.FAIL_BACKOFF_MS + 1)
+    expect(guard.filterNewOneSatOutpoints(['latch.0'])).toEqual(['latch.0'])
+    vi.useRealTimers()
   })
 
   it('normalizes underscore outpoints to dotted form', async () => {

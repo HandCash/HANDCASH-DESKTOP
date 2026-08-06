@@ -122,11 +122,13 @@ function HistoryRow({
   currency,
   usdPerBsv,
   showWhen,
+  newest = false,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
   usdPerBsv: number | null
   showWhen: boolean
+  newest?: boolean
 }) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
@@ -143,7 +145,7 @@ function HistoryRow({
         : `+${amountLabel}`
 
   return (
-    <li>
+    <li data-activity-newest={newest ? '' : undefined}>
       <button
         type="button"
         className="history-row history-row-btn"
@@ -262,6 +264,48 @@ function useScrollReveal(ref: RefObject<HTMLElement | null>) {
   }, [ref])
 }
 
+/** Keep newest rows in view when the feed is at its default (top) scroll. */
+function useStickNewestToTop(
+  listRef: RefObject<HTMLElement | null>,
+  newestId: string | undefined,
+) {
+  const stickToTopRef = useRef(true)
+  const prevNewestRef = useRef(newestId)
+
+  useEffect(() => {
+    const el = listRef.current
+    if (!el) return
+    const onScroll = () => {
+      stickToTopRef.current = el.scrollTop <= 24
+    }
+    onScroll()
+    el.addEventListener('scroll', onScroll, { passive: true })
+    return () => el.removeEventListener('scroll', onScroll)
+  }, [listRef, newestId])
+
+  useEffect(() => {
+    const el = listRef.current
+    if (!el || !newestId) return
+    const changed = prevNewestRef.current !== newestId
+    prevNewestRef.current = newestId
+    if (!changed || !stickToTopRef.current) return
+
+    const pin = () => {
+      el.scrollTop = 0
+      stickToTopRef.current = true
+      const newest = el.querySelector<HTMLElement>('[data-activity-newest]')
+      if (!newest) return
+      newest.classList.remove('is-fresh')
+      // Restart CSS animation if another arrival lands quickly.
+      void newest.offsetWidth
+      newest.classList.add('is-fresh')
+    }
+    pin()
+    const raf = window.requestAnimationFrame(pin)
+    return () => window.cancelAnimationFrame(raf)
+  }, [listRef, newestId])
+}
+
 export function ActivityFeed({
   limit = 40,
   title = 'Recent activity',
@@ -285,6 +329,8 @@ export function ActivityFeed({
   )
   const shownCount = useChunkedCount(filtered.length)
   const visibleEntries = filtered.slice(0, shownCount)
+  const newestId = filtered[0]?.id
+  useStickNewestToTop(listRef, newestId)
 
   const filtersActive =
     filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
@@ -311,13 +357,14 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
-        {visibleEntries.map((entry) => (
+        {visibleEntries.map((entry, index) => (
           <HistoryRow
             key={entry.id}
             entry={entry}
             currency={currency}
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}
+            newest={index === 0}
           />
         ))}
         {viewAllLabel && onViewAll ? (

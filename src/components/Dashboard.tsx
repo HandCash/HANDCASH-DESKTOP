@@ -41,9 +41,25 @@ import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
+import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 
 /** Cloud history is merged far less often than the chain poll — it is a network round trip. */
 const HISTORY_PULL_INTERVAL_MS = 60_000
+/** Quiet steady-state chain poll. */
+const CHAIN_POLL_MS = 30_000
+/** Device-parity steady-state poll. */
+const CHAIN_POLL_PARITY_MS = 12_000
+/**
+ * While latch-proven tips are waiting on GorillaPool / BEEF, poll hard so the
+ * ordinal lands in Collectables as soon as the indexer catches up — not after
+ * another quiet 30s tick.
+ */
+const CHAIN_POLL_PENDING_MS = 8_000
+
+function nextChainPollMs(pendingTips: number): number {
+  if (pendingTips > 0) return CHAIN_POLL_PENDING_MS
+  return isDeviceParityEnabled() ? CHAIN_POLL_PARITY_MS : CHAIN_POLL_MS
+}
 
 type Props = {
   profile: WalletProfile
@@ -115,6 +131,18 @@ export function Dashboard({
     let cancelled = false
     let lastHistoryPull = 0
     let tickInFlight = false
+    let pollTimer: number | null = null
+    let scheduledDelayMs = 0
+
+    const scheduleNext = (delayMs?: number) => {
+      if (cancelled) return
+      if (pollTimer != null) window.clearTimeout(pollTimer)
+      const delay = delayMs ?? nextChainPollMs(getSyncHealth().pendingTips)
+      scheduledDelayMs = delay
+      pollTimer = window.setTimeout(() => {
+        void sync().finally(() => scheduleNext())
+      }, delay)
+    }
 
     const sync = async (opts?: { forceReview?: boolean }) => {
       // Skip overlapping poll ticks — prior soft-pull + chain sync must finish.
@@ -154,7 +182,7 @@ export function Dashboard({
     let deferTimer: number | null = null
     const startFirst = () => {
       if (cancelled) return
-      void sync()
+      void sync().finally(() => scheduleNext())
     }
     if (isPhoneShell()) {
       if (typeof requestIdleCallback === 'function') {
@@ -166,13 +194,18 @@ export function Dashboard({
       deferTimer = window.setTimeout(startFirst, 0)
     }
 
-    const intervalMs = isDeviceParityEnabled() ? 12_000 : 30_000
-    const id = window.setInterval(() => {
-      void sync()
-    }, intervalMs)
+    // If a tip becomes pending mid-wait, collapse a quiet interval immediately.
+    const unsubHealth = subscribeSyncHealth((health) => {
+      if (cancelled || tickInFlight || health.pendingTips <= 0) return
+      if (pollTimer == null) return
+      if (scheduledDelayMs <= CHAIN_POLL_PENDING_MS) return
+      scheduleNext(CHAIN_POLL_PENDING_MS)
+    })
+
     return () => {
       cancelled = true
-      window.clearInterval(id)
+      unsubHealth()
+      if (pollTimer != null) window.clearTimeout(pollTimer)
       if (idleHandle != null && typeof cancelIdleCallback === 'function') {
         cancelIdleCallback(idleHandle)
       }

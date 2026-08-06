@@ -455,6 +455,8 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   } | null>(null)
   const [confirming, setConfirming] = useState(false)
   const threadEndRef = useRef<HTMLDivElement>(null)
+  const threadListRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
   const inputRef = useRef<HTMLTextAreaElement>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -514,6 +516,8 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     () => (threadSection === 'files' ? messages.filter((m) => m.kind === 'file') : messages),
     [messages, threadSection],
   )
+  const lastVisibleId = visibleMessages[visibleMessages.length - 1]?.id
+  const lastVisibleDirection = visibleMessages[visibleMessages.length - 1]?.direction
 
   const filteredPeers = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -538,8 +542,38 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   }, [draft])
 
   useEffect(() => {
-    threadEndRef.current?.scrollIntoView({ block: 'end' })
-  }, [visibleMessages.length, activePeerId, peers])
+    stickToBottomRef.current = true
+  }, [activePeerId])
+
+  useEffect(() => {
+    const list = threadListRef.current
+    if (!list) return
+    const onScroll = () => {
+      const remaining = list.scrollHeight - list.scrollTop - list.clientHeight
+      stickToBottomRef.current = remaining <= 48
+    }
+    onScroll()
+    list.addEventListener('scroll', onScroll, { passive: true })
+    return () => list.removeEventListener('scroll', onScroll)
+  }, [activePeerId])
+
+  useEffect(() => {
+    const list = threadListRef.current
+    if (!list || !activePeerId) return
+    const forceFollow =
+      lastVisibleDirection === 'out' || lastVisibleDirection === 'system'
+    if (!stickToBottomRef.current && !forceFollow) return
+
+    const pin = () => {
+      list.scrollTop = list.scrollHeight
+      threadEndRef.current?.scrollIntoView({ block: 'end', inline: 'nearest' })
+      stickToBottomRef.current = true
+    }
+    pin()
+    // Layout after images / card mount can grow the list one frame later.
+    const raf = window.requestAnimationFrame(pin)
+    return () => window.cancelAnimationFrame(raf)
+  }, [visibleMessages.length, lastVisibleId, lastVisibleDirection, activePeerId, peers])
 
   const queuePay = (
     friend: Friend,
@@ -1102,7 +1136,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
             </nav>
 
             <Thread.Root className="chat-thread-messages">
-              <Thread.List>
+              <Thread.List ref={threadListRef} className="chat-thread-list">
                 {visibleMessages.length === 0 ? (
                   <EmptyState
                     title={threadSection === 'files' ? 'No shared files' : 'No messages yet'}

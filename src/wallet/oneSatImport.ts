@@ -460,7 +460,9 @@ export async function classifyLegacyUtxos(
           if (fetched) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
-          } else {
+          } else if (!latchProven) {
+            // Stray dust only — latch-proven tips retry every poll without the
+            // 10-minute miss backoff.
             rememberUnresolved(cacheKey)
           }
         }

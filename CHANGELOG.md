@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.78] - 2026-08-06
+
+### Improved
+
+- **Faster ordinal receive when an item is already known to have landed.** While
+  latch-proven tips wait on the indexer, chain polls run every 8s instead of
+  30s. Transient BEEF/import failures retry after 45s (was 5 minutes). Latch
+  tips no longer write the 10-minute dust miss backoff.
+
+- **Chat matches Aeon chrome.** Messages use flat tokenized surfaces, compact
+  geometry, and Aeon-style tabs/composer instead of the old Nexus gradient skin.
+
+- **New chat messages and activity rows stay in view.** Threads stick to the
+  bottom when you are already there; the activity feed pins and briefly flashes
+  newest rows when you are at the default top scroll.
+
+- **Clearer status pill.** “Chain failed” is now **Sync failed** (balance may be
+  stale; coins/keys are fine). Cloud history errors say **Backup failed**.
+
 ## [1.2.77] - 2026-08-06
 
 ### Fixed
