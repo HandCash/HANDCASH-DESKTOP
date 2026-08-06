@@ -12,8 +12,7 @@ import { getActiveWallet } from './session'
 import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'
 import {
-  buildCollectableCustomInstructions,
-  tryBuildProvenanceV2,
+  buildInternalizeCustomInstructions,
 } from './oneSatProvenance'
 import {
   beginOneSatImport,
@@ -567,11 +566,6 @@ export async function importOneSatOrdinals(
       for (const item of ordinals) {
         const origin =
           item.origin ?? item.outpoint.replace(/\.(\d+)$/, '_$1')
-        const provenance = await tryBuildProvenanceV2({
-          tipOutpoint: item.outpoint,
-          origin,
-          wallet,
-        })
         remittanceOutputs.push({
           outputIndex: item.vout!,
           protocol: 'basket insertion' as const,
@@ -583,11 +577,10 @@ export async function importOneSatOrdinals(
               ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
               ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
             ],
-            customInstructions: buildCollectableCustomInstructions({
+            customInstructions: buildInternalizeCustomInstructions({
               origin,
               name: item.name ?? 'Collectable',
               app: item.app,
-              provenance,
             }),
           },
         })

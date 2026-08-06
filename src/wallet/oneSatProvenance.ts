@@ -238,3 +238,35 @@ export function buildCollectableCustomInstructions(args: {
   if (args.provenance) body.provenance = args.provenance
   return JSON.stringify(body)
 }
+
+/**
+ * `internalizeAction` caps `customInstructions` at 1000 characters.
+ *
+ * The cap lives in the SDK's own validator, so it is not negotiable and it is
+ * not a storage detail we can widen: an over-long value throws before anything
+ * is written, and the whole transaction's outputs are lost with it. A BRC-150
+ * v2 remittance is ~400k characters, so attaching one here fails 100% of the
+ * time — every incoming ordinal, silently, forever.
+ *
+ * Dropping the BEEF costs nothing that matters. It was never received from the
+ * sender; it is built locally from chain data, and `verifyItemAuthenticity`
+ * rebuilds it on demand and caches the verdict. What must survive is the
+ * identity the item cannot be displayed or spent without.
+ */
+export const INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX = 1000
+
+export function buildInternalizeCustomInstructions(args: {
+  origin: string
+  name: string
+  app?: string
+}): string {
+  const full = buildCollectableCustomInstructions(args)
+  if (full.length <= INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX) return full
+
+  // Only a pathological name/app can get here. Origin is load-bearing, so the
+  // free-text fields give way rather than the identity.
+  const origin = toUnderscore(args.origin)
+  const fixed = JSON.stringify({ origin, name: '' }).length
+  const budget = Math.max(0, INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX - fixed - 16)
+  return JSON.stringify({ origin, name: args.name.slice(0, budget) })
+}

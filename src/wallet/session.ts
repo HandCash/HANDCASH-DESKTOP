@@ -1,4 +1,5 @@
-import { PrivateKey, type WalletInterface } from '@bsv/sdk'
+import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
+import { createFallbackChainTracker } from './chainTrackerFallback'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -19,6 +20,34 @@ export type ActiveWallet = {
 }
 
 let active: ActiveWallet | null = null
+
+/**
+ * Route every merkle-root check through the failover tracker.
+ *
+ * `Services.getChainTracker()` builds a fresh Chaintracks client per call and
+ * has no failover, so a single unreachable host silently disables all incoming
+ * value. Wrapping the method covers the toolbox's own callers (internalizeAction,
+ * verifyInputBeef, the proof monitor) as well as ours.
+ */
+function installFallbackChainTracker(services: Services, chain: Chain): void {
+  try {
+    const original = services.getChainTracker.bind(services)
+    let cached: ChainTracker | null = null
+    services.getChainTracker = async () => {
+      if (cached) return cached
+      let primary: ChainTracker | null = null
+      try {
+        primary = await original()
+      } catch {
+        // Chaintracks not configured at all — WhatsOnChain alone still works.
+      }
+      cached = createFallbackChainTracker(chain, primary)
+      return cached
+    }
+  } catch (err) {
+    console.warn('[chaintracker] could not install fallback', err)
+  }
+}
 
 export function getActiveWallet(): ActiveWallet | null {
   return active
@@ -43,6 +72,8 @@ export async function bootWallet(args: {
     rootKeyHex: args.rootKeyHex,
     databaseName: `handcash-brc100-${args.chain}-${args.handle}`,
   })
+
+  installFallbackChainTracker(setup.services as Services, args.chain)
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes

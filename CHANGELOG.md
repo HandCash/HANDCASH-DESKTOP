@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.69] - 2026-08-06
+
+### Fixed
+
+- **Nothing new synced: the chain tracker was down.** `mainnet-chaintracks.babbage.systems`
+  answers HTTP 500 (`At least one bulk ingestor must implement getPresentHeight`).
+  `Beef.verify` needs a chain tracker, and the toolbox points every incoming path
+  at that one host — so internalizing an ordinal failed as "valid AtomicBEEF",
+  legacy sweeps failed as "valid Beef when factoring options.trustSelf", and
+  `ReviewProvenTxs` errored on every pass. All three read like corrupt data; all
+  three were one dead host. Merkle-root checks now fail over to WhatsOnChain,
+  which serves the exact blocks these BEEFs reference.
+- **Incoming ordinals could never be internalized.** The BSV SDK validates
+  `internalizeAction`'s `customInstructions` at a hard 1000 characters. We attached
+  the BRC-150 v2 remittance, which is ~400k — our own budget was set to 400,000,
+  i.e. 400x over a limit we never checked against. Every incoming item threw
+  before anything was written. The remittance is built locally from chain data and
+  is not sender-supplied, so the receive path now stores identity only and
+  `verifyItemAuthenticity` rebuilds provenance on demand as it already did.
+
 ## [1.2.68] - 2026-08-06
 
 ### Fixed
