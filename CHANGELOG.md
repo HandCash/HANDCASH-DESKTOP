@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.64] - 2026-08-06
+
+### Fixed
+
+- Images stopped loading past the first few. The concurrent-decode cap added in
+  v1.2.58 handed out a slot when a frame came near the viewport but only
+  returned it on unmount, so the first three visible cards held all three slots
+  for as long as they stayed on screen and every other image queued forever.
+  The cap exists to limit simultaneous *decodes*, so the slot now goes back the
+  moment an image settles; the `src` stays attached to keep the frame painted.
+- Raised the cap from 3 to 6, and a request that never answers now gives up its
+  slot after 10s so one dead host cannot hold the queue shut.
+- Extracted the semaphore to `imageLoadSlots.ts` with tests, including a guard
+  for the starvation case above.
+
 ## [1.2.63] - 2026-08-06
 
 ### Fixed

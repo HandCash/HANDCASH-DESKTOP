@@ -1,5 +1,13 @@
-import { useEffect, useRef, useState, type ImgHTMLAttributes, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type ImgHTMLAttributes,
+  type ReactNode,
+} from 'react'
 import { Skeleton } from './Skeleton'
+import { acquireImageLoadSlot, releaseImageLoadSlot } from './imageLoadSlots'
 
 type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> & {
   /** Skeleton size while loading. Defaults to width/height props. */
@@ -46,31 +54,10 @@ function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
  * live images is worth having in the log when a crash is being chased.
  */
 const LIVE_IMAGE_WARN = 16
-/** Full-res ordinal decode is native-memory heavy — keep this tiny on phones. */
-const MAX_CONCURRENT_LOADS = 3
+/** How long one image may occupy a decode slot before the queue moves on. */
+const SLOT_STUCK_MS = 10_000
 let liveImages = 0
 let warnedLive = false
-let loadingNow = 0
-const loadWaiters: Array<() => void> = []
-
-function acquireLoadSlot(): Promise<void> {
-  if (loadingNow < MAX_CONCURRENT_LOADS) {
-    loadingNow += 1
-    return Promise.resolve()
-  }
-  return new Promise((resolve) => {
-    loadWaiters.push(() => {
-      loadingNow += 1
-      resolve()
-    })
-  })
-}
-
-function releaseLoadSlot(): void {
-  loadingNow = Math.max(0, loadingNow - 1)
-  const next = loadWaiters.shift()
-  if (next) next()
-}
 
 function noteImageLive(delta: 1 | -1): void {
   liveImages += delta
@@ -175,28 +162,43 @@ export function DeferredImage({
     }
   }, [src])
 
+  const releaseSlotIfHeld = useCallback(() => {
+    if (!slotHeld.current) return
+    slotHeld.current = false
+    releaseImageLoadSlot()
+  }, [])
+
   useEffect(() => {
     if (!near) {
       setLoadSlot(false)
       return
     }
     let cancelled = false
-    void acquireLoadSlot().then(() => {
+    let stuckTimer: number | undefined
+    void acquireImageLoadSlot().then(() => {
       if (cancelled) {
-        releaseLoadSlot()
+        releaseImageLoadSlot()
         return
       }
       slotHeld.current = true
       setLoadSlot(true)
+      // A host that never answers must not hold the queue shut behind it. The
+      // request carries on; it just stops counting against the cap.
+      stuckTimer = window.setTimeout(releaseSlotIfHeld, SLOT_STUCK_MS)
     })
     return () => {
       cancelled = true
-      if (slotHeld.current) {
-        slotHeld.current = false
-        releaseLoadSlot()
-      }
+      if (stuckTimer !== undefined) window.clearTimeout(stuckTimer)
+      releaseSlotIfHeld()
     }
-  }, [near, src])
+  }, [near, src, releaseSlotIfHeld])
+
+  // The slot caps concurrent decodes, so it goes back as soon as this image
+  // settles. `loadSlot` stays true — the src must remain attached to keep the
+  // decoded frame painted; it is dropped only when the frame scrolls far away.
+  useEffect(() => {
+    if (status === 'ready' || status === 'error') releaseSlotIfHeld()
+  }, [status, releaseSlotIfHeld])
 
   useEffect(() => {
     if (!near || !loadSlot) setStatus('loading')
