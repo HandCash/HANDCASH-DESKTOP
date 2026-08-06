@@ -4,9 +4,13 @@
  * HARD RULE: never pass satoshis === 1 through fundWalletFromP2PKHOutpoints.
  * Unrecognized 1-sat outs stay on the address until classified (cloud items or GorillaPool).
  *
- * GorillaPool often lags on the *current* transfer outpoint. When the new location
- * is not indexed yet, walk prior inputs (WhatsOnChain) and resolve origin from there.
+ * A BRC-154 latched transfer names itself: the settle transaction carries latch
+ * state on chain, so `resolveLatchedTip` identifies the item in one fetch with no
+ * indexer involved. The GorillaPool/WhatsOnChain ancestry walk below it is the
+ * bootstrap path for legacy unlatched tips, where nothing on chain says what the
+ * sat carries and the only recourse is replaying history.
  */
+import { Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
@@ -26,9 +30,12 @@ import {
   rememberResolvedInscription,
   rememberUnresolved,
   shouldResolveInscription,
+  PENDING_RETRY_MS,
+  RESOLVE_RETRY_MS,
 } from './inscriptionCache'
 import {
   ONE_SAT_LATCH_BASKET,
+  findLatchStateForTip,
   isLatchDustSats,
   latchOutputTags,
 } from './oneSatLatch'
@@ -281,6 +288,72 @@ async function fetchWocTx(txid: string, chain: Chain): Promise<WocTx | null> {
   }
 }
 
+/** Inputs probed per hop before the walk commits to descending. */
+const VIN_PROBE_LIMIT = 4
+
+async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
+  // Prefer the toolbox provider: it has raw-transaction failover installed and
+  // verifies the body hashes to the txid.
+  try {
+    const services = getActiveWallet()?.services
+    const raw = await services?.getRawTx(txid)
+    const bytes = raw?.rawTx
+    if (bytes && bytes.length > 0) {
+      return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+    }
+  } catch {
+    // Fall through to the public endpoint.
+  }
+  try {
+    const res = await fetch(`${wocBase(chain)}/tx/${txid}/hex`, {
+      signal: AbortSignal.timeout(8000),
+    })
+    if (!res.ok) return null
+    const hex = (await res.text()).trim()
+    return /^[0-9a-f]+$/i.test(hex) ? hex : null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * Resolve a latched tip's identity from the transaction that delivered it.
+ *
+ * This is the BRC-154 fast path and the whole point of latching: the settle
+ * transaction carries its own latch state, so identity costs one fetch of chain
+ * data the receiver needs anyway — no ancestry replay, no ordinal indexer, and
+ * no dependence on anyone having indexed the transfer yet.
+ */
+export async function resolveLatchedTip(
+  txid: string,
+  vout: number,
+  chain: Chain,
+): Promise<ResolvedInscription | null> {
+  const hex = await fetchRawTxHex(txid, chain)
+  if (!hex) return null
+
+  let outputs: Array<{ lockingScript?: string | null }>
+  try {
+    outputs = Transaction.fromHex(hex).outputs.map((o) => ({
+      lockingScript: o.lockingScript?.toHex(),
+    }))
+  } catch {
+    return null
+  }
+
+  const state = findLatchStateForTip(outputs, vout)
+  if (!state) return null
+
+  return {
+    origin: state.origin,
+    name: state.name,
+    app: state.app,
+    mimeType: state.mimeType,
+    traits: [],
+    extras: [],
+  }
+}
+
 /**
  * Resolve inscription origin for a 1-sat outpoint.
  * Falls back to walking prior inputs when GorillaPool has not indexed the new location yet.
@@ -313,8 +386,11 @@ export async function resolveOneSatInscription(
     if (vins.length === 0) break
 
     // Prefer any prior outpoint GorillaPool already knows as an ordinal.
+    // A transfer spends the ordinal ahead of its funding inputs, so probing
+    // deep into the input list mostly buys lookups on change UTXOs — at a
+    // request each, per hop, against a host that will start throttling us.
     let next: { txid: string; vout: number } | null = null
-    for (const vin of vins.slice(0, 12)) {
+    for (const vin of vins.slice(0, VIN_PROBE_LIMIT)) {
       if (typeof vin.txid !== 'string' || !Number.isInteger(vin.vout)) continue
       const prevKey = toUnderscoreOutpoint(vin.txid, vin.vout!)
       if (seen.has(prevKey)) continue
@@ -399,7 +475,7 @@ export async function classifyLegacyUtxos(
   const heldOneSats: LegacyUtxo[] = []
   const pendingTips: LegacyUtxo[] = []
 
-  // BRC-153 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
+  // BRC-154 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
   // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
   // latch paying us is therefore local proof that output 0 of the same
   // transaction is an ordinal tip. It cannot tell us *which* origin the tip
@@ -451,18 +527,27 @@ export async function classifyLegacyUtxos(
         const cacheKey = `${u.txid}.${u.vout}`
         resolved = getResolvedInscription(cacheKey)
         // The 10-minute miss backoff exists to stop us hammering the indexer
-        // over stray dust. A latch-proven tip is not stray dust — it is an
-        // item we know landed, so backing off just leaves a real transfer
-        // invisible for ten minutes at a time.
+        // over stray dust. A latch-proven tip is not stray dust — it is an item
+        // we know landed — so it gets the much shorter pending window instead.
+        // It still needs *a* window: the poll drops to 8s while a tip is
+        // pending, and one walk costs a request per input per hop, so retrying
+        // every poll is how the wallet gets itself throttled by the indexer it
+        // is waiting on.
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
-        if (!resolved && (latchProven || shouldResolveInscription(cacheKey))) {
-          const fetched = await resolveOneSatInscription(u.txid, u.vout, chain)
+        const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
+        if (!resolved && shouldResolveInscription(cacheKey, Date.now(), retryMs)) {
+          // BRC-154 first: a latched transfer names itself on chain, so this
+          // resolves in one fetch without any indexer having seen the transfer.
+          // The ancestry walk below is the bootstrap path for legacy unlatched
+          // tips only — it must never be what a latched receive waits on.
+          const fetched = latchProven
+            ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
+              (await resolveOneSatInscription(u.txid, u.vout, chain)))
+            : await resolveOneSatInscription(u.txid, u.vout, chain)
           if (fetched) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
-          } else if (!latchProven) {
-            // Stray dust only — latch-proven tips retry every poll without the
-            // 10-minute miss backoff.
+          } else {
             rememberUnresolved(cacheKey)
           }
         }

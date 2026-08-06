@@ -3596,9 +3596,19 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 .connected-empty-line {
+  display: grid;
+  place-items: center;
+  min-height: 7rem;
   margin: 0;
+  padding: 24px 18px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 72%, transparent);
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-panel) 82%, transparent);
   color: var(--hc-muted);
-  font-size: 0.9rem;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .empty-state {
@@ -3649,6 +3659,24 @@ button.payment-details-item-thumb-btn:hover {
 
 .empty-state-action {
   margin-top: 6px;
+}
+
+.collectable-details-loading {
+  pointer-events: none;
+}
+
+.collectable-details-loading-copy {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.collectable-details-loading-lines {
+  display: grid;
+  gap: 10px;
 }
 
 .confirm-password-gate {

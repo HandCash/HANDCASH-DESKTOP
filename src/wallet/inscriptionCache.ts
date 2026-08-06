@@ -18,6 +18,16 @@ const KEY = 'handcash.inscriptionResolution.v1'
 
 /** Long enough that a refresh loop stops re-walking, short enough to pick up new indexing. */
 export const RESOLVE_RETRY_MS = 10 * 60_000
+/**
+ * Retry window for a tip a latch already proved is an item.
+ *
+ * These must not wait out the stray-dust backoff — the user is watching a
+ * transfer that has landed. They must not re-walk on every poll either: one
+ * walk costs a txo lookup plus a transaction fetch plus a lookup per input,
+ * per hop, so an 8s poll turns a single pending tip into a request flood that
+ * gets the wallet throttled by the very indexers it is waiting on.
+ */
+export const PENDING_RETRY_MS = 45_000
 /** Hard cap so a flood of dust cannot grow the durable blob without bound. */
 export const RESOLVE_HIT_MAX = 2_000
 const MISS_MAX = 500
@@ -106,11 +116,20 @@ export function rememberUnresolved(outpoint: string, now = Date.now()): void {
   trimMisses(now)
 }
 
-/** False while a recent miss is still fresh. */
-export function shouldResolveInscription(outpoint: string, now = Date.now()): boolean {
+/**
+ * False while a recent miss is still fresh.
+ *
+ * `retryMs` lets a latch-proven tip come back sooner than stray dust without
+ * dropping the backoff altogether.
+ */
+export function shouldResolveInscription(
+  outpoint: string,
+  now = Date.now(),
+  retryMs = RESOLVE_RETRY_MS,
+): boolean {
   if (load().has(outpoint)) return false
   const missed = missAt.get(outpoint)
-  if (missed != null && now - missed < RESOLVE_RETRY_MS) return false
+  if (missed != null && now - missed < retryMs) return false
   if (missed != null) missAt.delete(outpoint)
   return true
 }

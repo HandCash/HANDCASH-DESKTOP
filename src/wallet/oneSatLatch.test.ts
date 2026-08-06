@@ -21,7 +21,7 @@ const LATCH = 'cc'.repeat(32) + '_0'
 const PARENT = 'dd'.repeat(32) + '_0'
 const SETTLE_TX = 'ee'.repeat(32)
 
-describe('BRC-153 latched provenance (soft-latch)', () => {
+describe('BRC-154 latched provenance (soft-latch)', () => {
   it('parseProvenanceV3 rejects v2 and hybrid objects', () => {
     expect(parseProvenanceV3({ v: 2, origin: ORIGIN, tip: TIP, path: [TIP], beefB64: 'x' })).toBeNull()
     expect(
@@ -97,9 +97,9 @@ describe('BRC-153 latched provenance (soft-latch)', () => {
     expect(isLatchedSendEnabled()).toBe(true)
   })
 
-  it('advertises BRC-153 capability profile with latchedSend', () => {
+  it('advertises BRC-154 capability profile with latchedSend', () => {
     expect(getOneSatBrcCapabilities()).toEqual({
-      brcs: ['147', '150', '153'],
+      brcs: ['147', '150', '154'],
       baskets: ['1sat', '1sat-latch'],
       latchedSend: true,
       provenanceVerify: ['v2', 'v3'],

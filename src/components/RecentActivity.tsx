@@ -264,13 +264,21 @@ function useScrollReveal(ref: RefObject<HTMLElement | null>) {
   }, [ref])
 }
 
-/** Keep newest rows in view when the feed is at its default (top) scroll. */
+/**
+ * Keep newest rows in view when the feed is at its default (top) scroll.
+ *
+ * Only flash when a *new* id arrives while this feed instance already knew a
+ * previous newest — remounting Activity (tab flick) must not treat the existing
+ * top row as a fresh population.
+ */
 function useStickNewestToTop(
   listRef: RefObject<HTMLElement | null>,
   newestId: string | undefined,
 ) {
   const stickToTopRef = useRef(true)
-  const prevNewestRef = useRef(newestId)
+  /** Undefined until the first effect run seeds the current top id. */
+  const prevNewestRef = useRef<string | undefined>(undefined)
+  const seededRef = useRef(false)
 
   useEffect(() => {
     const el = listRef.current
@@ -281,11 +289,18 @@ function useStickNewestToTop(
     onScroll()
     el.addEventListener('scroll', onScroll, { passive: true })
     return () => el.removeEventListener('scroll', onScroll)
-  }, [listRef, newestId])
+  }, [listRef])
 
   useEffect(() => {
     const el = listRef.current
     if (!el || !newestId) return
+
+    if (!seededRef.current) {
+      seededRef.current = true
+      prevNewestRef.current = newestId
+      return
+    }
+
     const changed = prevNewestRef.current !== newestId
     prevNewestRef.current = newestId
     if (!changed || !stickToTopRef.current) return

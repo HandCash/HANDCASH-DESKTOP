@@ -322,6 +322,18 @@ export async function refreshFromChainExclusive(
               ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
               : undefined,
         )
+        document.dispatchEvent(
+          new CustomEvent('handcash:receive', {
+            detail: {
+              title: balanceRose ? 'Payment received' : 'Item received',
+              body: amountLabel
+                ? `${amountLabel}${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
+                : newItems
+                  ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
+                  : 'Your wallet has been updated',
+            },
+          }),
+        )
       } else if (importedFunding > 0 && !balanceRose) {
         console.info(
           `[chain-ingest] imported ${importedFunding} legacy out(s) but balance unchanged — awaiting indexer`,

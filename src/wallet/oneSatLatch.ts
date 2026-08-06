@@ -1,5 +1,5 @@
 /**
- * BRC-153 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
+ * BRC-154 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
  *
  * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
  * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
@@ -12,7 +12,7 @@ export type ProvenanceVerifyResult = {
   reason: string | null
 }
 
-/** Companion basket for proof latch UTXOs ([BRC-153]). */
+/** Companion basket for proof latch UTXOs ([BRC-154]). */
 export const ONE_SAT_LATCH_BASKET = '1sat-latch' as const
 
 export const LATCH_TAG = 'latch:1sat' as const
@@ -20,7 +20,7 @@ export const LATCH_TAG = 'latch:1sat' as const
 export const LATCH_SCHEMA_VERSION = 1 as const
 
 /**
- * Soft-latch P2PKH latch value ([BRC-153]).
+ * Soft-latch P2PKH latch value ([BRC-154]).
  * Exactly **2 satoshis** — never 1 (that is a tip) — so address scanners still
  * find a plain P2PKH latch while receivers can classify it without a script marker.
  */
@@ -123,7 +123,7 @@ export function parseProvenanceV3(raw: unknown): ProvenanceV3 | null {
 }
 
 /**
- * Structural O(1) verify for v3 remittance (BRC-153).
+ * Structural O(1) verify for v3 remittance (BRC-154).
  * Relative tip/latch refs resolve against the held tip's txid.
  */
 export function verifyProvenanceV3(
@@ -210,7 +210,7 @@ export function buildSoftLatchProvenanceV3(args: {
   })
 }
 
-/** Tags for a latch output per BRC-153 (tip may be relative pre-txid). */
+/** Tags for a latch output per BRC-154 (tip may be relative pre-txid). */
 export function latchOutputTags(args: {
   origin: string
   tip: string
@@ -227,6 +227,181 @@ export function latchOutputTags(args: {
 
 export function isProvenanceV3(raw: unknown): boolean {
   return parseProvenanceV3(raw) != null
+}
+
+/**
+ * Protocol marker for the on-chain latch state output.
+ *
+ * Baskets, tags and `customInstructions` are BRC-100 *local* state: none of it
+ * reaches a counterparty who is paid at an address. A latch whose state lives
+ * only in local metadata therefore proves an item arrived but cannot say which
+ * item, which is what forced receivers back onto an indexer walk — the exact
+ * O(N), third-party dependency this BRC exists to remove. Writing the state to
+ * the settle transaction closes that gap: the receiver already fetches the
+ * transaction to internalize it, so identity costs no extra round trip.
+ */
+export const LATCH_DATA_PROTOCOL = 'BRC154' as const
+
+/** `OP_FALSE OP_RETURN` — provably unspendable, so this output carries no value. */
+const OP_FALSE_OP_RETURN = '006a'
+
+export type LatchState = {
+  schema: number
+  origin: string
+  /** Tip this latch is paired with; `OUTPUT:0` until the settle txid exists. */
+  tip: string
+  parentLatch: string
+  name?: string
+  app?: string
+  /** Content type of the inscription at origin, when the sender knows it. */
+  mimeType?: string
+}
+
+function pushData(bytes: number[]): string {
+  const hex = bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+  if (bytes.length < 0x4c) return bytes.length.toString(16).padStart(2, '0') + hex
+  if (bytes.length <= 0xff) return `4c${bytes.length.toString(16).padStart(2, '0')}` + hex
+  if (bytes.length <= 0xffff) {
+    const len = bytes.length
+    const le = (len & 0xff).toString(16).padStart(2, '0') + ((len >> 8) & 0xff).toString(16).padStart(2, '0')
+    return `4d${le}` + hex
+  }
+  throw new Error('latch state too large for a single pushdata')
+}
+
+function utf8Bytes(text: string): number[] {
+  return Array.from(new TextEncoder().encode(text))
+}
+
+/**
+ * Build the `OP_FALSE OP_RETURN BRC154 <json>` locking script for a latch state
+ * output. Carried at 0 satoshis, so it never appears in an address UTXO scan
+ * and never competes with the tip or the latch dust.
+ */
+export function buildLatchStateScript(state: LatchState): string {
+  const payload: Record<string, unknown> = {
+    schema: state.schema,
+    origin: toUnderscoreOutpoint(state.origin),
+    tip: isRelativeOutpointRef(state.tip)
+      ? state.tip.trim().toUpperCase()
+      : toUnderscoreOutpoint(state.tip),
+    parentLatch: toUnderscoreOutpoint(state.parentLatch),
+  }
+  if (state.name) payload.name = state.name.slice(0, 80)
+  if (state.app) payload.app = state.app.slice(0, 40)
+  if (state.mimeType) payload.mimeType = state.mimeType.slice(0, 60)
+
+  return (
+    OP_FALSE_OP_RETURN +
+    pushData(utf8Bytes(LATCH_DATA_PROTOCOL)) +
+    pushData(utf8Bytes(JSON.stringify(payload)))
+  )
+}
+
+/** Read the pushdata payloads following `OP_FALSE OP_RETURN`. */
+function readOpReturnPushes(scriptHex: string): number[][] | null {
+  const hex = scriptHex.trim().toLowerCase()
+  if (!hex.startsWith(OP_FALSE_OP_RETURN)) return null
+
+  const bytes: number[] = []
+  for (let i = 0; i + 1 < hex.length; i += 2) {
+    const byte = Number.parseInt(hex.slice(i, i + 2), 16)
+    if (Number.isNaN(byte)) return null
+    bytes.push(byte)
+  }
+
+  const pushes: number[][] = []
+  let at = 2
+  while (at < bytes.length) {
+    const op = bytes[at]!
+    at += 1
+    let len: number
+    if (op < 0x4c) {
+      len = op
+    } else if (op === 0x4c) {
+      len = bytes[at] ?? -1
+      at += 1
+    } else if (op === 0x4d) {
+      len = (bytes[at] ?? -1) | ((bytes[at + 1] ?? 0) << 8)
+      at += 2
+    } else {
+      // Anything else is not a payload this codec wrote.
+      return pushes
+    }
+    if (len < 0 || at + len > bytes.length) return pushes
+    pushes.push(bytes.slice(at, at + len))
+    at += len
+  }
+  return pushes
+}
+
+/** Parse a latch state output script. Returns null when it is not one. */
+export function parseLatchStateScript(scriptHex: string): LatchState | null {
+  const pushes = readOpReturnPushes(scriptHex)
+  if (!pushes || pushes.length < 2) return null
+
+  const decoder = new TextDecoder()
+  const protocol = decoder.decode(new Uint8Array(pushes[0]!))
+  if (protocol !== LATCH_DATA_PROTOCOL) return null
+
+  let raw: unknown
+  try {
+    raw = JSON.parse(decoder.decode(new Uint8Array(pushes[1]!)))
+  } catch {
+    return null
+  }
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null
+  const o = raw as Record<string, unknown>
+  if (typeof o.origin !== 'string' || typeof o.tip !== 'string') return null
+  if (!isValidOutpoint(o.origin)) return null
+
+  const tip = isRelativeOutpointRef(o.tip)
+    ? o.tip.trim().toUpperCase()
+    : toUnderscoreOutpoint(o.tip)
+  if (!isValidOutpoint(tip)) return null
+
+  const parentLatch =
+    typeof o.parentLatch === 'string' && isValidOutpoint(o.parentLatch)
+      ? toUnderscoreOutpoint(o.parentLatch)
+      : GENESIS_PARENT_LATCH
+
+  return {
+    schema: typeof o.schema === 'number' ? o.schema : LATCH_SCHEMA_VERSION,
+    origin: toUnderscoreOutpoint(o.origin),
+    tip,
+    parentLatch,
+    name: typeof o.name === 'string' && o.name.trim() ? o.name.trim().slice(0, 80) : undefined,
+    app: typeof o.app === 'string' && o.app.trim() ? o.app.trim().slice(0, 40) : undefined,
+    mimeType:
+      typeof o.mimeType === 'string' && o.mimeType.trim()
+        ? o.mimeType.trim().slice(0, 60)
+        : undefined,
+  }
+}
+
+/**
+ * Find latch state for a tip in the outputs of the transaction that delivered it.
+ *
+ * `tipVout` is matched against the state's `tip` so a batched settle carrying
+ * several items cannot hand the wrong identity to a tip.
+ */
+export function findLatchStateForTip(
+  outputs: Array<{ lockingScript?: string | null }>,
+  tipVout: number,
+): LatchState | null {
+  for (const out of outputs) {
+    if (!out?.lockingScript) continue
+    const state = parseLatchStateScript(out.lockingScript)
+    if (!state) continue
+    const relative = RELATIVE_RE.exec(state.tip)
+    if (relative) {
+      if (Number(relative[1]) === tipVout) return state
+      continue
+    }
+    const vout = Number(state.tip.split('_')[1])
+    if (vout === tipVout) return state
+  }
+  return null
 }
 
 export type LatchListing = {
@@ -247,7 +422,7 @@ export function resolveLatchTipClaim(latchOutpoint: string, tipTag: string): str
   return toUnderscoreOutpoint(tipTag)
 }
 
-/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-153). */
+/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-154). */
 export type OneSatBrcCapabilities = {
   brcs: readonly string[]
   baskets: readonly string[]
@@ -259,7 +434,7 @@ export type OneSatBrcCapabilities = {
 
 export function getOneSatBrcCapabilities(): OneSatBrcCapabilities {
   return {
-    brcs: ['147', '150', '153'],
+    brcs: ['147', '150', '154'],
     baskets: ['1sat', ONE_SAT_LATCH_BASKET],
     latchedSend: isLatchedSendEnabled(),
     provenanceVerify: ['v2', 'v3'],

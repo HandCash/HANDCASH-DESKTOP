@@ -90,6 +90,14 @@ export function Dashboard({
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
   useEffect(() => {
+    // Mobile uses this lifecycle to keep the unlocked wallet's foreground
+    // service alive while Android backgrounds the WebView.
+    document.dispatchEvent(new Event('handcash:wallet-unlocked'))
+    return () => {
+      document.dispatchEvent(new Event('handcash:wallet-locked'))
+    }
+  }, [])
+  useEffect(() => {
     // First Identity tab visit used to block ~3s generating this QR on a phone.
     void identityQrDataUrl(profile.identityKey)
   }, [profile.identityKey])
@@ -202,9 +210,19 @@ export function Dashboard({
       scheduleNext(CHAIN_POLL_PENDING_MS)
     })
 
+    // Web timers can be suspended while Android backgrounds the WebView. The
+    // native shell emits this on resume so we catch up immediately instead of
+    // waiting for the old timeout to become runnable again.
+    const onAppActive = () => {
+      if (cancelled) return
+      void sync({ forceReview: true }).finally(() => scheduleNext())
+    }
+    document.addEventListener('handcash:app-active', onAppActive)
+
     return () => {
       cancelled = true
       unsubHealth()
+      document.removeEventListener('handcash:app-active', onAppActive)
       if (pollTimer != null) window.clearTimeout(pollTimer)
       if (idleHandle != null && typeof cancelIdleCallback === 'function') {
         cancelIdleCallback(idleHandle)

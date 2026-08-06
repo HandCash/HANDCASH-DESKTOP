@@ -28,7 +28,7 @@
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
 - BRC-150: `oneSatProvenance.ts` (build/verify v2; omit oversized remittance).
-- BRC-153: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0153.md` — soft-latch companion (tip 1 + latch **exactly 2** sats). Authenticity is still BRC-150 v2 BEEF; structural v3 alone is not proven. O(1) induction = Phase 3.
+- BRC-154: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0154.md` — soft-latch (tip 1 + latch **exactly 2** sats P2PKH) plus on-chain latch state (`OP_FALSE OP_RETURN "BRC154" …`) so address receives name the item without an indexer. Authenticity is still BRC-150 v2 BEEF; structural v3 alone is not proven. O(1) hardened induction = Phase 3.
 ## Read first
 
 | Topic | Path |

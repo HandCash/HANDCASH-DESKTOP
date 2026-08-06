@@ -3,13 +3,16 @@ import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
   getCollectable,
+  subscribeCollectables,
   type Collectable,
   type CollectableTrait,
 } from '../wallet/collectables'
 import { openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { SendIcon } from './icons'
+import { CollectablesIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
+import { EmptyState } from './EmptyState'
+import { Skeleton } from './Skeleton'
 
 type Props = {
   outpoint: string
@@ -81,15 +84,52 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     }
   }, [outpoint])
 
+  // The list reconciles against the address UTXO set after the panel opens, so
+  // a tip that turns out to be spent has to leave the detail view too.
+  useEffect(
+    () =>
+      subscribeCollectables((items) => {
+        const next = items.find((i) => i.outpoint === outpoint)
+        if (next) setItem(next)
+      }),
+    [outpoint],
+  )
+
   const copy = async (label: string, value: string) => {
     await copyText(value, { label })
   }
 
   if (loading && !item) {
-    return <p className="connected-empty-line">Loading…</p>
+    return (
+      <div
+        className="nav-child-panel collectable-details collectable-details-loading"
+        data-aeon-scope="collectable-details"
+        aria-label="Loading collectable"
+        aria-busy="true"
+      >
+        <div className="collectable-details-hero">
+          <Skeleton width={96} height={96} radius={10} />
+          <div className="collectable-details-loading-copy">
+            <Skeleton width="min(14rem, 72%)" height={20} radius={6} />
+            <Skeleton width="min(9rem, 48%)" height={14} radius={5} />
+            <Skeleton width={112} height={36} radius={8} />
+          </div>
+        </div>
+        <div className="collectable-details-loading-lines">
+          <Skeleton width="100%" height={52} radius={8} />
+          <Skeleton width="100%" height={52} radius={8} />
+        </div>
+      </div>
+    )
   }
   if (!item) {
-    return <p className="connected-empty-line">Collectable not found</p>
+    return (
+      <EmptyState
+        icon={<CollectablesIcon size={22} />}
+        title="Item unavailable"
+        body="This collectable is no longer in the wallet or could not be loaded."
+      />
+    )
   }
 
   const detailRows: CollectableTrait[] = [

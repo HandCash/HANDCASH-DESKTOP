@@ -35,9 +35,11 @@ import {
 import {
   GENESIS_PARENT_LATCH,
   LATCH_DUST_SATS,
+  LATCH_SCHEMA_VERSION,
   LATCH_TAG,
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
+  buildLatchStateScript,
   isLatchedSendEnabled,
   latchOutputTags,
   resolveLatchTipClaim,
@@ -469,6 +471,15 @@ async function resolveUnknownOrigins(): Promise<void> {
 let listInFlight: Promise<Collectable[]> | null = null
 
 /**
+ * Ceiling on one basket read.
+ *
+ * `listOutputs` has no timeout of its own, and callers share the in-flight
+ * promise. A storage host that accepts the socket and never answers therefore
+ * wedges every later list *and* every details open for the life of the process.
+ */
+const LIST_TIMEOUT_MS = 20_000
+
+/**
  * Verify one tip's BRC-150 remittance and remember the verdict.
  *
  * Scoped to a single outpoint: remittance holds the BEEF (~400k chars) that
@@ -549,16 +560,21 @@ async function listCollectablesNow(
   let outputs: ItemOutput[] = []
 
   try {
-    const result = await wallet.wallet.listOutputs({
-      basket: '1sat',
-      limit: 1000,
-      includeTags: true,
-      // Never for a whole basket: remittance carries BEEF (~400k chars each), and
-      // pulling every item's copy into the renderer is what crashed phones once a
-      // wallet held real ordinals. Tags carry everything the list renders.
-      includeCustomInstructions: false,
-      seekPermission: false,
-    })
+    const result = await Promise.race([
+      wallet.wallet.listOutputs({
+        basket: '1sat',
+        limit: 1000,
+        includeTags: true,
+        // Never for a whole basket: remittance carries BEEF (~400k chars each), and
+        // pulling every item's copy into the renderer is what crashed phones once a
+        // wallet held real ordinals. Tags carry everything the list renders.
+        includeCustomInstructions: false,
+        seekPermission: false,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('listOutputs timed out')), LIST_TIMEOUT_MS),
+      ),
+    ])
     outputs = (result.outputs ?? []).map((o) => ({
       outpoint: o.outpoint,
       satoshis: o.satoshis ?? 1,
@@ -625,10 +641,18 @@ export async function getCollectable(
 ): Promise<Collectable | null> {
   const target = normalizeOutpoint(outpoint)
   const wallet = active ?? getActiveWallet()
-  // Always reconcile against live UTXOs before opening details — a durable
-  // cache hit must not show a tip we already spent or never held.
-  const listed = await listCollectables(active)
-  let item = listed.find((i) => i.outpoint === target) ?? null
+
+  // Details still reconcile against live UTXOs, but a tip we already hold paints
+  // from cache first. Awaiting the list put the whole basket read — shared with
+  // the background poll, so often already in flight — between the tap and the
+  // panel. Subscribers get the reconciled answer when it lands.
+  let item = cachedCollectables.find((i) => i.outpoint === target) ?? null
+  if (item) {
+    void listCollectables(active).catch(() => {})
+  } else {
+    const listed = await listCollectables(active)
+    item = listed.find((i) => i.outpoint === target) ?? null
+  }
   if (!item || !wallet) return item
 
   // Details: traits/mime come from the indexer only when remittance left them
@@ -893,7 +917,7 @@ async function relinquishSpentOutputs(
 /**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
- * Soft-latch (BRC-153): settle-style single tx spends tip (+ prior latch when
+ * Soft-latch (BRC-154): settle-style single tx spends tip (+ prior latch when
  * present) and creates recipient tip (vout 0) + latch (vout 1). Authenticity is
  * BRC-150 v2 remittance on the tip (not structural v3). Ordinal sat stays on
  * output 0 (`randomizeOutputs: false`). Fees are funded from the default change
@@ -1040,6 +1064,25 @@ export async function sendCollectable(args: {
                   tip: RELATIVE_TIP,
                   parentLatch,
                 }),
+              },
+              // Latch state on chain (BRC-154). Baskets, tags and
+              // customInstructions above are local to this wallet and never
+              // reach the recipient, so without this output the recipient can
+              // prove an item landed but has to ask an indexer which item it
+              // is. Provably unspendable and 0 sats, so it costs the recipient
+              // nothing and never shows up as a UTXO.
+              {
+                lockingScript: buildLatchStateScript({
+                  schema: LATCH_SCHEMA_VERSION,
+                  origin,
+                  tip: RELATIVE_TIP,
+                  parentLatch,
+                  name,
+                  app,
+                  mimeType: item?.mimeType,
+                }),
+                satoshis: 0,
+                outputDescription: '1sat latch state',
               },
             ]
           : []),

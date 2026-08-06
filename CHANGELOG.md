@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.2.80] - 2026-08-06
+
+### Added
+
+- **BRC-154 Phase 1b — on-chain latch state.** Soft-latch Settle now writes tip (1) +
+  latch (2-sat P2PKH) + `OP_FALSE OP_RETURN "BRC154" {origin, tip, parentLatch, …}`.
+  Receivers name latched items from the settle tx itself — no ordinal indexer and
+  no ancestry walk. Spec: `docs/bsva/brcs/tokens/0154.md`.
+
+### Fixed
+
+- **Activity row no longer flashes on tab switch.** The fresh animation only runs
+  when a new top entry actually arrives (same moment as payment-received toast).
+
+- **Collectable details open from cache with a skeleton.** Clicking an item no
+  longer stalls on a hung `listOutputs`; missing items use a styled empty state.
+
+- **Pending latch tips no longer hammer indexers.** Proven tips retry on a 45s
+  window (not every 8s poll), with a bounded input probe. Indexer walk is
+  bootstrap-only for unlatched tips.
+
+### Improved
+
+- **Background receive hooks for mobile.** Wallet unlock/lock and receive events
+  are dispatched so Android can keep sync alive and post local notifications.
+
+
 ## [1.2.79] - 2026-08-06
 
 ### Fixed

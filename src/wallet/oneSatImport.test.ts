@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import { classifyLegacyUtxos } from './oneSatImport'
+import { PENDING_RETRY_MS } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 
 function utxo(outpoint: string, satoshis: number): LegacyUtxo {
@@ -45,13 +46,18 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('keeps retrying a latch-proven tip instead of backing off', async () => {
-    // BRC-153 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
-    // local proof an item landed, so the miss backoff — which exists for stray
-    // dust — would only keep a real transfer invisible for ten minutes a time.
+  it('retries a latch-proven tip on the pending window, not on every poll', async () => {
+    // BRC-154 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
+    // local proof an item landed, so the ten-minute dust backoff would keep a
+    // real transfer invisible. Retrying on every poll is the opposite failure:
+    // the poll drops to 8s while a tip is pending and each walk costs a request
+    // per input per hop, so the wallet throttles itself out of ever resolving.
     const TXID_D = 'd'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
+    const start = Date.now()
+    vi.useFakeTimers()
+    vi.setSystemTime(start)
 
     const scan = [utxo(`${TXID_D}.0`, 1), utxo(`${TXID_D}.1`, 2)]
 
@@ -61,9 +67,17 @@ describe('classifyLegacyUtxos', () => {
 
     fetchMock.mockClear()
     const second = await classifyLegacyUtxos(scan, 'main')
-
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(0)
+    expect(fetchMock).not.toHaveBeenCalled()
     expect(second.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+
+    // Still well inside the ten-minute stray-dust backoff.
+    vi.setSystemTime(start + PENDING_RETRY_MS + 1_000)
+    fetchMock.mockClear()
+    const third = await classifyLegacyUtxos(scan, 'main')
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0)
+    expect(third.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+
+    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
