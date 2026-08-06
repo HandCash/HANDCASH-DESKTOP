@@ -24,6 +24,14 @@ export type ProvenVerdict = {
   tier: AuthenticityTier
   /** Immutable origin commitment used by hardened BRC-156. */
   originScriptHash?: string
+  /**
+   * Origin established by verified BEEF, not by a sender's claim.
+   *
+   * Only a lineage proof writes this. It outranks remittance and indexer answers
+   * wherever an origin is displayed or passed on, because it is the only one
+   * backed by transactions the wallet checked itself.
+   */
+  origin?: string
   verifiedAt: number
 }
 
@@ -53,6 +61,7 @@ function load(): Map<string, ProvenVerdict> {
             typeof candidate.originScriptHash === 'string'
               ? candidate.originScriptHash
               : undefined,
+          origin: typeof candidate.origin === 'string' ? candidate.origin : undefined,
           verifiedAt:
             typeof candidate.verifiedAt === 'number' ? candidate.verifiedAt : 0,
         })
@@ -171,7 +180,69 @@ export function rememberProvenVerdict(
   persist(map)
 }
 
+const GENESIS_KEY = 'handcash.collectables.genesisAttempt.v1'
+/**
+ * How long a failed lineage walk is left alone.
+ *
+ * A walk costs a fetch per hop, so retrying on every list would be far worse
+ * than the missing badge it is trying to earn. A day is short enough that a hop
+ * which was simply unmined at the time gets another chance.
+ */
+export const GENESIS_RETRY_MS = 24 * 60 * 60_000
+const GENESIS_MAX_ENTRIES = 500
+
+let genesisAttempts: Map<string, number> | null = null
+
+function loadGenesisAttempts(): Map<string, number> {
+  if (genesisAttempts) return genesisAttempts
+  genesisAttempts = new Map()
+  try {
+    const raw = durableGetItem(GENESIS_KEY)
+    if (!raw) return genesisAttempts
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const [outpoint, at] of Object.entries(parsed)) {
+      if (typeof at === 'number') genesisAttempts.set(key(outpoint), at)
+    }
+  } catch {
+    // Losing the record costs one extra walk, not correctness.
+  }
+  return genesisAttempts
+}
+
+/** True when a tip with no proof may be walked back to its inscription now. */
+export function shouldAttemptGenesis(
+  outpoint: string,
+  now = Date.now(),
+  retryMs = GENESIS_RETRY_MS,
+): boolean {
+  const k = key(outpoint)
+  const tier = load().get(k)?.tier
+  if (tier === 'brc156' || tier === 'brc150') return false
+  const attempted = loadGenesisAttempts().get(k)
+  return attempted == null || now - attempted >= retryMs
+}
+
+export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void {
+  const map = loadGenesisAttempts()
+  const k = key(outpoint)
+  map.delete(k)
+  map.set(k, now)
+  if (map.size > GENESIS_MAX_ENTRIES) {
+    let drop = map.size - GENESIS_MAX_ENTRIES
+    for (const existing of map.keys()) {
+      if (drop-- <= 0) break
+      map.delete(existing)
+    }
+  }
+  try {
+    durableSetItem(GENESIS_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch {
+    // Optimisation only.
+  }
+}
+
 export function resetProvenCacheForTests(): void {
   verdicts = null
   originCommitments = null
+  genesisAttempts = null
 }

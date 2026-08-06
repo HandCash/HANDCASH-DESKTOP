@@ -17,6 +17,8 @@ import {
   type ActivityEntry,
 } from '../wallet/appActivity'
 import { markActivitySeen, shouldAnnounceActivity } from '../wallet/activitySeen'
+import { viewActivityItem } from '../wallet/activityItemView'
+import { subscribeCollectables } from '../wallet/collectables'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import {
   DEFAULT_PAYMENT_FILTERS,
@@ -134,9 +136,11 @@ function HistoryRow({
 }) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
-  const title = activityEntryTitle(entry)
+  // Identity as the wallet knows it now, not as the row froze it on arrival.
+  const shown = entry.item ? viewActivityItem(entry.item) : undefined
+  const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
   const amountLabel = item
-    ? entry.item?.name || 'Collectable'
+    ? shown?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = item
     ? 'Item'
@@ -158,10 +162,10 @@ function HistoryRow({
       >
         <div className="history-icon-wrap">
           <div className="history-icon">
-            {item && entry.item?.imageUrl ? (
+            {item && shown?.imageUrl ? (
               <DeferredImage
                 className="history-item-thumb"
-                src={entry.item.imageUrl}
+                src={shown.imageUrl}
                 alt=""
                 width={28}
                 height={28}
@@ -188,9 +192,7 @@ function HistoryRow({
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          {item && entry.item?.app ? (
-            <span className="history-when">{entry.item.app}</span>
-          ) : null}
+          {item && shown?.app ? <span className="history-when">{shown.app}</span> : null}
         </div>
         <div className="history-amount-block">
           <span
@@ -237,9 +239,13 @@ function useActivityFeed(limit: number) {
     }
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
+    // A repaired collectable changes what item rows should show, so pick it up
+    // rather than waiting for the next unrelated render.
+    const unsubItems = subscribeCollectables(refresh)
     return () => {
       unsubActivity()
       unsubApps()
+      unsubItems()
     }
   }, [limit])
 

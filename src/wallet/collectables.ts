@@ -32,7 +32,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
   buildCollectableCustomInstructions,
-  rebuildProvenanceV2FromBeef,
   tryBuildProvenanceForSend,
 } from './oneSatProvenance'
 import {
@@ -77,9 +76,13 @@ import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
   hasProvenVerdict,
+  rememberGenesisAttempt,
   rememberProvenVerdict,
+  shouldAttemptGenesis,
   type AuthenticityTier,
 } from './provenCache'
+import { proveGenesisLineage, type GenesisProof } from './oneSatGenesisProof'
+import { getWalletCoordinatorSnapshot } from './walletCoordinator'
 import {
   getResolvedInscription,
   isThinResolution,
@@ -310,12 +313,15 @@ function toCollectable(
   const authenticity = verdict?.tier ?? 'unproven'
   const proven = authenticity === 'brc156' || authenticity === 'brc150'
   const claimed = tagValue(o.tags, 'origin:') ?? custom.origin
-  // A walk that came back with real inscription content knows the lineage; a
-  // remittance origin is only the sender's claim, and a wrong one paints a 404
-  // image forever. A proven item keeps its claim — the verdict is bound to it.
-  const trustWalk = !proven && !isThinResolution(resolved)
+  // An indexer walk that came back with real inscription content knows the
+  // lineage; a remittance origin is only the sender's claim, and a wrong one
+  // paints a 404 image forever. A hardened verdict keeps its claim — the
+  // covenant commitment is bound to it.
+  const trustWalk = authenticity !== 'brc156' && !isThinResolution(resolved)
   const origin = parseOrigin(
-    trustWalk ? (resolved?.origin ?? claimed) : (claimed ?? resolved?.origin),
+    // A lineage proof outranks both: it is the only origin this wallet verified.
+    verdict?.origin ??
+      (trustWalk ? (resolved?.origin ?? claimed) : (claimed ?? resolved?.origin)),
     o.outpoint,
   )
   // Tags are not display text: @bsv/sdk validateTag lowercases them, so a
@@ -531,6 +537,88 @@ async function resolveUnknownOrigins(): Promise<void> {
   }
 }
 
+/**
+ * Lineage proofs attempted per session.
+ *
+ * A walk costs a fetch per hop, so an inventory of imported ordinals must earn
+ * its badges over several sessions rather than opening the Collect page into a
+ * few hundred requests.
+ */
+const GENESIS_SESSION_BUDGET = 3
+let genesisWalksThisSession = 0
+let provingGenesis = false
+
+/**
+ * Earn BRC-150 for held tips that arrived without a proof.
+ *
+ * Runs behind the painted list, one tip at a time. Proving a tip also settles
+ * its origin — which is the only origin here that was verified rather than
+ * claimed — and makes the next send eligible for hardened BRC-156 induction.
+ */
+async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
+  if (provingGenesis || genesisWalksThisSession >= GENESIS_SESSION_BUDGET) return
+  // A walk is never worth competing with a payment for the network.
+  if (getWalletCoordinatorSnapshot().spend === 'active') return
+
+  const candidates = lastItemOutputs
+    .filter(isListableItem)
+    .map((o) => normalizeOutpoint(o.outpoint))
+    .filter((outpoint) => shouldAttemptGenesis(outpoint))
+  if (candidates.length === 0) return
+
+  provingGenesis = true
+  try {
+    for (const outpoint of candidates) {
+      if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) break
+      if (getWalletCoordinatorSnapshot().spend === 'active') break
+      genesisWalksThisSession++
+      rememberGenesisAttempt(outpoint)
+      let proof: GenesisProof | null = null
+      try {
+        proof = await proveGenesisLineage({
+          tipOutpoint: outpoint,
+          getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+        })
+      } catch (err) {
+        console.warn('[brc-150] lineage walk failed', outpoint, err)
+      }
+      if (!proof) continue
+
+      console.info(
+        `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
+      )
+      rememberProvenVerdict(outpoint, {
+        tier: 'brc150',
+        origin: proof.origin,
+        verifiedAt: Date.now(),
+      })
+      adoptProvenOrigin(outpoint, proof.origin)
+      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      await yieldToUi()
+    }
+  } finally {
+    provingGenesis = false
+  }
+}
+
+/**
+ * Keep display metadata only while it belongs to the origin we just proved.
+ *
+ * A name and image cached against an origin the sender got wrong describe some
+ * other item. Dropping them leaves the tip thin, which is precisely what the
+ * indexer upgrade pass exists to fill back in — against the right origin.
+ */
+function adoptProvenOrigin(outpoint: string, origin: string): void {
+  const existing = getResolvedInscription(outpoint)
+  const sameOrigin =
+    existing != null &&
+    existing.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === origin
+  rememberResolvedInscription(outpoint, {
+    ...(sameOrigin ? existing : { traits: [], extras: [] }),
+    origin,
+  })
+}
+
 async function walkInscription(outpoint: string): Promise<ResolvedInscription | null> {
   const [txid, voutStr] = outpoint.split('.')
   const vout = Number(voutStr)
@@ -694,26 +782,34 @@ export async function verifyItemAuthenticity(
       }
     }
 
-    // 2) BRC-150 remittance / BEEF rebuild.
+    // 2) BRC-150: the sender's remittance, or a lineage this device assembles.
     const custom = parseCustom(match.customInstructions)
-    let provenance = custom.provenance
-    if (provenance == null && wallet.services?.getBeefForTxid) {
-      try {
-        if (tipTxid) {
-          const beef = await wallet.services.getBeefForTxid(tipTxid)
-          provenance = rebuildProvenanceV2FromBeef(beef, target)
-        }
-      } catch (err) {
-        console.warn('[brc-150] legacy ancestry rebuild failed', target, err)
-      }
-    }
-    const authenticity = verifyAuthenticityLadder({
+    const provenance = custom.provenance
+    let authenticity = verifyAuthenticityLadder({
       heldOutpoint: target,
       hardened,
       provenance,
       indexerResolved: true,
     })
-    rememberProvenVerdict(target, authenticityResultToVerdict(authenticity))
+    let provenOrigin: string | undefined
+    if (!authenticity.proven) {
+      const proof = await proveGenesisLineage({
+        tipOutpoint: target,
+        getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+      }).catch((err) => {
+        console.warn('[brc-150] lineage walk failed', target, err)
+        return null
+      })
+      if (proof) {
+        provenOrigin = proof.origin
+        authenticity = { tier: 'brc150', proven: true, reason: null }
+      }
+    }
+    rememberProvenVerdict(target, {
+      ...authenticityResultToVerdict(authenticity),
+      ...(provenOrigin ? { origin: provenOrigin } : {}),
+    })
+    if (provenOrigin) adoptProvenOrigin(target, provenOrigin)
     return authenticity
   } catch (err) {
     console.warn('[collectables] authenticity check failed', err)
@@ -842,7 +938,9 @@ async function listCollectablesNow(
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
   setCollectablesCache(deduped)
-  void resolveUnknownOrigins()
+  // Identity first, then authenticity — a lineage walk is the expensive one and
+  // must never delay getting a name and an image onto the card.
+  void resolveUnknownOrigins().then(() => proveHeldGenesis(wallet))
   return deduped
 }
 

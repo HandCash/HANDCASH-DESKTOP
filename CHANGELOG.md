@@ -1,5 +1,30 @@
 # Changelog
 
+## [1.2.90] - 2026-08-06
+
+### Added
+
+- **Collectables earn BRC-150 by proving their own lineage.** An ordinal imported
+  from an indexer arrives with no remittance, so it could never be verified — and
+  because hardened induction refuses an unproven tip, it could never climb to
+  BRC-156 either. The wallet now walks such a tip back to its inscription, one
+  proven transaction per hop, and verifies the assembled path. Runs behind the
+  list, three items per session, never during a spend.
+
+### Fixed
+
+- **A confirmed item could not be proven at all.** AtomicBEEF keeps only the
+  subject and its recursive dependencies, and a mined tip carrying its own merkle
+  proof depends on nothing — so the BRC-150 rebuild stripped the ancestry it had
+  just assembled and then failed to find it. Lineage is now verified from the
+  whole BEEF, and the remittance size cap applies only to what actually travels
+  in a remittance.
+- **Activity rows show the item as it is now, not as it arrived.** Rows froze the
+  name, origin and image URL at receive time, so a repaired collectable stayed
+  broken in Activity and in transaction details forever.
+- **A proven origin outranks a claimed one** wherever an item is painted or sent
+  on, so a sender's wrong origin stops propagating.
+
 ## [1.2.89] - 2026-08-06
 
 ### Fixed

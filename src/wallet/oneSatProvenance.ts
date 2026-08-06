@@ -221,14 +221,22 @@ export function parseProvenanceV2(raw: unknown): ProvenanceV2 | null {
 
 /**
  * Structural + BEEF validity check. Tip must match the held outpoint (dot or underscore).
+ *
+ * `enforceBudget` is about what may travel in a remittance, not about what is
+ * true: a locally assembled lineage is verified from the same transactions
+ * whether or not it would fit in an output's customInstructions, and an
+ * inscription large enough to blow the cap must still be provable to its owner.
  */
 export function verifyProvenanceV2(
   provenance: unknown,
   heldOutpoint: string,
+  opts?: { enforceBudget?: boolean },
 ): ProvenanceVerifyResult {
   const p = parseProvenanceV2(provenance)
   if (!p) return { proven: false, reason: 'missing or non-v2 provenance' }
-  if (!provenanceFitsBudget(p)) return { proven: false, reason: 'remittance over size budget' }
+  if (opts?.enforceBudget !== false && !provenanceFitsBudget(p)) {
+    return { proven: false, reason: 'remittance over size budget' }
+  }
   if (p.path[0] !== p.tip) return { proven: false, reason: 'path[0] !== tip' }
   if (p.path[p.path.length - 1] !== p.origin) {
     return { proven: false, reason: 'path does not end at origin' }

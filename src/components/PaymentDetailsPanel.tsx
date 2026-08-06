@@ -10,7 +10,9 @@ import {
   isItemActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
+  type ActivityItem,
 } from '../wallet/appActivity'
+import { viewActivityItem } from '../wallet/activityItemView'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -43,8 +45,7 @@ function openExplorer(url: string) {
 }
 
 /** Prefer a tip we still hold for this origin; fall back to a received outpoint. */
-function itemLinkOutpoint(entry: ActivityEntry): string | null {
-  const item = entry.item
+function itemLinkOutpoint(entry: ActivityEntry, item: ActivityItem | undefined): string | null {
   if (!item) return null
   const originKey = item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const held = getCachedCollectables().find(
@@ -77,8 +78,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
+  // Identity as the wallet knows it now, not as the row froze it on arrival.
+  const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
-  const itemOutpoint = itemLinkOutpoint(entry)
+  const itemOutpoint = itemLinkOutpoint(entry, shownItem)
   const openItem = itemOutpoint
     ? () => {
         playWalletSound('soft')
@@ -86,10 +89,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       }
     : null
   const primary = item
-    ? entry.item?.name || 'Collectable'
+    ? shownItem?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const secondary = item
-    ? entry.item?.app || '1Sat collectable'
+    ? shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
@@ -103,17 +106,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     >
       <div className="payment-details-hero">
         <div className="history-icon">
-          {item && entry.item?.imageUrl ? (
+          {item && shownItem?.imageUrl ? (
             openItem ? (
               <button
                 type="button"
                 className="payment-details-item-thumb-btn"
                 onClick={openItem}
-                aria-label={`Open ${entry.item.name}`}
+                aria-label={`Open ${shownItem.name}`}
               >
                 <DeferredImage
                   className="history-item-thumb"
-                  src={entry.item.imageUrl}
+                  src={shownItem.imageUrl}
                   alt=""
                   width={32}
                   height={32}
@@ -126,7 +129,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             ) : (
               <DeferredImage
                 className="history-item-thumb"
-                src={entry.item.imageUrl}
+                src={shownItem.imageUrl}
                 alt=""
                 width={32}
                 height={32}
@@ -192,17 +195,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             <span className="payment-details-secondary">{secondary}</span>
           </div>
 
-          {item && entry.item?.imageUrl ? (
+          {item && shownItem?.imageUrl ? (
             openItem ? (
               <button
                 type="button"
                 className="payment-details-item-media collectable-media collectable-media-md payment-details-item-link"
                 onClick={openItem}
-                aria-label={`Open ${entry.item.name}`}
+                aria-label={`Open ${shownItem.name}`}
               >
                 <DeferredImage
-                  src={entry.item.imageUrl}
-                  alt={entry.item.name}
+                  src={shownItem.imageUrl}
+                  alt={shownItem.name}
                   skeletonRadius={8}
                   skeletonClassName="skeleton-qr"
                   decoding="async"
@@ -211,8 +214,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             ) : (
               <div className="payment-details-item-media collectable-media collectable-media-md">
                 <DeferredImage
-                  src={entry.item.imageUrl}
-                  alt={entry.item.name}
+                  src={shownItem.imageUrl}
+                  alt={shownItem.name}
                   skeletonRadius={8}
                   skeletonClassName="skeleton-qr"
                   decoding="async"
@@ -230,7 +233,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                 <dd>{appDisplayName(entry.origin)}</dd>
               </>
             )}
-            {entry.item ? (
+            {shownItem ? (
               <>
                 <dt>Item</dt>
                 <dd>
@@ -240,18 +243,18 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                       className="payment-details-item-name"
                       onClick={openItem}
                     >
-                      {entry.item.name}
+                      {shownItem.name}
                     </button>
                   ) : (
-                    entry.item.name
+                    shownItem.name
                   )}
                 </dd>
                 <dt>Origin</dt>
-                <dd className="mono">{entry.item.origin}</dd>
-                {entry.item.outpoint ? (
+                <dd className="mono">{shownItem.origin}</dd>
+                {shownItem.outpoint ? (
                   <>
                     <dt>Outpoint</dt>
-                    <dd className="mono">{entry.item.outpoint}</dd>
+                    <dd className="mono">{shownItem.outpoint}</dd>
                   </>
                 ) : null}
               </>
