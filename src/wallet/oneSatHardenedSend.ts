@@ -51,6 +51,7 @@ import {
   loadBrc156CovenantArtifact,
   pubKeyHexToScrypt,
 } from './oneSatHardenedLatch'
+import { markHardenedBroadcastAttempted } from './oneSatHardenedReceive'
 import {
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
@@ -669,6 +670,7 @@ export async function sendHardenedCollectable(
   if (!tipSrc) throw new Error('Hardened send: tip source transaction missing from BEEF')
 
   let commitReference: string | undefined
+  let broadcastAttempted = false
 
   try {
     // ─── COMMIT (noSend) ─────────────────────────────────────────────
@@ -963,6 +965,7 @@ export async function sendHardenedCollectable(
         throw new Error('Hardened settle: createAction returned no signable transaction')
       }
 
+      broadcastAttempted = true
       const settleSigned = await signCovenantAction({
         wallet: args.wallet,
         signable: settleResult.signableTransaction,
@@ -1031,6 +1034,7 @@ export async function sendHardenedCollectable(
       throw new Error('Hardened settle: createAction returned no signable transaction')
     }
 
+    broadcastAttempted = true
     const settleSigned = await signCovenantAction({
       wallet: args.wallet,
       signable: settleResult.signableTransaction,
@@ -1055,6 +1059,7 @@ export async function sendHardenedCollectable(
       }
     }
     if (args.isAlreadySpentInputError(err)) await args.releaseStaleSpendableOutputs()
+    if (broadcastAttempted) markHardenedBroadcastAttempted(err)
     throw err
   }
 }

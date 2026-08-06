@@ -4,6 +4,7 @@ import {
   getCollectable,
   listCollectables,
   sendCollectable,
+  warmHardenedSend,
   type Collectable,
 } from '../wallet/collectables'
 import {
@@ -77,7 +78,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   useEffect(() => {
     if (stage === 'success') playPaymentSuccessSound()
     if (stage === 'failure') playWalletSound('error')
-  }, [stage])
+    if (stage === 'confirm') warmHardenedSend(recipientIdentityKey)
+  }, [stage, recipientIdentityKey])
 
   const matches = useMemo(
     () => searchFriends(recipientQuery, friends).slice(0, 8),

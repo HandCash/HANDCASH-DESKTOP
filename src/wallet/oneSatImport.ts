@@ -301,12 +301,103 @@ async function fetchWocTx(txid: string, chain: Chain): Promise<WocTx | null> {
 /** Inputs probed per hop before the walk commits to descending. */
 const VIN_PROBE_LIMIT = 4
 
+/** Unknown one-satoshi outputs identified per classify pass. */
+export const MAX_UNKNOWN_RESOLVES_PER_PASS = 6
+
+/**
+ * A mined transaction body never changes, so fetching one twice is pure latency.
+ * The receive ladder asks for the same settle, commit, prior-settle and proof
+ * bodies from several steps in a row — beacon discovery, hardened induction,
+ * then the latched-tip resolver — so a cold sync used to pay a round trip per
+ * step per item. Successes are held long enough to cover a whole sync pass;
+ * misses are held briefly so a transient outage does not pin a wrong answer.
+ */
+const RAW_TX_CACHE_TTL_MS = 10 * 60_000
+const RAW_TX_MISS_TTL_MS = 10_000
+const RAW_TX_CACHE_MAX = 400
+const rawTxCache = new Map<string, { at: number; hex: string | null }>()
+const rawTxInflight = new Map<string, Promise<string | null>>()
+
+const rawTxKey = (txid: string): string => txid.trim().toLowerCase()
+
+function readRawTxCache(txid: string): { hex: string | null } | null {
+  const key = rawTxKey(txid)
+  const hit = rawTxCache.get(key)
+  if (!hit) return null
+  const ttl = hit.hex ? RAW_TX_CACHE_TTL_MS : RAW_TX_MISS_TTL_MS
+  if (Date.now() - hit.at >= ttl) {
+    rawTxCache.delete(key)
+    return null
+  }
+  return { hex: hit.hex }
+}
+
+function writeRawTxCache(txid: string, hex: string | null): void {
+  if (rawTxCache.size >= RAW_TX_CACHE_MAX) {
+    const oldest = rawTxCache.keys().next().value
+    if (oldest != null) rawTxCache.delete(oldest)
+  }
+  rawTxCache.set(rawTxKey(txid), { at: Date.now(), hex })
+}
+
+/**
+ * Cached body only — never touches the network.
+ *
+ * Lets the sync path ask "is this plausibly a hardened tip?" without paying a
+ * fetch for every stray one-satoshi output it has never seen before.
+ */
+export function peekRawTxHex(txid: string): string | null {
+  return readRawTxCache(txid)?.hex ?? null
+}
+
 export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
+  const cached = readRawTxCache(txid)
+  if (cached) return cached.hex
+  const key = rawTxKey(txid)
+  const inflight = rawTxInflight.get(key)
+  if (inflight) return inflight
+  const request = fetchRawTxHexUncached(txid, chain)
+    .then((hex) => {
+      writeRawTxCache(txid, hex)
+      return hex
+    })
+    .finally(() => {
+      rawTxInflight.delete(key)
+    })
+  rawTxInflight.set(key, request)
+  return request
+}
+
+/**
+ * A storage host that accepts the socket and never answers must not be able to
+ * wedge a whole sync pass. Every caller below has a public fallback, so bounding
+ * the provider costs nothing except the wait we skip.
+ */
+const PROVIDER_TIMEOUT_MS = 6_000
+const BEEF_TIMEOUT_MS = 10_000
+
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('provider request timed out')), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function fetchRawTxHexUncached(txid: string, chain: Chain): Promise<string | null> {
   // Prefer the toolbox provider: it has raw-transaction failover installed and
   // verifies the body hashes to the txid.
   try {
     const services = getActiveWallet()?.services
-    const raw = await services?.getRawTx(txid)
+    const raw = services
+      ? await withTimeout(services.getRawTx(txid), PROVIDER_TIMEOUT_MS)
+      : null
     const bytes = raw?.rawTx
     if (bytes && bytes.length > 0) {
       return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
@@ -600,7 +691,7 @@ async function rebuildBrc150Identity(
   const services = getActiveWallet()?.services
   if (!services?.getBeefForTxid) return null
   try {
-    const beef = await services.getBeefForTxid(txid)
+    const beef = await withTimeout(services.getBeefForTxid(txid), BEEF_TIMEOUT_MS)
     const held = `${txid}.${vout}`
     const proof = rebuildProvenanceV2FromBeef(beef, held)
     if (!proof) return null
@@ -786,6 +877,14 @@ export async function classifyLegacyUtxos(
   const heldOneSats: LegacyUtxo[] = []
   const pendingTips: LegacyUtxo[] = []
 
+  // Identifying one unknown dust output costs a backwards walk — a request per
+  // input per hop — and the loop below is serial, so a wallet holding a pile of
+  // stray dust could spend minutes in a single pass before the UI saw anything.
+  // Unbudgeted outputs are simply held and picked up by a later pass; a tip a
+  // latch already proved landed is never budgeted, because the user is watching
+  // that one arrive.
+  let resolveBudget = MAX_UNKNOWN_RESOLVES_PER_PASS
+
   // BRC-156 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
   // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
   // latch paying us is therefore discovery evidence for a same-transaction
@@ -856,12 +955,27 @@ export async function classifyLegacyUtxos(
         // is waiting on.
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
-        if (!resolved && shouldResolveInscription(cacheKey, Date.now(), retryMs)) {
+        if (
+          !resolved &&
+          shouldResolveInscription(cacheKey, Date.now(), retryMs) &&
+          (latchProven || resolveBudget > 0)
+        ) {
+          if (!latchProven) resolveBudget--
           // Ordered authenticity/identity fallback:
           // 1. schema-2 BRC-156 bounded verifier;
           // 2. rebuild complete BRC-150 ancestry from wallet BEEF;
           // 3. only then ask indexers/chain walkers, which remains unproven.
-          const hardened = await tryHardenedReceiveIdentity(u.txid, u.vout, chain)
+          // Hardened induction needs the settle body, and asking for it costs a
+          // round trip. A hardened settle always pays the recipient a beacon in
+          // the same transaction, so either beacon discovery already fetched the
+          // body (cached) or the beacon is sitting in this very scan. Anything
+          // else is stray dust, and paying a fetch per stray output per sync is
+          // what made receiving feel stuck.
+          const hardenedCandidate =
+            peekRawTxHex(u.txid) != null || latchTxids.has(u.txid.trim().toLowerCase())
+          const hardened = hardenedCandidate
+            ? await tryHardenedReceiveIdentity(u.txid, u.vout, chain)
+            : null
           const brc150 = hardened ? null : await rebuildBrc150Identity(u.txid, u.vout)
           const fetched =
             hardened ??

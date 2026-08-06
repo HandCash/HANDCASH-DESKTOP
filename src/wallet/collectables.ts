@@ -57,6 +57,7 @@ import {
 } from './oneSatLatch'
 import {
   canUseHardenedLatch,
+  hardenedBroadcastWasAttempted,
   isHardenedCovenantLockingScript,
   isHardenedSendEnabled,
   parseHardenedTipInstructions,
@@ -1096,6 +1097,22 @@ async function relinquishSpentOutputs(
   }
 }
 
+let hardenedModuleWarm: Promise<unknown> | null = null
+
+/**
+ * Pull the covenant bridge into memory ahead of a hardened send.
+ *
+ * The scrypt-ts contract is a large chunk kept out of the main bundle, and on a
+ * phone parsing it costs real time. Calling this while the user is still reading
+ * the confirm screen moves that cost off the transfer itself.
+ */
+export function warmHardenedSend(recipientIdentityKey?: string | null): void {
+  if (!isHardenedSendEnabled() || !canUseHardenedLatch({ publicKey: recipientIdentityKey })) {
+    return
+  }
+  hardenedModuleWarm ??= import('./oneSatHardenedSend').catch(() => null)
+}
+
 /**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
@@ -1187,13 +1204,21 @@ export async function sendCollectable(args: {
   ]
 
   // Hardened path — identity key required. Bare address falls through to soft-latch.
+  //
+  // Genesis is only legal on a BRC-150-verified tip, and that verdict comes from
+  // the cache the details view fills. Checking it up front matters for latency as
+  // much as for correctness: without it every send fetched the origin BEEF and
+  // pulled in the scrypt covenant chunk before discovering it had to give up.
+  const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
+  const tipVerdict = getProvenVerdict(outpoint)
+  const genesisReady = tipVerdict?.tier === 'brc150' || tipVerdict?.tier === 'brc156'
   if (
     isHardenedSendEnabled() &&
-    canUseHardenedLatch({ publicKey: args.recipientIdentityKey })
+    canUseHardenedLatch({ publicKey: args.recipientIdentityKey }) &&
+    (tipIsCovenant || genesisReady)
   ) {
     let originLockingScriptHex: string | undefined
     let legacyParentOutpoint: string | undefined
-    const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
     if (!tipIsCovenant) {
       const tipTx = Beef.fromBinary(inputBEEF).findTxid(outpoint.split('.')[0]!)?.tx
       const parentIn = tipTx?.inputs[0]
@@ -1272,7 +1297,10 @@ export async function sendCollectable(args: {
       return result
     } catch (err) {
       if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-      throw formatSendError(err)
+      // Nothing was broadcast, so the item can still go out over soft-latch
+      // rather than the whole send failing on a covenant precondition.
+      if (hardenedBroadcastWasAttempted(err)) throw formatSendError(err)
+      console.warn('[brc-156] hardened send unavailable — using soft-latch', err)
     }
   }
 

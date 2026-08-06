@@ -30,6 +30,7 @@ import {
   restoreScryptChangeMarker,
   sendHardenedCollectable,
 } from './oneSatHardenedSend'
+import { hardenedBroadcastWasAttempted } from './oneSatHardenedReceive'
 import { rememberProvenVerdict } from './provenCache'
 import type { ActiveWallet } from './session'
 
@@ -474,6 +475,51 @@ describe('BRC-156 wallet-toolbox unlock bridge', () => {
     } else if (sendErr) {
       expect(String(sendErr)).toMatch(/hashOutputs|Hardened settle|change output|genesis|P2PKH/)
     }
+  })
+
+  it('leaves a pre-broadcast failure unmarked so the caller can still soft-latch', async () => {
+    const owner = bsv.PrivateKey.fromRandom(bsv.Networks.testnet)
+    const funding = bsv.PrivateKey.fromRandom(bsv.Networks.testnet)
+    const recipient = bsv.PrivateKey.fromRandom(bsv.Networks.testnet)
+    const anchor = buildAnchor(owner, funding)
+    const tipBeef = new Beef()
+    const sdkLegacy = scryptToSdk(anchor.legacyTx)
+    tipBeef.mergeRawTx(scryptToSdk(anchor.ancestorTx).toBinary())
+    tipBeef.mergeRawTx(sdkLegacy.toBinary())
+
+    // No BRC-150 verdict for this tip, so genesis must refuse before it builds
+    // anything — nothing is on the wire, and the transfer can still go out over
+    // soft-latch instead of failing in the user's face.
+    let sendErr: unknown
+    try {
+      await sendHardenedCollectable({
+        wallet: {
+          rootKeyHex: owner.toBuffer().toString('hex'),
+          identityKey: owner.publicKey.toString(),
+          wallet: { createAction: vi.fn(), signAction: vi.fn(), abortAction: vi.fn() },
+        } as unknown as ActiveWallet,
+        outpoint: `${anchor.legacyTx.id}.0`,
+        recipientIdentityKey: recipient.publicKey.toString(),
+        toAddress: recipient.toAddress().toString(),
+        origin: ORIGIN,
+        name: 'Probe',
+        tipLockingScript: anchor.legacyTx.outputs[0]!.script.toHex(),
+        originLockingScriptHex: ORIGIN_SCRIPT,
+        priorProofOutpoint: null,
+        inputBEEF: tipBeef.toBinaryAtomic(sdkLegacy.id('hex')),
+        knownTxids: [anchor.legacyTx.id],
+        buildInputBeefForSpends: async () => tipBeef.toBinary(),
+        normalizeOutpoint: (op) => (op.includes('_') ? op.replace(/_(\d+)$/, '.$1') : op),
+        formatSendError: (e) => (e instanceof Error ? e : new Error(String(e))),
+        isAlreadySpentInputError: () => false,
+        releaseStaleSpendableOutputs: async () => {},
+      })
+    } catch (err) {
+      sendErr = err
+    }
+
+    expect(String(sendErr)).toMatch(/BRC-150-verified/)
+    expect(hardenedBroadcastWasAttempted(sendErr)).toBe(false)
   })
 
   it('locateExplicitInputVins mirrors signOrdinalTransfer targeting', () => {

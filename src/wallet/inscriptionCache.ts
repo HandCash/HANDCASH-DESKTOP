@@ -15,6 +15,12 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import type { ResolvedInscription } from './oneSatImport'
 
 const KEY = 'handcash.inscriptionResolution.v1'
+/**
+ * Misses are durable too. Keeping them in memory only meant every restart paid
+ * a full backwards walk for every stray dust output the indexer has never heard
+ * of, serially, before the wallet could finish a sync.
+ */
+const MISS_KEY = 'handcash.inscriptionMiss.v1'
 
 /** Long enough that a refresh loop stops re-walking, short enough to pick up new indexing. */
 export const RESOLVE_RETRY_MS = 10 * 60_000
@@ -35,7 +41,33 @@ const MISS_MAX = 500
 type Stored = Record<string, ResolvedInscription>
 
 let hits: Map<string, ResolvedInscription> | null = null
-const missAt = new Map<string, number>()
+let misses: Map<string, number> | null = null
+
+function loadMisses(): Map<string, number> {
+  if (misses) return misses
+  misses = new Map()
+  try {
+    const raw = durableGetItem(MISS_KEY)
+    if (raw) {
+      const parsed = JSON.parse(raw) as Record<string, number>
+      const now = Date.now()
+      for (const [outpoint, at] of Object.entries(parsed)) {
+        if (typeof at === 'number' && now - at < RESOLVE_RETRY_MS) misses.set(outpoint, at)
+      }
+    }
+  } catch {
+    // A corrupt blob only costs us the backoff, so start clean.
+  }
+  return misses
+}
+
+function persistMisses(map: Map<string, number>): void {
+  try {
+    durableSetItem(MISS_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch {
+    // Cache is an optimisation; losing it costs speed, not correctness.
+  }
+}
 
 function load(): Map<string, ResolvedInscription> {
   if (hits) return hits
@@ -73,15 +105,16 @@ function trimHits(map: Map<string, ResolvedInscription>): void {
 }
 
 function trimMisses(now = Date.now()): void {
-  for (const [key, at] of missAt) {
-    if (now - at >= RESOLVE_RETRY_MS) missAt.delete(key)
+  const map = loadMisses()
+  for (const [key, at] of map) {
+    if (now - at >= RESOLVE_RETRY_MS) map.delete(key)
   }
-  if (missAt.size <= MISS_MAX) return
-  const drop = missAt.size - MISS_MAX
+  if (map.size <= MISS_MAX) return
+  const drop = map.size - MISS_MAX
   let i = 0
-  for (const key of missAt.keys()) {
+  for (const key of map.keys()) {
     if (i++ >= drop) break
-    missAt.delete(key)
+    map.delete(key)
   }
 }
 
@@ -105,15 +138,18 @@ export function rememberResolvedInscription(
   // Re-insert so a refreshed hit is treated as newest when we trim from the front.
   map.delete(outpoint)
   map.set(outpoint, resolved)
-  missAt.delete(outpoint)
+  const missMap = loadMisses()
+  if (missMap.delete(outpoint)) persistMisses(missMap)
   trimHits(map)
   persist(map)
 }
 
 /** Note that the indexer had nothing for this outpoint, so we back off. */
 export function rememberUnresolved(outpoint: string, now = Date.now()): void {
-  missAt.set(outpoint, now)
+  const map = loadMisses()
+  map.set(outpoint, now)
   trimMisses(now)
+  persistMisses(map)
 }
 
 /**
@@ -128,13 +164,17 @@ export function shouldResolveInscription(
   retryMs = RESOLVE_RETRY_MS,
 ): boolean {
   if (load().has(outpoint)) return false
-  const missed = missAt.get(outpoint)
+  const map = loadMisses()
+  const missed = map.get(outpoint)
   if (missed != null && now - missed < retryMs) return false
-  if (missed != null) missAt.delete(outpoint)
+  if (missed != null) {
+    map.delete(outpoint)
+    persistMisses(map)
+  }
   return true
 }
 
 export function resetInscriptionCacheForTests(): void {
   hits = null
-  missAt.clear()
+  misses = null
 }

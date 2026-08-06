@@ -62,6 +62,20 @@ describe('inscriptionCache', () => {
     expect(cache.shouldResolveInscription('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(true)
   })
 
+  it('keeps the back-off across a reload, so a restart re-walks nothing', async () => {
+    const cache = await import('./inscriptionCache')
+    const at = Date.now()
+    cache.rememberUnresolved('aa.0', at)
+
+    vi.resetModules()
+    const reloaded = await import('./inscriptionCache')
+
+    expect(reloaded.shouldResolveInscription('aa.0', at + 1)).toBe(false)
+    expect(reloaded.shouldResolveInscription('aa.0', at + reloaded.RESOLVE_RETRY_MS)).toBe(
+      true,
+    )
+  })
+
   it('clears the back-off when the outpoint finally resolves', async () => {
     const cache = await import('./inscriptionCache')
     const at = Date.now()

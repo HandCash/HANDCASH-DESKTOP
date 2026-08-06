@@ -34,6 +34,29 @@ export function canUseHardenedLatch(recipient: {
   }
 }
 
+/**
+ * Hardened Commit and Settle reach the network only in the final
+ * `signAction({ sendWith })`. A failure before that point has spent nothing, so
+ * the caller may still deliver the item over soft-latch / BRC-150 instead of
+ * failing the send. A failure at or after the broadcast must surface: retrying
+ * the same tip would race a covenant pair that is already on the wire.
+ */
+const BROADCAST_ATTEMPTED = Symbol.for('handcash.brc156.broadcastAttempted')
+
+export function markHardenedBroadcastAttempted(err: unknown): void {
+  if (err != null && typeof err === 'object') {
+    ;(err as Record<symbol, unknown>)[BROADCAST_ATTEMPTED] = true
+  }
+}
+
+export function hardenedBroadcastWasAttempted(err: unknown): boolean {
+  return (
+    err != null &&
+    typeof err === 'object' &&
+    (err as Record<symbol, unknown>)[BROADCAST_ATTEMPTED] === true
+  )
+}
+
 /** True when a locking script is a covenant candidate (not P2PKH). */
 export function isHardenedCovenantLockingScript(
   scriptHex: string | undefined | null,

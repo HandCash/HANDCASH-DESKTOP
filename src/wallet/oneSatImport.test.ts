@@ -1,7 +1,12 @@
 import { LockingScript, Transaction } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
-import { classifyLegacyUtxos } from './oneSatImport'
-import { PENDING_RETRY_MS } from './inscriptionCache'
+import {
+  MAX_UNKNOWN_RESOLVES_PER_PASS,
+  classifyLegacyUtxos,
+  fetchRawTxHex,
+  peekRawTxHex,
+} from './oneSatImport'
+import { PENDING_RETRY_MS, shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 import { buildLatchStateScript } from './oneSatLatch'
 
@@ -266,5 +271,49 @@ describe('classifyLegacyUtxos', () => {
 
     expect(result.funding).toEqual([])
     expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_B}.0`])
+  })
+
+  it('identifies a bounded number of unknown outputs per pass, holding the rest', async () => {
+    const ids = Array.from({ length: 9 }, (_, i) => `${'0'.repeat(63)}${i + 1}`)
+    vi.stubGlobal('fetch', vi.fn(async () => new Response(null, { status: 404 })))
+    const result = await classifyLegacyUtxos(
+      ids.map((id) => utxo(`${id}.0`, 1)),
+      'main',
+      [],
+    )
+    vi.unstubAllGlobals()
+
+    expect(result.heldOneSats).toHaveLength(9)
+    // A walked output is backed off; an unbudgeted one is untouched so the next
+    // pass picks it up instead of it being written off as unresolvable.
+    const walked = ids.filter((id) => !shouldResolveInscription(`${id}.0`))
+    expect(walked).toHaveLength(MAX_UNKNOWN_RESOLVES_PER_PASS)
+  })
+})
+
+describe('fetchRawTxHex', () => {
+  it('fetches a body once and serves every later ladder step from cache', async () => {
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const fetchMock = vi.fn(async () => new Response(tx.toHex(), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const [first, second] = await Promise.all([
+      fetchRawTxHex(txid, 'main'),
+      fetchRawTxHex(txid, 'main'),
+    ])
+    const third = await fetchRawTxHex(txid, 'main')
+    vi.unstubAllGlobals()
+
+    expect(first).toBe(tx.toHex())
+    expect(second).toBe(tx.toHex())
+    expect(third).toBe(tx.toHex())
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(peekRawTxHex(txid)).toBe(tx.toHex())
+  })
+
+  it('reports no cached body for a transaction it has never fetched', () => {
+    expect(peekRawTxHex('f'.repeat(64))).toBeNull()
   })
 })

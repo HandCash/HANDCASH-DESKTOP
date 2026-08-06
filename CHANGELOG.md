@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.85] - 2026-08-06
+
+### Fixed
+
+- **Sends no longer stall on the hardened path.** Covenant genesis needs a
+  BRC-150-verified tip, and that is now checked before the send fetches the
+  origin BEEF or loads the covenant chunk. A hardened attempt that fails before
+  anything is broadcast falls back to soft-latch instead of failing the transfer.
+- **Sync no longer walks the whole wallet on every pass.** Transaction bodies are
+  cached and de-duplicated across ladder steps, hardened induction only runs when
+  the settle body is already at hand, indexer misses survive a restart, and one
+  pass identifies a bounded number of unknown outputs.
+- Bounded the storage provider calls used by sync, so a host that accepts the
+  socket and never answers can no longer wedge receiving.
+
+### Changed
+
+- The covenant bridge chunk warms while the confirm screen is open, so a
+  hardened send does not pay for loading it.
+
 ## [1.2.84] - 2026-08-06
 
 ### Added
