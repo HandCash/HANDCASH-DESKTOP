@@ -20,6 +20,8 @@ import {
   rebuildProvenanceV2FromBeef,
 } from './oneSatProvenance'
 import { rememberProvenVerdict } from './provenCache'
+import { proveGenesisLineage } from './oneSatGenesisProof'
+import { getBeefForTxidCached } from './beefCache'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -720,6 +722,61 @@ async function rebuildBrc150Identity(
   }
 }
 
+/** How often one waiting tip may repeat its "still holding" line. */
+const HOLD_LOG_INTERVAL_MS = 60_000
+const holdLoggedAt = new Map<string, number>()
+
+function shouldLogHold(outpoint: string, now = Date.now()): boolean {
+  const last = holdLoggedAt.get(outpoint)
+  if (last != null && now - last < HOLD_LOG_INTERVAL_MS) return false
+  holdLoggedAt.set(outpoint, now)
+  return true
+}
+
+/**
+ * Prove a landed tip's origin from the chain when nothing can name it.
+ *
+ * `rebuildBrc150Identity` only sees the ancestry the wallet's own BEEF happens to
+ * carry, and an indexer that is behind — or simply unreachable, which is most of
+ * what "stuck receiving" turns out to be — answers nothing at all. A latch is
+ * local proof the item landed, so the last resort is walking its parents
+ * ourselves: a proven origin is all internalization needs, and the upgrade pass
+ * fills in name and traits whenever an indexer can be reached again.
+ */
+async function proveLineageIdentity(
+  txid: string,
+  vout: number,
+): Promise<ResolvedInscription | null> {
+  const wallet = getActiveWallet()
+  if (!wallet?.services?.getBeefForTxid) return null
+  const held = `${txid}.${vout}`
+  try {
+    const proof = await proveGenesisLineage({
+      tipOutpoint: held,
+      // One hop is one network round trip, and this runs on the chain poll while
+      // the panel is being painted. Yield first so a deep lineage cannot starve
+      // the basket read that shares this thread.
+      getBeef: async (hop) => {
+        await yieldToUi()
+        return await withTimeout(getBeefForTxidCached(wallet, hop), BEEF_TIMEOUT_MS)
+      },
+    })
+    if (!proof) return null
+    console.info(
+      `[brc-150] proved landing ${held} back to ${proof.origin} in ${proof.hops} hop(s)`,
+    )
+    rememberProvenVerdict(held, {
+      tier: 'brc150',
+      origin: proof.origin,
+      verifiedAt: Date.now(),
+    })
+    return { origin: proof.origin, traits: [], extras: [] }
+  } catch (err) {
+    console.warn('[brc-150] landing lineage walk failed', held, err)
+    return null
+  }
+}
+
 /**
  * Attempt schema-2 hardened induction before BRC-150 / indexer.
  * On success caches `brc156` + originScriptHash.
@@ -990,13 +1047,20 @@ export async function classifyLegacyUtxos(
             ? await tryHardenedReceiveIdentity(u.txid, u.vout, chain)
             : null
           const brc150 = hardened ? null : await rebuildBrc150Identity(u.txid, u.vout)
-          const fetched =
+          let fetched =
             hardened ??
             brc150 ??
             (latchProven
               ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
                 (await resolveOneSatInscription(u.txid, u.vout, chain)))
               : await resolveOneSatInscription(u.txid, u.vout, chain))
+          // A latched tip nobody can name is the one case worth paying a full
+          // ancestry walk for on the poll: the alternative is holding an item the
+          // wallet already owns out of Collectables indefinitely, which is what
+          // "still arriving" looks like from the outside.
+          if (!fetched && latchProven) {
+            fetched = await proveLineageIdentity(u.txid, u.vout)
+          }
           if (fetched) {
             rememberResolvedInscription(cacheKey, fetched)
             resolved = fetched
@@ -1005,9 +1069,13 @@ export async function classifyLegacyUtxos(
           }
         }
         if (!resolved && latchProven) {
-          console.info(
-            `[1sat] latch-proven tip ${cacheKey} has no origin yet — holding, will retry next sync`,
-          )
+          // The poll drops to 8s while a tip is pending, so logging the same wait
+          // on every pass buries whatever is actually failing underneath it.
+          if (shouldLogHold(cacheKey)) {
+            console.info(
+              `[1sat] latch-proven tip ${cacheKey} has no origin yet — holding, will retry next sync`,
+            )
+          }
           pendingTips.push(u)
         }
       }

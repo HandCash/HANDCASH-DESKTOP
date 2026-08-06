@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.93] - 2026-08-06
+
+### Fixed
+
+- **A latch-proven collectable no longer sits in "Item arriving" forever when the
+  indexer cannot name it.** Ingest already knew the tip had landed (its soft latch
+  is local proof), but without an indexer origin it held the output out of
+  Collectables and retried every 8s. It now walks the tip's own ancestry from
+  chain BEEF as a last resort, pins BRC-150 with a proven origin, and lets the
+  card fill in once an indexer is reachable again.
+- **Lineage walks no longer starve the basket read.** A hop yields to the UI, and
+  a walk backs off when a newer `listOutputs` is in flight — the path that was
+  timing out the Collect panel while proofs ran in the background.
+- **The "holding, awaiting origin" log no longer floods every poll.** The same
+  waiting tip may repeat that line at most once a minute.
+
 ## [1.2.92] - 2026-08-06
 
 ### Fixed

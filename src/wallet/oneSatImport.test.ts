@@ -1,4 +1,4 @@
-import { LockingScript, Transaction } from '@bsv/sdk'
+import { Beef, LockingScript, MerklePath, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_UNKNOWN_RESOLVES_PER_PASS,
@@ -14,6 +14,31 @@ import { buildLatchStateScript } from './oneSatLatch'
 function utxo(outpoint: string, satoshis: number): LegacyUtxo {
   const [txid, vout] = outpoint.split('.')
   return { outpoint, txid: txid!, vout: Number(vout), satoshis }
+}
+
+/** Session wallet seen by the code under test; set per test that needs BEEF. */
+let activeWallet: unknown = null
+vi.mock('./session', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./session')>()),
+  getActiveWallet: () => activeWallet,
+}))
+
+const ORD_ENVELOPE =
+  '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
+
+/** One mined transaction carrying its own merkle proof, as a service returns it. */
+function minedBeef(tx: Transaction, height: number): Beef {
+  const beef = new Beef()
+  const entry = beef.mergeRawTx(tx.toBinary())
+  entry.bumpIndex = beef.mergeBump(
+    new MerklePath(height, [
+      [
+        { offset: 0, hash: tx.id('hex'), txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ]),
+  )
+  return beef
 }
 
 const TXID_A = 'a'.repeat(64)
@@ -181,6 +206,56 @@ describe('classifyLegacyUtxos', () => {
     expect(third.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
 
     vi.useRealTimers()
+    vi.unstubAllGlobals()
+  })
+
+  it('proves a latched tip from the chain when no indexer can name it', async () => {
+    // The failure this covers looks like a lost transfer: a latch says the item
+    // landed, but every indexer answers nothing — because it is behind, or simply
+    // unreachable — so ingest held the tip out of Collectables on an 8s loop
+    // forever. Its ancestry is chain data, so the wallet can settle the origin
+    // itself and let name/traits arrive later.
+    const genesis = new Transaction()
+    genesis.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTransaction: genesis,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    tip.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
+    const tipId = tip.id('hex')
+
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const heights = new Map([
+      [genesis.id('hex'), 900_000],
+      [tipId, 900_001],
+    ])
+    activeWallet = {
+      services: {
+        getBeefForTxid: vi.fn(async (txid: string) => {
+          const height = heights.get(txid)
+          if (height == null) throw new Error(`no such transaction ${txid}`)
+          return minedBeef(txid === tipId ? tip : genesis, height)
+        }),
+      },
+    }
+
+    const result = await classifyLegacyUtxos(
+      [utxo(`${tipId}.0`, 1), utxo(`${tipId}.1`, 2)],
+      'main',
+    )
+
+    expect(result.pendingTips).toEqual([])
+    expect(result.oneSats).toEqual([
+      expect.objectContaining({
+        outpoint: `${tipId}.0`,
+        origin: `${genesis.id('hex')}_0`,
+      }),
+    ])
+    activeWallet = null
     vi.unstubAllGlobals()
   })
 

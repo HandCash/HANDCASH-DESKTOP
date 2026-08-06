@@ -576,7 +576,10 @@ let provingGenesis = false
  * its origin — which is the only origin here that was verified rather than
  * claimed — and makes the next send eligible for hardened BRC-156 induction.
  */
-async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
+async function proveHeldGenesis(
+  wallet: ActiveWallet,
+  ownRead: Promise<Collectable[]> | null,
+): Promise<void> {
   if (provingGenesis || genesisWalksThisSession >= GENESIS_SESSION_BUDGET) return
   // A walk is never worth competing with a payment for the network.
   if (getWalletCoordinatorSnapshot().spend === 'active') return
@@ -605,13 +608,22 @@ async function proveHeldGenesis(wallet: ActiveWallet): Promise<void> {
     for (const outpoint of candidates) {
       if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) break
       if (getWalletCoordinatorSnapshot().spend === 'active') break
+      // A basket read newer than the one that spawned us is somebody looking at
+      // the panel right now. That read has its own timeout, and a walk fetching
+      // through it is how the list ends up timing out instead of painting.
+      if (listInFlight && listInFlight !== ownRead) break
       genesisWalksThisSession++
       rememberGenesisAttempt(outpoint)
       let proof: GenesisProof | null = null
       try {
         proof = await proveGenesisLineage({
           tipOutpoint: outpoint,
-          getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+          // Yield per hop for the same reason: each one is a round trip, and the
+          // UI shares this thread.
+          getBeef: async (txid) => {
+            await yieldToUi()
+            return await getBeefForTxidCached(wallet, txid)
+          },
         })
       } catch (err) {
         console.warn('[brc-150] lineage walk failed', outpoint, err)
@@ -1057,7 +1069,8 @@ async function listCollectablesNow(
   setCollectablesCache(deduped)
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.
-  void resolveUnknownOrigins().then(() => proveHeldGenesis(wallet))
+  const ownRead = listInFlight
+  void resolveUnknownOrigins().then(() => proveHeldGenesis(wallet, ownRead))
   return deduped
 }
 
