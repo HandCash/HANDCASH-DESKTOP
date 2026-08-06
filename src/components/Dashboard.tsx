@@ -115,7 +115,7 @@ export function Dashboard({
     let lastHistoryPull = 0
     let tickInFlight = false
 
-    const sync = async () => {
+    const sync = async (opts?: { forceReview?: boolean }) => {
       // Skip overlapping poll ticks — prior soft-pull + chain sync must finish.
       if (tickInFlight) return
       tickInFlight = true
@@ -131,7 +131,13 @@ export function Dashboard({
           await softPullHistoryIfRemoteNewer()
           if (cancelled) return
         }
-        const sats = await refreshFromChain()
+        // Background polls never audit: reviewSpendableOutputs is report-only and
+        // was colliding with nav taps right after unlock. Manual Refresh / online
+        // recovery still force the audit.
+        const sats = await refreshFromChain({
+          audit: opts?.forceReview === true,
+          forceReview: opts?.forceReview === true,
+        })
         if (cancelled) return
         if (sats != null) onRefreshBalance(sats)
         void pollDeviceMeshOnce()
@@ -140,7 +146,20 @@ export function Dashboard({
       }
     }
 
-    void sync()
+    // Defer the first poll so unlock + first nav taps are not fighting BEEF
+    // internalization on the main thread (latest freeze log: latch import mid-tap).
+    let idleHandle: number | null = null
+    let deferTimer: number | null = null
+    const startFirst = () => {
+      if (cancelled) return
+      void sync()
+    }
+    if (typeof requestIdleCallback === 'function') {
+      idleHandle = requestIdleCallback(startFirst, { timeout: 2500 }) as unknown as number
+    } else {
+      deferTimer = window.setTimeout(startFirst, 1200)
+    }
+
     const intervalMs = isDeviceParityEnabled() ? 12_000 : 30_000
     const id = window.setInterval(() => {
       void sync()
@@ -148,6 +167,10 @@ export function Dashboard({
     return () => {
       cancelled = true
       window.clearInterval(id)
+      if (idleHandle != null && typeof cancelIdleCallback === 'function') {
+        cancelIdleCallback(idleHandle)
+      }
+      if (deferTimer != null) window.clearTimeout(deferTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [profile.address])

@@ -41,6 +41,7 @@ import {
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { isItemSent, markItemsSent } from './sentItemGuard'
+import { yieldToUi } from './yieldToUi'
 import {
   hasProvenVerdict,
   isItemProven,
@@ -388,17 +389,6 @@ async function resolveUnknownOrigins(): Promise<void> {
 }
 
 let listInFlight: Promise<Collectable[]> | null = null
-
-/** Yield so BEEF parse/verify does not monopolise the UI thread. */
-function yieldToUi(): Promise<void> {
-  return new Promise((resolve) => {
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => resolve(), { timeout: 120 })
-      return
-    }
-    setTimeout(resolve, 0)
-  })
-}
 
 /**
  * Verify one tip's BRC-150 remittance and remember the verdict.

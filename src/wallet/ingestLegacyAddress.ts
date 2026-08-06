@@ -24,6 +24,8 @@ import {
   importOneSatOrdinals,
   type MigrationItem,
 } from './oneSatImport'
+import { filterNewOneSatOutpoints, isOneSatOutpointKnown } from './oneSatImportGuard'
+import { yieldToUi } from './yieldToUi'
 
 export type LegacyAddressIngestResult = {
   scan: LegacyScanResult
@@ -133,14 +135,23 @@ export async function ingestLegacyAddressUtxos(
     opts.knownItems ?? [],
   )
 
+  // Latch dust stays on the address after basket insertion, so every poll still
+  // classifies it. Skip anything already imported / backing off before we log or
+  // touch BEEF — that retry loop was freezing the UI on every Dashboard tick.
+  const newLatches = latches.filter((l) => !isOneSatOutpointKnown(l.outpoint))
+  const newOneSatCandidates = oneSats.filter((i) => {
+    const fresh = filterNewOneSatOutpoints([i.outpoint])
+    return fresh.length > 0
+  })
+
   if (heldOneSats.length > 0) {
     console.info(
       `[chain-ingest] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
     )
   }
-  if (latches.length > 0) {
+  if (newLatches.length > 0) {
     console.info(
-      `[chain-ingest] routing ${latches.length} soft-latch dust out(s) to basket 1sat-latch`,
+      `[chain-ingest] routing ${newLatches.length} soft-latch dust out(s) to basket 1sat-latch`,
     )
   }
 
@@ -168,8 +179,10 @@ export async function ingestLegacyAddressUtxos(
   let newOneSatOutpoints: string[] = []
   let partialWarn: string | null = null
 
-  if (oneSats.length > 0) {
-    const itemResult = await importOneSatOrdinals(oneSats, active)
+  await yieldToUi()
+
+  if (newOneSatCandidates.length > 0) {
+    const itemResult = await importOneSatOrdinals(newOneSatCandidates, active)
     importedItems = itemResult.imported
     itemsFailed = itemResult.failed
     newOneSatOutpoints = itemResult.outpoints ?? []
@@ -180,12 +193,13 @@ export async function ingestLegacyAddressUtxos(
     }
   }
 
-  if (latches.length > 0) {
+  if (newLatches.length > 0) {
     const tipOrigins = new Map<string, string>()
     for (const tip of oneSats) {
       if (tip.txid && tip.origin) tipOrigins.set(tip.txid.toLowerCase(), tip.origin)
     }
-    const latchResult = await importOneSatLatches(latches, tipOrigins, active)
+    await yieldToUi()
+    const latchResult = await importOneSatLatches(newLatches, tipOrigins, active)
     if (latchResult.failed > 0) {
       console.warn('[chain-ingest] latch import partial', latchResult)
     }

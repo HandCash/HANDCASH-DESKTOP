@@ -18,8 +18,10 @@ import {
 import {
   beginOneSatImport,
   markOneSatImported,
+  markOneSatImportFailed,
   releaseOneSatImport,
 } from './oneSatImportGuard'
+import { yieldToUi } from './yieldToUi'
 import {
   getResolvedInscription,
   rememberResolvedInscription,
@@ -495,7 +497,9 @@ export async function importOneSatOrdinals(
       if (!wallet.services?.getBeefForTxid) {
         throw new Error('Wallet services unavailable for BEEF fetch')
       }
+      await yieldToUi()
       const beef = await wallet.services.getBeefForTxid(txid)
+      await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
 
       // Last line of defence: basket `1sat` is not counted as spendable balance,
@@ -546,6 +550,7 @@ export async function importOneSatOrdinals(
         })
       }
 
+      await yieldToUi()
       await wallet.wallet.internalizeAction({
         tx: atomic,
         description: 'Import 1Sat ordinal',
@@ -553,12 +558,13 @@ export async function importOneSatOrdinals(
         outputs: remittanceOutputs,
         seekPermission: false,
       })
+      await yieldToUi()
 
       imported += ordinals.length
       outpoints.push(...ordinals.map((i) => i.outpoint))
       markOneSatImported(ordinals.map((i) => i.outpoint))
     } catch (err) {
-      releaseOneSatImport(groupOps)
+      markOneSatImportFailed(groupOps)
       failed += group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const item of group) {
@@ -611,7 +617,11 @@ export async function importOneSatLatches(
       if (!wallet.services?.getBeefForTxid) {
         throw new Error('Wallet services unavailable for BEEF fetch')
       }
+      // BEEF serialize + AtomicBEEF validate inside internalizeAction are sync
+      // CPU on the WebView thread — yield around them so nav taps stay live.
+      await yieldToUi()
       const beef = await wallet.services.getBeefForTxid(txid)
+      await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)
       const tipOrigin =
@@ -651,6 +661,7 @@ export async function importOneSatLatches(
       }
       if (remittanceOutputs.length === 0) continue
 
+      await yieldToUi()
       await wallet.wallet.internalizeAction({
         tx: atomic,
         description: 'Import 1Sat latch',
@@ -658,6 +669,7 @@ export async function importOneSatLatches(
         outputs: remittanceOutputs,
         seekPermission: false,
       })
+      await yieldToUi()
 
       const importedOps = remittanceOutputs.map(
         (o) => `${txid}.${o.outputIndex}`,
@@ -666,7 +678,7 @@ export async function importOneSatLatches(
       outpoints.push(...importedOps)
       markOneSatImported(importedOps)
     } catch (err) {
-      releaseOneSatImport(groupOps)
+      markOneSatImportFailed(groupOps)
       failed += group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const latch of group) {

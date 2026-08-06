@@ -26,6 +26,7 @@ import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 import type { MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
+import { yieldToUi } from './yieldToUi'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -224,6 +225,8 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
+  await yieldToUi()
+
   let heldCount = 0
   let partialWarn: string | null = null
   let importedFunding = 0
@@ -259,8 +262,12 @@ export async function refreshFromChainExclusive(
     return emptyRun()
   }
 
+  await yieldToUi()
+
   // A sweep in this same pass means the indexer has definitely not caught up,
   // so its answers are noise — skip the round trips rather than log them.
+  // Background polls pass audit:false — the audit is report-only and was racing
+  // user taps after unlock.
   const review =
     opts?.audit === false
       ? { suspect: 0, skipped: true }

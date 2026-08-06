@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.61] - 2026-08-06
+
+### Fixed
+
+- True freeze cause was wallet sync, not tabs. Latest log: soft-latch ingest mid-tap
+  then a 2.8s main-thread stall. Latch dust stays on the address after basket
+  insertion, so every Dashboard poll re-fetched BEEF and ran `internalizeAction`
+  on the UI thread. Known latches are skipped, failed imports back off for 5
+  minutes, BEEF work yields to the UI, the first post-unlock poll waits for idle,
+  and background polls no longer run the spendable audit.
+
 ## [1.2.60] - 2026-08-06
 
 ### Fixed

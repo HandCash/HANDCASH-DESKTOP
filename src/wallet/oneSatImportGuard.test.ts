@@ -38,4 +38,17 @@ describe('oneSatImportGuard', () => {
     expect(guard2.isOneSatOutpointKnown('deadbeef.0')).toBe(true)
     expect(guard2.filterNewOneSatOutpoints(['deadbeef.0', 'cafe.1'])).toEqual(['cafe.1'])
   })
+
+  it('backs off failed imports so polls do not re-fetch BEEF immediately', async () => {
+    const guard = await import('./oneSatImportGuard')
+    guard.markOneSatImportFailed(['latch.0'])
+    expect(guard.filterNewOneSatOutpoints(['latch.0', 'other.1'])).toEqual(['other.1'])
+    expect(guard.beginOneSatImport(['latch.0'])).toEqual([])
+  })
+
+  it('normalizes underscore outpoints to dotted form', async () => {
+    const guard = await import('./oneSatImportGuard')
+    guard.markOneSatImported(['abcd_0'])
+    expect(guard.isOneSatOutpointKnown('abcd.0')).toBe(true)
+  })
 })
