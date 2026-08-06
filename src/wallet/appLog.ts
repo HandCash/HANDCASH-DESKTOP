@@ -29,6 +29,7 @@ const listeners = new Set<(all: AppLogEntry[]) => void>()
 let installed = false
 let previousSession: AppLogEntry[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
+let dirty = false
 
 function emit() {
   const snapshot = entries.slice()
@@ -54,6 +55,10 @@ function readStored(key: string): AppLogEntry[] {
 
 function flushNow(): void {
   flushTimer = null
+  // Persisting costs a synchronous write (localStorage on Mobile, sync IPC on
+  // Desktop), so never pay for it twice for the same lines.
+  if (!dirty) return
+  dirty = false
   try {
     durableSetItem(CURRENT_KEY, JSON.stringify(entries.slice(-PERSIST_MAX)))
   } catch {
@@ -71,6 +76,7 @@ export function appendAppLog(level: AppLogLevel, message: string): void {
   if (!line) return
   entries.push({ at: Date.now(), level, message: line.slice(0, 4000) })
   if (entries.length > MAX) entries.splice(0, entries.length - MAX)
+  dirty = true
   // An error may be the last thing that happens — persist it immediately.
   if (level === 'error') flushNow()
   else scheduleFlush()
@@ -165,6 +171,76 @@ function startHeapWatch(): void {
   }, HEAP_SAMPLE_MS)
 }
 
+/**
+ * Freeze detector.
+ *
+ * A frozen app is a blocked main thread: no error is raised and nothing else
+ * gets logged, so the only way to see it is to notice that a timer that should
+ * have run 500ms ago ran much later. The line lands right after the breadcrumb
+ * for whatever screen or action was responsible.
+ */
+const STALL_TICK_MS = 500
+const STALL_WARN_MS = 1_000
+let stallTimer: ReturnType<typeof setInterval> | null = null
+
+function startStallWatch(): void {
+  if (stallTimer) return
+  let last = Date.now()
+  stallTimer = setInterval(() => {
+    const now = Date.now()
+    const drift = now - last - STALL_TICK_MS
+    last = now
+    // Background tabs have their timers throttled on purpose; that is not a stall.
+    if (document.visibilityState === 'hidden') return
+    if (drift < STALL_WARN_MS) return
+    appendAppLog('warn', `[stall] main thread blocked ${Math.round(drift)}ms`)
+    flushNow()
+  }, STALL_TICK_MS)
+}
+
+/** Attributes the block to a task when the runtime supports long-task timing. */
+const LONGTASK_MIN_MS = 800
+let lastLongTaskAt = 0
+
+function startLongTaskWatch(): void {
+  if (typeof PerformanceObserver === 'undefined') return
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        if (entry.duration < LONGTASK_MIN_MS) continue
+        const now = Date.now()
+        if (now - lastLongTaskAt < 2_000) continue
+        lastLongTaskAt = now
+        appendAppLog(
+          'warn',
+          `[longtask] ${Math.round(entry.duration)}ms (${entry.name || 'unknown'})`,
+        )
+        flushNow()
+      }
+    })
+    observer.observe({ entryTypes: ['longtask'] })
+  } catch {
+    // Unsupported entry type — the stall watch still covers us.
+  }
+}
+
+/** Periodic proof of life, so a log tail shows exactly when the app stopped. */
+const HEARTBEAT_MS = 5_000
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null
+
+function startHeartbeat(): void {
+  if (heartbeatTimer) return
+  const bootedAt = Date.now()
+  heartbeatTimer = setInterval(() => {
+    const heap = readHeap()
+    const up = Math.round((Date.now() - bootedAt) / 1000)
+    appendAppLog(
+      'info',
+      `[heartbeat] up ${up}s · ${heap ? mb(heap.used) : 'heap n/a'} · ${document.visibilityState}`,
+    )
+  }, HEARTBEAT_MS)
+}
+
 /** Capture console + optional window errors into the ring buffer (once). */
 export function installAppLogCapture(): void {
   if (installed || typeof window === 'undefined') return
@@ -211,6 +287,9 @@ export function installAppLogCapture(): void {
   // Last chance to persist before the OS reclaims the WebView.
   window.addEventListener('pagehide', flushNow)
   document.addEventListener('visibilitychange', () => {
+    // Distinguishes "user backgrounded it and Android reclaimed it" from
+    // "died while the user was looking at it".
+    appendAppLog('info', `[lifecycle] ${document.visibilityState}`)
     if (document.visibilityState === 'hidden') flushNow()
   })
 
@@ -238,4 +317,7 @@ export function installAppLogCapture(): void {
     )
   }
   startHeapWatch()
+  startStallWatch()
+  startLongTaskWatch()
+  startHeartbeat()
 }

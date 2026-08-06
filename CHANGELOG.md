@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.55] - 2026-08-06
+
+### Added
+
+- Freeze detection. A blocked main thread raises no error and stops all other
+  logging, so a 500ms timer now reports how late it ran, long tasks over 800ms
+  are attributed where the runtime supports it, and a 5s heartbeat marks exactly
+  when the app stopped responding.
+- Foreground/background transitions are logged, which separates an OS reclaim
+  after backgrounding from a freeze the user was staring at.
+
+### Fixed
+
+- Image viewport observers are created once per frame instead of on every
+  load/release flip, since re-observing re-fires the initial callback and an
+  element resting on the boundary could oscillate.
+- The log tail is only written when there are new lines, halving the
+  synchronous storage writes the diagnostics themselves cost.
+
 ## [1.2.54] - 2026-08-06
 
 ### Fixed

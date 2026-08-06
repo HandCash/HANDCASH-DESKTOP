@@ -97,6 +97,9 @@ export function DeferredImage({
     readySent.current = false
   }, [src])
 
+  // Observers are set up once per frame, never per `near` flip: re-observing
+  // re-fires the initial callback, which is how an element sitting on a boundary
+  // turns into a load/release loop.
   useEffect(() => {
     const frame = frameRef.current
     if (!frame) return
@@ -108,7 +111,7 @@ export function DeferredImage({
 
     // Android WebViews often never fire IntersectionObserver for elements that
     // were already on screen when observe() ran. Check first, then observe.
-    if (!near && frameIsNear(frame)) mark(true)
+    if (frameIsNear(frame)) mark(true)
 
     if (typeof IntersectionObserver === 'undefined') {
       const fallbackTimer = window.setTimeout(() => mark(true), 350)
@@ -135,15 +138,15 @@ export function DeferredImage({
     releaseObserver.observe(frame)
 
     // Absolute fallback — a broken observer must never leave images on the skeleton.
-    const fallbackTimer = near ? null : window.setTimeout(() => mark(true), 350)
+    const fallbackTimer = window.setTimeout(() => mark(true), 350)
 
     return () => {
       cancelled = true
-      if (fallbackTimer !== null) window.clearTimeout(fallbackTimer)
+      window.clearTimeout(fallbackTimer)
       loadObserver.disconnect()
       releaseObserver.disconnect()
     }
-  }, [near, src])
+  }, [src])
 
   useEffect(() => {
     if (!near) setStatus('loading')
