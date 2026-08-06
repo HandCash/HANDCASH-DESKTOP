@@ -62,6 +62,12 @@ export type ClassifiedLegacyUtxos = {
   latches: LegacyUtxo[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
+  /**
+   * Subset of {@link heldOneSats} a co-created latch proves is an ordinal tip.
+   * Known to be an item, still waiting on an origin — worth telling the user
+   * about, because to them the transfer has simply gone missing.
+   */
+  pendingTips: LegacyUtxo[]
 }
 
 export type CollectableTrait = {
@@ -384,6 +390,18 @@ export async function classifyLegacyUtxos(
   const funding: LegacyUtxo[] = []
   const latches: LegacyUtxo[] = []
   const heldOneSats: LegacyUtxo[] = []
+  const pendingTips: LegacyUtxo[] = []
+
+  // BRC-153 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
+  // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
+  // latch paying us is therefore local proof that output 0 of the same
+  // transaction is an ordinal tip. It cannot tell us *which* origin the tip
+  // carries — that lives in sender-side remittance, not in the script — so the
+  // indexer is still needed for identity, just not to know an item arrived.
+  const latchTxids = new Set<string>()
+  for (const u of utxos) {
+    if (isLatchDustSats(u.satoshis)) latchTxids.add(u.txid.trim().toLowerCase())
+  }
 
   for (const u of utxos) {
     if (claimed.has(outpointKey(u.outpoint))) continue
@@ -419,7 +437,12 @@ export async function classifyLegacyUtxos(
       } else {
         const cacheKey = `${u.txid}.${u.vout}`
         resolved = getResolvedInscription(cacheKey)
-        if (!resolved && shouldResolveInscription(cacheKey)) {
+        // The 10-minute miss backoff exists to stop us hammering the indexer
+        // over stray dust. A latch-proven tip is not stray dust — it is an
+        // item we know landed, so backing off just leaves a real transfer
+        // invisible for ten minutes at a time.
+        const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
+        if (!resolved && (latchProven || shouldResolveInscription(cacheKey))) {
           const fetched = await resolveOneSatInscription(u.txid, u.vout, chain)
           if (fetched) {
             rememberResolvedInscription(cacheKey, fetched)
@@ -427,6 +450,12 @@ export async function classifyLegacyUtxos(
           } else {
             rememberUnresolved(cacheKey)
           }
+        }
+        if (!resolved && latchProven) {
+          console.info(
+            `[1sat] latch-proven tip ${cacheKey} has no origin yet — holding, will retry next sync`,
+          )
+          pendingTips.push(u)
         }
       }
 
@@ -452,7 +481,7 @@ export async function classifyLegacyUtxos(
     // satoshis === 0 or weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats, latches, heldOneSats }
+  return { funding, oneSats, latches, heldOneSats, pendingTips }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */

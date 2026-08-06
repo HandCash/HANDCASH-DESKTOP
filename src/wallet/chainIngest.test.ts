@@ -83,7 +83,9 @@ describe('refreshFromChain spendable review', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [],
       oneSats: [],
+      latches: [],
       heldOneSats: [],
+      pendingTips: [],
     })
   })
 
@@ -242,6 +244,7 @@ describe('refreshFromChain spendable review', () => {
       oneSats: [],
       latches: [],
       heldOneSats: [],
+      pendingTips: [],
     })
     const guard = await import('./legacyImportGuard')
     mockImportLegacyUtxos.mockImplementation(async () => {

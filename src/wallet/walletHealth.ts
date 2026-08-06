@@ -8,6 +8,8 @@ export type SyncHealth = {
   /** Short user-facing line; null when quiet. */
   message: string | null
   heldOneSats: number
+  /** Held tips a co-created BRC-153 latch proves are items, still awaiting an origin. */
+  pendingTips: number
   updatedAt: number
 }
 
@@ -21,6 +23,7 @@ let syncHealth: SyncHealth = {
   phase: 'idle',
   message: null,
   heldOneSats: 0,
+  pendingTips: 0,
   updatedAt: 0,
 }
 

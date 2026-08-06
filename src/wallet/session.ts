@@ -3,6 +3,7 @@ import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-cli
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
+import { isPhoneShell } from './runtimePlatform'
 
 const { specOpWalletBalance } = sdk
 
@@ -53,7 +54,8 @@ export async function bootWallet(args: {
   }
 
   // Defer the remaining monitor loop so unlock + first taps are not racing
-  // TaskNewHeader / proofs / IDB writes on the UI thread.
+  // TaskNewHeader / proofs / IDB writes on the UI thread. Phone shells wait
+  // longer; desktop only needs a short tick so unlock stays responsive.
   const startMonitor = () => {
     try {
       void setup.monitor?.startTasks?.()
@@ -61,10 +63,14 @@ export async function bootWallet(args: {
       // optional
     }
   }
-  if (typeof requestIdleCallback === 'function') {
-    requestIdleCallback(startMonitor, { timeout: 8_000 })
+  if (isPhoneShell()) {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(startMonitor, { timeout: 8_000 })
+    } else {
+      setTimeout(startMonitor, 3_000)
+    }
   } else {
-    setTimeout(startMonitor, 3_000)
+    setTimeout(startMonitor, 400)
   }
 
   active = {

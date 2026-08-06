@@ -61,6 +61,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
       oneSats: [],
       latches: [],
       heldOneSats: [],
+      pendingTips: [],
     })
   })
 

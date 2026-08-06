@@ -228,6 +228,7 @@ export async function refreshFromChainExclusive(
   await yieldToUi()
 
   let heldCount = 0
+  let pendingTips = 0
   let partialWarn: string | null = null
   let importedFunding = 0
   let importedItems = 0
@@ -240,6 +241,7 @@ export async function refreshFromChainExclusive(
       knownItems: opts?.knownItems,
     })
     heldCount = ingest.heldOneSats
+    pendingTips = ingest.pendingTips
     partialWarn = ingest.partialWarn
     importedFunding = ingest.importedFunding
     importedItems = ingest.importedItems
@@ -258,6 +260,7 @@ export async function refreshFromChainExclusive(
       phase: 'error',
       message: 'Couldn’t refresh funds — check your network connection.',
       heldOneSats: heldCount,
+      pendingTips,
     })
     return emptyRun()
   }
@@ -277,6 +280,7 @@ export async function refreshFromChainExclusive(
       phase: 'error',
       message: 'Couldn’t verify spent outputs — check your network connection.',
       heldOneSats: heldCount,
+      pendingTips,
     })
   }
 
@@ -320,6 +324,7 @@ export async function refreshFromChainExclusive(
           ? 'Spend check incomplete — retrying automatically.'
           : reviewNote),
       heldOneSats: heldCount,
+      pendingTips,
     })
     return {
       balanceSats: balanceAfter,
@@ -333,6 +338,7 @@ export async function refreshFromChainExclusive(
       phase: 'error',
       message: 'Balance refresh failed — check your network connection.',
       heldOneSats: heldCount,
+      pendingTips,
     })
     return {
       balanceSats: null,

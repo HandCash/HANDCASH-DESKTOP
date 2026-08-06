@@ -1,7 +1,12 @@
 /**
  * BRC-169 handle resolve client → BRC-CLOUD.
+ *
+ * Input accepts HandCash `$handle` / `$handle@domain` and BRC-169 `@handle` /
+ * `@handle@domain` (plus bare paymail-shaped `handle@domain`). Display for
+ * HandCash prefers `$`.
  */
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
+import { formatHandCashHandle } from './handleFormat'
 
 export type ResolvedHandle = {
   handle: string
@@ -15,19 +20,24 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/** Parse @handle, @handle@domain, or handle@domain → { handle, domain? }. */
+/** Parse $handle, @handle, $handle@domain, @handle@domain, or handle@domain. */
 export function parseHandleInput(raw: string): { handle: string; domain: string | null } | null {
   const t = raw.trim()
   if (!t) return null
-  // @alice@handcash.io
-  let m = /^@([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
+
+  // $alice@handcash.io or @alice@handcash.io
+  let m =
+    /^[$@]([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
-  // @alice
-  m = /^@([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])$/i.exec(t)
+
+  // $alice or @alice
+  m = /^[$@]([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: null }
+
   // alice@handcash.io (paymail-shaped → handle grammar)
   m = /^([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
+
   return null
 }
 
@@ -46,7 +56,9 @@ export async function resolveHandle(
     headers: { Accept: 'application/json' },
     cache: 'no-store',
   })
-  if (res.status === 404) throw new Error(`Handle @${parsed.handle} not found`)
+  if (res.status === 404) {
+    throw new Error(`Handle ${formatHandCashHandle(parsed.handle, parsed.domain)} not found`)
+  }
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 120)
     throw new Error(`Handle resolve failed (${res.status})${detail ? `: ${detail}` : ''}`)
@@ -65,13 +77,15 @@ export async function resolveHandle(
     domain: data.domain,
     identityKey: data.identityKey.toLowerCase(),
     certificate: data.certificate,
-    display: `@${data.handle}@${data.domain}`,
+    display: formatHandCashHandle(data.handle, data.domain, { fullyQualified: true }),
   }
 }
 
 export async function claimHandle(args: {
   handle: string
   identityKey: string
+  /** Short-lived ticket from HandCash (items-market) — required in production. */
+  claimTicket?: string
   baseUrl?: string
 }): Promise<{ display: string; certificate: unknown }> {
   const base = normalizeBase(args.baseUrl || DEFAULT_METANET_HANDLES_BASE_URL)
@@ -81,6 +95,7 @@ export async function claimHandle(args: {
     body: JSON.stringify({
       handle: args.handle,
       identityKey: args.identityKey,
+      claimTicket: args.claimTicket,
     }),
   })
   if (!res.ok) {
@@ -89,7 +104,9 @@ export async function claimHandle(args: {
   }
   const data = (await res.json()) as { display?: string; certificate?: unknown }
   return {
-    display: data.display || `@${args.handle}@handcash.io`,
+    display:
+      data.display ||
+      formatHandCashHandle(args.handle, 'handcash.io', { fullyQualified: true }),
     certificate: data.certificate,
   }
 }

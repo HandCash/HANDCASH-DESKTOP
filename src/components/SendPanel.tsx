@@ -290,12 +290,12 @@ export function SendPanel({
                   onBlur={() => {
                     window.setTimeout(() => setShowFriendMatches(false), 120)
                   }}
-                  placeholder="Friend, @handle, peerpay:, address, or identity key"
+                  placeholder="Friend, $handle, peerpay:, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
                 />
                 <p className="friend-recipient-hint send-recipient-hint">
-                  PeerPay links, @handles, and identity keys resolve to a payment address on this network.
+                  PeerPay links, $handles, and identity keys resolve to a payment address on this network.
                 </p>
                 {sendSnap.context.friendLabel && (
                   <p className="friend-recipient-hint">

@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
+import { isPhoneShell } from '../wallet/runtimePlatform'
 import {
   formatUsdFromSats,
   getCachedUsdPerBsv,
@@ -146,18 +147,23 @@ export function Dashboard({
       }
     }
 
-    // Defer the first poll so unlock + first nav taps are not fighting BEEF
-    // internalization on the main thread (latest freeze log: latch import mid-tap).
+    // Phone shells defer the first poll so unlock taps are not fighting BEEF
+    // internalization. Desktop starts immediately — yieldToUi already keeps the
+    // UI live, and the old idle wait made desktop sync feel slower than mobile.
     let idleHandle: number | null = null
     let deferTimer: number | null = null
     const startFirst = () => {
       if (cancelled) return
       void sync()
     }
-    if (typeof requestIdleCallback === 'function') {
-      idleHandle = requestIdleCallback(startFirst, { timeout: 2500 }) as unknown as number
+    if (isPhoneShell()) {
+      if (typeof requestIdleCallback === 'function') {
+        idleHandle = requestIdleCallback(startFirst, { timeout: 2500 }) as unknown as number
+      } else {
+        deferTimer = window.setTimeout(startFirst, 1200)
+      }
     } else {
-      deferTimer = window.setTimeout(startFirst, 1200)
+      deferTimer = window.setTimeout(startFirst, 0)
     }
 
     const intervalMs = isDeviceParityEnabled() ? 12_000 : 30_000

@@ -36,6 +36,8 @@ export type LegacyAddressIngestResult = {
   fundingSkippedKnown: number
   importedFundingOutpoints: string[]
   heldOneSats: number
+  /** Held tips a co-created latch proves are items, still awaiting an origin. */
+  pendingTips: number
   newOneSatOutpoints: string[]
   /** Human-facing retry hint when partial import occurred. */
   partialWarn: string | null
@@ -124,12 +126,13 @@ export async function ingestLegacyAddressUtxos(
       fundingSkippedKnown: 0,
       importedFundingOutpoints: [],
       heldOneSats: 0,
+      pendingTips: 0,
       newOneSatOutpoints: [],
       partialWarn: null,
     }
   }
 
-  const { funding, oneSats, latches, heldOneSats } = await classifyLegacyUtxos(
+  const { funding, oneSats, latches, heldOneSats, pendingTips } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,
     opts.knownItems ?? [],
@@ -146,7 +149,8 @@ export async function ingestLegacyAddressUtxos(
 
   if (heldOneSats.length > 0) {
     console.info(
-      `[chain-ingest] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping`,
+      `[chain-ingest] holding ${heldOneSats.length} unrecognized one-sat out(s) — not sweeping` +
+        (pendingTips.length > 0 ? ` (${pendingTips.length} latch-proven, awaiting origin)` : ''),
     )
   }
   if (newLatches.length > 0) {
@@ -239,6 +243,7 @@ export async function ingestLegacyAddressUtxos(
     fundingSkippedKnown,
     importedFundingOutpoints,
     heldOneSats: heldOneSats.length,
+    pendingTips: pendingTips.length,
     newOneSatOutpoints,
     partialWarn,
   }

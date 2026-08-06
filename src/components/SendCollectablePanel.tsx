@@ -85,7 +85,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const canReview = to.trim().length > 0
 
-  /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, @handle. */
+  /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */
   const applyRecipientInput = (value: string) => {
     setRecipientQuery(value)
     setShowMatches(true)
@@ -229,7 +229,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                   onBlur={() => {
                     window.setTimeout(() => setShowMatches(false), 120)
                   }}
-                  placeholder="Friend, @handle, address, or identity key"
+                  placeholder="Friend, $handle, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
                   autoFocus

@@ -45,6 +45,38 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('keeps retrying a latch-proven tip instead of backing off', async () => {
+    // BRC-153 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
+    // local proof an item landed, so the miss backoff — which exists for stray
+    // dust — would only keep a real transfer invisible for ten minutes a time.
+    const TXID_D = 'd'.repeat(64)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const scan = [utxo(`${TXID_D}.0`, 1), utxo(`${TXID_D}.1`, 2)]
+
+    const first = await classifyLegacyUtxos(scan, 'main')
+    expect(first.latches.map((u) => u.outpoint)).toEqual([`${TXID_D}.1`])
+    expect(first.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+
+    fetchMock.mockClear()
+    const second = await classifyLegacyUtxos(scan, 'main')
+
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0)
+    expect(second.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+    vi.unstubAllGlobals()
+  })
+
+  it('never treats the latch itself as a tip or as funds', async () => {
+    const TXID_E = 'e'.repeat(64)
+    const result = await classifyLegacyUtxos([utxo(`${TXID_E}.1`, 2)], 'main')
+
+    expect(result.funding).toEqual([])
+    expect(result.oneSats).toEqual([])
+    expect(result.pendingTips).toEqual([])
+    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID_E}.1`])
+  })
+
   it('keeps a cloud-named outpoint that really is one satoshi', async () => {
     const result = await classifyLegacyUtxos(
       [utxo(`${TXID_A}.0`, 1)],

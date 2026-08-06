@@ -87,6 +87,20 @@ function resolveStatus(
     }
   }
 
+  // A latch-proven tip we cannot name yet is an item that has definitely landed.
+  // Reporting "Synced" while it is missing from Collectables is exactly how a
+  // transfer looks lost to the person who sent it.
+  if (health.pendingTips > 0) {
+    return {
+      label: health.pendingTips === 1 ? 'Item arriving' : `${health.pendingTips} arriving`,
+      tone: 'busy',
+      detail:
+        health.pendingTips === 1
+          ? 'Collectable received — identifying it with the indexer'
+          : `${health.pendingTips} collectables received — identifying them with the indexer`,
+    }
+  }
+
   // Chain ingest wins. History replica (BRC-39) is optional parity — never alarm as
   // "Out of sync" when funds/items are healthy on this device. See wallet/layers.ts.
   if (health.phase === 'ok') {

@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.65] - 2026-08-06
+
+### Fixed
+
+- Desktop sync felt slower than mobile for a silly reason: `yieldToUi` used
+  `requestIdleCallback` with a 120ms timeout, and during ingest the main thread
+  stays busy so every yield waited out the full timeout. Electron has ric;
+  Android WebViews often do not — so mobile already fell through to
+  `setTimeout(0)` and finished sooner. Yields now always use `setTimeout(0)`.
+- First post-unlock chain poll and the toolbox monitor start immediately on
+  desktop; phone shells keep the longer deferral that protects unlock taps.
+- Peer BRC-153 transfers: a co-created 2-sat latch is local proof that OUTPUT:0
+  is an ordinal tip. Latch-proven tips bypass the 10-minute miss backoff and
+  surface as "Item arriving" instead of silently sitting in held dust.
+- Top bar control heights aligned across Activity / Collectables / Friends.
+- HandCash handles display as `$handle`; BRC-CLOUD claims require an HMAC claim
+  ticket (or operator key).
+
 ## [1.2.64] - 2026-08-06
 
 ### Fixed

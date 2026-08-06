@@ -3040,8 +3040,8 @@ button.identity-qr-copy:focus-visible {
 .activity-filter-toggle {
   appearance: none;
   position: relative;
-  width: 32px;
-  height: 32px;
+  width: 28px;
+  height: 28px;
   margin: 0;
   padding: 0;
   border-radius: var(--radius);
@@ -3358,7 +3358,7 @@ a.history-row-link:hover .history-tx-hint {
   display: inline-flex;
   align-items: center;
   gap: 1px;
-  height: 32px;
+  height: 28px;
   padding: 2px;
   border-radius: var(--radius);
   border: 1px solid hsl(var(--border));
@@ -3371,8 +3371,8 @@ a.history-row-link:hover .history-tx-hint {
   appearance: none;
   display: grid;
   place-items: center;
-  width: 26px;
-  height: 26px;
+  width: 22px;
+  height: 22px;
   margin: 0;
   padding: 0;
   border: 0;

@@ -1,10 +1,14 @@
 /**
  * BRC-169 cloud handle claim — separate from balance migration.
  * Hosts: same allowlist as migration (handcash.io / market / preprod / localhost).
+ *
+ * Production minting requires a short-lived `claimTicket` from HandCash
+ * (items-market) proving ownership of the cloud $alias.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { getActiveWallet } from './session'
 import { claimHandle } from './handleResolve'
+import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
 const STORAGE_KEY = 'handcash.brc169.claimedHandle.v1'
@@ -25,7 +29,7 @@ export function isHandleClaimOrigin(origin: string | undefined): boolean {
 }
 
 function normalizeCloudHandle(raw: string): string {
-  const h = raw.trim().replace(/^\$/, '').replace(/^@/, '').toLowerCase()
+  const h = normalizeHandleName(raw)
   if (!/^[a-z0-9]([a-z0-9._-]{0,62}[a-z0-9])?$/.test(h)) {
     throw new Error('Invalid handle')
   }
@@ -47,7 +51,9 @@ export function readClaimedCloudHandle(): ClaimedHandleState | null {
     }
     return {
       handle: parsed.handle,
-      display: parsed.display,
+      display: parsed.display.startsWith('$')
+        ? parsed.display
+        : formatHandCashHandle(parsed.handle, 'handcash.io', { fullyQualified: true }),
       identityKey: parsed.identityKey.toLowerCase(),
       claimedAt: parsed.claimedAt,
     }
@@ -64,6 +70,7 @@ let claimInFlight: Promise<ClaimedHandleState> | null = null
 
 export async function claimCloudHandlePayload(args: {
   handle: string
+  claimTicket?: string
 }): Promise<ClaimedHandleState> {
   if (claimInFlight) return claimInFlight
   claimInFlight = (async () => {
@@ -71,9 +78,13 @@ export async function claimCloudHandlePayload(args: {
     if (!active) throw new Error('Wallet locked')
 
     const handle = normalizeCloudHandle(args.handle)
+    const claimTicket =
+      typeof args.claimTicket === 'string' ? args.claimTicket.trim() : ''
+
     const result = await claimHandle({
       handle,
       identityKey: active.identityKey,
+      ...(claimTicket ? { claimTicket } : {}),
     })
 
     const state: ClaimedHandleState = {
