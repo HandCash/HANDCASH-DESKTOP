@@ -8,7 +8,7 @@
  *
  * Callers must not reach here while {@link isHardenedSendEnabled} is false.
  */
-import { isHardenedSendEnabled } from './oneSatHardenedLatch'
+import { isHardenedSendEnabled } from './oneSatHardenedReceive'
 import type { ActiveWallet } from './session'
 
 export type HardenedSendArgs = {

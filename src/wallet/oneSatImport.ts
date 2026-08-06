@@ -43,7 +43,7 @@ import {
   parseLatchStateScript,
   resolveOutpointRef,
 } from './oneSatLatch'
-import { verifyHardenedReceive, resolveAlternatingProofContext } from './oneSatHardenedLatch'
+import { verifyHardenedReceive, resolveAlternatingProofContext } from './oneSatHardenedReceive'
 import {
   authenticityResultToVerdict,
   verifyAuthenticityLadder,

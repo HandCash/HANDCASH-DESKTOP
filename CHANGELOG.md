@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.83] - 2026-08-06
+
+### Fixed
+
+- **Renderer no longer pulls scrypt-ts / node:path.** Hardened receive helpers live
+  in browser-safe `oneSatHardenedReceive.ts`; covenant script-exec stays Node-only.
+  Unblocks Desktop packaging CI for v1.2.82+.
+
 ## [1.2.82] - 2026-08-06
 
 ### Added

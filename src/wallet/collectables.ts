@@ -62,8 +62,7 @@ import {
   parseHardenedTipInstructions,
   resolveAlternatingProofContext,
   verifyHardenedReceive,
-} from './oneSatHardenedLatch'
-import { sendHardenedCollectable } from './oneSatHardenedSend'
+} from './oneSatHardenedReceive'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
   liveOneSatKeys,
@@ -1231,6 +1230,7 @@ export async function sendCollectable(args: {
       }
     }
     try {
+      const { sendHardenedCollectable } = await import('./oneSatHardenedSend')
       const result = await sendHardenedCollectable({
         wallet,
         outpoint,
