@@ -15,6 +15,11 @@ import {
   subscribeAppActivity,
   type ActivityEntry,
 } from '../wallet/appActivity'
+import {
+  activitySeenReady,
+  hasSeenActivity,
+  markActivitySeen,
+} from '../wallet/activitySeen'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import {
   DEFAULT_PAYMENT_FILTERS,
@@ -267,18 +272,17 @@ function useScrollReveal(ref: RefObject<HTMLElement | null>) {
 /**
  * Keep newest rows in view when the feed is at its default (top) scroll.
  *
- * Only flash when a *new* id arrives while this feed instance already knew a
- * previous newest — remounting Activity (tab flick) must not treat the existing
- * top row as a fresh population.
+ * The flash announces a transaction the user has not seen before, so it is
+ * decided from the durable seen record rather than from this instance's history.
+ * Opening Activity, flicking between tabs, or reopening the app all re-mount the
+ * feed over entries the user has already read, and none of those are arrivals.
  */
 function useStickNewestToTop(
   listRef: RefObject<HTMLElement | null>,
   newestId: string | undefined,
+  shownIds: readonly string[],
 ) {
   const stickToTopRef = useRef(true)
-  /** Undefined until the first effect run seeds the current top id. */
-  const prevNewestRef = useRef<string | undefined>(undefined)
-  const seededRef = useRef(false)
 
   useEffect(() => {
     const el = listRef.current
@@ -295,15 +299,9 @@ function useStickNewestToTop(
     const el = listRef.current
     if (!el || !newestId) return
 
-    if (!seededRef.current) {
-      seededRef.current = true
-      prevNewestRef.current = newestId
-      return
-    }
-
-    const changed = prevNewestRef.current !== newestId
-    prevNewestRef.current = newestId
-    if (!changed || !stickToTopRef.current) return
+    const fresh = activitySeenReady() && !hasSeenActivity(newestId)
+    markActivitySeen(shownIds)
+    if (!fresh || !stickToTopRef.current) return
 
     const pin = () => {
       el.scrollTop = 0
@@ -318,7 +316,7 @@ function useStickNewestToTop(
     pin()
     const raf = window.requestAnimationFrame(pin)
     return () => window.cancelAnimationFrame(raf)
-  }, [listRef, newestId])
+  }, [listRef, newestId, shownIds])
 }
 
 export function ActivityFeed({
@@ -345,7 +343,8 @@ export function ActivityFeed({
   const shownCount = useChunkedCount(filtered.length)
   const visibleEntries = filtered.slice(0, shownCount)
   const newestId = filtered[0]?.id
-  useStickNewestToTop(listRef, newestId)
+  const shownIds = useMemo(() => filtered.map((entry) => entry.id), [filtered])
+  useStickNewestToTop(listRef, newestId, shownIds)
 
   const filtersActive =
     filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||

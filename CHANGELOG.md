@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.86] - 2026-08-06
+
+### Fixed
+
+- **Activity only flashes a transaction the user has never seen.** The highlight
+  was decided from per-mount state, so opening Activity announced whatever was on
+  top. Which entries have been shown is now recorded durably; a restored history
+  seeds silently.
+
 ## [1.2.85] - 2026-08-06
 
 ### Fixed
