@@ -29,6 +29,7 @@ import { resolvePaymentAddress } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
+import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
   buildCollectableCustomInstructions,
   rebuildProvenanceV2FromBeef,
@@ -916,43 +917,15 @@ function assertOrdinalIsDeviceLocked(
  * `buildSignableTransaction` reads each user input's source transaction out of
  * the BEEF we pass, so a tip and a latch from different transactions both have to
  * be in it — otherwise the toolbox fails with "Every signableTransaction input
- * must have a sourceTransaction". The raw source is also what gives the signer the
- * real locking script and satoshi value for each input.
+ * must have a sourceTransaction". Fetches run in parallel and share a session
+ * cache with provenance / settle / origin lookups so a send never pays twice for
+ * the same mined body.
  */
 async function buildInputBeefForSpends(
   wallet: ActiveWallet,
   outpoints: string[],
 ): Promise<number[]> {
-  if (!wallet.services?.getBeefForTxid) {
-    throw new Error('Cannot prove the collectable input offline. Try again when connected.')
-  }
-
-  const txids = [
-    ...new Set(
-      outpoints
-        .map((op) => normalizeOutpoint(op).split('.')[0]?.toLowerCase())
-        .filter((txid): txid is string => !!txid),
-    ),
-  ]
-
-  const merged = new Beef()
-  for (const txid of txids) {
-    try {
-      const beef = await wallet.services.getBeefForTxid(txid)
-      merged.mergeBeef(beef.toBinary())
-    } catch (err) {
-      console.warn('[collectables] inputBEEF fetch failed', txid, err)
-    }
-  }
-
-  const missing = txids.filter((txid) => merged.findTxid(txid)?.tx == null)
-  if (missing.length > 0) {
-    throw new Error(
-      'Could not load the transaction that holds this collectable. Refresh, then send again.',
-    )
-  }
-
-  return merged.toBinary()
+  return buildMergedInputBeef(wallet, outpoints, normalizeOutpoint)
 }
 
 /**
@@ -1040,10 +1013,15 @@ async function findLatchForTip(
 ): Promise<LatchListing | null> {
   const tip = toUnderscoreOutpoint(tipOutpoint)
   const originU = toUnderscoreOutpoint(origin)
+  const originTag = originU.replace(/_(\d+)$/, '.$1')
   try {
+    // Origin tag first — a full latch basket read is wasted work when the tip's
+    // origin is already known (the usual case on send).
     const result = await wallet.wallet.listOutputs({
       basket: ONE_SAT_LATCH_BASKET,
-      limit: 1000,
+      tags: [`origin:${originTag}`],
+      tagQueryMode: 'all',
+      limit: 40,
       includeTags: true,
       include: 'locking scripts',
       seekPermission: false,
@@ -1103,14 +1081,23 @@ let hardenedModuleWarm: Promise<unknown> | null = null
  * Pull the covenant bridge into memory ahead of a hardened send.
  *
  * The scrypt-ts contract is a large chunk kept out of the main bundle, and on a
- * phone parsing it costs real time. Calling this while the user is still reading
- * the confirm screen moves that cost off the transfer itself.
+ * phone parsing it costs real time — as does `loadArtifact` once the chunk is
+ * present. Calling this while the user is still reading the confirm screen moves
+ * both costs off the transfer itself.
  */
 export function warmHardenedSend(recipientIdentityKey?: string | null): void {
   if (!isHardenedSendEnabled() || !canUseHardenedLatch({ publicKey: recipientIdentityKey })) {
     return
   }
-  hardenedModuleWarm ??= import('./oneSatHardenedSend').catch(() => null)
+  hardenedModuleWarm ??= import('./oneSatHardenedSend')
+    .then(async (mod) => {
+      // Artifact compile is sync and cheap once the chunk is parsed; do it now
+      // so the first unlock does not pay for it on tap.
+      const { loadBrc156CovenantArtifact } = await import('./oneSatHardenedLatch')
+      loadBrc156CovenantArtifact()
+      return mod
+    })
+    .catch(() => null)
 }
 
 /**
@@ -1151,9 +1138,17 @@ export async function sendCollectable(args: {
     throw new Error('Invalid recipient address or identity key')
   }
 
+  // Prefer the in-memory list for name/origin so the tip listOutputs can be a
+  // tagged narrow query instead of a full-basket read of every held ordinal.
+  const cachedItem = cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
+  const originGuess = parseOrigin(args.origin ?? cachedItem?.origin, outpoint)
+  const originTag = originGuess.replace(/_(\d+)$/, '.$1')
+
   const held = await wallet.wallet.listOutputs({
     basket: '1sat',
-    limit: 1000,
+    tags: [`origin:${originTag}`],
+    tagQueryMode: 'all',
+    limit: 20,
     includeTags: true,
     // Locking script and satoshis are all this needs; remittance BEEF for every
     // held item would be tens of megabytes on a full wallet.
@@ -1161,31 +1156,48 @@ export async function sendCollectable(args: {
     include: 'locking scripts',
     seekPermission: false,
   })
-  const match = (held.outputs ?? []).find(
+  let match = (held.outputs ?? []).find(
     (o) => normalizeOutpoint(o.outpoint) === outpoint,
   )
+  // Origin tag can miss after a migrate / rename; one broader pass is enough.
+  if (!match) {
+    const wide = await wallet.wallet.listOutputs({
+      basket: '1sat',
+      limit: 1000,
+      includeTags: true,
+      includeCustomInstructions: true,
+      include: 'locking scripts',
+      seekPermission: false,
+    })
+    match = (wide.outputs ?? []).find(
+      (o) => normalizeOutpoint(o.outpoint) === outpoint,
+    )
+  }
   if (!match) throw new Error('Collectable is no longer in this wallet')
   if ((match.satoshis ?? 1) !== 1) {
     throw new Error('Collectable UTXO is not a 1-sat ordinal')
   }
   assertOrdinalIsDeviceLocked(match.lockingScript, wallet)
 
-  const item = (await getCollectable(outpoint, wallet)) ?? null
+  const item = cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
   const origin = parseOrigin(args.origin ?? item?.origin, outpoint)
   const name =
     (args.name ?? item?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
   const app = args.app ?? item?.app
-  const originTag = origin.replace(/_(\d+)$/, '.$1')
   const tags = [
     'ordinal',
-    `origin:${originTag}`,
+    `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
     `name:${name.slice(0, 80)}`,
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
   ]
 
-  const priorLatch = isLatchedSendEnabled()
-    ? await findLatchForTip(wallet, outpoint, origin)
-    : null
+  // Latch discovery and tip BEEF are independent — run them together so the
+  // slower of the two dominates instead of their sum.
+  const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
+  const [priorLatch, tipBeefBin] = await Promise.all([
+    isLatchedSendEnabled() ? findLatchForTip(wallet, outpoint, origin) : Promise.resolve(null),
+    tipBeefPromise,
+  ])
   if (priorLatch?.lockingScript) {
     assertOrdinalIsDeviceLocked(priorLatch.lockingScript, wallet)
   }
@@ -1193,8 +1205,19 @@ export async function sendCollectable(args: {
     ? toUnderscoreOutpoint(priorLatch.outpoint)
     : GENESIS_PARENT_LATCH
 
+  rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
+
+  let inputBEEF = tipBeefBin
+  if (priorLatch) {
+    const latchTxid = normalizeOutpoint(priorLatch.outpoint).split('.')[0]
+    if (latchTxid && !Beef.fromBinary(tipBeefBin).findTxid(latchTxid)?.tx) {
+      inputBEEF = await buildInputBeefForSpends(wallet, [
+        outpoint,
+        priorLatch.outpoint,
+      ])
+    }
+  }
   const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
-  const inputBEEF = await buildInputBeefForSpends(wallet, spendOutpoints)
   const knownTxids = [
     ...new Set(
       spendOutpoints
@@ -1227,9 +1250,20 @@ export async function sendCollectable(args: {
       }
       const [originTxid, originVoutRaw] = origin.split(/[_.]/)
       const originVout = Number(originVoutRaw)
-      if (originTxid && Number.isInteger(originVout) && wallet.services?.getBeefForTxid) {
+      // Prefer bodies already in the tip BEEF / remittance before another fetch.
+      if (originTxid && Number.isInteger(originVout)) {
+        originLockingScriptHex = Beef.fromBinary(inputBEEF)
+          .findTxid(originTxid)
+          ?.tx?.outputs[originVout]?.lockingScript?.toHex()
+      }
+      if (
+        !originLockingScriptHex &&
+        originTxid &&
+        Number.isInteger(originVout) &&
+        wallet.services
+      ) {
         try {
-          const originBeef = await wallet.services.getBeefForTxid(originTxid)
+          const originBeef = await getBeefForTxidCached(wallet, originTxid)
           originLockingScriptHex = originBeef
             .findTxid(originTxid)
             ?.tx?.outputs[originVout]?.lockingScript?.toHex()
@@ -1310,6 +1344,7 @@ export async function sendCollectable(args: {
     wallet,
     contentType: item?.mimeType,
     parentLatch,
+    inputBeef: inputBEEF,
   })
 
   const inputs = [

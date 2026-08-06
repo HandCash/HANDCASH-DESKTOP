@@ -347,6 +347,11 @@ export async function tryBuildProvenanceV2(args: {
   contentType?: string
   /** Optional prior path tip→…→origin (underscore). */
   path?: string[]
+  /**
+   * Tip BEEF already fetched for this send. Reusing it avoids a second
+   * `getBeefForTxid` round trip that otherwise dominates soft-latch signing.
+   */
+  inputBeef?: number[]
 }): Promise<ProvenanceV2 | null> {
   const tip = toUnderscore(args.tipOutpoint)
   const origin = toUnderscore(args.origin)
@@ -355,8 +360,20 @@ export async function tryBuildProvenanceV2(args: {
   if (!txid) return null
 
   try {
-    if (!args.wallet.services?.getBeefForTxid) return null
-    const beef = await args.wallet.services.getBeefForTxid(txid)
+    let beef: Beef | null = null
+    if (args.inputBeef?.length) {
+      try {
+        const fromInput = Beef.fromBinary(args.inputBeef)
+        if (fromInput.findTxid(txid)?.tx) beef = fromInput
+      } catch {
+        // Fall through to a fresh fetch.
+      }
+    }
+    if (!beef) {
+      if (!args.wallet.services?.getBeefForTxid) return null
+      const { getBeefForTxidCached } = await import('./beefCache')
+      beef = await getBeefForTxidCached(args.wallet, txid)
+    }
     if (!beef) return null
     let bin: number[]
     try {
@@ -417,6 +434,7 @@ export async function tryBuildProvenanceForSend(args: {
   contentType?: string
   path?: string[]
   parentLatch?: string | null
+  inputBeef?: number[]
 }): Promise<ProvenanceRemittance | null> {
   void args.parentLatch
   return tryBuildProvenanceV2(args)

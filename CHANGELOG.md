@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.87] - 2026-08-06
+
+### Changed
+
+- **Faster collectable signing.** Tip BEEF, latch discovery, provenance, origin
+  script, and settle input BEEF no longer each pay a fresh storage round trip:
+  a session BEEF cache dedupes them, fetches run in parallel, settle reuses the
+  commit AtomicBEEF, and soft-latch provenance reuses the tip BEEF already in
+  hand. Pre-send `listOutputs` is tagged by origin instead of reading the whole
+  basket, and confirm-screen warm now compiles the covenant artifact so the
+  first unlock does not.
+
 ## [1.2.86] - 2026-08-06
 
 ### Fixed

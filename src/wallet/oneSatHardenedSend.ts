@@ -173,8 +173,8 @@ async function ensureTxHex(
   try {
     return resolveTxHexFromBeef(beef, txid)
   } catch {
-    if (!wallet.services?.getBeefForTxid) throw new Error(`Missing tx ${txid}`)
-    const fetched = await wallet.services.getBeefForTxid(txid)
+    const { getBeefForTxidCached } = await import('./beefCache')
+    const fetched = await getBeefForTxidCached(wallet, txid)
     beef.mergeBeef(fetched.toBinary())
     return resolveTxHexFromBeef(beef, txid)
   }
@@ -935,9 +935,8 @@ export async function sendHardenedCollectable(
       ])
 
       // Internalize commit proof into latch basket via inputBEEF merge (held).
-      const settleInputBeef = await args.buildInputBeefForSpends(args.wallet, [
-        commitTipOp,
-      ]).catch(() => commitSigned.tx!)
+      // Commit AtomicBEEF already has the tip we just signed — no refetch.
+      const settleInputBeef = commitSigned.tx!
 
       const settleResult = await args.wallet.wallet.createAction({
         description: `Hardened settle ${args.name}`.slice(0, 50),
@@ -993,15 +992,20 @@ export async function sendHardenedCollectable(
     ])
 
     const settleSpendOps = [commitTipOp, delayedProofDot]
-    const settleInputBeef = await args.buildInputBeefForSpends(
-      args.wallet,
-      settleSpendOps,
-    ).catch(() => {
-      // Fall back to commit AtomicBEEF + whatever tipBeef already has.
-      const merged = Beef.fromBinary(commitSigned.tx!)
-      merged.mergeBeef(args.inputBEEF)
-      return merged.toBinary()
-    })
+    // Commit AtomicBEEF already covers the tip we just signed; tip/input BEEF
+    // already covers the delayed proof. Merging those is enough — refetching
+    // both from the storage provider only adds a round trip to every resend.
+    const settleMerged = Beef.fromBinary(commitSigned.tx!)
+    settleMerged.mergeBeef(args.inputBEEF)
+    let settleInputBeef = settleMerged.toBinary()
+    if (
+      !settleMerged.findTxid(delayedProofDot.split('.')[0]!)?.tx ||
+      !settleMerged.findTxid(commitTxid)?.tx
+    ) {
+      settleInputBeef = await args
+        .buildInputBeefForSpends(args.wallet, settleSpendOps)
+        .catch(() => settleInputBeef)
+    }
 
     const settleResult = await args.wallet.wallet.createAction({
       description: `Hardened settle ${args.name}`.slice(0, 50),
