@@ -245,7 +245,7 @@ function toCollectable(
   const name = tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
   const app = tagValue(o.tags, 'app:') ?? resolved?.app
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
-  // in the background after paint — see `scheduleAuthenticitySweep`.
+  // Provenance verdict comes from durable cache; detail view verifies on demand.
   const proven = isItemProven(normalizeOutpoint(o.outpoint))
   return {
     outpoint: normalizeOutpoint(o.outpoint),
@@ -388,7 +388,6 @@ async function resolveUnknownOrigins(): Promise<void> {
 }
 
 let listInFlight: Promise<Collectable[]> | null = null
-let authenticitySweep: Promise<void> | null = null
 
 /** Yield so BEEF parse/verify does not monopolise the UI thread. */
 function yieldToUi(): Promise<void> {
@@ -457,35 +456,6 @@ function applyProvenFlag(outpoint: string, proven: boolean): void {
 }
 
 /**
- * Automatic authenticity: after the list paints, verify unverified tips one at a
- * time in the background. Same checks as before — just not on the critical path
- * and never with every remittance resident at once.
- */
-function scheduleAuthenticitySweep(
-  items: Collectable[],
-  wallet: ActiveWallet,
-): void {
-  const pending = items.filter((i) => !hasProvenVerdict(i.outpoint))
-  if (pending.length === 0) return
-
-  const run = (async () => {
-    // Wait out any prior sweep so two lists cannot race BEEF verifies.
-    if (authenticitySweep) await authenticitySweep.catch(() => {})
-    for (const item of pending) {
-      if (getActiveWallet() !== wallet) return
-      if (hasProvenVerdict(item.outpoint)) continue
-      const proven = await verifyItemAuthenticity(item.outpoint, item.origin, wallet)
-      applyProvenFlag(item.outpoint, proven)
-      await yieldToUi()
-    }
-  })()
-
-  authenticitySweep = run.finally(() => {
-    if (authenticitySweep === run) authenticitySweep = null
-  })
-}
-
-/**
  * Every visit to the Collect panel lists the basket, so flipping through the nav
  * bar would otherwise stack identical `listOutputs` queries. Callers all share the
  * one session wallet, so joining the in-flight read is the same answer.
@@ -539,7 +509,6 @@ async function listCollectablesNow(
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
   setCollectablesCache(deduped)
-  scheduleAuthenticitySweep(deduped, wallet)
   void resolveUnknownOrigins()
   return deduped
 }
@@ -555,7 +524,7 @@ export async function getCollectable(
   if (!item || !wallet) return item
 
   // Details: traits/mime come from the indexer only when remittance left them
-  // blank. Authenticity is already sweeping in the background after list.
+  // blank. Authenticity runs here, one item, when the user opens details.
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
@@ -593,6 +562,12 @@ export async function getCollectable(
     }
   } catch (err) {
     console.warn('[collectables] detail enrich failed', err)
+  }
+
+  if (!hasProvenVerdict(target)) {
+    void verifyItemAuthenticity(target, item.origin, wallet)
+      .then((proven) => applyProvenFlag(target, proven))
+      .catch(() => {})
   }
 
   return item

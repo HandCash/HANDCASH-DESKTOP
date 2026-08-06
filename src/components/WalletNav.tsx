@@ -98,24 +98,8 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
-  /**
-   * Sections mount on first visit and then stay mounted. Remounting on every
-   * tap froze the UI; mounting all six up front just moves that cost to launch.
-   */
-  const [mountedSections, setMountedSections] = useState<Set<NavSection>>(
-    () => new Set([getNavState().section]),
-  )
 
   useEffect(() => subscribeNav(setNav), [])
-
-  useEffect(() => {
-    setMountedSections((prev) => {
-      if (prev.has(nav.section)) return prev
-      const next = new Set(prev)
-      next.add(nav.section)
-      return next
-    })
-  }, [nav.section])
 
   useEffect(() => {
     const child = nav.child
@@ -191,8 +175,6 @@ export function WalletNav({
 
   const selectSection = (next: NavSection) => {
     playWalletSound('soft')
-    // Panel trees stay mounted (see below). startTransition still lets the tap
-    // highlight update before any remaining layout work from the section swap.
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
       else clearNavChild()
@@ -207,7 +189,7 @@ export function WalletNav({
     >
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          {child && (
+          {child ? (
             <div className="wallet-nav-panel nav-child-stage">
               <NavBreadcrumb crumbs={crumbs} />
               <div className="nav-child-body">
@@ -293,46 +275,16 @@ export function WalletNav({
               )}
               </div>
             </div>
+          ) : (
+            <div className="wallet-nav-panel">
+              {nav.section === 'activity' && <TransactionsPanel chain={profile.chain} />}
+              {nav.section === 'apps' && <ConnectedAppsPanel apps={apps} />}
+              {nav.section === 'collectables' && <InventoryPanel />}
+              {nav.section === 'friends' && <FriendsPanel chain={profile.chain} />}
+              {nav.section === 'identity' && <IdentityPanel profile={profile} />}
+              {nav.section === 'settings' && <SettingsPanel />}
+            </div>
           )}
-
-          {/*
-            Once visited, a section is never torn down: remounting whole panel
-            trees on every tap blocked the main thread for seconds. A slot is
-            `display: contents` while visible, so each panel keeps its place in
-            the stage's flex chain, and `display: none` once hidden.
-          */}
-          <div className="wallet-nav-panel" hidden={child != null}>
-            {mountedSections.has('activity') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'activity'}>
-                <TransactionsPanel chain={profile.chain} />
-              </div>
-            )}
-            {mountedSections.has('apps') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'apps'}>
-                <ConnectedAppsPanel apps={apps} />
-              </div>
-            )}
-            {mountedSections.has('collectables') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'collectables'}>
-                <InventoryPanel />
-              </div>
-            )}
-            {mountedSections.has('friends') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'friends'}>
-                <FriendsPanel chain={profile.chain} />
-              </div>
-            )}
-            {mountedSections.has('identity') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'identity'}>
-                <IdentityPanel profile={profile} />
-              </div>
-            )}
-            {mountedSections.has('settings') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'settings'}>
-                <SettingsPanel />
-              </div>
-            )}
-          </div>
         </div>
 
         <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">

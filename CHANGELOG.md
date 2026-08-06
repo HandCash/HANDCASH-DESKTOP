@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.58] - 2026-08-06
+
+### Fixed
+
+- Revert the keep-alive nav experiment. Mounting every visited tab at once stacked
+  panel trees and ordinal images until Android killed the WebView — logs showed 3s
+  main-thread stalls with heap still at 10MB, which is native memory pressure, not
+  a JS OOM. Only the active section mounts again, like yesterday.
+- Collect opens from cache immediately; network refresh waits for idle time.
+  Cards render in small batches per frame instead of all at once.
+- Ordinal images decode at most six at a time, and authenticity checks run when
+  you open an item — not for the whole basket after every list.
+
 ## [1.2.57] - 2026-08-06
 
 ### Fixed

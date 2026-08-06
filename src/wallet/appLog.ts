@@ -215,7 +215,6 @@ function startLongTaskWatch(): void {
           'warn',
           `[longtask] ${Math.round(entry.duration)}ms (${entry.name || 'unknown'})`,
         )
-        flushNow()
       }
     })
     observer.observe({ entryTypes: ['longtask'] })

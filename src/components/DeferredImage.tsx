@@ -45,9 +45,31 @@ function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
  * the WebView for that with no JS error and no heap warning, so the count of
  * live images is worth having in the log when a crash is being chased.
  */
-const LIVE_IMAGE_WARN = 40
+const LIVE_IMAGE_WARN = 24
+const MAX_CONCURRENT_LOADS = 6
 let liveImages = 0
 let warnedLive = false
+let loadingNow = 0
+const loadWaiters: Array<() => void> = []
+
+function acquireLoadSlot(): Promise<void> {
+  if (loadingNow < MAX_CONCURRENT_LOADS) {
+    loadingNow += 1
+    return Promise.resolve()
+  }
+  return new Promise((resolve) => {
+    loadWaiters.push(() => {
+      loadingNow += 1
+      resolve()
+    })
+  })
+}
+
+function releaseLoadSlot(): void {
+  loadingNow = Math.max(0, loadingNow - 1)
+  const next = loadWaiters.shift()
+  if (next) next()
+}
 
 function noteImageLive(delta: 1 | -1): void {
   liveImages += delta
@@ -91,6 +113,8 @@ export function DeferredImage({
    * by the frame (which has layout via the skeleton), not the hidden img.
    */
   const [near, setNear] = useState(() => typeof IntersectionObserver === 'undefined')
+  const [loadSlot, setLoadSlot] = useState(false)
+  const slotHeld = useRef(false)
 
   useEffect(() => {
     setStatus('loading')
@@ -149,8 +173,31 @@ export function DeferredImage({
   }, [src])
 
   useEffect(() => {
-    if (!near) setStatus('loading')
-  }, [near])
+    if (!near) {
+      setLoadSlot(false)
+      return
+    }
+    let cancelled = false
+    void acquireLoadSlot().then(() => {
+      if (cancelled) {
+        releaseLoadSlot()
+        return
+      }
+      slotHeld.current = true
+      setLoadSlot(true)
+    })
+    return () => {
+      cancelled = true
+      if (slotHeld.current) {
+        slotHeld.current = false
+        releaseLoadSlot()
+      }
+    }
+  }, [near, src])
+
+  useEffect(() => {
+    if (!near || !loadSlot) setStatus('loading')
+  }, [near, loadSlot])
 
   useEffect(() => {
     if (status !== 'ready') return
@@ -160,10 +207,10 @@ export function DeferredImage({
 
   useEffect(() => {
     const img = imgRef.current
-    if (!img || !src || !near) return
+    if (!img || !src || !near || !loadSlot) return
     const next = markFromElement(img)
     if (next !== 'loading') setStatus(next)
-  }, [src, near])
+  }, [src, near, loadSlot])
 
   useEffect(() => {
     if (status === 'loading') return
@@ -205,7 +252,7 @@ export function DeferredImage({
         {...rest}
         ref={imgRef}
         className={className}
-        src={near ? src : undefined}
+        src={near && loadSlot ? src : undefined}
         alt={alt}
         width={width}
         height={height}

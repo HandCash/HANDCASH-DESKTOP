@@ -18,6 +18,37 @@ import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { CollectablesIcon, SendIcon } from './icons'
 
+/** Paint a few cards per frame so opening Collect does not block the UI. */
+const RENDER_CHUNK = 12
+
+function useChunkedCount(total: number): number {
+  const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))
+
+  useEffect(() => {
+    setShown(Math.min(RENDER_CHUNK, total))
+    if (total <= RENDER_CHUNK) return
+
+    let cancelled = false
+    let next = RENDER_CHUNK
+    let handle = 0
+
+    const step = () => {
+      if (cancelled) return
+      next = Math.min(total, next + RENDER_CHUNK)
+      setShown(next)
+      if (next < total) handle = window.requestAnimationFrame(step)
+    }
+
+    handle = window.requestAnimationFrame(step)
+    return () => {
+      cancelled = true
+      if (handle) window.cancelAnimationFrame(handle)
+    }
+  }, [total])
+
+  return shown
+}
+
 function CollectableGridItem({ item }: { item: Collectable }) {
   return (
     <li className="collection-grid-card collectable-card">
@@ -147,7 +178,6 @@ export function InventoryPanel() {
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {
-        // Dashboard owns chain ingest. This panel only refreshes the item list.
         await listCollectables()
         if (!cancelled) {
           setReady(areCollectablesHydrated())
@@ -162,17 +192,49 @@ export function InventoryPanel() {
       }
     }
 
-    void refresh()
-    const id = window.setInterval(() => {
+    const startRefresh = () => {
+      void refresh()
+    }
+
+    let intervalId = 0
+
+    // Cached inventory paints immediately; network refresh can wait.
+    if (getCachedCollectables().length > 0) {
+      if (typeof requestIdleCallback === 'function') {
+        const idle = requestIdleCallback(startRefresh, { timeout: 2500 })
+        intervalId = window.setInterval(() => {
+          void refresh()
+        }, 30_000)
+        return () => {
+          cancelled = true
+          cancelIdleCallback(idle)
+          window.clearInterval(intervalId)
+        }
+      }
+      const defer = window.setTimeout(startRefresh, 400)
+      intervalId = window.setInterval(() => {
+        void refresh()
+      }, 30_000)
+      return () => {
+        cancelled = true
+        window.clearTimeout(defer)
+        window.clearInterval(intervalId)
+      }
+    }
+
+    startRefresh()
+    intervalId = window.setInterval(() => {
       void refresh()
     }, 30_000)
     return () => {
       cancelled = true
-      window.clearInterval(id)
+      window.clearInterval(intervalId)
     }
   }, [])
 
   const showLoading = awaitingFirst || !ready
+  const shownCount = useChunkedCount(items.length)
+  const visibleItems = items.slice(0, shownCount)
 
   return (
     <div
@@ -188,13 +250,13 @@ export function InventoryPanel() {
       {items.length > 0 ? (
         view === 'grid' ? (
           <ul className="collection-grid">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <CollectableGridItem key={item.outpoint} item={item} />
             ))}
           </ul>
         ) : (
           <ul className="connected-app-list">
-            {items.map((item) => (
+            {visibleItems.map((item) => (
               <CollectableListItem key={item.outpoint} item={item} />
             ))}
           </ul>
