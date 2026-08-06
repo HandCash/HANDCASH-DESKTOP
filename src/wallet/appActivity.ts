@@ -237,6 +237,27 @@ export function getSpentSatsSince(origin: string | undefined, sinceMs: number): 
   return total
 }
 
+/**
+ * Stable identity for the event a row describes.
+ *
+ * `id` is minted from the clock when a row is written, so the same transaction
+ * recorded twice — a local write plus a restored history replica, a re-import,
+ * a reinstall — carries a different `id` every time. Anything that remembers
+ * rows by `id` therefore forgets them, which is why the newest row kept
+ * announcing itself as an arrival. What the transaction *is* does not change:
+ * its txid, or for an item transfer its tip outpoint.
+ */
+export function activityEntryKey(entry: ActivityEntry): string {
+  const kind = entry.kind
+  const txid = entry.txid?.trim().toLowerCase()
+  if (txid) return `tx:${txid}:${kind}`
+  const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+  if (outpoint) return `item:${outpoint}:${kind}`
+  // Nothing on-chain to key on (a local-only row): the timestamp it was written
+  // with is as stable as this row gets.
+  return `at:${entry.at}:${kind}:${entry.sats}`
+}
+
 /** Human title for an activity row (payment or collectable). */
 export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.item?.name) {

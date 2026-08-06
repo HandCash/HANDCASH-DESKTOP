@@ -9,17 +9,14 @@ import {
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import {
+  activityEntryKey,
   activityEntryTitle,
   isItemActivity,
   listRecentActivity,
   subscribeAppActivity,
   type ActivityEntry,
 } from '../wallet/appActivity'
-import {
-  activitySeenReady,
-  hasSeenActivity,
-  markActivitySeen,
-} from '../wallet/activitySeen'
+import { markActivitySeen, shouldAnnounceActivity } from '../wallet/activitySeen'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import {
   DEFAULT_PAYMENT_FILTERS,
@@ -272,15 +269,16 @@ function useScrollReveal(ref: RefObject<HTMLElement | null>) {
 /**
  * Keep newest rows in view when the feed is at its default (top) scroll.
  *
- * The flash announces a transaction the user has not seen before, so it is
- * decided from the durable seen record rather than from this instance's history.
- * Opening Activity, flicking between tabs, or reopening the app all re-mount the
- * feed over entries the user has already read, and none of those are arrivals.
+ * The flash announces a transaction that just landed and has not been shown
+ * before, decided from the durable seen record keyed by event identity plus the
+ * entry's own age. Opening Activity, flicking between tabs, or reopening the app
+ * all re-mount the feed over entries the user has already read, and none of
+ * those are arrivals.
  */
 function useStickNewestToTop(
   listRef: RefObject<HTMLElement | null>,
-  newestId: string | undefined,
-  shownIds: readonly string[],
+  newest: { key: string; at: number } | undefined,
+  shownKeys: readonly string[],
 ) {
   const stickToTopRef = useRef(true)
 
@@ -297,26 +295,26 @@ function useStickNewestToTop(
 
   useEffect(() => {
     const el = listRef.current
-    if (!el || !newestId) return
+    if (!el || !newest) return
 
-    const fresh = activitySeenReady() && !hasSeenActivity(newestId)
-    markActivitySeen(shownIds)
+    const fresh = shouldAnnounceActivity(newest.key, newest.at)
+    markActivitySeen(shownKeys)
     if (!fresh || !stickToTopRef.current) return
 
     const pin = () => {
       el.scrollTop = 0
       stickToTopRef.current = true
-      const newest = el.querySelector<HTMLElement>('[data-activity-newest]')
-      if (!newest) return
-      newest.classList.remove('is-fresh')
+      const row = el.querySelector<HTMLElement>('[data-activity-newest]')
+      if (!row) return
+      row.classList.remove('is-fresh')
       // Restart CSS animation if another arrival lands quickly.
-      void newest.offsetWidth
-      newest.classList.add('is-fresh')
+      void row.offsetWidth
+      row.classList.add('is-fresh')
     }
     pin()
     const raf = window.requestAnimationFrame(pin)
     return () => window.cancelAnimationFrame(raf)
-  }, [listRef, newestId, shownIds])
+  }, [listRef, newest, shownKeys])
 }
 
 export function ActivityFeed({
@@ -342,9 +340,12 @@ export function ActivityFeed({
   )
   const shownCount = useChunkedCount(filtered.length)
   const visibleEntries = filtered.slice(0, shownCount)
-  const newestId = filtered[0]?.id
-  const shownIds = useMemo(() => filtered.map((entry) => entry.id), [filtered])
-  useStickNewestToTop(listRef, newestId, shownIds)
+  const newest = useMemo(() => {
+    const top = filtered[0]
+    return top ? { key: activityEntryKey(top), at: top.at } : undefined
+  }, [filtered])
+  const shownKeys = useMemo(() => filtered.map(activityEntryKey), [filtered])
+  useStickNewestToTop(listRef, newest, shownKeys)
 
   const filtersActive =
     filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||

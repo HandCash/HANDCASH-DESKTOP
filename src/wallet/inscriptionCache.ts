@@ -148,6 +148,41 @@ export function isPlaceholderResolution(
   return !resolved.mimeType && (resolved.traits?.length ?? 0) === 0
 }
 
+/**
+ * True for an identity that names an item without ever proving what it is.
+ *
+ * A sender's remittance carries a name, an app and an origin and nothing else.
+ * That is enough to paint a card, and it is exactly what a *wrong* origin also
+ * looks like — no content type, no traits. An origin the indexer cannot back
+ * with an inscription leaves a 404 image and a stale name on screen forever, and
+ * gets handed on to the next recipient, so these stay eligible for one indexer
+ * upgrade per retry window.
+ */
+export function isThinResolution(
+  resolved: Partial<ResolvedInscription> | null | undefined,
+): boolean {
+  if (!resolved) return true
+  return !resolved.mimeType && (resolved.traits?.length ?? 0) === 0
+}
+
+const UPGRADE_PREFIX = 'upgrade:'
+
+/** True when a thin identity may be re-asked of the indexer now. */
+export function shouldUpgradeResolution(
+  outpoint: string,
+  now = Date.now(),
+  retryMs = RESOLVE_RETRY_MS,
+): boolean {
+  if (!isThinResolution(load().get(outpoint))) return false
+  const attempted = loadMisses().get(`${UPGRADE_PREFIX}${outpoint}`)
+  return attempted == null || now - attempted >= retryMs
+}
+
+/** Note an upgrade attempt so a thin identity is not re-walked on every open. */
+export function rememberUpgradeAttempt(outpoint: string, now = Date.now()): void {
+  rememberUnresolved(`${UPGRADE_PREFIX}${outpoint}`, now)
+}
+
 export function rememberResolvedInscription(
   outpoint: string,
   resolved: ResolvedInscription,

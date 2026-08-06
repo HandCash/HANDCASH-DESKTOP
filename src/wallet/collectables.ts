@@ -82,9 +82,12 @@ import {
 } from './provenCache'
 import {
   getResolvedInscription,
+  isThinResolution,
   rememberResolvedInscription,
   rememberUnresolved,
+  rememberUpgradeAttempt,
   shouldResolveInscription,
+  shouldUpgradeResolution,
 } from './inscriptionCache'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
@@ -301,8 +304,18 @@ function toCollectable(
   resolved?: Partial<ResolvedInscription> | null,
 ): Collectable {
   const custom = parseCustom(o.customInstructions)
+  // List paints from tags + cached verdicts. Full BEEF verify runs automatically
+  // Provenance verdict comes from durable cache; detail view verifies on demand.
+  const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
+  const authenticity = verdict?.tier ?? 'unproven'
+  const proven = authenticity === 'brc156' || authenticity === 'brc150'
+  const claimed = tagValue(o.tags, 'origin:') ?? custom.origin
+  // A walk that came back with real inscription content knows the lineage; a
+  // remittance origin is only the sender's claim, and a wrong one paints a 404
+  // image forever. A proven item keeps its claim — the verdict is bound to it.
+  const trustWalk = !proven && !isThinResolution(resolved)
   const origin = parseOrigin(
-    tagValue(o.tags, 'origin:') ?? custom.origin ?? resolved?.origin,
+    trustWalk ? (resolved?.origin ?? claimed) : (claimed ?? resolved?.origin),
     o.outpoint,
   )
   // Tags are not display text: @bsv/sdk validateTag lowercases them, so a
@@ -311,11 +324,6 @@ function toCollectable(
   const name =
     resolved?.name ?? custom.name ?? tagValue(o.tags, 'name:') ?? shortOrigin(origin)
   const app = resolved?.app ?? custom.app ?? tagValue(o.tags, 'app:')
-  // List paints from tags + cached verdicts. Full BEEF verify runs automatically
-  // Provenance verdict comes from durable cache; detail view verifies on demand.
-  const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
-  const authenticity = verdict?.tier ?? 'unproven'
-  const proven = authenticity === 'brc156' || authenticity === 'brc150'
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -463,44 +471,74 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
 }
 
 /**
- * Fill in origins only for tips remittance could not verify.
+ * Walks per pass for tips that already show something.
  *
- * Runs after the list is already on screen. P2P items never enter this queue.
+ * An upgrade repairs a card that is merely wrong, not one that is missing, so it
+ * must never cost the list a burst of requests. Unrepaired tips come back on the
+ * next pass.
+ */
+const UPGRADE_BUDGET = 3
+
+/**
+ * Fill in origins for tips remittance could not verify, and repair the ones it
+ * verified wrongly.
+ *
+ * Runs after the list is already on screen. A tip whose origin claim the indexer
+ * cannot back with an inscription is indistinguishable on screen from a tip with
+ * no origin at all — broken image, sender's flattened name — and it is what a
+ * send passes on, so it gets one walk per retry window too.
  */
 async function resolveUnknownOrigins(): Promise<void> {
   if (resolvingOrigins) return
-  const pending = lastItemOutputs.filter(
-    (o) =>
-      isListableItem(o) &&
-      needsIndexerResolve(o) &&
-      shouldResolveInscription(normalizeOutpoint(o.outpoint)),
+  const listable = lastItemOutputs.filter(isListableItem)
+  const pending = listable.filter(
+    (o) => needsIndexerResolve(o) && shouldResolveInscription(normalizeOutpoint(o.outpoint)),
   )
-  if (pending.length === 0) return
+  const upgrades = listable
+    .filter(
+      (o) => !needsIndexerResolve(o) && shouldUpgradeResolution(normalizeOutpoint(o.outpoint)),
+    )
+    .slice(0, UPGRADE_BUDGET)
+  if (pending.length === 0 && upgrades.length === 0) return
 
   resolvingOrigins = true
   try {
     let changed = false
     for (const o of pending) {
       const outpoint = normalizeOutpoint(o.outpoint)
-      const [txid, voutStr] = outpoint.split('.')
-      const vout = Number(voutStr)
-      if (!txid || !Number.isInteger(vout)) continue
-      let resolved: ResolvedInscription | null = null
-      try {
-        resolved = await resolveOneSatInscription(txid, vout, lastItemChain, 6)
-      } catch {
-        // keep fallbacks
-      }
-      if (resolved) {
-        rememberResolvedInscription(outpoint, resolved)
+      const walked = await walkInscription(outpoint)
+      if (walked) {
+        rememberResolvedInscription(outpoint, walked)
         changed = true
       } else {
         rememberUnresolved(outpoint)
       }
     }
+    for (const o of upgrades) {
+      const outpoint = normalizeOutpoint(o.outpoint)
+      rememberUpgradeAttempt(outpoint)
+      const walked = await walkInscription(outpoint)
+      // Only a richer answer may replace what the card already shows; a second
+      // thin one would just overwrite the sender's name with another guess.
+      if (walked && !isThinResolution(walked)) {
+        rememberResolvedInscription(outpoint, walked)
+        changed = true
+      }
+    }
     if (changed) setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
   } finally {
     resolvingOrigins = false
+  }
+}
+
+async function walkInscription(outpoint: string): Promise<ResolvedInscription | null> {
+  const [txid, voutStr] = outpoint.split('.')
+  const vout = Number(voutStr)
+  if (!txid || !Number.isInteger(vout)) return null
+  try {
+    return await resolveOneSatInscription(txid, vout, lastItemChain, 6)
+  } catch {
+    return null
   }
 }
 

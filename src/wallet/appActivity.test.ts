@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   activityDetailLabel,
+  activityEntryKey,
   isItemActivity,
   type ActivityEntry,
 } from './appActivity'
@@ -37,5 +38,32 @@ describe('activityDetailLabel', () => {
 
   it('labels wallet BSV sends as Transaction', () => {
     expect(activityDetailLabel(entry({ method: 'send', sats: 5000 }))).toBe('Transaction')
+  })
+})
+
+describe('activityEntryKey', () => {
+  it('is the same for one transaction recorded twice', () => {
+    // A restored history replica re-records the row with a fresh clock-minted id.
+    // Keying the seen record on `id` is what made the top row flash on every visit.
+    const local = entry({ id: '1770000000000-ab12', txid: 'AA', at: 10 })
+    const restored = entry({ id: '1780000000000-cd34', txid: 'aa', at: 10 })
+
+    expect(activityEntryKey(restored)).toBe(activityEntryKey(local))
+  })
+
+  it('separates the send and the receive of the same transaction', () => {
+    const sent = entry({ txid: 'aa', kind: 'spent' })
+    const earned = entry({ txid: 'aa', kind: 'earned' })
+
+    expect(activityEntryKey(sent)).not.toBe(activityEntryKey(earned))
+  })
+
+  it('falls back to the tip outpoint for an item row with no txid', () => {
+    const row = entry({ item: { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' } })
+    expect(activityEntryKey(row)).toBe('item:bb.0:spent')
+  })
+
+  it('keys a local-only row on its timestamp', () => {
+    expect(activityEntryKey(entry({ at: 42, sats: 7 }))).toBe('at:42:spent:7')
   })
 })

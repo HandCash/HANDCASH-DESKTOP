@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.89] - 2026-08-06
+
+### Fixed
+
+- **Activity no longer flashes the top row on every visit.** Seen tracking keyed
+  off the clock-minted row id, so a re-recorded or remounted feed treated yesterday's
+  newest entry as an arrival. Rows are now remembered by txid / tip outpoint, and
+  the flash only fires for unseen events under ten minutes old.
+- **Stuck collectables with a wrong remittance origin heal themselves.** Tips that
+  already show a name but have no inscription content are re-walked once per retry
+  window; a richer indexer answer replaces the broken image URL.
+
 ## [1.2.88] - 2026-08-06
 
 ### Fixed

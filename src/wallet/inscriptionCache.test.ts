@@ -99,6 +99,35 @@ describe('inscriptionCache', () => {
     expect(cache.shouldResolveInscription('aa.0')).toBe(true)
   })
 
+  it('re-asks the indexer for a named origin it cannot back with content', async () => {
+    const cache = await import('./inscriptionCache')
+    const at = Date.now()
+    // What a sender's remittance leaves behind: a name and an origin, with nothing
+    // that says the origin really holds an inscription. A wrong origin looks
+    // exactly like this, and it is what paints a 404 image forever.
+    cache.rememberResolvedInscription('aa.0', {
+      origin: 'cc_3',
+      name: 'pixel foxes #1',
+      traits: [],
+      extras: [],
+    })
+
+    expect(cache.shouldUpgradeResolution('aa.0', at)).toBe(true)
+    cache.rememberUpgradeAttempt('aa.0', at)
+    expect(cache.shouldUpgradeResolution('aa.0', at + 1)).toBe(false)
+    expect(cache.shouldUpgradeResolution('aa.0', at + cache.RESOLVE_RETRY_MS)).toBe(true)
+    // The upgrade window must not disturb the identity already on screen.
+    expect(cache.getResolvedInscription('aa.0')?.origin).toBe('cc_3')
+  })
+
+  it('leaves an identity the indexer proved alone', async () => {
+    const cache = await import('./inscriptionCache')
+    cache.rememberResolvedInscription('aa.0', { ...resolved('bb_1'), mimeType: 'image/png' })
+
+    expect(cache.isThinResolution(cache.getResolvedInscription('aa.0'))).toBe(false)
+    expect(cache.shouldUpgradeResolution('aa.0')).toBe(false)
+  })
+
   it('lists normally when the stored blob is corrupt', async () => {
     store.set('handcash.inscriptionResolution.v1', '{not json')
     const cache = await import('./inscriptionCache')
