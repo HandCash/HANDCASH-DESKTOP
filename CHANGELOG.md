@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.2.72] - 2026-08-06
+
+### Fixed
+
+- **Collectables bounced while payments went through, because internalizing an
+  ordinal needs a block header the Chaintracks host has not stored yet.**
+  Verifying a merkle root and recording which block a proof belongs to are two
+  separate calls, and only the first one had failover. The second,
+  `getHeaderForHeight`, reaches straight into `options.chaintracks` past every
+  wrapper, so a host sitting below the tip returned nothing and the toolbox
+  reported "The hash parameter must be valid height '961050' on mined chain
+  main". A P2PKH sweep is a `createAction` and stops after the root check, which
+  is why money arrived and every collectable failed.
+
+  Header lookups now fall back to Bitails and WhatsOnChain, and a header from a
+  public source is only accepted when it proves itself: its 80 bytes must hash
+  to the hash the API reported, and that hash must clear the proof-of-work its
+  own `bits` field encodes. Forging one would require mining it.
+- **Cloud backup was failing permanently over a diagnostic breadcrumb.** BRC-38
+  export refuses a document containing any JSON `null`, and the monitor writes
+  them — a proof service that answers without a txid leaves `{"txid":null}` in a
+  `provenTxReqs` history note. One note poisoned every subsequent backup, and
+  the watchdog's failure counter then locked backups out for twelve hours.
+  These notes carry no wallet state, so when the export is refused for a null
+  member the wallet now strips the nulls out of the stored history and exports
+  again.
+- **A backup hold no longer outlives the build that earned it.** The watchdog
+  had already pushed the next attempt twelve hours out, so shipping the fix
+  above would have changed nothing until tomorrow. The streak now records which
+  version failed and clears itself on upgrade.
+
 ## [1.2.71] - 2026-08-06
 
 ### Fixed

@@ -9,6 +9,14 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
+let appVersion = '1.0.0'
+
+vi.mock('../version', () => ({
+  get APP_VERSION() {
+    return appVersion
+  },
+}))
+
 const T0 = 1_700_000_000_000
 
 async function load() {
@@ -19,6 +27,7 @@ describe('backupWatchdog', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
+    appVersion = '1.0.0'
   })
 
   it('allows a backup on a fresh install', async () => {
@@ -95,6 +104,34 @@ describe('backupWatchdog', () => {
 
     wd.clearBackupBackoff()
     expect(wd.backupBlockedReason(T0 + 1_000)).toBeNull()
+  })
+
+  it('upgrading clears a hold the previous build earned', async () => {
+    const wd = await load()
+    wd.openBackupAttempt(T0)
+    wd.reconcileBackupWatchdog(T0 + 1_000)
+    expect(wd.backupBlockedReason(T0 + 1_000)).not.toBeNull()
+
+    appVersion = '1.0.1'
+    vi.resetModules()
+    const upgraded = await load()
+
+    expect(upgraded.reconcileBackupWatchdog(T0 + 2_000)).toMatch(
+      /cleared BRC-39 backup backoff from v1\.0\.0/,
+    )
+    expect(upgraded.backupBlockedReason(T0 + 2_000)).toBeNull()
+  })
+
+  it('reinstalling the same build keeps the hold', async () => {
+    const wd = await load()
+    wd.openBackupAttempt(T0)
+    wd.reconcileBackupWatchdog(T0 + 1_000)
+
+    vi.resetModules()
+    const same = await load()
+
+    expect(same.reconcileBackupWatchdog(T0 + 2_000)).toBeNull()
+    expect(same.backupBlockedReason(T0 + 2_000)).toMatch(/backing off/)
   })
 
   it('survives a corrupt record', async () => {

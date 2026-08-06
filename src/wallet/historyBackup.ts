@@ -25,6 +25,11 @@ import {
   readLocalBrc39Archive,
 } from './brc39LocalArchive'
 import { runHistoryReplica } from './walletCoordinator'
+import {
+  isNullMemberRejection,
+  repairProvenTxReqHistoryNulls,
+  type ProvenTxReqHistoryStore,
+} from './brc38HistoryRepair'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
@@ -48,6 +53,28 @@ async function withActiveStorageProvider<T>(
   )
 }
 
+/**
+ * Export, and if BRC-38 validation trips over a null the monitor left in a
+ * history note, clear those notes and export once more. Retrying without the
+ * repair would fail identically, so a second refusal is the caller's problem.
+ */
+async function exportBrc38JsonRepairingNulls(
+  storage: StorageProvider,
+  identityKey: string,
+): Promise<string> {
+  try {
+    return await exportBRC38Json(storage, identityKey)
+  } catch (err) {
+    if (!isNullMemberRejection(err)) throw err
+    appendAppLog('warn', `[cloud-backup] export rejected — ${(err as Error).message}`)
+    await repairProvenTxReqHistoryNulls(
+      storage as unknown as ProvenTxReqHistoryStore,
+      identityKey,
+    )
+    return await exportBRC38Json(storage, identityKey)
+  }
+}
+
 export type CreateBrc39Opts = {
   /**
    * Skip the vault re-check. The session password was already proven at unlock,
@@ -68,7 +95,7 @@ export async function createBrc39BackupBytes(
 
   // Dump and encrypt as two steps so the Argon2id half can run in a worker.
   const json = await withActiveStorageProvider((storage, identityKey) =>
-    exportBRC38Json(storage, identityKey),
+    exportBrc38JsonRepairingNulls(storage, identityKey),
   )
   appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
   const out = asArrayBufferBytes(await encryptBrc39Document(json, password))

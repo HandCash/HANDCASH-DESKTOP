@@ -12,7 +12,13 @@
  *
  * Backoff is deliberately conservative. Losing a few hours of backup freshness
  * is recoverable; an app that cannot be opened is not.
+ *
+ * The one thing that always clears a streak is an upgrade: the failures were
+ * recorded by code the user is no longer running, and holding a fixed build
+ * hostage to the broken one's history is how a twelve-hour lockout outlives the
+ * bug that earned it.
  */
+import { APP_VERSION } from '../version'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 const KEY = 'handcash.cloudBackup.watchdog.v1'
@@ -32,6 +38,8 @@ type WatchdogState = {
   consecutiveFailures: number
   lastSuccessAt: number | null
   blockedUntil: number | null
+  /** App version that recorded the current streak. */
+  failedOnVersion: string | null
 }
 
 const EMPTY: WatchdogState = {
@@ -39,6 +47,7 @@ const EMPTY: WatchdogState = {
   consecutiveFailures: 0,
   lastSuccessAt: null,
   blockedUntil: null,
+  failedOnVersion: null,
 }
 
 function read(): WatchdogState {
@@ -53,6 +62,8 @@ function read(): WatchdogState {
       lastSuccessAt:
         typeof parsed.lastSuccessAt === 'number' ? parsed.lastSuccessAt : null,
       blockedUntil: typeof parsed.blockedUntil === 'number' ? parsed.blockedUntil : null,
+      failedOnVersion:
+        typeof parsed.failedOnVersion === 'string' ? parsed.failedOnVersion : null,
     }
   } catch {
     return { ...EMPTY }
@@ -80,6 +91,23 @@ function backoffFor(failures: number): number {
  */
 export function reconcileBackupWatchdog(now = Date.now()): string | null {
   const state = read()
+
+  // An upgrade is the strongest evidence we get that the cause was addressed.
+  if (
+    state.failedOnVersion != null &&
+    state.failedOnVersion !== APP_VERSION &&
+    (state.consecutiveFailures > 0 || state.blockedUntil != null)
+  ) {
+    write({
+      openedAt: null,
+      consecutiveFailures: 0,
+      lastSuccessAt: state.lastSuccessAt,
+      blockedUntil: null,
+      failedOnVersion: null,
+    })
+    return `cleared BRC-39 backup backoff from v${state.failedOnVersion} — now on v${APP_VERSION}`
+  }
+
   if (state.openedAt == null) return null
 
   const failures = state.consecutiveFailures + 1
@@ -89,6 +117,7 @@ export function reconcileBackupWatchdog(now = Date.now()): string | null {
     consecutiveFailures: failures,
     lastSuccessAt: state.lastSuccessAt,
     blockedUntil: now + wait,
+    failedOnVersion: APP_VERSION,
   })
   return `previous BRC-39 backup never finished (attempt ${failures}) — holding off ${Math.round(
     wait / 60_000,
@@ -120,6 +149,7 @@ export function closeBackupAttempt(ok: boolean, now = Date.now()): void {
       consecutiveFailures: 0,
       lastSuccessAt: now,
       blockedUntil: null,
+      failedOnVersion: null,
     })
     return
   }
@@ -129,13 +159,20 @@ export function closeBackupAttempt(ok: boolean, now = Date.now()): void {
     consecutiveFailures: failures,
     lastSuccessAt: state.lastSuccessAt,
     blockedUntil: now + backoffFor(failures),
+    failedOnVersion: APP_VERSION,
   })
 }
 
 /** Settings "Back up now" clears the streak so a manual retry is never blocked. */
 export function clearBackupBackoff(): void {
   const state = read()
-  write({ ...state, openedAt: null, consecutiveFailures: 0, blockedUntil: null })
+  write({
+    ...state,
+    openedAt: null,
+    consecutiveFailures: 0,
+    blockedUntil: null,
+    failedOnVersion: null,
+  })
 }
 
 export function getBackupWatchdogState(): WatchdogState {

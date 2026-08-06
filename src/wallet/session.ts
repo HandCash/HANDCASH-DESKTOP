@@ -1,4 +1,5 @@
 import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
+import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
@@ -75,6 +76,38 @@ function installHeightFailover(services: Services, chain: Chain): void {
   }
 }
 
+/**
+ * Give block-header lookups the same failover as roots and the tip.
+ *
+ * Internalizing an ordinal records which block its proof belongs to, and that
+ * step calls `Services.getHeaderForHeight` — which, like `getHeight()`, reaches
+ * past `getChainTracker()` straight into `options.chaintracks`. A host whose
+ * store stops short of the tip returns nothing for a freshly mined block, and
+ * the toolbox reports it as "The hash parameter must be valid height 'N' on
+ * mined chain main". Payments never reach this code path, so the wallet took
+ * money in while every collectable bounced.
+ */
+function installHeaderFailover(services: Services, chain: Chain): void {
+  try {
+    const chaintracks = services.options.chaintracks as
+      | { findHeaderForHeight?: (height: number) => Promise<unknown> }
+      | undefined
+    if (typeof chaintracks?.findHeaderForHeight !== 'function') return
+    const original = chaintracks.findHeaderForHeight.bind(chaintracks)
+    chaintracks.findHeaderForHeight = async (height: number) => {
+      try {
+        const header = await original(height)
+        if (header != null) return header
+      } catch {
+        // Same treatment as a miss: ask someone who can actually answer.
+      }
+      return (await fetchBlockHeaderForHeight(chain, height)) ?? undefined
+    }
+  } catch (err) {
+    console.warn('[chaintracker] could not install header failover', err)
+  }
+}
+
 export function getActiveWallet(): ActiveWallet | null {
   return active
 }
@@ -101,6 +134,7 @@ export async function bootWallet(args: {
 
   installFallbackChainTracker(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
+  installHeaderFailover(setup.services as Services, args.chain)
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes
