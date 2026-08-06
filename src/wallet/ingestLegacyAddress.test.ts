@@ -15,9 +15,12 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
+const mockTxExistsOnChain = vi.fn(async (): Promise<boolean | null> => null)
+
 vi.mock('./legacyScan', () => ({
   scanLegacyAddress: (...args: unknown[]) => mockScanLegacyAddress(...args),
   importLegacyUtxos: (...args: unknown[]) => mockImportLegacyUtxos(...args),
+  txExistsOnChain: () => mockTxExistsOnChain(),
 }))
 
 vi.mock('./oneSatImport', () => ({
@@ -145,5 +148,53 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
     expect(result.importedFunding).toBe(0)
     expect(result.fundingSkippedKnown).toBe(1)
+  })
+
+  it('re-sweeps when the recorded sweep tx is provably absent', async () => {
+    // The sweep is queued in delayed mode, so a reported success only means the
+    // toolbox accepted it. When it never reached a miner the deposit sits unspent
+    // behind a permanent mark, and nothing else in the wallet can free it.
+    const { markLegacyImported } = await import('./legacyImportGuard')
+    markLegacyImported([{ outpoint: OUTPOINT, txid: SWEEP_TXID }])
+    // Age the mark past SWEEP_RETRY_MS.
+    vi.setSystemTime(Date.now() + 20 * 60_000)
+    mockTxExistsOnChain.mockResolvedValue(false)
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 1,
+      importedOutpoints: [],
+      importedReceipts: [],
+    })
+
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await ingestLegacyAddressUtxos({ active })
+
+    expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(2)
+    vi.useRealTimers()
+  })
+
+  it('leaves the mark alone when the sweep tx does exist', async () => {
+    const { markLegacyImported } = await import('./legacyImportGuard')
+    markLegacyImported([{ outpoint: OUTPOINT, txid: SWEEP_TXID }])
+    vi.setSystemTime(Date.now() + 20 * 60_000)
+    mockTxExistsOnChain.mockResolvedValue(true)
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 1,
+      importedOutpoints: [],
+      importedReceipts: [],
+    })
+
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await ingestLegacyAddressUtxos({ active })
+
+    expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
+    vi.useRealTimers()
   })
 })

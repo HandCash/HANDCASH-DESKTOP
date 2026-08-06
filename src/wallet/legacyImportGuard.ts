@@ -19,6 +19,14 @@ const MAX_ENTRIES = 2000
 /** Skip spendable review briefly after a successful sweep while indexers catch up. */
 const IMPORT_GRACE_MS = 120_000
 
+/**
+ * How long a mark must stand before a stuck sweep may be reconsidered.
+ *
+ * Long enough that our own broadcast has had every chance to appear, because the
+ * only thing worse than an unswept deposit is sweeping it twice.
+ */
+export const SWEEP_RETRY_MS = 15 * 60_000
+
 export type LegacySweepRecord = {
   /** When the sweep was marked imported. 0 for v1 marks of unknown age. */
   at: number
@@ -143,6 +151,35 @@ export function isLegacyImportGraceActive(): boolean {
     if (record.at > 0 && now - record.at < IMPORT_GRACE_MS) return true
   }
   return false
+}
+
+/** A mark old enough to be genuinely stuck rather than merely fresh. */
+export function legacySweepRetryEligible(outpoint: string, now = Date.now()): boolean {
+  const record = legacySweepRecord(outpoint)
+  if (!record) return true
+  return now - record.at >= SWEEP_RETRY_MS
+}
+
+/**
+ * Undo a durable mark, for an "imported" out that is still unspent on chain.
+ *
+ * The sweep is queued through the toolbox in delayed mode, so a reported success
+ * means the transaction was accepted locally — not that it reached a miner. When
+ * it never does, the mark is the only thing standing between the user and their
+ * coins, and nothing else in the wallet can clear it.
+ */
+export function forgetLegacyImported(outpoints: string[]): void {
+  if (outpoints.length === 0) return
+  const known = readRecords()
+  let changed = false
+  for (const raw of outpoints) {
+    const op = raw.trim().toLowerCase()
+    if (!op || !known.has(op)) continue
+    known.delete(op)
+    inFlight.delete(op)
+    changed = true
+  }
+  if (changed) writeRecords(known)
 }
 
 export function releaseLegacyImport(outpoints: string[]): void {

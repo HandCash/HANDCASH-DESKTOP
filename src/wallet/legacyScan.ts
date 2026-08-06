@@ -39,6 +39,28 @@ function wocBase(chain: Chain): string {
     : 'https://api.whatsonchain.com/v1/bsv/test'
 }
 
+/**
+ * True when the network has heard of `txid` (mempool or mined), null if unknown.
+ *
+ * Used before retrying a sweep: if our earlier funding transaction exists, an
+ * address scan that still lists the input as unspent is stale, and sweeping
+ * again would double-spend it. Silence from the provider is not evidence, so an
+ * error answers null and the mark stands.
+ */
+export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return null
+  try {
+    const res = await fetch(`${wocBase(chain)}/tx/hash/${id}`)
+    if (res.status === 404) return false
+    if (!res.ok) return null
+    return true
+  } catch (err) {
+    console.warn('[legacy-scan] tx lookup failed', err)
+    return null
+  }
+}
+
 /** Scan a legacy P2PKH address for UTXOs via WhatsOnChain REST. */
 export async function scanAddressViaWhatsOnChain(
   address: string,

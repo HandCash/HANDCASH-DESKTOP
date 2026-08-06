@@ -7,9 +7,15 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   scanLegacyAddress,
   importLegacyUtxos,
+  txExistsOnChain,
   type LegacyFundingReceipt,
   type LegacyScanResult,
 } from './legacyScan'
+import {
+  forgetLegacyImported,
+  legacySweepRecord,
+  legacySweepRetryEligible,
+} from './legacyImportGuard'
 import type { Chain } from './vault'
 import {
   hasActivityItemOutpoint,
@@ -53,6 +59,39 @@ export type LegacyAddressIngestOptions = {
    * nothing else.
    */
   fundingOnly?: boolean
+}
+
+/**
+ * Sweeps safe to try again: old enough to be genuinely stuck, and with their
+ * recorded transaction provably absent from the chain.
+ *
+ * The sweep runs through the toolbox in delayed mode, so a reported success only
+ * means the transaction was accepted locally. If it never reached a miner, the
+ * deposit sits unspent behind a permanent mark and no other code path can free
+ * it — that is a received payment the wallet will never credit.
+ *
+ * An address scan still listing the input as unspent proves nothing on its own;
+ * providers lag our own broadcast by minutes, and re-sweeping on that alone
+ * double-spends the first sweep. So the recorded txid must be provably missing.
+ * When the provider will not answer, the mark stands.
+ */
+async function retryableStuckSweeps(
+  utxos: Array<{ outpoint: string }>,
+  chain: Chain,
+): Promise<string[]> {
+  const retryable: string[] = []
+  for (const u of utxos) {
+    const op = u.outpoint.trim().toLowerCase()
+    if (!op || !legacySweepRetryEligible(op)) continue
+    const txid = legacySweepRecord(op)?.txid
+    // No recorded sweep txid means no evidence either way. The original version
+    // of this heal treated that as retryable, and re-sweeping on a hunch is what
+    // booked one deposit three times. Absent proof, the mark stands.
+    if (!txid) continue
+    if ((await txExistsOnChain(txid, chain)) !== false) continue
+    retryable.push(op)
+  }
+  return retryable
 }
 
 /** Activity rows for newly swept funding — one per incoming payment txid. */
@@ -225,12 +264,35 @@ export async function ingestLegacyAddressUtxos(
   let importedFundingOutpoints: string[] = []
 
   if (funding.length > 0) {
-    const result = await importLegacyUtxos(funding, active)
+    let result = await importLegacyUtxos(funding, active)
     importedFunding = result.imported
     fundingFailed = result.failed
     fundingSkippedKnown = result.skippedKnown
     importedFundingOutpoints = result.importedOutpoints
     recordFundingReceipts(result.importedReceipts)
+
+    // Everything marked imported, yet the coins are still sitting on the address:
+    // that is the stuck-sweep signature. Only reachable in that exact state, so
+    // the txid checks below cost nothing on a healthy wallet.
+    if (result.imported === 0 && result.skippedKnown > 0 && scan.sats > 0) {
+      const retryable = await retryableStuckSweeps(funding, active.chain)
+      if (retryable.length > 0) {
+        forgetLegacyImported(retryable)
+        console.warn(
+          `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${scan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
+        )
+        result = await importLegacyUtxos(funding, active)
+        importedFunding = result.imported
+        fundingFailed = result.failed
+        fundingSkippedKnown = result.skippedKnown
+        importedFundingOutpoints = result.importedOutpoints
+        recordFundingReceipts(result.importedReceipts)
+      } else {
+        console.info(
+          `[chain-ingest] ${result.skippedKnown} legacy out(s) already swept — waiting for the indexer instead of sweeping again`,
+        )
+      }
+    }
 
     if (result.failed > 0) {
       console.warn('[chain-ingest] legacy funding import partial', result)

@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.68] - 2026-08-06
+
+### Fixed
+
+- **Incoming PtP payments could be permanently written off.** The legacy sweep
+  that credits every received payment goes through `fundWalletFromP2PKHOutpoints`,
+  whose `createAction` passes only `{ trustSelf: 'known' }` — so it inherits the
+  SDK's delayed broadcast. A reported `success: true` therefore means "queued
+  locally", not "sent". We then durably marked the outpoint imported, and
+  `legacyImportGuard` marks are permanent by design.
+- v1.2.40 deleted the self-heal that covered exactly this case
+  (`retryableStuckSweeps` / `forgetLegacyImported` / `txExistsOnChain`) because it
+  was making sync crawl. After that there was no un-mark path left in the wallet
+  at all: a sweep that never reached a miner left the coins unspent on the address
+  behind a permanent blacklist, while the log claimed "balance should already
+  include them".
+- The heal is restored, and stricter than before. It only runs in the stuck state
+  (nothing imported, marks present, coins still on the address), and it now
+  requires a *recorded sweep txid that is provably absent* from the chain. The
+  old version treated "no recorded txid" as retryable, which is what booked one
+  deposit three times; absent proof, the mark stands.
+
 ## [1.2.67] - 2026-08-06
 
 ### Fixed
