@@ -41,6 +41,23 @@ function wocBase(chain: Chain): string {
 }
 
 /**
+ * A throttled provider can hold a socket open far longer than anyone is willing
+ * to wait, and this scan sits between a tap on Collect and the grid. Give up and
+ * let the caller fall through to the toolbox services instead.
+ */
+const SCAN_TIMEOUT_MS = 7_000
+
+async function fetchWithDeadline(url: string): Promise<Response> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS)
+  try {
+    return await fetch(url, { signal: controller.signal })
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
  * True when the network has heard of `txid` (mempool or mined), null if unknown.
  *
  * Used before retrying a sweep: if our earlier funding transaction exists, an
@@ -52,7 +69,7 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
   try {
-    const res = await fetch(`${wocBase(chain)}/tx/hash/${id}`)
+    const res = await fetchWithDeadline(`${wocBase(chain)}/tx/hash/${id}`)
     if (res.status === 404) return false
     if (!res.ok) return null
     return true
@@ -68,7 +85,7 @@ export async function scanAddressViaWhatsOnChain(
   chain: Chain,
 ): Promise<LegacyScanResult> {
   const url = `${wocBase(chain)}/address/${encodeURIComponent(address)}/unspent`
-  const res = await fetch(url)
+  const res = await fetchWithDeadline(url)
   if (!res.ok) {
     throw new Error(`WhatsOnChain ${res.status}: ${await res.text()}`)
   }

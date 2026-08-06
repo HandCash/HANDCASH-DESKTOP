@@ -1,17 +1,14 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
-import { AppAvatar } from './AppAvatar'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
-import { ActivityIcon, FilterIcon, ReceiveIcon, SendIcon } from './icons'
+import { ActivityIcon, CollectablesIcon, FilterIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
-import { appDisplayName } from '../wallet/appIdentity'
 import {
-  activityEntryTitle,
   isItemActivity,
   listRecentActivity,
   subscribeAppActivity,
-  WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from '../wallet/appActivity'
+import bsvLogo from '../assets/brand/bsv-logo.svg'
 import {
   DEFAULT_PAYMENT_FILTERS,
   filterPaymentActivity,
@@ -124,10 +121,11 @@ function HistoryRow({
   usdPerBsv: number | null
   showWhen: boolean
 }) {
-  const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
-  const title = activityEntryTitle(entry)
+  // Subject is primary; transfer direction is supporting context.
+  const title = item ? entry.item?.name || 'Collectable' : 'BSV'
+  const action = spent ? 'Send' : 'Receive'
   const amountLabel = item
     ? entry.item?.name || 'Collectable'
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
@@ -162,21 +160,17 @@ function HistoryRow({
               skeletonRadius={6}
               decoding="async"
             />
-          ) : isWallet ? (
-            spent ? <SendIcon size={14} /> : <ReceiveIcon size={14} />
+          ) : item ? (
+            <span className="history-item-thumb-icon">
+              <CollectablesIcon size={18} />
+            </span>
           ) : (
-            <AppAvatar
-              origin={entry.origin}
-              name={appDisplayName(entry.origin)}
-              size="sm"
-            />
+            <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
           )}
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          {item && entry.item?.app ? (
-            <span className="history-when">{entry.item.app}</span>
-          ) : null}
+          <span className="history-when">{action}</span>
         </div>
         <div className="history-amount-block">
           <span

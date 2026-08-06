@@ -3245,6 +3245,13 @@ a.history-row-link:hover .history-tx-hint {
   object-fit: cover;
 }
 
+.history-asset-logo {
+  display: block;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+}
+
 .history-item-thumb-icon {
   display: inline-flex;
   align-items: center;

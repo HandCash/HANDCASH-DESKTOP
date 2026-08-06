@@ -1,5 +1,35 @@
 # Changelog
 
+## [1.2.74] - 2026-08-06
+
+### Fixed
+
+- **Activity rows now lead with the asset, not the verb.** An NFT's image and
+  name are the subject; BSV transfers use the BSV logo and `BSV`. `Send` or
+  `Receive` is the smaller subtitle, so direction remains clear without
+  competing with the thing that moved.
+
+- **Collectables no longer depend on one explorer being reachable.** The toolbox
+  registers a single provider for raw transaction lookups — WhatsOnChain — while
+  every other lookup has two or three. Importing a tip needs those bytes for the
+  transaction and each unproven ancestor, so on a device WhatsOnChain is
+  throttling (the throttled reply carries no CORS headers, which the browser
+  reports as `TypeError: Failed to fetch`) every collectable bounced with "The
+  txid … must be valid transaction on chain main" — for transactions sitting on
+  every other explorer. Bitails and JungleBus are now registered behind
+  WhatsOnChain, so a busy primary costs a round trip instead of the import. The
+  toolbox still hashes each returned body against the txid it asked for.
+
+- **Opening Collect no longer waits on the network.** The ownership check
+  introduced in 1.2.73 awaited an address scan before painting, and a throttled
+  provider answers in tens of seconds — one open took 17s. The grid now paints
+  from the basket immediately and reconciles when the scan lands. The address
+  scan itself gives up after 7s and falls through to the toolbox services.
+
+- **A stale scan can no longer hide a tip that just arrived.** Ownership is only
+  applied to tips the scan was in a position to see; anything first seen after it
+  ran stays on screen until a newer scan judges it.
+
 ## [1.2.73] - 2026-08-06
 
 ### Fixed

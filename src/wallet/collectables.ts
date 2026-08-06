@@ -198,6 +198,7 @@ export function clearCollectablesCache(): void {
   cachedCollectables = []
   collectablesHydrated = false
   cachedLiveOneSats = null
+  firstSeenAt.clear()
   durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
 }
@@ -344,22 +345,51 @@ let lastItemOutputs: ItemOutput[] = []
 let lastItemChain: Chain = 'main'
 let resolvingOrigins = false
 
-async function resolveLiveOneSatKeys(
-  wallet: ActiveWallet,
-): Promise<Set<string> | null> {
-  const now = Date.now()
-  if (cachedLiveOneSats && now - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS) {
-    return cachedLiveOneSats.keys
-  }
-  try {
-    const scan = await scanLegacyAddress(wallet)
-    rememberLiveOneSatOutpoints(scan.utxos)
-    return cachedLiveOneSats!.keys
-  } catch (err) {
-    console.warn('[collectables] address UTXO scan failed — keeping basket list', err)
-    return null
-  }
+/** One address scan in flight at a time — Collect and ingest share the answer. */
+let liveScan: Promise<void> | null = null
+
+function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
+  if (liveScan != null) return
+  liveScan = scanLegacyAddress(wallet)
+    .then((scan) => {
+      rememberLiveOneSatOutpoints(scan.utxos)
+      // The rows on screen were filtered against a stale set (or none) — list
+      // again now that the chain has answered, so ghosts leave without a tap.
+      void listCollectables(wallet)
+    })
+    .catch((err) => {
+      console.warn('[collectables] address UTXO scan failed — keeping basket list', err)
+    })
+    .finally(() => {
+      liveScan = null
+    })
 }
+
+/**
+ * The live 1-sat set, but only if we already have it.
+ *
+ * Opening Collect must never wait on the network. A provider that is being
+ * throttled answers in tens of seconds, and awaiting it here put that delay
+ * between the tap and the grid. The basket rows paint immediately against
+ * whatever we last learned, and the scan lands as a second render.
+ */
+function resolveLiveOneSatKeys(
+  wallet: ActiveWallet,
+): { at: number; keys: Set<string> } | null {
+  const fresh =
+    cachedLiveOneSats != null && Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
+  if (!fresh) refreshLiveOneSatKeys(wallet)
+  return cachedLiveOneSats
+}
+
+/**
+ * When each tip was first seen in the basket.
+ *
+ * A scan can only testify about the address as it was when it ran. Judging a
+ * tip that arrived after it would hide the very item the user is waiting for —
+ * an import lands, the basket has it, and a minutes-old scan does not.
+ */
+const firstSeenAt = new Map<string, number>()
 
 function isListableItem(o: ItemOutput): boolean {
   if (o.tags?.includes(LATCH_TAG)) return false
@@ -540,14 +570,27 @@ async function listCollectablesNow(
     return getCachedCollectables()
   }
 
+  const seenNow = Date.now()
+  for (const o of outputs) {
+    const key = outpointKey(o.outpoint)
+    if (!firstSeenAt.has(key)) firstSeenAt.set(key, seenNow)
+  }
+
   // Basket rows are necessary but not sufficient. Drop anything the address no
   // longer holds as a 1-sat UTXO, and write those ghosts out of the basket so
-  // the next list cannot resurrect them. A failed scan must not empty the grid.
-  const live = await resolveLiveOneSatKeys(wallet)
+  // the next list cannot resurrect them. A failed scan must not empty the grid,
+  // and a scan older than a tip cannot speak to it.
+  const live = resolveLiveOneSatKeys(wallet)
   if (live) {
-    const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live)
+    const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
+    const unjudged = spentOrMissing.filter(
+      (o) => (firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow) > live.at,
+    )
     const ghosts = spentOrMissing.filter(
-      (o) => (o.satoshis ?? 1) === 1 && !o.tags?.includes(LATCH_TAG),
+      (o) =>
+        !unjudged.includes(o) &&
+        (o.satoshis ?? 1) === 1 &&
+        !o.tags?.includes(LATCH_TAG),
     )
     if (ghosts.length > 0) {
       console.info(
@@ -562,7 +605,7 @@ async function listCollectablesNow(
         })),
       )
     }
-    outputs = owned
+    outputs = unjudged.length > 0 ? [...owned, ...unjudged] : owned
   }
 
   lastItemOutputs = outputs

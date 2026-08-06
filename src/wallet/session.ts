@@ -1,6 +1,7 @@
 import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
+import { installRawTxFallback } from './rawTxFallback'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -135,6 +136,7 @@ export async function bootWallet(args: {
   installFallbackChainTracker(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
+  installRawTxFallback(setup.services as Services, args.chain)
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes
