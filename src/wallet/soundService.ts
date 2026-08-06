@@ -14,6 +14,7 @@ type Tone = { freq: number; start: number; duration: number; gain?: number; type
 
 let sharedCtx: AudioContext | null = null
 let unlockBound = false
+const UNLOCK_EVENTS = ['pointerdown', 'touchstart', 'keydown', 'click'] as const
 
 function getSharedAudioContext(): AudioContext | null {
   if (sharedCtx) return sharedCtx
@@ -23,6 +24,24 @@ function getSharedAudioContext(): AudioContext | null {
   if (!AudioCtx) return null
   sharedCtx = new AudioCtx()
   return sharedCtx
+}
+
+function unbindAudioUnlock(): void {
+  if (!unlockBound || typeof window === 'undefined') return
+  unlockBound = false
+  for (const type of UNLOCK_EVENTS) {
+    window.removeEventListener(type, onUnlockGesture, true)
+  }
+}
+
+function onUnlockGesture(): void {
+  const ctx = getSharedAudioContext()
+  if (!ctx) return
+  void ensureAudioRunning(ctx).then((ok) => {
+    // Once the context is running, every later tap was only paying for a no-op
+    // resume — drop the capture listeners so they stop thrashing the main thread.
+    if (ok) unbindAudioUnlock()
+  })
 }
 
 /** Android / iOS WebViews start suspended until a user gesture resumes the context. */
@@ -46,18 +65,27 @@ async function ensureAudioRunning(ctx: AudioContext): Promise<boolean> {
 function bindAudioUnlock(): void {
   if (unlockBound || typeof window === 'undefined') return
   unlockBound = true
-  const unlock = () => {
-    const ctx = getSharedAudioContext()
-    if (!ctx) return
-    void ensureAudioRunning(ctx)
-  }
   // Capture phase so we unlock before UI handlers that play SFX on the same tap.
-  for (const type of ['pointerdown', 'touchstart', 'keydown', 'click'] as const) {
-    window.addEventListener(type, unlock, { capture: true, passive: true })
+  for (const type of UNLOCK_EVENTS) {
+    window.addEventListener(type, onUnlockGesture, { capture: true, passive: true })
   }
 }
 
 bindAudioUnlock()
+
+function tearDownTone(osc: OscillatorNode, amp: GainNode): void {
+  try {
+    osc.onended = null
+    osc.disconnect()
+  } catch {
+    // already torn down
+  }
+  try {
+    amp.disconnect()
+  } catch {
+    // already torn down
+  }
+}
 
 function playTones(tones: Tone[]): void {
   const ctx = getSharedAudioContext()
@@ -65,6 +93,8 @@ function playTones(tones: Tone[]): void {
   void (async () => {
     try {
       if (!(await ensureAudioRunning(ctx))) return
+      // Audio is live — no need to keep the unlock listeners around.
+      unbindAudioUnlock()
       const t0 = ctx.currentTime + 0.015
       for (const tone of tones) {
         const start = t0 + tone.start
@@ -79,17 +109,17 @@ function playTones(tones: Tone[]): void {
         amp.gain.exponentialRampToValueAtTime(0.0001, start + duration)
         osc.connect(amp)
         amp.connect(ctx.destination)
-        // Every tone leaves a gain node wired to the destination, and the graph
-        // reprocesses all of them each quantum. The nav bar plays a tone per tap,
-        // so without this the UI degrades click by click until it locks up.
-        osc.onended = () => {
-          try {
-            osc.disconnect()
-            amp.disconnect()
-          } catch {
-            // already torn down
-          }
+        // Some Android WebViews never fire `onended` after stop(). Tear down on
+        // both paths so nodes cannot pile up on the destination again.
+        let cleaned = false
+        const clean = () => {
+          if (cleaned) return
+          cleaned = true
+          tearDownTone(osc, amp)
         }
+        osc.onended = clean
+        const holdMs = Math.ceil((tone.start + duration + 0.08) * 1000)
+        window.setTimeout(clean, holdMs)
         osc.start(start)
         osc.stop(start + duration + 0.02)
       }

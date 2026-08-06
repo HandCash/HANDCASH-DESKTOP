@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.50] - 2026-08-06
+
+### Fixed
+
+- Audio unlock listeners no longer run on every tap for the life of the app —
+  they unbind once the AudioContext is running. Tone nodes also tear down on a
+  timer, because some Android WebViews never fire `onended` after `stop()`.
+- Cap session receive-chime outpoints, prune inscription hit/miss maps, and
+  expire stale permission-connect timestamps so a long unlock cannot grow
+  unbounded Sets.
+
 ## [1.2.49] - 2026-08-05
 
 ### Fixed

@@ -18,6 +18,9 @@ const KEY = 'handcash.inscriptionResolution.v1'
 
 /** Long enough that a refresh loop stops re-walking, short enough to pick up new indexing. */
 export const RESOLVE_RETRY_MS = 10 * 60_000
+/** Hard cap so a flood of dust cannot grow the durable blob without bound. */
+export const RESOLVE_HIT_MAX = 2_000
+const MISS_MAX = 500
 
 type Stored = Record<string, ResolvedInscription>
 
@@ -40,11 +43,36 @@ function load(): Map<string, ResolvedInscription> {
           })
         }
       }
+      // Older installs may already exceed the cap.
+      trimHits(hits)
     }
   } catch {
     // A corrupt blob must not keep the page from listing.
   }
   return hits
+}
+
+function trimHits(map: Map<string, ResolvedInscription>): void {
+  if (map.size <= RESOLVE_HIT_MAX) return
+  const drop = map.size - RESOLVE_HIT_MAX
+  let i = 0
+  for (const key of map.keys()) {
+    if (i++ >= drop) break
+    map.delete(key)
+  }
+}
+
+function trimMisses(now = Date.now()): void {
+  for (const [key, at] of missAt) {
+    if (now - at >= RESOLVE_RETRY_MS) missAt.delete(key)
+  }
+  if (missAt.size <= MISS_MAX) return
+  const drop = missAt.size - MISS_MAX
+  let i = 0
+  for (const key of missAt.keys()) {
+    if (i++ >= drop) break
+    missAt.delete(key)
+  }
 }
 
 function persist(map: Map<string, ResolvedInscription>): void {
@@ -64,21 +92,27 @@ export function rememberResolvedInscription(
   resolved: ResolvedInscription,
 ): void {
   const map = load()
+  // Re-insert so a refreshed hit is treated as newest when we trim from the front.
+  map.delete(outpoint)
   map.set(outpoint, resolved)
   missAt.delete(outpoint)
+  trimHits(map)
   persist(map)
 }
 
 /** Note that the indexer had nothing for this outpoint, so we back off. */
 export function rememberUnresolved(outpoint: string, now = Date.now()): void {
   missAt.set(outpoint, now)
+  trimMisses(now)
 }
 
 /** False while a recent miss is still fresh. */
 export function shouldResolveInscription(outpoint: string, now = Date.now()): boolean {
   if (load().has(outpoint)) return false
   const missed = missAt.get(outpoint)
-  return missed == null || now - missed >= RESOLVE_RETRY_MS
+  if (missed != null && now - missed < RESOLVE_RETRY_MS) return false
+  if (missed != null) missAt.delete(outpoint)
+  return true
 }
 
 export function resetInscriptionCacheForTests(): void {

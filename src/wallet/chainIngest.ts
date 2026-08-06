@@ -89,8 +89,21 @@ export async function refreshFromChainDuringSpend(
 
 /** Outpoints we've already chimed for this session — avoids re-import noise. */
 const announcedOneSatOutpoints = new Set<string>()
+const ANNOUNCED_MAX = 500
 let lastReceiveChimeAt = 0
 const RECEIVE_CHIME_COOLDOWN_MS = 12_000
+
+function noteAnnouncedOneSat(outpoint: string): void {
+  announcedOneSatOutpoints.add(outpoint)
+  // Session-long receive chimes must not grow without bound across a long unlock.
+  if (announcedOneSatOutpoints.size <= ANNOUNCED_MAX) return
+  const drop = announcedOneSatOutpoints.size - ANNOUNCED_MAX
+  let i = 0
+  for (const key of announcedOneSatOutpoints) {
+    if (i++ >= drop) break
+    announcedOneSatOutpoints.delete(key)
+  }
+}
 
 /** Background sync should not hammer UTXO status providers. */
 const REVIEW_THROTTLE_MS = 2 * 60_000
@@ -228,7 +241,7 @@ export async function refreshFromChainExclusive(
       (op) => !announcedOneSatOutpoints.has(op),
     )
     for (const op of ingest.newOneSatOutpoints) {
-      announcedOneSatOutpoints.add(op)
+      noteAnnouncedOneSat(op)
     }
   } catch (err) {
     console.warn('[chain-ingest] legacy address ingest skipped', err)

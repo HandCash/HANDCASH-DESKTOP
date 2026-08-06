@@ -205,13 +205,23 @@ function proofGrantKey(origin: string, method: string): string {
   return `${origin}::${method}`
 }
 
-function markRecentlyConnected(origin: string): void {
-  recentlyConnectedAt.set(origin, Date.now())
-}
-
 function wasRecentlyConnected(origin: string): boolean {
   const at = recentlyConnectedAt.get(origin)
-  return at != null && Date.now() - at < FRESH_CONNECT_MS
+  if (at == null) return false
+  if (Date.now() - at >= FRESH_CONNECT_MS) {
+    recentlyConnectedAt.delete(origin)
+    return false
+  }
+  return true
+}
+
+function markRecentlyConnected(origin: string): void {
+  const now = Date.now()
+  recentlyConnectedAt.set(origin, now)
+  // Drop expired entries so a chatty origin list cannot grow forever.
+  for (const [key, at] of recentlyConnectedAt) {
+    if (now - at >= FRESH_CONNECT_MS) recentlyConnectedAt.delete(key)
+  }
 }
 
 export function clearPermissionSession(origin?: string): void {
