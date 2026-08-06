@@ -48,6 +48,7 @@ export const WALLET_LAYER_MODULES = {
     'sentItemGuard.ts',
     'pendingSend.ts',
     'inscriptionCache.ts',
+    'provenCache.ts',
   ],
   chainIngest: [
     'chainIngest.ts',

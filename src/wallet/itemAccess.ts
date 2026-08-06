@@ -468,7 +468,10 @@ export function outputMatchesItemAccess(
       origin = t.slice('origin:'.length)
     }
   }
-  if (customInstructions) {
+  // Remittance holds BRC-150 BEEF and can reach ~400k characters, so only pay for
+  // the parse when tags left a gap in what this grant is filtered on.
+  const needsCustom = !app || !collectionId || !origin
+  if (customInstructions && needsCustom) {
     try {
       const o = JSON.parse(customInstructions) as Record<string, unknown>
       if (typeof o.app === 'string') app = app ?? o.app

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.51] - 2026-08-06
+
+### Fixed
+
+- Opening Collect with many BRC-150 ordinals no longer OOMs the WebView. Listing
+  no longer pulls every item's remittance BEEF (~400k chars each) or verifies it
+  on the critical path. Authenticity still runs automatically after paint — one
+  tip at a time, with UI yields — and verdicts are cached durably.
+
 ## [1.2.50] - 2026-08-06
 
 ### Fixed

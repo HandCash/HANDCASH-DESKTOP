@@ -42,6 +42,11 @@ import {
 import { scriptPaysAddress } from './ordinalOwnership'
 import { isItemSent, markItemsSent } from './sentItemGuard'
 import {
+  hasProvenVerdict,
+  isItemProven,
+  rememberProvenVerdict,
+} from './provenCache'
+import {
   getResolvedInscription,
   rememberResolvedInscription,
   rememberUnresolved,
@@ -233,17 +238,15 @@ function toCollectable(
   chain: Chain,
   resolved?: Partial<ResolvedInscription> | null,
 ): Collectable {
-  const custom = parseCustom(o.customInstructions)
   const origin = parseOrigin(
-    custom.origin ?? tagValue(o.tags, 'origin:') ?? resolved?.origin,
+    tagValue(o.tags, 'origin:') ?? resolved?.origin,
     o.outpoint,
   )
-  const name =
-    custom.name ?? tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
-  const app = custom.app ?? tagValue(o.tags, 'app:') ?? resolved?.app
-  const proven = verifyProvenance(custom.provenance, o.outpoint).proven
-  // When remittance fails, do not treat sender name/app as authoritative — keep for UX
-  // but proven=false. Indexer-resolved fields remain display aids.
+  const name = tagValue(o.tags, 'name:') ?? resolved?.name ?? shortOrigin(origin)
+  const app = tagValue(o.tags, 'app:') ?? resolved?.app
+  // List paints from tags + cached verdicts. Full BEEF verify runs automatically
+  // in the background after paint — see `scheduleAuthenticitySweep`.
+  const proven = isItemProven(normalizeOutpoint(o.outpoint))
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -302,7 +305,6 @@ type ItemOutput = {
   outpoint: string
   satoshis: number
   tags?: string[]
-  customInstructions?: string
 }
 
 /** Kept so a late resolution can rebuild the list without re-listing outputs. */
@@ -319,23 +321,19 @@ function isListableItem(o: ItemOutput): boolean {
   return true
 }
 
-/** True when remittance already names the origin — P2P HandCash sends do this. */
+/** True when the item carries its own origin tag — P2P HandCash sends set this. */
 function hasLocalOrigin(o: ItemOutput): boolean {
-  return !!(parseCustom(o.customInstructions).origin ?? tagValue(o.tags, 'origin:'))
+  return !!tagValue(o.tags, 'origin:')
 }
 
 /**
- * True when GorillaPool has nothing left to prove.
+ * True when GorillaPool has something left to tell us.
  *
- * A P2P tip carries origin (+ optional BRC-150 provenance) in remittance. Asking
- * the indexer again is pure latency and the common freeze on Collect / send.
- * Only unresolved tips — no origin tag, no verified remittance — may walk GP.
+ * Only tips with no origin tag qualify. A P2P tip names its origin in remittance
+ * tags, so asking the indexer would be pure latency.
  */
 function needsIndexerResolve(o: ItemOutput): boolean {
-  if (hasLocalOrigin(o)) return false
-  const custom = parseCustom(o.customInstructions)
-  if (verifyProvenance(custom.provenance, o.outpoint).proven) return false
-  return true
+  return !hasLocalOrigin(o)
 }
 
 function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
@@ -390,6 +388,102 @@ async function resolveUnknownOrigins(): Promise<void> {
 }
 
 let listInFlight: Promise<Collectable[]> | null = null
+let authenticitySweep: Promise<void> | null = null
+
+/** Yield so BEEF parse/verify does not monopolise the UI thread. */
+function yieldToUi(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => resolve(), { timeout: 120 })
+      return
+    }
+    setTimeout(resolve, 0)
+  })
+}
+
+/**
+ * Verify one tip's BRC-150 remittance and remember the verdict.
+ *
+ * Scoped to a single outpoint: remittance holds the BEEF (~400k chars) that
+ * proves tip → origin. Never pull that for a whole basket at once.
+ */
+export async function verifyItemAuthenticity(
+  outpoint: string,
+  originTag: string,
+  active?: ActiveWallet | null,
+): Promise<boolean> {
+  const target = normalizeOutpoint(outpoint)
+  if (hasProvenVerdict(target)) return isItemProven(target)
+
+  const wallet = active ?? getActiveWallet()
+  const tag = originTag.trim().replace(/_(\d+)$/, '.$1')
+  if (!wallet || !tag) return false
+
+  try {
+    const result = await wallet.wallet.listOutputs({
+      basket: '1sat',
+      tags: [`origin:${tag}`],
+      tagQueryMode: 'all',
+      limit: 10,
+      includeCustomInstructions: true,
+      seekPermission: false,
+    })
+    const match = (result.outputs ?? []).find(
+      (o) => normalizeOutpoint(o.outpoint) === target,
+    )
+    if (!match) return false
+
+    // BEEF parse + verifyValid is sync CPU on the main thread — yield first.
+    await yieldToUi()
+    const custom = parseCustom(match.customInstructions)
+    const proven = verifyProvenance(custom.provenance, target).proven
+    rememberProvenVerdict(target, proven)
+    return proven
+  } catch (err) {
+    console.warn('[collectables] authenticity check failed', err)
+    return false
+  }
+}
+
+function applyProvenFlag(outpoint: string, proven: boolean): void {
+  if (!proven) return
+  const target = normalizeOutpoint(outpoint)
+  if (!cachedCollectables.some((c) => c.outpoint === target && !c.proven)) return
+  setCollectablesCache(
+    cachedCollectables.map((c) =>
+      c.outpoint === target ? { ...c, proven: true } : c,
+    ),
+  )
+}
+
+/**
+ * Automatic authenticity: after the list paints, verify unverified tips one at a
+ * time in the background. Same checks as before — just not on the critical path
+ * and never with every remittance resident at once.
+ */
+function scheduleAuthenticitySweep(
+  items: Collectable[],
+  wallet: ActiveWallet,
+): void {
+  const pending = items.filter((i) => !hasProvenVerdict(i.outpoint))
+  if (pending.length === 0) return
+
+  const run = (async () => {
+    // Wait out any prior sweep so two lists cannot race BEEF verifies.
+    if (authenticitySweep) await authenticitySweep.catch(() => {})
+    for (const item of pending) {
+      if (getActiveWallet() !== wallet) return
+      if (hasProvenVerdict(item.outpoint)) continue
+      const proven = await verifyItemAuthenticity(item.outpoint, item.origin, wallet)
+      applyProvenFlag(item.outpoint, proven)
+      await yieldToUi()
+    }
+  })()
+
+  authenticitySweep = run.finally(() => {
+    if (authenticitySweep === run) authenticitySweep = null
+  })
+}
 
 /**
  * Every visit to the Collect panel lists the basket, so flipping through the nav
@@ -421,14 +515,16 @@ async function listCollectablesNow(
       basket: '1sat',
       limit: 1000,
       includeTags: true,
-      includeCustomInstructions: true,
+      // Never for a whole basket: remittance carries BEEF (~400k chars each), and
+      // pulling every item's copy into the renderer is what crashed phones once a
+      // wallet held real ordinals. Tags carry everything the list renders.
+      includeCustomInstructions: false,
       seekPermission: false,
     })
     outputs = (result.outputs ?? []).map((o) => ({
       outpoint: o.outpoint,
       satoshis: o.satoshis ?? 1,
       tags: o.tags,
-      customInstructions: o.customInstructions,
     }))
   } catch (err) {
     console.warn('[collectables] listOutputs failed', err)
@@ -440,9 +536,10 @@ async function listCollectablesNow(
   lastItemChain = wallet.chain
 
   // Everything the list renders (name, app, image) comes from the output itself
-  // or the resolution cache, so paint now and let the indexer catch up.
+  // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
   setCollectablesCache(deduped)
+  scheduleAuthenticitySweep(deduped, wallet)
   void resolveUnknownOrigins()
   return deduped
 }
@@ -458,7 +555,7 @@ export async function getCollectable(
   if (!item || !wallet) return item
 
   // Details: traits/mime come from the indexer only when remittance left them
-  // blank. A verified P2P tip already has everything we need on the remittance.
+  // blank. Authenticity is already sweeping in the background after list.
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
@@ -746,7 +843,9 @@ export async function sendCollectable(args: {
     basket: '1sat',
     limit: 1000,
     includeTags: true,
-    includeCustomInstructions: true,
+    // Locking script and satoshis are all this needs; remittance BEEF for every
+    // held item would be tens of megabytes on a full wallet.
+    includeCustomInstructions: false,
     include: 'locking scripts',
     seekPermission: false,
   })
