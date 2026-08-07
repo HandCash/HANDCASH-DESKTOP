@@ -65,7 +65,7 @@ import {
   latchOutputTags,
   toUnderscoreOutpoint,
 } from './oneSatLatch'
-import { getProvenVerdict } from './provenCache'
+import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { hexToU32Le } from './hexBinary'
 import {
   estimateUnlockingLength,
@@ -799,15 +799,29 @@ async function postHardenedBroadcast(args: {
   settleAtomic: number[]
   commitTxid: string
   settleTxid: string
+  /** Tip origin — stamped BRC-156 immediately so background walks cannot demote. */
+  origin: string
+  originScriptHash?: string
 }): Promise<void> {
   const postBeef = args.wallet.services?.postBeef?.bind(args.wallet.services)
   if (!postBeef) {
     console.warn('[brc-156] no postBeef service — relying on monitor to send')
+    stampHardenedSettleProven(args)
     return
   }
   await withAbortRetry('postBeef(settle+commit)', async () => {
     const beef = Beef.fromBinary(args.settleAtomic)
     beef.mergeBeef(args.commitAtomic)
+    if (!beef.findTxid(args.settleTxid)?.tx && !beef.findAtomicTransaction(args.settleTxid)) {
+      throw new Error(
+        `Hardened postBeef: settle AtomicBEEF missing claimed txid ${args.settleTxid}`,
+      )
+    }
+    if (!beef.findTxid(args.commitTxid)?.tx && !beef.findAtomicTransaction(args.commitTxid)) {
+      throw new Error(
+        `Hardened postBeef: commit AtomicBEEF missing claimed txid ${args.commitTxid}`,
+      )
+    }
     // Authenticity verify runs seconds later — keep both bodies so BRC-156
     // does not race WhatsOnChain indexing and fall through to BRC-150.
     const { rememberBeefBinary } = await import('./beefCache')
@@ -818,7 +832,57 @@ async function postHardenedBroadcast(args: {
     )
     const result = await postBeef(beef, [args.commitTxid, args.settleTxid])
     console.info('[brc-156] postBeef done', result)
+    const flat = Array.isArray(result) ? result : [result]
+    for (const entry of flat) {
+      const txidResults = (entry as { txidResults?: unknown })?.txidResults
+      if (!Array.isArray(txidResults)) continue
+      for (const row of txidResults) {
+        if (!row || typeof row !== 'object') continue
+        const r = row as { txid?: unknown; data?: unknown; notes?: unknown }
+        const reported = typeof r.txid === 'string' ? r.txid.toLowerCase() : ''
+        const blob = `${typeof r.data === 'string' ? r.data : ''} ${JSON.stringify(r.notes ?? '')}`
+        const altered = /txid altered from\s+([0-9a-f]+)\s+to\s+([0-9a-f]+)/i.exec(blob)
+        if (altered) {
+          const from = altered[1]!.toLowerCase()
+          const to = altered[2]!.toLowerCase()
+          if (
+            from === args.settleTxid.toLowerCase() &&
+            to !== args.settleTxid.toLowerCase() &&
+            to !== args.commitTxid.toLowerCase()
+          ) {
+            console.warn(
+              `[brc-156] ARC reported settle txid malleation ${from.slice(0, 12)}… → ${to.slice(0, 12)}… (reported row ${reported.slice(0, 12)}…)`,
+            )
+          }
+        }
+      }
+    }
   })
+  stampHardenedSettleProven(args)
+}
+
+/** Local settle we just signed is BRC-156 by construction — pin before ingest walks. */
+function stampHardenedSettleProven(args: {
+  settleTxid: string
+  origin: string
+  originScriptHash?: string
+}): void {
+  const tip = `${args.settleTxid.trim().toLowerCase()}.0`
+  const origin = args.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  rememberProvenVerdict(tip, {
+    tier: 'brc156',
+    origin,
+    ...(args.originScriptHash
+      ? { originScriptHash: args.originScriptHash.trim().toLowerCase() }
+      : {}),
+    verifiedAt: Date.now(),
+  })
+  console.info(`[brc-156] stamped ${tip.slice(0, 14)}… as BRC-156 after settle`)
+  void import('./itemArrivalToast')
+    .then(({ announceItemVerified }) =>
+      announceItemVerified(tip, 'BRC-156 covenant verified'),
+    )
+    .catch(() => undefined)
 }
 
 function tipTags(args: {
@@ -1254,6 +1318,8 @@ export async function sendHardenedCollectable(
         settleAtomic: settleSigned.tx,
         commitTxid,
         settleTxid: settleSigned.txid,
+        origin: args.origin,
+        originScriptHash: oshForSettle,
       })
       advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
       chart.stop()
@@ -1361,6 +1427,8 @@ export async function sendHardenedCollectable(
       settleAtomic: settleSigned.tx,
       commitTxid,
       settleTxid: settleSigned.txid,
+      origin: args.origin,
+      originScriptHash: oshForSettle,
     })
     advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
     chart.stop()

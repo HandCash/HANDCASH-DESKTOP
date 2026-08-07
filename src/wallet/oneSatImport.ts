@@ -48,6 +48,7 @@ import {
   toUnderscoreOutpoint as normalizeUnderscoreOutpoint,
 } from './oneSatLatch'
 import {
+  isHardenedCovenantLockingScript,
   verifyHardenedReceive,
   verifyInductionBounded,
   resolveAlternatingProofContext,
@@ -788,6 +789,24 @@ async function rebuildBrc150Identity(
     const held = `${txid}.${vout}`
     const proof = rebuildProvenanceV2FromBeef(beef, held)
     if (!proof) return null
+    const tipLock = beef.findAtomicTransaction(txid)?.outputs[vout]?.lockingScript?.toHex()
+    if (tipLock && isHardenedCovenantLockingScript(tipLock)) {
+      console.info(
+        `[brc-156] rebuilt origin for hardened tip ${held.slice(0, 14)}… — not stamping BRC-150`,
+      )
+      const resolvedHardened = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
+      if (
+        resolvedHardened &&
+        (resolvedHardened.name || resolvedHardened.mimeType || resolvedHardened.traits.length > 0)
+      ) {
+        return resolvedHardened
+      }
+      return {
+        origin: proof.origin,
+        traits: [],
+        extras: [],
+      }
+    }
     rememberProvenVerdict(held, {
       tier: 'brc150',
       origin: proof.origin,
@@ -851,6 +870,23 @@ async function proveLineageIdentity(
       },
     })
     if (!proof) return null
+    const tipTx = await withTimeout(getBeefForTxidCached(wallet, txid), BEEF_TIMEOUT_MS)
+      .then((beef) => beef.findAtomicTransaction(txid))
+      .catch(() => null)
+    const tipLock = tipTx?.outputs[vout]?.lockingScript?.toHex()
+    if (tipLock && isHardenedCovenantLockingScript(tipLock)) {
+      console.info(
+        `[brc-156] lineage walk found origin for hardened tip ${held.slice(0, 14)}… — not stamping BRC-150`,
+      )
+      const resolvedHardened = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
+      if (
+        resolvedHardened &&
+        (resolvedHardened.name || resolvedHardened.mimeType || resolvedHardened.traits.length > 0)
+      ) {
+        return resolvedHardened
+      }
+      return { origin: proof.origin, traits: [], extras: [] }
+    }
     console.info(
       `[brc-150] proved landing ${held} back to ${proof.origin} in ${proof.hops} hop(s)`,
     )

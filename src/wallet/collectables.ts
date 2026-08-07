@@ -102,7 +102,6 @@ import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
-  hasProvenTier,
   rememberGenesisAttempt,
   rememberProvenVerdict,
   shouldAttemptGenesis,
@@ -710,6 +709,23 @@ async function proveHeldGenesis(
       ) {
         break
       }
+      const lockingBefore = lastItemOutputs.find(
+        (o) => normalizeOutpoint(o.outpoint) === outpoint,
+      )?.lockingScript
+      if (lockingBefore && isHardenedCovenantLockingScript(lockingBefore)) {
+        console.info(
+          `[brc-156] not walking hardened tip ${outpoint.slice(0, 14)}… for BRC-150`,
+        )
+        const originTag =
+          getProvenVerdict(outpoint)?.origin ??
+          getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === outpoint)
+            ?.origin ??
+          ''
+        if (originTag && getProvenVerdict(outpoint)?.tier !== 'brc156') {
+          void verifyItemAuthenticity(outpoint, originTag, wallet).catch(() => undefined)
+        }
+        continue
+      }
       setVerificationProgress(
         'verifying',
         outpoint,
@@ -758,6 +774,42 @@ async function proveHeldGenesis(
       genesisWalksThisSession++
       rememberGenesisAttempt(outpoint)
 
+      // Never demote a hardened covenant tip to BRC-150 — the ladder (or the
+      // post-settle stamp) owns that badge.
+      let locking = lastItemOutputs.find(
+        (o) => normalizeOutpoint(o.outpoint) === outpoint,
+      )?.lockingScript
+      if (!locking) {
+        try {
+          const [txid, voutRaw] = outpoint.split('.')
+          const vout = Number(voutRaw)
+          if (txid && Number.isInteger(vout)) {
+            const beef = await getBeefForTxidCached(wallet, txid)
+            locking = beef.findAtomicTransaction(txid)?.outputs[vout]?.lockingScript?.toHex()
+          }
+        } catch {
+          // Fall through — stamp / canAcceptVerdict still guard demotion.
+        }
+      }
+      if (
+        (locking && isHardenedCovenantLockingScript(locking)) ||
+        getProvenVerdict(outpoint)?.tier === 'brc156'
+      ) {
+        console.info(
+          `[brc-156] skipping BRC-150 stamp for hardened tip ${outpoint.slice(0, 14)}…`,
+        )
+        clearVerificationProgress(outpoint)
+        const originTag =
+          getProvenVerdict(outpoint)?.origin ??
+          getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === outpoint)
+            ?.origin ??
+          proof.origin
+        if (originTag && getProvenVerdict(outpoint)?.tier !== 'brc156') {
+          void verifyItemAuthenticity(outpoint, originTag, wallet).catch(() => undefined)
+        }
+        continue
+      }
+
       console.info(
         `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
       )
@@ -795,17 +847,40 @@ async function proveHeldGenesis(
 export function requestCollectableVerification(outpoint: string): void {
   const target = normalizeOutpoint(outpoint)
   preferCollectableVerification(target)
-  if (hasProvenTier(target)) {
+  const verdict = getProvenVerdict(target)
+  if (verdict?.tier === 'brc156') {
+    clearAwaitingVerification(target)
+    clearVerificationProgress(target)
+    return
+  }
+  // BRC-150 may still upgrade to BRC-156 when the tip is a hardened covenant.
+  const cached = getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === target)
+  if (verdict?.tier === 'brc150') {
+    const originForUpgrade = cached?.origin || verdict.origin
+    if (originForUpgrade) {
+      noteAwaitingVerification(target)
+      setVerificationProgress('verifying', target, 'Verifying authenticity')
+      void verifyItemAuthenticity(target, originForUpgrade).catch(() => undefined)
+      return
+    }
     clearAwaitingVerification(target)
     clearVerificationProgress(target)
     return
   }
   noteAwaitingVerification(target)
+  const locking = lastItemOutputs.find(
+    (o) => normalizeOutpoint(o.outpoint) === target,
+  )?.lockingScript
+  const hardened = Boolean(locking && isHardenedCovenantLockingScript(locking))
   setVerificationProgress(
     'verifying',
     target,
-    'Proving tip-to-origin lineage (BRC-150)',
+    hardened ? 'Verifying BRC-156 covenant' : 'Proving tip-to-origin lineage (BRC-150)',
   )
+  if (cached?.origin) {
+    void verifyItemAuthenticity(target, cached.origin).catch(() => undefined)
+    return
+  }
   if (!shouldAttemptGenesis(target)) return
   if (provingGenesis) return
   const wallet = getActiveWallet()
@@ -1437,7 +1512,10 @@ export async function getCollectable(
     console.warn('[collectables] detail enrich failed', err)
   }
 
-  if (!hasProvenTier(target)) {
+  const proven = getProvenVerdict(target)
+  // BRC-150 is not final for hardened tips — verifyItemAuthenticity upgrades
+  // when the tip locking script / remittance says covenant.
+  if (!proven || proven.tier === 'brc150') {
     void verifyItemAuthenticity(target, item.origin, wallet)
       .then((result) => applyAuthenticityResult(target, result))
       .catch(() => {})

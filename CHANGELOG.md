@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.116] - 2026-08-07
+
+### Fixed
+
+- **Hardened tips still landing as BRC-150.** Background lineage walks stamped
+  durable BRC-150 after settle before (or instead of) BRC-156, then never
+  upgraded. Stamp BRC-156 immediately after Commit/Settle broadcast, refuse to
+  walk/stamp hardened tips as BRC-150, and re-run the covenant ladder when a tip
+  is stuck on BRC-150 so it can upgrade.
+
 ## [1.2.115] - 2026-08-07
 
 ### Fixed
