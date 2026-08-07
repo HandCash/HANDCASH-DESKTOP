@@ -1,4 +1,5 @@
 import { P2PKH } from '@bsv/sdk'
+import { createActor } from 'xstate'
 import {
   hasActivityTxid,
   recordAppActivity,
@@ -24,6 +25,7 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
+import { bsvSendMachine } from './bsvSendMachine'
 
 export type SendSatsResult = {
   txid: string
@@ -41,6 +43,7 @@ export async function sendSatsToAddress(opts: {
 }): Promise<SendSatsResult> {
   setPaymentProgress('preparing', 'Waiting to send')
   return runExclusiveSpend(async () => {
+    const chart = createActor(bsvSendMachine).start()
     try {
       assertOnlineForPayment()
       const active = getActiveWallet()
@@ -50,8 +53,10 @@ export async function sendSatsToAddress(opts: {
       const satoshis = opts.satoshis
       if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
+      chart.send({ type: 'START', to, satoshis })
       setPaymentProgress('preparing')
       await prepareSpendHeal(satoshis)
+      chart.send({ type: 'HEALED' })
 
       const pending = beginPendingSend({
         to,
@@ -61,8 +66,6 @@ export async function sendSatsToAddress(opts: {
 
       try {
         const lockingScript = new P2PKH().lock(to).toHex()
-        // createAction with signAndProcess signs and broadcasts as one call —
-        // there is no honest mid-point between the two.
         setPaymentProgress(
           'broadcasting',
           'Signing and broadcasting your payment',
@@ -77,13 +80,6 @@ export async function sendSatsToAddress(opts: {
               outputDescription: 'Payment',
             },
           ],
-          // `acceptDelayedBroadcast` defaults to TRUE in the SDK, which queues the
-          // transaction for the monitor's TaskSendWaiting loop instead of sending
-          // it here — and in delayed mode the toolbox deliberately does not throw
-          // on a failed broadcast. A send that only reached local storage then
-          // looks identical to one that reached a miner. The user is standing in
-          // front of this, so it goes out now and a failure is an error.
-          // Collectable sends have always done this; payments were the odd one out.
           options: {
             acceptDelayedBroadcast: false,
             signAndProcess: true,
@@ -92,6 +88,7 @@ export async function sendSatsToAddress(opts: {
 
         const realTxid = (result as { txid?: string })?.txid
         const txid = realTxid ?? `local-${Date.now().toString(16)}`
+        chart.send({ type: 'BROADCASTED', txid })
         completePendingSend(pending.id, txid)
 
         const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
@@ -110,7 +107,6 @@ export async function sendSatsToAddress(opts: {
         setPaymentProgress('finishing')
         scheduleHistoryBackupPush('send')
 
-        // Pre-send heal already ran; background poll + settle grace reconcile the rest.
         const balanceSats = Math.max(
           0,
           (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
@@ -118,12 +114,23 @@ export async function sendSatsToAddress(opts: {
         return { txid, balanceSats }
       } catch (err) {
         clearPendingSend(pending.id)
-        // The network rejecting an input is the only proof our spendable set is
-        // stale. Clear those outputs now so the next attempt picks live coins.
         if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+        chart.send({
+          type: 'FAIL',
+          error: err instanceof Error ? err.message : String(err),
+        })
         throw err
       }
+    } catch (err) {
+      if (!chart.getSnapshot().matches('failed') && !chart.getSnapshot().matches('done')) {
+        chart.send({
+          type: 'FAIL',
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+      throw err
     } finally {
+      chart.stop()
       clearPaymentProgress()
     }
   })

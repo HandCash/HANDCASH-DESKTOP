@@ -92,8 +92,10 @@ import { ownershipFate } from './collectableOwnershipFate'
 import {
   chooseSendPath,
   classifyTipKind,
+  proofHintsFromTipTx,
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
+import { softLatchSendMachine } from './softLatchSendMachine'
 import { createActor } from 'xstate'
 import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent } from './sentItemGuard'
@@ -1789,6 +1791,9 @@ export async function sendCollectable(args: {
   const tipKind = classifyTipKind(match.lockingScript)
   const tipVerdict = getProvenVerdict(outpoint)
   const remittance = parseHardenedTipInstructions(match.customInstructions)
+  const tipTxid = outpoint.split('.')[0]!
+  const tipTx = Beef.fromBinary(inputBEEF).findTxid(tipTxid)?.tx
+  const tipHints = proofHintsFromTipTx(tipTx)
   const sendPath = chooseSendPath({
     tipKind,
     provenTier: tipVerdict?.tier ?? null,
@@ -1796,6 +1801,8 @@ export async function sendCollectable(args: {
     latchOutpoint: priorLatch?.outpoint ?? null,
     tipCustomInstructions: match.customInstructions,
     remittanceProofOutpoint: remittance?.proofOutpoint,
+    opReturnProofOutpoint: tipHints.opReturnProofOutpoint,
+    commitDerivedProofOutpoint: tipHints.commitDerivedProofOutpoint,
   })
 
   const chart = createActor(collectableSendMachine).start()
@@ -1804,7 +1811,9 @@ export async function sendCollectable(args: {
     `[brc-156] send path=${sendPath.path}${
       sendPath.path === 'hardenedResend'
         ? ` proof=${sendPath.proofOutpoint} via ${sendPath.proofSource}`
-        : ''
+        : sendPath.path === 'refuse'
+          ? ` reason=${sendPath.reason}`
+          : ''
     } tipKind=${tipKind.kind}`,
   )
 
@@ -1936,6 +1945,9 @@ export async function sendCollectable(args: {
     return failSend(new Error('collectableSendMachine did not enter softLatch'))
   }
 
+  const softChart = createActor(softLatchSendMachine).start()
+  softChart.send({ type: 'START', outpoint })
+
   const provenance = await tryBuildProvenanceForSend({
     tipOutpoint: outpoint,
     origin,
@@ -1944,6 +1956,7 @@ export async function sendCollectable(args: {
     parentLatch,
     inputBeef: inputBEEF,
   })
+  softChart.send({ type: 'BUILT' })
 
   const inputs = [
     {
@@ -2030,14 +2043,28 @@ export async function sendCollectable(args: {
         signAndProcess: true,
       },
     })
+    softChart.send({ type: 'CREATED', txid: result.txid })
   } catch (err) {
     if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+    softChart.send({
+      type: 'FAIL',
+      error: err instanceof Error ? err.message : String(err),
+    })
+    softChart.stop()
     return failSend(err)
   }
 
   let txid = result.txid
   if (!txid) {
-    if (!result.signableTransaction) return failSend(new Error('Send completed without txid'))
+    if (!result.signableTransaction) {
+      softChart.send({ type: 'FAIL', error: 'Send completed without txid' })
+      softChart.stop()
+      return failSend(new Error('Send completed without txid'))
+    }
+    if (!softChart.getSnapshot().matches('signing')) {
+      softChart.stop()
+      return failSend(new Error('softLatchSendMachine did not enter signing'))
+    }
     try {
       setPaymentProgress('signing', 'Signing the collectable transfer')
       txid = await signOrdinalTransfer({
@@ -2045,12 +2072,19 @@ export async function sendCollectable(args: {
         signable: result.signableTransaction,
         outpoints: spendOutpoints,
       })
+      softChart.send({ type: 'SIGNED', txid })
     } catch (err) {
       if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+      softChart.send({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
+      softChart.stop()
       return failSend(err)
     }
   }
 
+  softChart.stop()
   return await finishSend(txid)
     } finally {
       clearPaymentProgress()

@@ -267,6 +267,29 @@ const HARDENED_SEND = `stateDiagram-v2
   failed --> idle : RESET
 `
 
+const SOFT_LATCH_SEND = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> building : START
+  building --> createAction : BUILT
+  createAction --> done : CREATED with txid
+  createAction --> signing : CREATED needs sign
+  signing --> done : SIGNED
+  createAction --> failed : FAIL
+  signing --> failed : FAIL
+  building --> failed : FAIL
+`
+
+const BSV_SEND = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> preparing : START
+  preparing --> broadcasting : HEALED
+  broadcasting --> done : BROADCASTED
+  preparing --> failed : FAIL
+  broadcasting --> failed : FAIL
+`
+
 const CONNECTED_APPS = `stateDiagram-v2
   direction TB
   [*] --> list
@@ -524,6 +547,18 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Hardened send',
     caption: 'hardenedSendMachine — Commit → Settle (child of collectableSend)',
     source: HARDENED_SEND,
+  },
+  {
+    id: 'softLatchSend',
+    label: 'Soft-latch send',
+    caption: 'softLatchSendMachine — createAction → optional sign',
+    source: SOFT_LATCH_SEND,
+  },
+  {
+    id: 'bsvSend',
+    label: 'BSV send',
+    caption: 'bsvSendMachine — heal → broadcast (chain path)',
+    source: BSV_SEND,
   },
   {
     id: 'connectedApps',

@@ -75,15 +75,45 @@ describe('resolveDelayedProof', () => {
     })
   })
 
+  it('derives proof from remittance commitTxid when proofOutpoint is absent', () => {
+    const commit = 'f'.repeat(64)
+    expect(
+      resolveDelayedProof({
+        tipCustomInstructions: JSON.stringify({
+          mode: 'hardened',
+          commitTxid: commit,
+        }),
+      }),
+    ).toEqual({
+      proofOutpoint: `${commit}_1`,
+      proofSource: 'remittance',
+    })
+  })
+
+  it('uses OP_RETURN / commit-derived hints when remittance is empty', () => {
+    const commit = 'c'.repeat(64)
+    expect(
+      resolveDelayedProof({
+        opReturnProofOutpoint: `${commit}_1`,
+      }),
+    ).toEqual({
+      proofOutpoint: `${commit}_1`,
+      proofSource: 'opReturnState',
+    })
+    expect(
+      resolveDelayedProof({
+        commitDerivedProofOutpoint: `${commit}_1`,
+      }),
+    ).toEqual({
+      proofOutpoint: `${commit}_1`,
+      proofSource: 'opReturnState',
+    })
+  })
+
   it('does not treat a basket beacon as an implicit proof source', () => {
-    // Callers must not pass basket latch as remittance/link/state. Passing only
-    // a beacon-shaped outpoint via a non-source field is simply ignored — there
-    // is no DelayedProofSource for basket.
     const resolved = resolveDelayedProof({})
     expect(resolved.proofOutpoint).toBeNull()
     expect(resolved.proofSource).toBeNull()
-    // Even if someone mistakenly puts the beacon in remittance, that is an
-    // explicit remittance claim — the type still forbids a "basket" source tag.
     expect(
       resolveDelayedProof({ remittanceProofOutpoint: BEACON }).proofSource,
     ).toBe('remittance')

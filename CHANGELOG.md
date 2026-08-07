@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.108] - 2026-08-07
+
+### Fixed
+
+- **Hardened resend refuse.** Delayed proof now resolves from remittance
+  `proofOutpoint`, remittance `commitTxid_1`, and the tip settle OP_RETURN — not
+  only customInstructions. Refuse reasons are logged (`send path=refuse reason=`).
+
+### Changed
+
+- **Wallet-wide explicit paths.** Soft-latch and BSV sends use
+  `softLatchSendMachine` / `bsvSendMachine`. Cursor rule
+  `explicit-wallet-paths.mdc` — no silent fallthrough.
+
 ## [1.2.107] - 2026-08-07
 
 ### Changed

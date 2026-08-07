@@ -6,6 +6,7 @@
  * cannot be typed as a delayed proof. Routing lives in `chooseSendPath`; the
  * XState parent (`collectableSendMachine`) only invokes what that returns.
  */
+import type { Transaction } from '@bsv/sdk'
 import {
   BASE_LINK,
   canUseHardenedLatch,
@@ -14,7 +15,11 @@ import {
   parseHardenedTipInstructions,
 } from './oneSatHardenedReceive'
 import { decodeHardenedLinkOutpoint } from './oneSatHardenedLatch'
-import { isValidOutpoint, toUnderscoreOutpoint } from './oneSatLatch'
+import {
+  isValidOutpoint,
+  parseLatchStateScript,
+  toUnderscoreOutpoint,
+} from './oneSatLatch'
 
 export type TipKind =
   | { kind: 'hardenedCovenant'; lockingScript: string }
@@ -68,27 +73,61 @@ function isUsableProofOutpoint(raw: string | null | undefined): string | null {
   }
 }
 
+/** Commit layout is tip@0 · proof@1 — sibling proof when remittance names commitTxid. */
+function proofFromCommitTxid(commitTxid: string | null | undefined): string | null {
+  const id = commitTxid?.trim().toLowerCase()
+  if (!id || id.length !== 64 || !/^[0-9a-f]+$/.test(id)) return null
+  return isUsableProofOutpoint(`${id}_1`)
+}
+
+/**
+ * Pull delayed-proof hints from the tip transaction body (OP_RETURN latch state).
+ * Does not touch the latch basket — only on-chain settle outputs.
+ */
+export function proofHintsFromTipTx(tipTx: Transaction | undefined | null): {
+  opReturnProofOutpoint: string | null
+  commitDerivedProofOutpoint: string | null
+} {
+  if (!tipTx?.outputs?.length) {
+    return { opReturnProofOutpoint: null, commitDerivedProofOutpoint: null }
+  }
+  for (const out of tipTx.outputs) {
+    const hex = out.lockingScript?.toHex?.() ?? ''
+    if (!hex) continue
+    const state = parseLatchStateScript(hex)
+    if (!state?.proofOutpoint && !state?.commitTxid) continue
+    return {
+      opReturnProofOutpoint: isUsableProofOutpoint(state.proofOutpoint ?? null),
+      commitDerivedProofOutpoint: proofFromCommitTxid(state.commitTxid),
+    }
+  }
+  return { opReturnProofOutpoint: null, commitDerivedProofOutpoint: null }
+}
+
 /**
  * Resolve the delayed prior proof for a covenant resend.
  *
- * Order is fixed: remittance customInstructions → covenant linkOutpoint →
- * on-chain OP_RETURN latch state. A basket latch / beacon outpoint is never a
- * source — callers must not pass one.
+ * Order is fixed: remittance proofOutpoint → remittance commitTxid_1 →
+ * covenant linkOutpoint → OP_RETURN latch state (proof or commitTxid_1).
+ * A basket latch / beacon outpoint is never a source.
  */
 export function resolveDelayedProof(args: {
   remittanceProofOutpoint?: string | null
   tipCustomInstructions?: string | null
   covenantLinkOutpoint?: string | null
   opReturnProofOutpoint?: string | null
+  /** When remittance/state only has commitTxid, proof is always vout 1. */
+  commitDerivedProofOutpoint?: string | null
 }):
   | { proofOutpoint: string; proofSource: DelayedProofSource }
   | { proofOutpoint: null; proofSource: null; reason: string } {
+  const remittance = parseHardenedTipInstructions(
+    args.tipCustomInstructions ?? undefined,
+  )
   const fromRemittance =
     isUsableProofOutpoint(args.remittanceProofOutpoint) ??
-    isUsableProofOutpoint(
-      parseHardenedTipInstructions(args.tipCustomInstructions ?? undefined)
-        ?.proofOutpoint,
-    )
+    isUsableProofOutpoint(remittance?.proofOutpoint) ??
+    proofFromCommitTxid(remittance?.commitTxid)
   if (fromRemittance) {
     return { proofOutpoint: fromRemittance, proofSource: 'remittance' }
   }
@@ -111,7 +150,9 @@ export function resolveDelayedProof(args: {
     return { proofOutpoint: fromLink, proofSource: 'covenantLink' }
   }
 
-  const fromState = isUsableProofOutpoint(args.opReturnProofOutpoint)
+  const fromState =
+    isUsableProofOutpoint(args.opReturnProofOutpoint) ??
+    isUsableProofOutpoint(args.commitDerivedProofOutpoint)
   if (fromState) {
     return { proofOutpoint: fromState, proofSource: 'opReturnState' }
   }
@@ -119,7 +160,8 @@ export function resolveDelayedProof(args: {
   return {
     proofOutpoint: null,
     proofSource: null,
-    reason: 'Hardened resend requires the delayed prior proof outpoint',
+    reason:
+      'Hardened resend needs the delayed prior proof (commit vout1). Tip remittance and settle OP_RETURN were missing it.',
   }
 }
 
@@ -134,6 +176,7 @@ export type ChooseSendPathArgs = {
   remittanceProofOutpoint?: string | null
   covenantLinkOutpoint?: string | null
   opReturnProofOutpoint?: string | null
+  commitDerivedProofOutpoint?: string | null
   hardenedSendEnabled?: boolean
 }
 
@@ -175,6 +218,7 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
       tipCustomInstructions: args.tipCustomInstructions,
       covenantLinkOutpoint: args.covenantLinkOutpoint,
       opReturnProofOutpoint: args.opReturnProofOutpoint,
+      commitDerivedProofOutpoint: args.commitDerivedProofOutpoint,
     })
     if (!proof.proofOutpoint || !proof.proofSource) {
       return {
@@ -182,7 +226,7 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
         reason:
           'reason' in proof && proof.reason
             ? proof.reason
-            : 'Hardened resend requires the delayed prior proof outpoint',
+            : 'Hardened resend needs the delayed prior proof outpoint',
       }
     }
     return {

@@ -1,0 +1,36 @@
+---
+description: Wallet spends use exhaustive tagged paths + XState — no silent fallthrough
+alwaysApply: true
+---
+
+# Explicit wallet paths (no silent fallthrough)
+
+Collectables set the pattern. **All UTXO mutation / payment routing** follows it:
+
+1. **Tagged unions** for the decision (`TipKind`, `SendPath`, future `BsvSendPath`,
+   `BrcActionPhase`, import path). Booleans like `tipIsCovenant` are not enough.
+2. **XState machine** owns legal transitions. Imperative SDK calls may run *inside*
+   a phase, but must not invent a new path (no `try hardened catch soft-latch`).
+3. **Fail closed** with a named `refuse` / `failed` reason — log the reason.
+4. **Settings → Statecharts** Mermaid must match the real machine.
+
+## Reference modules
+
+| Concern | Module |
+|---------|--------|
+| Tip / send vocabulary | `collectableTipKind.ts` |
+| Collectable parent chart | `collectableSendMachine.ts` |
+| Hardened child chart | `hardenedSendMachine.ts` |
+| Soft-latch child chart | `softLatchSendMachine.ts` |
+| BSV payment chart | `bsvSendMachine.ts` |
+| Ownership vs address scan | `collectableOwnershipFate.ts` |
+| Layer concurrency | `walletCoordinatorMachine.ts` |
+
+## Forbidden
+
+- Catch a covenant/hardened error and continue on soft-latch / BRC-150
+- Treat latch-basket beacon outpoints as delayed proofs
+- Ghost-relinquish hardened tips because they are missing from the P2PKH scan
+- Decorative `chart.send` that the imperative code can ignore
+
+Effect.ts is deferred until we need interruptible fibers beyond `fromPromise`.
