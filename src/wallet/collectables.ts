@@ -519,10 +519,11 @@ async function resolveUnknownOrigins(): Promise<void> {
   const pending = listable.filter(
     (o) => needsIndexerResolve(o) && shouldResolveInscription(normalizeOutpoint(o.outpoint)),
   )
+  // Thin cards need an upgrade whether remittance named them or lineage did —
+  // both paths can land an origin with no traits, and that is what "came in
+  // unverified with no traits" looks like until the indexer fills the rest.
   const upgrades = listable
-    .filter(
-      (o) => !needsIndexerResolve(o) && shouldUpgradeResolution(normalizeOutpoint(o.outpoint)),
-    )
+    .filter((o) => shouldUpgradeResolution(normalizeOutpoint(o.outpoint)))
     .slice(0, UPGRADE_BUDGET)
   if (pending.length === 0 && upgrades.length === 0) return
 
@@ -613,7 +614,6 @@ async function proveHeldGenesis(
       // through it is how the list ends up timing out instead of painting.
       if (listInFlight && listInFlight !== ownRead) break
       genesisWalksThisSession++
-      rememberGenesisAttempt(outpoint)
       let proof: GenesisProof | null = null
       try {
         proof = await proveGenesisLineage({
@@ -624,11 +624,18 @@ async function proveHeldGenesis(
             await yieldToUi()
             return await getBeefForTxidCached(wallet, txid)
           },
+          // Abandoning mid-walk costs one retry; finishing it while somebody is
+          // waiting on the panel costs a `listOutputs` timeout.
+          shouldStop: () => !!listInFlight && listInFlight !== ownRead,
         })
       } catch (err) {
         console.warn('[brc-150] lineage walk failed', outpoint, err)
       }
+      // Only pin the attempt after a conclusive result. A transient network miss
+      // must not burn the 24h budget and leave a just-received tip "Unverified"
+      // until tomorrow.
       if (!proof) continue
+      rememberGenesisAttempt(outpoint)
 
       console.info(
         `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
@@ -661,10 +668,13 @@ async function adoptProvenOrigin(
   chain: Chain,
 ): Promise<void> {
   const existing = getResolvedInscription(outpoint)
-  if (
-    existing &&
+  const sameOrigin =
+    !!existing &&
     existing.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === origin
-  ) {
+  // A thin hit that already names the right origin still needs the indexer —
+  // that is exactly the "verified but no traits" card. Only a rich match may
+  // skip the fetch.
+  if (sameOrigin && !isThinResolution(existing)) {
     rememberResolvedInscription(outpoint, { ...existing, origin })
     return
   }
@@ -676,8 +686,15 @@ async function adoptProvenOrigin(
         )
       : null
   rememberResolvedInscription(outpoint, {
-    ...(resolved ?? { traits: [], extras: [] }),
+    ...(resolved && !isThinResolution(resolved)
+      ? resolved
+      : existing && sameOrigin
+        ? existing
+        : { traits: [], extras: [] }),
     origin,
+    ...(resolved?.name ? { name: resolved.name } : {}),
+    ...(resolved?.app ? { app: resolved.app } : {}),
+    ...(resolved?.mimeType ? { mimeType: resolved.mimeType } : {}),
   })
 }
 

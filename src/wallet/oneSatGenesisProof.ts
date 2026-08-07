@@ -39,6 +39,12 @@ export type GenesisProof = {
   /** Tip → origin, every step spending the one before it. */
   path: string[]
   hops: number
+  /**
+   * The whole assembled lineage, serialized. A sender needs this to put a
+   * complete BRC-150 remittance on the wire; discard it once the verdict is
+   * pinned, because it runs to hundreds of kilobytes.
+   */
+  beef: number[]
 }
 
 const POINT = /^([0-9a-f]{64})_(\d+)$/
@@ -58,6 +64,12 @@ export async function proveGenesisLineage(args: {
   tipOutpoint: string
   getBeef: (txid: string) => Promise<Beef>
   maxHops?: number
+  /**
+   * Consulted before each hop. A walk is worth abandoning the moment something
+   * the user is waiting on needs the thread — merkle verification is synchronous
+   * CPU, so yielding between fetches is not enough on a phone.
+   */
+  shouldStop?: () => boolean
 }): Promise<GenesisProof | null> {
   const tip = toPoint(args.tipOutpoint)
   if (!POINT.test(tip)) return null
@@ -83,6 +95,7 @@ export async function proveGenesisLineage(args: {
   let origin: string | null = null
   let hops = 0
   for (; hops <= maxHops; hops++) {
+    if (args.shouldStop?.()) return null
     const match = POINT.exec(point)
     if (!match) return null
     try {
@@ -132,8 +145,9 @@ export async function proveGenesisLineage(args: {
   // proven and is why the older rebuild could never prove a confirmed item.
   const path = deriveOneSatPathFromBeef(merged, tip, origin)
   if (!path || path[0] !== tip || path[path.length - 1] !== origin) return null
+  const beef = merged.toBinary()
   const result = verifyProvenanceV2(
-    { v: 2, origin, tip, path, beefB64: bytesToBase64(merged.toBinary()) },
+    { v: 2, origin, tip, path, beefB64: bytesToBase64(beef) },
     tip,
     { enforceBudget: false },
   )
@@ -141,7 +155,7 @@ export async function proveGenesisLineage(args: {
     console.warn('[brc-150] assembled lineage failed verification', tip, result.reason)
     return null
   }
-  return { origin, path, hops }
+  return { origin, path, hops, beef }
 }
 
 function bytesToBase64(bytes: number[]): string {

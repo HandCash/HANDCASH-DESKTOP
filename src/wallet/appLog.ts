@@ -182,6 +182,15 @@ function startHeapWatch(): void {
 const STALL_TICK_MS = 500
 const STALL_WARN_MS = 1_000
 let stallTimer: ReturnType<typeof setInterval> | null = null
+/**
+ * When the app last came back to the foreground.
+ *
+ * Android freezes a backgrounded WebView's timers, so the first tick after
+ * resuming carries the whole time spent away as drift — and by then visibility
+ * already reads `visible`. Without this the log fills with eight-minute "stalls"
+ * that are really the user's phone in their pocket, and real jank is lost in them.
+ */
+let becameVisibleAt = Date.now()
 
 function startStallWatch(): void {
   if (stallTimer) return
@@ -189,9 +198,11 @@ function startStallWatch(): void {
   stallTimer = setInterval(() => {
     const now = Date.now()
     const drift = now - last - STALL_TICK_MS
+    const previousTick = last
     last = now
     // Background tabs have their timers throttled on purpose; that is not a stall.
     if (document.visibilityState === 'hidden') return
+    if (previousTick < becameVisibleAt) return
     if (drift < STALL_WARN_MS) return
     appendAppLog('warn', `[stall] main thread blocked ${Math.round(drift)}ms`)
     flushNow()
@@ -296,6 +307,7 @@ export function installAppLogCapture(): void {
     // "died while the user was looking at it".
     appendAppLog('info', `[lifecycle] ${document.visibilityState}`)
     if (document.visibilityState === 'hidden') flushNow()
+    else becameVisibleAt = Date.now()
   })
 
   // Whatever this run writes becomes the previous session for the next one.

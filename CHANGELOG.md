@@ -1,5 +1,28 @@
 # Changelog
 
+## [1.2.94] - 2026-08-06
+
+### Fixed
+
+- **A collectable no longer arrives unverified with no traits.** The sender was
+  dropping BRC-150 provenance whenever the BEEF it held for a mined tip stopped at
+  that transaction — there was no ancestry left to derive a path from, so the item
+  went out with nothing to prove it and landed as "Unverified". The send now
+  hydrates the tip's lineage from chain data before giving up, and puts the whole
+  assembled BEEF on the wire instead of the atomic form, which discarded the very
+  ancestry the receiver has to walk.
+- **A card that arrives with a proven origin but no traits now asks the indexer
+  again.** An empty-traits cache entry counted as an answer and blocked the upgrade
+  pass, so a name and image that were merely late never arrived at all.
+- **A lineage walk gives up the moment somebody opens the panel.** Yielding between
+  fetches was not enough, because merkle verification in between is synchronous
+  work; the walk now checks for a waiting basket read at every hop.
+- **A transient network miss no longer costs a full day of "Unverified".** The 24h
+  lineage retry budget is spent only on a conclusive result.
+- **Multi-minute "main thread blocked" warnings are gone.** Android freezes a
+  backgrounded WebView's timers, and the first tick after resuming reported the
+  whole time away as a stall — burying the real jank in eight-minute phantoms.
+
 ## [1.2.93] - 2026-08-06
 
 ### Fixed

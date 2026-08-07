@@ -345,6 +345,39 @@ export function verifyProvenance(
 }
 
 /**
+ * Assemble the tip's ancestry when the locally held BEEF cannot reach genesis.
+ *
+ * Imported ordinals and confirmed tips both arrive without ancestry, and a
+ * sender that gives up there hands the receiver an unprovable item — the
+ * "arrived unverified with no traits" case. Imported dynamically because
+ * `oneSatGenesisProof` verifies through this module.
+ */
+async function hydrateLineageForSend(
+  wallet: ActiveWallet,
+  tip: string,
+): Promise<{ origin: string; path: string[]; beef: number[] } | null> {
+  if (!wallet.services?.getBeefForTxid) return null
+  try {
+    const [{ proveGenesisLineage }, { getBeefForTxidCached }] = await Promise.all([
+      import('./oneSatGenesisProof'),
+      import('./beefCache'),
+    ])
+    const proof = await proveGenesisLineage({
+      tipOutpoint: tip,
+      getBeef: (hop) => getBeefForTxidCached(wallet, hop),
+    })
+    if (!proof) return null
+    console.info(
+      `[brc-150] hydrated ${proof.hops} hop(s) of lineage for the send of ${tip}`,
+    )
+    return { origin: proof.origin, path: proof.path, beef: proof.beef }
+  } catch (err) {
+    console.warn('[brc-150] lineage hydration for send failed', tip, err)
+    return null
+  }
+}
+
+/**
  * Build v2 remittance for a known tip outpoint (usually the UTXO being spent).
  * Returns null when beef unavailable or over budget (omit — do not truncate).
  */
@@ -383,21 +416,28 @@ export async function tryBuildProvenanceV2(args: {
       beef = await getBeefForTxidCached(args.wallet, txid)
     }
     if (!beef) return null
-    let bin: number[]
-    try {
-      bin = beef.toBinaryAtomic(txid)
-    } catch {
-      bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
-    }
-    if (!bin.length) return null
-    const path =
+    // Serialized whole, never atomically: AtomicBEEF keeps only the subject and
+    // its recursive dependencies, and a mined tip carrying its own merkle proof
+    // depends on nothing — so the atomic form drops the very ancestry the
+    // receiver has to walk.
+    let bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
+    let path =
       args.path && args.path.length > 0
         ? args.path.map(toUnderscore)
         : deriveOneSatPathFromBeef(beef, tip, origin)
     if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
-      console.warn('[brc-150] omit provenance — no complete one-sat path to origin')
-      return null
+      // The BEEF the wallet holds for a mined tip stops at that transaction, so
+      // there is nothing older to walk. Hydrate the ancestry from chain data
+      // rather than sending an item the receiver can only call unverified.
+      const hydrated = await hydrateLineageForSend(args.wallet, tip)
+      if (!hydrated || hydrated.origin !== origin) {
+        console.warn('[brc-150] omit provenance — no complete one-sat path to origin')
+        return null
+      }
+      path = hydrated.path
+      bin = hydrated.beef
     }
+    if (!bin.length) return null
     const beefB64 = bytesToBase64(bin)
     const provenance: ProvenanceV2 = {
       v: 2,
