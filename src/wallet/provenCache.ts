@@ -209,6 +209,7 @@ export function rememberProvenVerdict(
 /**
  * Paint authenticity from the durable verdict store — list cache alone can
  * still say `unproven` after a prior session proved the tip.
+ * Legacy `brc156` verdicts display as BRC-150 (product is 150-only).
  */
 export function authenticityFromProvenCache(outpoint: string): {
   authenticity: AuthenticityTier
@@ -216,8 +217,10 @@ export function authenticityFromProvenCache(outpoint: string): {
 } {
   const verdict = getProvenVerdict(outpoint)
   if (!verdict) return { authenticity: 'unproven', proven: false }
+  const authenticity: AuthenticityTier =
+    verdict.tier === 'brc156' ? 'brc150' : verdict.tier
   return {
-    authenticity: verdict.tier,
+    authenticity,
     proven: isProvenTier(verdict.tier),
   }
 }

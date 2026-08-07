@@ -1,12 +1,12 @@
 /**
  * BRC-150 provenance remittance for basket `1sat` (+ recursive inscription tips).
  *
- * Oversized remittance edge case is isolated here: never truncate path/beef —
- * omit provenance and leave identity unproven (BRC-150).
+ * Oversized remittance edge case: never truncate path/beef — omit provenance
+ * and leave identity unproven.
  *
- * Tip rewrite after createAction (new outpoint unknown pre-broadcast) is best-effort:
- * we build for the known input tip when beef is available; receivers verify strictly
- * against the tip they hold.
+ * Soft-latch sends embed remittance for the *spent* tip (new outpoint unknown
+ * pre-broadcast). Receivers MUST use `verifyProvenanceForHeldTip`, which accepts
+ * either a direct tip match or a parent remittance when the held tip spends it.
  */
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
@@ -321,11 +321,95 @@ export function verifyProvenanceV2(
 }
 
 /**
- * Authenticity verify for collectables.
+ * Verify BRC-150 remittance for the tip the wallet actually holds.
  *
- * Soft-latch v3 remittance is structural only (outpoint shape / tip match) — it is
- * NOT lossless tip→origin proof. Prefer BRC-150 v2 whenever present. Bare v3 does
- * not mark an item as proven until Phase 3 inductive latch verify exists.
+ * Soft-latch embeds proof of the *spent* tip. When `provenance.tip` is that
+ * parent and `heldOutpoint` spends it (1 sat), the held tip inherits the proof
+ * — no O(N) lineage walk. Falls back to strict tip match otherwise.
+ */
+export async function verifyProvenanceForHeldTip(args: {
+  provenance: unknown
+  heldOutpoint: string
+  getBeef?: (txid: string) => Promise<Beef>
+}): Promise<ProvenanceVerifyResult & { origin?: string }> {
+  const p = parseProvenanceV2(args.provenance)
+  if (!p) {
+    if (parseProvenanceV3(args.provenance)) {
+      return {
+        proven: false,
+        reason:
+          'v3 soft-latch remittance is not authenticity proof — need BRC-150 v2 BEEF',
+      }
+    }
+    return { proven: false, reason: 'missing provenance' }
+  }
+
+  const held = toUnderscore(args.heldOutpoint)
+  const direct = verifyProvenanceV2(p, held, { enforceBudget: false })
+  if (direct.proven) return { ...direct, origin: p.origin }
+  if (p.tip === held) return direct
+
+  const parentOk = verifyProvenanceV2(p, toDot(p.tip), { enforceBudget: false })
+  if (!parentOk.proven) {
+    return {
+      proven: false,
+      reason: parentOk.reason ?? 'parent remittance invalid',
+    }
+  }
+
+  const heldMatch = /^([0-9a-f]{64})_(\d+)$/i.exec(held)
+  const parentMatch = /^([0-9a-f]{64})_(\d+)$/i.exec(p.tip)
+  if (!heldMatch || !parentMatch) {
+    return { proven: false, reason: 'invalid held or remittance tip outpoint' }
+  }
+  const heldTxid = heldMatch[1]!.toLowerCase()
+  const heldVout = Number(heldMatch[2])
+  const parentTxid = parentMatch[1]!.toLowerCase()
+  const parentVout = Number(parentMatch[2])
+
+  let heldTx =
+    (() => {
+      try {
+        return Beef.fromBinary(base64ToBytes(p.beefB64)).findTxid(heldTxid)?.tx
+      } catch {
+        return undefined
+      }
+    })() ?? null
+  if (!heldTx && args.getBeef) {
+    try {
+      heldTx = (await args.getBeef(heldTxid)).findTxid(heldTxid)?.tx ?? null
+    } catch {
+      heldTx = null
+    }
+  }
+  if (!heldTx) {
+    return {
+      proven: false,
+      reason: 'held tip transaction missing for parent remittance check',
+    }
+  }
+  const out = heldTx.outputs[heldVout]
+  if (!out || out.satoshis !== 1) {
+    return { proven: false, reason: 'held tip is not a 1-sat output' }
+  }
+  const spendsParent = heldTx.inputs.some(
+    (input) =>
+      String(input.sourceTXID).toLowerCase() === parentTxid &&
+      input.sourceOutputIndex === parentVout,
+  )
+  if (!spendsParent) {
+    return {
+      proven: false,
+      reason: 'held tip does not spend remittance tip (parent)',
+    }
+  }
+  return { proven: true, reason: null, origin: p.origin }
+}
+
+/**
+ * Authenticity verify for collectables — BRC-150 v2 only.
+ *
+ * Soft-latch v3 remittance is structural only and is NOT tip→origin proof.
  */
 export function verifyProvenance(
   provenance: unknown,
@@ -338,7 +422,7 @@ export function verifyProvenance(
     return {
       proven: false,
       reason:
-        'v3 soft-latch remittance is not authenticity proof — need v2 BEEF or hardened latch induction',
+        'v3 soft-latch remittance is not authenticity proof — need BRC-150 v2 BEEF',
     }
   }
   return { proven: false, reason: 'missing provenance' }

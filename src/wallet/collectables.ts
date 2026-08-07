@@ -48,11 +48,10 @@ import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from '
 import {
   buildCollectableCustomInstructions,
   tryBuildProvenanceForSend,
+  verifyProvenanceForHeldTip,
 } from './oneSatProvenance'
 import {
   authenticityResultToVerdict,
-  verifyAuthenticityLadder,
-  verifyOriginScriptCommitment,
   type AuthenticityResult,
 } from './oneSatAuthenticity'
 import {
@@ -63,22 +62,17 @@ import {
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
   buildLatchStateScript,
-  findLatchStateForTip,
   isLatchedSendEnabled,
   latchOutputTags,
   resolveLatchTipClaim,
   toUnderscoreOutpoint,
   type LatchListing,
-  type LatchState,
 } from './oneSatLatch'
 import {
   canUseHardenedLatch,
   isHardenedCovenantLockingScript,
   isHardenedSendEnabled,
   parseHardenedTipInstructions,
-  resolveAlternatingProofContext,
-  verifyHardenedReceive,
-  verifyInductionBounded,
 } from './oneSatHardenedReceive'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
@@ -360,14 +354,17 @@ function toCollectable(
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
   // Provenance verdict comes from durable cache; detail view verifies on demand.
   const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
-  const authenticity = verdict?.tier ?? 'unproven'
-  const proven = authenticity === 'brc156' || authenticity === 'brc150'
+  // Product authenticity is BRC-150; legacy brc156 pins paint as brc150.
+  const authenticity: AuthenticityTier =
+    verdict?.tier === 'brc156' || verdict?.tier === 'brc150'
+      ? 'brc150'
+      : (verdict?.tier ?? 'unproven')
+  const proven = authenticity === 'brc150'
   const claimed = tagValue(o.tags, 'origin:') ?? custom.origin
   // An indexer walk that came back with real inscription content knows the
   // lineage; a remittance origin is only the sender's claim, and a wrong one
-  // paints a 404 image forever. A hardened verdict keeps its claim — the
-  // covenant commitment is bound to it.
-  const trustWalk = authenticity !== 'brc156' && !isThinResolution(resolved)
+  // paints a 404 image forever.
+  const trustWalk = !isThinResolution(resolved)
   const origin = parseOrigin(
     // A lineage proof outranks both: it is the only origin this wallet verified.
     verdict?.origin ??
@@ -646,7 +643,7 @@ async function resolveUnknownOrigins(): Promise<void> {
  * its badges over several sessions rather than opening the Collect page into a
  * few hundred requests.
  */
-const GENESIS_SESSION_BUDGET = 3
+const GENESIS_SESSION_BUDGET = 8
 /** Activity rows scanned for tips this wallet no longer holds. */
 const ACTIVITY_REPAIR_DEPTH = 50
 let genesisWalksThisSession = 0
@@ -657,7 +654,7 @@ let provingGenesis = false
  *
  * Runs behind the painted list, one tip at a time. Proving a tip also settles
  * its origin — which is the only origin here that was verified rather than
- * claimed — and makes the next send eligible for hardened BRC-156 induction.
+ * claimed.
  */
 async function proveHeldGenesis(
   wallet: ActiveWallet,
@@ -709,23 +706,6 @@ async function proveHeldGenesis(
       ) {
         break
       }
-      const lockingBefore = lastItemOutputs.find(
-        (o) => normalizeOutpoint(o.outpoint) === outpoint,
-      )?.lockingScript
-      if (lockingBefore && isHardenedCovenantLockingScript(lockingBefore)) {
-        console.info(
-          `[brc-156] not walking hardened tip ${outpoint.slice(0, 14)}… for BRC-150`,
-        )
-        const originTag =
-          getProvenVerdict(outpoint)?.origin ??
-          getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === outpoint)
-            ?.origin ??
-          ''
-        if (originTag && getProvenVerdict(outpoint)?.tier !== 'brc156') {
-          void verifyItemAuthenticity(outpoint, originTag, wallet).catch(() => undefined)
-        }
-        continue
-      }
       setVerificationProgress(
         'verifying',
         outpoint,
@@ -773,42 +753,6 @@ async function proveHeldGenesis(
       }
       genesisWalksThisSession++
       rememberGenesisAttempt(outpoint)
-
-      // Never demote a hardened covenant tip to BRC-150 — the ladder (or the
-      // post-settle stamp) owns that badge.
-      let locking = lastItemOutputs.find(
-        (o) => normalizeOutpoint(o.outpoint) === outpoint,
-      )?.lockingScript
-      if (!locking) {
-        try {
-          const [txid, voutRaw] = outpoint.split('.')
-          const vout = Number(voutRaw)
-          if (txid && Number.isInteger(vout)) {
-            const beef = await getBeefForTxidCached(wallet, txid)
-            locking = beef.findAtomicTransaction(txid)?.outputs[vout]?.lockingScript?.toHex()
-          }
-        } catch {
-          // Fall through — stamp / canAcceptVerdict still guard demotion.
-        }
-      }
-      if (
-        (locking && isHardenedCovenantLockingScript(locking)) ||
-        getProvenVerdict(outpoint)?.tier === 'brc156'
-      ) {
-        console.info(
-          `[brc-156] skipping BRC-150 stamp for hardened tip ${outpoint.slice(0, 14)}…`,
-        )
-        clearVerificationProgress(outpoint)
-        const originTag =
-          getProvenVerdict(outpoint)?.origin ??
-          getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === outpoint)
-            ?.origin ??
-          proof.origin
-        if (originTag && getProvenVerdict(outpoint)?.tier !== 'brc156') {
-          void verifyItemAuthenticity(outpoint, originTag, wallet).catch(() => undefined)
-        }
-        continue
-      }
 
       console.info(
         `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
@@ -981,36 +925,9 @@ let listInFlight: Promise<Collectable[]> | null = null
 const LIST_TIMEOUT_MS = 20_000
 
 /**
- * Fetch BEEF, preferring the session cache. Retries briefly when the chain
- * tracker has not indexed a just-broadcast tx yet ("must be valid transaction
- * on chain") — that race was demoting hardened tips to BRC-150.
- */
-async function getBeefForAuthenticity(
-  wallet: ActiveWallet,
-  txid: string,
-  attempts = 4,
-): Promise<Awaited<ReturnType<typeof getBeefForTxidCached>>> {
-  let lastErr: unknown
-  for (let i = 0; i < attempts; i++) {
-    try {
-      return await getBeefForTxidCached(wallet, txid)
-    } catch (err) {
-      lastErr = err
-      const msg = err instanceof Error ? err.message : String(err)
-      if (!/must be valid transaction on chain/i.test(msg)) throw err
-      console.warn(
-        `[brc-156] beef for ${txid.slice(0, 12)}… not on chain yet — retry ${i + 1}/${attempts}`,
-      )
-      await new Promise((r) => setTimeout(r, 700 * (i + 1)))
-    }
-  }
-  throw lastErr
-}
-
-/**
- * Verify one tip's authenticity ladder and remember the verdict.
+ * Verify one tip's authenticity (BRC-150 only) and remember the verdict.
  *
- * Order: BRC-156 hardened bounded proof → BRC-150 v2 → unproven.
+ * Order: remittance (incl. parent soft-latch remittance) → lineage walk → unproven.
  * Scoped to a single outpoint so remittance BEEF never loads for a whole basket.
  */
 export async function verifyItemAuthenticity(
@@ -1019,12 +936,10 @@ export async function verifyItemAuthenticity(
   active?: ActiveWallet | null,
 ): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
-  // Only BRC-156 is a final short-circuit. BRC-150 on a hardened tip must be
-  // allowed to upgrade once Commit is indexed / local BEEF is remembered.
   const cached = getProvenVerdict(target)
-  if (cached?.tier === 'brc156') {
+  if (cached?.tier === 'brc150' || cached?.tier === 'brc156') {
     return {
-      tier: 'brc156',
+      tier: 'brc150',
       proven: true,
       reason: null,
       originScriptHash: cached.originScriptHash,
@@ -1058,147 +973,41 @@ export async function verifyItemAuthenticity(
       return { tier: 'unproven', proven: false, reason: 'Collectable output not found' }
     }
 
-    const tipLooksHardened =
-      Boolean(parseHardenedTipInstructions(match.customInstructions)) ||
-      isHardenedCovenantLockingScript(match.lockingScript)
-
-    // Soft / remittance tips that already have BRC-150 stay put.
-    if (cached?.tier === 'brc150' && !tipLooksHardened) {
-      return {
-        tier: 'brc150',
-        proven: true,
-        reason: null,
-        originScriptHash: cached.originScriptHash,
-      }
-    }
-
     await yieldToUi()
 
-    // 1) Hardened schema-2 when settle state + commit are available.
-    let hardened: {
-      proven: boolean
-      reason: string | null
-      originScriptHash?: string
-    } | null = null
-    let hardenedOrigin: string | undefined
-    const tipTxid = target.split('.')[0]
-    const tipVout = Number(target.split('.')[1])
-    if (tipTxid && Number.isInteger(tipVout) && tipLooksHardened) {
-      try {
-        const settleBeef = await getBeefForAuthenticity(wallet, tipTxid)
-        const settleTx = settleBeef.findAtomicTransaction(tipTxid)
-        if (settleTx) {
-          const outputs = settleTx.outputs.map((o) => ({
-            lockingScript: o.lockingScript?.toHex(),
-          }))
-          const state = findLatchStateForTip(outputs, tipVout)
-          if (state?.schema === 2 && state.mode === 'hardened' && state.commitTxid) {
-            if (state.origin) hardenedOrigin = state.origin
-            // Prefer commit already embedded in settle BEEF (post-send cache /
-            // atomic parents) — avoids a second chain race.
-            let commitTx = settleBeef.findAtomicTransaction(state.commitTxid)
-            if (!commitTx) {
-              const commitBeef = await getBeefForAuthenticity(wallet, state.commitTxid)
-              commitTx = commitBeef.findAtomicTransaction(state.commitTxid)
-            }
-            if (commitTx) {
-              let priorSettleTxHex: string | undefined
-              let proofCommitTxHex: string | undefined
-              if (state.proofOutpoint) {
-                const ctx = resolveAlternatingProofContext({
-                  commitTxHex: commitTx.toHex(),
-                  proofOutpoint: state.proofOutpoint,
-                })
-                if (ctx) {
-                  try {
-                    const [priorBeef, proofBeef] = await Promise.all([
-                      getBeefForAuthenticity(wallet, ctx.priorSettleTxid),
-                      getBeefForAuthenticity(wallet, ctx.proofCommitTxid),
-                    ])
-                    priorSettleTxHex = priorBeef
-                      .findAtomicTransaction(ctx.priorSettleTxid)
-                      ?.toHex()
-                    proofCommitTxHex = proofBeef
-                      .findAtomicTransaction(ctx.proofCommitTxid)
-                      ?.toHex()
-                  } catch {
-                    // Fall through — ladder continues with BRC-150.
-                  }
-                }
-              }
-              if (!priorSettleTxHex || !proofCommitTxHex) {
-                // An induction settle spends only its Commit token, so there is
-                // no alternating triangle to check. Verify that shape instead,
-                // then prove the lineage of the tip it inducted — continuity can
-                // only carry forward whatever induction bound.
-                hardened = await verifyInduction({
-                  wallet,
-                  settleTxHex: settleTx.toHex(),
-                  settleTxid: tipTxid,
-                  commitTxHex: commitTx.toHex(),
-                  commitTxid: state.commitTxid,
-                  target,
-                  state,
-                })
-              } else {
-                const bounded = verifyHardenedReceive({
-                  settleTxHex: settleTx.toHex(),
-                  tipVout,
-                  recipientPublicKeyHex: wallet.identityKey,
-                  state,
-                  commitTxHex: commitTx.toHex(),
-                  priorSettleTxHex,
-                  proofCommitTxHex,
-                  trustProvidedTxs: true,
-                })
-                if (bounded.proven && state.originScriptHash) {
-                  const pin = await verifyOriginScriptCommitment({
-                    origin: state.origin,
-                    expectedScriptHash: state.originScriptHash,
-                    chain: wallet.chain,
-                  })
-                  hardened = {
-                    proven: pin.proven,
-                    reason: pin.reason,
-                    originScriptHash: state.originScriptHash,
-                  }
-                } else {
-                  hardened = bounded
-                }
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('[brc-156] authenticity verify failed', target, err)
+    const custom = parseCustom(match.customInstructions)
+    const provenance = custom.provenance
+    let authenticity: AuthenticityResult = {
+      tier: 'unproven',
+      proven: false,
+      reason: 'No valid BRC-150 authenticity proof',
+    }
+    let provenOrigin: string | undefined
+
+    if (provenance != null) {
+      const remittance = await verifyProvenanceForHeldTip({
+        provenance,
+        heldOutpoint: target,
+        getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+      })
+      if (remittance.proven) {
+        authenticity = { tier: 'brc150', proven: true, reason: null }
+        provenOrigin =
+          remittance.origin ??
+          (typeof provenance === 'object' &&
+          provenance &&
+          typeof (provenance as { origin?: unknown }).origin === 'string'
+            ? (provenance as { origin: string }).origin
+            : undefined) ??
+          custom.origin ??
+          tag
+        console.info(
+          `[brc-150] remittance verified ${target.slice(0, 14)}… → ${String(provenOrigin).slice(0, 18)}…`,
+        )
       }
     }
 
-    // 2) BRC-150: the sender's remittance, or a lineage this device assembles.
-    const custom = parseCustom(match.customInstructions)
-    const provenance = custom.provenance
-    let authenticity = verifyAuthenticityLadder({
-      heldOutpoint: target,
-      hardened,
-      provenance,
-      indexerResolved: true,
-    })
-    let provenOrigin: string | undefined
-    if (
-      authenticity.proven &&
-      provenance &&
-      typeof provenance === 'object' &&
-      typeof (provenance as { origin?: unknown }).origin === 'string'
-    ) {
-      provenOrigin = (provenance as { origin: string }).origin
-    }
-    if (!provenOrigin && authenticity.proven) {
-      provenOrigin = hardenedOrigin ?? custom.origin ?? tag
-    }
-    // Hardened tips: do not stamp durable BRC-150 from a lineage walk while
-    // BRC-156 is still pending (commit not indexed). Leave unproven so the
-    // next open can upgrade to 156 — otherwise we stick on "Verified · BRC-150".
-    if (!authenticity.proven && !tipLooksHardened) {
+    if (!authenticity.proven) {
       const proof = await proveGenesisLineage({
         tipOutpoint: target,
         getBeef: (txid) => getBeefForTxidCached(wallet, txid),
@@ -1209,12 +1018,16 @@ export async function verifyItemAuthenticity(
       if (proof) {
         provenOrigin = proof.origin
         authenticity = { tier: 'brc150', proven: true, reason: null }
+        console.info(
+          `[brc-150] lineage proved ${target.slice(0, 14)}… in ${proof.hops} hop(s)`,
+        )
       }
-    } else if (!authenticity.proven && tipLooksHardened) {
-      console.info(
-        `[brc-156] tip ${target.slice(0, 12)}… still awaiting covenant proof — not demoting to BRC-150`,
-      )
     }
+
+    if (!provenOrigin && authenticity.proven) {
+      provenOrigin = custom.origin ?? tag
+    }
+
     rememberProvenVerdict(target, {
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: originKey(provenOrigin) } : {}),
@@ -1225,10 +1038,7 @@ export async function verifyItemAuthenticity(
     }
     if (authenticity.proven) {
       await yieldToUi()
-      announceItemVerified(
-        target,
-        authenticity.tier === 'brc156' ? 'BRC-156 covenant verified' : 'BRC-150 lineage proven',
-      )
+      announceItemVerified(target, 'BRC-150 tip-to-origin proven')
     }
     return authenticity
   } catch (err) {
@@ -1241,68 +1051,10 @@ export async function verifyItemAuthenticity(
   }
 }
 
-/**
- * Verify the induction hop and bind it to a real ordinal.
- *
- * The covenant checks alone say a tip was minted over a Commit that consumed one
- * particular satoshi; they cannot say that satoshi descends from the inscription
- * the state names. Nothing later in the covenant chain can supply that either, so
- * it is established once, here, by walking the inducted tip's lineage and holding
- * it to the pinned origin commitment.
- */
-async function verifyInduction(args: {
-  wallet: ActiveWallet
-  settleTxHex: string
-  settleTxid: string
-  commitTxHex: string
-  commitTxid: string
-  target: string
-  state: LatchState
-}): Promise<{ proven: boolean; reason: string | null; originScriptHash?: string }> {
-  const { wallet, state } = args
-  // Both bodies came from BEEFs the toolbox verified against headers.
-  const spv = new Set([args.settleTxid.toLowerCase(), args.commitTxid.toLowerCase()])
-  const bounded = verifyInductionBounded({
-    currentOutpoint: args.target,
-    currentSettleTxHex: args.settleTxHex,
-    currentCommitTxHex: args.commitTxHex,
-    spvVerifiedTxids: spv,
-    recipientPublicKeyHex: wallet.identityKey,
-  })
-  if (!bounded.proven || !bounded.inductedTipOutpoint) {
-    return { proven: false, reason: `induction: ${bounded.reason}` }
-  }
-  if (!state.originScriptHash) {
-    return { proven: false, reason: 'induction: state pins no originScriptHash' }
-  }
-
-  const lineage = await proveGenesisLineage({
-    tipOutpoint: bounded.inductedTipOutpoint,
-    getBeef: (txid) => getBeefForTxidCached(wallet, txid),
-  }).catch(() => null)
-  if (!lineage) {
-    return { proven: false, reason: 'induction: inducted tip lineage unproven' }
-  }
-  if (lineage.origin !== toUnderscoreOutpoint(state.origin)) {
-    return { proven: false, reason: 'induction: proven origin is not the claimed origin' }
-  }
-
-  const pin = await verifyOriginScriptCommitment({
-    origin: state.origin,
-    expectedScriptHash: state.originScriptHash,
-    chain: wallet.chain,
-  })
-  return {
-    proven: pin.proven,
-    reason: pin.proven ? null : `induction: ${pin.reason}`,
-    originScriptHash: state.originScriptHash,
-  }
-}
-
 function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): void {
   const target = normalizeOutpoint(outpoint)
   // Durable provenCache is the only authenticity SSoT. Never paint Unverified
-  // over an existing BRC-150/156 tier (that flip-flopped the badge on every open).
+  // over an existing proven tier. Product badge is always BRC-150.
   const verdict = getProvenVerdict(target)
   if (verdict?.tier === 'brc150' || verdict?.tier === 'brc156') {
     if (result.proven) clearAwaitingVerification(target)
@@ -1310,7 +1062,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
       !cachedCollectables.some(
         (c) =>
           c.outpoint === target &&
-          (c.proven !== true || c.authenticity !== verdict.tier),
+          (c.proven !== true || c.authenticity !== 'brc150'),
       )
     ) {
       return
@@ -1318,7 +1070,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
     setCollectablesCache(
       cachedCollectables.map((c) =>
         c.outpoint === target
-          ? { ...c, proven: true, authenticity: verdict.tier }
+          ? { ...c, proven: true, authenticity: 'brc150' }
           : c,
       ),
     )
@@ -1332,7 +1084,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
     !cachedCollectables.some(
       (c) =>
         c.outpoint === target &&
-        (c.proven !== true || c.authenticity !== painted.tier),
+        (c.proven !== true || c.authenticity !== 'brc150'),
     )
   ) {
     return
@@ -1340,7 +1092,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
   setCollectablesCache(
     cachedCollectables.map((c) =>
       c.outpoint === target
-        ? { ...c, proven: true, authenticity: painted.tier }
+        ? { ...c, proven: true, authenticity: 'brc150' }
         : c,
     ),
   )
@@ -1973,11 +1725,24 @@ export async function sendCollectable(args: {
     } tipKind=${tipKind.kind}`,
   )
 
-  const finishSend = async (txid: string): Promise<{ txid: string }> => {
+  const finishSend = async (
+    txid: string,
+    opts?: { remittanceBuilt?: boolean },
+  ): Promise<{ txid: string }> => {
     markItemsSent([
       { outpoint, txid },
       ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
     ])
+    // Soft-latch remittance proves the spent tip; the new tip inherits that
+    // proof on receive via verifyProvenanceForHeldTip. Pin BRC-150 for the
+    // sender's new tip when we built remittance (self-pay / local cache).
+    if (opts?.remittanceBuilt) {
+      rememberProvenVerdict(`${txid.trim().toLowerCase()}.0`, {
+        tier: 'brc150',
+        origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
+        verifiedAt: Date.now(),
+      })
+    }
     invalidateLiveOneSatOutpoints()
     await relinquishSpentOutputs(wallet, [
       { outpoint, basket: '1sat' },
@@ -2245,8 +2010,8 @@ export async function sendCollectable(args: {
   }
 
   softChart.stop()
-  return await finishSend(txid)
-    } finally {
+  return await finishSend(txid, { remittanceBuilt: Boolean(provenance) })
+} finally {
       clearPaymentProgress()
     }
   })

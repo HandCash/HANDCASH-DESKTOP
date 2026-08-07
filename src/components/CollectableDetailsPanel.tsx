@@ -77,18 +77,11 @@ function authenticityView(
   item: Collectable,
   verification: VerificationProgress,
 ): { label: string; tone: string; title: string } {
-  if (item.authenticity === 'brc156') {
-    return {
-      label: 'Verified · BRC-156',
-      tone: 'brc156',
-      title: 'Hardened BRC-156 covenant induction verified in constant time',
-    }
-  }
-  if (item.authenticity === 'brc150') {
+  if (item.authenticity === 'brc150' || item.authenticity === 'brc156') {
     return {
       label: 'Verified · BRC-150',
       tone: 'brc150',
-      title: 'BRC-150 full tip-to-origin BEEF path verified',
+      title: 'BRC-150 tip-to-origin lineage verified',
     }
   }
   if (isOutpointVerifying(item.outpoint, verification)) {

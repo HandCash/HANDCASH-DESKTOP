@@ -103,22 +103,14 @@ export async function verifyOriginScriptCommitment(args: {
 
 export function verifyAuthenticityLadder(args: {
   heldOutpoint: string
-  /** Result of bounded schema-2 covenant verification, when state is present. */
+  /** Ignored — product authenticity is BRC-150 only. */
   hardened?: HardenedAuthenticityResult | null
   /** BRC-150 v2 remittance, when available. */
   provenance?: unknown
   /** True only when identity was recovered through the final discovery fallback. */
   indexerResolved?: boolean
 }): AuthenticityResult {
-  if (args.hardened?.proven) {
-    return {
-      tier: 'brc156',
-      proven: true,
-      reason: null,
-      originScriptHash: args.hardened.originScriptHash,
-    }
-  }
-
+  void args.hardened
   if (args.provenance != null) {
     const v2 = verifyProvenanceV2(args.provenance, args.heldOutpoint)
     if (v2.proven) {
@@ -126,16 +118,12 @@ export function verifyAuthenticityLadder(args: {
     }
   }
 
-  const hardenedReason =
-    args.hardened && !args.hardened.proven ? `BRC-156: ${args.hardened.reason}` : null
   return {
     tier: 'unproven',
     proven: false,
-    reason:
-      hardenedReason ??
-      (args.indexerResolved
-        ? 'Identity resolved by indexer; no cryptographic authenticity proof'
-        : 'No valid BRC-156 or BRC-150 authenticity proof'),
+    reason: args.indexerResolved
+      ? 'Identity resolved by indexer; no BRC-150 authenticity proof'
+      : 'No valid BRC-150 authenticity proof',
   }
 }
 

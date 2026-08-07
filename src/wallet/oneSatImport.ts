@@ -45,19 +45,7 @@ import {
   latchOutputTags,
   parseLatchStateScript,
   resolveOutpointRef,
-  toUnderscoreOutpoint as normalizeUnderscoreOutpoint,
 } from './oneSatLatch'
-import {
-  isHardenedCovenantLockingScript,
-  verifyHardenedReceive,
-  verifyInductionBounded,
-  resolveAlternatingProofContext,
-} from './oneSatHardenedReceive'
-import {
-  authenticityResultToVerdict,
-  verifyAuthenticityLadder,
-  verifyOriginScriptCommitment,
-} from './oneSatAuthenticity'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -789,24 +777,6 @@ async function rebuildBrc150Identity(
     const held = `${txid}.${vout}`
     const proof = rebuildProvenanceV2FromBeef(beef, held)
     if (!proof) return null
-    const tipLock = beef.findAtomicTransaction(txid)?.outputs[vout]?.lockingScript?.toHex()
-    if (tipLock && isHardenedCovenantLockingScript(tipLock)) {
-      console.info(
-        `[brc-156] rebuilt origin for hardened tip ${held.slice(0, 14)}… — not stamping BRC-150`,
-      )
-      const resolvedHardened = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
-      if (
-        resolvedHardened &&
-        (resolvedHardened.name || resolvedHardened.mimeType || resolvedHardened.traits.length > 0)
-      ) {
-        return resolvedHardened
-      }
-      return {
-        origin: proof.origin,
-        traits: [],
-        extras: [],
-      }
-    }
     rememberProvenVerdict(held, {
       tier: 'brc150',
       origin: proof.origin,
@@ -870,23 +840,6 @@ async function proveLineageIdentity(
       },
     })
     if (!proof) return null
-    const tipTx = await withTimeout(getBeefForTxidCached(wallet, txid), BEEF_TIMEOUT_MS)
-      .then((beef) => beef.findAtomicTransaction(txid))
-      .catch(() => null)
-    const tipLock = tipTx?.outputs[vout]?.lockingScript?.toHex()
-    if (tipLock && isHardenedCovenantLockingScript(tipLock)) {
-      console.info(
-        `[brc-156] lineage walk found origin for hardened tip ${held.slice(0, 14)}… — not stamping BRC-150`,
-      )
-      const resolvedHardened = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
-      if (
-        resolvedHardened &&
-        (resolvedHardened.name || resolvedHardened.mimeType || resolvedHardened.traits.length > 0)
-      ) {
-        return resolvedHardened
-      }
-      return { origin: proof.origin, traits: [], extras: [] }
-    }
     console.info(
       `[brc-150] proved landing ${held} back to ${proof.origin} in ${proof.hops} hop(s)`,
     )
@@ -911,164 +864,6 @@ async function proveLineageIdentity(
   }
 }
 
-/**
- * Attempt schema-2 hardened induction before BRC-150 / indexer.
- * On success caches `brc156` + originScriptHash.
- */
-async function tryHardenedReceiveIdentity(
-  txid: string,
-  vout: number,
-  chain: Chain,
-): Promise<ResolvedInscription | null> {
-  const hex = await fetchRawTxHex(txid, chain)
-  if (!hex) return null
-  let tx: Transaction
-  try {
-    tx = Transaction.fromHex(hex)
-  } catch {
-    return null
-  }
-  const outputs = tx.outputs.map((o) => ({
-    lockingScript: o.lockingScript?.toHex(),
-  }))
-  const state = findLatchStateForTip(outputs, vout)
-  if (!state || state.schema < 2 || state.mode !== 'hardened' || !state.commitTxid) {
-    return null
-  }
-
-  const commitHex = await fetchRawTxHex(state.commitTxid, chain)
-  if (!commitHex) return null
-
-  const wallet = getActiveWallet()
-  const recipientKey = wallet?.identityKey
-  if (!recipientKey) return null
-
-  let priorSettleTxHex: string | undefined
-  let proofCommitTxHex: string | undefined
-  if (state.proofOutpoint) {
-    const ctx = resolveAlternatingProofContext({
-      commitTxHex: commitHex,
-      proofOutpoint: state.proofOutpoint,
-    })
-    if (ctx) {
-      const [prior, proof] = await Promise.all([
-        fetchRawTxHex(ctx.priorSettleTxid, chain),
-        fetchRawTxHex(ctx.proofCommitTxid, chain),
-      ])
-      priorSettleTxHex = prior ?? undefined
-      proofCommitTxHex = proof ?? undefined
-    }
-  }
-  const held = `${txid}.${vout}`
-  let hardened: {
-    proven: boolean
-    reason: string | null
-    originScriptHash?: string
-  }
-
-  if (priorSettleTxHex && proofCommitTxHex) {
-    const bounded = verifyHardenedReceive({
-      settleTxHex: hex,
-      tipVout: vout,
-      recipientPublicKeyHex: recipientKey,
-      state,
-      commitTxHex: commitHex,
-      priorSettleTxHex,
-      proofCommitTxHex,
-      trustProvidedTxs: true,
-    })
-    let originPin = bounded
-    if (bounded.proven && state.originScriptHash) {
-      originPin = await verifyOriginScriptCommitment({
-        origin: state.origin,
-        expectedScriptHash: state.originScriptHash,
-        chain,
-      })
-    }
-    hardened = {
-      proven: Boolean(bounded.proven && originPin.proven),
-      reason: !bounded.proven
-        ? bounded.reason
-        : !originPin.proven
-          ? originPin.reason
-          : null,
-      originScriptHash: state.originScriptHash,
-    }
-  } else {
-    // Induction hop: Settle spends only the Commit token — no delayed-proof
-    // triangle. Returning null here was why every first hardened transfer
-    // (including a self-send) landed as BRC-150.
-    const settleId = txid.trim().toLowerCase()
-    const commitId = state.commitTxid.trim().toLowerCase()
-    const bounded = verifyInductionBounded({
-      currentOutpoint: held,
-      currentSettleTxHex: hex,
-      currentCommitTxHex: commitHex,
-      spvVerifiedTxids: new Set([settleId, commitId]),
-      recipientPublicKeyHex: recipientKey,
-    })
-    if (!bounded.proven || !bounded.inductedTipOutpoint || !state.originScriptHash) {
-      console.warn(
-        '[brc-156] induction receive verify failed',
-        held,
-        bounded.reason ?? 'missing originScriptHash',
-      )
-      return null
-    }
-    const lineage = await proveGenesisLineage({
-      tipOutpoint: bounded.inductedTipOutpoint,
-      getBeef: async (hop) => {
-        const active = getActiveWallet()
-        if (!active?.services?.getBeefForTxid) throw new Error('offline')
-        return getBeefForTxidCached(active, hop)
-      },
-    }).catch(() => null)
-    if (!lineage || lineage.origin !== normalizeUnderscoreOutpoint(state.origin)) {
-      console.warn(
-        '[brc-156] induction lineage mismatch',
-        held,
-        lineage?.origin,
-        state.origin,
-      )
-      return null
-    }
-    const pin = await verifyOriginScriptCommitment({
-      origin: state.origin,
-      expectedScriptHash: state.originScriptHash,
-      chain,
-    })
-    hardened = {
-      proven: pin.proven,
-      reason: pin.proven ? null : pin.reason,
-      originScriptHash: state.originScriptHash,
-    }
-  }
-
-  const ladder = verifyAuthenticityLadder({
-    heldOutpoint: held,
-    hardened,
-  })
-  rememberProvenVerdict(held, {
-    ...authenticityResultToVerdict(ladder),
-    origin: normalizeUnderscoreOutpoint(state.origin),
-  })
-
-  if (!ladder.proven) {
-    console.warn('[brc-156] hardened receive verify failed', held, ladder.reason)
-    return null
-  }
-
-  announceItemVerified(held, 'BRC-156 covenant verified')
-  console.info(`[brc-156] verified hardened landing ${held} → ${state.origin}`)
-  return {
-    origin: state.origin,
-    name: state.name,
-    app: state.app,
-    mimeType: state.mimeType,
-    traits: [],
-    extras: [],
-  }
-}
 
 /**
  * Split scanned UTXOs.
@@ -1229,24 +1024,11 @@ export async function classifyLegacyUtxos(
           (latchProven || resolveBudget > 0)
         ) {
           if (!latchProven) resolveBudget--
-          // Ordered authenticity/identity fallback:
-          // 1. schema-2 BRC-156 bounded verifier;
-          // 2. rebuild complete BRC-150 ancestry from wallet BEEF;
-          // 3. only then ask indexers/chain walkers, which remains unproven.
-          // Hardened induction needs the settle body, and asking for it costs a
-          // round trip. A hardened settle always pays the recipient a beacon in
-          // the same transaction, so either beacon discovery already fetched the
-          // body (cached) or the beacon is sitting in this very scan. Anything
-          // else is stray dust, and paying a fetch per stray output per sync is
-          // what made receiving feel stuck.
-          const hardenedCandidate =
-            peekRawTxHex(u.txid) != null || latchTxids.has(u.txid.trim().toLowerCase())
-          const hardened = hardenedCandidate
-            ? await tryHardenedReceiveIdentity(u.txid, u.vout, chain)
-            : null
-          const brc150 = hardened ? null : await rebuildBrc150Identity(u.txid, u.vout)
+          // Authenticity/identity (BRC-150 only):
+          // 1. rebuild complete BRC-150 ancestry from wallet BEEF / remittance;
+          // 2. then ask indexers/chain walkers (unproven until lineage).
+          const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
           let fetched =
-            hardened ??
             brc150 ??
             (latchProven
               ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
