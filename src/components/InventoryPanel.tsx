@@ -13,6 +13,12 @@ import {
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
+import {
+  getVerificationProgress,
+  isOutpointVerifying,
+  subscribeVerificationProgress,
+  type VerificationProgress,
+} from '../wallet/verificationProgress'
 import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
@@ -49,7 +55,13 @@ function useChunkedCount(total: number): number {
   return shown
 }
 
-function CollectableGridItem({ item }: { item: Collectable }) {
+function CollectableGridItem({
+  item,
+  verifying,
+}: {
+  item: Collectable
+  verifying: boolean
+}) {
   return (
     <li className="collection-grid-card collectable-card">
       <button
@@ -72,6 +84,11 @@ function CollectableGridItem({ item }: { item: Collectable }) {
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
+          {verifying ? (
+            <span className="collectable-authenticity-verifying" aria-live="polite">
+              Verifying…
+            </span>
+          ) : null}
         </div>
         <strong className="collection-grid-name" title={item.name}>
           {item.name}
@@ -100,7 +117,13 @@ function CollectableGridItem({ item }: { item: Collectable }) {
   )
 }
 
-function CollectableListItem({ item }: { item: Collectable }) {
+function CollectableListItem({
+  item,
+  verifying,
+}: {
+  item: Collectable
+  verifying: boolean
+}) {
   return (
     <li className="connected-app-row collectable-row">
       <button
@@ -126,7 +149,11 @@ function CollectableListItem({ item }: { item: Collectable }) {
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{item.name}</strong>
-          {item.app ? <span className="connected-app-host">{item.app}</span> : null}
+          {verifying ? (
+            <span className="connected-app-host history-verifying">Verifying…</span>
+          ) : item.app ? (
+            <span className="connected-app-host">{item.app}</span>
+          ) : null}
         </div>
       </button>
       <button
@@ -155,8 +182,12 @@ export function InventoryPanel() {
   const [awaitingFirst, setAwaitingFirst] = useState(
     () => !areCollectablesHydrated() && getCachedCollectables().length === 0,
   )
+  const [verification, setVerification] = useState<VerificationProgress>(() =>
+    getVerificationProgress(),
+  )
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
+  useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(
     () =>
       subscribeCollectables((next) => {
@@ -255,13 +286,21 @@ export function InventoryPanel() {
         view === 'grid' ? (
           <ul className="collection-grid">
             {visibleItems.map((item) => (
-              <CollectableGridItem key={item.outpoint} item={item} />
+              <CollectableGridItem
+                key={item.outpoint}
+                item={item}
+                verifying={isOutpointVerifying(item.outpoint, verification)}
+              />
             ))}
           </ul>
         ) : (
           <ul className="connected-app-list">
             {visibleItems.map((item) => (
-              <CollectableListItem key={item.outpoint} item={item} />
+              <CollectableListItem
+                key={item.outpoint}
+                item={item}
+                verifying={isOutpointVerifying(item.outpoint, verification)}
+              />
             ))}
           </ul>
         )

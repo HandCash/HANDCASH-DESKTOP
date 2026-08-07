@@ -162,6 +162,18 @@ export function DeferredImage({
     // Dropping src frees the decoded bitmap; scrolling back re-fetches from cache.
     const releaseObserver = new IntersectionObserver(
       (entries) => {
+        // `[hidden]` / `display:none` collapses the frame to a 0×0 rect and
+        // reports not-intersecting. That is a keep-alive tab, not a scroll-away
+        // — releasing here is what made Activity's top thumbnail blink every
+        // time the tab was re-shown.
+        if (
+          entries.every((e) => {
+            const r = e.boundingClientRect
+            return r.width <= 0 && r.height <= 0
+          })
+        ) {
+          return
+        }
         if (entries.every((e) => !e.isIntersecting)) mark(false)
       },
       { rootMargin: `${RELEASE_MARGIN_PX}px` },
@@ -226,8 +238,12 @@ export function DeferredImage({
   }, [status, releaseSlotIfHeld])
 
   useEffect(() => {
-    if (!near || !loadSlot) setStatus('loading')
-  }, [near, loadSlot])
+    if (near && loadSlot) return
+    // A URL that already decoded this session must not blink a skeleton when
+    // its frame briefly loses a slot (tab hide, slot churn). Keep it ready.
+    if (typeof src === 'string' && src !== '' && decodedOnce.has(src)) return
+    setStatus('loading')
+  }, [near, loadSlot, src])
 
   useEffect(() => {
     if (status !== 'ready') return

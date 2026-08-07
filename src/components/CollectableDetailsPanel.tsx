@@ -3,10 +3,17 @@ import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
   getCollectable,
+  requestCollectableVerification,
   subscribeCollectables,
   type Collectable,
   type CollectableTrait,
 } from '../wallet/collectables'
+import {
+  getVerificationProgress,
+  isOutpointVerifying,
+  subscribeVerificationProgress,
+  type VerificationProgress,
+} from '../wallet/verificationProgress'
 import { openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectablesIcon, SendIcon } from './icons'
@@ -61,9 +68,48 @@ function TraitStrip({ title, traits }: { title: string; traits: CollectableTrait
   )
 }
 
+function authenticityView(
+  item: Collectable,
+  verification: VerificationProgress,
+): { label: string; tone: string; title: string } {
+  if (item.authenticity === 'brc156') {
+    return {
+      label: 'Verified · BRC-156',
+      tone: 'brc156',
+      title: 'Hardened BRC-156 covenant induction verified in constant time',
+    }
+  }
+  if (item.authenticity === 'brc150') {
+    return {
+      label: 'Verified · BRC-150',
+      tone: 'brc150',
+      title: 'BRC-150 full tip-to-origin BEEF path verified',
+    }
+  }
+  if (isOutpointVerifying(item.outpoint, verification)) {
+    return {
+      label:
+        verification.phase === 'identifying'
+          ? 'Identifying…'
+          : 'Verifying… · BRC-150',
+      tone: 'verifying',
+      title: verification.detail ?? 'Proving this item’s identity on chain',
+    }
+  }
+  return {
+    label: 'Unverified identity',
+    tone: 'unproven',
+    title:
+      'Identity is a chain/indexer claim and has not been cryptographically proven',
+  }
+}
+
 export function CollectableDetailsPanel({ outpoint }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [loading, setLoading] = useState(true)
+  const [verification, setVerification] = useState(() => getVerificationProgress())
+
+  useEffect(() => subscribeVerificationProgress(setVerification), [])
 
   useEffect(() => {
     let cancelled = false
@@ -94,6 +140,13 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       }),
     [outpoint],
   )
+
+  // Opening an unverified tip jumps it to the front of the lineage queue so the
+  // badge can move from "Unverified" to "Verifying…" while the user is looking.
+  useEffect(() => {
+    if (!item || item.authenticity !== 'unproven') return
+    requestCollectableVerification(item.outpoint)
+  }, [item?.outpoint, item?.authenticity])
 
   const copy = async (label: string, value: string) => {
     await copyText(value, { label })
@@ -145,6 +198,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     openSendCollectable(item.outpoint)
   }
 
+  const authenticity = authenticityView(item, verification)
+
   return (
     <div
       className="nav-child-panel collectable-details"
@@ -168,20 +223,10 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           <h3 className="collectable-details-name">{item.name}</h3>
           {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
           <p
-            className={`collectable-authenticity collectable-authenticity-${item.authenticity}`}
-            title={
-              item.authenticity === 'brc156'
-                ? 'Hardened BRC-156 covenant induction verified in constant time'
-                : item.authenticity === 'brc150'
-                  ? 'BRC-150 full tip-to-origin BEEF path verified'
-                  : 'Identity is a chain/indexer claim and has not been cryptographically proven'
-            }
+            className={`collectable-authenticity collectable-authenticity-${authenticity.tone}`}
+            title={authenticity.title}
           >
-            {item.authenticity === 'brc156'
-              ? 'Verified · BRC-156'
-              : item.authenticity === 'brc150'
-                ? 'Verified · BRC-150'
-                : 'Unverified identity'}
+            {authenticity.label}
           </p>
           <div className="actions collectable-details-actions">
             <button type="button" className="btn btn-primary btn-icon" onClick={startSend}>

@@ -40,6 +40,11 @@ import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurre
 import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { sendSatsToAddress } from '../wallet/sendPayment'
+import {
+  getPaymentProgress,
+  subscribePaymentProgress,
+  type PaymentProgress,
+} from '../wallet/paymentProgress'
 import { subscribeMessageFocus, takeMessageFocus } from '../wallet/messageFocus'
 import { copyText } from '../wallet/clipboard'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
@@ -155,10 +160,12 @@ function applyPaymentVerb(
   return { draft, cursor: `/${verb}`.length + lead.cursor }
 }
 
-function payStatusLabel(msg: ChatMessage): string {
+function payStatusLabel(msg: ChatMessage, payment: PaymentProgress): string {
   const st = msg.meta?.payStatus
   if (st === 'pending') return 'Confirm to send'
-  if (st === 'sending') return 'Sending…'
+  if (st === 'sending') {
+    return payment.phase !== 'idle' && payment.label ? payment.label : 'Sending…'
+  }
   if (st === 'sent') {
     return msg.meta?.txid ? `Sent · ${shortenTxid(msg.meta.txid)}` : 'Sent'
   }
@@ -191,6 +198,12 @@ function MessageBubble({
   onEscrowDecline?: (id: string) => void
   onBindReply?: (id: string) => void
 }) {
+  const [paymentProgress, setPaymentProgressState] = useState(() => getPaymentProgress())
+  useEffect(() => {
+    if (msg.meta?.payStatus !== 'sending') return
+    return subscribePaymentProgress(setPaymentProgressState)
+  }, [msg.meta?.payStatus])
+
   if (msg.direction === 'system' || msg.kind === 'system' || msg.kind === 'whois') {
     return (
       <Thread.Item state="command-result" className="chat-system" role="status">
@@ -302,7 +315,7 @@ function MessageBubble({
                       className="chat-card-status"
                       data-status={payStatus || 'claimed'}
                     >
-                      {payStatusLabel(msg)}
+                      {payStatusLabel(msg, paymentProgress)}
                     </span>
                   ) : null}
                 </Thread.CardTitle>
@@ -346,7 +359,7 @@ function MessageBubble({
                   <span className="chat-card-badge">Escrow</span>
                   {payStatus ? (
                     <span className="chat-card-status" data-status={payStatus}>
-                      {payStatusLabel(msg)}
+                      {payStatusLabel(msg, paymentProgress)}
                     </span>
                   ) : null}
                 </Thread.CardTitle>

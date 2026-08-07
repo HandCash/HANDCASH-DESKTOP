@@ -29,6 +29,15 @@ export const FLASH_MAX_AGE_MS = 10 * 60_000
 
 let seen: Map<string, true> | null = null
 let ready = false
+/**
+ * Keys already flashed this process.
+ *
+ * Durable storage can lag or miss a write on a phone, and remounting Activity
+ * would otherwise re-ask `shouldAnnounceActivity` for a tip still inside the
+ * recency window. Once a key has flashed (or been suppressed) in this session,
+ * it never flashes again until the app restarts.
+ */
+const announcedThisSession = new Set<string>()
 
 function load(): Map<string, true> {
   if (seen) return seen
@@ -87,9 +96,15 @@ export function shouldAnnounceActivity(
   at: number,
   now = Date.now(),
 ): boolean {
+  if (!key || announcedThisSession.has(key)) return false
   if (!activitySeenReady()) return false
   if (!Number.isFinite(at) || now - at > FLASH_MAX_AGE_MS) return false
   return !hasSeenActivity(key)
+}
+
+/** Record that this key's announce decision was taken (flash or suppress). */
+export function noteActivityAnnounced(key: string): void {
+  if (key) announcedThisSession.add(key)
 }
 
 /** Record keys the feed has shown, newest first. */
@@ -117,4 +132,5 @@ export function markActivitySeen(ids: readonly string[]): void {
 export function resetActivitySeenForTests(): void {
   seen = null
   ready = false
+  announcedThisSession.clear()
 }

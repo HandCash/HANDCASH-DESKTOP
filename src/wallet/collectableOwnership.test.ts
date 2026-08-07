@@ -1,8 +1,10 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isOwnershipUnjudged,
   liveOneSatKeys,
   outpointKey,
   partitionByLiveUtxos,
+  OWNERSHIP_SETTLE_GRACE_MS,
 } from './collectableOwnership'
 
 const TX = 'a'.repeat(64)
@@ -45,5 +47,39 @@ describe('collectableOwnership', () => {
     )
     expect(owned).toHaveLength(1)
     expect(spentOrMissing).toHaveLength(0)
+  })
+
+  it('spares a tip newer than the live scan', () => {
+    expect(
+      isOwnershipUnjudged({
+        firstSeenAt: 2_000,
+        liveAt: 1_000,
+        now: 2_500,
+        graceMs: OWNERSHIP_SETTLE_GRACE_MS,
+      }),
+    ).toBe(true)
+  })
+
+  it('spares a tip inside settle grace even when the scan is newer', () => {
+    // Self-send: tip lands in the basket, then a lagging address scan omits it.
+    expect(
+      isOwnershipUnjudged({
+        firstSeenAt: 1_000,
+        liveAt: 2_000,
+        now: 1_000 + 60_000,
+        graceMs: OWNERSHIP_SETTLE_GRACE_MS,
+      }),
+    ).toBe(true)
+  })
+
+  it('judges a tip once settle grace has elapsed and the scan is newer', () => {
+    expect(
+      isOwnershipUnjudged({
+        firstSeenAt: 1_000,
+        liveAt: 1_000 + OWNERSHIP_SETTLE_GRACE_MS + 1,
+        now: 1_000 + OWNERSHIP_SETTLE_GRACE_MS + 1,
+        graceMs: OWNERSHIP_SETTLE_GRACE_MS,
+      }),
+    ).toBe(false)
   })
 })

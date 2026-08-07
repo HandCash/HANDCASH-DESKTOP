@@ -10,6 +10,11 @@ import {
   subscribeCloudBackupHealth,
   type CloudBackupHealth,
 } from '../wallet/cloudBackupHealth'
+import {
+  getPaymentProgress,
+  subscribePaymentProgress,
+  type PaymentProgress,
+} from '../wallet/paymentProgress'
 
 export type WalletSession =
   | 'boot'
@@ -41,6 +46,7 @@ function resolveStatus(
   cloud: CloudBackupHealth,
   networkOnline: boolean,
   bridgeOnline: boolean,
+  payment: PaymentProgress,
 ): StatusView {
   if (session === 'boot') {
     return { label: 'Opening', tone: 'busy', detail: 'Starting HandCash' }
@@ -76,8 +82,24 @@ function resolveStatus(
       } This device is fine — only the off-device history copy is behind.`,
     }
   }
+  // Live payment phases outrank the generic "Sending" session bit — the user
+  // asked to see preparing / signing / broadcasting while a transfer runs.
+  if (payment.phase !== 'idle' && payment.label) {
+    return {
+      label: payment.label.replace(/…$/, ''),
+      tone: 'busy',
+      detail: payment.detail,
+    }
+  }
   if (session === 'sending') {
     return { label: 'Sending', tone: 'busy', detail: 'Broadcasting payment' }
+  }
+  if (health.phase === 'syncing') {
+    return {
+      label: health.label ?? 'Syncing…',
+      tone: 'busy',
+      detail: health.message ?? 'Refreshing against the network',
+    }
   }
   if (session === 'locked') {
     return { label: 'Locked', tone: 'muted', detail: 'Unlock to spend or connect apps' }
@@ -180,6 +202,7 @@ function sessionFromMachine(value: unknown): WalletSession {
 export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props) {
   const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
   const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
+  const [payment, setPayment] = useState<PaymentProgress>(() => getPaymentProgress())
   const [networkOnline, setNetworkOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   )
@@ -187,6 +210,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
 
   useEffect(() => subscribeSyncHealth(setHealth), [])
   useEffect(() => subscribeCloudBackupHealth(setCloud), [])
+  useEffect(() => subscribePaymentProgress(setPayment), [])
 
   useEffect(() => {
     const sync = () => setNetworkOnline(navigator.onLine)
@@ -205,16 +229,29 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     return () => window.clearInterval(id)
   }, [session])
 
-  const view = resolveStatus(session, health, cloud, networkOnline, bridgeOnline)
+  const view = resolveStatus(
+    session,
+    health,
+    cloud,
+    networkOnline,
+    bridgeOnline,
+    payment,
+  )
   const canManualSync =
-    (session === 'ready' || session === 'sending') && networkOnline && Boolean(onManualSync)
-  const display = manualBusy
-    ? {
-        label: 'Syncing…',
-        tone: 'busy' as const,
-        detail: 'Refreshing funds and history against the network',
-      }
-    : view
+    (session === 'ready' || session === 'sending') &&
+    networkOnline &&
+    Boolean(onManualSync) &&
+    payment.phase === 'idle'
+  // Prefer live sync/payment labels over the generic manual busy flag — those
+  // already say which layer is working.
+  const display =
+    manualBusy && health.phase !== 'syncing' && payment.phase === 'idle'
+      ? {
+          label: 'Syncing…',
+          tone: 'busy' as const,
+          detail: 'Refreshing funds and history against the network',
+        }
+      : view
 
   const handleManualSync = () => {
     if (!canManualSync || manualBusy || !onManualSync) return
@@ -240,7 +277,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
         {...pillProps}
         className="status-pill status-pill-btn"
         aria-label={`${display.label} — tap to refresh wallet`}
-        disabled={manualBusy}
+        disabled={manualBusy || health.phase === 'syncing'}
         onClick={handleManualSync}
       >
         <span className="status-dot" data-tone={display.tone} />
@@ -257,4 +294,4 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   )
 }
 
-export { sessionFromMachine }
+export { sessionFromMachine, resolveStatus }

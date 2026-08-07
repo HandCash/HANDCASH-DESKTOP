@@ -44,8 +44,13 @@ import {
   latchOutputTags,
   parseLatchStateScript,
   resolveOutpointRef,
+  toUnderscoreOutpoint,
 } from './oneSatLatch'
-import { verifyHardenedReceive, resolveAlternatingProofContext } from './oneSatHardenedReceive'
+import {
+  verifyHardenedReceive,
+  verifyInductionBounded,
+  resolveAlternatingProofContext,
+} from './oneSatHardenedReceive'
 import {
   authenticityResultToVerdict,
   verifyAuthenticityLadder,
@@ -895,32 +900,33 @@ async function tryHardenedReceiveIdentity(
       proofCommitTxHex = proof ?? undefined
     }
   }
-  // Without the delayed-proof Tx set, fall through to BRC-150 / indexer.
-  if (!priorSettleTxHex || !proofCommitTxHex) return null
-
-  const bounded = verifyHardenedReceive({
-    settleTxHex: hex,
-    tipVout: vout,
-    recipientPublicKeyHex: recipientKey,
-    state,
-    commitTxHex: commitHex,
-    priorSettleTxHex,
-    proofCommitTxHex,
-    trustProvidedTxs: true,
-  })
-
-  let originPin = bounded
-  if (bounded.proven && state.originScriptHash) {
-    originPin = await verifyOriginScriptCommitment({
-      origin: state.origin,
-      expectedScriptHash: state.originScriptHash,
-      chain,
-    })
+  const held = `${txid}.${vout}`
+  let hardened: {
+    proven: boolean
+    reason: string | null
+    originScriptHash?: string
   }
 
-  const ladder = verifyAuthenticityLadder({
-    heldOutpoint: `${txid}.${vout}`,
-    hardened: {
+  if (priorSettleTxHex && proofCommitTxHex) {
+    const bounded = verifyHardenedReceive({
+      settleTxHex: hex,
+      tipVout: vout,
+      recipientPublicKeyHex: recipientKey,
+      state,
+      commitTxHex: commitHex,
+      priorSettleTxHex,
+      proofCommitTxHex,
+      trustProvidedTxs: true,
+    })
+    let originPin = bounded
+    if (bounded.proven && state.originScriptHash) {
+      originPin = await verifyOriginScriptCommitment({
+        origin: state.origin,
+        expectedScriptHash: state.originScriptHash,
+        chain,
+      })
+    }
+    hardened = {
       proven: Boolean(bounded.proven && originPin.proven),
       reason: !bounded.proven
         ? bounded.reason
@@ -928,19 +934,72 @@ async function tryHardenedReceiveIdentity(
           ? originPin.reason
           : null,
       originScriptHash: state.originScriptHash,
-    },
+    }
+  } else {
+    // Induction hop: Settle spends only the Commit token — no delayed-proof
+    // triangle. Returning null here was why every first hardened transfer
+    // (including a self-send) landed as BRC-150.
+    const settleId = txid.trim().toLowerCase()
+    const commitId = state.commitTxid.trim().toLowerCase()
+    const bounded = verifyInductionBounded({
+      currentOutpoint: held,
+      currentSettleTxHex: hex,
+      currentCommitTxHex: commitHex,
+      spvVerifiedTxids: new Set([settleId, commitId]),
+      recipientPublicKeyHex: recipientKey,
+    })
+    if (!bounded.proven || !bounded.inductedTipOutpoint || !state.originScriptHash) {
+      console.warn(
+        '[brc-156] induction receive verify failed',
+        held,
+        bounded.reason ?? 'missing originScriptHash',
+      )
+      return null
+    }
+    const lineage = await proveGenesisLineage({
+      tipOutpoint: bounded.inductedTipOutpoint,
+      getBeef: async (hop) => {
+        const active = getActiveWallet()
+        if (!active?.services?.getBeefForTxid) throw new Error('offline')
+        return getBeefForTxidCached(active, hop)
+      },
+    }).catch(() => null)
+    if (!lineage || lineage.origin !== toUnderscoreOutpoint(state.origin)) {
+      console.warn(
+        '[brc-156] induction lineage mismatch',
+        held,
+        lineage?.origin,
+        state.origin,
+      )
+      return null
+    }
+    const pin = await verifyOriginScriptCommitment({
+      origin: state.origin,
+      expectedScriptHash: state.originScriptHash,
+      chain,
+    })
+    hardened = {
+      proven: pin.proven,
+      reason: pin.proven ? null : pin.reason,
+      originScriptHash: state.originScriptHash,
+    }
+  }
+
+  const ladder = verifyAuthenticityLadder({
+    heldOutpoint: held,
+    hardened,
   })
-  rememberProvenVerdict(`${txid}.${vout}`, authenticityResultToVerdict(ladder))
+  rememberProvenVerdict(held, {
+    ...authenticityResultToVerdict(ladder),
+    origin: toUnderscoreOutpoint(state.origin),
+  })
 
   if (!ladder.proven) {
-    console.warn(
-      '[brc-156] hardened receive verify failed',
-      `${txid}.${vout}`,
-      ladder.reason,
-    )
+    console.warn('[brc-156] hardened receive verify failed', held, ladder.reason)
     return null
   }
 
+  console.info(`[brc-156] verified hardened landing ${held} → ${state.origin}`)
   return {
     origin: state.origin,
     name: state.name,

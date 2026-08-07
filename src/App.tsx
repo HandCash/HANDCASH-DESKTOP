@@ -25,6 +25,7 @@ import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
 import { AppToastHost } from './components/AppToastHost'
 import { setAutoPaySettings } from './wallet/autoPay'
+import { isMobileWalletPlatform } from './wallet/isMobilePlatform'
 import { UpdateProvider } from './wallet/updateProvider'
 import { playWalletSound } from './wallet/soundService'
 import { showToast, toastError } from './wallet/toast'
@@ -34,6 +35,7 @@ import { isDeviceParityEnabled } from './wallet/paymentPolicy'
 import { getSessionBackupPassword } from './wallet/sessionBackupAuth'
 import { refreshCloudBackupHealth } from './wallet/cloudBackupHealth'
 import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
+import { setSyncHealth } from './wallet/walletHealth'
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
@@ -170,6 +172,11 @@ export function App() {
     playWalletSound('soft')
     try {
       if (isDeviceParityEnabled() && getSessionBackupPassword()) {
+        setSyncHealth({
+          phase: 'syncing',
+          label: 'Syncing history',
+          message: 'Checking for a newer history backup',
+        })
         await softPullHistoryIfRemoteNewer()
       }
       const sats = await refreshFromChain({ forceReview: true, announceReceive: true })
@@ -250,39 +257,48 @@ export function App() {
         <UpdatePrompt />
         <ScreenshotToast />
 
-        <ConnectPermissionDialog
-          pending={pendingConnect}
-          onAllow={() => {
-            if (pendingConnect) {
-              resolvePermission(pendingConnect.id, 'allow')
-              playWalletSound('connect')
-            }
-          }}
-          onDeny={() => {
-            if (pendingConnect) {
-              resolvePermission(pendingConnect.id, 'deny')
-              playWalletSound('deny')
-            }
-          }}
-        />
+        {/*
+          Desktop: modal prompts.
+          Mobile unlocked: Activity + bottom Accept/Decline (WalletNav).
+          Mobile locked: keep modals so a request can still be decided after unlock UI.
+        */}
+        {(!isMobileWalletPlatform() || !walletUnlocked) && (
+          <>
+            <ConnectPermissionDialog
+              pending={pendingConnect}
+              onAllow={() => {
+                if (pendingConnect) {
+                  resolvePermission(pendingConnect.id, 'allow')
+                  playWalletSound('connect')
+                }
+              }}
+              onDeny={() => {
+                if (pendingConnect) {
+                  resolvePermission(pendingConnect.id, 'deny')
+                  playWalletSound('deny')
+                }
+              }}
+            />
 
-        <ActionPermissionDialog
-          pending={pendingAction}
-          onAllow={(autoPay) => {
-            if (!pendingAction) return
-            if (autoPay) {
-              setAutoPaySettings(pendingAction.origin, autoPay)
-            }
-            resolvePermission(pendingAction.id, 'allow')
-            playWalletSound('connect')
-          }}
-          onDeny={() => {
-            if (pendingAction) {
-              resolvePermission(pendingAction.id, 'deny')
-              playWalletSound('deny')
-            }
-          }}
-        />
+            <ActionPermissionDialog
+              pending={pendingAction}
+              onAllow={(autoPay) => {
+                if (!pendingAction) return
+                if (autoPay) {
+                  setAutoPaySettings(pendingAction.origin, autoPay)
+                }
+                resolvePermission(pendingAction.id, 'allow')
+                playWalletSound('connect')
+              }}
+              onDeny={() => {
+                if (pendingAction) {
+                  resolvePermission(pendingAction.id, 'deny')
+                  playWalletSound('deny')
+                }
+              }}
+            />
+          </>
+        )}
       </div>
     </UpdateProvider>
   )

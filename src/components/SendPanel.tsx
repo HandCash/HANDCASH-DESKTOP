@@ -30,6 +30,10 @@ import {
   refreshSpendableBalance,
   sendSatsToAddress,
 } from '../wallet/sendPayment'
+import {
+  getPaymentProgress,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
@@ -68,12 +72,14 @@ export function SendPanel({
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
+  const [paymentProgress, setPaymentProgressState] = useState(() => getPaymentProgress())
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => subscribePaymentProgress(setPaymentProgressState), [])
   useEffect(() => {
     const sync = () => setOfflineBlock(offlinePaymentBlockedMessage())
     sync()
@@ -372,8 +378,12 @@ export function SendPanel({
         <div className="send-stage send-stage-status">
           <div className="send-stage-body send-stage-body-center">
             <div className="send-spinner" aria-hidden />
-            <p className="send-status-title">Sending…</p>
-            <p className="send-status-sub">Broadcasting your payment…</p>
+            <p className="send-status-title">
+              {paymentProgress.label ?? 'Sending…'}
+            </p>
+            <p className="send-status-sub">
+              {paymentProgress.detail ?? 'Preparing your payment…'}
+            </p>
           </div>
         </div>
       )}

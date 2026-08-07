@@ -215,9 +215,14 @@ export async function refreshFromChainExclusive(
   const active = getActiveWallet()
   if (!active) return emptyRun()
 
-  if (forceReview) {
-    setSyncHealth({ phase: 'syncing', message: 'Refreshing funds against the network' })
-  }
+  const fundingOnly = opts?.fundingOnly === true
+  setSyncHealth({
+    phase: 'syncing',
+    label: fundingOnly ? 'Syncing payments' : 'Syncing…',
+    message: fundingOnly
+      ? 'Looking for new payments on your address'
+      : 'Refreshing payments and items against the network',
+  })
 
   let balanceBefore = 0
   let balanceBeforeOk = false
@@ -245,10 +250,15 @@ export async function refreshFromChainExclusive(
   let newOneSatOutpoints: string[] = []
 
   try {
+    setSyncHealth({
+      phase: 'syncing',
+      label: 'Syncing payments',
+      message: 'Scanning your address for new payments',
+    })
     const ingest = await ingestLegacyAddressUtxos({
       active,
       knownItems: opts?.knownItems,
-      fundingOnly: opts?.fundingOnly === true,
+      fundingOnly,
     })
     heldCount = ingest.heldOneSats
     pendingTips = ingest.pendingTips
@@ -266,23 +276,33 @@ export async function refreshFromChainExclusive(
     }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
-    try {
-      const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
-      const hardenedTips = await discoverHardenedTipsFromBeacons(
-        ingest.scan.utxos,
-        active.chain,
-      )
-      rememberLiveOneSatOutpoints([...ingest.scan.utxos, ...hardenedTips])
-      void listCollectables(active).catch((err) => {
-        console.warn('[chain-ingest] collectables refresh failed', err)
-      })
-    } catch (err) {
-      console.warn('[chain-ingest] collectables refresh skipped', err)
+    if (!fundingOnly) {
+      try {
+        setSyncHealth({
+          phase: 'syncing',
+          label: 'Syncing items',
+          message: 'Checking collectables against the chain',
+          heldOneSats: heldCount,
+          pendingTips,
+        })
+        const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
+        const hardenedTips = await discoverHardenedTipsFromBeacons(
+          ingest.scan.utxos,
+          active.chain,
+        )
+        rememberLiveOneSatOutpoints([...ingest.scan.utxos, ...hardenedTips])
+        void listCollectables(active).catch((err) => {
+          console.warn('[chain-ingest] collectables refresh failed', err)
+        })
+      } catch (err) {
+        console.warn('[chain-ingest] collectables refresh skipped', err)
+      }
     }
   } catch (err) {
     console.warn('[chain-ingest] legacy address ingest skipped', err)
     setSyncHealth({
       phase: 'error',
+      label: null,
       message: 'Couldn’t refresh funds — check your network connection.',
       heldOneSats: heldCount,
       pendingTips,
@@ -296,6 +316,15 @@ export async function refreshFromChainExclusive(
   // so its answers are noise — skip the round trips rather than log them.
   // Background polls pass audit:false — the audit is report-only and was racing
   // user taps after unlock.
+  if (opts?.audit !== false) {
+    setSyncHealth({
+      phase: 'syncing',
+      label: 'Checking spends',
+      message: 'Verifying which outputs are still spendable',
+      heldOneSats: heldCount,
+      pendingTips,
+    })
+  }
   const review =
     opts?.audit === false
       ? { suspect: 0, skipped: true }
@@ -303,6 +332,7 @@ export async function refreshFromChainExclusive(
   if (review.error && forceReview) {
     setSyncHealth({
       phase: 'error',
+      label: null,
       message: 'Couldn’t verify spent outputs — check your network connection.',
       heldOneSats: heldCount,
       pendingTips,
@@ -310,6 +340,13 @@ export async function refreshFromChainExclusive(
   }
 
   try {
+    setSyncHealth({
+      phase: 'syncing',
+      label: 'Updating balance',
+      message: 'Reading your spendable balance',
+      heldOneSats: heldCount,
+      pendingTips,
+    })
     const balanceAfter = await fetchBalanceSats(active.wallet)
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
@@ -355,6 +392,7 @@ export async function refreshFromChainExclusive(
 
     setSyncHealth({
       phase: review.error && !partialWarn ? 'error' : 'ok',
+      label: null,
       message:
         partialWarn ??
         (review.error
@@ -373,6 +411,7 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] balance refresh failed', err)
     setSyncHealth({
       phase: 'error',
+      label: null,
       message: 'Balance refresh failed — check your network connection.',
       heldOneSats: heldCount,
       pendingTips,

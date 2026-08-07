@@ -7,6 +7,16 @@
  * is therefore the intersection of basket tips and live 1-sat outpoints.
  */
 
+/**
+ * How long a tip missing from the address scan stays unjudged.
+ *
+ * A scan that lands *after* the tip was first seen can still omit it while the
+ * indexer catches up (self-send is the usual case). The old rule only spared tips
+ * newer than the scan, so a fresh tip followed by a lagging scan was relinquished
+ * as a ghost and vanished from inventory.
+ */
+export const OWNERSHIP_SETTLE_GRACE_MS = 10 * 60 * 1000
+
 export function outpointKey(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
@@ -37,4 +47,24 @@ export function partitionByLiveUtxos<T extends { outpoint: string }>(
     else spentOrMissing.push(o)
   }
   return { owned, spentOrMissing }
+}
+
+/**
+ * True when a missing tip must not yet be treated as spent.
+ *
+ * - Tip arrived after the scan ran → the scan cannot speak to it.
+ * - Tip is still inside the settle grace → a newer scan may omit it while the
+ *   address indexer lags behind a broadcast we already put in the basket.
+ */
+export function isOwnershipUnjudged(args: {
+  firstSeenAt: number
+  liveAt: number
+  now?: number
+  graceMs?: number
+}): boolean {
+  const now = args.now ?? Date.now()
+  const grace = args.graceMs ?? OWNERSHIP_SETTLE_GRACE_MS
+  if (args.firstSeenAt > args.liveAt) return true
+  if (now - args.firstSeenAt < grace) return true
+  return false
 }

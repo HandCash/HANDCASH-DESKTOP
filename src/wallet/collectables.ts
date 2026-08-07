@@ -30,6 +30,17 @@ import {
 import { resolvePaymentAddress } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
+import {
+  clearPaymentProgress,
+  setPaymentProgress,
+} from './paymentProgress'
+import {
+  clearVerificationProgress,
+  peekPreferredCollectableVerification,
+  preferCollectableVerification,
+  setVerificationProgress,
+  takePreferredCollectableVerification,
+} from './verificationProgress'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
@@ -73,6 +84,8 @@ import {
   liveOneSatKeys,
   outpointKey,
   partitionByLiveUtxos,
+  OWNERSHIP_SETTLE_GRACE_MS,
+  isOwnershipUnjudged,
 } from './collectableOwnership'
 import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent } from './sentItemGuard'
@@ -542,8 +555,26 @@ async function resolveUnknownOrigins(): Promise<void> {
   resolvingOrigins = true
   try {
     let changed = false
-    for (const o of pending) {
+    const preferred = peekPreferredCollectableVerification()
+    const orderedPending = preferred
+      ? [
+          ...pending.filter((o) => normalizeOutpoint(o.outpoint) === preferred),
+          ...pending.filter((o) => normalizeOutpoint(o.outpoint) !== preferred),
+        ]
+      : pending
+    const orderedUpgrades = preferred
+      ? [
+          ...upgrades.filter((o) => normalizeOutpoint(o.outpoint) === preferred),
+          ...upgrades.filter((o) => normalizeOutpoint(o.outpoint) !== preferred),
+        ]
+      : upgrades
+    for (const o of orderedPending) {
       const outpoint = normalizeOutpoint(o.outpoint)
+      setVerificationProgress(
+        'identifying',
+        outpoint,
+        'Looking up this item with the indexer',
+      )
       const walked = await walkInscription(outpoint)
       if (walked) {
         rememberResolvedInscription(outpoint, walked)
@@ -551,10 +582,16 @@ async function resolveUnknownOrigins(): Promise<void> {
       } else {
         rememberUnresolved(outpoint)
       }
+      clearVerificationProgress(outpoint)
     }
-    for (const o of upgrades) {
+    for (const o of orderedUpgrades) {
       const outpoint = normalizeOutpoint(o.outpoint)
       rememberUpgradeAttempt(outpoint)
+      setVerificationProgress(
+        'identifying',
+        outpoint,
+        'Fetching name and traits from the indexer',
+      )
       const walked = await walkInscription(outpoint)
       // Only a richer answer may replace what the card already shows; a second
       // thin one would just overwrite the sender's name with another guess.
@@ -562,10 +599,12 @@ async function resolveUnknownOrigins(): Promise<void> {
         rememberResolvedInscription(outpoint, walked)
         changed = true
       }
+      clearVerificationProgress(outpoint)
     }
     if (changed) setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
   } finally {
     resolvingOrigins = false
+    clearVerificationProgress()
   }
 }
 
@@ -611,9 +650,16 @@ async function proveHeldGenesis(
         .map(normalizeOutpoint),
     ),
   ].filter((outpoint) => !held.includes(outpoint))
+  const preferred = takePreferredCollectableVerification()
   const candidates = [...held, ...inActivity].filter((outpoint) =>
     shouldAttemptGenesis(outpoint),
   )
+  if (preferred && shouldAttemptGenesis(preferred) && !candidates.includes(preferred)) {
+    candidates.unshift(preferred)
+  } else if (preferred && candidates.includes(preferred)) {
+    candidates.splice(candidates.indexOf(preferred), 1)
+    candidates.unshift(preferred)
+  }
   if (candidates.length === 0) return
 
   provingGenesis = true
@@ -626,6 +672,11 @@ async function proveHeldGenesis(
       // through it is how the list ends up timing out instead of painting.
       if (listInFlight && listInFlight !== ownRead) break
       genesisWalksThisSession++
+      setVerificationProgress(
+        'verifying',
+        outpoint,
+        'Proving tip-to-origin lineage (BRC-150)',
+      )
       let proof: GenesisProof | null = null
       try {
         proof = await proveGenesisLineage({
@@ -646,7 +697,10 @@ async function proveHeldGenesis(
       // Only pin the attempt after a conclusive result. A transient network miss
       // must not burn the 24h budget and leave a just-received tip "Unverified"
       // until tomorrow.
-      if (!proof) continue
+      if (!proof) {
+        clearVerificationProgress(outpoint)
+        continue
+      }
       rememberGenesisAttempt(outpoint)
 
       console.info(
@@ -657,13 +711,35 @@ async function proveHeldGenesis(
         origin: proof.origin,
         verifiedAt: Date.now(),
       })
+      setVerificationProgress(
+        'identifying',
+        outpoint,
+        'Fetching name and traits for the proven origin',
+      )
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      clearVerificationProgress(outpoint)
       await yieldToUi()
     }
   } finally {
     provingGenesis = false
+    clearVerificationProgress()
   }
+}
+
+/**
+ * Ask the wallet to verify this tip next, and start a walk if one is not already
+ * running. Used by the item details panel so opening an unverified collectable
+ * surfaces "Verifying…" instead of a dead "Unverified" badge.
+ */
+export function requestCollectableVerification(outpoint: string): void {
+  const target = normalizeOutpoint(outpoint)
+  preferCollectableVerification(target)
+  if (!shouldAttemptGenesis(target)) return
+  if (provingGenesis) return
+  const wallet = getActiveWallet()
+  if (!wallet) return
+  void proveHeldGenesis(wallet, listInFlight)
 }
 
 /**
@@ -1066,12 +1142,18 @@ async function listCollectablesNow(
   // Basket rows are necessary but not sufficient. Drop anything the address no
   // longer holds as a 1-sat UTXO, and write those ghosts out of the basket so
   // the next list cannot resurrect them. A failed scan must not empty the grid,
-  // and a scan older than a tip cannot speak to it.
+  // a scan older than a tip cannot speak to it, and a tip still inside the
+  // settle grace must survive a lagging address scan (self-send indexer delay).
   const live = resolveLiveOneSatKeys(wallet)
   if (live) {
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
-    const unjudged = spentOrMissing.filter(
-      (o) => (firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow) > live.at,
+    const unjudged = spentOrMissing.filter((o) =>
+      isOwnershipUnjudged({
+        firstSeenAt: firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow,
+        liveAt: live.at,
+        now: seenNow,
+        graceMs: OWNERSHIP_SETTLE_GRACE_MS,
+      }),
     )
     const ghosts = spentOrMissing.filter(
       (o) =>
@@ -1429,11 +1511,14 @@ export async function sendCollectable(args: {
   app?: string
 }): Promise<{ txid: string }> {
   return runExclusiveSpend(async () => {
+    try {
     assertOnlineForPayment()
+    setPaymentProgress('preparing')
     await prepareSpendHeal()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
 
+  setPaymentProgress('building', 'Preparing the collectable for transfer')
   const outpoint = normalizeOutpoint(args.outpoint)
   const to = resolvePaymentAddress(args.toAddress, wallet.chain)
 
@@ -1548,12 +1633,23 @@ export async function sendCollectable(args: {
   // the cache the details view fills. Checking it up front matters for latency as
   // much as for correctness: without it every send fetched the origin BEEF and
   // pulled in the scrypt covenant chunk before discovering it had to give up.
+  //
+  // Self-send to our own P2PKH address still hardens: the address cannot be
+  // reversed into a key, but it is ours, so the wallet's identity key is the
+  // recipient. Without this, every self-transfer fell through to BRC-150.
+  let recipientIdentityKey =
+    typeof args.recipientIdentityKey === 'string' && args.recipientIdentityKey.trim()
+      ? args.recipientIdentityKey.trim()
+      : null
+  if (!recipientIdentityKey && to === wallet.address && wallet.identityKey) {
+    recipientIdentityKey = wallet.identityKey
+  }
   const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
   const tipVerdict = getProvenVerdict(outpoint)
   const genesisReady = tipVerdict?.tier === 'brc150' || tipVerdict?.tier === 'brc156'
   const hardenedEligible =
     isHardenedSendEnabled() &&
-    canUseHardenedLatch({ publicKey: args.recipientIdentityKey }) &&
+    canUseHardenedLatch({ publicKey: recipientIdentityKey }) &&
     (tipIsCovenant || genesisReady)
   // Which rung a transfer takes is invisible in the UI and decides what the
   // recipient can prove, so say it once per send instead of guessing later.
@@ -1561,7 +1657,7 @@ export async function sendCollectable(args: {
     hardenedEligible
       ? `[brc-156] hardened send: ${tipIsCovenant ? 'covenant tip' : 'genesis induction'}`
       : `[brc-156] soft-latch send: ${
-          !canUseHardenedLatch({ publicKey: args.recipientIdentityKey })
+          !canUseHardenedLatch({ publicKey: recipientIdentityKey })
             ? 'recipient identity key unknown'
             : `tip is not a covenant and its verdict is ${tipVerdict?.tier ?? 'none'}`
         }`,
@@ -1616,10 +1712,14 @@ export async function sendCollectable(args: {
     }
     try {
       const { sendHardenedCollectable } = await import('./oneSatHardenedSend')
+      setPaymentProgress(
+        'broadcasting',
+        'Signing and broadcasting the hardened transfer',
+      )
       const result = await sendHardenedCollectable({
         wallet,
         outpoint,
-        recipientIdentityKey: args.recipientIdentityKey!.trim(),
+        recipientIdentityKey: recipientIdentityKey!,
         toAddress: to,
         origin,
         name,
@@ -1650,6 +1750,7 @@ export async function sendCollectable(args: {
           ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
           : []),
       ])
+      setPaymentProgress('finishing')
       setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
       scheduleHistoryBackupPush('sendCollectable')
       void listCollectables(wallet).catch((err) => {
@@ -1662,6 +1763,7 @@ export async function sendCollectable(args: {
       // rather than the whole send failing on a covenant precondition.
       if (hardenedBroadcastWasAttempted(err)) throw formatSendError(err)
       console.warn('[brc-156] hardened send unavailable — using soft-latch', err)
+      setPaymentProgress('building', 'Falling back to a soft-latch transfer')
     }
   }
 
@@ -1693,6 +1795,10 @@ export async function sendCollectable(args: {
 
   let result: { txid?: string; signableTransaction?: SignableTransaction }
   try {
+    setPaymentProgress(
+      'broadcasting',
+      'Signing and broadcasting the collectable',
+    )
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
       labels: [
@@ -1773,6 +1879,7 @@ export async function sendCollectable(args: {
   if (!txid) {
     if (!result.signableTransaction) throw new Error('Send completed without txid')
     try {
+      setPaymentProgress('signing', 'Signing the collectable transfer')
       txid = await signOrdinalTransfer({
         wallet,
         signable: result.signableTransaction,
@@ -1799,11 +1906,15 @@ export async function sendCollectable(args: {
     ...(priorLatch ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }] : []),
   ])
 
+  setPaymentProgress('finishing')
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
   scheduleHistoryBackupPush('sendCollectable')
   void listCollectables(wallet).catch((err) => {
     console.warn('[collectables] post-send refresh failed', err)
   })
   return { txid }
+    } finally {
+      clearPaymentProgress()
+    }
   })
 }

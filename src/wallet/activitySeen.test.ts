@@ -107,4 +107,14 @@ describe('shouldAnnounceActivity', () => {
 
     expect(seen.shouldAnnounceActivity('tx:new:earned', now - 1_000, now)).toBe(false)
   })
+
+  it('stays quiet for a key already decided this session, even if durable seen lags', async () => {
+    const seen = await import('./activitySeen')
+    const now = 1_800_000_000_000
+    seen.markActivitySeen(['tx:other:earned'])
+
+    expect(seen.shouldAnnounceActivity('tx:new:earned', now - 1_000, now)).toBe(true)
+    seen.noteActivityAnnounced('tx:new:earned')
+    expect(seen.shouldAnnounceActivity('tx:new:earned', now - 1_000, now)).toBe(false)
+  })
 })

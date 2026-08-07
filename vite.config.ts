@@ -13,6 +13,11 @@ export default defineConfig({
   base: './',
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
+    // scrypt-ts reads these at method-call time; without a shim the hardened
+    // send chunk throws `process is not defined` and falls back to soft-latch.
+    'process.env.NETWORK': JSON.stringify(''),
+    'process.env.BASEURL': JSON.stringify(''),
+    'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
   },
   resolve: {
     alias: [

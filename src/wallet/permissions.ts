@@ -167,6 +167,23 @@ function pumpQueue(): void {
   current = queue.shift() ?? null
   notify()
   void window.handcash?.focusWindow?.()
+  // Mobile shell listens to bring the app forward + show a heads-up if needed.
+  const prompt = current?.request
+  if (prompt) {
+    try {
+      document.dispatchEvent(
+        new CustomEvent('handcash:permission-request', {
+          detail: {
+            kind: prompt.kind,
+            origin: prompt.origin,
+            title: prompt.kind === 'action' ? prompt.title : 'Connect request',
+          },
+        }),
+      )
+    } catch {
+      // Non-DOM environments (tests) — ignore.
+    }
+  }
 }
 
 function enqueuePrompt(request: PendingPrompt): Promise<PermissionDecision> {

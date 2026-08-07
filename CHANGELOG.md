@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.96] - 2026-08-06
+
+### Fixed
+
+- **A self-sent tip no longer vanishes from inventory.** The ownership filter
+  treated a lagging address scan as proof the tip was spent, so a tip that
+  landed in the basket and then missed the next scan was relinquished as a
+  ghost. Tips stay unjudged for a settle grace window even when the scan is
+  newer, so indexer delay cannot wipe a fresh self-send.
+- **Hardened collectable sends work in the browser again.** scrypt-ts reads
+  `process.env.NETWORK` / `BASEURL` at call time; without a Vite shim that threw
+  `process is not defined` and every send fell back to soft-latch.
+
+### Changed
+
+- **On mobile, a BRC-100 permission request occupies Activity** and replaces the
+  bottom nav with Decline / Accept, instead of a modal over the wallet.
+
 ## [1.2.95] - 2026-08-06
 
 ### Fixed

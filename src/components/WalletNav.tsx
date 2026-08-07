@@ -1,5 +1,6 @@
 import {
   startTransition,
+  useCallback,
   useEffect,
   useState,
   type ComponentType,
@@ -7,10 +8,17 @@ import {
 } from 'react'
 import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
-import type { ConnectedApp } from '../wallet/permissions'
+import {
+  resolvePermission,
+  subscribePermissionRequests,
+  type ConnectedApp,
+  type PendingPrompt,
+} from '../wallet/permissions'
 import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
 import { activityDetailLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
+import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
+import { setAutoPaySettings } from '../wallet/autoPay'
 import {
   clearNavChild,
   getNavState,
@@ -32,6 +40,10 @@ import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
 import { SendCollectablePanel } from './SendCollectablePanel'
 import { TransactionsPanel } from './RecentActivity'
+import {
+  PermissionRequestPanel,
+  type PermissionDecisionApi,
+} from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
@@ -53,6 +65,8 @@ import { getCollectable } from '../wallet/collectables'
 import {
   ActivityIcon,
   AppsIcon,
+  CheckIcon,
+  CloseIcon,
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
@@ -99,6 +113,9 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
+  const [decisionApi, setDecisionApi] = useState<PermissionDecisionApi | null>(null)
+  const mobileInlinePermission = isMobileWalletPlatform() && pendingPrompt != null
   /**
    * Light tabs stay mounted once visited — remounting Activity/Identity on every
    * tap was the 2.6s stall in the latest log. Collectables never stays mounted:
@@ -110,6 +127,44 @@ export function WalletNav({
   })
 
   useEffect(() => subscribeNav(setNav), [])
+  useEffect(() => {
+    if (!isMobileWalletPlatform()) return
+    return subscribePermissionRequests(setPendingPrompt)
+  }, [])
+
+  useEffect(() => {
+    if (!mobileInlinePermission) return
+    startTransition(() => {
+      setNavSection('activity')
+      clearNavChild()
+    })
+    setMountedLight((prev) => {
+      if (prev.has('activity')) return prev
+      const next = new Set(prev)
+      next.add('activity')
+      return next
+    })
+  }, [mobileInlinePermission, pendingPrompt?.id])
+
+  const onPermissionAllow = useCallback(
+    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
+      if (!pendingPrompt) return
+      if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
+      resolvePermission(pendingPrompt.id, 'allow')
+      playWalletSound('connect')
+    },
+    [pendingPrompt],
+  )
+
+  const onPermissionDeny = useCallback(() => {
+    if (!pendingPrompt) return
+    resolvePermission(pendingPrompt.id, 'deny')
+    playWalletSound('deny')
+  }, [pendingPrompt])
+
+  const onDecisionApi = useCallback((api: PermissionDecisionApi | null) => {
+    setDecisionApi(api)
+  }, [])
 
   useEffect(() => {
     if (nav.section === 'collectables') return
@@ -302,58 +357,121 @@ export function WalletNav({
             </div>
           ) : null}
 
-          <div className="wallet-nav-panel" hidden={child != null}>
-            {mountedLight.has('activity') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'activity'}>
-                <TransactionsPanel chain={profile.chain} />
+          <div className="wallet-nav-panel" hidden={child != null && !mobileInlinePermission}>
+            {(mountedLight.has('activity') || mobileInlinePermission) && (
+              <div
+                className="wallet-nav-slot"
+                hidden={nav.section !== 'activity' && !mobileInlinePermission}
+              >
+                {mobileInlinePermission && pendingPrompt ? (
+                  <PermissionRequestPanel
+                    pending={pendingPrompt}
+                    onAllow={onPermissionAllow}
+                    onDeny={onPermissionDeny}
+                    onDecisionApi={onDecisionApi}
+                  />
+                ) : (
+                  <TransactionsPanel chain={profile.chain} />
+                )}
               </div>
             )}
             {mountedLight.has('apps') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'apps'}>
+              <div className="wallet-nav-slot" hidden={nav.section !== 'apps' || mobileInlinePermission}>
                 <ConnectedAppsPanel apps={apps} />
               </div>
             )}
-            {nav.section === 'collectables' && <InventoryPanel />}
+            {nav.section === 'collectables' && !mobileInlinePermission && <InventoryPanel />}
             {mountedLight.has('friends') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'friends'}>
+              <div
+                className="wallet-nav-slot"
+                hidden={nav.section !== 'friends' || mobileInlinePermission}
+              >
                 <FriendsPanel chain={profile.chain} />
               </div>
             )}
             {mountedLight.has('identity') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'identity'}>
+              <div
+                className="wallet-nav-slot"
+                hidden={nav.section !== 'identity' || mobileInlinePermission}
+              >
                 <IdentityPanel profile={profile} />
               </div>
             )}
             {mountedLight.has('settings') && (
-              <div className="wallet-nav-slot" hidden={nav.section !== 'settings'}>
+              <div
+                className="wallet-nav-slot"
+                hidden={nav.section !== 'settings' || mobileInlinePermission}
+              >
                 <SettingsPanel />
               </div>
             )}
           </div>
         </div>
 
-        <div className="wallet-nav-bar" role="tablist" aria-label="Wallet sections">
+        <div
+          className="wallet-nav-bar"
+          role={mobileInlinePermission ? 'group' : 'tablist'}
+          aria-label={mobileInlinePermission ? 'Permission decision' : 'Wallet sections'}
+          data-permission={mobileInlinePermission ? '' : undefined}
+        >
           <div className="wallet-nav-bar-track">
-            {SECTIONS.map(({ value, label, shortLabel, Icon }) => {
-              const selected = nav.section === value
-              return (
+            {mobileInlinePermission ? (
+              <>
                 <button
-                  key={value}
                   type="button"
-                  role="tab"
-                  className="wallet-nav-tab"
-                  aria-label={label}
-                  aria-selected={selected}
-                  title={label}
-                  data-selected={selected ? '' : undefined}
-                  onClick={() => selectSection(value)}
+                  className="wallet-nav-tab wallet-nav-tab-deny"
+                  aria-label={decisionApi?.denyLabel ?? 'Decline'}
+                  title={decisionApi?.denyLabel ?? 'Decline'}
+                  onClick={() => (decisionApi ? decisionApi.deny() : onPermissionDeny())}
                 >
-                  <Icon size={18} />
-                  <span className="wallet-nav-tab-label">{label}</span>
-                  <span className="wallet-nav-tab-label-short">{shortLabel}</span>
+                  <CloseIcon size={18} />
+                  <span className="wallet-nav-tab-label">
+                    {decisionApi?.denyLabel ?? 'Decline'}
+                  </span>
+                  <span className="wallet-nav-tab-label-short">
+                    {decisionApi?.denyLabel ?? 'Decline'}
+                  </span>
                 </button>
-              )
-            })}
+                <button
+                  type="button"
+                  className="wallet-nav-tab wallet-nav-tab-accept"
+                  aria-label={decisionApi?.allowLabel ?? 'Accept'}
+                  title={decisionApi?.allowLabel ?? 'Accept'}
+                  data-selected=""
+                  disabled={!decisionApi || decisionApi.allowDisabled}
+                  onClick={() => decisionApi?.allow()}
+                >
+                  <CheckIcon size={18} />
+                  <span className="wallet-nav-tab-label">
+                    {decisionApi?.allowLabel ?? 'Accept'}
+                  </span>
+                  <span className="wallet-nav-tab-label-short">
+                    {decisionApi?.allowLabel ?? 'Accept'}
+                  </span>
+                </button>
+              </>
+            ) : (
+              SECTIONS.map(({ value, label, shortLabel, Icon }) => {
+                const selected = nav.section === value
+                return (
+                  <button
+                    key={value}
+                    type="button"
+                    role="tab"
+                    className="wallet-nav-tab"
+                    aria-label={label}
+                    aria-selected={selected}
+                    title={label}
+                    data-selected={selected ? '' : undefined}
+                    onClick={() => selectSection(value)}
+                  >
+                    <Icon size={18} />
+                    <span className="wallet-nav-tab-label">{label}</span>
+                    <span className="wallet-nav-tab-label-short">{shortLabel}</span>
+                  </button>
+                )
+              })
+            )}
           </div>
         </div>
       </div>

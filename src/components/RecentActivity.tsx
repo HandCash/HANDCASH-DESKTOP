@@ -16,9 +16,18 @@ import {
   subscribeAppActivity,
   type ActivityEntry,
 } from '../wallet/appActivity'
-import { markActivitySeen, shouldAnnounceActivity } from '../wallet/activitySeen'
+import {
+  markActivitySeen,
+  noteActivityAnnounced,
+  shouldAnnounceActivity,
+} from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
 import { subscribeCollectables } from '../wallet/collectables'
+import {
+  getVerificationProgress,
+  isOutpointVerifying,
+  subscribeVerificationProgress,
+} from '../wallet/verificationProgress'
 import bsvLogo from '../assets/brand/bsv-logo.png'
 import {
   DEFAULT_PAYMENT_FILTERS,
@@ -127,12 +136,14 @@ function HistoryRow({
   usdPerBsv,
   showWhen,
   newest = false,
+  verifying = false,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
   usdPerBsv: number | null
   showWhen: boolean
   newest?: boolean
+  verifying?: boolean
 }) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
@@ -149,9 +160,20 @@ function HistoryRow({
       : spent
         ? `−${amountLabel}`
         : `+${amountLabel}`
+  const subtitle =
+    item && verifying && !spent
+      ? 'Verifying…'
+      : item && shown?.app
+        ? shown.app
+        : null
+
+  const entryKey = activityEntryKey(entry)
 
   return (
-    <li data-activity-newest={newest ? '' : undefined}>
+    <li
+      data-activity-key={entryKey}
+      data-activity-newest={newest ? '' : undefined}
+    >
       <button
         type="button"
         className="history-row history-row-btn"
@@ -192,7 +214,15 @@ function HistoryRow({
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          {item && shown?.app ? <span className="history-when">{shown.app}</span> : null}
+          {subtitle ? (
+            <span
+              className={
+                verifying && !spent ? 'history-when history-verifying' : 'history-when'
+              }
+            >
+              {subtitle}
+            </span>
+          ) : null}
         </div>
         <div className="history-amount-block">
           <span
@@ -287,6 +317,9 @@ function useStickNewestToTop(
   shownKeys: readonly string[],
 ) {
   const stickToTopRef = useRef(true)
+  // Stable fingerprint so collectables healing the feed cannot re-fire the
+  // announce effect and restart the top-row animation on every inventory tick.
+  const shownFingerprint = shownKeys.join('\0')
 
   useEffect(() => {
     const el = listRef.current
@@ -301,26 +334,48 @@ function useStickNewestToTop(
 
   useEffect(() => {
     const el = listRef.current
-    if (!el || !newest) return
+    if (!el) return
+    if (!newest) {
+      if (shownKeys.length > 0) markActivitySeen(shownKeys)
+      return
+    }
 
     const fresh = shouldAnnounceActivity(newest.key, newest.at)
+    // Whether we flash or not, this key is decided for the session — tab
+    // switches must not re-evaluate a tip still inside the recency window.
+    noteActivityAnnounced(newest.key)
     markActivitySeen(shownKeys)
     if (!fresh || !stickToTopRef.current) return
 
+    let clearFresh: number | undefined
     const pin = () => {
       el.scrollTop = 0
       stickToTopRef.current = true
-      const row = el.querySelector<HTMLElement>('[data-activity-newest]')
+      const row = el.querySelector<HTMLElement>(
+        `[data-activity-key="${CSS.escape(newest.key)}"]`,
+      )
       if (!row) return
       row.classList.remove('is-fresh')
       // Restart CSS animation if another arrival lands quickly.
       void row.offsetWidth
       row.classList.add('is-fresh')
+      // Drop the class when the animation ends. Leaving `is-fresh` on a
+      // keep-alive Activity panel restarts the highlight every time the tab is
+      // un-hidden — that was the remaining top-row flash.
+      window.clearTimeout(clearFresh)
+      clearFresh = window.setTimeout(() => {
+        row.classList.remove('is-fresh')
+      }, 780)
     }
     pin()
     const raf = window.requestAnimationFrame(pin)
-    return () => window.cancelAnimationFrame(raf)
-  }, [listRef, newest, shownKeys])
+    return () => {
+      window.cancelAnimationFrame(raf)
+      window.clearTimeout(clearFresh)
+    }
+    // shownFingerprint stands in for shownKeys identity without array churn.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [listRef, newest?.key, newest?.at, shownFingerprint])
 }
 
 export function ActivityFeed({
@@ -337,8 +392,10 @@ export function ActivityFeed({
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
   const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
   const [filtersOpen, setFiltersOpen] = useState(false)
+  const [verification, setVerification] = useState(() => getVerificationProgress())
   const listRef = useRef<HTMLUListElement>(null)
   useScrollReveal(listRef)
+  useEffect(() => subscribeVerificationProgress(setVerification), [])
 
   const filtered = useMemo(
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
@@ -380,12 +437,13 @@ export function ActivityFeed({
       <ul className="history-list" ref={listRef}>
         {visibleEntries.map((entry, index) => (
           <HistoryRow
-            key={entry.id}
+            key={activityEntryKey(entry)}
             entry={entry}
             currency={currency}
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}
             newest={index === 0}
+            verifying={isOutpointVerifying(entry.item?.outpoint, verification)}
           />
         ))}
         {viewAllLabel && onViewAll ? (

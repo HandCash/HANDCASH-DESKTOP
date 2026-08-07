@@ -31,6 +31,10 @@ import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
+import {
+  getPaymentProgress,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
 import type { Chain } from '../wallet/vault'
 import { CheckCircleIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
@@ -62,8 +66,10 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [txid, setTxid] = useState<string | null>(null)
+  const [paymentProgress, setPaymentProgressState] = useState(() => getPaymentProgress())
 
   useEffect(() => subscribeFriends(setFriends), [])
+  useEffect(() => subscribePaymentProgress(setPaymentProgressState), [])
 
   useEffect(() => {
     let cancelled = false
@@ -95,7 +101,19 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     setShowMatches(true)
     setTo(value.trim())
     setFriendLabel(null)
-    setRecipientIdentityKey(identityKeyFromRecipient(value))
+    const wallet = getActiveWallet()
+    let key = identityKeyFromRecipient(value)
+    // Own P2PKH address still hardens — we know our identity key.
+    if (!key && wallet?.address && wallet.identityKey) {
+      try {
+        if (resolvePaymentAddress(value, chain) === wallet.address) {
+          key = wallet.identityKey
+        }
+      } catch {
+        // Not a resolvable address; leave key null.
+      }
+    }
+    setRecipientIdentityKey(key)
 
     const peer = tryParsePeerPayUri(value)
     if (peer) {
@@ -353,8 +371,12 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
         <div className="send-stage send-stage-status">
           <div className="send-stage-body send-stage-body-center">
             <div className="send-spinner" aria-hidden />
-            <p className="send-status-title">Sending…</p>
-            <p className="send-status-sub">Broadcasting over BRC-100…</p>
+            <p className="send-status-title">
+              {paymentProgress.label ?? 'Sending…'}
+            </p>
+            <p className="send-status-sub">
+              {paymentProgress.detail ?? 'Preparing the collectable…'}
+            </p>
           </div>
         </div>
       )}

@@ -5,7 +5,12 @@
 
 export type SyncHealth = {
   phase: 'idle' | 'syncing' | 'ok' | 'error'
-  /** Short user-facing line; null when quiet. */
+  /**
+   * Short pill label while syncing — e.g. "Syncing payments".
+   * Null when idle / after a terminal outcome.
+   */
+  label: string | null
+  /** Longer user-facing line; null when quiet. */
   message: string | null
   heldOneSats: number
   /** Held tips a co-created BRC-156 latch proves are items, still awaiting an origin. */
@@ -21,6 +26,7 @@ const unlockListeners = new Set<UnlockListener>()
 
 let syncHealth: SyncHealth = {
   phase: 'idle',
+  label: null,
   message: null,
   heldOneSats: 0,
   pendingTips: 0,

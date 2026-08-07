@@ -2760,6 +2760,45 @@ button.wallet-detail-value.is-copied {
   background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
 }
 
+.wallet-nav-bar[data-permission] .wallet-nav-bar-track {
+  width: 100%;
+  min-width: 100%;
+}
+
+.wallet-nav-tab-accept {
+  flex: 1 1 0;
+  color: var(--hc-accent);
+  background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
+}
+
+.wallet-nav-tab-accept:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.wallet-nav-tab-deny {
+  flex: 1 1 0;
+}
+
+.permission-request-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 4px 2px 16px;
+  min-height: 100%;
+  box-sizing: border-box;
+  overflow: auto;
+}
+
+.permission-request-title {
+  margin: 0 0 4px;
+  font-family: var(--hc-display);
+  font-size: 1.35rem;
+  font-weight: 700;
+  line-height: 1.2;
+  color: var(--hc-text);
+}
+
 .wallet-nav-tab-label {
   font-family: var(--hc-display);
   font-size: 0.62rem;
@@ -5718,6 +5757,30 @@ a.app-details-host:hover {
   color: var(--hc-positive);
   border-color: color-mix(in srgb, var(--hc-positive) 36%, var(--hc-border));
   background: color-mix(in srgb, var(--hc-positive) 9%, var(--hc-panel));
+}
+
+.collectable-authenticity-verifying {
+  position: absolute;
+  left: 6px;
+  bottom: 6px;
+  z-index: 1;
+  padding: 2px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 40%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-panel) 88%, transparent);
+  color: var(--hc-muted);
+  font-size: 0.62rem;
+  font-weight: 650;
+  line-height: 1.2;
+  pointer-events: none;
+}
+
+.collectable-media {
+  position: relative;
+}
+
+.history-verifying {
+  color: color-mix(in srgb, var(--hc-accent, #57ff97) 70%, var(--hc-muted));
 }
 
 .collectable-origin-value {
