@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.95] - 2026-08-06
+
+### Fixed
+
+- **A verified collectable no longer shows a truncated origin and empty traits
+  while its image already paints.** The content URL is built from the proven
+  origin, so the PNG loads even when the tip is still unindexed. Name and traits
+  were still asked of the tip itself — which 404s for hours after a transfer —
+  so the card kept `4ee07451…_33` as its title. Metadata lookup now asks the
+  known origin first, and proven-but-thin cards retry on the pending cadence
+  instead of waiting ten minutes.
+
 ## [1.2.94] - 2026-08-06
 
 ### Fixed

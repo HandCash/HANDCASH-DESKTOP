@@ -21,6 +21,8 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   contentUrlForOrigin,
   discoverHardenedTipsFromBeacons,
+  resolveInscriptionAtOrigin,
+  resolveInscriptionPreferringOrigin,
   resolveOneSatInscription,
   type CollectableTrait,
   type ResolvedInscription,
@@ -89,9 +91,11 @@ import { getWalletCoordinatorSnapshot } from './walletCoordinator'
 import {
   getResolvedInscription,
   isThinResolution,
+  PENDING_RETRY_MS,
   rememberResolvedInscription,
   rememberUnresolved,
   rememberUpgradeAttempt,
+  RESOLVE_RETRY_MS,
   shouldResolveInscription,
   shouldUpgradeResolution,
 } from './inscriptionCache'
@@ -522,8 +526,16 @@ async function resolveUnknownOrigins(): Promise<void> {
   // Thin cards need an upgrade whether remittance named them or lineage did —
   // both paths can land an origin with no traits, and that is what "came in
   // unverified with no traits" looks like until the indexer fills the rest.
+  // A proven origin is already known: looking it up is one request, so retry
+  // those on the pending cadence rather than the ten-minute dust backoff.
   const upgrades = listable
-    .filter((o) => shouldUpgradeResolution(normalizeOutpoint(o.outpoint)))
+    .filter((o) => {
+      const outpoint = normalizeOutpoint(o.outpoint)
+      const retry = getProvenVerdict(outpoint)?.origin
+        ? PENDING_RETRY_MS
+        : RESOLVE_RETRY_MS
+      return shouldUpgradeResolution(outpoint, Date.now(), retry)
+    })
     .slice(0, UPGRADE_BUDGET)
   if (pending.length === 0 && upgrades.length === 0) return
 
@@ -678,13 +690,7 @@ async function adoptProvenOrigin(
     rememberResolvedInscription(outpoint, { ...existing, origin })
     return
   }
-  const [originTxid, originVout] = origin.split('_')
-  const resolved =
-    originTxid && originVout != null
-      ? await resolveOneSatInscription(originTxid, Number(originVout), chain).catch(
-          () => null,
-        )
-      : null
+  const resolved = await resolveInscriptionAtOrigin(origin, chain)
   rememberResolvedInscription(outpoint, {
     ...(resolved && !isThinResolution(resolved)
       ? resolved
@@ -698,12 +704,24 @@ async function adoptProvenOrigin(
   })
 }
 
+/**
+ * Resolve inscription metadata for a held tip.
+ *
+ * Prefer a known origin over walking the tip backwards. Fresh transfers are
+ * often missing from the indexer for hours (the tip 404s) while the inscription
+ * origin has been indexed for months — asking about the tip first is how a
+ * BRC-150 card keeps its image (built from the origin content URL) but shows a
+ * truncated outpoint and empty traits.
+ */
 async function walkInscription(outpoint: string): Promise<ResolvedInscription | null> {
-  const [txid, voutStr] = outpoint.split('.')
-  const vout = Number(voutStr)
-  if (!txid || !Number.isInteger(vout)) return null
+  const knownOrigin =
+    getProvenVerdict(outpoint)?.origin ?? getResolvedInscription(outpoint)?.origin
   try {
-    return await resolveOneSatInscription(txid, vout, lastItemChain, 6)
+    return await resolveInscriptionPreferringOrigin(
+      outpoint,
+      lastItemChain,
+      knownOrigin,
+    )
   } catch {
     return null
   }

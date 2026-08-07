@@ -5,6 +5,7 @@ import {
   classifyLegacyUtxos,
   fetchRawTxHex,
   peekRawTxHex,
+  resolveInscriptionPreferringOrigin,
   resolveOneSatInscription,
 } from './oneSatImport'
 import { PENDING_RETRY_MS, shouldResolveInscription } from './inscriptionCache'
@@ -380,11 +381,41 @@ describe('resolveOneSatInscription', () => {
       origin: {
         outpoint,
         data: {
-          map: { name: 'Pixel Foxes #2437906', app: 'Bubblemint' },
+          map: {
+            name: 'Pixel Foxes #2437906',
+            app: 'Bubblemint',
+            subTypeData: {
+              traits: [{ name: 'fox', value: 'Arctic Fox' }],
+            },
+          },
           insc: { file: { type: 'image/png' } },
         },
       },
     })
+
+  it('asks a known origin before walking an unindexed tip', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes(`/api/txos/${TIP}_0`) || url.includes(`/api/inscriptions/${TIP}_0`)) {
+        return new Response('{"message":"Not Found"}', { status: 404 })
+      }
+      if (url.includes(`/api/txos/${ORIGIN}_33`) || url.includes(`/api/inscriptions/${ORIGIN}_33`)) {
+        return new Response(inscribedTxo(`${ORIGIN}_33`), { status: 200 })
+      }
+      return new Response('null', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const resolved = await resolveInscriptionPreferringOrigin(
+      `${TIP}.0`,
+      'main',
+      `${ORIGIN}_33`,
+    )
+    vi.unstubAllGlobals()
+
+    expect(resolved?.name).toBe('Pixel Foxes #2437906')
+    expect(resolved?.traits).toEqual([{ name: 'fox', value: 'Arctic Fox' }])
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes(TIP))).toBe(false)
+  })
 
   it('walks past a satoshi the indexer only knows as its own origin', async () => {
     const fetchMock = vi.fn(async (url: string) => {

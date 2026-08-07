@@ -471,6 +471,27 @@ export async function resolveLatchedTip(
 }
 
 /**
+ * Resolve metadata when the tip's origin is already known.
+ *
+ * Fresh tips often 404 on the indexer for hours after a transfer, while the
+ * inscription origin has been indexed for months. Asking about the tip first is
+ * how a verified card keeps a content image (built from the origin URL) but
+ * shows a truncated outpoint and empty traits.
+ */
+export async function resolveInscriptionAtOrigin(
+  origin: string,
+  chain: Chain,
+): Promise<ResolvedInscription | null> {
+  const point = origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const [txid, voutStr] = point.split('_')
+  const vout = Number(voutStr)
+  if (!txid || !Number.isInteger(vout)) return null
+  const resolved = await resolveOneSatInscription(txid, vout, chain, 0).catch(() => null)
+  if (!resolved) return null
+  return { ...resolved, origin: point }
+}
+
+/**
  * Resolve inscription origin for a 1-sat outpoint.
  * Falls back to walking prior inputs when GorillaPool has not indexed the new location yet.
  */
@@ -524,6 +545,47 @@ export async function resolveOneSatInscription(
   }
 
   return null
+}
+
+/**
+ * Resolve a held tip, asking the indexer about a known origin first.
+ *
+ * Fresh tips routinely 404 on GorillaPool for hours after a transfer while the
+ * inscription origin has been indexed for months. Walking the tip first is how
+ * a BRC-150 card paints as a truncated outpoint with empty traits even though
+ * the origin's name and traits are one request away.
+ */
+export async function resolveInscriptionPreferringOrigin(
+  tipOutpoint: string,
+  chain: Chain,
+  knownOrigin?: string | null,
+  maxDepth = 6,
+): Promise<ResolvedInscription | null> {
+  const origin = (knownOrigin ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\.(\d+)$/, '_$1')
+  if (/^[0-9a-f]{64}_\d+$/.test(origin)) {
+    const [originTxid, originVout] = origin.split('_')
+    const byOrigin = await resolveOneSatInscription(
+      originTxid!,
+      Number(originVout),
+      chain,
+      0,
+    ).catch(() => null)
+    if (byOrigin && (byOrigin.name || byOrigin.mimeType || byOrigin.traits.length > 0)) {
+      return { ...byOrigin, origin }
+    }
+  }
+
+  const [txid, voutStr] = tipOutpoint
+    .trim()
+    .toLowerCase()
+    .replace(/_(\d+)$/, '.$1')
+    .split('.')
+  const vout = Number(voutStr)
+  if (!txid || !Number.isInteger(vout)) return null
+  return resolveOneSatInscription(txid, vout, chain, maxDepth)
 }
 
 /** Probe whether this outpoint is (or carries) a known inscription. */
@@ -770,6 +832,14 @@ async function proveLineageIdentity(
       origin: proof.origin,
       verifiedAt: Date.now(),
     })
+    // The tip itself is often still unknown to the indexer after a transfer;
+    // the origin has usually been indexed for months. Ask about the origin so
+    // the card does not land as a truncated outpoint with empty traits while
+    // the content image (served from the origin URL) already paints.
+    const resolved = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
+    if (resolved && (resolved.name || resolved.mimeType || resolved.traits.length > 0)) {
+      return resolved
+    }
     return { origin: proof.origin, traits: [], extras: [] }
   } catch (err) {
     console.warn('[brc-150] landing lineage walk failed', held, err)
