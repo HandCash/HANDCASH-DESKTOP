@@ -73,7 +73,6 @@ import {
 } from './oneSatLatch'
 import {
   canUseHardenedLatch,
-  hardenedBroadcastWasAttempted,
   isHardenedCovenantLockingScript,
   isHardenedSendEnabled,
   parseHardenedTipInstructions,
@@ -89,6 +88,13 @@ import {
   OWNERSHIP_SETTLE_GRACE_MS,
   isOwnershipUnjudged,
 } from './collectableOwnership'
+import { ownershipFate } from './collectableOwnershipFate'
+import {
+  chooseSendPath,
+  classifyTipKind,
+} from './collectableTipKind'
+import { collectableSendMachine } from './collectableSendMachine'
+import { createActor } from 'xstate'
 import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
@@ -1253,42 +1259,32 @@ async function listCollectablesNow(
     if (!firstSeenAt.has(key)) firstSeenAt.set(key, seenNow)
   }
 
-  // Basket rows are necessary but not sufficient. Drop anything the address no
-  // longer holds as a 1-sat UTXO, and write those ghosts out of the basket so
-  // the next list cannot resurrect them. A failed scan must not empty the grid,
-  // a scan older than a tip cannot speak to it, and a tip still inside the
-  // settle grace must survive a lagging address scan (self-send indexer delay).
-  //
-  // Hardened covenant tips never appear on the P2PKH address scan (only their
-  // 2-sat beacon does). Beacon discovery should add them to `live`, but when it
-  // lags they must not be relinquished — that emptied inventory while the tip
-  // stayed unspent on chain.
+  // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:
+  // keepLive | graceHold | keepCovenant | ghostDrop — only ghostDrop relinquish.
+  // Covenant tips never appear on the P2PKH address scan (only their beacon does).
   const live = resolveLiveOneSatKeys(wallet)
   if (live) {
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
-    const unjudged = spentOrMissing.filter((o) =>
-      isOwnershipUnjudged({
+    const keptMissing: ItemOutput[] = []
+    const ghosts: ItemOutput[] = []
+    for (const o of spentOrMissing) {
+      if ((o.satoshis ?? 1) !== 1 || o.tags?.includes(LATCH_TAG)) continue
+      const unjudged = isOwnershipUnjudged({
         firstSeenAt: firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow,
         liveAt: live.at,
         now: seenNow,
         graceMs: OWNERSHIP_SETTLE_GRACE_MS,
-      }),
-    )
-    const isCovenantHeld = (o: ItemOutput): boolean => {
-      if (isHardenedCovenantLockingScript(o.lockingScript)) return true
-      const tier = getProvenVerdict(normalizeOutpoint(o.outpoint))?.tier
-      return tier === 'brc156'
+      })
+      const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
+      const fate = ownershipFate({
+        tipKind: classifyTipKind(o.lockingScript),
+        inLiveSet: false,
+        unjudged,
+        provenTier: verdict?.tier ?? null,
+      })
+      if (fate === 'ghostDrop') ghosts.push(o)
+      else keptMissing.push(o)
     }
-    const covenantHeld = spentOrMissing.filter(
-      (o) => !unjudged.includes(o) && isCovenantHeld(o),
-    )
-    const ghosts = spentOrMissing.filter(
-      (o) =>
-        !unjudged.includes(o) &&
-        !isCovenantHeld(o) &&
-        (o.satoshis ?? 1) === 1 &&
-        !o.tags?.includes(LATCH_TAG),
-    )
     if (ghosts.length > 0) {
       console.info(
         `[collectables] dropping ${ghosts.length} tip(s) not in the address UTXO set`,
@@ -1302,7 +1298,7 @@ async function listCollectablesNow(
         })),
       )
     }
-    outputs = [...owned, ...unjudged, ...covenantHeld]
+    outputs = [...owned, ...keptMissing]
   }
 
   lastItemOutputs = outputs
@@ -1633,15 +1629,15 @@ export function warmHardenedSend(recipientIdentityKey?: string | null): void {
 /**
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
- * Soft-latch (BRC-156): settle-style single tx spends tip (+ prior latch when
- * present) and creates recipient tip (vout 0) + latch (vout 1). Authenticity is
- * BRC-150 v2 remittance on the tip (not structural v3). Ordinal sat stays on
- * output 0 (`randomizeOutputs: false`). Fees are funded from the default change
- * basket.
+ * Path selection is exhaustive via `chooseSendPath` + `collectableSendMachine`:
+ * hardenedGenesis | hardenedResend | softLatch | refuse. There is no try/catch
+ * fallthrough from hardened to soft-latch.
  *
- * Hardened (BRC-156 schema 2): when `recipientIdentityKey` is present, Commit +
- * Settle (+ 2-sat P2PKH beacon) via noSend/sendWith. Bare addresses fall through
- * to the soft / BRC-150 path below.
+ * Soft-latch (BRC-156): settle-style single tx spends tip (+ prior latch when
+ * present) and creates recipient tip (vout 0) + latch (vout 1).
+ *
+ * Hardened (BRC-156 schema 2): Commit + Settle (+ 2-sat P2PKH beacon) via
+ * noSend/sendWith when `chooseSendPath` returns a hardened path.
  */
 export async function sendCollectable(args: {
   outpoint: string
@@ -1779,16 +1775,9 @@ export async function sendCollectable(args: {
     ),
   ]
 
-  // Hardened path — identity key required. Bare address falls through to soft-latch.
-  //
-  // Genesis is only legal on a BRC-150-verified tip, and that verdict comes from
-  // the cache the details view fills. Checking it up front matters for latency as
-  // much as for correctness: without it every send fetched the origin BEEF and
-  // pulled in the scrypt covenant chunk before discovering it had to give up.
-  //
   // Self-send to our own P2PKH address still hardens: the address cannot be
   // reversed into a key, but it is ours, so the wallet's identity key is the
-  // recipient. Without this, every self-transfer fell through to BRC-150.
+  // recipient.
   let recipientIdentityKey =
     typeof args.recipientIdentityKey === 'string' && args.recipientIdentityKey.trim()
       ? args.recipientIdentityKey.trim()
@@ -1796,28 +1785,70 @@ export async function sendCollectable(args: {
   if (!recipientIdentityKey && to === wallet.address && wallet.identityKey) {
     recipientIdentityKey = wallet.identityKey
   }
-  const tipIsCovenant = isHardenedCovenantLockingScript(match.lockingScript)
+
+  const tipKind = classifyTipKind(match.lockingScript)
   const tipVerdict = getProvenVerdict(outpoint)
-  const genesisReady = tipVerdict?.tier === 'brc150' || tipVerdict?.tier === 'brc156'
-  const hardenedEligible =
-    isHardenedSendEnabled() &&
-    canUseHardenedLatch({ publicKey: recipientIdentityKey }) &&
-    (tipIsCovenant || genesisReady)
-  // Which rung a transfer takes is invisible in the UI and decides what the
-  // recipient can prove, so say it once per send instead of guessing later.
+  const remittance = parseHardenedTipInstructions(match.customInstructions)
+  const sendPath = chooseSendPath({
+    tipKind,
+    provenTier: tipVerdict?.tier ?? null,
+    recipientIdentityKey,
+    latchOutpoint: priorLatch?.outpoint ?? null,
+    tipCustomInstructions: match.customInstructions,
+    remittanceProofOutpoint: remittance?.proofOutpoint,
+  })
+
+  const chart = createActor(collectableSendMachine).start()
+  chart.send({ type: 'START', outpoint, sendPath })
   console.info(
-    hardenedEligible
-      ? `[brc-156] hardened send: ${tipIsCovenant ? 'covenant tip' : 'genesis induction'}`
-      : `[brc-156] soft-latch send: ${
-          !canUseHardenedLatch({ publicKey: recipientIdentityKey })
-            ? 'recipient identity key unknown'
-            : `tip is not a covenant and its verdict is ${tipVerdict?.tier ?? 'none'}`
-        }`,
+    `[brc-156] send path=${sendPath.path}${
+      sendPath.path === 'hardenedResend'
+        ? ` proof=${sendPath.proofOutpoint} via ${sendPath.proofSource}`
+        : ''
+    } tipKind=${tipKind.kind}`,
   )
-  if (hardenedEligible) {
+
+  const finishSend = async (txid: string): Promise<{ txid: string }> => {
+    markItemsSent([
+      { outpoint, txid },
+      ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
+    ])
+    invalidateLiveOneSatOutpoints()
+    await relinquishSpentOutputs(wallet, [
+      { outpoint, basket: '1sat' },
+      ...(priorLatch
+        ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
+        : []),
+    ])
+    setPaymentProgress('finishing')
+    setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
+    scheduleHistoryBackupPush('sendCollectable')
+    void listCollectables(wallet).catch((err) => {
+      console.warn('[collectables] post-send refresh failed', err)
+    })
+    chart.send({ type: 'SUCCESS', txid })
+    chart.stop()
+    return { txid }
+  }
+
+  const failSend = (err: unknown): never => {
+    const formatted = formatSendError(err)
+    chart.send({ type: 'FAIL', error: formatted.message })
+    chart.stop()
+    throw formatted
+  }
+
+  if (sendPath.path === 'refuse') {
+    return failSend(new Error(sendPath.reason))
+  }
+
+  if (sendPath.path === 'hardenedGenesis' || sendPath.path === 'hardenedResend') {
+    if (!chart.getSnapshot().matches('hardened')) {
+      return failSend(new Error('collectableSendMachine did not enter hardened'))
+    }
     let originLockingScriptHex: string | undefined
     let legacyParentOutpoint: string | undefined
-    if (!tipIsCovenant) {
+    if (sendPath.path === 'hardenedGenesis') {
       const tipTx = Beef.fromBinary(inputBEEF).findTxid(outpoint.split('.')[0]!)?.tx
       const parentIn = tipTx?.inputs[0]
       if (parentIn?.sourceTXID != null) {
@@ -1825,7 +1856,6 @@ export async function sendCollectable(args: {
       }
       const [originTxid, originVoutRaw] = origin.split(/[_.]/)
       const originVout = Number(originVoutRaw)
-      // Prefer bodies already in the tip BEEF / remittance before another fetch.
       if (originTxid && Number.isInteger(originVout)) {
         originLockingScriptHex = Beef.fromBinary(inputBEEF)
           .findTxid(originTxid)
@@ -1857,7 +1887,7 @@ export async function sendCollectable(args: {
               .findTxid(originTxid!)
               ?.tx?.outputs[originVout]?.lockingScript?.toHex()
           } catch {
-            // Fall through — sendHardenedCollectable will require the script.
+            // sendHardenedCollectable will require the script.
           }
         }
       }
@@ -1879,8 +1909,11 @@ export async function sendCollectable(args: {
         mimeType: item?.mimeType,
         tipLockingScript: match.lockingScript,
         tipCustomInstructions: match.customInstructions,
-        priorProofOutpoint: priorLatch?.outpoint ?? null,
-        priorProofLockingScript: priorLatch?.lockingScript,
+        // Delayed proof comes from remittance / covenant link — never the
+        // latch-basket beacon row. Pass the resolved outpoint for resend.
+        priorProofOutpoint:
+          sendPath.path === 'hardenedResend' ? sendPath.proofOutpoint : null,
+        priorProofLockingScript: undefined,
         originLockingScriptHex,
         legacyParentOutpoint,
         inputBEEF,
@@ -1891,42 +1924,16 @@ export async function sendCollectable(args: {
         isAlreadySpentInputError,
         releaseStaleSpendableOutputs,
       })
-      markItemsSent([
-        { outpoint, txid: result.txid },
-        ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid: result.txid }] : []),
-      ])
-      invalidateLiveOneSatOutpoints()
-      await relinquishSpentOutputs(wallet, [
-        { outpoint, basket: '1sat' },
-        ...(priorLatch
-          ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
-          : []),
-      ])
-      setPaymentProgress('finishing')
-      setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
-      scheduleHistoryBackupPush('sendCollectable')
-      void listCollectables(wallet).catch((err) => {
-        console.warn('[collectables] post-send refresh failed', err)
-      })
-      return result
+      return await finishSend(result.txid)
     } catch (err) {
       if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-      // Nothing was broadcast, so the item can still go out over soft-latch
-      // rather than the whole send failing on a covenant precondition.
-      if (hardenedBroadcastWasAttempted(err)) throw formatSendError(err)
-      // Covenant tips cannot be unlocked with the soft-latch P2PKH path —
-      // falling through would either fail mid-sign or strip the tip from the
-      // basket while leaving it unspent on chain.
-      if (tipIsCovenant) throw formatSendError(err)
-      console.warn('[brc-156] hardened send unavailable — using soft-latch', err)
-      const why = err instanceof Error ? err.message : String(err)
-      setPaymentProgress(
-        'building',
-        why.trim()
-          ? `Hardened send failed (${why.slice(0, 120)}) — soft-latch fallback`
-          : 'Falling back to a soft-latch transfer',
-      )
+      return failSend(err)
     }
+  }
+
+  // softLatch path — machine is in softLatch; covenant never reaches here.
+  if (!chart.getSnapshot().matches('softLatch')) {
+    return failSend(new Error('collectableSendMachine did not enter softLatch'))
   }
 
   const provenance = await tryBuildProvenanceForSend({
@@ -1984,8 +1991,6 @@ export async function sendCollectable(args: {
             provenance,
           }),
         },
-        // Soft-latch: P2PKH dust (>1 sat) so address scanners still find it, but
-        // receivers never confuse it with a tip (tips are always exactly 1 sat).
         ...(isLatchedSendEnabled()
           ? [
               {
@@ -2001,12 +2006,6 @@ export async function sendCollectable(args: {
                   parentLatch,
                 }),
               },
-              // Latch state on chain (BRC-156). Baskets, tags and
-              // customInstructions above are local to this wallet and never
-              // reach the recipient, so without this output the recipient can
-              // prove an item landed but has to ask an indexer which item it
-              // is. Provably unspendable and 0 sats, so it costs the recipient
-              // nothing and never shows up as a UTXO.
               {
                 lockingScript: buildLatchStateScript({
                   schema: LATCH_SCHEMA_VERSION,
@@ -2032,14 +2031,13 @@ export async function sendCollectable(args: {
       },
     })
   } catch (err) {
-    // A rejected input is proof this basket is stale; clear it so a retry works.
     if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-    throw formatSendError(err)
+    return failSend(err)
   }
 
   let txid = result.txid
   if (!txid) {
-    if (!result.signableTransaction) throw new Error('Send completed without txid')
+    if (!result.signableTransaction) return failSend(new Error('Send completed without txid'))
     try {
       setPaymentProgress('signing', 'Signing the collectable transfer')
       txid = await signOrdinalTransfer({
@@ -2049,32 +2047,11 @@ export async function sendCollectable(args: {
       })
     } catch (err) {
       if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-      throw formatSendError(err)
+      return failSend(err)
     }
   }
 
-  // Hide before relinquishing: relinquish is best-effort, and the basket keeps
-  // listing a spent tip until a spendable review runs.
-  markItemsSent([
-    { outpoint, txid },
-    ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
-  ])
-  // The address scan still lists the tip until the send is seen — drop the
-  // ownership cache so a post-send list cannot paint it from a stale live set.
-  invalidateLiveOneSatOutpoints()
-
-  await relinquishSpentOutputs(wallet, [
-    { outpoint, basket: '1sat' },
-    ...(priorLatch ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }] : []),
-  ])
-
-  setPaymentProgress('finishing')
-  setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
-  scheduleHistoryBackupPush('sendCollectable')
-  void listCollectables(wallet).catch((err) => {
-    console.warn('[collectables] post-send refresh failed', err)
-  })
-  return { txid }
+  return await finishSend(txid)
     } finally {
       clearPaymentProgress()
     }

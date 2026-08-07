@@ -201,19 +201,32 @@ const COLLECTABLES = `stateDiagram-v2
 
 const SEND_COLLECTABLE = `stateDiagram-v2
   direction LR
-  [*] --> edit
-  edit --> confirm : REVIEW
-  confirm --> edit : BACK
-  confirm --> sending : CONFIRM
-  sending --> success : SUCCESS
-  sending --> failure : FAIL
-  failure --> edit : RETRY
-  success --> [*]
-  edit : Edit
-  confirm : Confirm
-  sending : Sending
-  success : Success
-  failure : Failure
+  [*] --> idle
+  idle --> classifying : START with SendPath
+  classifying --> hardened : hardenedGenesis / hardenedResend
+  classifying --> softLatch : softLatch
+  classifying --> refusing : refuse
+  refusing --> failed
+  hardened --> done : SUCCESS
+  hardened --> failed : FAIL
+  softLatch --> done : SUCCESS
+  softLatch --> failed : FAIL
+  note right of hardened : no edge to softLatch
+  done --> idle : RESET
+  failed --> idle : RESET
+`
+
+const COLLECTABLE_SEND_PATH = `stateDiagram-v2
+  direction TB
+  [*] --> tipKind
+  tipKind --> hardenedCovenant : long non-P2PKH
+  tipKind --> softP2pkh : P2PKH
+  tipKind --> unknown : empty / other
+  hardenedCovenant --> hardenedResend : identity + delayed proof
+  hardenedCovenant --> refuse : missing identity or proof
+  softP2pkh --> hardenedGenesis : identity + brc150/156
+  softP2pkh --> softLatch : otherwise
+  unknown --> refuse
 `
 
 const AUTHENTICITY = `stateDiagram-v2
@@ -491,8 +504,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendCollectable',
     label: 'Send item',
-    caption: 'sendCollectable — edit → confirm → transfer',
+    caption: 'collectableSendMachine — classify → hardened | softLatch | refuse',
     source: SEND_COLLECTABLE,
+  },
+  {
+    id: 'sendPath',
+    label: 'Send path',
+    caption: 'chooseSendPath — TipKind → SendPath (no covenant soft-latch)',
+    source: COLLECTABLE_SEND_PATH,
   },
   {
     id: 'authenticity',
@@ -503,7 +522,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'hardenedSend',
     label: 'Hardened send',
-    caption: 'hardenedSendMachine — Commit → Settle unlock budget',
+    caption: 'hardenedSendMachine — Commit → Settle (child of collectableSend)',
     source: HARDENED_SEND,
   },
   {

@@ -13,8 +13,10 @@ import {
 export const BASE_LINK = `${'00'.repeat(32)}_0`
 
 /**
- * Live wallet hardened Commit/Settle is enabled. Soft-latch remains the
- * fallback when the recipient has no identity key.
+ * Live wallet hardened Commit/Settle is enabled.
+ *
+ * Soft-latch is a separate `SendPath` chosen by `chooseSendPath` — never a
+ * silent fallback after a failed covenant send.
  */
 export function isHardenedSendEnabled(): boolean {
   return true
@@ -36,10 +38,9 @@ export function canUseHardenedLatch(recipient: {
 
 /**
  * Hardened Commit and Settle reach the network only in the final
- * `signAction({ sendWith })`. A failure before that point has spent nothing, so
- * the caller may still deliver the item over soft-latch / BRC-150 instead of
- * failing the send. A failure at or after the broadcast must surface: retrying
- * the same tip would race a covenant pair that is already on the wire.
+ * `signAction({ sendWith })`. A failure before that point has spent nothing.
+ * Covenant tips still must not soft-latch — `collectableSendMachine` refuses
+ * instead. Marking broadcast-attempted prevents a dangerous retry of the same tip.
  */
 const BROADCAST_ATTEMPTED = Symbol.for('handcash.brc156.broadcastAttempted')
 

@@ -1,6 +1,10 @@
 /**
  * Wallet-toolbox wiring for hardened BRC-156 Commit + Settle (+ 2-sat beacon).
  *
+ * Parent routing is `collectableSendMachine` — there is no soft-latch edge out of
+ * a covenant path. This module advances `hardenedSendMachine` phase-by-phase;
+ * a send that fires events out of order throws instead of freestyling.
+ *
  * Flow: createAction `noSend` Commit → signAction `noSend` → createAction Settle with
  * `sendWith:[commitTxid]` → signAction `sendWith` so both broadcast together.
  *
@@ -32,7 +36,6 @@ import {
 } from 'scrypt-ts'
 import type { ActiveWallet } from './session'
 import {
-  BASE_LINK,
   Brc156Covenant,
   HARDENED_BEACON_SATS,
   HARDENED_LATCH_SCHEMA_VERSION,
@@ -53,8 +56,8 @@ import {
 } from './oneSatHardenedLatch'
 import {
   markHardenedBroadcastAttempted,
-  parseHardenedTipInstructions,
 } from './oneSatHardenedReceive'
+import { resolveDelayedProof } from './collectableTipKind'
 import {
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
@@ -68,10 +71,25 @@ import {
   estimateUnlockingLength,
   hardenedSendMachine,
   spendsFitBudget,
+  type HardenedSendPhase,
 } from './hardenedSendMachine'
-import { createActor } from 'xstate'
+import { createActor, type Actor } from 'xstate'
 
 export { estimateUnlockingLength } from './hardenedSendMachine'
+
+function advanceHardened(
+  chart: Actor<typeof hardenedSendMachine>,
+  event: Parameters<Actor<typeof hardenedSendMachine>['send']>[0],
+  expect: HardenedSendPhase,
+): void {
+  chart.send(event)
+  const snap = chart.getSnapshot()
+  if (!snap.matches(expect)) {
+    throw new Error(
+      `hardenedSendMachine: after ${event.type} expected ${expect}, got ${JSON.stringify(snap.value)}`,
+    )
+  }
+}
 
 export type HardenedSendArgs = {
   wallet: ActiveWallet
@@ -686,11 +704,15 @@ export async function sendHardenedCollectable(
 
   const chart = createActor(hardenedSendMachine)
   chart.start()
-  chart.send({
-    type: 'SEND',
-    outpoint: tipOp,
-    mode: tipIsCovenant ? 'resend' : 'genesis',
-  })
+  advanceHardened(
+    chart,
+    {
+      type: 'SEND',
+      outpoint: tipOp,
+      mode: tipIsCovenant ? 'resend' : 'genesis',
+    },
+    'gating',
+  )
 
   let commitReference: string | undefined
   let broadcastAttempted = false
@@ -723,16 +745,20 @@ export async function sendHardenedCollectable(
       const verdict = getProvenVerdict(tipOp)
       const brc150Ok = verdict?.tier === 'brc150' || verdict?.tier === 'brc156'
       if (!brc150Ok) {
-        chart.send({
-          type: 'PROVEN_FAIL',
-          error:
-            'Hardened genesis requires a BRC-150-verified tip before the first covenant send',
-        })
+        advanceHardened(
+          chart,
+          {
+            type: 'PROVEN_FAIL',
+            error:
+              'Hardened genesis requires a BRC-150-verified tip before the first covenant send',
+          },
+          'failed',
+        )
         throw new Error(
           'Hardened genesis requires a BRC-150-verified tip before the first covenant send',
         )
       }
-      chart.send({ type: 'PROVEN_OK' })
+      advanceHardened(chart, { type: 'PROVEN_OK' }, 'commitBuild')
       if (!args.originLockingScriptHex) {
         throw new Error('Hardened genesis requires the origin locking script')
       }
@@ -797,32 +823,32 @@ export async function sendHardenedCollectable(
         },
       ]
     } else {
-      chart.send({ type: 'PROVEN_OK' })
+      advanceHardened(chart, { type: 'PROVEN_OK' }, 'commitBuild')
       const tipInstance = Brc156Covenant.fromTx(sdkTxToScrypt(tipSrc), tipVout)
       const { nextTip, nextProof } = buildNextCommitInstances(tipInstance, recipientKey)
       commitNextTipScript = nextTip.lockingScript.toHex()
       commitNextProofScript = nextProof.lockingScript.toHex()
       oshForSettle = normalizeOriginScriptHash(String(tipInstance.originScriptHash))
 
-      // Remittance + covenant linkOutpoint name the delayed proof (commit vout1).
-      // Never prefer the soft-latch / beacon basket row — findLatchForTip returns
-      // those, and using their outpoint as the proof yields createAction failures
-      // or fetches of txs that were never mined.
-      const fromRemittance = parseHardenedTipInstructions(
-        args.tipCustomInstructions,
-      )?.proofOutpoint
-      const fromLink = decodeHardenedLinkOutpoint(String(tipInstance.linkOutpoint))
-      delayedProofOutpoint =
-        (fromRemittance && fromRemittance !== BASE_LINK
-          ? fromRemittance
-          : null) ||
-        (fromLink && fromLink !== BASE_LINK ? fromLink : null) ||
-        args.priorProofOutpoint?.trim() ||
-        null
-      if (!delayedProofOutpoint || delayedProofOutpoint === BASE_LINK) {
-        throw new Error('Hardened resend requires the delayed prior proof outpoint')
+      // Remittance / covenant link / OP_RETURN only — never basket latch.
+      // Caller may pass priorProofOutpoint already resolved via chooseSendPath.
+      const proof = resolveDelayedProof({
+        remittanceProofOutpoint: args.priorProofOutpoint,
+        tipCustomInstructions: args.tipCustomInstructions,
+        covenantLinkOutpoint: String(tipInstance.linkOutpoint),
+      })
+      if (!proof.proofOutpoint || !proof.proofSource) {
+        const why =
+          'reason' in proof && proof.reason
+            ? proof.reason
+            : 'Hardened resend requires the delayed prior proof outpoint'
+        advanceHardened(chart, { type: 'FAIL', error: why }, 'failed')
+        throw new Error(why)
       }
-      delayedProofOutpoint = toUnderscoreOutpoint(delayedProofOutpoint)
+      delayedProofOutpoint = proof.proofOutpoint
+      console.info(
+        `[brc-156] delayed proof ${delayedProofOutpoint} via ${proof.proofSource}`,
+      )
 
       // priorSettle = tx that created the tip we are committing (tipSrc).
       priorSettleTxHex = tipSrc.toHex()
@@ -831,6 +857,14 @@ export async function sendHardenedCollectable(
         proofCommitTxHex = await ensureTxHex(args.wallet, tipBeef, proofTxid)
       } catch (err) {
         const why = err instanceof Error ? err.message : String(err)
+        advanceHardened(
+          chart,
+          {
+            type: 'FAIL',
+            error: `Hardened resend: delayed proof ${delayedProofOutpoint} is missing on chain (${why})`,
+          },
+          'failed',
+        )
         throw new Error(
           `Hardened resend: delayed proof ${delayedProofOutpoint} is missing on chain (${why})`,
         )
@@ -873,7 +907,7 @@ export async function sendHardenedCollectable(
       ]
     }
 
-    chart.send({ type: 'COMMIT_BUILT', unlockBudgetBytes })
+    advanceHardened(chart, { type: 'COMMIT_BUILT', unlockBudgetBytes }, 'commitSign')
 
     const commitResult = await args.wallet.wallet.createAction({
       description: `Hardened commit ${args.name}`.slice(0, 50),
@@ -919,7 +953,7 @@ export async function sendHardenedCollectable(
         signOptions: { noSend: true },
       })
     }
-    chart.send({ type: 'COMMIT_SIGNED', commitTxid: commitSigned.txid })
+    advanceHardened(chart, { type: 'COMMIT_SIGNED', commitTxid: commitSigned.txid }, 'settleBuild')
 
     const commitTxid = commitSigned.txid
     if (!commitSigned.tx) {
@@ -994,7 +1028,7 @@ export async function sendHardenedCollectable(
         [settleParentHex, settleGenesisHex],
         [settleStateScript, settleTip.lockingScript.toHex()],
       )
-      chart.send({ type: 'SETTLE_BUILT', unlockBudgetBytes })
+      advanceHardened(chart, { type: 'SETTLE_BUILT', unlockBudgetBytes }, 'settleSign')
 
       // Internalize commit proof into latch basket via inputBEEF merge (held).
       // Commit AtomicBEEF already has the tip we just signed — no refetch.
@@ -1039,7 +1073,7 @@ export async function sendHardenedCollectable(
         unlockBudgetBytes,
         signOptions: { sendWith: [commitTxid] },
       })
-      chart.send({ type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid })
+      advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
       chart.stop()
       return { txid: settleSigned.txid }
     }
@@ -1055,7 +1089,7 @@ export async function sendHardenedCollectable(
       [settleParentHex, priorSettleTxHex, proofCommitTxHex],
       [settleStateScript, nextTipScriptHex],
     )
-    chart.send({ type: 'SETTLE_BUILT', unlockBudgetBytes })
+    advanceHardened(chart, { type: 'SETTLE_BUILT', unlockBudgetBytes }, 'settleSign')
 
     const settleSpendOps = [commitTipOp, delayedProofDot]
     // Commit AtomicBEEF already covers the tip we just signed; tip/input BEEF
@@ -1119,7 +1153,7 @@ export async function sendHardenedCollectable(
       unlockBudgetBytes,
       signOptions: { sendWith: [commitTxid] },
     })
-    chart.send({ type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid })
+    advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
     chart.stop()
     return { txid: settleSigned.txid }
   } catch (err) {

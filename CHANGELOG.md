@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.107] - 2026-08-07
+
+### Changed
+
+- **Explicit collectable send paths.** `chooseSendPath` + `collectableSendMachine`
+  classify tip kind → hardenedGenesis | hardenedResend | softLatch | refuse.
+  Covenant tips can no longer fall through to soft-latch. Delayed proof comes
+  only from remittance / covenant link / OP_RETURN (`DelayedProofSource`).
+- **Ownership fate classifier.** Address-scan ghosting only `ghostDrop`s soft
+  P2PKH tips; covenant / brc156 stay via `keepCovenant`.
+- **hardenedSendMachine is phase-driven** (`advanceHardened` asserts each step).
+
 ## [1.2.106] - 2026-08-07
 
 ### Fixed

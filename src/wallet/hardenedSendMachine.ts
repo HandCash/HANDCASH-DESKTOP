@@ -1,9 +1,10 @@
 /**
  * Hardened BRC-156 Commit → Settle send statechart.
  *
- * Separates fee-budget declaration (unlockingScriptLength) from unlock
- * generation and broadcast. Undersizing the budget fails signAction; this
- * machine owns the estimate policy so collectables.ts cannot freestyle it.
+ * Parent: `collectableSendMachine` (no soft-latch edge from covenant paths).
+ * This machine owns unlock-budget declaration and Commit/Settle phases so
+ * `oneSatHardenedSend.ts` cannot freestyle the order — `advanceHardened`
+ * asserts each transition lands in the expected state.
  */
 import { assign, setup } from 'xstate'
 import { HARDENED_UNLOCKING_SCRIPT_LENGTH } from './oneSatHardenedLatch'
