@@ -4,8 +4,8 @@ import { CheckIcon } from './icons'
 type VerifyMarkPhase = 'hidden' | 'busy' | 'done'
 
 /**
- * Tiny corner mark on an item thumbnail: spinner while proving, check when
- * done, then gone. Used on Collectables and Activity item rows.
+ * Tiny corner mark on an item thumbnail: spinner from receive until authenticity
+ * settles, then check, then gone. No idle gap between spinner and check.
  */
 export function CollectableVerifyMark({ verifying }: { verifying: boolean }) {
   const [phase, setPhase] = useState<VerifyMarkPhase>(() =>
@@ -25,8 +25,8 @@ export function CollectableVerifyMark({ verifying }: { verifying: boolean }) {
     }
     wasBusy.current = false
     setPhase('done')
-    const t = window.setTimeout(() => setPhase('hidden'), 850)
-    return () => window.clearTimeout(t)
+    const hideTimer = window.setTimeout(() => setPhase('hidden'), 1100)
+    return () => window.clearTimeout(hideTimer)
   }, [verifying])
 
   if (phase === 'hidden') return null

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.99] - 2026-08-06
+
+### Fixed
+
+- **Item received toasts immediately**, and the corner spinner stays until
+  authenticity settles — no gap between spinner and verified, and receive is
+  not delayed behind the verify walk.
+- **Status pill typography is consistent** and tap-to-refresh stays a button
+  while unlocked (no more swapping to a non-clickable pill).
+
 ## [1.2.98] - 2026-08-06
 
 ### Fixed

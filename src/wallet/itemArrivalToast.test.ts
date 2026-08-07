@@ -5,6 +5,13 @@ vi.mock('./toast', () => ({
   toastSuccess: (...args: unknown[]) => toastSuccess(...args),
 }))
 
+const noteAwaitingVerification = vi.fn()
+const clearAwaitingVerification = vi.fn()
+vi.mock('./verificationProgress', () => ({
+  noteAwaitingVerification: (...args: unknown[]) => noteAwaitingVerification(...args),
+  clearAwaitingVerification: (...args: unknown[]) => clearAwaitingVerification(...args),
+}))
+
 vi.mock('./provenCache', () => ({
   isItemProven: vi.fn(() => false),
 }))
@@ -12,10 +19,12 @@ vi.mock('./provenCache', () => ({
 describe('itemArrivalToast', () => {
   beforeEach(() => {
     toastSuccess.mockReset()
+    noteAwaitingVerification.mockReset()
+    clearAwaitingVerification.mockReset()
     vi.resetModules()
   })
 
-  it('toasts receive once, then verify once for the same tip', async () => {
+  it('toasts receive once with spinner, then verify once', async () => {
     const { announceItemsReceived, announceItemVerified } = await import(
       './itemArrivalToast'
     )
@@ -25,6 +34,7 @@ describe('itemArrivalToast', () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1)
     expect(toastSuccess.mock.calls[0]![0]).toBe('Item received')
     expect(String(toastSuccess.mock.calls[0]![1])).toMatch(/Verifying/i)
+    expect(noteAwaitingVerification).toHaveBeenCalled()
 
     announceItemsReceived([op])
     expect(toastSuccess).toHaveBeenCalledTimes(1)
@@ -32,24 +42,26 @@ describe('itemArrivalToast', () => {
     announceItemVerified(op, 'BRC-150 lineage proven')
     expect(toastSuccess).toHaveBeenCalledTimes(2)
     expect(toastSuccess.mock.calls[1]![0]).toBe('Item verified')
+    expect(clearAwaitingVerification).toHaveBeenCalled()
 
     announceItemVerified(op, 'again')
     expect(toastSuccess).toHaveBeenCalledTimes(2)
   })
 
-  it('skips verify toast when the tip was already proven at receive', async () => {
+  it('defers verify toast until after receive when proven during classify', async () => {
     const { isItemProven } = await import('./provenCache')
-    vi.mocked(isItemProven).mockReturnValue(true)
-    const { announceItemsReceived, announceItemVerified } = await import(
+    const { announceItemVerified, announceItemsReceived } = await import(
       './itemArrivalToast'
     )
     const op = `${'b'.repeat(64)}.0`
 
+    announceItemVerified(op, 'BRC-156 covenant verified')
+    expect(toastSuccess).not.toHaveBeenCalled()
+
+    vi.mocked(isItemProven).mockReturnValue(true)
     announceItemsReceived([op])
     expect(toastSuccess).toHaveBeenCalledTimes(1)
+    expect(toastSuccess.mock.calls[0]![0]).toBe('Item received')
     expect(String(toastSuccess.mock.calls[0]![1])).toMatch(/verified/i)
-
-    announceItemVerified(op, 'BRC-150 lineage proven')
-    expect(toastSuccess).toHaveBeenCalledTimes(1)
   })
 })

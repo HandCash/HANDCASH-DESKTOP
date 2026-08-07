@@ -712,14 +712,18 @@ async function proveHeldGenesis(
         origin: proof.origin,
         verifiedAt: Date.now(),
       })
-      announceItemVerified(outpoint, 'BRC-150 lineage proven')
+      // Spinner stays via awaitingVerify until announceItemVerified clears it.
       setVerificationProgress(
-        'identifying',
+        'verifying',
         outpoint,
         'Fetching name and traits for the proven origin',
       )
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
+      await yieldToUi()
       setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+      await yieldToUi()
+      // Toast + drop spinner in one beat — no idle gap before the checkmark.
+      announceItemVerified(outpoint, 'BRC-150 lineage proven')
       clearVerificationProgress(outpoint)
       await yieldToUi()
     }
@@ -993,13 +997,14 @@ export async function verifyItemAuthenticity(
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: provenOrigin } : {}),
     })
+    if (provenOrigin) await adoptProvenOrigin(target, provenOrigin, wallet.chain)
     if (authenticity.proven) {
+      await yieldToUi()
       announceItemVerified(
         target,
         authenticity.tier === 'brc156' ? 'BRC-156 covenant verified' : 'BRC-150 lineage proven',
       )
     }
-    if (provenOrigin) await adoptProvenOrigin(target, provenOrigin, wallet.chain)
     return authenticity
   } catch (err) {
     console.warn('[collectables] authenticity check failed', err)

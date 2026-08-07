@@ -274,6 +274,24 @@ export async function refreshFromChainExclusive(
     for (const op of arrivedItemOutpoints) {
       noteAnnouncedOneSat(op)
     }
+    // Toast + spinner as soon as the tip is known — before collectables refresh
+    // / spend audit / balance, so "Item received" is not stuck behind verify.
+    if (announceReceive && arrivedItemOutpoints.length > 0) {
+      announceItemsReceived(arrivedItemOutpoints)
+      maybeReceiveChime()
+      document.dispatchEvent(
+        new CustomEvent('handcash:receive', {
+          detail: {
+            title:
+              arrivedItemOutpoints.length === 1 ? 'Item received' : 'Items received',
+            body:
+              arrivedItemOutpoints.length === 1
+                ? 'A collectable landed in your wallet'
+                : `${arrivedItemOutpoints.length} collectables landed in your wallet`,
+          },
+        }),
+      )
+    }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
     if (!fundingOnly) {
@@ -325,15 +343,8 @@ export async function refreshFromChainExclusive(
     const balanceAfter = await fetchBalanceSats(active.wallet)
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
-      // Item receive toast is independent of the payment toast — authenticity
-      // settle fires a second toast later via announceItemVerified.
-      if (arrivedItemOutpoints.length > 0) {
-        announceItemsReceived(arrivedItemOutpoints)
-      }
-      if (balanceRose || arrivedItemOutpoints.length > 0) {
-        maybeReceiveChime()
-      }
       if (balanceRose) {
+        maybeReceiveChime()
         const gained = Math.max(0, balanceAfter - balanceBefore)
         const amountLabel =
           gained > 0 ? formatPrimaryFromSats(gained, getDisplayCurrency()) : undefined
@@ -343,19 +354,6 @@ export async function refreshFromChainExclusive(
             detail: {
               title: 'Payment received',
               body: amountLabel ?? 'Your wallet has been updated',
-            },
-          }),
-        )
-      } else if (arrivedItemOutpoints.length > 0) {
-        document.dispatchEvent(
-          new CustomEvent('handcash:receive', {
-            detail: {
-              title:
-                arrivedItemOutpoints.length === 1 ? 'Item received' : 'Items received',
-              body:
-                arrivedItemOutpoints.length === 1
-                  ? 'A collectable landed in your wallet'
-                  : `${arrivedItemOutpoints.length} collectables landed in your wallet`,
             },
           }),
         )

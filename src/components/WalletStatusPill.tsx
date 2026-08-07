@@ -28,16 +28,21 @@ type Props = {
   session: WalletSession
   /** Local BRC-100 HTTP bridge is listening. */
   bridgeOnline: boolean
-  /** Tap Sync / status pill — chain refresh (+ optional history pull from App). */
+  /** Tap the status pill — chain refresh (+ optional history pull from App). */
   onManualSync?: () => void | Promise<void>
 }
 
 type Tone = 'ok' | 'busy' | 'warn' | 'error' | 'muted'
 
-type StatusView = {
+export type StatusView = {
   label: string
   tone: Tone
   detail: string | null
+}
+
+/** Strip trailing ellipsis so uppercase pill labels stay uniform. */
+function pillLabel(raw: string): string {
+  return raw.replace(/[…\.]+$/u, '').trim()
 }
 
 function resolveStatus(
@@ -82,11 +87,10 @@ function resolveStatus(
       } This device is fine — only the off-device history copy is behind.`,
     }
   }
-  // Live payment phases outrank the generic "Sending" session bit — the user
-  // asked to see preparing / signing / broadcasting while a transfer runs.
+  // Live payment phases outrank the generic "Sending" session bit.
   if (payment.phase !== 'idle' && payment.label) {
     return {
-      label: payment.label.replace(/…$/, ''),
+      label: pillLabel(payment.label),
       tone: 'busy',
       detail: payment.detail,
     }
@@ -96,7 +100,7 @@ function resolveStatus(
   }
   if (health.phase === 'syncing') {
     return {
-      label: 'Syncing…',
+      label: 'Syncing',
       tone: 'busy',
       detail: health.message ?? 'Refreshing funds against the network',
     }
@@ -132,53 +136,36 @@ function resolveStatus(
   // Chain ingest wins. History replica (BRC-39) is optional parity — never alarm as
   // "Out of sync" when funds/items are healthy on this device. See wallet/layers.ts.
   if (health.phase === 'ok') {
-    if (cloud.phase === 'ok') {
-      return {
-        label: 'Synced',
-        tone: 'ok',
-        detail: cloud.message ?? health.message ?? 'Chain ingest and history replica look healthy',
-      }
-    }
     return {
       label: 'Synced',
       tone: 'ok',
       detail:
-        health.message ??
-        (cloud.phase === 'pending'
-          ? 'Chain OK — history replica (BRC-39) still uploading'
-          : cloud.phase === 'off'
-            ? 'Chain OK — history replica not configured'
-            : 'Chain OK'),
+        cloud.phase === 'ok'
+          ? (cloud.message ?? health.message ?? 'Chain ingest and history replica look healthy')
+          : health.message ??
+            (cloud.phase === 'pending'
+              ? 'Chain OK — history replica (BRC-39) still uploading'
+              : cloud.phase === 'off'
+                ? 'Chain OK — history replica not configured'
+                : 'Chain OK'),
     }
   }
 
-  if (cloud.phase === 'off') {
-    return {
-      label: 'Ready',
-      tone: 'ok',
-      detail: 'Wallet unlocked — chain ingest only, no history replica',
-    }
-  }
   if (cloud.phase === 'ok') {
     return {
-      label: 'Backup synced',
+      label: 'Synced',
       tone: 'ok',
-      detail: cloud.message,
-    }
-  }
-  if (cloud.phase === 'pending') {
-    return {
-      label: 'Ready',
-      tone: 'ok',
-      detail:
-        cloud.message ??
-        'Wallet unlocked — history replica pending (does not affect local balance)',
+      detail: cloud.message ?? 'History replica looks healthy',
     }
   }
   return {
     label: 'Ready',
     tone: 'ok',
-    detail: 'Wallet unlocked — chain ingest only, no history replica',
+    detail:
+      cloud.phase === 'pending'
+        ? (cloud.message ??
+          'Wallet unlocked — history replica pending (does not affect local balance)')
+        : 'Wallet unlocked — chain ingest only, no history replica',
   }
 }
 
@@ -198,7 +185,11 @@ function sessionFromMachine(value: unknown): WalletSession {
   return 'boot'
 }
 
-/** Titlebar status — precise wallet/network/cloud state. Tap when unlocked to refresh. */
+function isUnlocked(session: WalletSession): boolean {
+  return session === 'ready' || session === 'sending'
+}
+
+/** Titlebar status — one pill, one typeface. Tap when unlocked to refresh. */
 export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props) {
   const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
   const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
@@ -223,7 +214,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   }, [])
 
   useEffect(() => {
-    if (session !== 'ready' && session !== 'sending') return
+    if (!isUnlocked(session)) return
     void refreshCloudBackupHealth()
     const id = window.setInterval(() => void refreshCloudBackupHealth(), 60_000)
     return () => window.clearInterval(id)
@@ -237,61 +228,66 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     bridgeOnline,
     payment,
   )
-  const canManualSync =
-    (session === 'ready' || session === 'sending') &&
-    networkOnline &&
-    Boolean(onManualSync) &&
-    payment.phase === 'idle'
-  // Prefer live sync/payment labels over the generic manual busy flag — those
-  // already say which layer is working.
   const display =
     manualBusy && health.phase !== 'syncing' && payment.phase === 'idle'
       ? {
-          label: 'Syncing…',
+          label: 'Syncing',
           tone: 'busy' as const,
           detail: 'Refreshing funds and history against the network',
         }
       : view
 
+  // Always the same control when a refresh handler exists — never swap to a
+  // <div> mid-session (that flipped fonts and dropped the click target).
+  const tapEnabled = Boolean(onManualSync) && isUnlocked(session) && networkOnline
+  const tapBusy =
+    manualBusy || health.phase === 'syncing' || payment.phase !== 'idle'
+
   const handleManualSync = () => {
-    if (!canManualSync || manualBusy || !onManualSync) return
+    if (!tapEnabled || tapBusy || !onManualSync) return
     setManualBusy(true)
     void Promise.resolve(onManualSync()).finally(() => setManualBusy(false))
   }
 
-  const pillProps = {
-    className: 'status-pill',
-    'data-aeon-no-drag': true,
-    'data-tone': display.tone,
-    title:
-      canManualSync && !manualBusy
-        ? `${display.detail ?? display.label} — tap to refresh`
-        : (display.detail ?? undefined),
-    'aria-live': 'polite' as const,
-  }
+  const label = pillLabel(display.label)
+  const title =
+    tapEnabled && !tapBusy
+      ? `${display.detail ?? label} — tap to refresh`
+      : (display.detail ?? undefined)
 
-  if (canManualSync) {
+  if (tapEnabled) {
     return (
       <button
         type="button"
-        {...pillProps}
         className="status-pill status-pill-btn"
-        aria-label={`${display.label} — tap to refresh wallet`}
-        disabled={manualBusy || health.phase === 'syncing'}
+        data-aeon-no-drag
+        data-tone={display.tone}
+        title={title}
+        aria-live="polite"
+        aria-label={
+          tapBusy ? label : `${label} — tap to refresh wallet`
+        }
+        disabled={tapBusy}
         onClick={handleManualSync}
       >
-        <span className="status-dot" data-tone={display.tone} />
-        {display.label}
+        <span className="status-dot" data-tone={display.tone} aria-hidden />
+        <span className="status-pill-label">{label}</span>
       </button>
     )
   }
 
   return (
-    <div {...pillProps}>
-      <span className="status-dot" data-tone={display.tone} />
-      {display.label}
+    <div
+      className="status-pill"
+      data-aeon-no-drag
+      data-tone={display.tone}
+      title={title}
+      aria-live="polite"
+    >
+      <span className="status-dot" data-tone={display.tone} aria-hidden />
+      <span className="status-pill-label">{label}</span>
     </div>
   )
 }
 
-export { sessionFromMachine, resolveStatus }
+export { sessionFromMachine, resolveStatus, pillLabel }

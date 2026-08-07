@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveStatus } from './WalletStatusPill'
+import { pillLabel, resolveStatus } from './WalletStatusPill'
 import type { SyncHealth } from '../wallet/walletHealth'
 import type { CloudBackupHealth } from '../wallet/cloudBackupHealth'
 import type { PaymentProgress } from '../wallet/paymentProgress'
@@ -41,12 +41,12 @@ describe('resolveStatus', () => {
       true,
       idlePayment,
     )
-    expect(view.label).toBe('Syncing…')
+    expect(view.label).toBe('Syncing')
     expect(view.tone).toBe('busy')
     expect(view.detail).toMatch(/payments/i)
   })
 
-  it('prefers live payment phases over the generic sending session', () => {
+  it('normalizes payment labels without trailing ellipsis', () => {
     const view = resolveStatus(
       'sending',
       health(),
@@ -61,5 +61,19 @@ describe('resolveStatus', () => {
     )
     expect(view.label).toBe('Broadcasting')
     expect(view.detail).toMatch(/Signing and broadcasting/i)
+  })
+
+  it('shows Synced when chain is ok', () => {
+    const view = resolveStatus('ready', health(), idleCloud, true, true, idlePayment)
+    expect(view.label).toBe('Synced')
+    expect(view.tone).toBe('ok')
+  })
+})
+
+describe('pillLabel', () => {
+  it('strips trailing ellipsis for uniform uppercase labels', () => {
+    expect(pillLabel('Syncing…')).toBe('Syncing')
+    expect(pillLabel('Preparing...')).toBe('Preparing')
+    expect(pillLabel('Synced')).toBe('Synced')
   })
 })

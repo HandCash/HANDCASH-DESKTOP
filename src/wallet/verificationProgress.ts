@@ -1,8 +1,9 @@
 /**
- * Live authenticity / identity work for a single collectable.
+ * Live authenticity work for collectables.
  *
- * The details panel reads this so an unverified tip does not look abandoned
- * while a lineage walk or indexer fill is actually running for it.
+ * A tip enters `awaiting` as soon as it is received (toast), and stays there
+ * until authenticity settles — that drives the corner spinner. Separately,
+ * `progress` names which tip is actively being walked right now.
  */
 
 export type VerificationPhase = 'idle' | 'verifying' | 'identifying'
@@ -17,6 +18,9 @@ export type VerificationProgress = {
 type Listener = (progress: VerificationProgress) => void
 
 const listeners = new Set<Listener>()
+
+/** Tips received but not yet authenticity-proven — spinner stays until cleared. */
+const awaitingVerify = new Set<string>()
 
 let progress: VerificationProgress = {
   outpoint: null,
@@ -51,6 +55,7 @@ export function setVerificationProgress(
     return
   }
   const op = outpoint ? normalize(outpoint) : null
+  if (op) awaitingVerify.add(op)
   progress = {
     outpoint: op,
     phase,
@@ -73,6 +78,32 @@ export function clearVerificationProgress(outpoint?: string | null): void {
     return
   }
   setVerificationProgress('idle')
+}
+
+/**
+ * Mark a freshly received tip as verifying so the corner spinner appears
+ * immediately — before the lineage walk is scheduled.
+ */
+export function noteAwaitingVerification(outpoint: string): void {
+  const key = normalize(outpoint)
+  if (!key || awaitingVerify.has(key)) return
+  awaitingVerify.add(key)
+  // New object so React subscribers re-render and pick up isOutpointVerifying.
+  progress = { ...progress }
+  emit()
+}
+
+/** Tip authenticity settled — drop the spinner for this outpoint. */
+export function clearAwaitingVerification(outpoint: string): void {
+  const key = normalize(outpoint)
+  if (!key || !awaitingVerify.has(key)) return
+  awaitingVerify.delete(key)
+  if (progress.outpoint === key) {
+    progress = { outpoint: null, phase: 'idle', label: null, detail: null }
+  } else {
+    progress = { ...progress }
+  }
+  emit()
 }
 
 export function subscribeVerificationProgress(listener: Listener): () => void {
@@ -98,11 +129,17 @@ export function peekPreferredCollectableVerification(): string | null {
   return preferredOutpoint
 }
 
-/** True when this tip is the one currently being verified or identified. */
+/**
+ * True while this tip is waiting on authenticity or is the active walk target.
+ * Used by the corner spinner — must stay true from receive until verified.
+ */
 export function isOutpointVerifying(
   outpoint: string | null | undefined,
   current: VerificationProgress = progress,
 ): boolean {
-  if (!outpoint || current.phase === 'idle' || !current.outpoint) return false
-  return normalize(outpoint) === current.outpoint
+  if (!outpoint) return false
+  const key = normalize(outpoint)
+  if (awaitingVerify.has(key)) return true
+  if (current.phase === 'idle' || !current.outpoint) return false
+  return key === current.outpoint
 }
