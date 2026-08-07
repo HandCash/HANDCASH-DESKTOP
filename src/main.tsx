@@ -7,7 +7,7 @@ import './styles/handcash.css'
 import './wallet/browserPolyfills'
 import { App } from './App'
 import { appendAppLog, installAppLogCapture } from './wallet/appLog'
-import { shipPreviousSessionLogs } from './wallet/logShip'
+import { shipPreviousSessionLogs, startAutoLogShip } from './wallet/logShip'
 import { reconcileBackupWatchdog } from './wallet/backupWatchdog'
 
 // Map HandCash brand tokens onto Aeon CSS vars (no parallel token sheet for Aeon).
@@ -38,7 +38,9 @@ const backupCrash = reconcileBackupWatchdog()
 if (backupCrash) appendAppLog('warn', `[cloud-backup] ${backupCrash}`)
 
 // A crash log is only useful if it leaves the device on its own.
-void shipPreviousSessionLogs()
+void shipPreviousSessionLogs().finally(() => {
+  startAutoLogShip()
+})
 
 const platform = window.handcash?.platform
 if (platform === 'darwin') {

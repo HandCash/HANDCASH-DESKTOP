@@ -113,6 +113,38 @@ async function abortHeldReferences(
   }
 }
 
+function isAbortError(err: unknown): boolean {
+  if (!err || typeof err !== 'object') return false
+  const e = err as { name?: string; message?: string }
+  return e.name === 'AbortError' || /^AbortError$/i.test(String(e.message ?? ''))
+}
+
+async function withAbortRetry<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn()
+  } catch (err) {
+    if (!isAbortError(err)) throw err
+    console.warn(`[brc-156] ${label} AbortError — retrying once`, err)
+    return await fn()
+  }
+}
+
+function pauseMonitor(wallet: ActiveWallet): () => void {
+  try {
+    wallet.monitor?.stopTasks?.()
+    console.info('[brc-156] monitor paused for hardened send')
+  } catch (err) {
+    console.warn('[brc-156] monitor stop failed', err)
+  }
+  return () => {
+    try {
+      void wallet.monitor?.startTasks?.()
+    } catch (err) {
+      console.warn('[brc-156] monitor restart failed', err)
+    }
+  }
+}
+
 function advanceHardened(
   chart: Actor<typeof hardenedSendMachine>,
   event: Parameters<Actor<typeof hardenedSendMachine>['send']>[0],
@@ -695,6 +727,17 @@ async function signCovenantAction(args: {
   return { txid: signed.txid, tx: atomicBeefToNumberArray(signed.tx) }
 }
 
+async function signCovenantActionResilient(
+  args: Parameters<typeof signCovenantAction>[0],
+): Promise<{ txid: string; tx?: number[] }> {
+  return withAbortRetry(`signCovenantAction(${args.mode})`, async () => {
+    console.info(`[brc-156] ${args.mode}: building unlock scripts`)
+    const result = await signCovenantAction(args)
+    console.info(`[brc-156] ${args.mode}: signAction ok txid=${result.txid.slice(0, 12)}…`)
+    return result
+  })
+}
+
 function tipTags(args: {
   origin: string
   name: string
@@ -739,6 +782,7 @@ export async function sendHardenedCollectable(
   if (!tipSrc) throw new Error('Hardened send: tip source transaction missing from BEEF')
 
   await abortStuckHardenedNosends(args.wallet)
+  const resumeMonitor = pauseMonitor(args.wallet)
 
   const chart = createActor(hardenedSendMachine)
   chart.start()
@@ -981,7 +1025,7 @@ export async function sendHardenedCollectable(
         signOptions: { noSend: true },
       })
     } else {
-      commitSigned = await signCovenantAction({
+      commitSigned = await signCovenantActionResilient({
         wallet: args.wallet,
         signable: commitResult.signableTransaction,
         mode: 'commit',
@@ -1101,7 +1145,7 @@ export async function sendHardenedCollectable(
       settleReference = settleResult.signableTransaction.reference
 
       broadcastAttempted = true
-      const settleSigned = await signCovenantAction({
+      const settleSigned = await signCovenantActionResilient({
         wallet: args.wallet,
         signable: settleResult.signableTransaction,
         mode: 'settleBase',
@@ -1193,7 +1237,7 @@ export async function sendHardenedCollectable(
     settleReference = settleResult.signableTransaction.reference
 
     broadcastAttempted = true
-    const settleSigned = await signCovenantAction({
+    const settleSigned = await signCovenantActionResilient({
       wallet: args.wallet,
       signable: settleResult.signableTransaction,
       mode: 'settle',
@@ -1226,7 +1270,14 @@ export async function sendHardenedCollectable(
     await abortStuckHardenedNosends(args.wallet)
     if (args.isAlreadySpentInputError(err)) await args.releaseStaleSpendableOutputs()
     if (broadcastAttempted) markHardenedBroadcastAttempted(err)
+    if (isAbortError(err)) {
+      throw new Error(
+        'Signing was interrupted (wallet storage busy). Wait a second and send again.',
+      )
+    }
     throw err
+  } finally {
+    resumeMonitor()
   }
 }
 

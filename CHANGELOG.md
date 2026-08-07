@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.110] - 2026-08-07
+
+### Fixed
+
+- **Settle AbortError.** Pause the toolbox monitor during hardened Commit/Settle
+  and retry covenant `signAction` once on IndexedDB `AbortError` (was failing
+  mid-settleSign with a bare "AbortError" toast).
+- **Auto support logs.** With an upload URL set, logs ship every ~45s, on
+  backgrounding, and immediately after a send failure — no Settings tap needed.
+
 ## [1.2.109] - 2026-08-07
 
 ### Fixed

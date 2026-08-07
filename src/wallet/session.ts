@@ -14,6 +14,8 @@ export type ActiveWallet = {
   /** Full toolbox wallet (has balance()). */
   wallet: Wallet
   services: Services
+  /** Background proof/header loop — pause during hardened sign to avoid IDB AbortError. */
+  monitor?: { stopTasks?: () => void; startTasks?: () => void | Promise<void> }
   rootKeyHex: string
   identityKey: string
   address: string
@@ -176,6 +178,12 @@ export async function bootWallet(args: {
   active = {
     wallet: setup.wallet,
     services: setup.services as Services,
+    monitor: setup.monitor
+      ? {
+          stopTasks: () => setup.monitor?.stopTasks?.(),
+          startTasks: () => setup.monitor?.startTasks?.(),
+        }
+      : undefined,
     rootKeyHex: args.rootKeyHex,
     identityKey: setup.identityKey || identityKey,
     address,

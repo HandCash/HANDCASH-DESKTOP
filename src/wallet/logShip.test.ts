@@ -116,4 +116,25 @@ describe('logShip', () => {
 
     expect(result).toMatchObject({ ok: false })
   })
+
+  it('auto-ships on send-failure without waiting for the interval', async () => {
+    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-live')
+    store.set(
+      CURRENT_KEY,
+      JSON.stringify([{ at: 1, level: 'error', message: 'send blew up' }]),
+    )
+    stubBrowserGlobals()
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    await import('./appLog').then((m) => m.installAppLogCapture())
+    const ship = await import('./logShip')
+
+    const first = await ship.shipAppLogsAuto('send-failure')
+    expect(first.ok).toBe(true)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['X-HandCash-Log']).toBe(
+      'send-failure',
+    )
+  })
 })

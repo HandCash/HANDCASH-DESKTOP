@@ -86,6 +86,63 @@ export async function shipAppLogs(url = getLogUploadUrl()): Promise<LogShipResul
 }
 
 let shippedPrevious = false
+let autoShipTimer: ReturnType<typeof setInterval> | null = null
+let lastAutoShipAt = 0
+let autoShipInflight: Promise<void> | null = null
+
+const AUTO_SHIP_INTERVAL_MS = 45_000
+const AUTO_SHIP_MIN_GAP_MS = 12_000
+
+/**
+ * Background / event-driven upload so support can `GET /latest` without the
+ * user tapping Settings. Debounced except for `send-failure`.
+ */
+export async function shipAppLogsAuto(reason: string): Promise<LogShipResult> {
+  const url = getLogUploadUrl()
+  if (!url) return { ok: true, skipped: true, reason: 'no upload URL configured' }
+  const now = Date.now()
+  const force = reason === 'send-failure' || reason === 'crash-recovery'
+  if (!force && now - lastAutoShipAt < AUTO_SHIP_MIN_GAP_MS) {
+    return { ok: true, skipped: true, reason: 'debounced' }
+  }
+  if (autoShipInflight) return { ok: true, skipped: true, reason: 'inflight' }
+
+  lastAutoShipAt = now
+  const run = (async () => {
+    const body = `${previousBlock(getPreviousSessionLogs())}${await platformTail()}`
+    const result = await post(url, body, reason)
+    if (result.ok && !('skipped' in result && result.skipped)) {
+      console.info(`[logs] auto-uploaded (${reason}, ${result.bytes} bytes)`)
+    } else if (!result.ok) {
+      console.warn('[logs] auto-upload failed', reason, result.error)
+    }
+    return result
+  })()
+
+  autoShipInflight = run.then(
+    () => {
+      autoShipInflight = null
+    },
+    () => {
+      autoShipInflight = null
+    },
+  )
+  return run
+}
+
+/** Start periodic + visibility-hidden auto ship (once per process). */
+export function startAutoLogShip(): void {
+  if (autoShipTimer != null) return
+  void shipAppLogsAuto('boot')
+  autoShipTimer = setInterval(() => {
+    void shipAppLogsAuto('interval')
+  }, AUTO_SHIP_INTERVAL_MS)
+  if (typeof document !== 'undefined') {
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'hidden') void shipAppLogsAuto('hidden')
+    })
+  }
+}
 
 /**
  * Auto-send a recovered crash log, once per launch. Silent by design: it runs
@@ -102,5 +159,6 @@ export async function shipPreviousSessionLogs(): Promise<LogShipResult> {
   const result = await post(url, previousBlock(previous) + formatAppLogs(), 'crash-recovery')
   if (result.ok) console.info(`[logs] previous session uploaded (${previous.length} lines)`)
   else console.warn('[logs] previous session upload failed', result.error)
+  lastAutoShipAt = Date.now()
   return result
 }

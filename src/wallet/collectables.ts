@@ -1405,6 +1405,11 @@ function formatSendError(err: unknown): Error {
   if (err instanceof Error) {
     const name = err.name || ''
     const msg = err.message || String(err)
+    if (name === 'AbortError' || /^AbortError$/i.test(msg)) {
+      return new Error(
+        'Signing was interrupted (wallet storage busy). Wait a second and send again.',
+      )
+    }
     if (name.includes('INSUFFICIENT_FUNDS') || /insufficient.?funds/i.test(msg)) {
       return new Error('Not enough BSV to cover the network fee for this transfer')
     }
@@ -1845,6 +1850,9 @@ export async function sendCollectable(args: {
     console.error('[collectables] send failed', formatted.message, err)
     chart.send({ type: 'FAIL', error: formatted.message })
     chart.stop()
+    void import('./logShip')
+      .then((m) => m.shipAppLogsAuto('send-failure'))
+      .catch(() => {})
     throw formatted
   }
 
