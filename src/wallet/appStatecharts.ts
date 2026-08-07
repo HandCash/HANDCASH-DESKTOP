@@ -28,7 +28,7 @@ const MASTER = `stateDiagram-v2
 
   walletNav --> friendsFlow : Friends
   walletNav --> collectablesFlow : Collectables
-  walletNav --> connectedApps : Apps
+  walletNav --> connectedApps : Connect
   walletNav --> activityFeed : Activity
   walletNav --> identityPanel : Identity
   walletNav --> settingsFlow : Settings
@@ -49,7 +49,7 @@ const MASTER = `stateDiagram-v2
   friendsFlow : Friends
   collectablesFlow : Collectables
   sendCollectable : Send item
-  connectedApps : Apps
+  connectedApps : Connected apps
   connectPermission : Connect prompt
   actionPermission : Action prompt
   activityFeed : Activity
@@ -533,8 +533,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'connectedApps',
-    label: 'Apps',
-    caption: 'connectedApps — list, details, scopes',
+    label: 'Connect',
+    caption: 'connectedApps — Connected apps list, details, scopes',
     source: CONNECTED_APPS,
   },
   {

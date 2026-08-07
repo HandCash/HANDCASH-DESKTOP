@@ -82,6 +82,7 @@ import {
   chooseSendPath,
   classifyTipKind,
   isCovenantLockedScript,
+  normalizeLockingScriptHex,
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
 import { softLatchSendMachine } from './softLatchSendMachine'
@@ -1122,15 +1123,17 @@ async function listCollectablesNow(
         setTimeout(() => reject(new Error('listOutputs timed out')), LIST_TIMEOUT_MS),
       ),
     ])
-    outputs = (result.outputs ?? []).map((o) => ({
-      outpoint: o.outpoint,
-      satoshis: o.satoshis ?? 1,
-      tags: o.tags,
-      lockingScript:
-        typeof (o as { lockingScript?: unknown }).lockingScript === 'string'
-          ? ((o as { lockingScript: string }).lockingScript)
-          : undefined,
-    }))
+    outputs = (result.outputs ?? []).map((o) => {
+      const lockingScript = normalizeLockingScriptHex(
+        (o as { lockingScript?: unknown }).lockingScript,
+      )
+      return {
+        outpoint: o.outpoint,
+        satoshis: o.satoshis ?? 1,
+        tags: o.tags,
+        lockingScript: lockingScript || undefined,
+      }
+    })
   } catch (err) {
     console.warn('[collectables] listOutputs failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
@@ -1316,13 +1319,14 @@ function formatSendError(err: unknown): Error {
  * the branch rather than the whole script.
  */
 function assertOrdinalIsDeviceLocked(
-  lockingScript: string | undefined,
+  lockingScript: unknown,
   wallet: ActiveWallet,
 ): void {
-  if (!lockingScript) return
+  const hex = normalizeLockingScriptHex(lockingScript)
+  if (!hex) return
   // Covenant-locked tips cannot be soft-spent; send refuses and UI offers abandon.
-  if (isCovenantLockedScript(lockingScript)) return
-  if (!scriptPaysAddress(lockingScript, wallet.address)) {
+  if (isCovenantLockedScript(hex)) return
+  if (!scriptPaysAddress(hex, wallet.address)) {
     throw new Error(
       'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.',
     )

@@ -166,8 +166,8 @@ export function ConnectedAppsPanel({ apps }: Props) {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Apps</h2>
-        <CollectionViewToggle label="Apps view" scope="apps" />
+        <h2>Connected apps</h2>
+        <CollectionViewToggle label="Connected apps view" scope="apps" />
       </div>
       {orderedApps.length === 0 ? (
         <EmptyState

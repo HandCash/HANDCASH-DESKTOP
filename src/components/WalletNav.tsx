@@ -93,7 +93,7 @@ const SECTIONS: {
   Icon: ComponentType<IconProps>
 }[] = [
   { value: 'activity', label: 'Activity', shortLabel: 'Activity', Icon: ActivityIcon },
-  { value: 'apps', label: 'Apps', shortLabel: 'Apps', Icon: AppsIcon },
+  { value: 'apps', label: 'Connect', shortLabel: 'Connect', Icon: AppsIcon },
   { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },

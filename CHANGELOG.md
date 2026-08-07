@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.125] - 2026-08-07
+
+### Fixed
+
+- **“Collectable locking script is unrecognized” on soft ordinals.** Tip
+  classification now normalizes hex (`0x` / SDK `toHex()`), and treats any
+  spendable P2PKH branch (bare or inscribed) as soft-latch — not unknown /
+  covenant.
+
+### Changed
+
+- Nav label **Apps → Connect**; panel heading **Connected apps**.
+
 ## [1.2.124] - 2026-08-07
 
 ### Fixed
