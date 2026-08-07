@@ -54,7 +54,12 @@ export const HARDENED_TIP_SATS = 1
 export const HARDENED_BEACON_SATS = LATCH_DUST_SATS
 export const HARDENED_PROOF_SATS = 3
 /** Generous vin unlocking length for tip/proof embeds in settle. */
-export const HARDENED_UNLOCKING_SCRIPT_LENGTH = 12_000
+/**
+ * Floor for covenant unlockingScriptLength (bytes).
+ * Real settle unlocks embed prior txs and often exceed 30k — keep the floor
+ * high enough that a thin estimate pad cannot slip under signAction.
+ */
+export const HARDENED_UNLOCKING_SCRIPT_LENGTH = 48_000
 /** Alias for {@link LATCH_SCHEMA_HARDENED}. */
 export const HARDENED_LATCH_SCHEMA_VERSION = LATCH_SCHEMA_HARDENED
 /**

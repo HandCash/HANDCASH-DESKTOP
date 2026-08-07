@@ -52,10 +52,15 @@ function readThrough(key: string): string | null {
 
 export function durableGetItem(key: string): string | null {
   const cached = cache.get(key)
-  if (cached !== undefined) return cached
+  if (cached !== undefined) {
+    // Electron delete writes '' — treat empty as absent so callers do not
+    // confuse a wiped key with a stored empty payload.
+    return cached === '' ? null : cached
+  }
   const value = readThrough(key)
-  cache.set(key, value)
-  return value
+  const normalized = value === '' ? null : value
+  cache.set(key, normalized)
+  return normalized
 }
 
 export function durableSetItem(key: string, value: string, opts?: DurableSetOptions): boolean {
@@ -98,7 +103,7 @@ export function durableRemoveItem(key: string): void {
   } catch {
     // ignore
   }
-  cache.delete(key)
+  cache.set(key, null)
 }
 
 /** Drop cached reads when something outside this renderer may have written. */

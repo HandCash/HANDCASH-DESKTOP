@@ -93,10 +93,12 @@ import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
+  hasProvenTiers,
   hasProvenVerdict,
   rememberGenesisAttempt,
   rememberProvenVerdict,
   shouldAttemptGenesis,
+  authenticityFromProvenCache,
   type AuthenticityTier,
 } from './provenCache'
 import { listRecentActivity } from './appActivity'
@@ -186,16 +188,22 @@ function loadDurableList(): Collectable[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as { items?: unknown }
     if (!Array.isArray(parsed?.items)) return []
-    return parsed.items.filter(isCollectableShape).map((item) => ({
-      ...item,
-      traits: Array.isArray(item.traits) ? item.traits : [],
-      extras: Array.isArray(item.extras) ? item.extras : [],
-      proven: item.proven === true,
-      authenticity:
-        item.authenticity === 'brc156' || item.authenticity === 'brc150'
+    return parsed.items.filter(isCollectableShape).map((item) => {
+      // Verdict store outranks a stale list-cache badge from last session.
+      const fromProven = authenticityFromProvenCache(item.outpoint)
+      const authenticity = fromProven.proven
+        ? fromProven.authenticity
+        : item.authenticity === 'brc156' || item.authenticity === 'brc150'
           ? item.authenticity
-          : 'unproven',
-    }))
+          : 'unproven'
+      return {
+        ...item,
+        traits: Array.isArray(item.traits) ? item.traits : [],
+        extras: Array.isArray(item.extras) ? item.extras : [],
+        proven: authenticity === 'brc156' || authenticity === 'brc150',
+        authenticity,
+      }
+    })
   } catch {
     return []
   }
@@ -866,12 +874,14 @@ export async function verifyItemAuthenticity(
   active?: ActiveWallet | null,
 ): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
+  // Only a proven tier is a durable short-circuit. Cached `unproven` may be a
+  // transient ladder miss — allow re-verify so restarts can complete the walk.
   const cached = getProvenVerdict(target)
-  if (cached) {
+  if (cached && hasProvenTier(target)) {
     return {
       tier: cached.tier,
-      proven: cached.tier === 'brc156' || cached.tier === 'brc150',
-      reason: cached.tier === 'unproven' ? 'No cryptographic proof was available' : null,
+      proven: true,
+      reason: null,
       originScriptHash: cached.originScriptHash,
     }
   }

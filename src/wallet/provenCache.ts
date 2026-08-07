@@ -35,6 +35,20 @@ export type ProvenVerdict = {
   verifiedAt: number
 }
 
+export function isProvenTier(tier: AuthenticityTier): boolean {
+  return tier === 'brc156' || tier === 'brc150'
+}
+
+/** Proven tiers never move backwards to unproven / weaker proofs. */
+export function canAcceptVerdict(
+  current: AuthenticityTier,
+  next: AuthenticityTier,
+): boolean {
+  if (isProvenTier(current) && !isProvenTier(next)) return false
+  if (current === 'brc156' && next === 'brc150') return false
+  return true
+}
+
 let verdicts: Map<string, ProvenVerdict> | null = null
 let originCommitments: Map<string, string> | null = null
 
@@ -167,17 +181,51 @@ export function rememberProvenVerdict(
       : typeof verdict === 'string'
         ? { tier: verdict, verifiedAt: Date.now() }
         : verdict
+  const existing = map.get(k)
+  // Monotonic authenticity: never let a transient ladder miss erase BRC-150/156.
+  if (existing && !canAcceptVerdict(existing.tier, normalized.tier)) {
+    return
+  }
+  // Prefer keeping a proven origin when a later write omits it.
+  const merged: ProvenVerdict = {
+    ...normalized,
+    origin: normalized.origin ?? existing?.origin,
+    originScriptHash: normalized.originScriptHash ?? existing?.originScriptHash,
+    verifiedAt: normalized.verifiedAt || Date.now(),
+  }
   map.delete(k)
-  map.set(k, normalized)
+  map.set(k, merged)
   if (map.size > MAX_ENTRIES) {
     const drop = map.size - MAX_ENTRIES
     let i = 0
-    for (const existing of map.keys()) {
+    for (const existingKey of map.keys()) {
       if (i++ >= drop) break
-      map.delete(existing)
+      map.delete(existingKey)
     }
   }
   persist(map)
+}
+
+/**
+ * Paint authenticity from the durable verdict store — list cache alone can
+ * still say `unproven` after a prior session proved the tip.
+ */
+export function authenticityFromProvenCache(outpoint: string): {
+  authenticity: AuthenticityTier
+  proven: boolean
+} {
+  const verdict = getProvenVerdict(outpoint)
+  if (!verdict) return { authenticity: 'unproven', proven: false }
+  return {
+    authenticity: verdict.tier,
+    proven: isProvenTier(verdict.tier),
+  }
+}
+
+/** True when a cryptographically proven tier is already on disk. */
+export function hasProvenTier(outpoint: string): boolean {
+  const tier = getProvenVerdict(outpoint)?.tier
+  return tier === 'brc156' || tier === 'brc150'
 }
 
 const GENESIS_KEY = 'handcash.collectables.genesisAttempt.v1'

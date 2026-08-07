@@ -61,6 +61,27 @@ describe('provenCache', () => {
     expect(cache.isItemProven('cc.2')).toBe(true)
   })
 
+  it('does not downgrade a proven tier to unproven', async () => {
+    const cache = await import('./provenCache')
+    cache.rememberProvenVerdict('ee.3', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      verifiedAt: 1,
+    })
+    cache.rememberProvenVerdict('ee.3', false)
+    expect(cache.getProvenVerdict('ee.3')?.tier).toBe('brc150')
+    expect(cache.isItemProven('ee.3')).toBe(true)
+  })
+
+  it('rehydrates authenticityFromProvenCache for list paint', async () => {
+    const cache = await import('./provenCache')
+    cache.rememberProvenVerdict('ff.4', { tier: 'brc150', verifiedAt: 2 })
+    expect(cache.authenticityFromProvenCache('FF_4')).toEqual({
+      authenticity: 'brc150',
+      proven: true,
+    })
+  })
+
   it('pins one immutable script hash per origin', async () => {
     const cache = await import('./provenCache')
     cache.rememberOriginCommitment('AA.0', '11'.repeat(32))

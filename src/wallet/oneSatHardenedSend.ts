@@ -38,7 +38,6 @@ import {
   HARDENED_LATCH_SCHEMA_VERSION,
   HARDENED_PROOF_SATS,
   HARDENED_TIP_SATS,
-  HARDENED_UNLOCKING_SCRIPT_LENGTH,
   RELATIVE_HARDENED_PROOF,
   buildGenesisHardenedPair,
   buildHardenedSettleState,
@@ -62,6 +61,14 @@ import {
 } from './oneSatLatch'
 import { getProvenVerdict } from './provenCache'
 import { hexToU32Le } from './hexBinary'
+import {
+  estimateUnlockingLength,
+  hardenedSendMachine,
+  spendsFitBudget,
+} from './hardenedSendMachine'
+import { createActor } from 'xstate'
+
+export { estimateUnlockingLength } from './hardenedSendMachine'
 
 export type HardenedSendArgs = {
   wallet: ActiveWallet
@@ -278,14 +285,6 @@ export function restoreScryptChangeMarker(tx: bsv.Transaction): void {
     )
     return
   }
-}
-
-function estimateUnlockingLength(embeddedTxHexes: string[]): number {
-  const embedded = embeddedTxHexes.reduce(
-    (sum, hex) => sum + Math.ceil(hex.length / 2),
-    0,
-  )
-  return Math.max(HARDENED_UNLOCKING_SCRIPT_LENGTH, embedded + 4096)
 }
 
 async function connectThrowawaySigner(
@@ -597,6 +596,8 @@ async function signCovenantAction(args: {
   currentCommitTxHex?: string
   priorSettleTxHex?: string
   proofCommitTxHex?: string
+  /** Declared unlockingScriptLength for these inputs (bytes). */
+  unlockBudgetBytes?: number
   signOptions?: { noSend?: boolean; sendWith?: string[] }
 }): Promise<{ txid: string; tx?: number[] }> {
   const spends = await generateCovenantUnlocks({
@@ -614,6 +615,15 @@ async function signCovenantAction(args: {
     priorSettleTxHex: args.priorSettleTxHex,
     proofCommitTxHex: args.proofCommitTxHex,
   })
+
+  if (args.unlockBudgetBytes != null) {
+    const fit = spendsFitBudget(spends, args.unlockBudgetBytes)
+    if (!fit.ok) {
+      throw new Error(
+        `Hardened ${args.mode}: unlockingScript ${fit.actual} bytes exceeds budget ${fit.budget} (vin ${fit.vin})`,
+      )
+    }
+  }
 
   const signed = await args.wallet.wallet.signAction({
     reference: args.signable.reference,
@@ -671,8 +681,17 @@ export async function sendHardenedCollectable(
   const tipSrc = tipBeef.findTxid(tipTxid)?.tx
   if (!tipSrc) throw new Error('Hardened send: tip source transaction missing from BEEF')
 
+  const chart = createActor(hardenedSendMachine)
+  chart.start()
+  chart.send({
+    type: 'SEND',
+    outpoint: tipOp,
+    mode: tipIsCovenant ? 'resend' : 'genesis',
+  })
+
   let commitReference: string | undefined
   let broadcastAttempted = false
+  let unlockBudgetBytes = 0
 
   try {
     // ─── COMMIT (noSend) ─────────────────────────────────────────────
@@ -701,10 +720,16 @@ export async function sendHardenedCollectable(
       const verdict = getProvenVerdict(tipOp)
       const brc150Ok = verdict?.tier === 'brc150' || verdict?.tier === 'brc156'
       if (!brc150Ok) {
+        chart.send({
+          type: 'PROVEN_FAIL',
+          error:
+            'Hardened genesis requires a BRC-150-verified tip before the first covenant send',
+        })
         throw new Error(
           'Hardened genesis requires a BRC-150-verified tip before the first covenant send',
         )
       }
+      chart.send({ type: 'PROVEN_OK' })
       if (!args.originLockingScriptHex) {
         throw new Error('Hardened genesis requires the origin locking script')
       }
@@ -729,6 +754,7 @@ export async function sendHardenedCollectable(
       commitNextTipScript = pair.tip.lockingScript.toHex()
       commitNextProofScript = nextProof.lockingScript.toHex()
       oshForSettle = pair.originScriptHash
+      unlockBudgetBytes = 108
 
       commitInputs = [
         {
@@ -768,6 +794,7 @@ export async function sendHardenedCollectable(
         },
       ]
     } else {
+      chart.send({ type: 'PROVEN_OK' })
       const tipInstance = Brc156Covenant.fromTx(sdkTxToScrypt(tipSrc), tipVout)
       const { nextTip, nextProof } = buildNextCommitInstances(tipInstance, recipientKey)
       commitNextTipScript = nextTip.lockingScript.toHex()
@@ -787,12 +814,15 @@ export async function sendHardenedCollectable(
       const proofTxid = delayedProofOutpoint.split('_')[0]!
       proofCommitTxHex = await ensureTxHex(args.wallet, tipBeef, proofTxid)
 
-      const unlockLen = estimateUnlockingLength([tipSrc.toHex()])
+      unlockBudgetBytes = estimateUnlockingLength(
+        [tipSrc.toHex()],
+        [commitNextProofScript],
+      )
       commitInputs = [
         {
           outpoint: tipOp,
           inputDescription: '1sat hardened tip',
-          unlockingScriptLength: unlockLen,
+          unlockingScriptLength: unlockBudgetBytes,
         },
       ]
       commitOutputs = [
@@ -820,6 +850,8 @@ export async function sendHardenedCollectable(
         },
       ]
     }
+
+    chart.send({ type: 'COMMIT_BUILT', unlockBudgetBytes })
 
     const commitResult = await args.wallet.wallet.createAction({
       description: `Hardened commit ${args.name}`.slice(0, 50),
@@ -858,9 +890,11 @@ export async function sendHardenedCollectable(
         outpoints: [tipOp],
         nextProofScriptHex: commitNextProofScript,
         recipientPublicKeyHex: recipientKey,
+        unlockBudgetBytes,
         signOptions: { noSend: true },
       })
     }
+    chart.send({ type: 'COMMIT_SIGNED', commitTxid: commitSigned.txid })
 
     const commitTxid = commitSigned.txid
     if (!commitSigned.tx) {
@@ -931,10 +965,11 @@ export async function sendHardenedCollectable(
       // Base settle: tip only. Sibling proof stays unspent for the next send.
       const settleParentHex = commitTx.toHex()
       const settleGenesisHex = tipSrc.toHex()
-      const settleUnlockLen = estimateUnlockingLength([
-        settleParentHex,
-        settleGenesisHex,
-      ])
+      unlockBudgetBytes = estimateUnlockingLength(
+        [settleParentHex, settleGenesisHex],
+        [settleStateScript, settleTip.lockingScript.toHex()],
+      )
+      chart.send({ type: 'SETTLE_BUILT', unlockBudgetBytes })
 
       // Internalize commit proof into latch basket via inputBEEF merge (held).
       // Commit AtomicBEEF already has the tip we just signed — no refetch.
@@ -948,7 +983,7 @@ export async function sendHardenedCollectable(
           {
             outpoint: commitTipOp,
             inputDescription: 'Hardened commit tip',
-            unlockingScriptLength: settleUnlockLen,
+            unlockingScriptLength: unlockBudgetBytes,
           },
         ],
         outputs: settleOutputs,
@@ -976,8 +1011,11 @@ export async function sendHardenedCollectable(
         genesisTxHex: settleGenesisHex,
         stateScriptHex: settleStateScript,
         recipientPublicKeyHex: recipientKey,
+        unlockBudgetBytes,
         signOptions: { sendWith: [commitTxid] },
       })
+      chart.send({ type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid })
+      chart.stop()
       return { txid: settleSigned.txid }
     }
 
@@ -987,11 +1025,12 @@ export async function sendHardenedCollectable(
     }
     const delayedProofDot = delayedProofOutpoint.replace(/_(\d+)$/, '.$1')
     const settleParentHex = commitTx.toHex()
-    const settleUnlockLen = estimateUnlockingLength([
-      settleParentHex,
-      priorSettleTxHex,
-      proofCommitTxHex,
-    ])
+    const nextTipScriptHex = settleTip.lockingScript.toHex()
+    unlockBudgetBytes = estimateUnlockingLength(
+      [settleParentHex, priorSettleTxHex, proofCommitTxHex],
+      [settleStateScript, nextTipScriptHex],
+    )
+    chart.send({ type: 'SETTLE_BUILT', unlockBudgetBytes })
 
     const settleSpendOps = [commitTipOp, delayedProofDot]
     // Commit AtomicBEEF already covers the tip we just signed; tip/input BEEF
@@ -1017,12 +1056,12 @@ export async function sendHardenedCollectable(
         {
           outpoint: commitTipOp,
           inputDescription: 'Hardened commit tip',
-          unlockingScriptLength: settleUnlockLen,
+          unlockingScriptLength: unlockBudgetBytes,
         },
         {
           outpoint: delayedProofDot,
           inputDescription: 'Hardened delayed proof',
-          unlockingScriptLength: settleUnlockLen,
+          unlockingScriptLength: unlockBudgetBytes,
         },
       ],
       outputs: settleOutputs,
@@ -1049,14 +1088,25 @@ export async function sendHardenedCollectable(
       currentCommitTxHex: settleParentHex,
       priorSettleTxHex,
       proofCommitTxHex,
-      nextTipScriptHex: settleTip.lockingScript.toHex(),
+      nextTipScriptHex,
       stateScriptHex: settleStateScript,
       recipientPublicKeyHex: recipientKey,
+      unlockBudgetBytes,
       signOptions: { sendWith: [commitTxid] },
     })
-
+    chart.send({ type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid })
+    chart.stop()
     return { txid: settleSigned.txid }
   } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    const phase = chart.getSnapshot().value
+    if (phase === 'commitSign' || phase === 'settleBuild' || phase === 'settleSign') {
+      chart.send({ type: 'FAIL', error: message })
+      chart.send({ type: 'ABORT_DONE' })
+    } else if (phase !== 'failed' && phase !== 'done' && phase !== 'idle') {
+      chart.send({ type: 'FAIL', error: message })
+    }
+    chart.stop()
     if (commitReference) {
       try {
         await args.wallet.wallet.abortAction({ reference: commitReference })

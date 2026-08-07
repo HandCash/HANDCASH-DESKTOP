@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.103] - 2026-08-07
+
+### Fixed
+
+- **Hardened settle unlock budget.** `unlockingScriptLength` undersized settle
+  embeds (state + tip scripts + framing), so signAction rejected spends with
+  `unlockingScript length … exceeds expected length`. Estimate now includes
+  extras, pads aggressively, and floors at 48k bytes.
+- **BRC-150 badges survive restart.** List cache no longer paints Unverified
+  over a durable `proven.v2` hit; proven tiers are monotonic (never downgraded
+  to unproven); detail verify no longer short-circuits on sticky unproven misses;
+  empty Electron durable keys read as absent.
+
+### Changed
+
+- **Authenticity + hardened send are XState machines** (`authenticityMachine`,
+  `hardenedSendMachine`) with Mermaid charts under Settings → Statecharts.
+
 ## [1.2.102] - 2026-08-07
 
 ### Fixed

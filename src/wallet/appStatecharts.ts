@@ -216,6 +216,44 @@ const SEND_COLLECTABLE = `stateDiagram-v2
   failure : Failure
 `
 
+const AUTHENTICITY = `stateDiagram-v2
+  direction TB
+  [*] --> unknown
+  unknown --> proven : HYDRATE proven / PROVEN
+  unknown --> unproven : HYDRATE unproven / UNPROVEN
+  unknown --> verifying : START_VERIFY
+  verifying --> proven : PROVEN
+  verifying --> unproven : UNPROVEN
+  verifying --> budgetExhausted : BUDGET_EXHAUSTED
+  verifying --> unknown : ABORT
+  unproven --> verifying : RETRY / START_VERIFY
+  unproven --> proven : PROVEN
+  budgetExhausted --> verifying : RETRY
+  proven --> proven : PROVEN (monotonic)
+  note right of proven
+    Never downgrade to unproven.
+    Durable projection: provenCache.v2
+  end note
+`
+
+const HARDENED_SEND = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> gating : SEND
+  gating --> commitBuild : PROVEN_OK
+  gating --> failed : PROVEN_FAIL
+  commitBuild --> commitSign : COMMIT_BUILT
+  commitSign --> settleBuild : COMMIT_SIGNED
+  commitSign --> aborting : FAIL
+  settleBuild --> settleSign : SETTLE_BUILT
+  settleBuild --> aborting : FAIL
+  settleSign --> done : SETTLE_SIGNED
+  settleSign --> aborting : FAIL
+  aborting --> failed : ABORT_DONE
+  done --> idle : RESET
+  failed --> idle : RESET
+`
+
 const CONNECTED_APPS = `stateDiagram-v2
   direction TB
   [*] --> list
@@ -455,6 +493,18 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Send item',
     caption: 'sendCollectable — edit → confirm → transfer',
     source: SEND_COLLECTABLE,
+  },
+  {
+    id: 'authenticity',
+    label: 'Authenticity',
+    caption: 'authenticityMachine — BRC-156/150 ladder (monotonic durable)',
+    source: AUTHENTICITY,
+  },
+  {
+    id: 'hardenedSend',
+    label: 'Hardened send',
+    caption: 'hardenedSendMachine — Commit → Settle unlock budget',
+    source: HARDENED_SEND,
   },
   {
     id: 'connectedApps',
