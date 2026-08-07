@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.119] - 2026-08-07
+
+### Changed
+
+- **Collectables authenticity is BRC-150 only.** Soft-latch remains the send
+  mechanism; remittance verify accepts parent-tip proofs so receivers skip
+  lineage walks. UI maps legacy BRC-156 pins to Verified · BRC-150. Background
+  walks stamp BRC-150 for all tips; session lineage budget raised to 8.
+
 ## [1.2.118] - 2026-08-07
 
 ### Changed
