@@ -1,0 +1,31 @@
+---
+description: Always pull HandCash support logs from BRC-CLOUD before guessing
+alwaysApply: true
+---
+
+# Remote support log sink (BRC-CLOUD)
+
+Devices POST session logs to BRC-CLOUD. **Do not ask the user to paste logs** when
+the upload URL / bucket is known — fetch `/latest` (and the bucket index) first.
+
+## Endpoints
+
+| | |
+|---|---|
+| Base | `https://brc-cloud.bcryderman.workers.dev` |
+| Bucket index | `GET /v1/logs/<bucket>` |
+| Latest upload | `GET /v1/logs/<bucket>/latest` |
+| Last few | `GET /v1/logs/<bucket>/all` |
+
+Current lab phone bucket (Android): `hc-2c00efc3249a742845a7`
+
+```bash
+curl -sS -A "Mozilla/5.0" \
+  "https://brc-cloud.bcryderman.workers.dev/v1/logs/hc-2c00efc3249a742845a7/latest"
+```
+
+In-app: Settings → Upload URL (`handcash.logs.uploadUrl`). New installs
+auto-provision `https://brc-cloud.bcryderman.workers.dev/v1/logs/hc-<random>`.
+
+Wallet code: `HANDCASH-DESKTOP/src/wallet/logShip.ts`, `logUploadPrefs.ts`.
+Server: `BRC-CLOUD/src/logs.js`.
