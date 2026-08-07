@@ -46,15 +46,24 @@ describe('logShip', () => {
     vi.unstubAllGlobals()
   })
 
-  it('does nothing when no upload URL is configured', async () => {
-    const fetchSpy = vi.fn()
+  it('auto-provisions a BRC-CLOUD bucket when none is configured', async () => {
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
     vi.stubGlobal('fetch', fetchSpy)
+    vi.stubGlobal('crypto', {
+      getRandomValues: (a: Uint8Array) => {
+        a.fill(0xab)
+        return a
+      },
+    })
     const ship = await withRecoveredCrash()
 
     const result = await ship.shipPreviousSessionLogs()
 
-    expect(result).toMatchObject({ ok: true, skipped: true })
-    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(result.ok).toBe(true)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const [url] = fetchSpy.mock.calls[0] as unknown as [string]
+    expect(url).toMatch(/\/v1\/logs\/hc-[0-9a-f]+$/)
+    expect(store.get(UPLOAD_KEY)).toBe(url)
   })
 
   it('uploads a recovered crash log automatically', async () => {

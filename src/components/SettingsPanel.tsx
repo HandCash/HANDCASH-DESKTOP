@@ -335,7 +335,7 @@ export function SettingsPanel() {
                 Upload URL
               </label>
               <span className="settings-row-desc">
-                POST the current log file to this http(s) endpoint
+                POST the current log file to BRC-CLOUD (auto-set on first launch)
               </span>
               <div className="settings-log-upload-row">
                 <input
@@ -345,7 +345,7 @@ export function SettingsPanel() {
                   inputMode="url"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="https://…"
+                  placeholder="https://brc-cloud…/v1/logs/hc-…"
                   value={logUploadUrl}
                   data-aeon-part="log-upload-url"
                   onChange={(e) => setLogUploadUrlState(e.target.value)}

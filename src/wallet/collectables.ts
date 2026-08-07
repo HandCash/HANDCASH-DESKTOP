@@ -448,6 +448,7 @@ type ItemOutput = {
   outpoint: string
   satoshis: number
   tags?: string[]
+  lockingScript?: string
 }
 
 /** Kept so a late resolution can rebuild the list without re-listing outputs. */
@@ -1220,10 +1221,11 @@ async function listCollectablesNow(
         basket: '1sat',
         limit: 1000,
         includeTags: true,
-        // Never for a whole basket: remittance carries BEEF (~400k chars each), and
-        // pulling every item's copy into the renderer is what crashed phones once a
-        // wallet held real ordinals. Tags carry everything the list renders.
+        // Locking scripts are small and let us spare BRC-156 covenant tips from
+        // address-scan ghosting. Never pull customInstructions for a whole
+        // basket: remittance BEEF (~400k chars each) crashed phones.
         includeCustomInstructions: false,
+        include: 'locking scripts',
         seekPermission: false,
       }),
       new Promise<never>((_, reject) =>
@@ -1234,6 +1236,10 @@ async function listCollectablesNow(
       outpoint: o.outpoint,
       satoshis: o.satoshis ?? 1,
       tags: o.tags,
+      lockingScript:
+        typeof (o as { lockingScript?: unknown }).lockingScript === 'string'
+          ? ((o as { lockingScript: string }).lockingScript)
+          : undefined,
     }))
   } catch (err) {
     console.warn('[collectables] listOutputs failed', err)
@@ -1252,6 +1258,11 @@ async function listCollectablesNow(
   // the next list cannot resurrect them. A failed scan must not empty the grid,
   // a scan older than a tip cannot speak to it, and a tip still inside the
   // settle grace must survive a lagging address scan (self-send indexer delay).
+  //
+  // Hardened covenant tips never appear on the P2PKH address scan (only their
+  // 2-sat beacon does). Beacon discovery should add them to `live`, but when it
+  // lags they must not be relinquished — that emptied inventory while the tip
+  // stayed unspent on chain.
   const live = resolveLiveOneSatKeys(wallet)
   if (live) {
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
@@ -1263,9 +1274,18 @@ async function listCollectablesNow(
         graceMs: OWNERSHIP_SETTLE_GRACE_MS,
       }),
     )
+    const isCovenantHeld = (o: ItemOutput): boolean => {
+      if (isHardenedCovenantLockingScript(o.lockingScript)) return true
+      const tier = getProvenVerdict(normalizeOutpoint(o.outpoint))?.tier
+      return tier === 'brc156'
+    }
+    const covenantHeld = spentOrMissing.filter(
+      (o) => !unjudged.includes(o) && isCovenantHeld(o),
+    )
     const ghosts = spentOrMissing.filter(
       (o) =>
         !unjudged.includes(o) &&
+        !isCovenantHeld(o) &&
         (o.satoshis ?? 1) === 1 &&
         !o.tags?.includes(LATCH_TAG),
     )
@@ -1282,7 +1302,7 @@ async function listCollectablesNow(
         })),
       )
     }
-    outputs = unjudged.length > 0 ? [...owned, ...unjudged] : owned
+    outputs = [...owned, ...unjudged, ...covenantHeld]
   }
 
   lastItemOutputs = outputs
@@ -1894,6 +1914,10 @@ export async function sendCollectable(args: {
       // Nothing was broadcast, so the item can still go out over soft-latch
       // rather than the whole send failing on a covenant precondition.
       if (hardenedBroadcastWasAttempted(err)) throw formatSendError(err)
+      // Covenant tips cannot be unlocked with the soft-latch P2PKH path —
+      // falling through would either fail mid-sign or strip the tip from the
+      // basket while leaving it unspent on chain.
+      if (tipIsCovenant) throw formatSendError(err)
       console.warn('[brc-156] hardened send unavailable — using soft-latch', err)
       const why = err instanceof Error ? err.message : String(err)
       setPaymentProgress(

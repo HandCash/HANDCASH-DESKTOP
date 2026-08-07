@@ -51,7 +51,10 @@ import {
   loadBrc156CovenantArtifact,
   pubKeyHexToScrypt,
 } from './oneSatHardenedLatch'
-import { markHardenedBroadcastAttempted } from './oneSatHardenedReceive'
+import {
+  markHardenedBroadcastAttempted,
+  parseHardenedTipInstructions,
+} from './oneSatHardenedReceive'
 import {
   ONE_SAT_LATCH_BASKET,
   RELATIVE_TIP,
@@ -801,9 +804,21 @@ export async function sendHardenedCollectable(
       commitNextProofScript = nextProof.lockingScript.toHex()
       oshForSettle = normalizeOriginScriptHash(String(tipInstance.originScriptHash))
 
+      // Remittance + covenant linkOutpoint name the delayed proof (commit vout1).
+      // Never prefer the soft-latch / beacon basket row — findLatchForTip returns
+      // those, and using their outpoint as the proof yields createAction failures
+      // or fetches of txs that were never mined.
+      const fromRemittance = parseHardenedTipInstructions(
+        args.tipCustomInstructions,
+      )?.proofOutpoint
+      const fromLink = decodeHardenedLinkOutpoint(String(tipInstance.linkOutpoint))
       delayedProofOutpoint =
+        (fromRemittance && fromRemittance !== BASE_LINK
+          ? fromRemittance
+          : null) ||
+        (fromLink && fromLink !== BASE_LINK ? fromLink : null) ||
         args.priorProofOutpoint?.trim() ||
-        decodeHardenedLinkOutpoint(String(tipInstance.linkOutpoint))
+        null
       if (!delayedProofOutpoint || delayedProofOutpoint === BASE_LINK) {
         throw new Error('Hardened resend requires the delayed prior proof outpoint')
       }
@@ -812,7 +827,14 @@ export async function sendHardenedCollectable(
       // priorSettle = tx that created the tip we are committing (tipSrc).
       priorSettleTxHex = tipSrc.toHex()
       const proofTxid = delayedProofOutpoint.split('_')[0]!
-      proofCommitTxHex = await ensureTxHex(args.wallet, tipBeef, proofTxid)
+      try {
+        proofCommitTxHex = await ensureTxHex(args.wallet, tipBeef, proofTxid)
+      } catch (err) {
+        const why = err instanceof Error ? err.message : String(err)
+        throw new Error(
+          `Hardened resend: delayed proof ${delayedProofOutpoint} is missing on chain (${why})`,
+        )
+      }
 
       unlockBudgetBytes = estimateUnlockingLength(
         [tipSrc.toHex()],
@@ -861,7 +883,10 @@ export async function sendHardenedCollectable(
       outputs: commitOutputs,
       options: {
         trustSelf: 'known',
-        ...(args.knownTxids.length > 0 ? { knownTxids: args.knownTxids } : {}),
+        // Do not list tip/proof as knownTxids — createAction must take
+        // sourceTransaction from inputBEEF. Claiming them known when storage
+        // lacks the raw body yields "Every signableTransaction input must have
+        // a sourceTransaction".
         randomizeOutputs: false,
         acceptDelayedBroadcast: false,
         signAndProcess: false,

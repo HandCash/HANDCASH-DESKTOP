@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.106] - 2026-08-07
+
+### Fixed
+
+- **Hardened resend proof outpoint.** Prefer tip remittance / covenant
+  `linkOutpoint` over the latch-basket row (beacons and stale soft-latches were
+  fed in as the delayed proof → `sourceTransaction` / missing-txid failures).
+- **No soft-latch fallback for covenant tips.** P2PKH unlock cannot spend them;
+  falling through emptied inventory while the tip stayed unspent on chain.
+- **Covenant tips survive address-scan ghosting.** BRC-156 tips never sit on the
+  P2PKH UTXO set; list no longer relinquished them after settle grace.
+
+### Changed
+
+- **Log upload URL auto-provisions** a BRC-CLOUD `hc-*` bucket on first use so
+  crash uploads always have a sink. Agents: see `.cursor/rules/remote-support-logs.mdc`.
+
 ## [1.2.105] - 2026-08-07
 
 ### Fixed
