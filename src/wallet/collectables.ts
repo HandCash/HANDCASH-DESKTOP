@@ -83,6 +83,7 @@ import {
   classifyTipKind,
   isCovenantLockedScript,
   normalizeLockingScriptHex,
+  resolveTipLockingScriptHex,
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
 import { softLatchSendMachine } from './softLatchSendMachine'
@@ -1643,7 +1644,6 @@ export async function sendCollectable(args: {
   if ((match.satoshis ?? 1) !== 1) {
     throw new Error('Collectable UTXO is not a 1-sat ordinal')
   }
-  assertOrdinalIsDeviceLocked(match.lockingScript, wallet)
 
   const item = cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
   // Remittance identity must not come from tags — the SDK lowercases them, and
@@ -1674,6 +1674,20 @@ export async function sendCollectable(args: {
     isLatchedSendEnabled() ? findLatchForTip(wallet, outpoint, origin) : Promise.resolve(null),
     tipBeefPromise,
   ])
+
+  // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
+  // Classify from the tip BEEF we already need for soft-latch.
+  const tipLockingScript = resolveTipLockingScriptHex({
+    listed: match.lockingScript,
+    beefBin: tipBeefBin,
+    outpoint,
+  })
+  if (!normalizeLockingScriptHex(match.lockingScript) && tipLockingScript) {
+    console.info(
+      `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`,
+    )
+  }
+  assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
   if (priorLatch?.lockingScript) {
     assertOrdinalIsDeviceLocked(priorLatch.lockingScript, wallet)
   }
@@ -1705,7 +1719,7 @@ export async function sendCollectable(args: {
   // Soft-latch only — identity key is unused for path choice but still accepted
   // so callers (friends / peerpay) keep the same signature.
   void args.recipientIdentityKey
-  const tipKind = classifyTipKind(match.lockingScript)
+  const tipKind = classifyTipKind(tipLockingScript)
   const sendPath = chooseSendPath({
     tipKind,
     latchOutpoint: priorLatch?.outpoint ?? null,
@@ -1716,7 +1730,7 @@ export async function sendCollectable(args: {
   console.info(
     `[brc-156] send path=${sendPath.path}${
       sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
-    } tipKind=${tipKind.kind}`,
+    } tipKind=${tipKind.kind} scriptChars=${tipLockingScript.length}`,
   )
 
   const finishSend = async (

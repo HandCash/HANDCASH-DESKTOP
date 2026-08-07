@@ -8,6 +8,7 @@
  * Soft-latch (tip + 2-sat latch) is the only spend path. Covenant / unknown
  * tips refuse — the UI offers abandon instead of send.
  */
+import { Beef } from '@bsv/sdk'
 import { toUnderscoreOutpoint } from './oneSatLatch'
 
 export type TipKind =
@@ -52,6 +53,43 @@ export function normalizeLockingScriptHex(
     }
   }
   return ''
+}
+
+/**
+ * Read a tip's locking script from BEEF when `listOutputs` omits it.
+ *
+ * wallet-toolbox IDB `validateOutputScript` no-ops when `scriptOffset === 0`,
+ * so `include: 'locking scripts'` often returns no script even for spendable
+ * tips. The tip BEEF we already fetch for soft-latch always has the output.
+ */
+export function lockingScriptHexFromBeef(
+  beefBin: number[] | Uint8Array,
+  outpoint: string,
+): string {
+  const dotted = outpoint.trim().replace(/_(\d+)$/, '.$1')
+  const [txid, voutRaw] = dotted.split('.')
+  const vout = Number(voutRaw)
+  if (!txid || !Number.isFinite(vout) || vout < 0) return ''
+  try {
+    const tx = Beef.fromBinary(beefBin).findTxid(txid)?.tx
+    return normalizeLockingScriptHex(
+      tx?.outputs[vout]?.lockingScript?.toHex(),
+    )
+  } catch {
+    return ''
+  }
+}
+
+/** Prefer listOutputs hex; fall back to the tip BEEF body. */
+export function resolveTipLockingScriptHex(args: {
+  listed: unknown
+  beefBin?: number[] | Uint8Array | null
+  outpoint: string
+}): string {
+  const fromList = normalizeLockingScriptHex(args.listed)
+  if (fromList) return fromList
+  if (!args.beefBin) return ''
+  return lockingScriptHexFromBeef(args.beefBin, args.outpoint)
 }
 
 /** True when hex contains a P2PKH branch on a byte boundary. */

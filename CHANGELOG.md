@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.126] - 2026-08-07
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.2.125] - 2026-08-07
 
 ### Fixed
