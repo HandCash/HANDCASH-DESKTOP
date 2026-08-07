@@ -41,6 +41,7 @@ import {
   setVerificationProgress,
   takePreferredCollectableVerification,
 } from './verificationProgress'
+import { announceItemVerified } from './itemArrivalToast'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
@@ -711,6 +712,7 @@ async function proveHeldGenesis(
         origin: proof.origin,
         verifiedAt: Date.now(),
       })
+      announceItemVerified(outpoint, 'BRC-150 lineage proven')
       setVerificationProgress(
         'identifying',
         outpoint,
@@ -991,6 +993,12 @@ export async function verifyItemAuthenticity(
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: provenOrigin } : {}),
     })
+    if (authenticity.proven) {
+      announceItemVerified(
+        target,
+        authenticity.tier === 'brc156' ? 'BRC-156 covenant verified' : 'BRC-150 lineage proven',
+      )
+    }
     if (provenOrigin) await adoptProvenOrigin(target, provenOrigin, wallet.chain)
     return authenticity
   } catch (err) {

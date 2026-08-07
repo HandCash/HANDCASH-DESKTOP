@@ -18,6 +18,12 @@ export default defineConfig({
     'process.env.NETWORK': JSON.stringify(''),
     'process.env.BASEURL': JSON.stringify(''),
     'process.env.NODE_ENV': JSON.stringify(process.env.NODE_ENV ?? 'production'),
+    // Residual `process.env.FOO` reads (object form) must not see bare `process`.
+    'process.env': JSON.stringify({
+      NETWORK: '',
+      BASEURL: '',
+      NODE_ENV: process.env.NODE_ENV ?? 'production',
+    }),
   },
   resolve: {
     alias: [

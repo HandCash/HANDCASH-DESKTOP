@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.98] - 2026-08-06
+
+### Fixed
+
+- **Item toasts fire on receive and again on verify.** Latch-proven tips no
+  longer wait for authenticity before "Item received"; settling proof then
+  shows "Item verified".
+- **Hardened collectable sends no longer fall through to soft-latch in the
+  WebView.** Covenant code used Node `Buffer` and residual `process.env`, which
+  threw and aborted the hardened path.
+
 ## [1.2.97] - 2026-08-06
 
 ### Fixed

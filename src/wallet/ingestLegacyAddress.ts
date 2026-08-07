@@ -44,6 +44,8 @@ export type LegacyAddressIngestResult = {
   heldOneSats: number
   /** Held tips a co-created latch proves are items, still awaiting an origin. */
   pendingTips: number
+  /** Outpoints of those pending tips (for receive toasts before import). */
+  pendingOutpoints: string[]
   newOneSatOutpoints: string[]
   /** Human-facing retry hint when partial import occurred. */
   partialWarn: string | null
@@ -172,6 +174,7 @@ export async function ingestLegacyAddressUtxos(
       importedFundingOutpoints: [],
       heldOneSats: 0,
       pendingTips: 0,
+      pendingOutpoints: [],
       newOneSatOutpoints: [],
       partialWarn: null,
     }
@@ -316,6 +319,7 @@ export async function ingestLegacyAddressUtxos(
     importedFundingOutpoints,
     heldOneSats: heldOneSats.length,
     pendingTips: pendingTips.length,
+    pendingOutpoints: pendingTips.map((u) => u.outpoint),
     newOneSatOutpoints,
     partialWarn,
   }

@@ -27,6 +27,11 @@ import {
   BASE_LINK as HARDENED_BASE_LINK,
   canUseHardenedLatch,
 } from './oneSatHardenedReceive'
+import {
+  hexToU32Le,
+  reverseTxidHex,
+  u32LeToHex,
+} from './hexBinary'
 
 export {
   BASE_LINK,
@@ -57,7 +62,26 @@ export const HARDENED_LATCH_SCHEMA_VERSION = LATCH_SCHEMA_HARDENED
  */
 export const RELATIVE_HARDENED_PROOF = 'OUTPUT:2' as const
 
+/**
+ * scrypt-ts still reads `process.env.NETWORK` / `BASEURL` at call time. Vite
+ * define covers the common paths; this fills any residual `process` access in
+ * the WebView so covenant signing does not throw into the soft-latch fallback.
+ */
+function ensureScryptProcessShim(): void {
+  const g = globalThis as {
+    process?: { env?: Record<string, string | undefined> }
+  }
+  if (!g.process) g.process = { env: {} }
+  if (!g.process.env) g.process.env = {}
+  if (g.process.env.NETWORK === undefined) g.process.env.NETWORK = ''
+  if (g.process.env.BASEURL === undefined) g.process.env.BASEURL = ''
+  if (g.process.env.NODE_ENV === undefined) {
+    g.process.env.NODE_ENV = 'production'
+  }
+}
+
 export function loadBrc156CovenantArtifact(): void {
+  ensureScryptProcessShim()
   if (artifactLoaded) return
   Brc156Covenant.loadArtifact(brc156Artifact)
   artifactLoaded = true
@@ -73,9 +97,7 @@ export function encodeOriginOutpoint(outpoint: string): string {
   if (!txid || txid.length !== 64 || voutRaw == null) {
     throw new Error('invalid origin outpoint')
   }
-  const vout = Buffer.alloc(4)
-  vout.writeUInt32LE(Number(voutRaw), 0)
-  return txid + vout.toString('hex')
+  return txid + u32LeToHex(Number(voutRaw))
 }
 
 /** Raw prevout encoding: txid LE + vout LE. */
@@ -85,9 +107,7 @@ export function encodeLineageOutpoint(outpoint: string): string {
   if (!txid || txid.length !== 64 || voutRaw == null) {
     throw new Error('invalid lineage outpoint')
   }
-  const vout = Buffer.alloc(4)
-  vout.writeUInt32LE(Number(voutRaw), 0)
-  return Buffer.from(txid, 'hex').reverse().toString('hex') + vout.toString('hex')
+  return reverseTxidHex(txid) + u32LeToHex(Number(voutRaw))
 }
 
 function pubKey(publicKeyHex: string): PubKey {
@@ -514,8 +534,8 @@ function callOptions(
 
 function decodeLineage(bytes: string): string {
   if (bytes === '00'.repeat(36)) return BASE_LINK
-  const txid = Buffer.from(bytes.slice(0, 64), 'hex').reverse().toString('hex')
-  const vout = Buffer.from(bytes.slice(64), 'hex').readUInt32LE(0)
+  const txid = reverseTxidHex(bytes.slice(0, 64))
+  const vout = hexToU32Le(bytes.slice(64))
   return `${txid}_${vout}`
 }
 
@@ -527,7 +547,7 @@ export function decodeHardenedLinkOutpoint(bytes: string): string {
 function decodeOrigin(bytes: string): string {
   const raw = String(bytes).replace(/^0x/i, '')
   const txid = raw.slice(0, 64)
-  const vout = Buffer.from(raw.slice(64), 'hex').readUInt32LE(0)
+  const vout = hexToU32Le(raw.slice(64))
   return `${txid}_${vout}`
 }
 

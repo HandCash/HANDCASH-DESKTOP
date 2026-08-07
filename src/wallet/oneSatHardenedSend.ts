@@ -60,6 +60,7 @@ import {
   toUnderscoreOutpoint,
 } from './oneSatLatch'
 import { getProvenVerdict } from './provenCache'
+import { hexToU32Le } from './hexBinary'
 
 export type HardenedSendArgs = {
   wallet: ActiveWallet
@@ -230,7 +231,7 @@ export function buildNextCommitInstances(
 function decodeOriginField(bytes: string): string {
   const raw = bytes.replace(/^0x/i, '')
   const txid = raw.slice(0, 64)
-  const vout = Buffer.from(raw.slice(64), 'hex').readUInt32LE(0)
+  const vout = hexToU32Le(raw.slice(64))
   return `${txid}_${vout}`
 }
 

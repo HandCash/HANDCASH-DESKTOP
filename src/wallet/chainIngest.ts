@@ -20,6 +20,7 @@ import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 import { toastSuccess } from './toast'
+import { announceItemsReceived } from './itemArrivalToast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
@@ -248,7 +249,7 @@ export async function refreshFromChainExclusive(
   let importedFunding = 0
   let importedItems = 0
   let scannedTxids: string[] = []
-  let newOneSatOutpoints: string[] = []
+  let arrivedItemOutpoints: string[] = []
 
   try {
     const ingest = await ingestLegacyAddressUtxos({
@@ -264,10 +265,13 @@ export async function refreshFromChainExclusive(
     scannedTxids = [
       ...new Set(ingest.scan.utxos.map((u) => u.txid).filter((t): t is string => !!t)),
     ]
-    newOneSatOutpoints = ingest.newOneSatOutpoints.filter(
-      (op) => !announcedOneSatOutpoints.has(op),
-    )
-    for (const op of ingest.newOneSatOutpoints) {
+    // Imports and latch-proven pending tips both count as a receive — do not
+    // wait for authenticity before the user hears about the landing.
+    arrivedItemOutpoints = [
+      ...ingest.newOneSatOutpoints,
+      ...ingest.pendingOutpoints,
+    ]
+    for (const op of arrivedItemOutpoints) {
       noteAnnouncedOneSat(op)
     }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
@@ -321,31 +325,37 @@ export async function refreshFromChainExclusive(
     const balanceAfter = await fetchBalanceSats(active.wallet)
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
-      const newItems = newOneSatOutpoints.length > 0
-      // Only announce when balance actually rose or new collectables arrived — not on
-      // import attempt alone (indexer lag can show a phantom deposit then review drops it).
-      if (balanceRose || newItems) {
+      // Item receive toast is independent of the payment toast — authenticity
+      // settle fires a second toast later via announceItemVerified.
+      if (arrivedItemOutpoints.length > 0) {
+        announceItemsReceived(arrivedItemOutpoints)
+      }
+      if (balanceRose || arrivedItemOutpoints.length > 0) {
         maybeReceiveChime()
-        const gained = balanceRose ? Math.max(0, balanceAfter - balanceBefore) : 0
+      }
+      if (balanceRose) {
+        const gained = Math.max(0, balanceAfter - balanceBefore)
         const amountLabel =
           gained > 0 ? formatPrimaryFromSats(gained, getDisplayCurrency()) : undefined
-        toastSuccess(
-          balanceRose ? 'Payment received' : 'Item received',
-          amountLabel
-            ? `${amountLabel}${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
-            : newItems
-              ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
-              : undefined,
-        )
+        toastSuccess('Payment received', amountLabel)
         document.dispatchEvent(
           new CustomEvent('handcash:receive', {
             detail: {
-              title: balanceRose ? 'Payment received' : 'Item received',
-              body: amountLabel
-                ? `${amountLabel}${newItems ? ` · ${newOneSatOutpoints.length} item${newOneSatOutpoints.length === 1 ? '' : 's'}` : ''}`
-                : newItems
-                  ? `${newOneSatOutpoints.length} collectable${newOneSatOutpoints.length === 1 ? '' : 's'}`
-                  : 'Your wallet has been updated',
+              title: 'Payment received',
+              body: amountLabel ?? 'Your wallet has been updated',
+            },
+          }),
+        )
+      } else if (arrivedItemOutpoints.length > 0) {
+        document.dispatchEvent(
+          new CustomEvent('handcash:receive', {
+            detail: {
+              title:
+                arrivedItemOutpoints.length === 1 ? 'Item received' : 'Items received',
+              body:
+                arrivedItemOutpoints.length === 1
+                  ? 'A collectable landed in your wallet'
+                  : `${arrivedItemOutpoints.length} collectables landed in your wallet`,
             },
           }),
         )

@@ -20,6 +20,7 @@ import {
   rebuildProvenanceV2FromBeef,
 } from './oneSatProvenance'
 import { rememberProvenVerdict } from './provenCache'
+import { announceItemVerified } from './itemArrivalToast'
 import { proveGenesisLineage } from './oneSatGenesisProof'
 import { getBeefForTxidCached } from './beefCache'
 import {
@@ -778,6 +779,7 @@ async function rebuildBrc150Identity(
     const proof = rebuildProvenanceV2FromBeef(beef, held)
     if (!proof) return null
     rememberProvenVerdict(held, 'brc150')
+    announceItemVerified(held, 'BRC-150 lineage proven')
     return {
       origin: proof.origin,
       traits: [],
@@ -837,6 +839,7 @@ async function proveLineageIdentity(
       origin: proof.origin,
       verifiedAt: Date.now(),
     })
+    announceItemVerified(held, 'BRC-150 lineage proven')
     // The tip itself is often still unknown to the indexer after a transfer;
     // the origin has usually been indexed for months. Ask about the origin so
     // the card does not land as a truncated outpoint with empty traits while
@@ -999,6 +1002,7 @@ async function tryHardenedReceiveIdentity(
     return null
   }
 
+  announceItemVerified(held, 'BRC-156 covenant verified')
   console.info(`[brc-156] verified hardened landing ${held} → ${state.origin}`)
   return {
     origin: state.origin,
