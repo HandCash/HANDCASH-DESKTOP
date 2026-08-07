@@ -140,6 +140,9 @@ function friendlyUpdateError(err: unknown): string {
   if (/404/.test(raw) && /latest-.*\.yml/i.test(raw)) {
     return 'Update metadata missing from the GitHub release for this platform.'
   }
+  if (/\b403\b/.test(raw) || /rate.?limit/i.test(raw)) {
+    return 'GitHub rate-limited the update check. Try again in a few minutes.'
+  }
   if (/APPIMAGE env is not defined/i.test(raw)) {
     return 'Linux auto-update needs the AppImage build (not the unpacked dir).'
   }
