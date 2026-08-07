@@ -31,7 +31,10 @@ export default defineConfig({
       { find: '@', replacement: path.resolve(__dirname, 'src') },
     ],
   },
-  optimizeDeps: aeonUiOptimizeDeps(),
+  optimizeDeps: {
+    ...aeonUiOptimizeDeps(),
+    include: [...(aeonUiOptimizeDeps().include ?? []), 'buffer'],
+  },
   build: {
     outDir: 'dist',
     emptyOutDir: true,

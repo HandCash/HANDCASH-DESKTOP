@@ -45,7 +45,7 @@ import {
   latchOutputTags,
   parseLatchStateScript,
   resolveOutpointRef,
-  toUnderscoreOutpoint,
+  toUnderscoreOutpoint as normalizeUnderscoreOutpoint,
 } from './oneSatLatch'
 import {
   verifyHardenedReceive,
@@ -136,7 +136,7 @@ function parseOutpoint(outpoint: string): { txid: string; vout: number } | null 
   return { txid, vout }
 }
 
-function toUnderscoreOutpoint(txid: string, vout: number): string {
+function txidVoutUnderscore(txid: string, vout: number): string {
   return `${txid}_${vout}`
 }
 
@@ -512,7 +512,7 @@ export async function resolveOneSatInscription(
   let curVout = vout
 
   for (let depth = 0; depth <= maxDepth; depth++) {
-    const key = toUnderscoreOutpoint(curTxid, curVout)
+    const key = txidVoutUnderscore(curTxid, curVout)
     if (seen.has(key)) break
     seen.add(key)
 
@@ -535,7 +535,7 @@ export async function resolveOneSatInscription(
     let next: { txid: string; vout: number } | null = null
     for (const vin of vins.slice(0, VIN_PROBE_LIMIT)) {
       if (typeof vin.txid !== 'string' || !Number.isInteger(vin.vout)) continue
-      const prevKey = toUnderscoreOutpoint(vin.txid, vin.vout!)
+      const prevKey = txidVoutUnderscore(vin.txid, vin.vout!)
       if (seen.has(prevKey)) continue
       const prevMeta = await fetchGpTxo(prevKey, chain)
       if (prevMeta) {
@@ -967,7 +967,7 @@ async function tryHardenedReceiveIdentity(
         return getBeefForTxidCached(active, hop)
       },
     }).catch(() => null)
-    if (!lineage || lineage.origin !== toUnderscoreOutpoint(state.origin)) {
+    if (!lineage || lineage.origin !== normalizeUnderscoreOutpoint(state.origin)) {
       console.warn(
         '[brc-156] induction lineage mismatch',
         held,
@@ -994,7 +994,7 @@ async function tryHardenedReceiveIdentity(
   })
   rememberProvenVerdict(held, {
     ...authenticityResultToVerdict(ladder),
-    origin: toUnderscoreOutpoint(state.origin),
+    origin: normalizeUnderscoreOutpoint(state.origin),
   })
 
   if (!ladder.proven) {
@@ -1142,7 +1142,7 @@ export async function classifyLegacyUtxos(
         }
       } else if (known) {
         resolved = {
-          origin: toUnderscoreOutpoint(u.txid, u.vout),
+          origin: txidVoutUnderscore(u.txid, u.vout),
           name: known.name,
           app: known.app,
         }
@@ -1157,6 +1157,15 @@ export async function classifyLegacyUtxos(
         // every poll is how the wallet gets itself throttled by the indexer it
         // is waiting on.
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
+        // Latch-proven tips are items the moment we see them — toast before the
+        // indexer/lineage walk so receive is not stuck behind media resolve.
+        if (latchProven) {
+          void import('./itemArrivalToast')
+            .then(({ announceItemsReceived }) =>
+              announceItemsReceived([`${u.txid}.${u.vout}`]),
+            )
+            .catch(() => undefined)
+        }
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
         if (
           !resolved &&
@@ -1218,7 +1227,7 @@ export async function classifyLegacyUtxos(
           outpoint: u.outpoint,
           txid: u.txid,
           vout: u.vout,
-          origin: resolved?.origin ?? known?.origin ?? toUnderscoreOutpoint(u.txid, u.vout),
+          origin: resolved?.origin ?? known?.origin ?? txidVoutUnderscore(u.txid, u.vout),
           name: resolved?.name ?? known?.name,
           app: resolved?.app ?? known?.app,
         })

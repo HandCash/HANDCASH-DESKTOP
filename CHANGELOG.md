@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.100] - 2026-08-06
+
+### Fixed
+
+- **Desktop installer CI builds again.** A duplicate `toUnderscoreOutpoint`
+  import broke `tsc` on Mac/Windows/Linux release jobs.
+- **Item received toasts when the tip first paints**, not after media resolve —
+  inventory arrivals and latch-proven tips announce immediately.
+- **Hardened BRC-156 sends in the WebView.** scrypt-ts still needs Node `Buffer`
+  at sign time; polyfill it (and `process.env`) so mobile no longer falls through
+  to soft-latch / BRC-150.
+
 ## [1.2.99] - 2026-08-06
 
 ### Fixed

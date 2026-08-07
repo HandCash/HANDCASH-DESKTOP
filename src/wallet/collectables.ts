@@ -244,10 +244,24 @@ function notifyCollectables(items: Collectable[]) {
 }
 
 function setCollectablesCache(items: Collectable[]) {
+  const wasHydrated = collectablesHydrated
+  const prev = new Set(
+    cachedCollectables.map((i) => normalizeOutpoint(i.outpoint)),
+  )
+  const arrived = items
+    .map((i) => normalizeOutpoint(i.outpoint))
+    .filter((op) => !prev.has(op))
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
   notifyCollectables(items)
+  // Toast as soon as a tip paints in the list — do not wait for chain-ingest
+  // classify / media resolution to finish. Deduped in itemArrivalToast.
+  if (wasHydrated && arrived.length > 0) {
+    void import('./itemArrivalToast')
+      .then(({ announceItemsReceived }) => announceItemsReceived(arrived))
+      .catch(() => undefined)
+  }
 }
 
 export function clearCollectablesCache(): void {
@@ -1776,7 +1790,13 @@ export async function sendCollectable(args: {
       // rather than the whole send failing on a covenant precondition.
       if (hardenedBroadcastWasAttempted(err)) throw formatSendError(err)
       console.warn('[brc-156] hardened send unavailable — using soft-latch', err)
-      setPaymentProgress('building', 'Falling back to a soft-latch transfer')
+      const why = err instanceof Error ? err.message : String(err)
+      setPaymentProgress(
+        'building',
+        why.trim()
+          ? `Hardened send failed (${why.slice(0, 120)}) — soft-latch fallback`
+          : 'Falling back to a soft-latch transfer',
+      )
     }
   }
 
