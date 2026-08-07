@@ -39,6 +39,7 @@ export async function sendSatsToAddress(opts: {
   friendLabel?: string | null
   description?: string
 }): Promise<SendSatsResult> {
+  setPaymentProgress('preparing', 'Waiting to send')
   return runExclusiveSpend(async () => {
     try {
       assertOnlineForPayment()

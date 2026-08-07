@@ -29,11 +29,26 @@ export default defineConfig({
     alias: [
       ...aeonUiViteAliases(),
       { find: '@', replacement: path.resolve(__dirname, 'src') },
+      // scrypt-ts Provider extends EventEmitter. Vite's browser build otherwise
+      // stubs Node `events` as `{ default: {} }` → Class extends Object.
+      {
+        find: /^events$/,
+        replacement: path.resolve(__dirname, 'node_modules/events/events.js'),
+      },
+      {
+        find: /^buffer$/,
+        replacement: path.resolve(__dirname, 'node_modules/buffer/index.js'),
+      },
     ],
   },
   optimizeDeps: {
     ...aeonUiOptimizeDeps(),
-    include: [...(aeonUiOptimizeDeps().include ?? []), 'buffer'],
+    include: [
+      ...(aeonUiOptimizeDeps().include ?? []),
+      'buffer',
+      'events',
+      'scrypt-ts',
+    ],
   },
   build: {
     outDir: 'dist',

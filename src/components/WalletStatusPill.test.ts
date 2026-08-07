@@ -15,6 +15,7 @@ const idlePayment: PaymentProgress = {
   phase: 'idle',
   label: null,
   detail: null,
+  outpoint: null,
 }
 
 function health(patch: Partial<SyncHealth> = {}): SyncHealth {
@@ -55,12 +56,48 @@ describe('resolveStatus', () => {
       true,
       {
         phase: 'broadcasting',
-        label: 'Broadcasting…',
+        label: 'Sending…',
         detail: 'Signing and broadcasting your payment',
+        outpoint: null,
       },
     )
-    expect(view.label).toBe('Broadcasting')
+    expect(view.label).toBe('Sending')
     expect(view.detail).toMatch(/Signing and broadcasting/i)
+  })
+
+  it('keeps Sending visible over sync failure while a payment is in flight', () => {
+    const view = resolveStatus(
+      'ready',
+      health({ phase: 'error', message: 'indexer down' }),
+      idleCloud,
+      true,
+      true,
+      {
+        phase: 'preparing',
+        label: 'Sending…',
+        detail: 'Waiting to send the collectable',
+        outpoint: 'abc_0',
+      },
+    )
+    expect(view.label).toBe('Sending')
+    expect(view.tone).toBe('busy')
+  })
+
+  it('keeps Sending visible over Syncing', () => {
+    const view = resolveStatus(
+      'ready',
+      health({ phase: 'syncing', message: 'Refreshing funds' }),
+      idleCloud,
+      true,
+      true,
+      {
+        phase: 'building',
+        label: 'Sending…',
+        detail: 'Assembling the transaction',
+        outpoint: null,
+      },
+    )
+    expect(view.label).toBe('Sending')
   })
 
   it('shows Synced when chain is ok', () => {

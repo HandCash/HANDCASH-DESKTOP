@@ -14,10 +14,15 @@ import {
   subscribeVerificationProgress,
   type VerificationProgress,
 } from '../wallet/verificationProgress'
+import {
+  isOutpointSending,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
 import { openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectablesIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
+import { CollectableSendingMark } from './CollectableSendingMark'
 import { EmptyState } from './EmptyState'
 import { Skeleton } from './Skeleton'
 
@@ -108,8 +113,16 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [loading, setLoading] = useState(true)
   const [verification, setVerification] = useState(() => getVerificationProgress())
+  const [sending, setSending] = useState(() => isOutpointSending(outpoint))
 
   useEffect(() => subscribeVerificationProgress(setVerification), [])
+  useEffect(
+    () =>
+      subscribePaymentProgress(() => {
+        setSending(isOutpointSending(outpoint))
+      }),
+    [outpoint],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -194,6 +207,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   ]
 
   const startSend = () => {
+    if (sending) return
     playWalletSound('soft')
     openSendCollectable(item.outpoint)
   }
@@ -204,6 +218,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     <div
       className="nav-child-panel collectable-details"
       data-aeon-scope="collectable-details"
+      data-sending={sending ? 'true' : undefined}
     >
       <div className="collectable-details-hero">
         <div className="collectable-media collectable-media-md">
@@ -218,6 +233,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
+          <CollectableSendingMark sending={sending} />
         </div>
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>
@@ -229,9 +245,15 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             {authenticity.label}
           </p>
           <div className="actions collectable-details-actions">
-            <button type="button" className="btn btn-primary btn-icon" onClick={startSend}>
+            <button
+              type="button"
+              className="btn btn-primary btn-icon"
+              onClick={startSend}
+              disabled={sending}
+              aria-busy={sending || undefined}
+            >
               <SendIcon size={14} />
-              Send item
+              {sending ? 'Sending…' : 'Send item'}
             </button>
           </div>
         </div>

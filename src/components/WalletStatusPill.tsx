@@ -59,6 +59,19 @@ function resolveStatus(
   if (session === 'failure') {
     return { label: 'Failed', tone: 'error', detail: 'App hit an error — retry' }
   }
+  // In-flight sends must always win the pill — including while queued behind
+  // sync, after navigating away from the send screen, and over sync/backup
+  // error banners. Desktop and mobile share this component.
+  if (payment.phase !== 'idle' && payment.label) {
+    return {
+      label: pillLabel(payment.label),
+      tone: 'busy',
+      detail: payment.detail,
+    }
+  }
+  if (session === 'sending') {
+    return { label: 'Sending', tone: 'busy', detail: 'Broadcasting payment' }
+  }
   if (!networkOnline) {
     return {
       label: 'No network',
@@ -86,17 +99,6 @@ function resolveStatus(
         cloud.message ?? 'History backup host (BRC-39) is not responding.'
       } This device is fine — only the off-device history copy is behind.`,
     }
-  }
-  // Live payment phases outrank the generic "Sending" session bit.
-  if (payment.phase !== 'idle' && payment.label) {
-    return {
-      label: pillLabel(payment.label),
-      tone: 'busy',
-      detail: payment.detail,
-    }
-  }
-  if (session === 'sending') {
-    return { label: 'Sending', tone: 'busy', detail: 'Broadcasting payment' }
   }
   if (health.phase === 'syncing') {
     return {

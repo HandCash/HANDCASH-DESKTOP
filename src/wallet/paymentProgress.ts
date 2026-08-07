@@ -20,6 +20,11 @@ export type PaymentProgress = {
   label: string | null
   /** Longer subtitle. */
   detail: string | null
+  /**
+   * Collectable outpoint in flight (normalized `txid_vout`). Used for inventory
+   * / details badges while the user navigates away from the send screen.
+   */
+  outpoint: string | null
 }
 
 type Listener = (progress: PaymentProgress) => void
@@ -30,6 +35,7 @@ let progress: PaymentProgress = {
   phase: 'idle',
   label: null,
   detail: null,
+  outpoint: null,
 }
 
 const COPY: Record<
@@ -37,25 +43,29 @@ const COPY: Record<
   { label: string; detail: string }
 > = {
   preparing: {
-    label: 'Preparing…',
+    label: 'Sending…',
     detail: 'Checking spendable funds',
   },
   building: {
-    label: 'Building…',
+    label: 'Sending…',
     detail: 'Assembling the transaction',
   },
   signing: {
-    label: 'Signing…',
+    label: 'Sending…',
     detail: 'Signing the transaction',
   },
   broadcasting: {
-    label: 'Broadcasting…',
+    label: 'Sending…',
     detail: 'Signing and sending to the network',
   },
   finishing: {
-    label: 'Finishing…',
+    label: 'Sending…',
     detail: 'Updating your balance',
   },
+}
+
+function normalizeOutpointKey(outpoint: string): string {
+  return outpoint.trim().replace(/\./g, '_')
 }
 
 function emit(): void {
@@ -66,20 +76,42 @@ export function getPaymentProgress(): PaymentProgress {
   return progress
 }
 
+export function getSendingOutpoint(): string | null {
+  return progress.phase === 'idle' ? null : progress.outpoint
+}
+
+export function isOutpointSending(outpoint: string): boolean {
+  if (progress.phase === 'idle' || !progress.outpoint) return false
+  return progress.outpoint === normalizeOutpointKey(outpoint)
+}
+
+/**
+ * Start (or update) payment UI. Pass `outpoint` on collectable sends so grid /
+ * details can show a per-item Sending badge after the user leaves the panel.
+ * Omitting `outpoint` keeps the previous in-flight outpoint (if any).
+ */
 export function setPaymentProgress(
   phase: PaymentPhase,
   detail?: string | null,
+  outpoint?: string | null,
 ): void {
   if (phase === 'idle') {
-    progress = { phase: 'idle', label: null, detail: null }
+    progress = { phase: 'idle', label: null, detail: null, outpoint: null }
     emit()
     return
   }
   const copy = COPY[phase]
+  const nextOutpoint =
+    outpoint === undefined
+      ? progress.outpoint
+      : outpoint
+        ? normalizeOutpointKey(outpoint)
+        : null
   progress = {
     phase,
     label: copy.label,
     detail: detail?.trim() || copy.detail,
+    outpoint: nextOutpoint,
   }
   emit()
 }

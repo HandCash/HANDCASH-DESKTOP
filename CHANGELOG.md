@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.102] - 2026-08-07
+
+### Fixed
+
+- **Hardened BRC-156 sends in the browser bundle.** Vite was stubbing Node
+  `events` as `{ default: {} }`, so scrypt-ts `Provider extends EventEmitter`
+  threw `Class extends value #<Object>` and every identity-key send fell through
+  to soft-latch. Alias the real `events` (+ `buffer`) packages in Vite.
+- **Sending stays visible while a transfer runs in the background.** The status
+  pill prefers payment progress over Syncing / sync errors, progress starts
+  before the spend queue waits, and the in-flight collectable shows a Sending
+  badge on inventory and details.
+- **Sends waiting on sync get priority.** In-flight chain ingest yields ordinal
+  work so a queued send can begin sooner.
+
 ## [1.2.101] - 2026-08-07
 
 ### Fixed

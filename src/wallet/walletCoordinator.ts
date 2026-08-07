@@ -20,10 +20,31 @@ const topLevelQueue = createSerialQueue()
 
 let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinatorMachine).start()
 
+/**
+ * Count of spends waiting on / holding the FIFO. Chain ingest checks this to
+ * skip ordinal work and finish early so a queued send can begin.
+ */
+let spendPriorityDepth = 0
+
 /** Test-only — reset coordinator between cases. */
 export function resetWalletCoordinatorForTests(): void {
   actor.stop()
   actor = createActor(walletCoordinatorMachine).start()
+  spendPriorityDepth = 0
+}
+
+/** Raise before enqueueing a spend so in-flight chain ingest can yield. */
+export function requestSpendPriority(): void {
+  spendPriorityDepth += 1
+}
+
+export function releaseSpendPriority(): void {
+  spendPriorityDepth = Math.max(0, spendPriorityDepth - 1)
+}
+
+/** True while a send is queued or running — ingest should prefer funding-only. */
+export function shouldYieldChainIngestToSpend(): boolean {
+  return spendPriorityDepth > 0
 }
 
 function context(): WalletCoordinatorContext {
@@ -139,14 +160,20 @@ export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   acquireLease: () => Promise<() => Promise<void>>,
 ): Promise<T> {
+  // Before the FIFO waits — so a running refresh can yield ordinal work now.
+  requestSpendPriority()
   return topLevelQueue(async () => {
-    const releaseSpend = await acquireSpend()
-    const releaseLease = await acquireLease()
     try {
-      return await fn()
+      const releaseSpend = await acquireSpend()
+      const releaseLease = await acquireLease()
+      try {
+        return await fn()
+      } finally {
+        await releaseLease()
+        releaseSpend()
+      }
     } finally {
-      await releaseLease()
-      releaseSpend()
+      releaseSpendPriority()
     }
   })
 }

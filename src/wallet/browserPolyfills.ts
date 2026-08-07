@@ -3,9 +3,10 @@
  * touch during hardened BRC-156 signing. Without these, covenant sends throw
  * and fall through to soft-latch / BRC-150.
  *
- * Important: ES modules resolve free `process` via the global object, but some
- * Android WebViews are picky — pair this with the classic script in index.html
- * and the full shim below (cwd / version / nextTick), not just `process.env`.
+ * Pair with:
+ * - classic `process` bootstrap in index.html
+ * - Vite aliases for `events` + `buffer` (empty Node builtin stubs make
+ *   `Provider extends EventEmitter` throw Class extends #<Object>)
  */
 import { Buffer } from 'buffer'
 

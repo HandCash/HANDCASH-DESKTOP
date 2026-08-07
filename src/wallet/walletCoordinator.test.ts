@@ -10,6 +10,9 @@ import {
   runChainIngest,
   runChainIngestDuringSpend,
   runExclusiveSpend,
+  requestSpendPriority,
+  releaseSpendPriority,
+  shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -105,5 +108,32 @@ describe('walletCoordinator runtime', () => {
     expect(() => runChainIngestDuringSpend(async () => 'x')).toThrow(
       /active spend session/i,
     )
+  })
+
+  it('marks spend priority while a send is queued or running', async () => {
+    expect(shouldYieldChainIngestToSpend()).toBe(false)
+    let releaseSpend!: () => void
+    const hold = new Promise<void>((resolve) => {
+      releaseSpend = resolve
+    })
+
+    const spend = runExclusiveSpend(async () => {
+      expect(shouldYieldChainIngestToSpend()).toBe(true)
+      await hold
+    }, async () => async () => undefined)
+
+    await Promise.resolve()
+    expect(shouldYieldChainIngestToSpend()).toBe(true)
+    releaseSpend()
+    await spend
+    expect(shouldYieldChainIngestToSpend()).toBe(false)
+  })
+
+  it('tracks explicit requestSpendPriority independently of the FIFO', () => {
+    expect(shouldYieldChainIngestToSpend()).toBe(false)
+    requestSpendPriority()
+    expect(shouldYieldChainIngestToSpend()).toBe(true)
+    releaseSpendPriority()
+    expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
 })

@@ -13,7 +13,7 @@
  * Sync never marks an output unspendable. Only a spend the network rejected can
  * do that, via `releaseStaleSpendableOutputs`.
  */
-import { runChainIngest, runChainIngestDuringSpend } from './walletCoordinator'
+import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
@@ -216,7 +216,14 @@ export async function refreshFromChainExclusive(
   const active = getActiveWallet()
   if (!active) return emptyRun()
 
-  const fundingOnly = opts?.fundingOnly === true
+  // A send is waiting on the coordinator — skip ordinal naming / inventory work
+  // so the FIFO frees and prepareSpendHeal can run.
+  const yieldToSpend = shouldYieldChainIngestToSpend()
+  const fundingOnly = opts?.fundingOnly === true || yieldToSpend
+  if (yieldToSpend && opts?.fundingOnly !== true) {
+    console.info('[chain-ingest] yielding ordinal work — send is waiting')
+  }
+
   // One short pill state for the whole pass — phased "Syncing payments / items"
   // labels overflowed the status bubble.
   setSyncHealth({
@@ -239,6 +246,16 @@ export async function refreshFromChainExclusive(
     reconcilePendingSends()
   } catch (err) {
     console.warn('[chain-ingest] pending send reconcile skipped', err)
+  }
+
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
   }
 
   await yieldToUi()
@@ -292,6 +309,15 @@ export async function refreshFromChainExclusive(
         }),
       )
     }
+    if (shouldYieldChainIngestToSpend()) {
+      return finishEarlyForSpend(active, {
+        heldCount,
+        pendingTips,
+        importedFunding,
+        importedItems,
+        scannedTxids,
+      })
+    }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
     if (!fundingOnly) {
@@ -320,14 +346,24 @@ export async function refreshFromChainExclusive(
     return emptyRun()
   }
 
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount,
+      pendingTips,
+      importedFunding,
+      importedItems,
+      scannedTxids,
+    })
+  }
+
   await yieldToUi()
 
   // A sweep in this same pass means the indexer has definitely not caught up,
   // so its answers are noise — skip the round trips rather than log them.
   // Background polls pass audit:false — the audit is report-only and was racing
-  // user taps after unlock.
+  // user taps after unlock. Also skip when a send is waiting.
   const review =
-    opts?.audit === false
+    opts?.audit === false || shouldYieldChainIngestToSpend()
       ? { suspect: 0, skipped: true }
       : await auditSpendableOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {
@@ -399,5 +435,36 @@ export async function refreshFromChainExclusive(
       importedItems,
       scannedTxids,
     }
+  }
+}
+
+async function finishEarlyForSpend(
+  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  partial: {
+    heldCount: number
+    pendingTips: number
+    importedFunding: number
+    importedItems: number
+    scannedTxids: string[]
+  },
+): Promise<ChainIngestRunResult> {
+  console.info('[chain-ingest] yielding to send')
+  let balanceSats: number | null = null
+  try {
+    balanceSats = await fetchBalanceSats(active.wallet)
+  } catch {
+    balanceSats = null
+  }
+  setSyncHealth({
+    phase: 'ok',
+    message: null,
+    heldOneSats: partial.heldCount,
+    pendingTips: partial.pendingTips,
+  })
+  return {
+    balanceSats,
+    importedFunding: partial.importedFunding,
+    importedItems: partial.importedItems,
+    scannedTxids: partial.scannedTxids,
   }
 }

@@ -1573,16 +1573,26 @@ export async function sendCollectable(args: {
   origin?: string
   app?: string
 }): Promise<{ txid: string }> {
+  const outpoint = normalizeOutpoint(args.outpoint)
+  // Before the spend FIFO — pill + inventory badge while waiting on sync.
+  setPaymentProgress(
+    'preparing',
+    'Waiting to send the collectable',
+    outpoint,
+  )
   return runExclusiveSpend(async () => {
     try {
     assertOnlineForPayment()
-    setPaymentProgress('preparing')
+    setPaymentProgress('preparing', undefined, outpoint)
     await prepareSpendHeal()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
 
-  setPaymentProgress('building', 'Preparing the collectable for transfer')
-  const outpoint = normalizeOutpoint(args.outpoint)
+  setPaymentProgress(
+    'building',
+    'Preparing the collectable for transfer',
+    outpoint,
+  )
   const to = resolvePaymentAddress(args.toAddress, wallet.chain)
 
   let lockingScript: string

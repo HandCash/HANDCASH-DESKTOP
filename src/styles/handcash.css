@@ -5870,6 +5870,56 @@ a.app-details-host:hover {
   animation: collectable-verify-fade 1.1s ease forwards;
 }
 
+/* In-flight send badge — stays while the user browses away from the send panel. */
+.collectable-sending-mark {
+  position: absolute;
+  left: 3px;
+  top: 3px;
+  z-index: 2;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: calc(100% - 6px);
+  margin: 0;
+  padding: 2px 6px 2px 4px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
+  background: color-mix(in srgb, hsl(var(--background)) 88%, #000);
+  color: var(--hc-accent, #57ff97);
+  box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
+  pointer-events: none;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  line-height: 1;
+}
+
+.collectable-media-sm .collectable-sending-mark {
+  left: 2px;
+  top: 2px;
+  padding: 2px 5px 2px 3px;
+  font-size: 8px;
+  gap: 3px;
+}
+
+.collectable-sending-mark-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collectable-card[data-sending='true'],
+.collectable-row[data-sending='true'] {
+  opacity: 0.92;
+}
+
+.collectable-send-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .collectable-verify-spinner {
   box-sizing: border-box;
   width: 8px;

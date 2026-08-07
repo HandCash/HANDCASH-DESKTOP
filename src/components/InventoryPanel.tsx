@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
+import { CollectableSendingMark } from './CollectableSendingMark'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -20,6 +21,11 @@ import {
   subscribeVerificationProgress,
   type VerificationProgress,
 } from '../wallet/verificationProgress'
+import {
+  getPaymentProgress,
+  isOutpointSending,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
 import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
@@ -59,12 +65,17 @@ function useChunkedCount(total: number): number {
 function CollectableGridItem({
   item,
   verifying,
+  sending,
 }: {
   item: Collectable
   verifying: boolean
+  sending: boolean
 }) {
   return (
-    <li className="collection-grid-card collectable-card">
+    <li
+      className="collection-grid-card collectable-card"
+      data-sending={sending ? 'true' : undefined}
+    >
       <button
         type="button"
         className="collection-grid-main collectable-main"
@@ -85,6 +96,7 @@ function CollectableGridItem({
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
+          <CollectableSendingMark sending={sending} />
           <CollectableVerifyMark verifying={verifying} />
         </div>
         <strong className="collection-grid-name" title={item.name}>
@@ -99,8 +111,9 @@ function CollectableGridItem({
       <button
         type="button"
         className="collectable-send-btn"
-        title={`Send ${item.name}`}
-        aria-label={`Send ${item.name}`}
+        title={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        aria-label={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        disabled={sending}
         onClick={(e) => {
           e.stopPropagation()
           playWalletSound('soft')
@@ -108,7 +121,7 @@ function CollectableGridItem({
         }}
       >
         <SendIcon size={14} />
-        Send
+        {sending ? 'Sending' : 'Send'}
       </button>
     </li>
   )
@@ -117,12 +130,17 @@ function CollectableGridItem({
 function CollectableListItem({
   item,
   verifying,
+  sending,
 }: {
   item: Collectable
   verifying: boolean
+  sending: boolean
 }) {
   return (
-    <li className="connected-app-row collectable-row">
+    <li
+      className="connected-app-row collectable-row"
+      data-sending={sending ? 'true' : undefined}
+    >
       <button
         type="button"
         className="connected-app-main collectable-row-main"
@@ -143,6 +161,7 @@ function CollectableListItem({
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
+          <CollectableSendingMark sending={sending} />
           <CollectableVerifyMark verifying={verifying} />
         </div>
         <div className="connected-app-body">
@@ -155,15 +174,16 @@ function CollectableListItem({
       <button
         type="button"
         className="collectable-send-btn collectable-send-btn--row"
-        title={`Send ${item.name}`}
-        aria-label={`Send ${item.name}`}
+        title={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        aria-label={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        disabled={sending}
         onClick={() => {
           playWalletSound('soft')
           openSendCollectable(item.outpoint)
         }}
       >
         <SendIcon size={14} />
-        Send
+        {sending ? 'Sending' : 'Send'}
       </button>
     </li>
   )
@@ -181,9 +201,19 @@ export function InventoryPanel() {
   const [verification, setVerification] = useState<VerificationProgress>(() =>
     getVerificationProgress(),
   )
+  const [sendingOutpoint, setSendingOutpoint] = useState<string | null>(() =>
+    getPaymentProgress().phase === 'idle' ? null : getPaymentProgress().outpoint,
+  )
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
   useEffect(() => subscribeVerificationProgress(setVerification), [])
+  useEffect(
+    () =>
+      subscribePaymentProgress((next) => {
+        setSendingOutpoint(next.phase === 'idle' ? null : next.outpoint)
+      }),
+    [],
+  )
   useEffect(
     () =>
       subscribeCollectables((next) => {
@@ -286,6 +316,9 @@ export function InventoryPanel() {
                 key={item.outpoint}
                 item={item}
                 verifying={isOutpointVerifying(item.outpoint, verification)}
+                sending={
+                  sendingOutpoint != null && isOutpointSending(item.outpoint)
+                }
               />
             ))}
           </ul>
@@ -296,6 +329,9 @@ export function InventoryPanel() {
                 key={item.outpoint}
                 item={item}
                 verifying={isOutpointVerifying(item.outpoint, verification)}
+                sending={
+                  sendingOutpoint != null && isOutpointSending(item.outpoint)
+                }
               />
             ))}
           </ul>
