@@ -71,7 +71,6 @@ import {
 import {
   canUseHardenedLatch,
   isHardenedCovenantLockingScript,
-  isHardenedSendEnabled,
   parseHardenedTipInstructions,
 } from './oneSatHardenedReceive'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -1522,7 +1521,8 @@ let hardenedModuleWarm: Promise<unknown> | null = null
  * both costs off the transfer itself.
  */
 export function warmHardenedSend(recipientIdentityKey?: string | null): void {
-  if (!isHardenedSendEnabled() || !canUseHardenedLatch({ publicKey: recipientIdentityKey })) {
+  // Genesis is off, but covenant resend still needs the scrypt chunk.
+  if (!canUseHardenedLatch({ publicKey: recipientIdentityKey })) {
     return
   }
   hardenedModuleWarm ??= import('./oneSatHardenedSend')

@@ -13,13 +13,12 @@ import {
 export const BASE_LINK = `${'00'.repeat(32)}_0`
 
 /**
- * Live wallet hardened Commit/Settle is disabled.
+ * Live wallet hardened *genesis* (P2PKH → covenant) is disabled.
  *
- * Soft-latch / BRC-150 is the wallet send path — covenant embeds make fees
- * scale with prior settle size. Receive still verifies BRC-156 tips from others
- * (bounded O(1) when the tip is already hardened). Soft-latch is a separate
- * `SendPath` chosen by `chooseSendPath` — never a silent fallback after a
- * failed covenant send.
+ * Soft-latch / BRC-150 is the normal send path — covenant embeds make fees
+ * scale with prior settle size. Tips already on a hardened covenant still use
+ * Commit/Settle resend via `chooseSendPath` (soft-latch cannot unlock them).
+ * Receive still verifies BRC-156 tips from others.
  */
 export function isHardenedSendEnabled(): boolean {
   return false

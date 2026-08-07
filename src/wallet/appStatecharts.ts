@@ -224,8 +224,8 @@ const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   tipKind --> unknown : empty / other
   hardenedCovenant --> hardenedResend : identity + delayed proof
   hardenedCovenant --> refuse : missing identity or proof
-  softP2pkh --> hardenedGenesis : identity + brc150/156
-  softP2pkh --> softLatch : otherwise
+  softP2pkh --> hardenedGenesis : genesis on + identity + brc150/156
+  softP2pkh --> softLatch : otherwise (incl. genesis off)
   unknown --> refuse
 `
 

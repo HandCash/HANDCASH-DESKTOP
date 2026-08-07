@@ -985,11 +985,6 @@ function tipTags(args: {
 export async function sendHardenedCollectable(
   args: HardenedSendArgs,
 ): Promise<{ txid: string }> {
-  if (!isHardenedSendEnabled()) {
-    throw new Error(
-      'Hardened BRC-156 alternating Commit/Settle is not enabled for wallet sends yet — use soft-latch / BRC-150',
-    )
-  }
   if (!canUseHardenedLatch({ publicKey: args.recipientIdentityKey })) {
     throw new Error('Hardened BRC-156 requires a recipient identity public key')
   }
@@ -997,6 +992,13 @@ export async function sendHardenedCollectable(
 
   const tipOp = args.normalizeOutpoint(args.outpoint)
   const tipIsCovenant = isHardenedCovenantLockingScript(args.tipLockingScript)
+  // New covenant induction is off; already-covenant tips may still resend so
+  // they are not stuck when soft-latch cannot unlock them.
+  if (!isHardenedSendEnabled() && !tipIsCovenant) {
+    throw new Error(
+      'Hardened BRC-156 genesis is not enabled — use soft-latch / BRC-150',
+    )
+  }
   const recipientKey = args.recipientIdentityKey.trim()
   const originU = toUnderscoreOutpoint(args.origin)
   const tags = tipTags({ origin: args.origin, name: args.name, app: args.app })

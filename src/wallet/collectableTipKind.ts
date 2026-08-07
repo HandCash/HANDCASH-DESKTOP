@@ -200,17 +200,14 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
   }
 
   if (args.tipKind.kind === 'hardenedCovenant') {
-    if (!hardenedOn) {
-      return {
-        path: 'refuse',
-        reason: 'Hardened BRC-156 send is not enabled',
-      }
-    }
+    // Soft-latch cannot unlock a covenant tip. Tips already on that path must
+    // use Commit/Settle resend even when new hardened genesis is disabled —
+    // otherwise they are stuck forever with a "not enabled" error.
     if (!hasIdentity) {
       return {
         path: 'refuse',
         reason:
-          'Hardened covenant tip requires a recipient identity key (cannot soft-latch)',
+          'This collectable is covenant-locked and needs a recipient identity key to send',
       }
     }
     const proof = resolveDelayedProof({
@@ -226,7 +223,7 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
         reason:
           'reason' in proof && proof.reason
             ? proof.reason
-            : 'Hardened resend needs the delayed prior proof outpoint',
+            : 'This covenant-locked collectable is missing its delayed proof and cannot be sent yet',
       }
     }
     return {

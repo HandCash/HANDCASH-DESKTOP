@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.120] - 2026-08-07
+
+### Fixed
+
+- **Covenant tips stuck with "BRC-156 not enabled".** Soft tips still soft-latch
+  (hardened genesis remains off). Tips already on a hardened covenant can
+  Commit/Settle resend again — soft-latch cannot unlock them.
+
 ## [1.2.119] - 2026-08-07
 
 ### Changed

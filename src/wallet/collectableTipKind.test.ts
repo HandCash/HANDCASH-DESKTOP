@@ -151,7 +151,7 @@ describe('chooseSendPath', () => {
     })
   })
 
-  it('refuses covenant when hardened send is disabled', () => {
+  it('still resends covenant tips when hardened genesis is disabled', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(COVENANT),
@@ -160,8 +160,9 @@ describe('chooseSendPath', () => {
         hardenedSendEnabled: false,
       }),
     ).toMatchObject({
-      path: 'refuse',
-      reason: 'Hardened BRC-156 send is not enabled',
+      path: 'hardenedResend',
+      proofOutpoint: PROOF,
+      proofSource: 'remittance',
     })
   })
 
