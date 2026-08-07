@@ -132,6 +132,7 @@ describe('chooseSendPath', () => {
           mode: 'hardened',
           proofOutpoint: PROOF,
         }),
+        hardenedSendEnabled: true,
       }).path,
     ).toBe('refuse')
 
@@ -141,11 +142,26 @@ describe('chooseSendPath', () => {
         recipientIdentityKey: IDENTITY,
         latchOutpoint: BEACON,
         remittanceProofOutpoint: PROOF,
+        hardenedSendEnabled: true,
       }),
     ).toMatchObject({
       path: 'hardenedResend',
       proofOutpoint: PROOF,
       proofSource: 'remittance',
+    })
+  })
+
+  it('refuses covenant when hardened send is disabled', () => {
+    expect(
+      chooseSendPath({
+        tipKind: classifyTipKind(COVENANT),
+        recipientIdentityKey: IDENTITY,
+        remittanceProofOutpoint: PROOF,
+        hardenedSendEnabled: false,
+      }),
+    ).toMatchObject({
+      path: 'refuse',
+      reason: 'Hardened BRC-156 send is not enabled',
     })
   })
 
@@ -155,19 +171,33 @@ describe('chooseSendPath', () => {
         tipKind: classifyTipKind(COVENANT),
         recipientIdentityKey: IDENTITY,
         latchOutpoint: BEACON,
+        hardenedSendEnabled: true,
       }).path,
     ).toBe('refuse')
   })
 
-  it('chooses hardenedGenesis for proven soft P2PKH with identity', () => {
+  it('chooses hardenedGenesis for proven soft P2PKH with identity when enabled', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(P2PKH),
         provenTier: 'brc150',
         recipientIdentityKey: IDENTITY,
         latchOutpoint: BEACON,
+        hardenedSendEnabled: true,
       }),
     ).toEqual({ path: 'hardenedGenesis' })
+  })
+
+  it('soft-latches proven soft P2PKH when hardened send is disabled', () => {
+    expect(
+      chooseSendPath({
+        tipKind: classifyTipKind(P2PKH),
+        provenTier: 'brc150',
+        recipientIdentityKey: IDENTITY,
+        latchOutpoint: BEACON,
+        hardenedSendEnabled: false,
+      }),
+    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
   })
 
   it('soft-latches unproven soft P2PKH (or missing identity)', () => {
@@ -177,6 +207,7 @@ describe('chooseSendPath', () => {
         provenTier: 'unproven',
         recipientIdentityKey: IDENTITY,
         latchOutpoint: BEACON,
+        hardenedSendEnabled: true,
       }),
     ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
 
@@ -186,6 +217,7 @@ describe('chooseSendPath', () => {
         provenTier: 'brc150',
         recipientIdentityKey: null,
         latchOutpoint: null,
+        hardenedSendEnabled: true,
       }),
     ).toEqual({ path: 'softLatch', latchOutpoint: null })
   })

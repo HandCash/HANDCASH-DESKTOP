@@ -5,6 +5,16 @@
  * and that mutated outputs fail hashOutputs-bound unlock generation.
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+
+vi.mock('./oneSatHardenedReceive', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./oneSatHardenedReceive')>()
+  return {
+    ...actual,
+    // Protocol bridge tests exercise the disabled live path with an override.
+    isHardenedSendEnabled: () => true,
+  }
+})
+
 import { Beef, PrivateKey, P2PKH, Transaction } from '@bsv/sdk'
 import { bsv } from 'scrypt-ts'
 import {

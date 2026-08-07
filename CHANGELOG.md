@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.118] - 2026-08-07
+
+### Changed
+
+- **Wallet sends use soft-latch / BRC-150 only.** Hardened BRC-156 Commit/Settle
+  is disabled for live sends (covenant embeds made fees scale with prior settle
+  size). Receive still verifies hardened tips from others. Protocol code and
+  tests remain; `isHardenedSendEnabled()` is false.
+
 ## [1.2.117] - 2026-08-07
 
 ### Fixed

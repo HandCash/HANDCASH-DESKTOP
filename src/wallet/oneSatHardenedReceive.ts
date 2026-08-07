@@ -13,13 +13,16 @@ import {
 export const BASE_LINK = `${'00'.repeat(32)}_0`
 
 /**
- * Live wallet hardened Commit/Settle is enabled.
+ * Live wallet hardened Commit/Settle is disabled.
  *
- * Soft-latch is a separate `SendPath` chosen by `chooseSendPath` — never a
- * silent fallback after a failed covenant send.
+ * Soft-latch / BRC-150 is the wallet send path — covenant embeds make fees
+ * scale with prior settle size. Receive still verifies BRC-156 tips from others
+ * (bounded O(1) when the tip is already hardened). Soft-latch is a separate
+ * `SendPath` chosen by `chooseSendPath` — never a silent fallback after a
+ * failed covenant send.
  */
 export function isHardenedSendEnabled(): boolean {
-  return true
+  return false
 }
 
 export function canUseHardenedLatch(recipient: {
