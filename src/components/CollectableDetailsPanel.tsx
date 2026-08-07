@@ -173,19 +173,16 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     await copyText(value, { label })
   }
 
+  // Cache hits paint immediately. Rare cold loads stay blank — no corner/center
+  // spinner chrome in the item subcontext.
   if (loading && !item) {
     return (
       <div
-        className="nav-child-panel collectable-details collectable-details-loading"
+        className="nav-child-panel collectable-details"
         data-aeon-scope="collectable-details"
         aria-label="Loading collectable"
         aria-busy="true"
-      >
-        <div className="collectable-details-loading-spinner" role="status">
-          <span className="send-spinner" aria-hidden />
-          <span className="collectable-details-loading-label">Loading…</span>
-        </div>
-      </div>
+      />
     )
   }
   if (!item) {

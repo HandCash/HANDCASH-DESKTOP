@@ -3770,25 +3770,6 @@ button.payment-details-item-thumb-btn:hover {
   margin-top: 6px;
 }
 
-.collectable-details-loading {
-  display: grid;
-  place-items: center;
-  min-height: 12rem;
-  pointer-events: none;
-}
-
-.collectable-details-loading-spinner {
-  display: grid;
-  justify-items: center;
-  gap: 10px;
-}
-
-.collectable-details-loading-label {
-  color: var(--hc-muted);
-  font-size: 0.82rem;
-  font-weight: 600;
-}
-
 .collectable-authenticity-busy {
   display: inline-flex;
   align-items: center;

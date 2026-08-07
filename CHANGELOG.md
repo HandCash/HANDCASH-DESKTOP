@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.113] - 2026-08-07
+
+### Fixed
+
+- **Settle "input was not reserved by this action batch".** Delayed-proof UTXOs
+  already present in settle `inputBEEF` were skipped for batch reservation, then
+  rejected at commit. Always extend-reserve explicit inputs not yet in batch
+  state. Also removes the item-details loading spinner chrome.
+
 ## [1.2.112] - 2026-08-07
 
 ### Fixed

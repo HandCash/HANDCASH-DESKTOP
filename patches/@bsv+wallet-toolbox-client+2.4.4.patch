@@ -1,3 +1,25 @@
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/signer/actionBatch/ActionBatchWorkspace.js b/node_modules/@bsv/wallet-toolbox-client/out/src/signer/actionBatch/ActionBatchWorkspace.js
+index 463e3a2..07b10d4 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/signer/actionBatch/ActionBatchWorkspace.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/signer/actionBatch/ActionBatchWorkspace.js
+@@ -238,9 +238,15 @@ class ActionBatchWorkspace {
+         return [...args.inputs.map(input => input.outpoint), ...args.options.noSendChange]
+             .filter(outpoint => {
+             const key = `${outpoint.txid}.${outpoint.vout}`;
++            // Always extend-reserve explicit inputs that are not already in batch
++            // state — even when their parent tx is already in sharedBeef. Otherwise
++            // resolveInputOutput synthesizes them from beef (outputId -1) and
++            // commitActionBatch rejects the real storage row as unreserved
++            // ("input X was not reserved by this action batch"). External-only
++            // inputs (not in storage) stay fine: extend finds nothing to reserve
++            // and persistAction skips missing storage rows.
+             return !this.state.staged.has(key) && !this.state.explicit.has(key) &&
+-                !this.state.reserved.has(key) && (this.state.discardedStagedTxids.has(outpoint.txid) ||
+-                this.state.sharedBeef.findTxid(outpoint.txid)?.tx == null);
++                !this.state.reserved.has(key);
+         });
+     }
+     async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
 diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
 index cd5d6d7..5eb6b85 100644
 --- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
