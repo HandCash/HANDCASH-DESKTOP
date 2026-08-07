@@ -24,10 +24,7 @@ import { announceItemsReceived } from './itemArrivalToast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
-import {
-  discoverHardenedTipsFromBeacons,
-  type MigrationItem,
-} from './oneSatImport'
+import { type MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
@@ -326,11 +323,7 @@ export async function refreshFromChainExclusive(
     if (!fundingOnly) {
       try {
         const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
-        const hardenedTips = await discoverHardenedTipsFromBeacons(
-          ingest.scan.utxos,
-          active.chain,
-        )
-        rememberLiveOneSatOutpoints([...ingest.scan.utxos, ...hardenedTips])
+        rememberLiveOneSatOutpoints(ingest.scan.utxos)
         void listCollectables(active).catch((err) => {
           console.warn('[chain-ingest] collectables refresh failed', err)
         })

@@ -4,7 +4,8 @@
  * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
  * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
  * the held tip's txid (so remittance can be built before the settle txid is known).
- * Hardened Commit/Settle uses the scrypt-ts covenant in `src/contracts/brc156Covenant.ts`.
+ * Schema-2 / hardened Commit/Settle fields are parsed for compatibility only;
+ * the wallet no longer creates or spends covenant tips.
  */
 import { Hash, Utils } from '@bsv/sdk'
 

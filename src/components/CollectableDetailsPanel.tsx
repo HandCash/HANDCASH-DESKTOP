@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
+  abandonCollectable,
   getCachedCollectables,
   getCollectable,
   requestCollectableVerification,
@@ -19,8 +20,9 @@ import {
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { openSendCollectable } from '../wallet/navStore'
+import { openSendCollectable, clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { toastError } from '../wallet/toast'
 import { CollectablesIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
@@ -108,6 +110,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const [loading, setLoading] = useState(() => !cacheHit(outpoint))
   const [verification, setVerification] = useState(() => getVerificationProgress())
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
+  const [abandoning, setAbandoning] = useState(false)
 
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(
@@ -197,9 +200,25 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   ]
 
   const startSend = () => {
-    if (sending) return
+    if (sending || item.covenantLocked) return
     playWalletSound('soft')
     openSendCollectable(item.outpoint)
+  }
+
+  const startAbandon = () => {
+    if (abandoning || sending) return
+    setAbandoning(true)
+    playWalletSound('soft')
+    void abandonCollectable(item.outpoint)
+      .then(() => {
+        clearNavChild()
+      })
+      .catch((err) => {
+        toastError(err instanceof Error ? err.message : String(err))
+      })
+      .finally(() => {
+        setAbandoning(false)
+      })
   }
 
   const authenticity = authenticityView(item, verification)
@@ -241,17 +260,35 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               authenticity.label
             )}
           </p>
+          {item.covenantLocked ? (
+            <p className="collectable-details-app">
+              Stuck covenant tip (legacy BRC-156). It cannot be sent. Remove it
+              from this wallet — the sat stays locked on chain.
+            </p>
+          ) : null}
           <div className="actions collectable-details-actions">
-            <button
-              type="button"
-              className="btn btn-primary btn-icon"
-              onClick={startSend}
-              disabled={sending}
-              aria-busy={sending || undefined}
-            >
-              <SendIcon size={14} />
-              {sending ? 'Sending…' : 'Send item'}
-            </button>
+            {item.covenantLocked ? (
+              <button
+                type="button"
+                className="btn btn-secondary btn-icon"
+                onClick={startAbandon}
+                disabled={abandoning}
+                aria-busy={abandoning || undefined}
+              >
+                {abandoning ? 'Removing…' : 'Remove from wallet'}
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary btn-icon"
+                onClick={startSend}
+                disabled={sending}
+                aria-busy={sending || undefined}
+              >
+                <SendIcon size={14} />
+                {sending ? 'Sending…' : 'Send item'}
+              </button>
+            )}
           </div>
         </div>
       </div>

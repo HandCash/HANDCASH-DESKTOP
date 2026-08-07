@@ -60,7 +60,11 @@ export function showToast(input: {
   items = [...items, item].slice(-4)
   emit()
   if (durationMs > 0) {
-    window.setTimeout(() => dismissToast(id), durationMs)
+    const schedule =
+      typeof globalThis.setTimeout === 'function'
+        ? globalThis.setTimeout.bind(globalThis)
+        : null
+    schedule?.(() => dismissToast(id), durationMs)
   }
   return id
 }

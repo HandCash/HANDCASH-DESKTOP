@@ -203,15 +203,11 @@ const SEND_COLLECTABLE = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> classifying : START with SendPath
-  classifying --> hardened : hardenedGenesis / hardenedResend
   classifying --> softLatch : softLatch
   classifying --> refusing : refuse
   refusing --> failed
-  hardened --> done : SUCCESS
-  hardened --> failed : FAIL
   softLatch --> done : SUCCESS
   softLatch --> failed : FAIL
-  note right of hardened : no edge to softLatch
   done --> idle : RESET
   failed --> idle : RESET
 `
@@ -219,13 +215,11 @@ const SEND_COLLECTABLE = `stateDiagram-v2
 const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   direction TB
   [*] --> tipKind
-  tipKind --> hardenedCovenant : long non-P2PKH
+  tipKind --> covenantLocked : long non-P2PKH
   tipKind --> softP2pkh : P2PKH
   tipKind --> unknown : empty / other
-  hardenedCovenant --> hardenedResend : identity + delayed proof
-  hardenedCovenant --> refuse : missing identity or proof
-  softP2pkh --> hardenedGenesis : genesis on + identity + brc150/156
-  softP2pkh --> softLatch : otherwise (incl. genesis off)
+  covenantLocked --> refuse : abandon only
+  softP2pkh --> softLatch
   unknown --> refuse
 `
 
@@ -246,25 +240,8 @@ const AUTHENTICITY = `stateDiagram-v2
   note right of proven
     Never downgrade to unproven.
     Durable projection: provenCache.v2
+    Legacy brc156 paints as BRC-150
   end note
-`
-
-const HARDENED_SEND = `stateDiagram-v2
-  direction LR
-  [*] --> idle
-  idle --> gating : SEND
-  gating --> commitBuild : PROVEN_OK
-  gating --> failed : PROVEN_FAIL
-  commitBuild --> commitSign : COMMIT_BUILT
-  commitSign --> settleBuild : COMMIT_SIGNED
-  commitSign --> aborting : FAIL
-  settleBuild --> settleSign : SETTLE_BUILT
-  settleBuild --> aborting : FAIL
-  settleSign --> done : SETTLE_SIGNED
-  settleSign --> aborting : FAIL
-  aborting --> failed : ABORT_DONE
-  done --> idle : RESET
-  failed --> idle : RESET
 `
 
 const SOFT_LATCH_SEND = `stateDiagram-v2
@@ -527,26 +504,20 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendCollectable',
     label: 'Send item',
-    caption: 'collectableSendMachine — classify → hardened | softLatch | refuse',
+    caption: 'collectableSendMachine — classify → softLatch | refuse',
     source: SEND_COLLECTABLE,
   },
   {
     id: 'sendPath',
     label: 'Send path',
-    caption: 'chooseSendPath — TipKind → SendPath (no covenant soft-latch)',
+    caption: 'chooseSendPath — TipKind → softLatch | refuse (covenant abandon)',
     source: COLLECTABLE_SEND_PATH,
   },
   {
     id: 'authenticity',
     label: 'Authenticity',
-    caption: 'authenticityMachine — BRC-156/150 ladder (monotonic durable)',
+    caption: 'authenticityMachine — BRC-150 ladder (legacy brc156 → 150)',
     source: AUTHENTICITY,
-  },
-  {
-    id: 'hardenedSend',
-    label: 'Hardened send',
-    caption: 'hardenedSendMachine — Commit → Settle (child of collectableSend)',
-    source: HARDENED_SEND,
   },
   {
     id: 'softLatchSend',

@@ -23,7 +23,6 @@ vi.mock('./legacyScan', () => ({
 
 vi.mock('./oneSatImport', () => ({
   classifyLegacyUtxos: (...args: unknown[]) => mockClassifyLegacyUtxos(...args),
-  discoverHardenedTipsFromBeacons: vi.fn(async () => []),
   importOneSatOrdinals: (...args: unknown[]) => mockImportOneSatOrdinals(...args),
 }))
 

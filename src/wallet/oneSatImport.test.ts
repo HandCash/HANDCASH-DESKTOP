@@ -46,7 +46,7 @@ const TXID_A = 'a'.repeat(64)
 const TXID_B = 'b'.repeat(64)
 
 describe('classifyLegacyUtxos', () => {
-  it('discovers a non-P2PKH hardened tip from its 2-sat Settle beacon', async () => {
+  it('does not synthesize covenant tips from schema-2 beacons', async () => {
     const tx = new Transaction()
     tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
     tx.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
@@ -80,18 +80,12 @@ describe('classifyLegacyUtxos', () => {
 
     const result = await classifyLegacyUtxos([utxo(`${txid}.1`, 2)], 'main')
 
-    expect(result.oneSats).toEqual([
-      expect.objectContaining({
-        outpoint: `${txid}.0`,
-        origin: `${TXID_A}_0`,
-        name: 'Hardened item',
-      }),
-    ])
+    expect(result.oneSats).toEqual([])
     expect(result.latches.map((u) => u.outpoint)).toEqual([`${txid}.1`])
     vi.unstubAllGlobals()
   })
 
-  it('discovers a hardened BOLT tip through a separate 2-sat beacon transaction', async () => {
+  it('treats a lone 2-sat beacon as latch dust without inventing a tip', async () => {
     const settle = new Transaction()
     settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
     settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
@@ -131,12 +125,7 @@ describe('classifyLegacyUtxos', () => {
 
     const result = await classifyLegacyUtxos([utxo(`${beaconTxid}.0`, 2)], 'main')
 
-    expect(result.oneSats).toEqual([
-      expect.objectContaining({
-        outpoint: `${settleTxid}.0`,
-        origin: `${TXID_A}_0`,
-      }),
-    ])
+    expect(result.oneSats).toEqual([])
     expect(result.latches.map((u) => u.outpoint)).toEqual([`${beaconTxid}.0`])
     vi.unstubAllGlobals()
   })

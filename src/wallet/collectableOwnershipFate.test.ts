@@ -58,7 +58,7 @@ describe('ownershipFate', () => {
     ).toBe('ghostDrop')
   })
 
-  it('never ghost-drops hardenedCovenant (exhaustive)', () => {
+  it('never ghost-drops covenantLocked (exhaustive)', () => {
     const fate = ownershipFate({
       tipKind: classifyTipKind(COVENANT),
       inLiveSet: false,

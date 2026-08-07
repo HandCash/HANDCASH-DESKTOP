@@ -28,8 +28,8 @@
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
 - BRC-150: `oneSatProvenance.ts` fully verifies/rebuilds v2 ancestry, every exact parent spend, one-sat continuity, AtomicBEEF subject, and the origin `ord` envelope; oversized/incomplete proofs are omitted.
-- Authenticity order is fixed in `oneSatAuthenticity.ts`: consensus-hardened BRC-156 → complete BRC-150 → indexer identity marked `unproven`. Never promote indexer data or marker-only scripts to proven.
-- BRC-156: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0156.md` — soft-latch (tip 1 + discovery latch **exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …`). Schema 2 uses BOLT-style **alternating delayed proofs** (`oneSatHardenedLatch.ts` / `oneSatHardenedSend.ts`); marker + CHECKSIG and sliding parent/grandparent windows are explicitly insufficient. Identity-key peers use hardened Commit/Settle; bare addresses fall back to soft-latch / BRC-150.
+- Authenticity order is fixed in `oneSatAuthenticity.ts`: complete BRC-150 → indexer identity marked `unproven`. Legacy `brc156` cache pins display as BRC-150. Never promote indexer data or marker-only scripts to proven.
+- BRC-156 soft-latch: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0156.md` — tip (1 sat) + discovery latch (**exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …`). Soft-latch send via `softLatchSendMachine`; covenant-locked tips refuse and may be abandoned.
 ## Read first
 
 | Topic | Path |

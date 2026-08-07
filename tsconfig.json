@@ -30,5 +30,5 @@
     },
     "experimentalDecorators": true
   },
-  "include": ["src", "artifacts/brc156Covenant.json"]
+  "include": ["src"]
 }

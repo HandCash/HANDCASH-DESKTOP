@@ -1,12 +1,6 @@
 /**
- * Node globals the Vite WebView does not provide but scrypt-ts / bitcore still
- * touch during hardened BRC-156 signing. Without these, covenant sends throw
- * and fall through to soft-latch / BRC-150.
- *
- * Pair with:
- * - classic `process` bootstrap in index.html
- * - Vite aliases for `events` + `buffer` (empty Node builtin stubs make
- *   `Provider extends EventEmitter` throw Class extends #<Object>)
+ * Node globals the Vite WebView does not provide but some SDK / bitcore paths
+ * still touch. Pair with Vite aliases for `events` + `buffer`.
  */
 import { Buffer } from 'buffer'
 

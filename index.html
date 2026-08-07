@@ -17,7 +17,7 @@
   </head>
   <body>
     <div id="root"></div>
-    <!-- Classic script: free `process` binding before ES modules (scrypt-ts / BRC-156). -->
+    <!-- Classic script: free `process` binding before ES modules. -->
     <script>
       (function () {
         var g = typeof globalThis !== 'undefined' ? globalThis : window

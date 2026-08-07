@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.123] - 2026-08-07
+
+### Changed
+
+- **Removed hardened BRC-156 Commit/Settle** (scrypt covenant, ~14k LOC). Soft-latch
+  + BRC-150 remain. Stuck covenant tips show **Remove from wallet** (local abandon;
+  sat stays locked on chain — covenant cannot soft-exit or burn via hashOutputs).
+
 ## [1.2.122] - 2026-08-07
 
 ### Changed

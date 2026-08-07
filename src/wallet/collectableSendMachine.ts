@@ -1,9 +1,8 @@
 /**
  * Parent statechart for collectable transfer routing.
  *
- * Classifies once into an exhaustive `SendPath`, then invokes hardened or
- * soft-latch. There is no edge from hardened → softLatch — covenant tips that
- * cannot harden refuse instead of falling through.
+ * Classifies once into an exhaustive `SendPath`, then invokes soft-latch or
+ * refuses. Covenant-locked tips have no spend edge — abandon instead.
  *
  * UI confirm flow (edit → confirm) stays in the panel machine; this chart owns
  * the on-chain path only.
@@ -14,7 +13,6 @@ import type { SendPath } from './collectableTipKind'
 export type CollectableSendPhase =
   | 'idle'
   | 'classifying'
-  | 'hardened'
   | 'softLatch'
   | 'refusing'
   | 'done'
@@ -29,20 +27,17 @@ export type CollectableSendContext = {
 
 export type CollectableSendEvent =
   | { type: 'START'; outpoint: string; sendPath: SendPath }
-  | { type: 'PATH_HARDENED' }
   | { type: 'PATH_SOFT_LATCH' }
   | { type: 'PATH_REFUSE'; reason: string }
   | { type: 'SUCCESS'; txid: string }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
-function pathKind(
-  path: SendPath | null,
-): 'hardened' | 'softLatch' | 'refuse' | null {
+function pathKind(path: SendPath | null): 'softLatch' | 'refuse' | null {
   if (!path) return null
   if (path.path === 'refuse') return 'refuse'
   if (path.path === 'softLatch') return 'softLatch'
-  return 'hardened'
+  return null
 }
 
 export const collectableSendMachine = setup({
@@ -51,7 +46,6 @@ export const collectableSendMachine = setup({
     events: {} as CollectableSendEvent,
   },
   guards: {
-    choseHardened: ({ context }) => pathKind(context.sendPath) === 'hardened',
     choseSoftLatch: ({ context }) => pathKind(context.sendPath) === 'softLatch',
     choseRefuse: ({ context }) => pathKind(context.sendPath) === 'refuse',
   },
@@ -98,20 +92,12 @@ export const collectableSendMachine = setup({
     classifying: {
       always: [
         { guard: 'choseRefuse', target: 'refusing' },
-        { guard: 'choseHardened', target: 'hardened' },
         { guard: 'choseSoftLatch', target: 'softLatch' },
         {
           target: 'failed',
           actions: assign({ error: 'Send path was not classified' }),
         },
       ],
-    },
-    hardened: {
-      on: {
-        SUCCESS: { target: 'done', actions: 'setTxid' },
-        FAIL: { target: 'failed', actions: 'setError' },
-        // Intentionally no softLatch transition — covenant cannot fall through.
-      },
     },
     softLatch: {
       on: {
@@ -138,9 +124,3 @@ export const collectableSendMachine = setup({
 })
 
 export type CollectableSendSnapshot = SnapshotFrom<typeof collectableSendMachine>
-
-/** Events accepted while in the hardened state — softLatch must not appear. */
-export function hardenedStateEventTypes(): readonly string[] {
-  const node = collectableSendMachine.states.hardened
-  return Object.keys(node?.on ?? {})
-}
