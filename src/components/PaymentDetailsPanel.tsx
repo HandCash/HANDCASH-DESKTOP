@@ -123,6 +123,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   skeletonWidth={32}
                   skeletonHeight={32}
                   skeletonRadius={6}
+                  retainDecoded
                   decoding="async"
                 />
               </button>
@@ -136,6 +137,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                 skeletonWidth={32}
                 skeletonHeight={32}
                 skeletonRadius={6}
+                retainDecoded
                 decoding="async"
               />
             )

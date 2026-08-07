@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.121] - 2026-08-07
+
+### Fixed
+
+- **Activity thumb empty square while scrolling.** DeferredImage was clearing
+  `src` on scroll-away while status stayed ready, so a blank `<img>` flashed.
+  List thumbs now keep the decoded src once shown; paint never shows an img
+  without a src.
+
 ## [1.2.120] - 2026-08-07
 
 ### Fixed

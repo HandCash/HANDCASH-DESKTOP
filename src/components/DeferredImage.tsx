@@ -20,6 +20,13 @@ type Props = Omit<ImgHTMLAttributes<HTMLImageElement>, 'onLoad' | 'onError'> & {
   /** Show the broken image / empty frame after error. Default: stay on skeleton and call onReady. */
   revealOnError?: boolean
   fallback?: ReactNode
+  /**
+   * After a successful decode, keep `src` attached for the life of this mount.
+   * Activity list thumbs use this — releasing on scroll cleared `src` while
+   * status stayed `ready`, which paints an empty `<img>` square for a few frames.
+   * Large inventory grids should leave this off so far-away bitmaps free memory.
+   */
+  retainDecoded?: boolean
 }
 
 function markFromElement(img: HTMLImageElement): 'ready' | 'error' | 'loading' {
@@ -94,6 +101,7 @@ export function DeferredImage({
   onReady,
   revealOnError = false,
   fallback = null,
+  retainDecoded = false,
   className = '',
   width,
   height,
@@ -122,11 +130,15 @@ export function DeferredImage({
   )
   const [loadSlot, setLoadSlot] = useState(cached)
   const slotHeld = useRef(false)
+  /** Once painted with retainDecoded, never drop src on this mount. */
+  const retained = useRef(retainDecoded && cached)
 
   useEffect(() => {
-    setStatus(typeof src === 'string' && decodedOnce.has(src) ? 'ready' : 'loading')
+    const hit = typeof src === 'string' && src !== '' && decodedOnce.has(src)
+    setStatus(hit ? 'ready' : 'loading')
     readySent.current = false
-  }, [src])
+    retained.current = retainDecoded && hit
+  }, [src, retainDecoded])
 
   // Observers are set up once per frame, never per `near` flip: re-observing
   // re-fires the initial callback, which is how an element sitting on a boundary
@@ -174,6 +186,16 @@ export function DeferredImage({
         ) {
           return
         }
+        // List thumbs keep the bitmap once shown; releasing them is what
+        // flashed empty squares while scrolling Activity.
+        if (
+          retainDecoded &&
+          typeof src === 'string' &&
+          src !== '' &&
+          (retained.current || decodedOnce.has(src))
+        ) {
+          return
+        }
         if (entries.every((e) => !e.isIntersecting)) mark(false)
       },
       { rootMargin: `${RELEASE_MARGIN_PX}px` },
@@ -191,7 +213,7 @@ export function DeferredImage({
       loadObserver.disconnect()
       releaseObserver.disconnect()
     }
-  }, [src])
+  }, [src, retainDecoded])
 
   const releaseSlotIfHeld = useCallback(() => {
     if (!slotHeld.current) return
@@ -200,6 +222,10 @@ export function DeferredImage({
   }, [])
 
   useEffect(() => {
+    if (retained.current) {
+      setLoadSlot(true)
+      return
+    }
     if (!near) {
       setLoadSlot(false)
       return
@@ -239,21 +265,26 @@ export function DeferredImage({
 
   useEffect(() => {
     if (near && loadSlot) return
+    if (retained.current) return
     // A URL that already decoded this session must not blink a skeleton when
-    // its frame briefly loses a slot (tab hide, slot churn). Keep it ready.
+    // its frame briefly loses a slot (tab hide, slot churn). Keep it ready —
+    // but only while src stays attached (see attachSrc). If we clear src, the
+    // paint path must not leave a ready+empty img on screen.
     if (typeof src === 'string' && src !== '' && decodedOnce.has(src)) return
     setStatus('loading')
   }, [near, loadSlot, src])
 
   useEffect(() => {
     if (status !== 'ready') return
+    if (retainDecoded) retained.current = true
     noteImageLive(1)
     return () => noteImageLive(-1)
-  }, [status])
+  }, [status, retainDecoded])
 
   useEffect(() => {
+    if (!src || !near || !loadSlot) return
     const img = imgRef.current
-    if (!img || !src || !near || !loadSlot) return
+    if (!img) return
     const next = markFromElement(img)
     if (next !== 'loading') setStatus(next)
   }, [src, near, loadSlot])
@@ -283,9 +314,17 @@ export function DeferredImage({
     )
   }
 
+  // Never paint an <img> without src. Clearing src while status stayed `ready`
+  // (scroll release + decodedOnce short-circuit) was the empty Activity square.
+  const attachSrc = retained.current || (near && loadSlot)
+  const showImg = status === 'ready' && attachSrc
+  const showSkeleton =
+    !showImg &&
+    !(status === 'error' && (revealOnError || fallback))
+
   return (
     <span className="deferred-image" data-aeon-state={status} ref={frameRef}>
-      {status === 'loading' || (status === 'error' && !revealOnError && !fallback) ? (
+      {showSkeleton ? (
         <Skeleton
           className={skeletonClassName}
           width={skW}
@@ -298,19 +337,21 @@ export function DeferredImage({
         {...rest}
         ref={imgRef}
         className={className}
-        src={near && loadSlot ? src : undefined}
+        src={attachSrc ? src : undefined}
         alt={alt}
         width={width}
         height={height}
         loading="eager"
         decoding="async"
-        hidden={status !== 'ready'}
+        hidden={!showImg}
         onLoad={() => {
           if (typeof src === 'string' && src !== '') decodedOnce.add(src)
+          if (retainDecoded) retained.current = true
           setStatus('ready')
         }}
         onError={() => {
           if (typeof src === 'string') decodedOnce.delete(src)
+          retained.current = false
           setStatus('error')
         }}
       />
