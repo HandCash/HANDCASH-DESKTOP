@@ -71,7 +71,8 @@ function activityAlreadyHas(pending: PendingSend): boolean {
   const recent = listRecentActivity(200)
   if (pending.txid) {
     const tx = pending.txid.toLowerCase()
-    if (recent.some((e) => e.txid?.toLowerCase() === tx)) return true
+    // Kind-scoped: a self-pay receive shares the txid and must not suppress the send.
+    if (recent.some((e) => e.kind === 'spent' && e.txid?.toLowerCase() === tx)) return true
   }
   // Same destination + amount within a short window of the interrupted send.
   const windowMs = 30 * 60_000

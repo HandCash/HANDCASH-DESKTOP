@@ -54,7 +54,7 @@ import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
-const RENDER_CHUNK = 16
+const RENDER_CHUNK = 24
 
 function useChunkedCount(total: number): number {
   const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))

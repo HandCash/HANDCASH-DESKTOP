@@ -173,7 +173,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       })
       setTxid(result.txid)
       const noteTo = friendLabel ? `${friendLabel} (${to})` : to
-      if (!hasActivityTxid(result.txid)) {
+      if (!hasActivityTxid(result.txid, 'spent')) {
         recordAppActivity({
           origin: WALLET_ACTIVITY_ORIGIN,
           kind: 'spent',

@@ -28,13 +28,13 @@ function markFromElement(img: HTMLImageElement): 'ready' | 'error' | 'loading' {
   return 'error'
 }
 
-/** Load slightly ahead of the viewport. */
-const LOAD_MARGIN_PX = 250
+/** Load ~one viewport ahead so the next rows paint decoded, not as skeletons. */
+const LOAD_MARGIN_PX = 900
 /**
  * Release well behind it. The gap between the two is hysteresis: without it,
  * a frame parked on the boundary would load and unload on every scroll tick.
  */
-const RELEASE_MARGIN_PX = 1500
+const RELEASE_MARGIN_PX = 2200
 
 function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
   const rect = frame.getBoundingClientRect()

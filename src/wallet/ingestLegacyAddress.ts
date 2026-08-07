@@ -105,7 +105,7 @@ function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
     byTx.set(txid, (byTx.get(txid) ?? 0) + receipt.satoshis)
   }
   for (const [txid, sats] of byTx) {
-    if (hasActivityTxid(txid)) continue
+    if (hasActivityTxid(txid, 'earned')) continue
     recordAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',

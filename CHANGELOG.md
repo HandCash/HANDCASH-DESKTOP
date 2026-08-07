@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.115] - 2026-08-07
+
+### Fixed
+
+- **Self-pay missing from Activity.** A send to your own address shares one txid;
+  the receive was skipped because that txid was already logged as the send. Now
+  send/receive dedupe by kind so both rows appear.
+- **Activity thumbnails pop in while scrolling.** Prefetch ~one viewport ahead
+  so the next rows arrive decoded instead of as skeletons.
+
 ## [1.2.114] - 2026-08-07
 
 ### Fixed

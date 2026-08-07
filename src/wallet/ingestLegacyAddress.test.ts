@@ -131,6 +131,42 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     expect(receives).toHaveLength(1)
   })
 
+  it('still records a receive when the same txid was already logged as a send (self-pay)', async () => {
+    const { recordAppActivity, WALLET_ACTIVITY_ORIGIN, listRecentActivity } =
+      await import('./appActivity')
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 5000,
+      method: 'send',
+      txid: 'bb',
+      note: 'Sent to self',
+    })
+
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 1,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 0,
+      importedOutpoints: [OUTPOINT],
+      importedReceipts: [
+        { outpoint: OUTPOINT, satoshis: 5000, receiveTxid: 'bb', sweepTxid: SWEEP_TXID },
+      ],
+    })
+
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await ingestLegacyAddressUtxos({ active })
+
+    const forTx = listRecentActivity(20).filter((e) => e.txid === 'bb')
+    expect(forTx).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'spent', method: 'send' }),
+        expect.objectContaining({ kind: 'earned', method: 'receive', sats: 5000 }),
+      ]),
+    )
+  })
+
   it('does not re-sweep outs already marked imported', async () => {
     mockImportLegacyUtxos.mockResolvedValue({
       imported: 0,

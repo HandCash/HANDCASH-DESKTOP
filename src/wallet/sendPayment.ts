@@ -92,7 +92,7 @@ export async function sendSatsToAddress(opts: {
         completePendingSend(pending.id, txid)
 
         const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
-        if (!hasActivityTxid(txid)) {
+        if (!hasActivityTxid(txid, 'spent')) {
           recordAppActivity({
             origin: WALLET_ACTIVITY_ORIGIN,
             kind: 'spent',

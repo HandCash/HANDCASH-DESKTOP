@@ -89,10 +89,15 @@ function writeAll(entries: ActivityEntry[]): void {
 }
 
 /** True if we already logged this on-chain (or local) txid. */
-export function hasActivityTxid(txid: string | undefined | null): boolean {
+export function hasActivityTxid(
+  txid: string | undefined | null,
+  kind?: ActivityKind,
+): boolean {
   const key = txid?.trim().toLowerCase()
   if (!key) return false
-  return readAll().some((e) => e.txid?.toLowerCase() === key)
+  return readAll().some(
+    (e) => e.txid?.toLowerCase() === key && (kind == null || e.kind === kind),
+  )
 }
 
 /** True if we already logged a collectable receive/send for this tip outpoint. */
