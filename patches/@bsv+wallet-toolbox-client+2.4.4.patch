@@ -1,20 +1,26 @@
-diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/listOutputsIdb.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/listOutputsIdb.js
-index 18b88ab..f4c3589 100644
---- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/listOutputsIdb.js
-+++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/listOutputsIdb.js
-@@ -90,11 +90,13 @@ async function listOutputsIdb(storage, auth, vargs, originator) {
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
+index cd5d6d7..5eb6b85 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
+@@ -1102,8 +1102,19 @@ class StorageIdb extends StorageProvider_1.StorageProvider {
+             return r;
+         }
+         catch (err) {
+-            tx.abort();
+-            await tx.done;
++            try {
++                tx.abort();
++            }
++            catch {
++                // Already finished / aborted.
++            }
++            try {
++                await tx.done;
++            }
++            catch {
++                // idb rejects `done` with AbortError after abort — that masks the
++                // real failure from commitNewTx / processAction. Keep `err`.
++            }
+             throw err;
+         }
      }
-     const includeSpent = false;
-     const stati = ['completed', 'unproven', 'nosend', 'sending'];
-+    // Omit undefined keys — StorageIdb/Knex reject `basketId: undefined`.
-+    // Spec-op tag `all` clears basketId to review every basket (must omit, not pass undefined).
-     const args = {
-         partial: {
-             userId,
--            basketId,
--            spendable: includeSpent ? undefined : true,
-+            ...(basketId !== undefined ? { basketId } : {}),
-+            ...(includeSpent ? {} : { spendable: true }),
-             ...(specOp?.managedChangeOnly ? managedChange_1.managedChangeOutputFields : {})
-         },
-         txStatus: stati,

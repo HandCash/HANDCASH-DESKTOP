@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.112] - 2026-08-07
+
+### Fixed
+
+- **Settle "wallet storage was busy".** Settle `signAction` no longer sync-broadcasts
+  (that path AbortError'd on Android). Signs with delayed broadcast, then
+  `postBeef` Commit+Settle. StorageIdb no longer masks the real IDB error as
+  `AbortError` when a transaction aborts.
+
 ## [1.2.111] - 2026-08-07
 
 ### Fixed

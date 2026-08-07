@@ -688,7 +688,12 @@ async function signCovenantAction(args: {
   proofCommitTxHex?: string
   /** Declared unlockingScriptLength for these inputs (bytes). */
   unlockBudgetBytes?: number
-  signOptions?: { noSend?: boolean; sendWith?: string[] }
+  signOptions?: {
+    noSend?: boolean
+    sendWith?: string[]
+    /** Prefer true for settle+sendWith — sync postBeef was AbortErroring on Android. */
+    acceptDelayedBroadcast?: boolean
+  }
 }): Promise<{ txid: string; tx?: number[] }> {
   const spends = await generateCovenantUnlocks({
     wallet: args.wallet,
@@ -719,7 +724,7 @@ async function signCovenantAction(args: {
     reference: args.signable.reference,
     spends,
     options: {
-      acceptDelayedBroadcast: false,
+      acceptDelayedBroadcast: args.signOptions?.acceptDelayedBroadcast ?? false,
       ...(args.signOptions?.noSend ? { noSend: true } : {}),
       ...(args.signOptions?.sendWith ? { sendWith: args.signOptions.sendWith } : {}),
     },
@@ -764,12 +769,16 @@ async function signCovenantActionResilient(
   }
 
   return withAbortRetry(`signAction(${args.mode})`, async () => {
-    console.info(`[brc-156] ${args.mode}: signAction`)
+    console.info(
+      `[brc-156] ${args.mode}: signAction` +
+        (args.signOptions?.acceptDelayedBroadcast ? ' (delayed broadcast)' : '') +
+        (args.signOptions?.sendWith ? ` sendWith=${args.signOptions.sendWith.length}` : ''),
+    )
     const signed = await args.wallet.wallet.signAction({
       reference: args.signable.reference,
       spends,
       options: {
-        acceptDelayedBroadcast: false,
+        acceptDelayedBroadcast: args.signOptions?.acceptDelayedBroadcast ?? false,
         ...(args.signOptions?.noSend ? { noSend: true } : {}),
         ...(args.signOptions?.sendWith ? { sendWith: args.signOptions.sendWith } : {}),
       },
@@ -777,6 +786,33 @@ async function signCovenantActionResilient(
     if (!signed.txid) throw new Error(`Hardened ${args.mode} returned no txid`)
     console.info(`[brc-156] ${args.mode}: signAction ok txid=${signed.txid.slice(0, 12)}…`)
     return { txid: signed.txid, tx: atomicBeefToNumberArray(signed.tx) }
+  })
+}
+
+/**
+ * Push Commit+Settle to the network after a delayed signAction. Avoids the
+ * sync postBeef path inside signAction that was AbortErroring on Android IDB.
+ */
+async function postHardenedBroadcast(args: {
+  wallet: ActiveWallet
+  commitAtomic: number[]
+  settleAtomic: number[]
+  commitTxid: string
+  settleTxid: string
+}): Promise<void> {
+  const postBeef = args.wallet.services?.postBeef?.bind(args.wallet.services)
+  if (!postBeef) {
+    console.warn('[brc-156] no postBeef service — relying on monitor to send')
+    return
+  }
+  await withAbortRetry('postBeef(settle+commit)', async () => {
+    const beef = Beef.fromBinary(args.settleAtomic)
+    beef.mergeBeef(args.commitAtomic)
+    console.info(
+      `[brc-156] postBeef commit=${args.commitTxid.slice(0, 12)}… settle=${args.settleTxid.slice(0, 12)}…`,
+    )
+    const result = await postBeef(beef, [args.commitTxid, args.settleTxid])
+    console.info('[brc-156] postBeef done', result)
   })
 }
 
@@ -1175,7 +1211,9 @@ export async function sendHardenedCollectable(
           trustSelf: 'known',
           knownTxids: [commitTxid],
           randomizeOutputs: false,
-          acceptDelayedBroadcast: false,
+          // Delayed: signAction stores txs as unsent; we postBeef ourselves.
+          // Sync postBeef inside signAction was AbortErroring on Android IDB.
+          acceptDelayedBroadcast: true,
           signAndProcess: false,
           sendWith: [commitTxid],
         },
@@ -1197,7 +1235,20 @@ export async function sendHardenedCollectable(
         stateScriptHex: settleStateScript,
         recipientPublicKeyHex: recipientKey,
         unlockBudgetBytes,
-        signOptions: { sendWith: [commitTxid] },
+        signOptions: {
+          sendWith: [commitTxid],
+          acceptDelayedBroadcast: true,
+        },
+      })
+      if (!settleSigned.tx || !commitSigned.tx) {
+        throw new Error('Hardened settle: missing atomic BEEF for broadcast')
+      }
+      await postHardenedBroadcast({
+        wallet: args.wallet,
+        commitAtomic: commitSigned.tx,
+        settleAtomic: settleSigned.tx,
+        commitTxid,
+        settleTxid: settleSigned.txid,
       })
       advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
       chart.stop()
@@ -1267,7 +1318,7 @@ export async function sendHardenedCollectable(
         trustSelf: 'known',
         knownTxids: [commitTxid],
         randomizeOutputs: false,
-        acceptDelayedBroadcast: false,
+        acceptDelayedBroadcast: true,
         signAndProcess: false,
         sendWith: [commitTxid],
       },
@@ -1291,7 +1342,20 @@ export async function sendHardenedCollectable(
       stateScriptHex: settleStateScript,
       recipientPublicKeyHex: recipientKey,
       unlockBudgetBytes,
-      signOptions: { sendWith: [commitTxid] },
+      signOptions: {
+        sendWith: [commitTxid],
+        acceptDelayedBroadcast: true,
+      },
+    })
+    if (!settleSigned.tx || !commitSigned.tx) {
+      throw new Error('Hardened settle: missing atomic BEEF for broadcast')
+    }
+    await postHardenedBroadcast({
+      wallet: args.wallet,
+      commitAtomic: commitSigned.tx,
+      settleAtomic: settleSigned.tx,
+      commitTxid,
+      settleTxid: settleSigned.txid,
     })
     advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
     chart.stop()
