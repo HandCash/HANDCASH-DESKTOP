@@ -14,6 +14,7 @@ import {
   REMITTANCE_MAX_BEEF_B64_CHARS,
   verifyProvenance,
   verifyProvenanceV2,
+  extendProvenanceV2,
   type ProvenanceV2,
 } from './oneSatProvenance'
 import { buildProvenanceV3 } from './oneSatLatch'
@@ -199,5 +200,41 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
         `${origin.id('hex')}_0`,
       ],
     })
+  })
+
+  it('extends a prior remittance by one hop without a lineage walk', () => {
+    const { provenance: parentProv, held: parentHeld } = buildV2Fixture()
+    const parentTxid = parentHeld.replace('.', '_').slice(0, 64)
+    const parentBeef = Beef.fromBinary(
+      Uint8Array.from(atob(parentProv.beefB64), (c) => c.charCodeAt(0)),
+    )
+    const parentTipTx = parentBeef.findTxid(parentTxid)?.tx
+    expect(parentTipTx).toBeTruthy()
+
+    const child = new Transaction()
+    child.addInput({
+      sourceTransaction: parentTipTx!,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    child.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+
+    const childBeef = new Beef()
+    childBeef.mergeBeef(parentBeef)
+    childBeef.mergeRawTx(child.toBinary())
+
+    const extended = extendProvenanceV2({
+      prior: parentProv,
+      heldOutpoint: `${child.id('hex')}_0`,
+      tipBeef: childBeef,
+    })
+    expect(extended).toMatchObject({
+      v: 2,
+      tip: `${child.id('hex')}_0`,
+      origin: parentProv.origin,
+    })
+    expect(extended!.path[0]).toBe(`${child.id('hex')}_0`)
+    expect(extended!.path[1]).toBe(parentProv.tip)
+    expect(verifyProvenanceV2(extended!, `${child.id('hex')}.0`).proven).toBe(true)
   })
 })

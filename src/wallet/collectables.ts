@@ -47,6 +47,9 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
   buildCollectableCustomInstructions,
+  extendProvenanceV2,
+  parseProvenanceV2,
+  rememberProvenanceRemittance,
   tryBuildProvenanceForSend,
   verifyProvenanceForHeldTip,
 } from './oneSatProvenance'
@@ -1880,6 +1883,7 @@ export async function sendCollectable(args: {
     contentType: item?.mimeType,
     parentLatch,
     inputBeef: inputBEEF,
+    priorProvenance: tipCustom.provenance,
   })
   softChart.send({ type: 'BUILT' })
 
@@ -2010,6 +2014,21 @@ export async function sendCollectable(args: {
   }
 
   softChart.stop()
+  // Soft-latch remittance on the wire names the spent tip. Extend once the
+  // settle txid is known so the next send reuses tip-named proof (no hydrate).
+  if (txid && provenance && parseProvenanceV2(provenance)) {
+    try {
+      const tipBeef = await getBeefForTxidCached(wallet, txid)
+      const extended = extendProvenanceV2({
+        prior: provenance,
+        heldOutpoint: `${txid.trim().toLowerCase()}_0`,
+        tipBeef,
+      })
+      if (extended) rememberProvenanceRemittance(extended)
+    } catch (err) {
+      console.warn('[brc-150] post-send remittance extend failed', err)
+    }
+  }
   return await finishSend(txid, { remittanceBuilt: Boolean(provenance) })
 } finally {
       clearPaymentProgress()

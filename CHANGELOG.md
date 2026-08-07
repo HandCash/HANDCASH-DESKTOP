@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.122] - 2026-08-07
+
+### Changed
+
+- **BRC-150 remittance is append-first.** Soft sends reuse or extend a prior
+  verified package (prepend tip + merge tip tx) before any lineage hydrate;
+  post-send tip-named proofs are remembered for the next hop. BRC-150 updated
+  for parent remittance inherit + sender extend.
+
 ## [1.2.121] - 2026-08-07
 
 ### Fixed

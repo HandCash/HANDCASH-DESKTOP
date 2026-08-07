@@ -7,6 +7,9 @@
  * Soft-latch sends embed remittance for the *spent* tip (new outpoint unknown
  * pre-broadcast). Receivers MUST use `verifyProvenanceForHeldTip`, which accepts
  * either a direct tip match or a parent remittance when the held tip spends it.
+ *
+ * Senders SHOULD reuse or extend a prior verified remittance (prepend the new
+ * tip + merge its tx into the BEEF) instead of re-walking lineage every hop.
  */
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
@@ -199,6 +202,115 @@ function base64ToBytes(b64: string): Uint8Array {
 /** Isolated size gate — truncate is forbidden. */
 export function provenanceFitsBudget(p: ProvenanceV2): boolean {
   return typeof p.beefB64 === 'string' && p.beefB64.length <= REMITTANCE_MAX_BEEF_B64_CHARS
+}
+
+/**
+ * Session cache of tip-named remittances built by extending a parent proof
+ * after soft-latch broadcast (or imported). Avoids re-hydrate on the next send.
+ */
+const remittanceByTip = new Map<string, ProvenanceV2>()
+
+export function rememberProvenanceRemittance(p: ProvenanceV2): void {
+  const tip = toUnderscore(p.tip).toLowerCase()
+  remittanceByTip.set(tip, {
+    ...p,
+    tip,
+    origin: toUnderscore(p.origin).toLowerCase(),
+    path: p.path.map((x) => toUnderscore(x).toLowerCase()),
+  })
+}
+
+export function getRememberedProvenanceRemittance(
+  tipOutpoint: string,
+): ProvenanceV2 | null {
+  return remittanceByTip.get(toUnderscore(tipOutpoint).toLowerCase()) ?? null
+}
+
+/** Test / logout helper. */
+export function clearRememberedProvenanceRemittances(): void {
+  remittanceByTip.clear()
+}
+
+/**
+ * Prepend `heldOutpoint` onto a prior tip→origin remittance and merge the held
+ * tip transaction into the BEEF. O(1) package growth vs O(hops) lineage walk.
+ *
+ * Prior must already verify for `prior.tip`. Held tip must spend that tip as a
+ * 1-sat input. Returns null when the inductive step cannot be proven or the
+ * extended package exceeds the remittance budget.
+ */
+export function extendProvenanceV2(args: {
+  prior: unknown
+  heldOutpoint: string
+  /** BEEF or raw tx bytes that include the held tip transaction. */
+  tipBeef: number[] | Beef
+}): ProvenanceV2 | null {
+  const prior = parseProvenanceV2(args.prior)
+  if (!prior) return null
+  const held = toUnderscore(args.heldOutpoint).toLowerCase()
+  const priorTip = toUnderscore(prior.tip).toLowerCase()
+  const origin = toUnderscore(prior.origin).toLowerCase()
+
+  if (priorTip === held) {
+    const direct = verifyProvenanceV2(prior, held, { enforceBudget: true })
+    return direct.proven ? prior : null
+  }
+
+  const priorOk = verifyProvenanceV2(prior, priorTip, { enforceBudget: false })
+  if (!priorOk.proven) return null
+
+  const heldMatch = /^([0-9a-f]{64})_(\d+)$/.exec(held)
+  const parentMatch = /^([0-9a-f]{64})_(\d+)$/.exec(priorTip)
+  if (!heldMatch || !parentMatch) return null
+  const heldTxid = heldMatch[1]!
+  const heldVout = Number(heldMatch[2])
+  const parentTxid = parentMatch[1]!
+  const parentVout = Number(parentMatch[2])
+
+  try {
+    const tipBeef =
+      args.tipBeef instanceof Beef
+        ? args.tipBeef
+        : Beef.fromBinary(args.tipBeef)
+    const heldTx = tipBeef.findTxid(heldTxid)?.tx
+    if (!heldTx) return null
+    const out = heldTx.outputs[heldVout]
+    if (!out || out.satoshis !== 1) return null
+    const spendsParent = heldTx.inputs.some(
+      (input) =>
+        String(input.sourceTXID).toLowerCase() === parentTxid &&
+        input.sourceOutputIndex === parentVout,
+    )
+    if (!spendsParent) return null
+
+    const beef = Beef.fromBinary(base64ToBytes(prior.beefB64))
+    beef.mergeRawTx(heldTx.toBinary())
+    // Prefer a full (non-atomic) serialization so ancestry is not dropped.
+    const bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
+    if (!bin.length) return null
+
+    const path = [
+      held,
+      ...prior.path.map((x) => toUnderscore(x).toLowerCase()),
+    ]
+    // Drop accidental duplicate if prior.path already started with held.
+    if (path.length >= 2 && path[1] === held) path.splice(1, 1)
+
+    const provenance: ProvenanceV2 = {
+      v: 2,
+      origin,
+      tip: held,
+      path,
+      beefB64: bytesToBase64(bin),
+      ...(prior.contentType ? { contentType: prior.contentType } : {}),
+    }
+    if (!provenanceFitsBudget(provenance)) return null
+    const check = verifyProvenanceV2(provenance, held, { enforceBudget: true })
+    if (!check.proven) return null
+    return provenance
+  } catch {
+    return null
+  }
 }
 
 export function parseProvenanceV2(raw: unknown): ProvenanceV2 | null {
@@ -464,6 +576,12 @@ async function hydrateLineageForSend(
 /**
  * Build v2 remittance for a known tip outpoint (usually the UTXO being spent).
  * Returns null when beef unavailable or over budget (omit — do not truncate).
+ *
+ * Preference order (cheapest first):
+ * 1. Session-remembered tip-named remittance
+ * 2. Reuse prior remittance when it already names this tip
+ * 3. Extend prior parent remittance (prepend tip + merge tip tx) — O(1) growth
+ * 4. Derive path from tip BEEF / hydrate lineage — O(hops) fallback
  */
 export async function tryBuildProvenanceV2(args: {
   tipOutpoint: string
@@ -477,14 +595,34 @@ export async function tryBuildProvenanceV2(args: {
    * `getBeefForTxid` round trip that otherwise dominates soft-latch signing.
    */
   inputBeef?: number[]
+  /**
+   * Remittance already on the tip (or remembered). May name this tip or its
+   * parent — both are reused/extended before any lineage walk.
+   */
+  priorProvenance?: unknown
 }): Promise<ProvenanceV2 | null> {
   const tip = toUnderscore(args.tipOutpoint)
   const origin = toUnderscore(args.origin)
   const tipDot = toDot(tip)
   const [txid] = tipDot.split('.')
   if (!txid) return null
+  const tipKey = tip.toLowerCase()
+  const originKey = origin.toLowerCase()
+
+  const finish = (p: ProvenanceV2 | null): ProvenanceV2 | null => {
+    if (!p) return null
+    if (toUnderscore(p.origin).toLowerCase() !== originKey) return null
+    rememberProvenanceRemittance(p)
+    return p
+  }
 
   try {
+    const remembered = getRememberedProvenanceRemittance(tipKey)
+    if (remembered) {
+      const ok = verifyProvenanceV2(remembered, tipDot, { enforceBudget: true })
+      if (ok.proven && remembered.origin === originKey) return finish(remembered)
+    }
+
     let beef: Beef | null = null
     if (args.inputBeef?.length) {
       try {
@@ -494,6 +632,32 @@ export async function tryBuildProvenanceV2(args: {
         // Fall through to a fresh fetch.
       }
     }
+    if (!beef) {
+      if (!args.wallet.services?.getBeefForTxid) {
+        // Still try prior-only reuse/extend without a tip beef when possible.
+      } else {
+        const { getBeefForTxidCached } = await import('./beefCache')
+        beef = await getBeefForTxidCached(args.wallet, txid)
+      }
+    }
+
+    const prior =
+      parseProvenanceV2(args.priorProvenance) ??
+      remembered ??
+      null
+    if (prior) {
+      const direct = verifyProvenanceV2(prior, tipDot, { enforceBudget: true })
+      if (direct.proven) return finish(prior)
+      if (beef) {
+        const extended = extendProvenanceV2({
+          prior,
+          heldOutpoint: tip,
+          tipBeef: beef,
+        })
+        if (extended) return finish(extended)
+      }
+    }
+
     if (!beef) {
       if (!args.wallet.services?.getBeefForTxid) return null
       const { getBeefForTxidCached } = await import('./beefCache')
@@ -545,7 +709,7 @@ export async function tryBuildProvenanceV2(args: {
     }
     const check = verifyProvenanceV2(provenance, tipDot)
     if (!check.proven) return null
-    return provenance
+    return finish(provenance)
   } catch (err) {
     console.warn('[brc-150] build provenance failed', err)
     return null
@@ -567,6 +731,7 @@ export async function tryBuildProvenanceForSend(args: {
   path?: string[]
   parentLatch?: string | null
   inputBeef?: number[]
+  priorProvenance?: unknown
 }): Promise<ProvenanceRemittance | null> {
   void args.parentLatch
   return tryBuildProvenanceV2(args)
