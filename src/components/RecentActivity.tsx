@@ -8,6 +8,7 @@ import {
   SendIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
+import { CollectableVerifyMark } from './CollectableVerifyMark'
 import {
   activityEntryKey,
   activityEntryTitle,
@@ -160,14 +161,10 @@ function HistoryRow({
       : spent
         ? `−${amountLabel}`
         : `+${amountLabel}`
-  const subtitle =
-    item && verifying && !spent
-      ? 'Verifying…'
-      : item && shown?.app
-        ? shown.app
-        : null
+  const subtitle = item && shown?.app ? shown.app : null
 
   const entryKey = activityEntryKey(entry)
+  const showVerify = Boolean(item && verifying && !spent)
 
   return (
     <li
@@ -204,6 +201,7 @@ function HistoryRow({
               <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
             )}
           </div>
+          <CollectableVerifyMark verifying={showVerify} />
           <span
             className={`history-action-badge ${spent ? 'is-send' : 'is-receive'}`}
             aria-label={spent ? 'Send' : 'Receive'}
@@ -214,15 +212,7 @@ function HistoryRow({
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          {subtitle ? (
-            <span
-              className={
-                verifying && !spent ? 'history-when history-verifying' : 'history-when'
-              }
-            >
-              {subtitle}
-            </span>
-          ) : null}
+          {subtitle ? <span className="history-when">{subtitle}</span> : null}
         </div>
         <div className="history-amount-block">
           <span

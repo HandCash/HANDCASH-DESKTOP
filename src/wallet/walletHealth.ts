@@ -1,15 +1,13 @@
 /**
  * User-visible **chainIngest** health — review/import outcomes + held 1-sats / unlock nudges.
  * History replica health lives in `cloudBackupHealth.ts`. See `layers.ts`.
+ *
+ * Soft in-flight sync does not invent a long pill label — the status bubble stays
+ * on a short "Syncing…" while details live in `message` (tooltip).
  */
 
 export type SyncHealth = {
   phase: 'idle' | 'syncing' | 'ok' | 'error'
-  /**
-   * Short pill label while syncing — e.g. "Syncing payments".
-   * Null when idle / after a terminal outcome.
-   */
-  label: string | null
   /** Longer user-facing line; null when quiet. */
   message: string | null
   heldOneSats: number
@@ -26,7 +24,6 @@ const unlockListeners = new Set<UnlockListener>()
 
 let syncHealth: SyncHealth = {
   phase: 'idle',
-  label: null,
   message: null,
   heldOneSats: 0,
   pendingTips: 0,

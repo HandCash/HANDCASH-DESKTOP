@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
+import { CollectableVerifyMark } from './CollectableVerifyMark'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -84,11 +85,7 @@ function CollectableGridItem({
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
-          {verifying ? (
-            <span className="collectable-authenticity-verifying" aria-live="polite">
-              Verifying…
-            </span>
-          ) : null}
+          <CollectableVerifyMark verifying={verifying} />
         </div>
         <strong className="collection-grid-name" title={item.name}>
           {item.name}
@@ -146,12 +143,11 @@ function CollectableListItem({
             skeletonClassName="skeleton-qr"
             decoding="async"
           />
+          <CollectableVerifyMark verifying={verifying} />
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{item.name}</strong>
-          {verifying ? (
-            <span className="connected-app-host history-verifying">Verifying…</span>
-          ) : item.app ? (
+          {item.app ? (
             <span className="connected-app-host">{item.app}</span>
           ) : null}
         </div>

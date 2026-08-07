@@ -174,7 +174,6 @@ export function App() {
       if (isDeviceParityEnabled() && getSessionBackupPassword()) {
         setSyncHealth({
           phase: 'syncing',
-          label: 'Syncing history',
           message: 'Checking for a newer history backup',
         })
         await softPullHistoryIfRemoteNewer()

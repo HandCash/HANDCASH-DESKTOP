@@ -96,9 +96,9 @@ function resolveStatus(
   }
   if (health.phase === 'syncing') {
     return {
-      label: health.label ?? 'Syncing…',
+      label: 'Syncing…',
       tone: 'busy',
-      detail: health.message ?? 'Refreshing against the network',
+      detail: health.message ?? 'Refreshing funds against the network',
     }
   }
   if (session === 'locked') {

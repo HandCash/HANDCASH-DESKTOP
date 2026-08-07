@@ -20,7 +20,6 @@ const idlePayment: PaymentProgress = {
 function health(patch: Partial<SyncHealth> = {}): SyncHealth {
   return {
     phase: 'ok',
-    label: null,
     message: null,
     heldOneSats: 0,
     pendingTips: 0,
@@ -30,38 +29,21 @@ function health(patch: Partial<SyncHealth> = {}): SyncHealth {
 }
 
 describe('resolveStatus', () => {
-  it('shows syncing payments while chain ingest is running', () => {
+  it('keeps syncing short enough for the status bubble', () => {
     const view = resolveStatus(
       'ready',
       health({
         phase: 'syncing',
-        label: 'Syncing payments',
-        message: 'Scanning your address for new payments',
+        message: 'Looking for new payments on your address',
       }),
       idleCloud,
       true,
       true,
       idlePayment,
     )
-    expect(view.label).toBe('Syncing payments')
+    expect(view.label).toBe('Syncing…')
     expect(view.tone).toBe('busy')
     expect(view.detail).toMatch(/payments/i)
-  })
-
-  it('shows syncing items when that phase is active', () => {
-    const view = resolveStatus(
-      'ready',
-      health({
-        phase: 'syncing',
-        label: 'Syncing items',
-        message: 'Checking collectables against the chain',
-      }),
-      idleCloud,
-      true,
-      true,
-      idlePayment,
-    )
-    expect(view.label).toBe('Syncing items')
   })
 
   it('prefers live payment phases over the generic sending session', () => {

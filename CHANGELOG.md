@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.97] - 2026-08-06
+
+### Fixed
+
+- **Status pill stays short while syncing.** Phased labels like "Syncing payments"
+  overflowed the bubble; the pill shows Syncing… again and puts detail in the
+  tooltip.
+- **Verifying on Items and Activity is a tiny corner mark** — spinner, then check,
+  then gone — instead of a "Verifying…" text pill that ate the row.
+
 ## [1.2.96] - 2026-08-06
 
 ### Fixed
