@@ -355,7 +355,8 @@ describe('BRC-156 wallet-toolbox unlock bridge', () => {
 
     const createAction = vi.fn()
     const signAction = vi.fn()
-    const abortAction = vi.fn(async () => ({}))
+    const abortAction = vi.fn(async () => ({ aborted: true }))
+    const listNoSendActions = vi.fn(async () => ({ actions: [], totalActions: 0 }))
 
     createAction.mockImplementation(
       async (args: {
@@ -422,7 +423,7 @@ describe('BRC-156 wallet-toolbox unlock bridge', () => {
     const wallet = {
       rootKeyHex: owner.toBuffer().toString('hex'),
       identityKey: owner.publicKey.toString(),
-      wallet: { createAction, signAction, abortAction },
+      wallet: { createAction, signAction, abortAction, listNoSendActions },
       services: {
         getBeefForTxid: async (txid: string) => {
           const b = new Beef()

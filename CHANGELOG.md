@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.109] - 2026-08-07
+
+### Fixed
+
+- **Hardened settle BEEF.** Settle no longer chain-fetches the unbroadcast
+  `noSend` commit (orphan local txids like `996bf929…` 404'd and broke retries).
+  Merge signed commit AtomicBEEF + tip/proof; refetch delayed proof only.
+- **Stuck noSend cleanup.** Abort held settle/commit refs (settle first), then
+  `listNoSendActions(abort)` before each hardened send and after failure — frees
+  tip/funding locked by a prior abort / mid-flight kill.
+- **Send failures log.** `failSend` and hardened catch `console.error` so remote
+  support uploads capture the real abort / sourceTransaction message.
+
 ## [1.2.108] - 2026-08-07
 
 ### Fixed

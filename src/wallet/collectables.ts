@@ -1842,6 +1842,7 @@ export async function sendCollectable(args: {
 
   const failSend = (err: unknown): never => {
     const formatted = formatSendError(err)
+    console.error('[collectables] send failed', formatted.message, err)
     chart.send({ type: 'FAIL', error: formatted.message })
     chart.stop()
     throw formatted

@@ -77,6 +77,42 @@ import { createActor, type Actor } from 'xstate'
 
 export { estimateUnlockingLength } from './hardenedSendMachine'
 
+/**
+ * Stuck `noSend` hardened commits (failed settle, killed app mid-flight) keep
+ * the tip/funding UTXOs reserved. Retries then fail with cryptic abort /
+ * sourceTransaction errors. Clear them before a new Commit/Settle pair.
+ */
+async function abortStuckHardenedNosends(wallet: ActiveWallet): Promise<void> {
+  const w = wallet.wallet as ActiveWallet['wallet'] & {
+    listNoSendActions?: (
+      args: { labels: string[]; limit?: number },
+      abort?: boolean,
+    ) => Promise<unknown>
+  }
+  if (typeof w.listNoSendActions !== 'function') return
+  try {
+    await w.listNoSendActions({ labels: [], limit: 100 }, true)
+    console.info('[brc-156] cleared stuck noSend actions before hardened send')
+  } catch (err) {
+    console.warn('[brc-156] listNoSendActions(abort) failed', err)
+  }
+}
+
+async function abortHeldReferences(
+  wallet: ActiveWallet,
+  references: Array<string | undefined>,
+): Promise<void> {
+  // Settle depends on Commit — abort dependents first.
+  for (const reference of references.filter((r): r is string => !!r)) {
+    try {
+      const result = await wallet.wallet.abortAction({ reference })
+      console.info('[brc-156] abortAction', reference, result)
+    } catch (err) {
+      console.warn('[brc-156] abortAction failed', reference, err)
+    }
+  }
+}
+
 function advanceHardened(
   chart: Actor<typeof hardenedSendMachine>,
   event: Parameters<Actor<typeof hardenedSendMachine>['send']>[0],
@@ -702,6 +738,8 @@ export async function sendHardenedCollectable(
   const tipSrc = tipBeef.findTxid(tipTxid)?.tx
   if (!tipSrc) throw new Error('Hardened send: tip source transaction missing from BEEF')
 
+  await abortStuckHardenedNosends(args.wallet)
+
   const chart = createActor(hardenedSendMachine)
   chart.start()
   advanceHardened(
@@ -715,6 +753,7 @@ export async function sendHardenedCollectable(
   )
 
   let commitReference: string | undefined
+  let settleReference: string | undefined
   let broadcastAttempted = false
   let unlockBudgetBytes = 0
 
@@ -1059,6 +1098,7 @@ export async function sendHardenedCollectable(
       if (!settleResult.signableTransaction) {
         throw new Error('Hardened settle: createAction returned no signable transaction')
       }
+      settleReference = settleResult.signableTransaction.reference
 
       broadcastAttempted = true
       const settleSigned = await signCovenantAction({
@@ -1083,6 +1123,7 @@ export async function sendHardenedCollectable(
       throw new Error('Hardened alternating settle missing delayed-proof context')
     }
     const delayedProofDot = delayedProofOutpoint.replace(/_(\d+)$/, '.$1')
+    const proofTxid = delayedProofDot.split('.')[0]!
     const settleParentHex = commitTx.toHex()
     const nextTipScriptHex = settleTip.lockingScript.toHex()
     unlockBudgetBytes = estimateUnlockingLength(
@@ -1091,21 +1132,33 @@ export async function sendHardenedCollectable(
     )
     advanceHardened(chart, { type: 'SETTLE_BUILT', unlockBudgetBytes }, 'settleSign')
 
-    const settleSpendOps = [commitTipOp, delayedProofDot]
-    // Commit AtomicBEEF already covers the tip we just signed; tip/input BEEF
-    // already covers the delayed proof. Merging those is enough — refetching
-    // both from the storage provider only adds a round trip to every resend.
+    // Commit is noSend — never on chain yet. Do not call getBeefForTxid(commit):
+    // that 404s (orphan local txid) and used to poison retries / abort cleanup.
+    // Merge signed commit AtomicBEEF + tip/proof inputBEEF; chain-fetch proof only.
     const settleMerged = Beef.fromBinary(commitSigned.tx!)
     settleMerged.mergeBeef(args.inputBEEF)
-    let settleInputBeef = settleMerged.toBinary()
-    if (
-      !settleMerged.findTxid(delayedProofDot.split('.')[0]!)?.tx ||
-      !settleMerged.findTxid(commitTxid)?.tx
-    ) {
-      settleInputBeef = await args
-        .buildInputBeefForSpends(args.wallet, settleSpendOps)
-        .catch(() => settleInputBeef)
+    if (!settleMerged.findTxid(commitTxid)?.tx) {
+      throw new Error('Hardened settle: commit tx missing from signed BEEF')
     }
+    if (!settleMerged.findTxid(proofTxid)?.tx) {
+      try {
+        const proofBeef = await args.buildInputBeefForSpends(args.wallet, [
+          delayedProofDot,
+        ])
+        settleMerged.mergeBeef(proofBeef)
+      } catch (err) {
+        console.warn('[brc-156] delayed-proof BEEF fetch failed', proofTxid, err)
+        throw new Error(
+          `Hardened settle: could not load delayed proof ${delayedProofOutpoint}`,
+        )
+      }
+    }
+    if (!settleMerged.findTxid(proofTxid)?.tx) {
+      throw new Error(
+        `Hardened settle: delayed proof ${delayedProofOutpoint} missing from BEEF`,
+      )
+    }
+    const settleInputBeef = settleMerged.toBinary()
 
     const settleResult = await args.wallet.wallet.createAction({
       description: `Hardened settle ${args.name}`.slice(0, 50),
@@ -1137,6 +1190,7 @@ export async function sendHardenedCollectable(
     if (!settleResult.signableTransaction) {
       throw new Error('Hardened settle: createAction returned no signable transaction')
     }
+    settleReference = settleResult.signableTransaction.reference
 
     broadcastAttempted = true
     const settleSigned = await signCovenantAction({
@@ -1158,6 +1212,7 @@ export async function sendHardenedCollectable(
     return { txid: settleSigned.txid }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
+    console.error('[brc-156] hardened send failed', phaseLabel(chart), message, err)
     const phase = chart.getSnapshot().value
     if (phase === 'commitSign' || phase === 'settleBuild' || phase === 'settleSign') {
       chart.send({ type: 'FAIL', error: message })
@@ -1166,15 +1221,19 @@ export async function sendHardenedCollectable(
       chart.send({ type: 'FAIL', error: message })
     }
     chart.stop()
-    if (commitReference) {
-      try {
-        await args.wallet.wallet.abortAction({ reference: commitReference })
-      } catch {
-        // Best-effort cleanup of the held noSend commit.
-      }
-    }
+    await abortHeldReferences(args.wallet, [settleReference, commitReference])
+    // If individual abort refused (dependent staged action), wipe all nosends.
+    await abortStuckHardenedNosends(args.wallet)
     if (args.isAlreadySpentInputError(err)) await args.releaseStaleSpendableOutputs()
     if (broadcastAttempted) markHardenedBroadcastAttempted(err)
     throw err
+  }
+}
+
+function phaseLabel(chart: Actor<typeof hardenedSendMachine>): string {
+  try {
+    return String(chart.getSnapshot().value)
+  } catch {
+    return 'unknown'
   }
 }
