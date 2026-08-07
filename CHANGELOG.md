@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.105] - 2026-08-07
+
+### Fixed
+
+- **Item details loading.** Replaced skeleton blocks with the same circular
+  spinner used elsewhere; cache hits paint immediately (no flash).
+- **Stuck Verifying · BRC-150.** Progress walks no longer pin tips into the
+  receive-awaiting set; aborted walks no longer burn the session budget; opening
+  details finishes the preferred tip; proven tips clear stale spinners; empty
+  traits re-fetch via origin on details open.
+
 ## [1.2.104] - 2026-08-07
 
 ### Fixed

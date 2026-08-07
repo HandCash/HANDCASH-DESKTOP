@@ -3771,21 +3771,39 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 .collectable-details-loading {
+  display: grid;
+  place-items: center;
+  min-height: 12rem;
   pointer-events: none;
 }
 
-.collectable-details-loading-copy {
+.collectable-details-loading-spinner {
   display: grid;
-  align-content: center;
-  justify-items: start;
+  justify-items: center;
   gap: 10px;
-  min-width: 0;
-  flex: 1 1 auto;
 }
 
-.collectable-details-loading-lines {
-  display: grid;
-  gap: 10px;
+.collectable-details-loading-label {
+  color: var(--hc-muted);
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.collectable-authenticity-busy {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.collectable-authenticity-verifying {
+  color: var(--hc-accent, #57ff97);
+  border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 36%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-accent, #57ff97) 8%, var(--hc-panel));
+}
+
+.collectable-authenticity-verifying .collectable-verify-spinner {
+  width: 9px;
+  height: 9px;
 }
 
 .confirm-password-gate {

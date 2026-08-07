@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
+  getCachedCollectables,
   getCollectable,
   requestCollectableVerification,
   subscribeCollectables,
@@ -24,7 +25,6 @@ import { CollectablesIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { EmptyState } from './EmptyState'
-import { Skeleton } from './Skeleton'
 
 type Props = {
   outpoint: string
@@ -93,10 +93,7 @@ function authenticityView(
   }
   if (isOutpointVerifying(item.outpoint, verification)) {
     return {
-      label:
-        verification.phase === 'identifying'
-          ? 'Identifying…'
-          : 'Verifying… · BRC-150',
+      label: verification.phase === 'identifying' ? 'Identifying…' : 'Verifying…',
       tone: 'verifying',
       title: verification.detail ?? 'Proving this item’s identity on chain',
     }
@@ -109,9 +106,13 @@ function authenticityView(
   }
 }
 
+function cacheHit(outpoint: string): Collectable | null {
+  return getCachedCollectables().find((i) => i.outpoint === outpoint) ?? null
+}
+
 export function CollectableDetailsPanel({ outpoint }: Props) {
-  const [item, setItem] = useState<Collectable | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [item, setItem] = useState<Collectable | null>(() => cacheHit(outpoint))
+  const [loading, setLoading] = useState(() => !cacheHit(outpoint))
   const [verification, setVerification] = useState(() => getVerificationProgress())
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
 
@@ -126,7 +127,14 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
+    const cached = cacheHit(outpoint)
+    if (cached) {
+      setItem(cached)
+      setLoading(false)
+    } else {
+      setItem(null)
+      setLoading(true)
+    }
     void getCollectable(outpoint)
       .then((next) => {
         if (!cancelled) setItem(next)
@@ -173,17 +181,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         aria-label="Loading collectable"
         aria-busy="true"
       >
-        <div className="collectable-details-hero">
-          <Skeleton width={96} height={96} radius={10} />
-          <div className="collectable-details-loading-copy">
-            <Skeleton width="min(14rem, 72%)" height={20} radius={6} />
-            <Skeleton width="min(9rem, 48%)" height={14} radius={5} />
-            <Skeleton width={112} height={36} radius={8} />
-          </div>
-        </div>
-        <div className="collectable-details-loading-lines">
-          <Skeleton width="100%" height={52} radius={8} />
-          <Skeleton width="100%" height={52} radius={8} />
+        <div className="collectable-details-loading-spinner" role="status">
+          <span className="send-spinner" aria-hidden />
+          <span className="collectable-details-loading-label">Loading…</span>
         </div>
       </div>
     )
@@ -242,7 +242,14 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             className={`collectable-authenticity collectable-authenticity-${authenticity.tone}`}
             title={authenticity.title}
           >
-            {authenticity.label}
+            {authenticity.tone === 'verifying' ? (
+              <span className="collectable-authenticity-busy">
+                <span className="collectable-verify-spinner" aria-hidden />
+                {authenticity.label}
+              </span>
+            ) : (
+              authenticity.label
+            )}
           </p>
           <div className="actions collectable-details-actions">
             <button

@@ -23,7 +23,6 @@ import {
   discoverHardenedTipsFromBeacons,
   resolveInscriptionAtOrigin,
   resolveInscriptionPreferringOrigin,
-  resolveOneSatInscription,
   type CollectableTrait,
   type ResolvedInscription,
 } from './oneSatImport'
@@ -35,7 +34,9 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import {
+  clearAwaitingVerification,
   clearVerificationProgress,
+  noteAwaitingVerification,
   peekPreferredCollectableVerification,
   preferCollectableVerification,
   setVerificationProgress,
@@ -94,7 +95,6 @@ import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
   hasProvenTier,
-  hasProvenVerdict,
   rememberGenesisAttempt,
   rememberProvenVerdict,
   shouldAttemptGenesis,
@@ -693,14 +693,21 @@ async function proveHeldGenesis(
       // A basket read newer than the one that spawned us is somebody looking at
       // the panel right now. That read has its own timeout, and a walk fetching
       // through it is how the list ends up timing out instead of painting.
-      if (listInFlight && listInFlight !== ownRead) break
-      genesisWalksThisSession++
+      // Exception: the tip the user opened in details — finish that walk.
+      if (
+        outpoint !== preferred &&
+        listInFlight &&
+        listInFlight !== ownRead
+      ) {
+        break
+      }
       setVerificationProgress(
         'verifying',
         outpoint,
         'Proving tip-to-origin lineage (BRC-150)',
       )
       let proof: GenesisProof | null = null
+      let aborted = false
       try {
         proof = await proveGenesisLineage({
           tipOutpoint: outpoint,
@@ -711,19 +718,35 @@ async function proveHeldGenesis(
             return await getBeefForTxidCached(wallet, txid)
           },
           // Abandoning mid-walk costs one retry; finishing it while somebody is
-          // waiting on the panel costs a `listOutputs` timeout.
-          shouldStop: () => !!listInFlight && listInFlight !== ownRead,
+          // waiting on the panel costs a `listOutputs` timeout. Never abort the
+          // tip the user is staring at on the details panel.
+          shouldStop: () => {
+            if (outpoint === preferred) return false
+            if (listInFlight && listInFlight !== ownRead) {
+              aborted = true
+              return true
+            }
+            return false
+          },
         })
       } catch (err) {
         console.warn('[brc-150] lineage walk failed', outpoint, err)
       }
       // Only pin the attempt after a conclusive result. A transient network miss
       // must not burn the 24h budget and leave a just-received tip "Unverified"
-      // until tomorrow.
+      // until tomorrow. Aborted walks also must not burn the session budget —
+      // opening details mid-walk used to exhaust the budget and strand the tip.
       if (!proof) {
         clearVerificationProgress(outpoint)
+        if (!aborted) {
+          // Conclusive miss — drop the receive spinner so we are not stuck on
+          // "Verifying…" forever with no chance to look unverified + retry later.
+          clearAwaitingVerification(outpoint)
+          genesisWalksThisSession++
+        }
         continue
       }
+      genesisWalksThisSession++
       rememberGenesisAttempt(outpoint)
 
       console.info(
@@ -763,6 +786,17 @@ async function proveHeldGenesis(
 export function requestCollectableVerification(outpoint: string): void {
   const target = normalizeOutpoint(outpoint)
   preferCollectableVerification(target)
+  if (hasProvenTier(target)) {
+    clearAwaitingVerification(target)
+    clearVerificationProgress(target)
+    return
+  }
+  noteAwaitingVerification(target)
+  setVerificationProgress(
+    'verifying',
+    target,
+    'Proving tip-to-origin lineage (BRC-150)',
+  )
   if (!shouldAttemptGenesis(target)) return
   if (provingGenesis) return
   const wallet = getActiveWallet()
@@ -1136,6 +1170,7 @@ async function verifyInduction(args: {
 
 function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): void {
   const target = normalizeOutpoint(outpoint)
+  if (result.proven) clearAwaitingVerification(target)
   if (
     !cachedCollectables.some(
       (c) =>
@@ -1284,23 +1319,35 @@ export async function getCollectable(
   }
   if (!item || !wallet) return item
 
-  // Details: traits/mime come from the indexer only when remittance left them
-  // blank. Authenticity runs here, one item, when the user opens details.
+  // Details: traits/mime come from the indexer. Prefer origin over tip — a
+  // fresh self-send tip often 404s for hours while the inscription origin has
+  // been indexed for months. Always fill empty traits, even on proven tips.
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
     if (txid && Number.isInteger(vout)) {
       const cachedResolved = getResolvedInscription(target)
+      const thin = !cachedResolved || isThinResolution(cachedResolved)
       const shouldAskIndexer =
-        !item.proven &&
-        !cachedResolved &&
-        shouldResolveInscription(target) &&
-        item.traits.length === 0
+        item.traits.length === 0 &&
+        thin &&
+        (shouldResolveInscription(target) ||
+          shouldUpgradeResolution(target) ||
+          !!item.origin)
+      const knownOrigin =
+        getProvenVerdict(target)?.origin ??
+        cachedResolved?.origin ??
+        item.origin
       const resolved =
-        cachedResolved ??
-        (shouldAskIndexer
-          ? await resolveOneSatInscription(txid, vout, wallet.chain, 6)
-          : null)
+        cachedResolved && !thin
+          ? cachedResolved
+          : shouldAskIndexer
+            ? await resolveInscriptionPreferringOrigin(
+                target,
+                wallet.chain,
+                knownOrigin,
+              ).catch(() => cachedResolved)
+            : cachedResolved
       if (resolved) {
         rememberResolvedInscription(target, resolved)
         item = {
@@ -1325,10 +1372,12 @@ export async function getCollectable(
     console.warn('[collectables] detail enrich failed', err)
   }
 
-  if (!hasProvenVerdict(target)) {
+  if (!hasProvenTier(target)) {
     void verifyItemAuthenticity(target, item.origin, wallet)
       .then((result) => applyAuthenticityResult(target, result))
       .catch(() => {})
+  } else {
+    clearAwaitingVerification(target)
   }
 
   return item

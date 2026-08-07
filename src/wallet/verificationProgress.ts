@@ -4,7 +4,12 @@
  * A tip enters `awaiting` as soon as it is received (toast), and stays there
  * until authenticity settles — that drives the corner spinner. Separately,
  * `progress` names which tip is actively being walked right now.
+ *
+ * Important: marking progress as verifying/identifying must NOT put a tip into
+ * `awaiting`. That set is only for "received, not yet settled". Conflating the
+ * two left tips stuck on Verifying forever after an aborted lineage walk.
  */
+import { isItemProven } from './provenCache'
 
 export type VerificationPhase = 'idle' | 'verifying' | 'identifying'
 
@@ -55,7 +60,6 @@ export function setVerificationProgress(
     return
   }
   const op = outpoint ? normalize(outpoint) : null
-  if (op) awaitingVerify.add(op)
   progress = {
     outpoint: op,
     phase,
@@ -87,6 +91,7 @@ export function clearVerificationProgress(outpoint?: string | null): void {
 export function noteAwaitingVerification(outpoint: string): void {
   const key = normalize(outpoint)
   if (!key || awaitingVerify.has(key)) return
+  if (isItemProven(key)) return
   awaitingVerify.add(key)
   // New object so React subscribers re-render and pick up isOutpointVerifying.
   progress = { ...progress }
@@ -96,9 +101,11 @@ export function noteAwaitingVerification(outpoint: string): void {
 /** Tip authenticity settled — drop the spinner for this outpoint. */
 export function clearAwaitingVerification(outpoint: string): void {
   const key = normalize(outpoint)
-  if (!key || !awaitingVerify.has(key)) return
-  awaitingVerify.delete(key)
-  if (progress.outpoint === key) {
+  if (!key) return
+  const had = awaitingVerify.delete(key)
+  const wasActive = progress.outpoint === key
+  if (!had && !wasActive) return
+  if (wasActive) {
     progress = { outpoint: null, phase: 'idle', label: null, detail: null }
   } else {
     progress = { ...progress }
@@ -139,7 +146,21 @@ export function isOutpointVerifying(
 ): boolean {
   if (!outpoint) return false
   const key = normalize(outpoint)
+  // Self-heal: a durable proven tip must never keep a stale awaiting spinner.
+  if (isItemProven(key)) {
+    if (awaitingVerify.has(key) || current.outpoint === key) {
+      clearAwaitingVerification(key)
+    }
+    return false
+  }
   if (awaitingVerify.has(key)) return true
   if (current.phase === 'idle' || !current.outpoint) return false
   return key === current.outpoint
+}
+
+/** Test helper — drop in-memory verify state between cases. */
+export function resetVerificationProgressForTests(): void {
+  awaitingVerify.clear()
+  preferredOutpoint = null
+  progress = { outpoint: null, phase: 'idle', label: null, detail: null }
 }
