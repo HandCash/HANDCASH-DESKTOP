@@ -906,6 +906,33 @@ let listInFlight: Promise<Collectable[]> | null = null
 const LIST_TIMEOUT_MS = 20_000
 
 /**
+ * Fetch BEEF, preferring the session cache. Retries briefly when the chain
+ * tracker has not indexed a just-broadcast tx yet ("must be valid transaction
+ * on chain") — that race was demoting hardened tips to BRC-150.
+ */
+async function getBeefForAuthenticity(
+  wallet: ActiveWallet,
+  txid: string,
+  attempts = 4,
+): Promise<Awaited<ReturnType<typeof getBeefForTxidCached>>> {
+  let lastErr: unknown
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await getBeefForTxidCached(wallet, txid)
+    } catch (err) {
+      lastErr = err
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/must be valid transaction on chain/i.test(msg)) throw err
+      console.warn(
+        `[brc-156] beef for ${txid.slice(0, 12)}… not on chain yet — retry ${i + 1}/${attempts}`,
+      )
+      await new Promise((r) => setTimeout(r, 700 * (i + 1)))
+    }
+  }
+  throw lastErr
+}
+
+/**
  * Verify one tip's authenticity ladder and remember the verdict.
  *
  * Order: BRC-156 hardened bounded proof → BRC-150 v2 → unproven.
@@ -917,12 +944,12 @@ export async function verifyItemAuthenticity(
   active?: ActiveWallet | null,
 ): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
-  // Only a proven tier is a durable short-circuit. Cached `unproven` may be a
-  // transient ladder miss — allow re-verify so restarts can complete the walk.
+  // Only BRC-156 is a final short-circuit. BRC-150 on a hardened tip must be
+  // allowed to upgrade once Commit is indexed / local BEEF is remembered.
   const cached = getProvenVerdict(target)
-  if (cached && hasProvenTier(target)) {
+  if (cached?.tier === 'brc156') {
     return {
-      tier: cached.tier,
+      tier: 'brc156',
       proven: true,
       reason: null,
       originScriptHash: cached.originScriptHash,
@@ -956,6 +983,20 @@ export async function verifyItemAuthenticity(
       return { tier: 'unproven', proven: false, reason: 'Collectable output not found' }
     }
 
+    const tipLooksHardened =
+      Boolean(parseHardenedTipInstructions(match.customInstructions)) ||
+      isHardenedCovenantLockingScript(match.lockingScript)
+
+    // Soft / remittance tips that already have BRC-150 stay put.
+    if (cached?.tier === 'brc150' && !tipLooksHardened) {
+      return {
+        tier: 'brc150',
+        proven: true,
+        reason: null,
+        originScriptHash: cached.originScriptHash,
+      }
+    }
+
     await yieldToUi()
 
     // 1) Hardened schema-2 when settle state + commit are available.
@@ -967,15 +1008,9 @@ export async function verifyItemAuthenticity(
     let hardenedOrigin: string | undefined
     const tipTxid = target.split('.')[0]
     const tipVout = Number(target.split('.')[1])
-    const hardenedMeta = parseHardenedTipInstructions(match.customInstructions)
-    if (
-      tipTxid &&
-      Number.isInteger(tipVout) &&
-      (hardenedMeta || isHardenedCovenantLockingScript(match.lockingScript)) &&
-      wallet.services?.getBeefForTxid
-    ) {
+    if (tipTxid && Number.isInteger(tipVout) && tipLooksHardened) {
       try {
-        const settleBeef = await wallet.services.getBeefForTxid(tipTxid)
+        const settleBeef = await getBeefForAuthenticity(wallet, tipTxid)
         const settleTx = settleBeef.findAtomicTransaction(tipTxid)
         if (settleTx) {
           const outputs = settleTx.outputs.map((o) => ({
@@ -984,8 +1019,13 @@ export async function verifyItemAuthenticity(
           const state = findLatchStateForTip(outputs, tipVout)
           if (state?.schema === 2 && state.mode === 'hardened' && state.commitTxid) {
             if (state.origin) hardenedOrigin = state.origin
-            const commitBeef = await wallet.services.getBeefForTxid(state.commitTxid)
-            const commitTx = commitBeef.findAtomicTransaction(state.commitTxid)
+            // Prefer commit already embedded in settle BEEF (post-send cache /
+            // atomic parents) — avoids a second chain race.
+            let commitTx = settleBeef.findAtomicTransaction(state.commitTxid)
+            if (!commitTx) {
+              const commitBeef = await getBeefForAuthenticity(wallet, state.commitTxid)
+              commitTx = commitBeef.findAtomicTransaction(state.commitTxid)
+            }
             if (commitTx) {
               let priorSettleTxHex: string | undefined
               let proofCommitTxHex: string | undefined
@@ -994,11 +1034,11 @@ export async function verifyItemAuthenticity(
                   commitTxHex: commitTx.toHex(),
                   proofOutpoint: state.proofOutpoint,
                 })
-                if (ctx && wallet.services?.getBeefForTxid) {
+                if (ctx) {
                   try {
                     const [priorBeef, proofBeef] = await Promise.all([
-                      wallet.services.getBeefForTxid(ctx.priorSettleTxid),
-                      wallet.services.getBeefForTxid(ctx.proofCommitTxid),
+                      getBeefForAuthenticity(wallet, ctx.priorSettleTxid),
+                      getBeefForAuthenticity(wallet, ctx.proofCommitTxid),
                     ])
                     priorSettleTxHex = priorBeef
                       .findAtomicTransaction(ctx.priorSettleTxid)
@@ -1080,7 +1120,10 @@ export async function verifyItemAuthenticity(
     if (!provenOrigin && authenticity.proven) {
       provenOrigin = hardenedOrigin ?? custom.origin ?? tag
     }
-    if (!authenticity.proven) {
+    // Hardened tips: do not stamp durable BRC-150 from a lineage walk while
+    // BRC-156 is still pending (commit not indexed). Leave unproven so the
+    // next open can upgrade to 156 — otherwise we stick on "Verified · BRC-150".
+    if (!authenticity.proven && !tipLooksHardened) {
       const proof = await proveGenesisLineage({
         tipOutpoint: target,
         getBeef: (txid) => getBeefForTxidCached(wallet, txid),
@@ -1092,6 +1135,10 @@ export async function verifyItemAuthenticity(
         provenOrigin = proof.origin
         authenticity = { tier: 'brc150', proven: true, reason: null }
       }
+    } else if (!authenticity.proven && tipLooksHardened) {
+      console.info(
+        `[brc-156] tip ${target.slice(0, 12)}… still awaiting covenant proof — not demoting to BRC-150`,
+      )
     }
     rememberProvenVerdict(target, {
       ...authenticityResultToVerdict(authenticity),

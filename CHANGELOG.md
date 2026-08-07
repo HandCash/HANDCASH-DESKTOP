@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.114] - 2026-08-07
+
+### Fixed
+
+- **Hardened tips stuck on BRC-150.** After a successful Commit/Settle broadcast,
+  authenticity verify raced chain indexing for the Commit, failed BRC-156, then
+  stamped durable BRC-150 and never upgraded. Remember local BEEF, prefer Commit
+  from settle parents, retry brief chain lag, allow 150→156 upgrade on hardened
+  tips, and do not demote hardened tips to BRC-150 while covenant proof is pending.
+
 ## [1.2.113] - 2026-08-07
 
 ### Fixed

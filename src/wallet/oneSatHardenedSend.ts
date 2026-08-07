@@ -808,6 +808,11 @@ async function postHardenedBroadcast(args: {
   await withAbortRetry('postBeef(settle+commit)', async () => {
     const beef = Beef.fromBinary(args.settleAtomic)
     beef.mergeBeef(args.commitAtomic)
+    // Authenticity verify runs seconds later — keep both bodies so BRC-156
+    // does not race WhatsOnChain indexing and fall through to BRC-150.
+    const { rememberBeefBinary } = await import('./beefCache')
+    rememberBeefBinary(args.commitTxid, args.commitAtomic)
+    rememberBeefBinary(args.settleTxid, beef.toBinary())
     console.info(
       `[brc-156] postBeef commit=${args.commitTxid.slice(0, 12)}… settle=${args.settleTxid.slice(0, 12)}…`,
     )
