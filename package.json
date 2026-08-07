@@ -37,6 +37,7 @@
     "@bsv/wallet-toolbox-client": "2.4.4",
     "@xstate/react": "^5.0.3",
     "@zxing/browser": "^0.1.5",
+    "@zxing/library": "^0.21.3",
     "aeon-ui-engine": "file:vendor/aeon-ui-engine",
     "buffer": "^6.0.3",
     "cors": "^2.8.5",
