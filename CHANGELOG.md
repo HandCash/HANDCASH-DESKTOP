@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.124] - 2026-08-07
+
+### Fixed
+
+- **Desktop CI release for v1.2.123.** Tag fired before `@zxing/library` was in
+  the lockfile (`npm ci` failed). Retag with synced lock.
+
 ## [1.2.123] - 2026-08-07
 
 ### Changed
