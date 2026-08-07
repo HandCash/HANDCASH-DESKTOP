@@ -166,7 +166,17 @@ function pumpQueue(): void {
   }
   current = queue.shift() ?? null
   notify()
-  void window.handcash?.focusWindow?.()
+  const focus = () => {
+    void window.handcash?.focusWindow?.()
+  }
+  focus()
+  // Mobile OEMs often ignore the first background startActivity; retry briefly.
+  try {
+    window.setTimeout(focus, 280)
+    window.setTimeout(focus, 900)
+  } catch {
+    // Non-DOM environments (tests) — ignore.
+  }
   // Mobile shell listens to bring the app forward + show a heads-up if needed.
   const prompt = current?.request
   if (prompt) {

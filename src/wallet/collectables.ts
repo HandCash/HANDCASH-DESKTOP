@@ -770,34 +770,54 @@ export function requestCollectableVerification(outpoint: string): void {
  * then shows a nameless, traitless item until the upgrade pass happens to run.
  * Ask the indexer about the origin we just proved instead.
  */
+function originKey(value: string): string {
+  return value.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
 async function adoptProvenOrigin(
   outpoint: string,
   origin: string,
   chain: Chain,
 ): Promise<void> {
+  const point = originKey(origin)
   const existing = getResolvedInscription(outpoint)
-  const sameOrigin =
-    !!existing &&
-    existing.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === origin
+  const sameOrigin = !!existing && originKey(existing.origin) === point
   // A thin hit that already names the right origin still needs the indexer —
   // that is exactly the "verified but no traits" card. Only a rich match may
   // skip the fetch.
   if (sameOrigin && !isThinResolution(existing)) {
-    rememberResolvedInscription(outpoint, { ...existing, origin })
+    rememberResolvedInscription(outpoint, { ...existing, origin: point })
     return
   }
-  const resolved = await resolveInscriptionAtOrigin(origin, chain)
-  rememberResolvedInscription(outpoint, {
-    ...(resolved && !isThinResolution(resolved)
-      ? resolved
-      : existing && sameOrigin
-        ? existing
-        : { traits: [], extras: [] }),
-    origin,
-    ...(resolved?.name ? { name: resolved.name } : {}),
-    ...(resolved?.app ? { app: resolved.app } : {}),
-    ...(resolved?.mimeType ? { mimeType: resolved.mimeType } : {}),
-  })
+  const resolved = await resolveInscriptionAtOrigin(point, chain)
+  const rich = resolved && !isThinResolution(resolved) ? resolved : null
+  const keep = sameOrigin ? existing : null
+  const merged = {
+    ...(rich ?? keep ?? { traits: [], extras: [] }),
+    origin: point,
+    ...(resolved?.name || keep?.name ? { name: resolved?.name || keep?.name } : {}),
+    ...(resolved?.app || keep?.app ? { app: resolved?.app || keep?.app } : {}),
+    ...(resolved?.mimeType || keep?.mimeType
+      ? { mimeType: resolved?.mimeType || keep?.mimeType }
+      : {}),
+    traits:
+      rich?.traits?.length
+        ? rich.traits
+        : resolved?.traits?.length
+          ? resolved.traits
+          : (keep?.traits ?? []),
+    extras:
+      rich?.extras?.length
+        ? rich.extras
+        : resolved?.extras?.length
+          ? resolved.extras
+          : (keep?.extras ?? []),
+  }
+  rememberResolvedInscription(outpoint, merged)
+  // Seed the origin key so later prefer-origin lookups do not re-fetch empty.
+  if (originKey(outpoint) !== point) {
+    rememberResolvedInscription(point, merged)
+  }
 }
 
 /**
@@ -891,6 +911,7 @@ export async function verifyItemAuthenticity(
       reason: string | null
       originScriptHash?: string
     } | null = null
+    let hardenedOrigin: string | undefined
     const tipTxid = target.split('.')[0]
     const tipVout = Number(target.split('.')[1])
     const hardenedMeta = parseHardenedTipInstructions(match.customInstructions)
@@ -909,6 +930,7 @@ export async function verifyItemAuthenticity(
           }))
           const state = findLatchStateForTip(outputs, tipVout)
           if (state?.schema === 2 && state.mode === 'hardened' && state.commitTxid) {
+            if (state.origin) hardenedOrigin = state.origin
             const commitBeef = await wallet.services.getBeefForTxid(state.commitTxid)
             const commitTx = commitBeef.findAtomicTransaction(state.commitTxid)
             if (commitTx) {
@@ -994,6 +1016,17 @@ export async function verifyItemAuthenticity(
       indexerResolved: true,
     })
     let provenOrigin: string | undefined
+    if (
+      authenticity.proven &&
+      provenance &&
+      typeof provenance === 'object' &&
+      typeof (provenance as { origin?: unknown }).origin === 'string'
+    ) {
+      provenOrigin = (provenance as { origin: string }).origin
+    }
+    if (!provenOrigin && authenticity.proven) {
+      provenOrigin = hardenedOrigin ?? custom.origin ?? tag
+    }
     if (!authenticity.proven) {
       const proof = await proveGenesisLineage({
         tipOutpoint: target,
@@ -1009,9 +1042,12 @@ export async function verifyItemAuthenticity(
     }
     rememberProvenVerdict(target, {
       ...authenticityResultToVerdict(authenticity),
-      ...(provenOrigin ? { origin: provenOrigin } : {}),
+      ...(provenOrigin ? { origin: originKey(provenOrigin) } : {}),
     })
-    if (provenOrigin) await adoptProvenOrigin(target, provenOrigin, wallet.chain)
+    if (provenOrigin) {
+      await adoptProvenOrigin(target, provenOrigin, wallet.chain)
+      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+    }
     if (authenticity.proven) {
       await yieldToUi()
       announceItemVerified(

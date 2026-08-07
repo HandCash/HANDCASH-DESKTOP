@@ -128,21 +128,21 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
           <AppAvatar
             origin={pending.origin}
             name={name}
-            size="lg"
+            size="md"
             onReady={() => setIconReady(true)}
           />
           <div>
-            <p className="permission-eyebrow">HandCash Connect</p>
-            <h2 className="permission-request-title">Connect {name}?</h2>
+            <p className="permission-eyebrow">Connect</p>
+            <h2 className="permission-request-title">{name}</h2>
             <p className="connect-app-host mono">{pending.origin}</p>
           </div>
         </div>
 
-        <p className="lede">
-          <strong>{name}</strong> wants to connect to your HandCash wallet.
+        <p className="lede permission-lede-compact">
+          Wants to connect to your wallet
           {home ? (
             <>
-              {' '}
+              {' · '}
               <a href={home} target="_blank" rel="noreferrer">
                 Visit site
               </a>
@@ -150,25 +150,19 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
           ) : null}
         </p>
 
-        <div className="scope-list" aria-label="Permissions requested">
-          <p className="scope-list-label">This app will be able to</p>
+        <div className="scope-list scope-list-compact" aria-label="Permissions requested">
           {CONNECT_SCOPES.map((scope) => (
-            <div key={scope.id} className="scope-row">
+            <div key={scope.id} className="scope-row scope-row-compact">
               <span className="scope-icon" aria-hidden>
-                <ScopeIcon scopeId={scope.id} size={15} />
+                <ScopeIcon scopeId={scope.id} size={14} />
               </span>
-              <div>
-                <strong>{scope.label}</strong>
-                <p>{scope.description}</p>
-              </div>
+              <strong>{scope.label}</strong>
             </div>
           ))}
         </div>
 
         <p className="permission-note">
-          BSV payments still need your approval (unless Auto-pay). Viewing or sending collectables
-          is approved separately and is never covered by Pay. You can disconnect this app later from
-          Connected apps.
+          Payments and items still need separate approval. Disconnect anytime in Connected apps.
         </p>
       </div>
     )
@@ -196,13 +190,13 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
         <AppAvatar
           origin={pending.origin}
           name={name}
-          size="lg"
+          size="md"
           onReady={() => setIconReady(true)}
         />
         <div>
           <p className="permission-eyebrow">{copy.eyebrow}</p>
           <h2 className="permission-request-title">{pending.title}</h2>
-          <p className="lede" style={{ marginBottom: 0 }}>
+          <p className="lede permission-lede-compact" style={{ marginBottom: 0 }}>
             <strong className="permission-origin">{name}</strong> {copy.verb}.
           </p>
         </div>
@@ -225,7 +219,7 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
           <dt>What for</dt>
           <dd>{pending.summary}</dd>
         </div>
-        {pending.details.map((line) => (
+        {pending.details.slice(0, 2).map((line) => (
           <div key={line}>
             <dt>Detail</dt>
             <dd>{line}</dd>
@@ -242,7 +236,7 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
               onChange={(e) => setAutoEnabled(e.target.checked)}
             />
             <span>
-              Automatically process payments from <strong>{name}</strong>
+              Auto-pay from <strong>{name}</strong>
             </span>
           </label>
 
@@ -277,10 +271,6 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
           ) : null}
         </div>
       ) : null}
-
-      <p className="permission-note">
-        Only approve if you trust this request from {name}. Declining cancels it safely.
-      </p>
     </div>
   )
 }

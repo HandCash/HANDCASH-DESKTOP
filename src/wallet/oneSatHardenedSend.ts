@@ -13,6 +13,7 @@
  * Commit layout: tip@0 · proof@1 (3 sat)
  * Settle consumes commit tip + delayed prior proof (never current sibling proof).
  */
+import './browserPolyfills'
 import {
   Beef,
   PrivateKey,

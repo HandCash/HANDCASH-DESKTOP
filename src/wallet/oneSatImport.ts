@@ -199,14 +199,23 @@ function asString(value: unknown): string | undefined {
 }
 
 function parseTraits(raw: unknown): CollectableTrait[] {
-  if (!Array.isArray(raw)) return []
   const traits: CollectableTrait[] = []
-  for (const row of raw) {
-    if (!row || typeof row !== 'object') continue
-    const o = row as Record<string, unknown>
-    const name = asString(o.name) ?? asString(o.trait_type) ?? asString(o.trait)
-    const value = asString(o.value) ?? asString(o.val)
-    if (name && value) traits.push({ name, value })
+  if (Array.isArray(raw)) {
+    for (const row of raw) {
+      if (!row || typeof row !== 'object') continue
+      const o = row as Record<string, unknown>
+      const name = asString(o.name) ?? asString(o.trait_type) ?? asString(o.trait)
+      const value = asString(o.value) ?? asString(o.val)
+      if (name && value) traits.push({ name, value })
+    }
+    return traits
+  }
+  // Some inscriptions store traits as a flat map: { Background: "Blue", … }.
+  if (raw && typeof raw === 'object') {
+    for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+      const text = asString(value)
+      if (key.trim() && text) traits.push({ name: key.trim(), value: text })
+    }
   }
   return traits
 }
@@ -771,15 +780,26 @@ async function rebuildBrc150Identity(
   txid: string,
   vout: number,
 ): Promise<ResolvedInscription | null> {
-  const services = getActiveWallet()?.services
-  if (!services?.getBeefForTxid) return null
+  const wallet = getActiveWallet()
+  const services = wallet?.services
+  if (!services?.getBeefForTxid || !wallet) return null
   try {
     const beef = await withTimeout(services.getBeefForTxid(txid), BEEF_TIMEOUT_MS)
     const held = `${txid}.${vout}`
     const proof = rebuildProvenanceV2FromBeef(beef, held)
     if (!proof) return null
-    rememberProvenVerdict(held, 'brc150')
+    rememberProvenVerdict(held, {
+      tier: 'brc150',
+      origin: proof.origin,
+      verifiedAt: Date.now(),
+    })
     announceItemVerified(held, 'BRC-150 lineage proven')
+    // Same as proveLineageIdentity: a proven origin without an indexer hit is
+    // exactly the "verified but no traits" card. Ask about the origin now.
+    const resolved = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
+    if (resolved && (resolved.name || resolved.mimeType || resolved.traits.length > 0)) {
+      return resolved
+    }
     return {
       origin: proof.origin,
       traits: [],

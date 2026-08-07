@@ -73,6 +73,7 @@ import {
   SettingsIcon,
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
+import { toastSuccess } from '../wallet/toast'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -150,8 +151,14 @@ export function WalletNav({
     (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
       if (!pendingPrompt) return
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
+      const name = appDisplayName(pendingPrompt.origin)
       resolvePermission(pendingPrompt.id, 'allow')
       playWalletSound('connect')
+      if (pendingPrompt.kind === 'connect') {
+        toastSuccess('Connected', `${name} can use your wallet`)
+      } else {
+        toastSuccess('Approved', pendingPrompt.title || name)
+      }
     },
     [pendingPrompt],
   )

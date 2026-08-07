@@ -1,4 +1,5 @@
 /** Clean-room BRC-156 BOLT-style alternating proof builders and verifier. */
+import './browserPolyfills'
 import {
   bsv,
   DummyProvider,
@@ -63,21 +64,56 @@ export const HARDENED_LATCH_SCHEMA_VERSION = LATCH_SCHEMA_HARDENED
 export const RELATIVE_HARDENED_PROOF = 'OUTPUT:2' as const
 
 /**
- * scrypt-ts still reads `process.env.NETWORK` / `BASEURL` at call time. Vite
- * define covers the common paths; this fills any residual `process` access in
- * the WebView so covenant signing does not throw into the soft-latch fallback.
+ * scrypt-ts and its browserify deps still touch Node `process` at import and
+ * method-call time. Keep a full browser shim — env alone is not enough
+ * (`process.cwd` / `process.version` throw mid-chunk and soft-latch wins).
  */
 function ensureScryptProcessShim(): void {
   const g = globalThis as {
-    process?: { env?: Record<string, string | undefined> }
+    process?: {
+      env?: Record<string, string | undefined>
+      browser?: boolean
+      version?: string
+      versions?: { node: string }
+      platform?: string
+      title?: string
+      argv?: string[]
+      pid?: number
+      cwd?: () => string
+      nextTick?: (fn: (...args: unknown[]) => void, ...args: unknown[]) => void
+    }
   }
-  if (!g.process) g.process = { env: {} }
+  const nextTick = (fn: (...args: unknown[]) => void, ...args: unknown[]) => {
+    queueMicrotask(() => fn(...args))
+  }
+  if (!g.process || typeof g.process !== 'object') {
+    g.process = {
+      env: { NETWORK: '', BASEURL: '', NODE_ENV: 'production' },
+      browser: true,
+      version: 'v18.0.0',
+      versions: { node: '18.0.0' },
+      platform: 'browser',
+      title: 'browser',
+      argv: [],
+      pid: 0,
+      cwd: () => '/',
+      nextTick,
+    }
+    return
+  }
   if (!g.process.env) g.process.env = {}
   if (g.process.env.NETWORK === undefined) g.process.env.NETWORK = ''
   if (g.process.env.BASEURL === undefined) g.process.env.BASEURL = ''
-  if (g.process.env.NODE_ENV === undefined) {
-    g.process.env.NODE_ENV = 'production'
-  }
+  if (g.process.env.NODE_ENV === undefined) g.process.env.NODE_ENV = 'production'
+  if (typeof g.process.cwd !== 'function') g.process.cwd = () => '/'
+  if (typeof g.process.nextTick !== 'function') g.process.nextTick = nextTick
+  if (g.process.browser == null) g.process.browser = true
+  if (!g.process.version) g.process.version = 'v18.0.0'
+  if (!g.process.versions) g.process.versions = { node: '18.0.0' }
+  if (!g.process.platform) g.process.platform = 'browser'
+  if (!g.process.title) g.process.title = 'browser'
+  if (!g.process.argv) g.process.argv = []
+  if (g.process.pid == null) g.process.pid = 0
 }
 
 export function loadBrc156CovenantArtifact(): void {

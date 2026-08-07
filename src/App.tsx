@@ -28,7 +28,8 @@ import { setAutoPaySettings } from './wallet/autoPay'
 import { isMobileWalletPlatform } from './wallet/isMobilePlatform'
 import { UpdateProvider } from './wallet/updateProvider'
 import { playWalletSound } from './wallet/soundService'
-import { showToast, toastError } from './wallet/toast'
+import { showToast, toastError, toastSuccess } from './wallet/toast'
+import { appDisplayName } from './wallet/appIdentity'
 import { refreshFromChain } from './wallet/chainIngest'
 import { softPullHistoryIfRemoteNewer } from './wallet/deviceSync'
 import { isDeviceParityEnabled } from './wallet/paymentPolicy'
@@ -269,6 +270,10 @@ export function App() {
                 if (pendingConnect) {
                   resolvePermission(pendingConnect.id, 'allow')
                   playWalletSound('connect')
+                  toastSuccess(
+                    'Connected',
+                    `${appDisplayName(pendingConnect.origin)} can use your wallet`,
+                  )
                 }
               }}
               onDeny={() => {
@@ -288,6 +293,10 @@ export function App() {
                 }
                 resolvePermission(pendingAction.id, 'allow')
                 playWalletSound('connect')
+                toastSuccess(
+                  'Approved',
+                  pendingAction.title || appDisplayName(pendingAction.origin),
+                )
               }}
               onDeny={() => {
                 if (pendingAction) {

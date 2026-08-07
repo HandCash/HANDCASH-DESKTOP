@@ -1,5 +1,25 @@
 # Changelog
 
+## [1.2.101] - 2026-08-07
+
+### Fixed
+
+- **BRC-156 hardened sends survive the WebView.** Full `process` shim
+  (`cwd` / `version` / `nextTick`) plus a classic `index.html` bootstrap so
+  scrypt-ts no longer throws into soft-latch / BRC-150 on mobile.
+- **Verified BRC-150 items get traits.** Remittance-proven and soft-latch
+  rebuild paths adopt the origin and fetch indexer metadata instead of leaving
+  empty traits.
+- **Permission Accept shows a toast.** Connect/action approval surfaces
+  Connected / Approved feedback.
+- **BRC-100 connect bring-to-front is more reliable** on Android
+  (`AppTask.moveToFront` + retries).
+
+### Changed
+
+- **Permission and payment screens are tighter** — less copy, denser layout.
+- **Status pill Syncing text is larger.**
+
 ## [1.2.100] - 2026-08-06
 
 ### Fixed

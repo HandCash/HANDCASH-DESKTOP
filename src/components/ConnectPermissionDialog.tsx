@@ -60,21 +60,21 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   <AppAvatar
                     origin={pending.origin}
                     name={name}
-                    size="lg"
+                    size="md"
                     onReady={() => setIconReady(true)}
                   />
                   <div>
-                    <Prompt.Eyebrow className="permission-eyebrow">HandCash Connect</Prompt.Eyebrow>
-                    <Prompt.Title>Connect {name}?</Prompt.Title>
+                    <Prompt.Eyebrow className="permission-eyebrow">Connect</Prompt.Eyebrow>
+                    <Prompt.Title>{name}</Prompt.Title>
                     <p className="connect-app-host mono">{pending.origin}</p>
                   </div>
                 </div>
 
-                <Prompt.Description className="lede">
-                  <strong>{name}</strong> wants to connect to your HandCash wallet.
+                <Prompt.Description className="lede permission-lede-compact">
+                  Wants to connect to your wallet
                   {home ? (
                     <>
-                      {' '}
+                      {' · '}
                       <a href={home} target="_blank" rel="noreferrer">
                         Visit site
                       </a>
@@ -82,25 +82,20 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   ) : null}
                 </Prompt.Description>
 
-                <div className="scope-list" aria-label="Permissions requested">
-                  <p className="scope-list-label">This app will be able to</p>
+                <div className="scope-list scope-list-compact" aria-label="Permissions requested">
                   {CONNECT_SCOPES.map((scope) => (
-                    <div key={scope.id} className="scope-row">
+                    <div key={scope.id} className="scope-row scope-row-compact">
                       <span className="scope-icon" aria-hidden>
-                        <ScopeIcon scopeId={scope.id} size={15} />
+                        <ScopeIcon scopeId={scope.id} size={14} />
                       </span>
-                      <div>
-                        <strong>{scope.label}</strong>
-                        <p>{scope.description}</p>
-                      </div>
+                      <strong>{scope.label}</strong>
                     </div>
                   ))}
                 </div>
 
                 <p className="permission-note">
-                  BSV payments still need your approval (unless Auto-pay). Viewing or sending
-                  collectables is approved separately and is never covered by Pay. You can
-                  disconnect this app later from Connected apps.
+                  Payments and items still need separate approval. Disconnect anytime in Connected
+                  apps.
                 </p>
 
                 <Prompt.Actions className="actions connect-actions">

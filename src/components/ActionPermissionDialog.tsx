@@ -135,13 +135,16 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   <AppAvatar
                     origin={pending.origin}
                     name={name}
-                    size="lg"
+                    size="md"
                     onReady={() => setIconReady(true)}
                   />
                   <div>
                     <Prompt.Eyebrow className="permission-eyebrow">{copy.eyebrow}</Prompt.Eyebrow>
                     <Prompt.Title>{pending.title}</Prompt.Title>
-                    <Prompt.Description className="lede" style={{ marginBottom: 0 }}>
+                    <Prompt.Description
+                      className="lede permission-lede-compact"
+                      style={{ marginBottom: 0 }}
+                    >
                       <strong className="permission-origin">{name}</strong> {copy.verb}.
                     </Prompt.Description>
                   </div>
@@ -166,7 +169,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     <dt>What for</dt>
                     <dd>{pending.summary}</dd>
                   </div>
-                  {pending.details.map((line) => (
+                  {pending.details.slice(0, 2).map((line) => (
                     <div key={line}>
                       <dt>Detail</dt>
                       <dd>{line}</dd>
@@ -183,7 +186,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                         onChange={(e) => setAutoEnabled(e.target.checked)}
                       />
                       <span>
-                        Automatically process payments from <strong>{name}</strong>
+                        Auto-pay from <strong>{name}</strong>
                       </span>
                     </label>
 
@@ -218,10 +221,6 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     ) : null}
                   </div>
                 ) : null}
-
-                <p className="permission-note">
-                  Only approve if you trust this request from {name}. Denying cancels it safely.
-                </p>
 
                 <Prompt.Actions className="actions connect-actions">
                   <Prompt.Secondary className="btn btn-ghost" onClick={onDeny}>
