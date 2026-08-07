@@ -1301,12 +1301,38 @@ async function verifyInduction(args: {
 
 function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): void {
   const target = normalizeOutpoint(outpoint)
-  if (result.proven) clearAwaitingVerification(target)
+  // Durable provenCache is the only authenticity SSoT. Never paint Unverified
+  // over an existing BRC-150/156 tier (that flip-flopped the badge on every open).
+  const verdict = getProvenVerdict(target)
+  if (verdict?.tier === 'brc150' || verdict?.tier === 'brc156') {
+    if (result.proven) clearAwaitingVerification(target)
+    if (
+      !cachedCollectables.some(
+        (c) =>
+          c.outpoint === target &&
+          (c.proven !== true || c.authenticity !== verdict.tier),
+      )
+    ) {
+      return
+    }
+    setCollectablesCache(
+      cachedCollectables.map((c) =>
+        c.outpoint === target
+          ? { ...c, proven: true, authenticity: verdict.tier }
+          : c,
+      ),
+    )
+    return
+  }
+  if (!result.proven) return
+  clearAwaitingVerification(target)
+  const painted = getProvenVerdict(target)
+  if (painted?.tier !== 'brc150' && painted?.tier !== 'brc156') return
   if (
     !cachedCollectables.some(
       (c) =>
         c.outpoint === target &&
-        (c.proven !== result.proven || c.authenticity !== result.tier),
+        (c.proven !== true || c.authenticity !== painted.tier),
     )
   ) {
     return
@@ -1314,7 +1340,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
   setCollectablesCache(
     cachedCollectables.map((c) =>
       c.outpoint === target
-        ? { ...c, proven: result.proven, authenticity: result.tier }
+        ? { ...c, proven: true, authenticity: painted.tier }
         : c,
     ),
   )

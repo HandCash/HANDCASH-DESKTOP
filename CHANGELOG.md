@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.117] - 2026-08-07
+
+### Fixed
+
+- **Hardened send false "insufficient funds".** Aborted Commit/Settle left tip and
+  funding change reserved as noSend, so settle saw only a fraction of the balance.
+  Release is now an explicit stage (abort refs → wipe nosends → assert clean) on
+  preflight and failure. Unlock fee declaration no longer applies a 1.35× / 20k
+  double-pad on top of embedded parent txs.
+- **Authenticity badge flip-flop (Unverified ↔ BRC-150).** List UI was painting
+  raw verify misses over durable proven tiers. Badge now only follows provenCache.
+
 ## [1.2.116] - 2026-08-07
 
 ### Fixed

@@ -69,32 +69,74 @@ import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 import { hexToU32Le } from './hexBinary'
 import {
   estimateUnlockingLength,
+  feeUnlockBytes,
   hardenedSendMachine,
   spendsFitBudget,
   type HardenedSendPhase,
 } from './hardenedSendMachine'
 import { createActor, type Actor } from 'xstate'
 
-export { estimateUnlockingLength } from './hardenedSendMachine'
+export { estimateUnlockingLength, feeUnlockBytes } from './hardenedSendMachine'
+
+const HARDENED_NOSEND_LABEL_RE = /^handcash-hardened-/
+
+type NoSendListWallet = ActiveWallet['wallet'] & {
+  listNoSendActions?: (
+    args: { labels: string[]; limit?: number },
+    abort?: boolean,
+  ) => Promise<{ actions?: Array<{ labels?: string[]; reference?: string }> } | unknown>
+}
+
+function asNoSendWallet(wallet: ActiveWallet): NoSendListWallet {
+  return wallet.wallet as NoSendListWallet
+}
+
+function countHardenedNosends(listed: unknown): number {
+  if (!listed || typeof listed !== 'object') return 0
+  const actions = (listed as { actions?: unknown }).actions
+  if (!Array.isArray(actions)) {
+    const total = (listed as { totalActions?: unknown }).totalActions
+    return typeof total === 'number' && total > 0 ? total : 0
+  }
+  if (actions.length === 0) return 0
+  const labeled = actions.filter((a) => {
+    if (!a || typeof a !== 'object') return true
+    const labels = (a as { labels?: unknown }).labels
+    if (!Array.isArray(labels) || labels.length === 0) return true
+    return labels.some(
+      (l) => typeof l === 'string' && HARDENED_NOSEND_LABEL_RE.test(l),
+    )
+  })
+  // Empty-label wipe may return non-hardened nosends; count hardened when labeled,
+  // otherwise any leftover nosend still blocks fee UTXOs.
+  return labeled.length > 0 ? labeled.length : actions.length
+}
 
 /**
  * Stuck `noSend` hardened commits (failed settle, killed app mid-flight) keep
  * the tip/funding UTXOs reserved. Retries then fail with cryptic abort /
- * sourceTransaction errors. Clear them before a new Commit/Settle pair.
+ * sourceTransaction / false insufficient-funds. Clear them before a new pair.
  */
 async function abortStuckHardenedNosends(wallet: ActiveWallet): Promise<void> {
-  const w = wallet.wallet as ActiveWallet['wallet'] & {
-    listNoSendActions?: (
-      args: { labels: string[]; limit?: number },
-      abort?: boolean,
-    ) => Promise<unknown>
-  }
+  const w = asNoSendWallet(wallet)
   if (typeof w.listNoSendActions !== 'function') return
   try {
     await w.listNoSendActions({ labels: [], limit: 100 }, true)
-    console.info('[brc-156] cleared stuck noSend actions before hardened send')
+    console.info('[brc-156] cleared stuck noSend actions')
   } catch (err) {
     console.warn('[brc-156] listNoSendActions(abort) failed', err)
+  }
+}
+
+async function listHardenedNosendCount(wallet: ActiveWallet): Promise<number> {
+  const w = asNoSendWallet(wallet)
+  if (typeof w.listNoSendActions !== 'function') return 0
+  try {
+    const listed = await w.listNoSendActions({ labels: [], limit: 100 }, false)
+    return countHardenedNosends(listed)
+  } catch (err) {
+    console.warn('[brc-156] listNoSendActions(list) failed', err)
+    return -1
   }
 }
 
@@ -110,6 +152,43 @@ async function abortHeldReferences(
     } catch (err) {
       console.warn('[brc-156] abortAction failed', reference, err)
     }
+  }
+}
+
+/**
+ * Objective release stage: abort held refs (optional), wipe nosends, assert clean.
+ * On success path pass `abortRefs: false` — broadcast already consumed the actions.
+ */
+async function releaseHardenedSend(
+  wallet: ActiveWallet,
+  args: {
+    settleRef?: string
+    commitRef?: string
+    abortRefs: boolean
+    /** When true, remaining nosends throw instead of only warning. */
+    assertClean: boolean
+  },
+): Promise<void> {
+  if (args.abortRefs) {
+    await abortHeldReferences(wallet, [args.settleRef, args.commitRef])
+    await abortStuckHardenedNosends(wallet)
+  }
+  let remaining = await listHardenedNosendCount(wallet)
+  if (remaining > 0) {
+    console.warn(
+      `[brc-156] ${remaining} noSend action(s) remain after release — wiping again`,
+    )
+    await abortStuckHardenedNosends(wallet)
+    await new Promise((r) => setTimeout(r, 200))
+    remaining = await listHardenedNosendCount(wallet)
+  }
+  if (remaining > 0 && args.assertClean) {
+    throw new Error(
+      'Prior hardened send is still holding funds in the wallet. Wait a second and send again.',
+    )
+  }
+  if (remaining === 0) {
+    console.info('[brc-156] release clean — no hardened noSend actions')
   }
 }
 
@@ -928,7 +1007,10 @@ export async function sendHardenedCollectable(
   const tipSrc = tipBeef.findTxid(tipTxid)?.tx
   if (!tipSrc) throw new Error('Hardened send: tip source transaction missing from BEEF')
 
-  await abortStuckHardenedNosends(args.wallet)
+  await releaseHardenedSend(args.wallet, {
+    abortRefs: true,
+    assertClean: true,
+  })
   const resumeMonitor = pauseMonitor(args.wallet)
 
   const chart = createActor(hardenedSendMachine)
@@ -1019,7 +1101,7 @@ export async function sendHardenedCollectable(
         {
           outpoint: tipOp,
           inputDescription: '1sat genesis tip',
-          unlockingScriptLength: 108,
+          unlockingScriptLength: feeUnlockBytes(108),
         },
       ]
       commitOutputs = [
@@ -1108,7 +1190,7 @@ export async function sendHardenedCollectable(
         {
           outpoint: tipOp,
           inputDescription: '1sat hardened tip',
-          unlockingScriptLength: unlockBudgetBytes,
+          unlockingScriptLength: feeUnlockBytes(unlockBudgetBytes),
         },
       ]
       commitOutputs = [
@@ -1272,7 +1354,7 @@ export async function sendHardenedCollectable(
           {
             outpoint: commitTipOp,
             inputDescription: 'Hardened commit tip',
-            unlockingScriptLength: unlockBudgetBytes,
+            unlockingScriptLength: feeUnlockBytes(unlockBudgetBytes),
           },
         ],
         outputs: settleOutputs,
@@ -1323,6 +1405,12 @@ export async function sendHardenedCollectable(
       })
       advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
       chart.stop()
+      await releaseHardenedSend(args.wallet, {
+        settleRef: settleReference,
+        commitRef: commitReference,
+        abortRefs: false,
+        assertClean: false,
+      })
       return { txid: settleSigned.txid }
     }
 
@@ -1376,12 +1464,12 @@ export async function sendHardenedCollectable(
         {
           outpoint: commitTipOp,
           inputDescription: 'Hardened commit tip',
-          unlockingScriptLength: unlockBudgetBytes,
+          unlockingScriptLength: feeUnlockBytes(unlockBudgetBytes),
         },
         {
           outpoint: delayedProofDot,
           inputDescription: 'Hardened delayed proof',
-          unlockingScriptLength: unlockBudgetBytes,
+          unlockingScriptLength: feeUnlockBytes(unlockBudgetBytes),
         },
       ],
       outputs: settleOutputs,
@@ -1432,6 +1520,12 @@ export async function sendHardenedCollectable(
     })
     advanceHardened(chart, { type: 'SETTLE_SIGNED', settleTxid: settleSigned.txid }, 'done')
     chart.stop()
+    await releaseHardenedSend(args.wallet, {
+      settleRef: settleReference,
+      commitRef: commitReference,
+      abortRefs: false,
+      assertClean: false,
+    })
     return { txid: settleSigned.txid }
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err)
@@ -1444,14 +1538,38 @@ export async function sendHardenedCollectable(
       chart.send({ type: 'FAIL', error: message })
     }
     chart.stop()
-    await abortHeldReferences(args.wallet, [settleReference, commitReference])
-    // If individual abort refused (dependent staged action), wipe all nosends.
-    await abortStuckHardenedNosends(args.wallet)
+    try {
+      await releaseHardenedSend(args.wallet, {
+        settleRef: settleReference,
+        commitRef: commitReference,
+        abortRefs: true,
+        assertClean: true,
+      })
+    } catch (releaseErr) {
+      // Prefer the release diagnosis when funds are still held — that is why
+      // settle looked like "insufficient funds" with a full balance.
+      if (
+        /INSUFFICIENT_FUNDS|insufficient.?funds/i.test(message) ||
+        /still holding funds/i.test(
+          releaseErr instanceof Error ? releaseErr.message : String(releaseErr),
+        )
+      ) {
+        throw releaseErr instanceof Error
+          ? releaseErr
+          : new Error(String(releaseErr))
+      }
+      console.warn('[brc-156] release after failure', releaseErr)
+    }
     if (args.isAlreadySpentInputError(err)) await args.releaseStaleSpendableOutputs()
     if (broadcastAttempted) markHardenedBroadcastAttempted(err)
     if (isAbortError(err)) {
       throw new Error(
         'Signing was interrupted (wallet storage busy). Wait a second and send again.',
+      )
+    }
+    if (/INSUFFICIENT_FUNDS|insufficient.?funds/i.test(message)) {
+      throw new Error(
+        'Not enough free BSV for this hardened transfer (funds may still be reserved). Wait a second and send again.',
       )
     }
     throw err

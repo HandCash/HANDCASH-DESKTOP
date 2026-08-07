@@ -2,6 +2,7 @@ import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
 import {
   estimateUnlockingLength,
+  feeUnlockBytes,
   hardenedSendMachine,
   spendsFitBudget,
   unlockingScriptByteLength,
@@ -9,8 +10,8 @@ import {
 import { HARDENED_UNLOCKING_SCRIPT_LENGTH } from './oneSatHardenedLatch'
 
 describe('hardenedSendMachine + unlock budget', () => {
-  it('estimates enough for the reported settle miss (hex 76190 ≈ 38k bytes)', () => {
-    // Reproduce: three txs totaling ~25k bytes → old pad 4096 → 29_201 budget.
+  it('estimates enough for embedded parent txs without 1.35× / 20k pad', () => {
+    // Three txs totaling ~25k bytes + extras — budget is payload + light framing.
     const txA = 'ab'.repeat(10_000) // 10_000 bytes
     const txB = 'cd'.repeat(8_000)
     const txC = 'ef'.repeat(7_105)
@@ -20,6 +21,13 @@ describe('hardenedSendMachine + unlock budget', () => {
     const needed = unlockingScriptByteLength('ff'.repeat(38_095))
     expect(budget).toBeGreaterThanOrEqual(needed)
     expect(budget).toBeGreaterThanOrEqual(HARDENED_UNLOCKING_SCRIPT_LENGTH)
+    // No double-pad: must stay well below old ceil(payload*1.35)+20480.
+    expect(budget).toBeLessThan(Math.ceil(38_095 * 1.35) + 20_480)
+  })
+
+  it('feeUnlockBytes passes the fit size through for createAction', () => {
+    expect(feeUnlockBytes(48_000)).toBe(48_000)
+    expect(feeUnlockBytes(12_345)).toBe(12_345)
   })
 
   it('rejects spends over budget before signAction', () => {

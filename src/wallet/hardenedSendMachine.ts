@@ -30,12 +30,14 @@ export type HardenedSendContext = {
 }
 
 /**
- * Bytes reserved for a covenant unlocking script.
+ * Sign-fit ceiling for a covenant unlocking script (`unlockFitBytes`).
  *
  * SDK compares `unlockingScript.length / 2` (bytes) to `unlockingScriptLength`.
  * Error messages often print the hex character length — do not confuse the units.
  *
- * Undersize → signAction throws. Oversize → slightly higher fee reserve only.
+ * Undersize → signAction throws. This estimate must stay ≥ the real unlock hex.
+ * Do not inflate with multipliers — that bleeds into fee selection when the same
+ * number is declared on createAction inputs (`feeUnlockBytes` = same size, no pad).
  */
 export function estimateUnlockingLength(
   embeddedTxHexes: string[],
@@ -47,11 +49,19 @@ export function estimateUnlockingLength(
   const payload = pieces.reduce((sum, hex) => sum + Math.ceil(hex.length / 2), 0)
   // OP_PUSHDATA4 ≈ 5–9 bytes per push; sig + pubkey + method selector ≈ 200.
   const pushOverhead = pieces.length * 16
-  const framing = 20_480
+  const framing = 512
   return Math.max(
     HARDENED_UNLOCKING_SCRIPT_LENGTH,
-    Math.ceil(payload * 1.35) + pushOverhead + framing,
+    payload + pushOverhead + framing,
   )
+}
+
+/**
+ * Fee-facing unlock size declared on createAction inputs.
+ * Same as sign-fit once estimate is honest (no 1.35× / 20k double-pad).
+ */
+export function feeUnlockBytes(unlockFitBytes: number): number {
+  return Math.max(0, Math.floor(unlockFitBytes))
 }
 
 /** Byte length of a hex unlocking script (what the toolbox compares against). */
