@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.104] - 2026-08-07
+
+### Fixed
+
+- **CI typecheck:** `hasProvenTier` import typo that blocked Mac/Win/Linux builds.
+
 ## [1.2.103] - 2026-08-07
 
 ### Fixed

@@ -93,7 +93,7 @@ import { isItemSent, markItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
-  hasProvenTiers,
+  hasProvenTier,
   hasProvenVerdict,
   rememberGenesisAttempt,
   rememberProvenVerdict,
