@@ -4,7 +4,11 @@
  * Receive fires as soon as a tip is first seen. Verify fires later when
  * authenticity settles — unless the tip was already proven before receive was
  * announced, in which case receive carries the verified copy alone.
+ *
+ * Announced receives are durable: unlock must not re-toast "Item received /
+ * Authenticity verified" for foxes that were proven days ago.
  */
+import { durableGetItem, durableSetItem } from './durableStorage'
 import { toastSuccess } from './toast'
 import { isItemProven } from './provenCache'
 import {
@@ -13,6 +17,9 @@ import {
 } from './verificationProgress'
 
 const ANNOUNCED_MAX = 500
+const DURABLE_RECEIVE_KEY = 'handcash.items.receiveAnnounced.v1'
+const DURABLE_RECEIVE_MAX = 2_000
+
 const receivedThisSession = new Set<string>()
 const verifiedThisSession = new Set<string>()
 
@@ -34,13 +41,51 @@ function note(set: Set<string>, outpoint: string): boolean {
   return true
 }
 
-/** True the first time this tip is announced as received this session. */
+function loadDurableReceives(): Set<string> {
+  try {
+    const raw = durableGetItem(DURABLE_RECEIVE_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(
+      parsed
+        .filter((v): v is string => typeof v === 'string' && !!v.trim())
+        .map(normalize),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+function persistDurableReceives(set: Set<string>): void {
+  try {
+    const values = [...set]
+    const trimmed =
+      values.length > DURABLE_RECEIVE_MAX
+        ? values.slice(values.length - DURABLE_RECEIVE_MAX)
+        : values
+    durableSetItem(DURABLE_RECEIVE_KEY, JSON.stringify(trimmed))
+  } catch {
+    // Toast dedupe must never break ingest.
+  }
+}
+
+/** True the first time this tip is announced as received (session + durable). */
 export function noteItemReceived(outpoint: string): boolean {
-  return note(receivedThisSession, outpoint)
+  const key = normalize(outpoint)
+  if (!key) return false
+  if (!note(receivedThisSession, key)) return false
+  const durable = loadDurableReceives()
+  if (durable.has(key)) return false
+  durable.add(key)
+  persistDurableReceives(durable)
+  return true
 }
 
 export function wasItemReceivedAnnounced(outpoint: string): boolean {
-  return receivedThisSession.has(normalize(outpoint))
+  const key = normalize(outpoint)
+  if (receivedThisSession.has(key)) return true
+  return loadDurableReceives().has(key)
 }
 
 /**
@@ -88,11 +133,22 @@ export function announceItemVerified(
   const key = normalize(outpoint)
   if (!key) return
   clearAwaitingVerification(key)
-  if (!receivedThisSession.has(key)) {
+  if (!wasItemReceivedAnnounced(outpoint)) {
     // Receive toast still ahead — do not toast verify first.
     note(verifiedThisSession, key)
     return
   }
   if (!note(verifiedThisSession, key)) return
   toastSuccess('Item verified', detail?.trim() || 'Authenticity proven on chain')
+}
+
+/** Test helper — clear session + durable announce state. */
+export function resetItemArrivalAnnouncementsForTests(): void {
+  receivedThisSession.clear()
+  verifiedThisSession.clear()
+  try {
+    durableSetItem(DURABLE_RECEIVE_KEY, '[]')
+  } catch {
+    // ignore
+  }
 }

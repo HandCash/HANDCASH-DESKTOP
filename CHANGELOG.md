@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.111] - 2026-08-07
+
+### Fixed
+
+- **Missing BRC-150/156 traits.** Remittance/OP_RETURN `mimeType` alone no longer
+  counts as a rich resolution — cards stay upgradeable until GorillaPool returns
+  collection traits (Pixel Fox eyes/background/etc.).
+- **Spurious "Item received · verified" on unlock.** Receive announces are
+  durable across sessions; already-proven pending rediscoveries are skipped.
+- **Settle AbortError.** Unlock vs `signAction` retried separately with a short
+  pause and clearer step logs.
+
 ## [1.2.110] - 2026-08-07
 
 ### Fixed

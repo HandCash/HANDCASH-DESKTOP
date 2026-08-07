@@ -120,9 +120,44 @@ describe('inscriptionCache', () => {
     expect(cache.getResolvedInscription('aa.0')?.origin).toBe('cc_3')
   })
 
-  it('leaves an identity the indexer proved alone', async () => {
+  it('re-asks the indexer when remittance only left mime/name (no traits)', async () => {
     const cache = await import('./inscriptionCache')
-    cache.rememberResolvedInscription('aa.0', { ...resolved('bb_1'), mimeType: 'image/png' })
+    const at = Date.now()
+    // Hardened OP_RETURN / remittance: name + mime, empty traits. Must stay
+    // upgradeable so collection traits can fill in from GorillaPool.
+    cache.rememberResolvedInscription('aa.0', {
+      origin: 'cc_3',
+      name: 'Pixel Foxes #1',
+      mimeType: 'image/png',
+      traits: [],
+      extras: [],
+    })
+
+    expect(cache.isThinResolution(cache.getResolvedInscription('aa.0'))).toBe(true)
+    expect(cache.shouldUpgradeResolution('aa.0', at)).toBe(true)
+  })
+
+  it('leaves an identity the indexer proved with collection shape', async () => {
+    const cache = await import('./inscriptionCache')
+    cache.rememberResolvedInscription('aa.0', {
+      ...resolved('bb_1'),
+      mimeType: 'image/png',
+      type: 'ord',
+      subType: 'collectionItem',
+      collectionId: 'foxes',
+    })
+
+    expect(cache.isThinResolution(cache.getResolvedInscription('aa.0'))).toBe(false)
+    expect(cache.shouldUpgradeResolution('aa.0')).toBe(false)
+  })
+
+  it('leaves an identity with traits alone', async () => {
+    const cache = await import('./inscriptionCache')
+    cache.rememberResolvedInscription('aa.0', {
+      origin: 'bb_1',
+      traits: [{ name: 'eyes', value: 'laser' }],
+      extras: [],
+    })
 
     expect(cache.isThinResolution(cache.getResolvedInscription('aa.0'))).toBe(false)
     expect(cache.shouldUpgradeResolution('aa.0')).toBe(false)

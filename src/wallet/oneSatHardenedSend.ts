@@ -124,7 +124,8 @@ async function withAbortRetry<T>(label: string, fn: () => Promise<T>): Promise<T
     return await fn()
   } catch (err) {
     if (!isAbortError(err)) throw err
-    console.warn(`[brc-156] ${label} AbortError — retrying once`, err)
+    console.warn(`[brc-156] ${label} AbortError — retrying once after brief pause`, err)
+    await new Promise((r) => setTimeout(r, 400))
     return await fn()
   }
 }
@@ -730,11 +731,52 @@ async function signCovenantAction(args: {
 async function signCovenantActionResilient(
   args: Parameters<typeof signCovenantAction>[0],
 ): Promise<{ txid: string; tx?: number[] }> {
-  return withAbortRetry(`signCovenantAction(${args.mode})`, async () => {
+  const spends = await withAbortRetry(`unlock(${args.mode})`, async () => {
     console.info(`[brc-156] ${args.mode}: building unlock scripts`)
-    const result = await signCovenantAction(args)
-    console.info(`[brc-156] ${args.mode}: signAction ok txid=${result.txid.slice(0, 12)}…`)
-    return result
+    const built = await generateCovenantUnlocks({
+      wallet: args.wallet,
+      signable: args.signable,
+      mode: args.mode,
+      outpoints: args.outpoints,
+      nextProofScriptHex: args.nextProofScriptHex,
+      nextTipScriptHex: args.nextTipScriptHex,
+      stateScriptHex: args.stateScriptHex,
+      recipientPublicKeyHex: args.recipientPublicKeyHex,
+      commitTxHex: args.commitTxHex,
+      genesisTxHex: args.genesisTxHex,
+      currentCommitTxHex: args.currentCommitTxHex,
+      priorSettleTxHex: args.priorSettleTxHex,
+      proofCommitTxHex: args.proofCommitTxHex,
+    })
+    console.info(
+      `[brc-156] ${args.mode}: unlock scripts ready (${Object.keys(built).length} vin)`,
+    )
+    return built
+  })
+
+  if (args.unlockBudgetBytes != null) {
+    const fit = spendsFitBudget(spends, args.unlockBudgetBytes)
+    if (!fit.ok) {
+      throw new Error(
+        `Hardened ${args.mode}: unlockingScript ${fit.actual} bytes exceeds budget ${fit.budget} (vin ${fit.vin})`,
+      )
+    }
+  }
+
+  return withAbortRetry(`signAction(${args.mode})`, async () => {
+    console.info(`[brc-156] ${args.mode}: signAction`)
+    const signed = await args.wallet.wallet.signAction({
+      reference: args.signable.reference,
+      spends,
+      options: {
+        acceptDelayedBroadcast: false,
+        ...(args.signOptions?.noSend ? { noSend: true } : {}),
+        ...(args.signOptions?.sendWith ? { sendWith: args.signOptions.sendWith } : {}),
+      },
+    })
+    if (!signed.txid) throw new Error(`Hardened ${args.mode} returned no txid`)
+    console.info(`[brc-156] ${args.mode}: signAction ok txid=${signed.txid.slice(0, 12)}…`)
+    return { txid: signed.txid, tx: atomicBeefToNumberArray(signed.tx) }
   })
 }
 

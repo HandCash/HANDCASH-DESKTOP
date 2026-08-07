@@ -1,5 +1,18 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 
+const store = new Map<string, string>()
+
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => store.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    store.set(key, value)
+    return true
+  },
+  durableRemoveItem: (key: string) => {
+    store.delete(key)
+  },
+}))
+
 const toastSuccess = vi.fn()
 vi.mock('./toast', () => ({
   toastSuccess: (...args: unknown[]) => toastSuccess(...args),
@@ -17,11 +30,14 @@ vi.mock('./provenCache', () => ({
 }))
 
 describe('itemArrivalToast', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
+    store.clear()
     toastSuccess.mockReset()
     noteAwaitingVerification.mockReset()
     clearAwaitingVerification.mockReset()
     vi.resetModules()
+    const { resetItemArrivalAnnouncementsForTests } = await import('./itemArrivalToast')
+    resetItemArrivalAnnouncementsForTests()
   })
 
   it('toasts receive once with spinner, then verify once', async () => {
@@ -63,5 +79,18 @@ describe('itemArrivalToast', () => {
     expect(toastSuccess).toHaveBeenCalledTimes(1)
     expect(toastSuccess.mock.calls[0]![0]).toBe('Item received')
     expect(String(toastSuccess.mock.calls[0]![1])).toMatch(/verified/i)
+  })
+
+  it('does not re-toast receive across sessions for the same outpoint', async () => {
+    const op = `${'c'.repeat(64)}.0`
+    const first = await import('./itemArrivalToast')
+    first.announceItemsReceived([op])
+    expect(toastSuccess).toHaveBeenCalledTimes(1)
+
+    vi.resetModules()
+    toastSuccess.mockReset()
+    const second = await import('./itemArrivalToast')
+    second.announceItemsReceived([op])
+    expect(toastSuccess).not.toHaveBeenCalled()
   })
 })

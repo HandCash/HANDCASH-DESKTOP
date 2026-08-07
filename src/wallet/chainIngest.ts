@@ -284,9 +284,12 @@ export async function refreshFromChainExclusive(
     ]
     // Imports and latch-proven pending tips both count as a receive — do not
     // wait for authenticity before the user hears about the landing.
+    // Skip already-proven pending rediscoveries (unlock would otherwise re-toast
+    // "Item received · Authenticity verified" for held foxes).
+    const { isItemProven } = await import('./provenCache')
     arrivedItemOutpoints = [
       ...ingest.newOneSatOutpoints,
-      ...ingest.pendingOutpoints,
+      ...ingest.pendingOutpoints.filter((op) => !isItemProven(op)),
     ]
     for (const op of arrivedItemOutpoints) {
       noteAnnouncedOneSat(op)

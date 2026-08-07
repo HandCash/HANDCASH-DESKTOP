@@ -149,20 +149,21 @@ export function isPlaceholderResolution(
 }
 
 /**
- * True for an identity that names an item without ever proving what it is.
+ * True for an identity that names an item without indexer-backed substance.
  *
- * A sender's remittance carries a name, an app and an origin and nothing else.
- * That is enough to paint a card, and it is exactly what a *wrong* origin also
- * looks like — no content type, no traits. An origin the indexer cannot back
- * with an inscription leaves a 404 image and a stale name on screen forever, and
- * gets handed on to the next recipient, so these stay eligible for one indexer
- * upgrade per retry window.
+ * A sender's remittance (and hardened OP_RETURN) often carries name + mimeType
+ * with empty traits. That used to count as "rich" because mime was set, so the
+ * upgrade pass never asked GorillaPool for collection traits — verified foxes
+ * painted traitless forever. Remittance paint stays thin until traits,
+ * collectionId, or an indexer type/subType lands.
  */
 export function isThinResolution(
   resolved: Partial<ResolvedInscription> | null | undefined,
 ): boolean {
   if (!resolved) return true
-  return !resolved.mimeType && (resolved.traits?.length ?? 0) === 0
+  if ((resolved.traits?.length ?? 0) > 0) return false
+  if (resolved.collectionId || resolved.subType || resolved.type) return false
+  return true
 }
 
 const UPGRADE_PREFIX = 'upgrade:'
