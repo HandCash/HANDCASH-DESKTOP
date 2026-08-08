@@ -129,6 +129,25 @@ describe('walletCoordinator runtime', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
 
+  it('notifies onSpendRegion after FIFO acquire and before the lease', async () => {
+    const order: string[] = []
+    await runExclusiveSpend(
+      async () => {
+        order.push('fn')
+      },
+      async () => {
+        order.push('lease')
+        return async () => {
+          order.push('release-lease')
+        }
+      },
+      () => {
+        order.push('acquired')
+      },
+    )
+    expect(order).toEqual(['acquired', 'lease', 'fn', 'release-lease'])
+  })
+
   it('tracks explicit requestSpendPriority independently of the FIFO', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(false)
     requestSpendPriority()

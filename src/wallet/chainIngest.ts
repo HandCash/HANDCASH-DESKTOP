@@ -214,7 +214,7 @@ export async function refreshFromChainExclusive(
   if (!active) return emptyRun()
 
   // A send is waiting on the coordinator — skip ordinal naming / inventory work
-  // so the FIFO frees and prepareSpendHeal can run.
+  // so the FIFO frees and the spend can begin.
   const yieldToSpend = shouldYieldChainIngestToSpend()
   const fundingOnly = opts?.fundingOnly === true || yieldToSpend
   if (yieldToSpend && opts?.fundingOnly !== true) {

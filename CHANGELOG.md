@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.128] - 2026-08-08
+
+### Fixed
+
+- **“Waiting to send the collectable” hung on a full address rescan.** The tip
+  is already in the basket; send no longer heals via WhatsOnChain (7s timeout
+  when it is down). Background ingest aborts when a send is queued, and WoC is
+  skipped for 45s after a failure.
+
 ## [1.2.127] - 2026-08-08
 
 ### Fixed

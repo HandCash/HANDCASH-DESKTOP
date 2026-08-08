@@ -159,12 +159,15 @@ export function runChainIngestDuringSpend<T>(fn: () => Promise<T>): Promise<T> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   acquireLease: () => Promise<() => Promise<void>>,
+  onSpendRegion?: () => void,
 ): Promise<T> {
   // Before the FIFO waits — so a running refresh can yield ordinal work now.
   requestSpendPriority()
   return topLevelQueue(async () => {
     try {
       const releaseSpend = await acquireSpend()
+      // FIFO is free — drop "Waiting to send…" before the cross-device lease RTT.
+      onSpendRegion?.()
       const releaseLease = await acquireLease()
       try {
         return await fn()

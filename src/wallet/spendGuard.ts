@@ -15,8 +15,11 @@ import {
 } from './walletCoordinator'
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
-export function runExclusiveSpend<T>(fn: () => Promise<T>): Promise<T> {
-  return runExclusiveSpendCoordinated(fn, acquireSpendLease)
+export function runExclusiveSpend<T>(
+  fn: () => Promise<T>,
+  onSpendRegion?: () => void,
+): Promise<T> {
+  return runExclusiveSpendCoordinated(fn, acquireSpendLease, onSpendRegion)
 }
 
 /**

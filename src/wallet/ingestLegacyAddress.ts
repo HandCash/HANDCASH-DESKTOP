@@ -32,6 +32,7 @@ import {
 } from './oneSatImport'
 import { filterNewOneSatOutpoints, isOneSatOutpointKnown } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 export type LegacyAddressIngestResult = {
   scan: LegacyScanResult
@@ -156,31 +157,50 @@ function recordItemReceipts(
  * Scan the wallet legacy P2PKH receive address and internalize funding + 1sats.
  * Does not run spendable review — callers run that first when needed.
  */
+function emptyIngest(scan: LegacyScanResult): LegacyAddressIngestResult {
+  return {
+    scan,
+    importedFunding: 0,
+    importedItems: 0,
+    fundingFailed: 0,
+    itemsFailed: 0,
+    fundingSkippedKnown: 0,
+    importedFundingOutpoints: [],
+    heldOneSats: 0,
+    pendingTips: 0,
+    pendingOutpoints: [],
+    newOneSatOutpoints: [],
+    partialWarn: null,
+  }
+}
+
 export async function ingestLegacyAddressUtxos(
   opts: LegacyAddressIngestOptions = {},
 ): Promise<LegacyAddressIngestResult> {
   const active = opts.active ?? getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const scan = await scanLegacyAddress(active)
-  if (scan.utxos.length === 0) {
-    return {
-      scan,
-      importedFunding: 0,
-      importedItems: 0,
-      fundingFailed: 0,
-      itemsFailed: 0,
-      fundingSkippedKnown: 0,
-      importedFundingOutpoints: [],
-      heldOneSats: 0,
-      pendingTips: 0,
-      pendingOutpoints: [],
-      newOneSatOutpoints: [],
-      partialWarn: null,
-    }
+  const fundingOnly = opts.fundingOnly === true
+  // A send is queued — don't start a 7s address scan the FIFO is waiting on.
+  if (!fundingOnly && shouldYieldChainIngestToSpend()) {
+    return emptyIngest({
+      address: active.address,
+      chain: active.chain,
+      sats: 0,
+      utxos: [],
+      source: 'services',
+    })
   }
 
-  const fundingOnly = opts.fundingOnly === true
+  const scan = await scanLegacyAddress(active)
+  if (scan.utxos.length === 0) {
+    return emptyIngest(scan)
+  }
+
+  if (!fundingOnly && shouldYieldChainIngestToSpend()) {
+    return emptyIngest(scan)
+  }
+
   const { funding, oneSats, latches, heldOneSats, pendingTips } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,

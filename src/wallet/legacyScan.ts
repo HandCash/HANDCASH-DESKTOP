@@ -46,6 +46,14 @@ function wocBase(chain: Chain): string {
  * let the caller fall through to the toolbox services instead.
  */
 const SCAN_TIMEOUT_MS = 7_000
+/** Don't pay another 7s abort on every poll after WoC just failed. */
+const WOC_COOLDOWN_MS = 45_000
+let wocCooldownUntil = 0
+
+/** Test-only — clear the WhatsOnChain skip window. */
+export function resetLegacyScanCooldownForTests(): void {
+  wocCooldownUntil = 0
+}
 
 async function fetchWithDeadline(url: string): Promise<Response> {
   const controller = new AbortController()
@@ -131,32 +139,38 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
   if (!wallet) throw new Error('Wallet locked')
 
   let wocError: unknown
-  try {
-    const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
-    // Enrich zero-sat rows from services if WoC omitted values (rare).
-    if (woc.utxos.some((u) => !(u.satoshis > 0)) && wallet.services) {
-      try {
-        const viaServices = await scanAddressViaServices(
-          wallet.services,
-          wallet.address,
-          wallet.chain,
-        )
-        const byOp = new Map(viaServices.utxos.map((u) => [u.outpoint.toLowerCase(), u]))
-        const merged = woc.utxos.map((u) => {
-          if (u.satoshis > 0) return u
-          const alt = byOp.get(u.outpoint.toLowerCase())
-          return alt && alt.satoshis > 0 ? { ...u, satoshis: alt.satoshis } : u
-        })
-        const sats = merged.reduce((s, u) => s + u.satoshis, 0)
-        return { ...woc, utxos: merged, sats }
-      } catch {
-        /* keep WoC */
+  if (Date.now() < wocCooldownUntil) {
+    console.info('[legacy-scan] skipping WhatsOnChain (recently failed)')
+  } else {
+    try {
+      const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+      wocCooldownUntil = 0
+      // Enrich zero-sat rows from services if WoC omitted values (rare).
+      if (woc.utxos.some((u) => !(u.satoshis > 0)) && wallet.services) {
+        try {
+          const viaServices = await scanAddressViaServices(
+            wallet.services,
+            wallet.address,
+            wallet.chain,
+          )
+          const byOp = new Map(viaServices.utxos.map((u) => [u.outpoint.toLowerCase(), u]))
+          const merged = woc.utxos.map((u) => {
+            if (u.satoshis > 0) return u
+            const alt = byOp.get(u.outpoint.toLowerCase())
+            return alt && alt.satoshis > 0 ? { ...u, satoshis: alt.satoshis } : u
+          })
+          const sats = merged.reduce((s, u) => s + u.satoshis, 0)
+          return { ...woc, utxos: merged, sats }
+        } catch {
+          /* keep WoC */
+        }
       }
+      return woc
+    } catch (err) {
+      wocError = err
+      wocCooldownUntil = Date.now() + WOC_COOLDOWN_MS
+      console.warn('[legacy-scan] WhatsOnChain failed, trying services', err)
     }
-    return woc
-  } catch (err) {
-    wocError = err
-    console.warn('[legacy-scan] WhatsOnChain failed, trying services', err)
   }
 
   try {

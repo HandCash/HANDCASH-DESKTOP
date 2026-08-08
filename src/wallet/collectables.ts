@@ -16,7 +16,7 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
-import { getActiveWallet, type ActiveWallet } from './session'
+import { fetchBalanceSats, getActiveWallet, type ActiveWallet } from './session'
 import {
   contentUrlForOrigin,
   resolveInscriptionAtOrigin,
@@ -26,7 +26,7 @@ import {
 } from './oneSatImport'
 import { resolvePaymentAddress } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
+import { runExclusiveSpend } from './spendGuard'
 import {
   clearPaymentProgress,
   setPaymentProgress,
@@ -1583,13 +1583,16 @@ export async function sendCollectable(args: {
     'Waiting to send the collectable',
     outpoint,
   )
-  return runExclusiveSpend(async () => {
+  return runExclusiveSpend(
+    async () => {
     try {
     assertOnlineForPayment()
-    setPaymentProgress('preparing', undefined, outpoint)
-    await prepareSpendHeal()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
+    // Tip is already in the 1sat basket. A full address rescan (7s WoC timeout
+    // when the indexer is down) is what made this pill feel stuck. Fee UTXOs
+    // are already in managed change — createAction fails closed if they aren't.
+    await fetchBalanceSats(wallet.wallet)
 
   setPaymentProgress(
     'building',
@@ -1951,5 +1954,7 @@ export async function sendCollectable(args: {
 } finally {
       clearPaymentProgress()
     }
-  })
+  },
+    () => setPaymentProgress('preparing', undefined, outpoint),
+  )
 }

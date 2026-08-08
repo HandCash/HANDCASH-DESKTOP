@@ -16,6 +16,11 @@ vi.mock('./durableStorage', () => ({
 }))
 
 const mockTxExistsOnChain = vi.fn(async (): Promise<boolean | null> => null)
+const mockShouldYield = vi.fn(() => false)
+
+vi.mock('./walletCoordinator', () => ({
+  shouldYieldChainIngestToSpend: () => mockShouldYield(),
+}))
 
 vi.mock('./legacyScan', () => ({
   scanLegacyAddress: (...args: unknown[]) => mockScanLegacyAddress(...args),
@@ -51,6 +56,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     mockScanLegacyAddress.mockReset()
     mockImportLegacyUtxos.mockReset()
     mockClassifyLegacyUtxos.mockReset()
+    mockShouldYield.mockReturnValue(false)
 
     mockScanLegacyAddress.mockResolvedValue({
       address: 'addr',
@@ -68,7 +74,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     })
   })
 
-  const active = { chain: 'main', wallet: {} } as unknown as ActiveWallet
+  const active = { chain: 'main', wallet: {}, address: '1abc' } as unknown as ActiveWallet
 
   it('writes a Received activity row for each newly swept payment', async () => {
     mockImportLegacyUtxos.mockResolvedValue({
@@ -210,6 +216,29 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
 
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(2)
     vi.useRealTimers()
+  })
+
+  it('skips the address scan when a send is waiting', async () => {
+    mockShouldYield.mockReturnValue(true)
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    const result = await ingestLegacyAddressUtxos({ active })
+    expect(mockScanLegacyAddress).not.toHaveBeenCalled()
+    expect(result.importedFunding).toBe(0)
+    expect(result.scan.utxos).toEqual([])
+  })
+
+  it('still scans when fundingOnly even if a send is waiting', async () => {
+    mockShouldYield.mockReturnValue(true)
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main' as const,
+      sats: 0,
+      utxos: [],
+      source: 'whatsonchain' as const,
+    })
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await ingestLegacyAddressUtxos({ active, fundingOnly: true })
+    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
   })
 
   it('leaves the mark alone when the sweep tx does exist', async () => {
