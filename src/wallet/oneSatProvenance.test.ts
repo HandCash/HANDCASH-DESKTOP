@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest'
 import {
   parseProvenanceV2,
   deriveOneSatPathFromBeef,
+  findOrdinalParentVin,
   rebuildProvenanceV2FromBeef,
   provenanceFitsBudget,
   REMITTANCE_MAX_BEEF_B64_CHARS,
@@ -236,5 +237,138 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
     expect(extended!.path[0]).toBe(`${child.id('hex')}_0`)
     expect(extended!.path[1]).toBe(parentProv.tip)
     expect(verifyProvenanceV2(extended!, `${child.id('hex')}.0`).proven).toBe(true)
+  })
+
+  it('maps i0 1-sat onto o0 without extra input sources', () => {
+    const origin = new Transaction()
+    origin.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: origin.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+
+    const beef = new Beef()
+    beef.mergeRawTx(origin.toBinary())
+    beef.mergeRawTx(tip.toBinary())
+    expect(findOrdinalParentVin(beef, tip, 0)).toBe(0)
+  })
+
+  it('requires the preceding funding source when the ordinal lands on o1', () => {
+    const origin = new Transaction()
+    origin.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
+    const funding = new Transaction()
+    funding.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: funding.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addInput({
+      sourceTXID: origin.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+
+    const withoutFunding = new Beef()
+    withoutFunding.mergeRawTx(origin.toBinary())
+    withoutFunding.mergeRawTx(tip.toBinary())
+    expect(findOrdinalParentVin(withoutFunding, tip, 1)).toBeNull()
+
+    const withFunding = new Beef()
+    withFunding.mergeRawTx(funding.toBinary())
+    withFunding.mergeRawTx(origin.toBinary())
+    withFunding.mergeRawTx(tip.toBinary())
+    expect(findOrdinalParentVin(withFunding, tip, 1)).toBe(1)
+    expect(findOrdinalParentVin(withFunding, tip, 0)).toBeNull()
+  })
+
+  it('rejects a path that spends the ordinal input but pays a funding sat on the claimed vout', () => {
+    const origin = new Transaction()
+    origin.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
+    const funding = new Transaction()
+    funding.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: funding.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addInput({
+      sourceTXID: origin.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    tip.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+
+    const beef = new Beef()
+    const originEntry = beef.mergeRawTx(origin.toBinary())
+    originEntry.bumpIndex = beef.mergeBump(provenAt(origin))
+    beef.mergeRawTx(funding.toBinary())
+    beef.mergeRawTx(tip.toBinary())
+
+    const originOutpoint = `${origin.id('hex')}_0`
+    const tipOutpoint = `${tip.id('hex')}_0`
+    const provenance: ProvenanceV2 = {
+      v: 2,
+      origin: originOutpoint,
+      tip: tipOutpoint,
+      path: [tipOutpoint, originOutpoint],
+      beefB64: toBase64(beef.toBinary()),
+    }
+    expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).reason).toMatch(
+      /does not receive the ordinal sat/i,
+    )
+  })
+
+  it('proves funding-first hops when o1 is the ordinal and funding is in the BEEF', () => {
+    const origin = new Transaction()
+    origin.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
+    const funding = new Transaction()
+    funding.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: funding.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addInput({
+      sourceTXID: origin.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 5_000, lockingScript: LockingScript.fromHex('51') })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+
+    const beef = new Beef()
+    const originEntry = beef.mergeRawTx(origin.toBinary())
+    originEntry.bumpIndex = beef.mergeBump(provenAt(origin))
+    beef.mergeRawTx(funding.toBinary())
+    beef.mergeRawTx(tip.toBinary())
+
+    const originOutpoint = `${origin.id('hex')}_0`
+    const tipOutpoint = `${tip.id('hex')}_1`
+    const provenance: ProvenanceV2 = {
+      v: 2,
+      origin: originOutpoint,
+      tip: tipOutpoint,
+      path: [tipOutpoint, originOutpoint],
+      beefB64: toBase64(beef.toBinary()),
+    }
+    expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.1`)).toEqual({
+      proven: true,
+      reason: null,
+    })
+    expect(rebuildProvenanceV2FromBeef(beef, tipOutpoint)).toMatchObject({
+      v: 2,
+      origin: originOutpoint,
+      path: [tipOutpoint, originOutpoint],
+    })
   })
 })

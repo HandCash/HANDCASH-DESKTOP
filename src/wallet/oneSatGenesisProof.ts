@@ -19,17 +19,22 @@
  * `INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX`), and the next send can go hardened.
  */
 import { Beef } from '@bsv/sdk'
-import { deriveOneSatPathFromBeef, verifyProvenanceV2 } from './oneSatProvenance'
+import {
+  deriveOneSatPathFromBeef,
+  findOrdinalParentVin,
+  verifyProvenanceV2,
+} from './oneSatProvenance'
 import { hasOrdEnvelope } from './ordinalOwnership'
 
 /** Hops walked before we give up. Deep enough for a decade of transfers. */
 export const MAX_GENESIS_HOPS = 64
 /**
- * Parent candidates examined per hop.
+ * Input sources hydrated per hop while resolving FIFO mapping.
  *
- * A transfer spends the ordinal plus a little funding, so the sat is found in
- * the first inputs. The cap stops a transaction with hundreds of inputs from
- * turning one hop into a fetch storm.
+ * A transfer spends the ordinal plus a little funding, so the sat is usually
+ * in the first inputs. Hydration is in vin order and stops once mapping is
+ * known (canonical i0→o0 fetches only the parent). The cap stops a transaction
+ * with hundreds of inputs from turning one hop into a fetch storm.
  */
 const MAX_PARENT_CANDIDATES = 8
 
@@ -114,21 +119,25 @@ export async function proveGenesisLineage(args: {
     }
     if (hops === maxHops) return null
 
+    const vout = Number(match[2])
     let parent: string | null = null
-    for (const input of here.tx.inputs.slice(0, MAX_PARENT_CANDIDATES)) {
+    for (let vin = 0; vin < Math.min(here.tx.inputs.length, MAX_PARENT_CANDIDATES); vin++) {
+      const srcTxid = String(here.tx.inputs[vin]?.sourceTXID ?? '').toLowerCase()
+      const srcVout = here.tx.inputs[vin]?.sourceOutputIndex
+      if (!/^[0-9a-f]{64}$/.test(srcTxid) || !Number.isSafeInteger(srcVout)) return null
+      try {
+        await hydrate(srcTxid)
+      } catch {
+        return null
+      }
+      const ordinalVin = findOrdinalParentVin(merged, here.tx, vout)
+      if (ordinalVin == null) continue
+      const input = here.tx.inputs[ordinalVin]!
       const parentTxid = String(input.sourceTXID ?? '').toLowerCase()
       const parentVout = input.sourceOutputIndex
-      if (!/^[0-9a-f]{64}$/.test(parentTxid) || !Number.isSafeInteger(parentVout)) continue
-      try {
-        await hydrate(parentTxid)
-      } catch {
-        continue
-      }
-      const candidate = `${parentTxid}_${parentVout}`
-      if (outputAt(candidate)?.output?.satoshis === 1) {
-        parent = candidate
-        break
-      }
+      if (!/^[0-9a-f]{64}$/.test(parentTxid) || !Number.isSafeInteger(parentVout)) return null
+      parent = `${parentTxid}_${parentVout}`
+      break
     }
     if (!parent) return null
     point = parent

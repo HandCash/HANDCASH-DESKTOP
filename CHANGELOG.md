@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.130] - 2026-08-08
+
+### Fixed
+
+- **BRC-150 trusted spend path instead of FIFO sat mapping.** Verifiers now
+  require the parent 1-sat vin to be the input whose sats land on the claimed
+  vout. Preceding input sources (funding before the ordinal vin) must be in the
+  remittance BEEF — fail closed if missing. AtomicBEEF is no longer preferred
+  when it would drop those sources.
+
 ## [1.2.129] - 2026-08-08
 
 ### Fixed

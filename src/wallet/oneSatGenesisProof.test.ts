@@ -34,7 +34,12 @@ function inscription(): Transaction {
   return tx
 }
 
-/** A transfer: spends the sat, pays it on, plus an unrelated funding input. */
+/**
+ * A transfer: spends the sat and pays it on.
+ *
+ * When `funding` is first, change is o0 and the ordinal is o1 — FIFO would
+ * otherwise assign a funding sat to a 1-sat o0.
+ */
 function transfer(parent: Transaction, parentVout = 0, funding?: Transaction): Transaction {
   const tx = new Transaction()
   if (funding) {
@@ -49,6 +54,12 @@ function transfer(parent: Transaction, parentVout = 0, funding?: Transaction): T
     sourceOutputIndex: parentVout,
     unlockingScript: new UnlockingScript(),
   })
+  if (funding) {
+    tx.addOutput({
+      satoshis: funding.outputs[0]!.satoshis,
+      lockingScript: LockingScript.fromHex('51'),
+    })
+  }
   tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
   return tx
 }
@@ -103,15 +114,43 @@ describe('proveGenesisLineage', () => {
 
   it('ignores funding inputs when picking the parent', async () => {
     const origin = inscription()
-    const tip = transfer(origin, 0, fundingTx())
-    const getBeef = service([origin, tip, tip.inputs[0]!.sourceTransaction!])
+    const funding = fundingTx()
+    const tip = transfer(origin, 0, funding)
+    const getBeef = service([origin, tip, funding])
 
     const proof = await proveGenesisLineage({
-      tipOutpoint: `${tip.id('hex')}.0`,
+      tipOutpoint: `${tip.id('hex')}.1`,
       getBeef,
     })
 
     expect(proof?.origin).toBe(`${origin.id('hex')}_0`)
+    expect(proof?.path).toEqual([`${tip.id('hex')}_1`, `${origin.id('hex')}_0`])
+  })
+
+  it('refuses a 1-sat vout that spends the ordinal input but does not receive that sat', async () => {
+    const origin = inscription()
+    const funding = fundingTx()
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTransaction: funding,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addInput({
+      sourceTransaction: origin,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    tip.addOutput({
+      satoshis: funding.outputs[0]!.satoshis,
+      lockingScript: LockingScript.fromHex('51'),
+    })
+    const getBeef = service([origin, tip, funding])
+
+    expect(
+      await proveGenesisLineage({ tipOutpoint: `${tip.id('hex')}.0`, getBeef }),
+    ).toBeNull()
   })
 
   it('proves a tip that is itself the inscription', async () => {

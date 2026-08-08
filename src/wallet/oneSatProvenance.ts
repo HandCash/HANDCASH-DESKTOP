@@ -11,7 +11,7 @@
  * Senders SHOULD reuse or extend a prior verified remittance (prepend the new
  * tip + merge its tx into the BEEF) instead of re-walking lineage every hop.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import {
   parseProvenanceV3,
@@ -36,6 +36,101 @@ export type { ProvenanceVerifyResult, ProvenanceV3 } from './oneSatLatch'
 export { parseProvenanceV3, verifyProvenanceV3 } from './oneSatLatch'
 
 export type ProvenanceRemittance = ProvenanceV2 | ProvenanceV3
+
+/**
+ * Satoshis locked by `tx.inputs[vin]`, read from its source output in `beef`
+ * (or a `sourceTransaction` already linked on the input).
+ */
+export function inputSatoshisFromBeef(
+  beef: Beef,
+  tx: Transaction,
+  vin: number,
+): number | null {
+  const input = tx.inputs[vin]
+  if (!input) return null
+  const vout = input.sourceOutputIndex
+  if (!Number.isSafeInteger(vout) || vout < 0) return null
+  const linked = input.sourceTransaction?.outputs[vout]?.satoshis
+  if (typeof linked === 'number' && linked >= 0) return linked
+  const sourceTxid = String(input.sourceTXID ?? '').toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(sourceTxid)) return null
+  const out = beef.findTxid(sourceTxid)?.tx?.outputs[vout]
+  if (!out || typeof out.satoshis !== 'number' || out.satoshis < 0) return null
+  return out.satoshis
+}
+
+/**
+ * 1Sat / ordinal FIFO: which vin’s single satoshi lands on `vout`.
+ *
+ * `sum(input sats before vin) === sum(output sats before vout)`, and that input
+ * is 1 sat. Missing preceding input sources → null (fail closed).
+ */
+export function findOrdinalParentVin(
+  beef: Beef,
+  tx: Transaction,
+  vout: number,
+): number | null {
+  const out = tx.outputs[vout]
+  if (!out || out.satoshis !== 1) return null
+  let precedingOut = 0
+  for (let j = 0; j < vout; j++) {
+    const s = tx.outputs[j]?.satoshis
+    if (typeof s !== 'number' || s < 0) return null
+    precedingOut += s
+  }
+  let precedingIn = 0
+  for (let vin = 0; vin < tx.inputs.length; vin++) {
+    const inSats = inputSatoshisFromBeef(beef, tx, vin)
+    if (inSats == null) return null
+    if (inSats === 1 && precedingIn === precedingOut) return vin
+    precedingIn += inSats
+  }
+  return null
+}
+
+/** True when vin’s 1-sat is the FIFO sat that `vout` receives. */
+export function ordinalVinMapsToVout(
+  beef: Beef,
+  tx: Transaction,
+  vin: number,
+  vout: number,
+): boolean {
+  return findOrdinalParentVin(beef, tx, vout) === vin
+}
+
+function vinSpendingParent(
+  tx: Transaction,
+  parentTxid: string,
+  parentVout: number,
+): number {
+  const id = parentTxid.toLowerCase()
+  return tx.inputs.findIndex(
+    (input) =>
+      String(input.sourceTXID).toLowerCase() === id &&
+      input.sourceOutputIndex === parentVout,
+  )
+}
+
+/** Merge source txs for vin `0..upToVin` into `beef` when present on `from`. */
+export function mergePrecedingInputSources(
+  beef: Beef,
+  tx: Transaction,
+  upToVin: number,
+  from?: Beef,
+): void {
+  for (let i = 0; i <= upToVin; i++) {
+    const input = tx.inputs[i]
+    const linked = input?.sourceTransaction
+    if (linked) {
+      beef.mergeRawTx(linked.toBinary())
+      continue
+    }
+    const sourceTxid = String(input?.sourceTXID ?? '').toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(sourceTxid)) continue
+    const src = from?.findTxid(sourceTxid)?.tx ?? beef.findTxid(sourceTxid)?.tx
+    if (src) beef.mergeRawTx(src.toBinary())
+  }
+}
 
 /**
  * Recover the actual one-sat spend path already present in a BEEF.
@@ -69,14 +164,21 @@ export function deriveOneSatPathFromBeef(
     if (!match) return null
     const tx = beef.findTxid(match[1]!)?.tx
     if (!tx) return null
+    if (tx.inputs.length > 0) {
+      mergePrecedingInputSources(beef, tx, tx.inputs.length - 1)
+    }
 
-    for (const input of tx.inputs) {
-      const parentTxid = String(input.sourceTXID).toLowerCase()
-      const parentVout = input.sourceOutputIndex
-      if (!/^[0-9a-f]{64}$/.test(parentTxid) || !Number.isSafeInteger(parentVout)) continue
-      const parentTx = beef.findTxid(parentTxid)?.tx
-      const parentOutput = parentTx?.outputs[parentVout]
-      if (!parentOutput || parentOutput.satoshis !== 1) continue
+    const vout = Number(match[2])
+    const ordinalVin = findOrdinalParentVin(beef, tx, vout)
+    if (ordinalVin == null) {
+      visiting.delete(point)
+      memo.set(point, null)
+      return null
+    }
+    const input = tx.inputs[ordinalVin]!
+    const parentTxid = String(input.sourceTXID).toLowerCase()
+    const parentVout = input.sourceOutputIndex
+    if (/^[0-9a-f]{64}$/.test(parentTxid) && Number.isSafeInteger(parentVout)) {
       const parent = `${parentTxid}_${parentVout}`
       const suffix = walk(parent)
       if (suffix) {
@@ -98,9 +200,8 @@ export function deriveOneSatPathFromBeef(
 /**
  * Rebuild a legacy BRC-150 path without trusting an indexer identity.
  *
- * Every candidate edge must be an exact one-sat input. If independent one-sat
- * parents lead to different `ord` origins the sat path is ambiguous and this
- * returns null rather than choosing whichever input an indexer happens to name.
+ * The parent of each hop is the unique FIFO 1-sat input that lands on that
+ * vout. Missing preceding input sources fail closed rather than guessing.
  */
 export function rebuildProvenanceV2FromBeef(
   beef: Beef,
@@ -127,15 +228,21 @@ export function rebuildProvenanceV2FromBeef(
       memo.set(point, null)
       return null
     }
+    if (tx.inputs.length > 0) {
+      mergePrecedingInputSources(beef, tx, tx.inputs.length - 1)
+    }
 
     const parents: Candidate[] = []
-    for (const input of tx.inputs) {
+    const ordinalVin = findOrdinalParentVin(beef, tx, Number(match![2]))
+    if (ordinalVin != null) {
+      const input = tx.inputs[ordinalVin]!
       const parentTxid = String(input.sourceTXID).toLowerCase()
       const parentVout = input.sourceOutputIndex
       const parentOutput = beef.findTxid(parentTxid)?.tx?.outputs[parentVout]
-      if (!parentOutput || parentOutput.satoshis !== 1) continue
-      const candidate = walk(`${parentTxid}_${parentVout}`)
-      if (candidate) parents.push(candidate)
+      if (parentOutput?.satoshis === 1) {
+        const candidate = walk(`${parentTxid}_${parentVout}`)
+        if (candidate) parents.push(candidate)
+      }
     }
 
     const origins = new Set(parents.map((candidate) => candidate.origin))
@@ -159,7 +266,8 @@ export function rebuildProvenanceV2FromBeef(
   const tipTxid = tip.slice(0, 64)
   let binary: number[]
   try {
-    binary = beef.toBinaryAtomic(tipTxid)
+    // Full BEEF: AtomicBEEF drops mined path parents and preceding input sources.
+    binary = typeof beef.toBinary === 'function' ? beef.toBinary() : beef.toBinaryAtomic(tipTxid)
   } catch {
     return null
   }
@@ -276,15 +384,13 @@ export function extendProvenanceV2(args: {
     if (!heldTx) return null
     const out = heldTx.outputs[heldVout]
     if (!out || out.satoshis !== 1) return null
-    const spendsParent = heldTx.inputs.some(
-      (input) =>
-        String(input.sourceTXID).toLowerCase() === parentTxid &&
-        input.sourceOutputIndex === parentVout,
-    )
-    if (!spendsParent) return null
+    const vin = vinSpendingParent(heldTx, parentTxid, parentVout)
+    if (vin < 0) return null
 
     const beef = Beef.fromBinary(base64ToBytes(prior.beefB64))
     beef.mergeRawTx(heldTx.toBinary())
+    mergePrecedingInputSources(beef, heldTx, vin, tipBeef)
+    if (!ordinalVinMapsToVout(beef, heldTx, vin, heldVout)) return null
     // Prefer a full (non-atomic) serialization so ancestry is not dropped.
     const bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
     if (!bin.length) return null
@@ -396,23 +502,30 @@ export function verifyProvenanceV2(
       }
     }
 
-    // `path` is ordered tip → origin. Every child transaction must spend the
-    // exact parent outpoint; merely including both txs in a valid BEEF does not
-    // prove the ordinal sat moved between them.
+    // `path` is ordered tip → origin. Spend + FIFO sat assignment: the parent
+    // 1-sat must be the input whose sats land on the child vout.
     for (let i = 0; i + 1 < parsedPath.length; i++) {
       const child = parsedPath[i]!
       const parent = parsedPath[i + 1]!
       if (child.txid === parent.txid) continue
       const childTx = beef.findTxid(child.txid)?.tx
-      const spendsParent = childTx?.inputs.some(
-        (input) =>
-          String(input.sourceTXID).toLowerCase() === parent.txid &&
-          input.sourceOutputIndex === parent.vout,
-      )
-      if (!spendsParent) {
+      if (!childTx) {
+        return {
+          proven: false,
+          reason: `path transaction missing: ${child.txid}`,
+        }
+      }
+      const vin = vinSpendingParent(childTx, parent.txid, parent.vout)
+      if (vin < 0) {
         return {
           proven: false,
           reason: `${child.normalized} does not spend parent ${parent.normalized}`,
+        }
+      }
+      if (!ordinalVinMapsToVout(beef, childTx, vin, child.vout)) {
+        return {
+          proven: false,
+          reason: `${child.normalized} does not receive the ordinal sat from ${parent.normalized}`,
         }
       }
     }
@@ -504,15 +617,37 @@ export async function verifyProvenanceForHeldTip(args: {
   if (!out || out.satoshis !== 1) {
     return { proven: false, reason: 'held tip is not a 1-sat output' }
   }
-  const spendsParent = heldTx.inputs.some(
-    (input) =>
-      String(input.sourceTXID).toLowerCase() === parentTxid &&
-      input.sourceOutputIndex === parentVout,
-  )
-  if (!spendsParent) {
+  const vin = vinSpendingParent(heldTx, parentTxid, parentVout)
+  if (vin < 0) {
     return {
       proven: false,
       reason: 'held tip does not spend remittance tip (parent)',
+    }
+  }
+  let mapBeef: Beef
+  try {
+    mapBeef = Beef.fromBinary(base64ToBytes(p.beefB64))
+    mapBeef.mergeRawTx(heldTx.toBinary())
+  } catch {
+    mapBeef = new Beef()
+    mapBeef.mergeRawTx(heldTx.toBinary())
+  }
+  if (!ordinalVinMapsToVout(mapBeef, heldTx, vin, heldVout) && args.getBeef) {
+    for (let i = 0; i < vin; i++) {
+      const srcTxid = String(heldTx.inputs[i]?.sourceTXID ?? '').toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(srcTxid)) continue
+      try {
+        mapBeef.mergeBeef((await args.getBeef(srcTxid)).toBinary())
+      } catch {
+        /* mapping may still fail closed */
+      }
+    }
+    mergePrecedingInputSources(mapBeef, heldTx, vin)
+  }
+  if (!ordinalVinMapsToVout(mapBeef, heldTx, vin, heldVout)) {
+    return {
+      proven: false,
+      reason: 'held tip does not receive the ordinal sat from remittance tip',
     }
   }
   return { proven: true, reason: null, origin: p.origin }
