@@ -152,13 +152,33 @@ describe('chooseSendPath', () => {
     ).toEqual({ path: 'softLatch', latchOutpoint: null })
   })
 
-  it('refuses unknown tip kinds', () => {
+  it('refuses unknown tip kinds without authenticity', () => {
     expect(
       chooseSendPath({
         tipKind: { kind: 'unknown' },
         recipientIdentityKey: IDENTITY,
       }),
     ).toMatchObject({ path: 'refuse' })
+  })
+
+  it('soft-latches unknown tips that already verified BRC-150', () => {
+    expect(
+      chooseSendPath({
+        tipKind: { kind: 'unknown' },
+        provenTier: 'brc150',
+        latchOutpoint: BEACON,
+      }),
+    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
+  })
+
+  it('still refuses covenant even when BRC-150 is proven', () => {
+    expect(
+      chooseSendPath({
+        tipKind: classifyTipKind(COVENANT),
+        provenTier: 'brc150',
+        latchOutpoint: BEACON,
+      }).path,
+    ).toBe('refuse')
   })
 })
 

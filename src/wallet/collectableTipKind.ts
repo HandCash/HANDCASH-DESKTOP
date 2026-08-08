@@ -136,7 +136,11 @@ export type ChooseSendPathArgs = {
   tipKind: TipKind
   /** Soft-latch dust outpoint when present. */
   latchOutpoint?: string | null
-  /** @deprecated Ignored — hardened genesis/resend removed. */
+  /**
+   * BRC-150 (or legacy brc156 paint) authenticity. When listOutputs/BEEF omit
+   * the locking script, a verified tip still soft-latches — authenticity is
+   * independent of the toolbox scriptOffset bug.
+   */
   provenTier?: ProvenTier | null
   /** @deprecated Ignored — hardened genesis/resend removed. */
   recipientIdentityKey?: string | null
@@ -144,9 +148,14 @@ export type ChooseSendPathArgs = {
   hardenedSendEnabled?: boolean
 }
 
+function isAuthenticityProven(tier: ProvenTier | null | undefined): boolean {
+  return tier === 'brc150' || tier === 'brc156'
+}
+
 /**
- * Exhaustive send-path choice. Covenant / unknown tips never return `softLatch`.
- * Soft P2PKH → softLatch; everything else refuses with an abandon hint.
+ * Exhaustive send-path choice. Covenant tips never return `softLatch`.
+ * Soft P2PKH → softLatch. Unknown + BRC-150 proven → softLatch (missing script).
+ * Unknown without proof refuses.
  */
 export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
   const latch =
@@ -154,16 +163,19 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
       ? toUnderscoreOutpoint(args.latchOutpoint)
       : null
 
-  if (args.tipKind.kind === 'unknown') {
-    return { path: 'refuse', reason: 'Collectable locking script is unrecognized' }
-  }
-
   if (args.tipKind.kind === 'covenantLocked') {
     return {
       path: 'refuse',
       reason:
         'This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory.',
     }
+  }
+
+  if (args.tipKind.kind === 'unknown') {
+    if (isAuthenticityProven(args.provenTier)) {
+      return { path: 'softLatch', latchOutpoint: latch }
+    }
+    return { path: 'refuse', reason: 'Collectable locking script is unrecognized' }
   }
 
   return { path: 'softLatch', latchOutpoint: latch }

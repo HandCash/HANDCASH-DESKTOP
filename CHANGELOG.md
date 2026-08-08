@@ -1,10 +1,21 @@
 # Changelog
 
+## [1.2.127] - 2026-08-08
+
+### Fixed
+
+- **BRC-150-verified tips still refused as unrecognized.** Missing locking
+  script (`listOutputs` / scriptOffset) no longer blocks send when authenticity
+  is already BRC-150. Covenant tips still refuse. Send log is `[collectables]`,
+  not leftover `[brc-156]`.
+
 ## [1.2.126] - 2026-08-07
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Send still refused as unrecognized on 1.2.125.** `listOutputs` often
+  returns no locking script (toolbox skips `scriptOffset === 0`). Soft-latch
+  now recovers the tip script from the tip BEEF before classifying.
 
 ## [1.2.125] - 2026-08-07
 

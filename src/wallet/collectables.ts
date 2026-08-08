@@ -1720,17 +1720,19 @@ export async function sendCollectable(args: {
   // so callers (friends / peerpay) keep the same signature.
   void args.recipientIdentityKey
   const tipKind = classifyTipKind(tipLockingScript)
+  const provenTier = getProvenVerdict(outpoint)?.tier ?? null
   const sendPath = chooseSendPath({
     tipKind,
     latchOutpoint: priorLatch?.outpoint ?? null,
+    provenTier,
   })
 
   const chart = createActor(collectableSendMachine).start()
   chart.send({ type: 'START', outpoint, sendPath })
   console.info(
-    `[brc-156] send path=${sendPath.path}${
+    `[collectables] send path=${sendPath.path}${
       sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
-    } tipKind=${tipKind.kind} scriptChars=${tipLockingScript.length}`,
+    } tipKind=${tipKind.kind} proven=${provenTier ?? 'none'} scriptChars=${tipLockingScript.length}`,
   )
 
   const finishSend = async (

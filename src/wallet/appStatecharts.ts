@@ -220,7 +220,8 @@ const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   tipKind --> unknown : empty / other
   covenantLocked --> refuse : abandon only
   softP2pkh --> softLatch
-  unknown --> refuse
+  unknown --> softLatch : BRC-150 proven
+  unknown --> refuse : unproven
 `
 
 const AUTHENTICITY = `stateDiagram-v2
@@ -510,7 +511,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendPath',
     label: 'Send path',
-    caption: 'chooseSendPath — TipKind → softLatch | refuse (covenant abandon)',
+    caption: 'chooseSendPath — TipKind → softLatch | refuse (150-proven unknown ok)',
     source: COLLECTABLE_SEND_PATH,
   },
   {
