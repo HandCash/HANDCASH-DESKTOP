@@ -24,6 +24,12 @@ vi.mock('./session', async (importOriginal) => ({
   getActiveWallet: () => activeWallet,
 }))
 
+const announceItemsReceived = vi.fn()
+vi.mock('./itemArrivalToast', () => ({
+  announceItemsReceived: (...args: unknown[]) => announceItemsReceived(...args),
+  announceItemVerified: vi.fn(),
+}))
+
 const ORD_ENVELOPE =
   '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
 
@@ -179,9 +185,11 @@ describe('classifyLegacyUtxos', () => {
 
     const scan = [utxo(`${TXID_D}.0`, 1), utxo(`${TXID_D}.1`, 2)]
 
+    announceItemsReceived.mockClear()
     const first = await classifyLegacyUtxos(scan, 'main')
     expect(first.latches.map((u) => u.outpoint)).toEqual([`${TXID_D}.1`])
     expect(first.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+    expect(announceItemsReceived).not.toHaveBeenCalled()
 
     fetchMock.mockClear()
     const second = await classifyLegacyUtxos(scan, 'main')

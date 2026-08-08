@@ -20,7 +20,6 @@ import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 import { toastSuccess } from './toast'
-import { announceItemsReceived } from './itemArrivalToast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
 import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
@@ -95,23 +94,8 @@ export async function refreshFromChainDuringSpend(
   )
 }
 
-/** Outpoints we've already chimed for this session — avoids re-import noise. */
-const announcedOneSatOutpoints = new Set<string>()
-const ANNOUNCED_MAX = 500
 let lastReceiveChimeAt = 0
 const RECEIVE_CHIME_COOLDOWN_MS = 12_000
-
-function noteAnnouncedOneSat(outpoint: string): void {
-  announcedOneSatOutpoints.add(outpoint)
-  // Session-long receive chimes must not grow without bound across a long unlock.
-  if (announcedOneSatOutpoints.size <= ANNOUNCED_MAX) return
-  const drop = announcedOneSatOutpoints.size - ANNOUNCED_MAX
-  let i = 0
-  for (const key of announcedOneSatOutpoints) {
-    if (i++ >= drop) break
-    announcedOneSatOutpoints.delete(key)
-  }
-}
 
 /** Background sync should not hammer UTXO status providers. */
 const REVIEW_THROTTLE_MS = 2 * 60_000
@@ -263,7 +247,6 @@ export async function refreshFromChainExclusive(
   let importedFunding = 0
   let importedItems = 0
   let scannedTxids: string[] = []
-  let arrivedItemOutpoints: string[] = []
 
   try {
     const ingest = await ingestLegacyAddressUtxos({
@@ -279,36 +262,6 @@ export async function refreshFromChainExclusive(
     scannedTxids = [
       ...new Set(ingest.scan.utxos.map((u) => u.txid).filter((t): t is string => !!t)),
     ]
-    // Imports and latch-proven pending tips both count as a receive — do not
-    // wait for authenticity before the user hears about the landing.
-    // Skip already-proven pending rediscoveries (unlock would otherwise re-toast
-    // "Item received · Authenticity verified" for held foxes).
-    const { isItemProven } = await import('./provenCache')
-    arrivedItemOutpoints = [
-      ...ingest.newOneSatOutpoints,
-      ...ingest.pendingOutpoints.filter((op) => !isItemProven(op)),
-    ]
-    for (const op of arrivedItemOutpoints) {
-      noteAnnouncedOneSat(op)
-    }
-    // Toast + spinner as soon as the tip is known — before collectables refresh
-    // / spend audit / balance, so "Item received" is not stuck behind verify.
-    if (announceReceive && arrivedItemOutpoints.length > 0) {
-      announceItemsReceived(arrivedItemOutpoints)
-      maybeReceiveChime()
-      document.dispatchEvent(
-        new CustomEvent('handcash:receive', {
-          detail: {
-            title:
-              arrivedItemOutpoints.length === 1 ? 'Item received' : 'Items received',
-            body:
-              arrivedItemOutpoints.length === 1
-                ? 'A collectable landed in your wallet'
-                : `${arrivedItemOutpoints.length} collectables landed in your wallet`,
-          },
-        }),
-      )
-    }
     if (shouldYieldChainIngestToSpend()) {
       return finishEarlyForSpend(active, {
         heldCount,
@@ -324,7 +277,8 @@ export async function refreshFromChainExclusive(
       try {
         const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
         rememberLiveOneSatOutpoints(ingest.scan.utxos)
-        void listCollectables(active).catch((err) => {
+        // Await so a just-imported tip paints (and toasts) before ingest returns.
+        await listCollectables(active).catch((err) => {
           console.warn('[chain-ingest] collectables refresh failed', err)
         })
       } catch (err) {

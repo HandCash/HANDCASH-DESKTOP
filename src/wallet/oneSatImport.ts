@@ -828,15 +828,6 @@ export async function classifyLegacyUtxos(
         // every poll is how the wallet gets itself throttled by the indexer it
         // is waiting on.
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
-        // Latch-proven tips are items the moment we see them — toast before the
-        // indexer/lineage walk so receive is not stuck behind media resolve.
-        if (latchProven) {
-          void import('./itemArrivalToast')
-            .then(({ announceItemsReceived }) =>
-              announceItemsReceived([`${u.txid}.${u.vout}`]),
-            )
-            .catch(() => undefined)
-        }
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
         if (
           !resolved &&

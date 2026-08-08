@@ -40,7 +40,8 @@ import {
   setVerificationProgress,
   takePreferredCollectableVerification,
 } from './verificationProgress'
-import { announceItemVerified } from './itemArrivalToast'
+import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
+import { playWalletSound } from './soundService'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import {
@@ -252,7 +253,6 @@ function notifyCollectables(items: Collectable[]) {
 }
 
 function setCollectablesCache(items: Collectable[]) {
-  const wasHydrated = collectablesHydrated
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint)),
   )
@@ -263,13 +263,29 @@ function setCollectablesCache(items: Collectable[]) {
   collectablesHydrated = true
   persistDurableList(items)
   notifyCollectables(items)
-  // Toast as soon as a tip paints in the list — do not wait for chain-ingest
-  // classify / media resolution to finish. Deduped in itemArrivalToast.
-  if (wasHydrated && arrived.length > 0) {
-    void import('./itemArrivalToast')
-      .then(({ announceItemsReceived }) => announceItemsReceived(arrived))
-      .catch(() => undefined)
-  }
+  // Toast / chime / OS banner only once the card is on the list. Ingest used
+  // to announce first; self-send then showed "Item received" on an empty grid.
+  // Durable dedupe in announceItemsReceived skips unlock rediscovery.
+  if (arrived.length === 0) return
+  void yieldToUi().then(() => {
+    announceItemsReceived(arrived)
+    try {
+      playWalletSound('receive')
+      document.dispatchEvent(
+        new CustomEvent('handcash:receive', {
+          detail: {
+            title: arrived.length === 1 ? 'Item received' : 'Items received',
+            body:
+              arrived.length === 1
+                ? 'A collectable landed in your wallet'
+                : `${arrived.length} collectables landed in your wallet`,
+          },
+        }),
+      )
+    } catch {
+      // Node tests / no DOM
+    }
+  })
 }
 
 export function clearCollectablesCache(): void {

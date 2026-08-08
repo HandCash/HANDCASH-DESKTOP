@@ -1,5 +1,5 @@
 /** App semver — mirrors package.json (electron-builder / updater source of truth). */
-const PACKAGED_VERSION = '1.2.128'
+const PACKAGED_VERSION = '1.2.129'
 
 /**
  * The Mobile shell bundles these sources with its own package.json version, so a

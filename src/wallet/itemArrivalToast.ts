@@ -1,9 +1,10 @@
 /**
  * User-facing toasts for collectable landings.
  *
- * Receive fires as soon as a tip is first seen. Verify fires later when
- * authenticity settles — unless the tip was already proven before receive was
- * announced, in which case receive carries the verified copy alone.
+ * Receive fires when a tip paints in inventory — not when ingest/classify first
+ * sees it on the address. Verify fires later when authenticity settles — unless
+ * the tip was already proven before receive was announced, in which case receive
+ * carries the verified copy alone.
  *
  * Announced receives are durable: unlock must not re-toast "Item received /
  * Authenticity verified" for foxes that were proven days ago.
@@ -89,8 +90,9 @@ export function wasItemReceivedAnnounced(outpoint: string): boolean {
 }
 
 /**
- * Toast that a tip landed. Starts the corner spinner for unproven tips.
- * Call as soon as the tip is known — do not wait for authenticity.
+ * Toast that a tip landed in inventory. Starts the corner spinner for unproven
+ * tips. Call from the collectables cache once the card is on the list — not
+ * from address classify / ingest.
  */
 export function announceItemsReceived(outpoints: string[]): void {
   const fresh: string[] = []

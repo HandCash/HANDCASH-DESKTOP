@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.129] - 2026-08-08
+
+### Fixed
+
+- **Self-send “Item received” toast before the card is in inventory.** Receive
+  toast / chime / OS banner now fire only when the tip paints in the collectables
+  list, not when ingest first sees it on the address.
+
 ## [1.2.128] - 2026-08-08
 
 ### Fixed
