@@ -162,6 +162,12 @@ const handcash = {
     }>,
   brc39ArchiveRoot: () => ipcRenderer.invoke('brc39-archive:root') as Promise<string>,
   clipboardWrite: (text: string) => ipcRenderer.invoke('clipboard:write', text) as Promise<void>,
+  clipboardWriteImage: (payload: { mime: string; base64: string }) =>
+    ipcRenderer.invoke('clipboard:write-image', payload) as Promise<void>,
+  saveImageFile: (payload: { filename: string; mime: string; base64: string }) =>
+    ipcRenderer.invoke('dialog:save-image', payload) as Promise<
+      { ok: true; canceled?: boolean; path?: string } | { ok: false; error: string }
+    >,
   copyScreenshot: () =>
     ipcRenderer.invoke('clipboard:screenshot') as Promise<
       { ok: true; version: string } | { ok: false; error: string }

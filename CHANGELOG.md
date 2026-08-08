@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.131] - 2026-08-08
+
+### Added
+
+- **Copy image / Save image** on collectable details. Desktop copies to the
+  clipboard or a save dialog; mobile uses the share sheet when the WebView
+  cannot download directly.
+
 ## [1.2.130] - 2026-08-08
 
 ### Fixed

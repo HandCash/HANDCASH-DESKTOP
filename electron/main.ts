@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, ipcMain, Menu, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -595,5 +595,62 @@ ipcMain.handle('clipboard:write', (_event, text: unknown) => {
   if (typeof text !== 'string') throw new Error('Invalid clipboard text')
   clipboard.writeText(text)
 })
+
+ipcMain.handle(
+  'clipboard:write-image',
+  (_event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') throw new Error('Invalid image payload')
+    const mime = (payload as { mime?: unknown }).mime
+    const base64 = (payload as { base64?: unknown }).base64
+    if (typeof mime !== 'string' || !mime.toLowerCase().startsWith('image/')) {
+      throw new Error('Invalid image type')
+    }
+    if (typeof base64 !== 'string' || !base64) throw new Error('Invalid image data')
+    const buf = Buffer.from(base64, 'base64')
+    if (buf.length === 0 || buf.length > 20 * 1024 * 1024) {
+      throw new Error('Invalid image size')
+    }
+    const image = nativeImage.createFromBuffer(buf)
+    if (image.isEmpty()) throw new Error('Could not decode image')
+    clipboard.writeImage(image)
+  },
+)
+
+ipcMain.handle(
+  'dialog:save-image',
+  async (event, payload: unknown) => {
+    if (!payload || typeof payload !== 'object') {
+      return { ok: false as const, error: 'Invalid image payload' }
+    }
+    const filename = (payload as { filename?: unknown }).filename
+    const mime = (payload as { mime?: unknown }).mime
+    const base64 = (payload as { base64?: unknown }).base64
+    if (typeof filename !== 'string' || !filename.trim()) {
+      return { ok: false as const, error: 'Invalid filename' }
+    }
+    if (typeof mime !== 'string' || !mime.toLowerCase().startsWith('image/')) {
+      return { ok: false as const, error: 'Invalid image type' }
+    }
+    if (typeof base64 !== 'string' || !base64) {
+      return { ok: false as const, error: 'Invalid image data' }
+    }
+    const buf = Buffer.from(base64, 'base64')
+    if (buf.length === 0 || buf.length > 20 * 1024 * 1024) {
+      return { ok: false as const, error: 'Invalid image size' }
+    }
+    const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
+    const ext = path.extname(filename).replace('.', '').toLowerCase() || 'png'
+    const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
+      defaultPath: filename.replace(/[/\\]/g, '-'),
+      filters: [
+        { name: 'Image', extensions: [ext] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    })
+    if (canceled || !filePath) return { ok: true as const, canceled: true }
+    await fs.writeFile(filePath, buf)
+    return { ok: true as const, path: filePath }
+  },
+)
 
 ipcMain.handle('clipboard:screenshot', async () => copyAppScreenshotToClipboard())

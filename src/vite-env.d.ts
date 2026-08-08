@@ -157,6 +157,12 @@ interface HandCashBridge {
   }>
   brc39ArchiveRoot?: () => Promise<string>
   clipboardWrite?: (text: string) => Promise<void>
+  clipboardWriteImage?: (payload: { mime: string; base64: string }) => Promise<void>
+  saveImageFile?: (payload: {
+    filename: string
+    mime: string
+    base64: string
+  }) => Promise<{ ok: true; canceled?: boolean; path?: string } | { ok: false; error: string }>
   copyScreenshot?: () => Promise<{ ok: true; version: string } | { ok: false; error: string }>
   onScreenshotCopied?: (handler: (payload: { at: number; version: string }) => void) => () => void
   getUpdateStatus?: () => Promise<UpdateStatus>

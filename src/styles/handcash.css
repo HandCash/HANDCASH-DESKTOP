@@ -6072,6 +6072,7 @@ a.app-details-host:hover {
   width: auto;
   max-width: none;
   justify-self: start;
+  gap: 6px;
 }
 
 .collectable-details-actions .btn {

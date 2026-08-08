@@ -1,6 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
+import {
+  copyCollectableImage,
+  saveCollectableImage,
+} from '../wallet/imageHandoff'
 import {
   abandonCollectable,
   getCachedCollectables,
@@ -23,7 +27,7 @@ import {
 import { openSendCollectable, clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
-import { CollectablesIcon, SendIcon } from './icons'
+import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { EmptyState } from './EmptyState'
@@ -111,6 +115,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const [verification, setVerification] = useState(() => getVerificationProgress())
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
   const [abandoning, setAbandoning] = useState(false)
+  const [imageBusy, setImageBusy] = useState<'copy' | 'save' | null>(null)
+  const mediaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(
@@ -205,6 +211,29 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     openSendCollectable(item.outpoint)
   }
 
+  const paintedImg = () => mediaRef.current?.querySelector('img') ?? null
+
+  const copyImage = () => {
+    if (!item.imageUrl || imageBusy) return
+    setImageBusy('copy')
+    void copyCollectableImage({
+      url: item.imageUrl,
+      mimeHint: item.mimeType,
+      paintedImg: paintedImg(),
+    }).finally(() => setImageBusy(null))
+  }
+
+  const saveImage = () => {
+    if (!item.imageUrl || imageBusy) return
+    setImageBusy('save')
+    void saveCollectableImage({
+      url: item.imageUrl,
+      name: item.name,
+      mimeHint: item.mimeType,
+      paintedImg: paintedImg(),
+    }).finally(() => setImageBusy(null))
+  }
+
   const startAbandon = () => {
     if (abandoning || sending) return
     setAbandoning(true)
@@ -230,7 +259,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       data-sending={sending ? 'true' : undefined}
     >
       <div className="collectable-details-hero">
-        <div className="collectable-media collectable-media-md">
+        <div className="collectable-media collectable-media-md" ref={mediaRef}>
           <DeferredImage
             src={item.imageUrl}
             alt={item.name}
@@ -289,6 +318,30 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 {sending ? 'Sending…' : 'Send item'}
               </button>
             )}
+            {item.imageUrl ? (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  onClick={copyImage}
+                  disabled={Boolean(imageBusy)}
+                  aria-busy={imageBusy === 'copy' || undefined}
+                >
+                  <CopyIcon size={14} />
+                  {imageBusy === 'copy' ? 'Copying…' : 'Copy image'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon"
+                  onClick={saveImage}
+                  disabled={Boolean(imageBusy)}
+                  aria-busy={imageBusy === 'save' || undefined}
+                >
+                  <DownloadIcon size={14} />
+                  {imageBusy === 'save' ? 'Saving…' : 'Save image'}
+                </button>
+              </>
+            ) : null}
           </div>
         </div>
       </div>
