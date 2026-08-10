@@ -243,8 +243,8 @@ export async function saveCollectableImage(args: {
           mime: bytes.mime,
           base64: bytesToBase64(bytes.bytes),
         })
-        if (result.canceled) return true
         if (!result.ok) throw new Error(result.error || 'save failed')
+        if (result.canceled) return true
         playWalletSound('soft')
         toastSuccess('Image saved')
         return true

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.133] - 2026-08-10
+
+### Fixed
+
+- **Release build TypeScript** — narrow `saveImageFile` result before reading
+  `canceled` so `tsc --noEmit` passes in CI.
+
+### Added (from 1.2.132)
+
+- Collect → Tokens (BSV-21) + optional cosigner tip kind.
+
 ## [1.2.132] - 2026-08-10
 
 ### Added
