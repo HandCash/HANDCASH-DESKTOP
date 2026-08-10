@@ -640,13 +640,16 @@ ipcMain.handle(
     }
     const win = BrowserWindow.fromWebContents(event.sender) ?? mainWindow
     const ext = path.extname(filename).replace('.', '').toLowerCase() || 'png'
-    const { canceled, filePath } = await dialog.showSaveDialog(win ?? undefined, {
+    const saveOpts = {
       defaultPath: filename.replace(/[/\\]/g, '-'),
       filters: [
         { name: 'Image', extensions: [ext] },
         { name: 'All files', extensions: ['*'] },
       ],
-    })
+    }
+    const { canceled, filePath } = win
+      ? await dialog.showSaveDialog(win, saveOpts)
+      : await dialog.showSaveDialog(saveOpts)
     if (canceled || !filePath) return { ok: true as const, canceled: true }
     await fs.writeFile(filePath, buf)
     return { ok: true as const, path: filePath }

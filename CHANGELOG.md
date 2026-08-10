@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.134] - 2026-08-10
+
+### Fixed
+
+- **Release build** — `dialog.showSaveDialog` when no BrowserWindow is focused
+  (Electron types reject `undefined` parent).
+
 ## [1.2.133] - 2026-08-10
 
 ### Fixed
