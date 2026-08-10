@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.132] - 2026-08-10
+
+### Added
+
+- **Collect → Tokens (BSV-21).** Fungible tips in basket `bsv21` (not Pay / not
+  `1sat`). Import from legacy address scan, list/aggregate by token id, details
+  panel. Holders verify their tips; issuer mint policy is trusted.
+- **Optional cosigner tip kind.** Detect MNEE-shaped cosign locks and remittance
+  (`cosign` in customInstructions / tags). Cosigned tips refuse a plain spend
+  until a cosigner client is configured (`cosigner_required`).
+
 ## [1.2.131] - 2026-08-08
 
 ### Added
