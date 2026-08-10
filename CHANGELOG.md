@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.136] - 2026-08-10
+
+### Changed
+
+- **BSV-21 tags:** token id is `bsv21:<tokenId>`, not `id:<…>`. Tag prefix `id:`
+  is reserved for per-output identity. Readers still accept legacy `id:` tags.
+
 ## [1.2.135] - 2026-08-10
 
 ### Fixed
