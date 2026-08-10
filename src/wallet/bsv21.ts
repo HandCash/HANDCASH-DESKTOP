@@ -342,6 +342,10 @@ export function shortTokenLabel(tokenId: string): string {
   return `${id.slice(0, 6)}…${id.slice(-4)}`
 }
 
+/**
+ * Output tags for basket `bsv21`.
+ * Token id uses `bsv21:<tokenId>` — not `id:` (reserved for per-output identity).
+ */
 export function bsv21Tags(args: {
   tokenId: string
   amt: string
@@ -349,11 +353,32 @@ export function bsv21Tags(args: {
   cosign?: Bsv21Cosign
 }): string[] {
   const pubkey = args.cosign ? normalizeCosignPubKey(args.cosign.pubkey) : null
+  const tokenId = normalizeTokenId(args.tokenId) ?? args.tokenId
   return [
     'bsv21',
-    `id:${args.tokenId}`,
+    `bsv21:${tokenId}`,
     `amt:${args.amt}`,
     ...(args.sym ? [`sym:${args.sym.slice(0, 32)}`] : []),
     ...(pubkey ? [`cosign:${pubkey}`] : []),
   ]
+}
+
+/** Token id from tags: prefer `bsv21:<id>`; accept legacy `id:` from early imports. */
+export function tokenIdFromBsv21Tags(tags: string[] | undefined): string | null {
+  if (!tags?.length) return null
+  for (const tag of tags) {
+    if (tag === 'bsv21') continue
+    if (tag.startsWith('bsv21:')) {
+      const id = normalizeTokenId(tag.slice('bsv21:'.length))
+      if (id) return id
+    }
+  }
+  // Legacy HandCash imports only — do not write `id:` for new tips.
+  for (const tag of tags) {
+    if (tag.startsWith('id:')) {
+      const id = normalizeTokenId(tag.slice('id:'.length))
+      if (id) return id
+    }
+  }
+  return null
 }

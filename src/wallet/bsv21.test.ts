@@ -7,8 +7,10 @@ import {
   normalizeTokenId,
   parseBsv21CustomInstructions,
   parseBsv21Json,
+  bsv21Tags,
   tokenIdForListedTip,
   tokenIdForPayload,
+  tokenIdFromBsv21Tags,
 } from './bsv21'
 
 describe('bsv21 parse', () => {
@@ -144,6 +146,15 @@ describe('bsv21 parse', () => {
     expect(
       tokenIdForListedTip({ outpoint: tip, op: 'deploy+mint' }),
     ).toBe(`${'ab'.repeat(32)}_0`)
+  })
+
+  it('tags token id as bsv21:<id>, not id:', () => {
+    const tags = bsv21Tags({ tokenId: MNEE, amt: '1', sym: 'MNEE' })
+    expect(tags).toContain('bsv21')
+    expect(tags).toContain(`bsv21:${MNEE}`)
+    expect(tags.some((t) => t.startsWith('id:'))).toBe(false)
+    expect(tokenIdFromBsv21Tags(tags)).toBe(MNEE)
+    expect(tokenIdFromBsv21Tags([`id:${MNEE}`])).toBe(MNEE) // legacy read
   })
 })
 
