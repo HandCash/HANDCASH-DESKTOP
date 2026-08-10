@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.135] - 2026-08-10
+
+### Fixed
+
+- **Collect → Tokens empty after self-mint.** `deploy+mint` tips have no `id` in
+  remittance — the tip outpoint *is* the token id. Listing no longer drops them.
+
 ## [1.2.134] - 2026-08-10
 
 ### Fixed

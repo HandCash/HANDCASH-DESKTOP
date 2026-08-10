@@ -7,6 +7,7 @@ import {
   normalizeTokenId,
   parseBsv21CustomInstructions,
   parseBsv21Json,
+  tokenIdForListedTip,
   tokenIdForPayload,
 } from './bsv21'
 
@@ -136,6 +137,13 @@ describe('bsv21 parse', () => {
     expect(isBsv21Mime('application/bsv-20')).toBe(true)
     expect(isBsv21Mime('image/png')).toBe(false)
     expect(normalizeTokenId(`${'ab'.repeat(32)}.3`)).toBe(`${'ab'.repeat(32)}_3`)
+  })
+
+  it('lists deploy+mint tips using the tip outpoint as token id', () => {
+    const tip = `${'ab'.repeat(32)}.0`
+    expect(
+      tokenIdForListedTip({ outpoint: tip, op: 'deploy+mint' }),
+    ).toBe(`${'ab'.repeat(32)}_0`)
   })
 })
 

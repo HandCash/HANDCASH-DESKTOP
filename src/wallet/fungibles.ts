@@ -21,6 +21,7 @@ import {
   parseBsv21CustomInstructions,
   parseBsv21Json,
   shortTokenLabel,
+  tokenIdForListedTip,
   type Bsv21ImportItem,
   type Bsv21Op,
   type Bsv21Utxo,
@@ -78,11 +79,15 @@ function parseListedOutput(raw: {
   const outpoint = (raw.outpoint ?? '').trim().toLowerCase()
   if (!outpoint) return null
   const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
-  const tokenId =
-    (fromCi?.id ? normalizeTokenId(fromCi.id) : null) ??
-    normalizeTokenId(tagValue(raw.tags, 'id:') ?? '')
   const amt = fromCi?.amt ?? tagValue(raw.tags, 'amt:')
-  const op = (fromCi?.op ?? 'transfer') as Bsv21Op
+  const op = (fromCi?.op ?? tagValue(raw.tags, 'op:') ?? 'transfer') as Bsv21Op
+  // deploy+mint has no id field — tip outpoint is the token id (BRC-161).
+  const tokenId = tokenIdForListedTip({
+    outpoint,
+    op,
+    id: fromCi?.id,
+    idTag: tagValue(raw.tags, 'id:'),
+  })
   if (!tokenId || !amt || !isBalanceBearingOp(op)) return null
   const sym = fromCi?.sym ?? tagValue(raw.tags, 'sym:')
   const icon = fromCi?.icon

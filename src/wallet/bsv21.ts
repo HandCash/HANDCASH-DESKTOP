@@ -195,6 +195,25 @@ export function tokenIdForPayload(
   return null
 }
 
+/**
+ * Token id for a held basket tip. `deploy+mint` has no `id` in the inscription —
+ * the tip outpoint *is* the token id (BRC-161).
+ */
+export function tokenIdForListedTip(args: {
+  outpoint: string
+  op?: Bsv21Op | string | null
+  id?: string | null
+  idTag?: string | null
+}): string | null {
+  const fromId =
+    (args.id ? normalizeTokenId(args.id) : null) ??
+    (args.idTag ? normalizeTokenId(args.idTag) : null)
+  if (fromId) return fromId
+  const op = (args.op ?? '').trim()
+  if (op === 'deploy+mint') return normalizeTokenId(args.outpoint)
+  return null
+}
+
 export function isBalanceBearingOp(op: Bsv21Op): boolean {
   return op === 'deploy+mint' || op === 'mint' || op === 'transfer'
 }
