@@ -14,14 +14,18 @@ import { normalizeAppHost } from './appIdentity'
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
 
+/** Storage basket for BSV-21 fungibles — Collect tokens, not Pay currency. */
+export const FUNGIBLE_STORAGE_BASKET = 'bsv21'
+
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
 
-/** Baskets that hold collectables — not spendable under normal pay.
+/** Baskets that hold collectables / tokens — not spendable under normal pay.
  * Recursive inscription content (HTML/JS that references other inscriptions)
  * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
+ * BSV-21 tips live in `bsv21` and are listed under Collect, never as balance.
  */
-export const ITEM_BASKETS = new Set([ITEM_STORAGE_BASKET])
+export const ITEM_BASKETS = new Set([ITEM_STORAGE_BASKET, FUNGIBLE_STORAGE_BASKET])
 
 export type ItemAccess = {
   /** Inventory visibility for this app. */

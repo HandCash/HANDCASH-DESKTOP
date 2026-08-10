@@ -45,6 +45,15 @@ vi.mock('./oneSatImport', () => ({
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
+vi.mock('./fungibles', () => ({
+  importBsv21Tokens: vi.fn(async () => ({
+    imported: 0,
+    failed: 0,
+    errors: [],
+    outpoints: [],
+  })),
+}))
+
 const OUTPOINT = 'bb.0'
 const SWEEP_TXID = 'c'.repeat(64)
 const FUNDING = { outpoint: OUTPOINT, txid: 'bb', vout: 0, satoshis: 5000 }
@@ -68,6 +77,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [FUNDING],
       oneSats: [],
+      bsv21: [],
       latches: [],
       heldOneSats: [],
       pendingTips: [],

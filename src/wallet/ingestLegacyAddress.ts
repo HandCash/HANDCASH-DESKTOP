@@ -30,6 +30,7 @@ import {
   importOneSatOrdinals,
   type MigrationItem,
 } from './oneSatImport'
+import { importBsv21Tokens } from './fungibles'
 import { filterNewOneSatOutpoints, isOneSatOutpointKnown } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
@@ -201,7 +202,7 @@ export async function ingestLegacyAddressUtxos(
     return emptyIngest(scan)
   }
 
-  const { funding, oneSats, latches, heldOneSats, pendingTips } = await classifyLegacyUtxos(
+  const { funding, oneSats, bsv21, latches, heldOneSats, pendingTips } = await classifyLegacyUtxos(
     scan.utxos,
     active.chain,
     opts.knownItems ?? [],
@@ -216,6 +217,7 @@ export async function ingestLegacyAddressUtxos(
     const fresh = filterNewOneSatOutpoints([i.outpoint])
     return fresh.length > 0
   })
+  const newBsv21 = bsv21.filter((i) => filterNewOneSatOutpoints([i.outpoint]).length > 0)
 
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.
   if (heldOneSats.length > 0 && !fundingOnly) {
@@ -229,6 +231,11 @@ export async function ingestLegacyAddressUtxos(
       `[chain-ingest] routing ${newLatches.length} soft-latch dust out(s) to basket 1sat-latch`,
     )
   }
+  if (newBsv21.length > 0) {
+    console.info(
+      `[chain-ingest] routing ${newBsv21.length} BSV-21 tip(s) to basket bsv21 (Collect tokens)`,
+    )
+  }
 
   // An address holding only ordinals classifies no funding, and that is correct —
   // only UTXOs that landed in no bucket at all are worth a warning. Cloud items
@@ -238,6 +245,7 @@ export async function ingestLegacyAddressUtxos(
   const accounted = new Set<string>([
     ...funding.map((u) => outpointKey(u.outpoint)),
     ...oneSats.map((i) => outpointKey(i.outpoint)),
+    ...bsv21.map((i) => outpointKey(i.outpoint)),
     ...latches.map((u) => outpointKey(u.outpoint)),
     ...heldOneSats.map((u) => outpointKey(u.outpoint)),
   ])
@@ -265,6 +273,19 @@ export async function ingestLegacyAddressUtxos(
     if (itemResult.failed > 0) {
       console.warn('[chain-ingest] 1sat import partial', itemResult)
       partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
+    }
+  }
+
+  if (newBsv21.length > 0 && !fundingOnly) {
+    await yieldToUi()
+    const ftResult = await importBsv21Tokens(newBsv21, active)
+    importedItems += ftResult.imported
+    itemsFailed += ftResult.failed
+    if (ftResult.failed > 0) {
+      console.warn('[chain-ingest] bsv21 import partial', ftResult)
+      partialWarn =
+        partialWarn ??
+        `Some tokens didn’t import (${ftResult.failed}). Retrying automatically.`
     }
   }
 

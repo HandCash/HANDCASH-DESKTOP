@@ -877,6 +877,11 @@ export function buildCollectableCustomInstructions(args: {
   origin: string
   name: string
   app?: string
+  /**
+   * Shared media outpoint for derivative / reference tips (Kit Kat pattern).
+   * Display claim — BRC-150 still proves tip→`origin` (the child token).
+   */
+  content?: string
   provenance?: ProvenanceRemittance | null
 }): string {
   const body: Record<string, unknown> = {
@@ -884,6 +889,10 @@ export function buildCollectableCustomInstructions(args: {
     name: args.name,
   }
   if (args.app) body.app = args.app
+  if (args.content) {
+    const content = toUnderscore(args.content)
+    if (/^[0-9a-f]{64}_\d+$/i.test(content)) body.content = content
+  }
   if (args.provenance) body.provenance = args.provenance
   return JSON.stringify(body)
 }
@@ -908,14 +917,24 @@ export function buildInternalizeCustomInstructions(args: {
   origin: string
   name: string
   app?: string
+  content?: string
 }): string {
   const full = buildCollectableCustomInstructions(args)
   if (full.length <= INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX) return full
 
-  // Only a pathological name/app can get here. Origin is load-bearing, so the
-  // free-text fields give way rather than the identity.
+  // Keep origin + content (load-bearing for derivatives); trim free text.
   const origin = toUnderscore(args.origin)
-  const fixed = JSON.stringify({ origin, name: '' }).length
+  const content =
+    args.content && /^[0-9a-f]{64}_\d+$/i.test(toUnderscore(args.content))
+      ? toUnderscore(args.content)
+      : undefined
+  const base: Record<string, unknown> = { origin, name: '' }
+  if (content) base.content = content
+  const fixed = JSON.stringify(base).length
   const budget = Math.max(0, INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX - fixed - 16)
-  return JSON.stringify({ origin, name: args.name.slice(0, budget) })
+  return JSON.stringify({
+    origin,
+    name: args.name.slice(0, budget),
+    ...(content ? { content } : {}),
+  })
 }

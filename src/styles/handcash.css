@@ -6098,6 +6098,44 @@ a.app-details-host:hover {
   gap: 0.35rem;
 }
 
+.fungible-row {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.collect-section-title {
+  margin: 0.75rem 0 0.4rem;
+  padding: 0 4px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+.collect-tokens-section + .collect-items-section {
+  margin-top: 0.5rem;
+}
+
+.fungible-icon-fallback {
+  display: grid;
+  place-items: center;
+  width: 160px;
+  height: 160px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--hc-muted) 18%, transparent);
+  color: var(--hc-text);
+  font-weight: 700;
+  font-size: 1.6rem;
+  letter-spacing: 0.04em;
+}
+
+.fungible-icon-fallback--sm {
+  width: 48px;
+  height: 48px;
+  border-radius: 6px;
+  font-size: 0.78rem;
+}
+
 .collectable-send-btn {
   appearance: none;
   display: inline-flex;

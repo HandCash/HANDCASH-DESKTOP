@@ -24,6 +24,7 @@ import {
   type CollectableTrait,
   type ResolvedInscription,
 } from './oneSatImport'
+import { isBsv21Mime } from './bsv21'
 import { resolvePaymentAddress } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
@@ -71,6 +72,7 @@ import {
   type LatchListing,
 } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
+import { resolveDerivativeContent } from './derivativeContentResolve'
 import {
   liveOneSatKeys,
   outpointKey,
@@ -123,8 +125,13 @@ export type { CollectableTrait }
 export type Collectable = {
   /** Wallet outpoint `txid.vout` */
   outpoint: string
-  /** Inscription origin `txid_vout` */
+  /** Inscription origin `txid_vout` (child token identity for derivatives). */
   origin: string
+  /**
+   * Shared media outpoint for derivative / reference tips (Kit Kat pattern).
+   * When set, UI loads `/content/<content>` instead of the child origin body.
+   */
+  content?: string
   name: string
   app?: string
   imageUrl: string
@@ -219,6 +226,7 @@ function persistDurableList(items: Collectable[]): void {
         items: items.map((item) => ({
           outpoint: item.outpoint,
           origin: item.origin,
+          ...(item.content ? { content: item.content } : {}),
           name: item.name,
           app: item.app,
           imageUrl: item.imageUrl,
@@ -339,15 +347,23 @@ function parseCustom(raw: string | undefined): {
   origin?: string
   name?: string
   app?: string
+  content?: string
   provenance?: unknown
 } {
   if (!raw) return {}
   try {
     const o = JSON.parse(raw) as Record<string, unknown>
+    const content =
+      typeof o.content === 'string'
+        ? o.content
+        : typeof o.media === 'string'
+          ? o.media
+          : undefined
     return {
       origin: typeof o.origin === 'string' ? o.origin : undefined,
       name: typeof o.name === 'string' ? o.name : undefined,
       app: typeof o.app === 'string' ? o.app : undefined,
+      content,
       provenance: o.provenance,
     }
   } catch {
@@ -393,12 +409,21 @@ function toCollectable(
   const name =
     resolved?.name ?? custom.name ?? tagValue(o.tags, 'name:') ?? shortOrigin(origin)
   const app = resolved?.app ?? custom.app ?? tagValue(o.tags, 'app:')
+  const content =
+    resolveDerivativeContent({
+      claimed:
+        custom.content ??
+        tagValue(o.tags, 'content:') ??
+        (resolved as { content?: string } | null | undefined)?.content,
+    }) ?? undefined
+  const mediaOrigin = content ?? origin
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
+    ...(content ? { content } : {}),
     name: name.trim() || shortOrigin(origin),
     app,
-    imageUrl: contentUrlForOrigin(origin, chain),
+    imageUrl: contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,
     mimeType: resolved?.mimeType,
     type: resolved?.type,
@@ -529,6 +554,10 @@ function isListableItem(o: ItemOutput): boolean {
   if ((o.satoshis ?? 1) !== 1) return false
   // A tip we already spent lingers in the basket until a review runs.
   if (isItemSent(o.outpoint)) return false
+  // BSV-21 fungibles belong under Collect → Tokens (basket bsv21), not NFT cards.
+  const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
+  if (isBsv21Mime(resolved?.mimeType)) return false
+  if (o.tags?.includes('bsv21')) return false
   return true
 }
 
@@ -1270,9 +1299,15 @@ export async function getCollectable(
             : cachedResolved
       if (resolved) {
         rememberResolvedInscription(target, resolved)
+        const content =
+          resolveDerivativeContent({
+            claimed: resolved.content ?? item.content,
+          }) ?? item.content
+        const mediaOrigin = content ?? (resolved.origin || item.origin)
         item = {
           ...item,
           origin: resolved.origin || item.origin,
+          ...(content ? { content } : {}),
           name: resolved.name?.trim() || item.name,
           app: resolved.app ?? item.app,
           mimeType: resolved.mimeType ?? item.mimeType,
@@ -1281,7 +1316,7 @@ export async function getCollectable(
           collectionId: resolved.collectionId ?? item.collectionId,
           traits: resolved.traits.length ? resolved.traits : item.traits,
           extras: resolved.extras.length ? resolved.extras : item.extras,
-          imageUrl: contentUrlForOrigin(resolved.origin || item.origin, wallet.chain),
+          imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
         }
         setCollectablesCache(
           cachedCollectables.map((c) => (c.outpoint === target ? item! : c)),
@@ -1679,11 +1714,36 @@ export async function sendCollectable(args: {
       .trim()
       .slice(0, 40) || 'Collectable'
   const app = resolvedMeta?.app ?? tipCustom.app ?? args.app ?? item?.app
+
+  // Derivative / Kit Kat: forward shared media outpoint peer-to-peer.
+  let content =
+    item?.content ??
+    resolveDerivativeContent({
+      claimed: tipCustom.content ?? tagValue(match.tags, 'content:'),
+    })
+  if (!content) {
+    try {
+      const originParts = origin.replace(/\.(\d+)$/, '_$1').split('_')
+      const originTxid = originParts[0]?.toLowerCase()
+      const originVout = Number(originParts[1])
+      if (originTxid?.length === 64 && Number.isInteger(originVout)) {
+        const originBeef = await getBeefForTxidCached(wallet, originTxid)
+        const scriptHex =
+          originBeef.findTxid(originTxid)?.tx?.outputs?.[originVout]?.lockingScript?.toHex() ??
+          null
+        content = resolveDerivativeContent({ originScriptHex: scriptHex })
+      }
+    } catch (err) {
+      console.warn('[collectables] derivative content resolve skipped', err)
+    }
+  }
+
   const tags = [
     'ordinal',
     `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
     `name:${name.slice(0, 80)}`,
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
+    ...(content ? [`content:${content.replace(/_(\d+)$/, '.$1')}`] : []),
   ]
 
   // Latch discovery and tip BEEF are independent — run them together so the
@@ -1867,6 +1927,7 @@ export async function sendCollectable(args: {
             origin,
             name,
             app,
+            ...(content ? { content } : {}),
             provenance,
           }),
         },

@@ -38,6 +38,7 @@ import { MessagesPanel } from './MessagesPanel'
 import { IdentityPanel } from './IdentityPanel'
 import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
+import { FungibleDetailsPanel } from './FungibleDetailsPanel'
 import { SendCollectablePanel } from './SendCollectablePanel'
 import { TransactionsPanel } from './RecentActivity'
 import {
@@ -62,6 +63,7 @@ import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCollectable } from '../wallet/collectables'
+import { getFungible, getCachedFungibles } from '../wallet/fungibles'
 import {
   ActivityIcon,
   AppsIcon,
@@ -114,6 +116,7 @@ export function WalletNav({
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
+  const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const [decisionApi, setDecisionApi] = useState<PermissionDecisionApi | null>(null)
   const mobileInlinePermission = isMobileWalletPlatform() && pendingPrompt != null
@@ -197,6 +200,15 @@ export function WalletNav({
     }
   }, [nav.child])
 
+  useEffect(() => {
+    const child = nav.child
+    if (!child || child.type !== 'fungible') return
+    const cached =
+      getFungible(child.tokenId) ??
+      getCachedFungibles().find((t) => t.tokenId === child.tokenId)
+    setFungibleLabel(cached?.sym || 'Token')
+  }, [nav.child])
+
   const child = nav.child
   const aeonState = child ? `${nav.section}.${child.type}` : nav.section
 
@@ -241,6 +253,9 @@ export function WalletNav({
     }
     if (child.type === 'collectable') {
       return [root, { label: collectableLabel }]
+    }
+    if (child.type === 'fungible') {
+      return [root, { label: fungibleLabel }]
     }
     if (child.type === 'send-collectable') {
       return [
@@ -325,6 +340,9 @@ export function WalletNav({
               {child.type === 'add-friend' && <AddFriendPanel />}
               {child.type === 'collectable' && (
                 <CollectableDetailsPanel outpoint={child.outpoint} />
+              )}
+              {child.type === 'fungible' && (
+                <FungibleDetailsPanel tokenId={child.tokenId} />
               )}
               {child.type === 'send-collectable' && (
                 <SendCollectablePanel

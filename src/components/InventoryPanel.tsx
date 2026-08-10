@@ -26,10 +26,18 @@ import {
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { openCollectableDetails, openSendCollectable } from '../wallet/navStore'
+import { openCollectableDetails, openSendCollectable, openFungibleDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { CollectablesIcon, SendIcon } from './icons'
+import {
+  areFungiblesHydrated,
+  formatFungibleAmount,
+  getCachedFungibles,
+  listFungibles,
+  subscribeFungibles,
+  type FungibleToken,
+} from '../wallet/fungibles'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -189,11 +197,54 @@ function CollectableListItem({
   )
 }
 
+
+function FungibleListItem({ token }: { token: FungibleToken }) {
+  const amount = formatFungibleAmount(token.amt, token.dec)
+  return (
+    <li className="connected-app-row collectable-row fungible-row">
+      <button
+        type="button"
+        className="connected-app-main collectable-row-main"
+        onClick={() => {
+          playWalletSound('soft')
+          openFungibleDetails(token.tokenId)
+        }}
+      >
+        <div className="collectable-media collectable-media-sm">
+          {token.iconUrl ? (
+            <DeferredImage
+              src={token.iconUrl}
+              alt={token.sym}
+              width={48}
+              height={48}
+              skeletonWidth={48}
+              skeletonHeight={48}
+              skeletonRadius={6}
+              skeletonClassName="skeleton-qr"
+              decoding="async"
+            />
+          ) : (
+            <div className="fungible-icon-fallback fungible-icon-fallback--sm" aria-hidden>
+              {token.sym.slice(0, 3).toUpperCase()}
+            </div>
+          )}
+        </div>
+        <div className="connected-app-body">
+          <strong className="connected-app-name">{token.sym}</strong>
+          <span className="connected-app-host">{amount}</span>
+        </div>
+      </button>
+    </li>
+  )
+}
+
 export function InventoryPanel() {
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
+  const [tokens, setTokens] = useState<FungibleToken[]>(() => getCachedFungibles())
   /** Only true after a successful listOutputs (may be empty). */
   const [ready, setReady] = useState(() => areCollectablesHydrated())
+  const [tokensReady, setTokensReady] = useState(() => areFungiblesHydrated())
   /** In-flight load while we still have nothing to show. */
   const [awaitingFirst, setAwaitingFirst] = useState(
     () => !areCollectablesHydrated() && getCachedCollectables().length === 0,
@@ -225,7 +276,14 @@ export function InventoryPanel() {
       }),
     [],
   )
-
+  useEffect(
+    () =>
+      subscribeFungibles((next) => {
+        setTokens(next)
+        if (areFungiblesHydrated()) setTokensReady(true)
+      }),
+    [],
+  )
   useEffect(() => {
     const cached = getCachedCollectables().length
     console.info(`[collectables] open cache=${cached} hydrated=${areCollectablesHydrated()}`)
@@ -240,12 +298,13 @@ export function InventoryPanel() {
       try {
         console.info(`[collectables] listOutputs start (${reason})`)
         const started = performance.now()
-        await listCollectables()
+        await Promise.all([listCollectables(), listFungibles()])
         console.info(
           `[collectables] listOutputs done (${reason}) ${Math.round(performance.now() - started)}ms`,
         )
         if (!cancelled) {
           setReady(areCollectablesHydrated())
+          setTokensReady(areFungiblesHydrated())
           setAwaitingFirst(false)
         }
       } catch (err) {
@@ -260,7 +319,11 @@ export function InventoryPanel() {
     // CRITICAL: paint from durable cache immediately, then reconcile against
     // live address UTXOs within a beat. Waiting 15s left spent tips on screen.
     // Network work is async — it must not block the first paint.
-    const hasCache = getCachedCollectables().length > 0 || areCollectablesHydrated()
+    const hasCache =
+      getCachedCollectables().length > 0 ||
+      areCollectablesHydrated() ||
+      getCachedFungibles().length > 0 ||
+      areFungiblesHydrated()
     let intervalId = 0
     let deferTimer = 0
 
@@ -289,13 +352,14 @@ export function InventoryPanel() {
     return () => {
       cancelled = true
       window.clearTimeout(deferTimer)
-      window.clearInterval(intervalId)
+      if (intervalId) window.clearInterval(intervalId)
     }
   }, [])
 
-  const showLoading = awaitingFirst || !ready
+  const showLoading = (awaitingFirst || !ready) && items.length === 0 && tokens.length === 0
   const shownCount = useChunkedCount(items.length)
   const visibleItems = items.slice(0, shownCount)
+  const empty = items.length === 0 && tokens.length === 0 && ready && tokensReady
 
   return (
     <div
@@ -304,51 +368,67 @@ export function InventoryPanel() {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Collectables</h2>
+        <h2>Collect</h2>
         <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
 
-      {items.length > 0 ? (
-        view === 'grid' ? (
-          <ul className="collection-grid">
-            {visibleItems.map((item) => (
-              <CollectableGridItem
-                key={item.outpoint}
-                item={item}
-                verifying={isOutpointVerifying(item.outpoint, verification)}
-                sending={
-                  sendingOutpoint != null && isOutpointSending(item.outpoint)
-                }
-              />
-            ))}
-          </ul>
-        ) : (
+      {tokens.length > 0 ? (
+        <section className="collect-tokens-section" aria-label="Tokens">
+          <h3 className="collect-section-title">Tokens</h3>
           <ul className="connected-app-list">
-            {visibleItems.map((item) => (
-              <CollectableListItem
-                key={item.outpoint}
-                item={item}
-                verifying={isOutpointVerifying(item.outpoint, verification)}
-                sending={
-                  sendingOutpoint != null && isOutpointSending(item.outpoint)
-                }
-              />
+            {tokens.map((token) => (
+              <FungibleListItem key={token.tokenId} token={token} />
             ))}
           </ul>
-        )
-      ) : showLoading ? (
+        </section>
+      ) : null}
+
+      {items.length > 0 ? (
+        <section className="collect-items-section" aria-label="Items">
+          {tokens.length > 0 ? <h3 className="collect-section-title">Items</h3> : null}
+          {view === 'grid' ? (
+            <ul className="collection-grid">
+              {visibleItems.map((item) => (
+                <CollectableGridItem
+                  key={item.outpoint}
+                  item={item}
+                  verifying={isOutpointVerifying(item.outpoint, verification)}
+                  sending={
+                    sendingOutpoint != null && isOutpointSending(item.outpoint)
+                  }
+                />
+              ))}
+            </ul>
+          ) : (
+            <ul className="connected-app-list">
+              {visibleItems.map((item) => (
+                <CollectableListItem
+                  key={item.outpoint}
+                  item={item}
+                  verifying={isOutpointVerifying(item.outpoint, verification)}
+                  sending={
+                    sendingOutpoint != null && isOutpointSending(item.outpoint)
+                  }
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
+
+      {showLoading ? (
         <EmptyState
           icon={<CollectablesIcon size={28} />}
           title="Looking for collectables…"
-          body="Checking this device for one-sat items."
+          body="Checking this device for one-sat items and tokens."
         />
-      ) : (
+      ) : empty ? (
         <EmptyState
           icon={<CollectablesIcon size={28} />}
           title="No collectables here"
-          body="Items live on the install that received them. This device updates from the network automatically; send to move them."
+          body="Items and tokens live on the install that received them. This device updates from the network automatically; send to move them."
         />
-      )}
+      ) : null}
     </div>
   )
 }

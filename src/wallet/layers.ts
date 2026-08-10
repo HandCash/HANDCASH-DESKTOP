@@ -23,6 +23,8 @@
  * - **Items (1sat / recursive)** → basket `1sat`; remittance + BRC-39 same as funds history.
  *   Recursive inscription *content* does not get a separate basket — tip→origin remittance does
  *   (BRC-150 in `oneSatProvenance.ts`; BRC-156 latched v3 in `oneSatLatch.ts`; oversized packages omitted).
+ * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
+ *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */
 
 import { fetchBalanceSats, getActiveWallet } from './session'
@@ -42,6 +44,8 @@ export const WALLET_LAYER_MODULES = {
   localState: [
     'session.ts',
     'collectables.ts',
+    'fungibles.ts',
+    'bsv21.ts',
     'brc100Handler.ts',
     'oneSatProvenance.ts',
     'oneSatLatch.ts',
