@@ -13,6 +13,8 @@ import {
   buildBsv21CustomInstructions,
   BSV21_BASKET,
   bsv21Tags,
+  cosignFromRemittance,
+  detectCosignFromLockingScript,
   formatFungibleAmount,
   isBalanceBearingOp,
   normalizeTokenId,
@@ -85,6 +87,10 @@ function parseListedOutput(raw: {
   const sym = fromCi?.sym ?? tagValue(raw.tags, 'sym:')
   const icon = fromCi?.icon
   const dec = fromCi?.dec ?? 0
+  const cosign = cosignFromRemittance({
+    customInstructions: raw.customInstructions,
+    tags: raw.tags,
+  })
   return {
     outpoint,
     tokenId,
@@ -94,6 +100,7 @@ function parseListedOutput(raw: {
     ...(icon ? { icon } : {}),
     dec,
     satoshis: raw.satoshis === 1 ? 1 : (raw.satoshis ?? 1),
+    ...(cosign ? { cosign } : {}),
   }
 }
 
@@ -169,6 +176,8 @@ export function fungibleFromImport(
     dec: item.dec ?? 0,
     utxoCount: 1,
     outpoint: item.outpoint,
+    spendKind: item.cosign ? 'cosigned' : 'plain',
+    ...(item.cosign ? { cosign: item.cosign } : {}),
     ...(item.icon
       ? { iconUrl: contentUrlForOrigin(item.icon, chain) }
       : {}),
@@ -230,26 +239,40 @@ export async function importBsv21Tokens(
       })
       if (valid.length === 0) continue
 
-      const remittanceOutputs = valid.map((item) => ({
-        outputIndex: item.vout,
-        protocol: 'basket insertion' as const,
-        insertionRemittance: {
-          basket: BSV21_BASKET,
-          tags: bsv21Tags({
-            tokenId: item.tokenId,
-            amt: item.amt,
-            sym: item.sym,
-          }),
-          customInstructions: buildBsv21CustomInstructions({
-            tokenId: item.tokenId,
-            amt: item.amt,
-            op: item.op === 'deploy+mint' ? 'deploy+mint' : 'transfer',
-            sym: item.sym,
-            icon: item.icon,
-            dec: item.dec,
-          }),
-        },
-      }))
+      const remittanceOutputs = valid.map((item) => {
+        const scriptHex = sourceTx?.outputs?.[item.vout]?.lockingScript?.toHex?.()
+        const cosign =
+          item.cosign ??
+          detectCosignFromLockingScript(scriptHex) ??
+          undefined
+        if (cosign) {
+          console.info(
+            `[bsv21] tip ${item.outpoint} cosigned pubkey=${cosign.pubkey.slice(0, 16)}…`,
+          )
+        }
+        return {
+          outputIndex: item.vout,
+          protocol: 'basket insertion' as const,
+          insertionRemittance: {
+            basket: BSV21_BASKET,
+            tags: bsv21Tags({
+              tokenId: item.tokenId,
+              amt: item.amt,
+              sym: item.sym,
+              cosign,
+            }),
+            customInstructions: buildBsv21CustomInstructions({
+              tokenId: item.tokenId,
+              amt: item.amt,
+              op: item.op === 'deploy+mint' ? 'deploy+mint' : 'transfer',
+              sym: item.sym,
+              icon: item.icon,
+              dec: item.dec,
+              cosign,
+            }),
+          },
+        }
+      })
 
       await yieldToUi()
       await wallet.wallet.internalizeAction({

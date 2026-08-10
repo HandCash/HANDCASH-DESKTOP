@@ -92,7 +92,44 @@ describe('bsv21 parse', () => {
       },
     ])
     expect(rows).toHaveLength(1)
-    expect(rows[0]).toMatchObject({ tokenId: MNEE, amt: '150', utxoCount: 2, sym: 'MNEE' })
+    expect(rows[0]).toMatchObject({
+      tokenId: MNEE,
+      amt: '150',
+      utxoCount: 2,
+      sym: 'MNEE',
+      spendKind: 'plain',
+    })
+  })
+
+  it('aggregates cosigned tips and marks spendKind', () => {
+    const pubkey = `02${'cd'.repeat(32)}`
+    const rows = aggregateFungibles([
+      {
+        outpoint: 'aa.0',
+        tokenId: MNEE,
+        amt: '100',
+        op: 'transfer',
+        sym: 'MNEE',
+        dec: 5,
+        satoshis: 1,
+        cosign: { pubkey },
+      },
+    ])
+    expect(rows[0]).toMatchObject({ spendKind: 'cosigned', cosign: { pubkey } })
+  })
+
+  it('preserves cosign in customInstructions', () => {
+    const pubkey = `03${'ef'.repeat(32)}`
+    const raw = buildBsv21CustomInstructions({
+      tokenId: MNEE,
+      amt: '1',
+      op: 'transfer',
+      cosign: { pubkey, endpoint: 'https://cosign.example' },
+    })
+    expect(parseBsv21CustomInstructions(raw)?.cosign).toEqual({
+      pubkey,
+      endpoint: 'https://cosign.example',
+    })
   })
 
   it('normalizes mime and token ids', () => {

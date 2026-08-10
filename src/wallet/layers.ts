@@ -46,6 +46,7 @@ export const WALLET_LAYER_MODULES = {
     'collectables.ts',
     'fungibles.ts',
     'bsv21.ts',
+    'bsv21TipKind.ts',
     'brc100Handler.ts',
     'oneSatProvenance.ts',
     'oneSatLatch.ts',

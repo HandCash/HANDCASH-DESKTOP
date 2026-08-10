@@ -6,9 +6,19 @@
  *
  * Trust model: holders verify *their* tips (local history / remittance).
  * Issuers are trusted for mint policy — global supply-cap proofs are not
- * required. Wire `"p":"bsv-20"` is historical; token id is deploy outpoint
- * (`txid_vout`).
+ * required. Optional cosigner gates (e.g. MNEE) use {@link ./bsv21TipKind}
+ * — never silent plain-spend fallthrough. Wire `"p":"bsv-20"` is historical;
+ * token id is deploy outpoint (`txid_vout`).
  */
+
+import {
+  normalizeCosignPubKey,
+  parseBsv21Cosign,
+  type Bsv21Cosign,
+} from './bsv21TipKind'
+
+export type { Bsv21Cosign }
+export { classifyBsv21TipKind, chooseBsv21SendPath, detectCosignFromLockingScript } from './bsv21TipKind'
 
 export const BSV21_BASKET = 'bsv21' as const
 export const BSV21_MIME = 'application/bsv-20' as const
@@ -36,6 +46,8 @@ export type Bsv21Payload = {
   icon?: string
   /** Decimal places from deploy (0–18). */
   dec?: number
+  /** Optional cosigner gate (BRC-163). */
+  cosign?: Bsv21Cosign
 }
 
 /** One spendable BSV-21 UTXO tip held by this wallet. */
@@ -48,6 +60,7 @@ export type Bsv21Utxo = {
   icon?: string
   dec: number
   satoshis: number
+  cosign?: Bsv21Cosign
 }
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
@@ -61,6 +74,7 @@ export type Bsv21ImportItem = {
   sym?: string
   icon?: string
   dec?: number
+  cosign?: Bsv21Cosign
 }
 
 /** Aggregated balance for one token id (Collect list row). */
@@ -73,6 +87,12 @@ export type FungibleToken = {
   utxoCount: number
   /** Representative tip outpoint (first UTXO). */
   outpoint: string
+  /**
+   * Spend gate for held tips of this token id.
+   * `mixed` = some tips plain, some cosigned (should not combine blindly).
+   */
+  spendKind: 'plain' | 'cosigned' | 'mixed'
+  cosign?: Bsv21Cosign
 }
 
 export function normalizeTokenId(raw: string): string | null {
@@ -143,13 +163,24 @@ export function parseBsv21Json(raw: unknown): Bsv21Payload | null {
     // Auth outputs are not balance-bearing holdings.
     return null
   }
+  const cosign = parseBsv21Cosign(o.cosign) ?? undefined
+
   if (op === 'deploy+mint') {
     if (!amt) return null
-    return { p: BSV21_PROTOCOL, op, amt, sym, icon, dec }
+    return { p: BSV21_PROTOCOL, op, amt, sym, icon, dec, ...(cosign ? { cosign } : {}) }
   }
   if (op === 'mint' || op === 'transfer' || op === 'burn') {
     if (!id || !amt) return null
-    return { p: BSV21_PROTOCOL, op, id, amt, sym, icon, dec }
+    return {
+      p: BSV21_PROTOCOL,
+      op,
+      id,
+      amt,
+      sym,
+      icon,
+      dec,
+      ...(cosign ? { cosign } : {}),
+    }
   }
   return null
 }
@@ -189,6 +220,7 @@ export function buildBsv21CustomInstructions(args: {
   sym?: string
   icon?: string
   dec?: number
+  cosign?: Bsv21Cosign
 }): string {
   const body: Record<string, unknown> = {
     p: BSV21_PROTOCOL,
@@ -199,6 +231,15 @@ export function buildBsv21CustomInstructions(args: {
   if (args.sym) body.sym = args.sym
   if (args.icon) body.icon = args.icon
   if (args.dec != null && args.dec > 0) body.dec = String(args.dec)
+  if (args.cosign?.pubkey) {
+    const pubkey = normalizeCosignPubKey(args.cosign.pubkey)
+    if (pubkey) {
+      const cosign: Record<string, string> = { pubkey }
+      if (args.cosign.endpoint) cosign.endpoint = args.cosign.endpoint
+      if (args.cosign.feeAddress) cosign.feeAddress = args.cosign.feeAddress
+      body.cosign = cosign
+    }
+  }
   return JSON.stringify(body)
 }
 
@@ -213,12 +254,32 @@ export function parseBsv21CustomInstructions(
   }
 }
 
+/** Cosign claim from CI and/or `cosign:<pubkey>` tag (script not required). */
+export function cosignFromRemittance(args: {
+  customInstructions?: string | null
+  tags?: string[]
+}): Bsv21Cosign | null {
+  const fromCi = parseBsv21CustomInstructions(args.customInstructions)?.cosign
+  if (fromCi) return fromCi
+  if (!args.tags) return null
+  for (const tag of args.tags) {
+    if (!tag.startsWith('cosign:')) continue
+    const pubkey = normalizeCosignPubKey(tag.slice('cosign:'.length))
+    if (pubkey) return { pubkey }
+  }
+  return null
+}
+
 export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
-  const byId = new Map<string, FungibleToken & { _sum: bigint }>()
+  const byId = new Map<
+    string,
+    FungibleToken & { _sum: bigint; _plain: boolean; _cosigned: boolean }
+  >()
   for (const u of utxos) {
     if (!isBalanceBearingOp(u.op)) continue
     const existing = byId.get(u.tokenId)
     const add = BigInt(u.amt.replace(/\D/g, '') || '0')
+    const tipCosigned = Boolean(u.cosign?.pubkey)
     if (!existing) {
       byId.set(u.tokenId, {
         tokenId: u.tokenId,
@@ -228,7 +289,11 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         iconUrl: undefined,
         utxoCount: 1,
         outpoint: u.outpoint,
+        spendKind: tipCosigned ? 'cosigned' : 'plain',
+        ...(u.cosign ? { cosign: u.cosign } : {}),
         _sum: add,
+        _plain: !tipCosigned,
+        _cosigned: tipCosigned,
       })
       continue
     }
@@ -236,9 +301,20 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     existing.utxoCount += 1
     if (!existing.sym && u.sym) existing.sym = u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
+    if (tipCosigned) {
+      existing._cosigned = true
+      if (!existing.cosign && u.cosign) existing.cosign = u.cosign
+    } else {
+      existing._plain = true
+    }
   }
   return [...byId.values()]
-    .map(({ _sum, ...row }) => ({ ...row, amt: _sum.toString() }))
+    .map(({ _sum, _plain, _cosigned, ...row }) => ({
+      ...row,
+      amt: _sum.toString(),
+      spendKind:
+        _plain && _cosigned ? ('mixed' as const) : _cosigned ? ('cosigned' as const) : ('plain' as const),
+    }))
     .sort((a, b) => a.sym.localeCompare(b.sym) || a.tokenId.localeCompare(b.tokenId))
 }
 
@@ -251,11 +327,14 @@ export function bsv21Tags(args: {
   tokenId: string
   amt: string
   sym?: string
+  cosign?: Bsv21Cosign
 }): string[] {
+  const pubkey = args.cosign ? normalizeCosignPubKey(args.cosign.pubkey) : null
   return [
     'bsv21',
     `id:${args.tokenId}`,
     `amt:${args.amt}`,
     ...(args.sym ? [`sym:${args.sym.slice(0, 32)}`] : []),
+    ...(pubkey ? [`cosign:${pubkey}`] : []),
   ]
 }

@@ -106,6 +106,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             : `${token.utxoCount} token outputs`}
           {' · '}
           Collect item — not spendable as BSV
+          {token.spendKind === 'cosigned'
+            ? ' · Cosigner required to send'
+            : token.spendKind === 'mixed'
+              ? ' · Mixed plain / cosigned tips'
+              : ''}
         </p>
       </div>
 
@@ -126,6 +131,16 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             void copyText(amount)
           }}
         />
+        {token.cosign?.pubkey ? (
+          <MetaRow
+            label="Cosigner"
+            value={token.cosign.pubkey}
+            onCopy={() => {
+              playWalletSound('soft')
+              void copyText(token.cosign!.pubkey)
+            }}
+          />
+        ) : null}
       </dl>
 
       <div className="collectable-details-actions">
