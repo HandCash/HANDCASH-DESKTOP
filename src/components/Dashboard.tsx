@@ -283,10 +283,58 @@ export function Dashboard({
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
         })
         if (cancelled || hints.tipHints <= 0) return
-        // Tip hint landed — ingest now, do not wait for the chain poll timer.
-        void sync({ forceReview: true }).finally(() => scheduleNext())
+        // Chat tip/pay cards arrive before Bitails lists the UTXO. Acking the
+        // messagebox tip once means we must retry ingest ourselves — otherwise
+        // the card shows "Claimed" while the balance stays stale.
+        void chasePaymentIngest(hints.paymentTxids).finally(() => scheduleNext())
       } catch {
         /* optional accelerator */
+      }
+    }
+
+    /**
+     * After a DM tip/pay notify: poll the address until funding lands or we
+     * give up (~12s). One shot is not enough when the indexer lags the box.
+     */
+    const chasePaymentIngest = async (_paymentTxids: string[]) => {
+      const { fetchBalanceSats } = await import('../wallet/session')
+      let before = 0
+      try {
+        const w = getActiveWallet()
+        if (w) before = await fetchBalanceSats(w.wallet)
+      } catch {
+        /* ignore */
+      }
+      for (let attempt = 0; attempt < 8; attempt++) {
+        if (cancelled) return
+        if (hasPendingPermissionPrompt() || shouldYieldChainIngestToSpend()) {
+          await new Promise((r) => window.setTimeout(r, 750))
+          continue
+        }
+        while (tickInFlight && !cancelled) {
+          await new Promise((r) => window.setTimeout(r, 200))
+        }
+        if (cancelled) return
+        tickInFlight = true
+        try {
+          const sats = await refreshFromChain({ forceReview: true })
+          if (cancelled) return
+          if (sats != null) onRefreshBalance(sats)
+          if (sats != null && sats > before) return
+        } finally {
+          tickInFlight = false
+        }
+        let after = before
+        try {
+          const w = getActiveWallet()
+          if (w) after = await fetchBalanceSats(w.wallet)
+        } catch {
+          /* ignore */
+        }
+        if (after > before) return
+        if (attempt < 7) {
+          await new Promise((r) => window.setTimeout(r, 1_500))
+        }
       }
     }
 
@@ -373,6 +421,13 @@ export function Dashboard({
     }
     document.addEventListener('handcash:app-active', onAppActive)
 
+    const onPaymentHint = (ev: Event) => {
+      if (cancelled) return
+      const txids = (ev as CustomEvent<{ txids?: string[] }>).detail?.txids ?? []
+      void chasePaymentIngest(txids).finally(() => scheduleNext())
+    }
+    document.addEventListener('handcash:payment-hint', onPaymentHint)
+
     const onVisibility = () => {
       if (cancelled || document.visibilityState !== 'visible') return
       // Foreground again — do not sit on a leftover 30s hidden timer.
@@ -385,6 +440,7 @@ export function Dashboard({
       cancelled = true
       unsubHealth()
       document.removeEventListener('handcash:app-active', onAppActive)
+      document.removeEventListener('handcash:payment-hint', onPaymentHint)
       document.removeEventListener('visibilitychange', onVisibility)
       if (pollTimer != null) window.clearTimeout(pollTimer)
       if (tipHintTimer != null) window.clearTimeout(tipHintTimer)

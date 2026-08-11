@@ -303,7 +303,7 @@ export async function pollInboundTipHints(args: {
   rootKeyHex: string
   peerIdForSender?: (senderIdentityKey: string) => string | null
   messagebox?: string | null
-}): Promise<{ messages: number; tipHints: number }> {
+}): Promise<{ messages: number; tipHints: number; paymentTxids: string[] }> {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
@@ -321,12 +321,13 @@ export async function pollInboundTipHints(args: {
       },
       body: JSON.stringify({ messageBox: 'inbox' }),
     })
-    if (!res.ok) return { messages: 0, tipHints: 0 }
+    if (!res.ok) return { messages: 0, tipHints: 0, paymentTxids: [] }
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0
+    const paymentTxids: string[] = []
     for (const m of list) {
       const senderKey = listedSender(m)
       const peerId = args.peerIdForSender?.(senderKey) ?? null
@@ -351,20 +352,28 @@ export async function pollInboundTipHints(args: {
         messages += 1
       }
       if (
-        decoded.kind === 'tip' &&
+        (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
         typeof decoded.meta?.txid === 'string' &&
         /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
       ) {
         tipHints += 1
+        paymentTxids.push(decoded.meta.txid.trim().toLowerCase())
       }
       if (m.messageId) ackIds.push(String(m.messageId))
     }
     if (ackIds.length > 0) {
       void acknowledgeMessages(ackIds, args.rootKeyHex, box)
     }
-    return { messages, tipHints }
+    if (paymentTxids.length > 0 && typeof document !== 'undefined') {
+      document.dispatchEvent(
+        new CustomEvent('handcash:payment-hint', {
+          detail: { txids: paymentTxids },
+        }),
+      )
+    }
+    return { messages, tipHints, paymentTxids }
   } catch {
-    return { messages: 0, tipHints: 0 }
+    return { messages: 0, tipHints: 0, paymentTxids: [] }
   }
 }
 
