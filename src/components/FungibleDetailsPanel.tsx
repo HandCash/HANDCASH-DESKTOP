@@ -12,8 +12,8 @@ import { shortIssuerLabel } from '../wallet/bsv21'
 import { clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectablesIcon, CopyIcon } from './icons'
-import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
+import { FungibleTokenFace } from './FungibleTokenFace'
 
 type Props = {
   tokenId: string
@@ -86,23 +86,12 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   return (
     <div className="collectable-details" data-aeon-scope="fungible-details">
       <div className="collectable-details-hero">
-        {token.iconUrl ? (
-          <DeferredImage
-            src={token.iconUrl}
-            alt={token.sym}
-            width={160}
-            height={160}
-            skeletonWidth={160}
-            skeletonHeight={160}
-            skeletonRadius={12}
-            skeletonClassName="skeleton-qr"
-            decoding="async"
-          />
-        ) : (
-          <div className="fungible-icon-fallback" aria-hidden>
-            {token.sym.slice(0, 3).toUpperCase()}
-          </div>
-        )}
+        <FungibleTokenFace
+          tokenId={token.tokenId}
+          sym={token.sym}
+          iconUrl={token.iconUrl}
+          size={160}
+        />
         <h2>{token.sym}</h2>
         <p className="collectable-details-sub">{amount}</p>
         <p className="field-static-hint">

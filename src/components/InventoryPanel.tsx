@@ -29,6 +29,7 @@ import {
 import { openCollectableDetails, openSendCollectable, openFungibleDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
+import { FungibleTokenFace } from './FungibleTokenFace'
 import { CollectablesIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
@@ -217,23 +218,12 @@ function FungibleListItem({ token }: { token: FungibleToken }) {
         }}
       >
         <div className="collectable-media collectable-media-sm">
-          {token.iconUrl ? (
-            <DeferredImage
-              src={token.iconUrl}
-              alt={token.sym}
-              width={48}
-              height={48}
-              skeletonWidth={48}
-              skeletonHeight={48}
-              skeletonRadius={6}
-              skeletonClassName="skeleton-qr"
-              decoding="async"
-            />
-          ) : (
-            <div className="fungible-icon-fallback fungible-icon-fallback--sm" aria-hidden>
-              {token.sym.slice(0, 3).toUpperCase()}
-            </div>
-          )}
+          <FungibleTokenFace
+            tokenId={token.tokenId}
+            sym={token.sym}
+            iconUrl={token.iconUrl}
+            size={48}
+          />
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{token.sym}</strong>

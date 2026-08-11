@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.139] - 2026-08-10
+
+### Fixed
+
+- **Token icons** no longer stick on a blank loader — hash identicon shows
+  immediately; on-chain `icon` overlays only after it loads (Panda `display`
+  was overriding HTML `hidden` on Avatar.Image).
+- **Activity history merge** keeps both send and receive rows for the same
+  txid (keyed by txid+kind). Wallet coin rows title as Sent/Received coins;
+  Activity filter includes **Wallet coins**.
+
+### Changed
+
+- **Sequential approvals:** skip pre-prompt chain heal for interactive pays
+  (auto-pay still heals first); right column shows Working while broadcasting.
+
 ## [1.2.138] - 2026-08-10
 
 ### Changed

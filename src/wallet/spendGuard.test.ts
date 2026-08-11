@@ -59,9 +59,11 @@ vi.mock('./session', () => ({
 }))
 
 describe('refreshSpendableBalance', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.clearAllMocks()
     getWalletCoordinatorSnapshot.mockReturnValue(idleSnapshot)
+    const { invalidateFundingHealCache } = await import('./spendGuard')
+    invalidateFundingHealCache()
   })
 
   it('uses top-level chain ingest outside a spend session', async () => {

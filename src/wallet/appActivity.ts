@@ -312,7 +312,9 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     return entry.note.trim()
   }
   if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    return entry.kind === 'spent' ? 'Sent' : 'Received'
+    const note = entry.note?.trim()
+    if (note && note !== 'Received' && note !== 'Sent') return note
+    return entry.kind === 'spent' ? 'Sent coins' : 'Received coins'
   }
   const name = appDisplayName(entry.origin)
   if (entry.kind === 'spent') return entry.note?.trim() || `Paid ${name}`
@@ -335,20 +337,26 @@ export function exportAllActivity(): ActivityEntry[] {
   return [...readAll()]
 }
 
-/** Merge remote activity into local history (idempotent by id / txid). */
+/** Merge remote activity into local history (idempotent by id / txid+kind). */
 export function mergeActivityEntries(incoming: ActivityEntry[]): number {
   const local = readAll()
   const byId = new Map(local.map((e) => [e.id, e]))
-  const byTx = new Map(
-    local.filter((e) => e.txid).map((e) => [e.txid!.toLowerCase(), e]),
+  const byTxKind = new Map(
+    local
+      .filter((e) => e.txid)
+      .map((e) => [`${e.txid!.toLowerCase()}:${e.kind}`, e]),
   )
   let added = 0
   for (const entry of incoming) {
     if (!entry?.id) continue
     if (byId.has(entry.id)) continue
-    if (entry.txid && byTx.has(entry.txid.toLowerCase())) continue
+    const txKind =
+      entry.txid && ACTIVITY_KINDS.has(entry.kind)
+        ? `${entry.txid.toLowerCase()}:${entry.kind}`
+        : null
+    if (txKind && byTxKind.has(txKind)) continue
     byId.set(entry.id, entry)
-    if (entry.txid) byTx.set(entry.txid.toLowerCase(), entry)
+    if (txKind) byTxKind.set(txKind, entry)
     added += 1
   }
   writeAll([...byId.values()].sort((a, b) => a.at - b.at))

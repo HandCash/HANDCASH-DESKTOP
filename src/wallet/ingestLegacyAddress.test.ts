@@ -111,7 +111,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
           method: 'receive',
           sats: 5000,
           txid: 'bb',
-          note: 'Received',
+          note: 'Received coins',
         }),
       ]),
     )

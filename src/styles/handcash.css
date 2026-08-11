@@ -1187,6 +1187,16 @@ body {
   min-width: 0;
 }
 
+.dashboard-side > .permission-side-panel--processing {
+  justify-content: center;
+  gap: 8px;
+  padding: 18px 16px;
+}
+
+.dashboard-side > .permission-side-panel--processing .permission-request-title {
+  margin: 0;
+}
+
 .what-is-bsv {
   position: relative;
   padding: 16px 14px 14px;
@@ -6210,24 +6220,53 @@ a.app-details-host:hover {
   margin-top: 0.5rem;
 }
 
-.fungible-icon-fallback {
-  display: grid;
-  place-items: center;
-  width: 160px;
-  height: 160px;
-  border-radius: 12px;
-  background: color-mix(in srgb, var(--hc-muted) 18%, transparent);
-  color: var(--hc-text);
-  font-weight: 700;
-  font-size: 1.6rem;
-  letter-spacing: 0.04em;
+/* Square token face — override Aeon Avatar’s always-round clip. */
+.fungible-avatar {
+  width: 160px !important;
+  height: 160px !important;
+  border-radius: 12px !important;
+  overflow: hidden;
 }
 
-.fungible-icon-fallback--sm {
-  width: 48px;
-  height: 48px;
-  border-radius: 6px;
-  font-size: 0.78rem;
+.fungible-avatar--sm {
+  width: 48px !important;
+  height: 48px !important;
+  border-radius: 6px !important;
+}
+
+.fungible-avatar--lg {
+  width: 160px !important;
+  height: 160px !important;
+  border-radius: 12px !important;
+}
+
+.fungible-avatar [data-aeon-part='image'],
+.fungible-avatar [data-aeon-part='fallback'] {
+  border-radius: inherit !important;
+}
+
+/* Panda `display:block` on image beats the HTML `hidden` attribute — force it. */
+.fungible-avatar [data-aeon-part='image'][hidden],
+.fungible-avatar [data-aeon-part='image'][data-aeon-state='idle'],
+.fungible-avatar [data-aeon-part='image'][data-aeon-state='loading'],
+.fungible-avatar [data-aeon-part='image'][data-aeon-state='error'] {
+  display: none !important;
+}
+
+.fungible-avatar [data-aeon-part='fallback'] {
+  padding: 0;
+  background: transparent;
+}
+
+.fungible-avatar [data-aeon-part='fallback'][hidden] {
+  display: none !important;
+}
+
+.fungible-avatar [data-aeon-part='fallback'] img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
 }
 
 .collectable-send-btn {

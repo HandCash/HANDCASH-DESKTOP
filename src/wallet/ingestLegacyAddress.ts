@@ -113,7 +113,7 @@ function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
       kind: 'earned',
       sats,
       method: 'receive',
-      note: 'Received',
+      note: 'Received coins',
       txid,
     })
   }

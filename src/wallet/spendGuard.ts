@@ -25,14 +25,35 @@ export function runExclusiveSpend<T>(
 /**
  * Force chain refresh; return spendable sats.
  *
- * Pre-prompt heals (BRC-100 createAction before the permission sheet) run
- * *outside* a spend session, so they must use the top-level chain ingest path.
- * Heals under `runExclusiveSpend` nest via `refreshFromChainDuringSpend`.
+ * Pre-prompt heals (auto-pay silent path) run *outside* a spend session, so they
+ * use the top-level chain ingest path. Heals under `runExclusiveSpend` nest via
+ * `refreshFromChainDuringSpend`.
+ *
+ * A heal completed within FUNDING_HEAL_FRESH_MS is reused so auto-pay's pre-prompt
+ * heal + post-approve heal do not double-scan the address.
  */
+const FUNDING_HEAL_FRESH_MS = 5_000
+let lastFundingHealAt = 0
+let lastFundingHealSats: number | null = null
+
+/** Call after a successful spend so the next heal cannot reuse pre-spend outs. */
+export function invalidateFundingHealCache(): void {
+  lastFundingHealAt = 0
+  lastFundingHealSats = null
+}
+
 export async function refreshSpendableBalance(): Promise<number> {
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
+
+  const now = Date.now()
+  if (
+    lastFundingHealSats != null &&
+    now - lastFundingHealAt < FUNDING_HEAL_FRESH_MS
+  ) {
+    return lastFundingHealSats
+  }
 
   // No audit: it only reports, and paying a request per output here is what made
   // sending feel frozen. fundingOnly for the same reason — a payment cannot spend
@@ -42,8 +63,10 @@ export async function refreshSpendableBalance(): Promise<number> {
     getWalletCoordinatorSnapshot().spend === 'active'
       ? await refreshFromChainDuringSpend(opts)
       : await refreshFromChain(opts)
-  if (synced != null) return synced
-  return fetchBalanceSats(active.wallet)
+  const sats = synced != null ? synced : await fetchBalanceSats(active.wallet)
+  lastFundingHealAt = Date.now()
+  lastFundingHealSats = sats
+  return sats
 }
 
 /** Refresh from chain and ensure `satoshis` still fits. */

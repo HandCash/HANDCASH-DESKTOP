@@ -101,5 +101,9 @@ export function listPaymentOriginOptions(limit = 200): PaymentOriginOption[] {
 
   apps.sort((a, b) => a.label.localeCompare(b.label))
 
-  return [{ id: 'all', label: 'All apps' }, ...apps]
+  return [
+    { id: 'all', label: 'Everything' },
+    { id: WALLET_ACTIVITY_ORIGIN, label: 'Wallet coins' },
+    ...apps,
+  ]
 }

@@ -4,10 +4,11 @@ import {
   filterItemOutputsForOrigin,
   gateOriginAccess,
   isActionMethod,
+  normalizeOrigin,
   requestActionApproval,
   requestItemViewApproval,
 } from './permissions'
-import { isItemBasket, prepareItemBasketArgs } from './itemAccess'
+import { isItemBasket, isItemSpendArgs, prepareItemBasketArgs } from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
@@ -27,8 +28,13 @@ import {
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import { prepareBrcActionSpend, runExclusiveSpend, invalidateFundingHealCache } from './spendGuard'
 import { enrichCreateActionForBsv21Issuer } from './bsv21Issuer'
+import { canAutoProcessPayment } from './autoPay'
+import {
+  clearPaymentProgress,
+  setPaymentProgress,
+} from './paymentProgress'
 type HttpRequestEvent = {
   method: string
   path: string
@@ -250,9 +256,18 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   if (isActionMethod(method)) {
     if (method === 'createAction' || method === 'signAction') {
       try {
-        // Pre-prompt heal so auto-pay / UI amount is based on live outs.
         assertOnlineForPayment()
-        await prepareBrcActionSpend(method, args)
+        // Interactive approvals: show the sheet immediately. A full chain heal
+        // before the prompt made sequential mint/pays feel stalled (idle column
+        // for tens of seconds). Auto-pay still heals first so silent allows are
+        // based on live outs; post-approve heal under lock remains for everyone.
+        const amountSats = extractSatsFromArgs(method, args)
+        const silentAutoPay =
+          !isItemSpendArgs(method, args) &&
+          canAutoProcessPayment(normalizeOrigin(originator), method, amountSats)
+        if (silentAutoPay) {
+          await prepareBrcActionSpend(method, args)
+        }
       } catch (err) {
         const description = err instanceof Error ? err.message : String(err)
         const offline = /offline/i.test(description)
@@ -303,8 +318,10 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     let result: unknown
     if (method === 'createAction' || method === 'signAction') {
       try {
+        setPaymentProgress('preparing', 'Checking spendable funds')
         result = await runExclusiveSpend(async () => {
           // Second heal under lock immediately before broadcast (cloud-style).
+          setPaymentProgress('preparing', 'Checking spendable funds')
           await prepareBrcActionSpend(method, args)
           let actionArgs = args
           if (method === 'createAction' && args && typeof args === 'object') {
@@ -317,9 +334,17 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
               console.warn('[bsv21-issuer] enrich createAction failed', err)
             }
           }
+          setPaymentProgress(
+            'broadcasting',
+            'Signing and sending to the network',
+          )
           return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
         })
+        setPaymentProgress('finishing', 'Updating your balance')
+        invalidateFundingHealCache()
       } catch (err) {
+        clearPaymentProgress()
+        invalidateFundingHealCache()
         const description = err instanceof Error ? err.message : String(err)
         const offline = /offline/i.test(description)
         return {
@@ -330,6 +355,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
             description,
           }),
         }
+      } finally {
+        clearPaymentProgress()
       }
     } else if (method === 'internalizeAction') {
       // Serialize with spends — concurrent internalize mid-broadcast can thrash outs.

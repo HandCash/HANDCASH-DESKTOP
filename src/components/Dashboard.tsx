@@ -42,6 +42,12 @@ import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
+import {
+  getPaymentProgress,
+  setPaymentProgress,
+  subscribePaymentProgress,
+  type PaymentProgress,
+} from '../wallet/paymentProgress'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
@@ -90,9 +96,16 @@ export function Dashboard({
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
+  const [paymentProgress, setPaymentProgressState] = useState<PaymentProgress>(() =>
+    getPaymentProgress(),
+  )
+  const [lastApproved, setLastApproved] = useState<PendingPrompt | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
   const sideRef = useRef<HTMLElement>(null)
+  const sideBusy =
+    !isMobileWalletPlatform() &&
+    (pendingPrompt != null || paymentProgress.phase !== 'idle')
   const sideApproval = !isMobileWalletPlatform() && pendingPrompt != null
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
@@ -101,9 +114,16 @@ export function Dashboard({
     return subscribePermissionRequests(setPendingPrompt)
   }, [])
   useEffect(() => {
-    if (!sideApproval || !sideRef.current) return
+    if (isMobileWalletPlatform()) return
+    return subscribePaymentProgress(setPaymentProgressState)
+  }, [])
+  useEffect(() => {
+    if (pendingPrompt) setLastApproved(null)
+  }, [pendingPrompt?.id])
+  useEffect(() => {
+    if (!sideBusy || !sideRef.current) return
     sideRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [sideApproval, pendingPrompt?.id])
+  }, [sideBusy, pendingPrompt?.id, paymentProgress.phase])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
 
@@ -112,6 +132,10 @@ export function Dashboard({
       if (!pendingPrompt) return
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
+      if (pendingPrompt.kind === 'action') {
+        setLastApproved(pendingPrompt)
+        setPaymentProgress('preparing', 'Starting…')
+      }
       resolvePermission(pendingPrompt.id, 'allow')
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
@@ -387,7 +411,7 @@ export function Dashboard({
         ref={sideRef}
         className="dashboard-side"
         data-aeon-scope="dashboard-side"
-        data-aeon-state={sideApproval ? 'permission' : 'idle'}
+        data-aeon-state={sideBusy ? 'permission' : 'idle'}
       >
         {sideApproval && pendingPrompt ? (
           <section
@@ -400,6 +424,23 @@ export function Dashboard({
               onDeny={onPermissionDeny}
               actions="inline"
             />
+          </section>
+        ) : sideBusy ? (
+          <section
+            className="panel permission-side-panel permission-side-panel--processing"
+            aria-label="Processing payment"
+            aria-busy="true"
+          >
+            <p className="permission-eyebrow">Working</p>
+            <h2 className="permission-request-title">
+              {paymentProgress.label || 'Sending…'}
+            </h2>
+            <p className="lede permission-lede-compact">
+              {paymentProgress.detail ||
+                (lastApproved
+                  ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
+                  : 'Broadcasting the approved payment.')}
+            </p>
           </section>
         ) : (
           <>
