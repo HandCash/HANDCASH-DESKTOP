@@ -1,5 +1,11 @@
 /**
- * Outpoints a send just spent, hidden from inventory until the chain agrees.
+ * Outpoints a send just spent (or filed as outbound remittance), hidden from
+ * inventory until the chain agrees.
+ *
+ * Soft-latch `createAction` puts the recipient tip in *this* wallet's `1sat`
+ * basket for remittance metadata. That tip is not ownership — mark it sent on
+ * outbound transfers so post-send list (which often runs with a cleared address
+ * scan cache) cannot toast "Item received" on the sender.
  *
  * `relinquishOutput` usually throws right after a send — `createAction` already
  * marked the tip spent — and `listOutputs` keeps returning it until a spendable

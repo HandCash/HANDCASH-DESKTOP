@@ -1241,6 +1241,45 @@ async function listCollectablesNow(
       )
     }
     outputs = [...owned, ...keptMissing]
+  } else {
+    // Address scan not ready (often right after send invalidates the cache).
+    // Still refuse to paint soft tips locked to someone else — remittance basket
+    // rows must not toast as receives.
+    const kept: ItemOutput[] = []
+    const ghosts: ItemOutput[] = []
+    for (const o of outputs) {
+      if ((o.satoshis ?? 1) !== 1 || o.tags?.includes(LATCH_TAG)) {
+        kept.push(o)
+        continue
+      }
+      const lockHex = o.lockingScript?.trim() ? o.lockingScript : null
+      const paysOurAddress =
+        lockHex != null ? scriptPaysAddress(lockHex, wallet.address) : null
+      const tipKind = classifyTipKind(o.lockingScript)
+      if (
+        paysOurAddress === false &&
+        tipKind.kind !== 'covenantLocked' &&
+        getProvenVerdict(normalizeOutpoint(o.outpoint))?.tier !== 'brc156'
+      ) {
+        ghosts.push(o)
+      } else {
+        kept.push(o)
+      }
+    }
+    if (ghosts.length > 0) {
+      console.info(
+        `[collectables] dropping ${ghosts.length} outbound tip(s) before address scan`,
+        ghosts.map((g) => outpointKey(g.outpoint)),
+      )
+      void relinquishSpentOutputs(
+        wallet,
+        ghosts.map((g) => ({
+          outpoint: normalizeOutpoint(g.outpoint),
+          basket: '1sat',
+        })),
+      )
+    }
+    outputs = kept
   }
 
   lastItemOutputs = outputs
@@ -1828,10 +1867,6 @@ export async function sendCollectable(args: {
     txid: string,
     opts?: { remittanceBuilt?: boolean },
   ): Promise<{ txid: string }> => {
-    markItemsSent([
-      { outpoint, txid },
-      ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
-    ])
     // Record activity as soon as the txid exists — before relinquish / list /
     // progress clear — so the feed updates while Working is still showing.
     const noteTo = args.friendLabel ? `${args.friendLabel} (${to})` : to
@@ -1859,6 +1894,19 @@ export async function sendCollectable(args: {
     // That is remittance metadata for the sender, not ownership — unless the
     // lock pays us (true self-receive).
     const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
+    // Hide spent tip + outbound remittance tips immediately. Post-send we
+    // invalidate the live address scan; without a fresh scan, ownership fate is
+    // skipped and the filed tip would toast "Item received" on the sender.
+    markItemsSent([
+      { outpoint, txid },
+      ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
+      ...(!selfReceive
+        ? [
+            { outpoint: newTip, txid },
+            ...(newLatch ? [{ outpoint: newLatch, txid }] : []),
+          ]
+        : []),
+    ])
     invalidateLiveOneSatOutpoints()
     await relinquishSpentOutputs(wallet, [
       { outpoint, basket: '1sat' },

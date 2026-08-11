@@ -37,6 +37,20 @@ describe('ownershipFate', () => {
     ).toBe('ghostDrop')
   })
 
+  it('never grace-holds a tip that pays someone else when address is unknown', () => {
+    // Mirror listCollectables fallback when live scan cache is cleared post-send:
+    // paysOurAddress false must win even without inLiveSet judgment.
+    expect(
+      ownershipFate({
+        tipKind: classifyTipKind(P2PKH),
+        inLiveSet: false,
+        unjudged: true,
+        paysOurAddress: false,
+        provenTier: 'brc150',
+      }),
+    ).toBe('ghostDrop')
+  })
+
   it('still grace-holds our soft tips when the address scan lags', () => {
     expect(
       ownershipFate({

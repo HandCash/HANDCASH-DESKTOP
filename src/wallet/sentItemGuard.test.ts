@@ -56,4 +56,17 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent('aa.0')).toBe(false)
     expect(guard.isItemSent('bb.1')).toBe(true)
   })
+
+  it('hides outbound remittance tips filed by soft-latch createAction', async () => {
+    const guard = await import('./sentItemGuard')
+    const txid = 'c'.repeat(64)
+    guard.markItemsSent([
+      { outpoint: 'old.0', txid },
+      { outpoint: `${txid}.0`, txid },
+      { outpoint: `${txid}.1`, txid },
+    ])
+    expect(guard.isItemSent('old.0')).toBe(true)
+    expect(guard.isItemSent(`${txid}.0`)).toBe(true)
+    expect(guard.isItemSent(`${txid}.1`)).toBe(true)
+  })
 })

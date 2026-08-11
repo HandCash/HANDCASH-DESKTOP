@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.174] - 2026-08-11
+
+### Fixed
+- **Outbound collectable send no longer toasts "Item received" / verified.** Soft-latch files the recipient tip in the sender's `1sat` basket for remittance; after send the live address scan was cleared so ownership fate skipped and that tip painted as a receive. Outbound tips are now marked sent immediately, and basket rows that pay someone else are dropped even before the address scan returns.
+
 ## [1.2.173] - 2026-08-11
 
 ### Fixed
