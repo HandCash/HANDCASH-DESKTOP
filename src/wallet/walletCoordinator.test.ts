@@ -155,4 +155,15 @@ describe('walletCoordinator runtime', () => {
     releaseSpendPriority()
     expect(shouldYieldChainIngestToSpend()).toBe(false)
   })
+
+  it('defers historyReplica when spend priority is raised', async () => {
+    const { HistoryDeferredForSpendError, runHistoryReplica } = await import(
+      './walletCoordinator'
+    )
+    requestSpendPriority()
+    await expect(runHistoryReplica(async () => 'backed-up')).rejects.toBeInstanceOf(
+      HistoryDeferredForSpendError,
+    )
+    releaseSpendPriority()
+  })
 })

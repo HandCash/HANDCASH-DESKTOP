@@ -338,27 +338,33 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     let result: unknown
     if (method === 'createAction' || method === 'signAction') {
       try {
-        setPaymentProgress('preparing', 'Preparing payment')
-        result = await runExclusiveSpend(async () => {
-          // Local balance check only — never block on address scan / chain ingest.
-          await prepareBrcActionSpend(method, args)
-          let actionArgs = args
-          if (method === 'createAction' && args && typeof args === 'object') {
-            try {
-              actionArgs = await enrichCreateActionForBsv21Issuer(
-                active,
-                args as Parameters<typeof enrichCreateActionForBsv21Issuer>[1],
-              )
-            } catch (err) {
-              console.warn('[bsv21-issuer] enrich createAction failed', err)
+        setPaymentProgress('preparing', 'Waiting to send…')
+        result = await runExclusiveSpend(
+          async () => {
+            // Local balance check only — never block on address scan / chain ingest.
+            await prepareBrcActionSpend(method, args)
+            let actionArgs = args
+            if (method === 'createAction' && args && typeof args === 'object') {
+              try {
+                setPaymentProgress('preparing', 'Preparing payment')
+                actionArgs = await enrichCreateActionForBsv21Issuer(
+                  active,
+                  args as Parameters<typeof enrichCreateActionForBsv21Issuer>[1],
+                )
+              } catch (err) {
+                console.warn('[bsv21-issuer] enrich createAction failed', err)
+              }
             }
-          }
-          setPaymentProgress(
-            'broadcasting',
-            'Signing and sending to the network',
-          )
-          return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
-        })
+            setPaymentProgress(
+              'broadcasting',
+              'Signing and sending to the network',
+            )
+            return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
+          },
+          () => {
+            setPaymentProgress('preparing', 'Preparing payment')
+          },
+        )
         setPaymentProgress('finishing', 'Updating your balance')
       } catch (err) {
         clearPaymentProgress()

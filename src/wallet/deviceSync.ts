@@ -44,7 +44,21 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null
 let pushInFlight: Promise<void> | null = null
 
 const PUSH_DEBOUNCE_MS = 2_500
+/** After spends — wait for sequential mint / pay chains before encrypting. */
+const POST_SPEND_PUSH_DEBOUNCE_MS = 12_000
 
+function pushDebounceMs(reason: string): number {
+  if (
+    reason === 'createAction' ||
+    reason === 'signAction' ||
+    reason === 'send' ||
+    reason === 'sendCollectable' ||
+    reason === 'internalizeAction'
+  ) {
+    return POST_SPEND_PUSH_DEBOUNCE_MS
+  }
+  return PUSH_DEBOUNCE_MS
+}
 
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
@@ -206,6 +220,9 @@ export function markHistoryBackupDirty(): void {
  * Debounced BRC-39 push using the in-memory session password (post-spend path).
  * Always archives a write-once local UTXO snapshot first — even when no cloud URL
  * is configured — so on-device history cannot be lost by an empty IndexedDB wipe.
+ *
+ * Yields to in-flight / queued spends: Argon2 + upload must not sit on the wallet
+ * FIFO ahead of createAction (sequential mint hung on "Preparing payment").
  */
 export function scheduleHistoryBackupPush(reason = 'dirty'): void {
   if (!getSessionBackupPassword()) {
@@ -218,8 +235,24 @@ export function scheduleHistoryBackupPush(reason = 'dirty'): void {
   if (pushTimer) clearTimeout(pushTimer)
   pushTimer = setTimeout(() => {
     pushTimer = null
-    void flushHistoryBackupPush(reason)
-  }, PUSH_DEBOUNCE_MS)
+    void (async () => {
+      try {
+        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+        if (shouldYieldChainIngestToSpend()) {
+          const { appendAppLog } = await import('./appLog')
+          appendAppLog(
+            'info',
+            `[cloud-backup] defer schedule (${reason}) — spend waiting`,
+          )
+          scheduleHistoryBackupPush(reason)
+          return
+        }
+      } catch {
+        /* coordinator optional during early boot */
+      }
+      await flushHistoryBackupPush(reason)
+    })()
+  }, pushDebounceMs(reason))
 }
 
 async function flushHistoryBackupPush(reason: string): Promise<void> {
@@ -251,6 +284,15 @@ async function flushHistoryBackupPush(reason: string): Promise<void> {
       closeBackupAttempt(true)
     } catch (err) {
       closeBackupAttempt(false)
+      if (
+        err instanceof Error &&
+        (err.name === 'HistoryDeferredForSpendError' ||
+          /payment is waiting/i.test(err.message))
+      ) {
+        historyDirty = true
+        scheduleHistoryBackupPush(reason)
+        return
+      }
       try {
         const { appendAppLog } = await import('./appLog')
         const msg = err instanceof Error ? err.message : String(err)
@@ -357,6 +399,16 @@ export async function autoPushHistoryBackupIfConfigured(
   } catch (err) {
     if (attemptOpen) closeBackupAttempt(false)
     const msg = err instanceof Error ? err.message : String(err)
+    if (
+      err instanceof Error &&
+      (err.name === 'HistoryDeferredForSpendError' ||
+        /payment is waiting/i.test(msg))
+    ) {
+      historyDirty = true
+      appendAppLog('info', `[cloud-backup] deferred (${reason}) — spend waiting`)
+      scheduleHistoryBackupPush(reason)
+      return
+    }
     try {
       appendAppLog('warn', `[cloud-backup] auto-sync failed (${reason}): ${msg}`)
     } catch {

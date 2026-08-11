@@ -84,7 +84,17 @@ export type CreateBrc39Opts = {
   passwordAlreadyVerified?: boolean
 }
 
-/** Verify unlock password, then export canonical BRC-39 bytes (AES-256-GCM + Argon2id). */
+/** Live BRC-38 JSON under the caller's historyReplica session (or none). */
+async function exportLiveBrc38Json(): Promise<string> {
+  return withActiveStorageProvider((storage, identityKey) =>
+    exportBrc38JsonRepairingNulls(storage, identityKey),
+  )
+}
+
+/**
+ * Snapshot toolbox state under historyReplica, then encrypt outside that lock.
+ * Argon2id on a ~26MB document must not block createAction / send.
+ */
 export async function createBrc39BackupBytes(
   password: string,
   opts: CreateBrc39Opts = {},
@@ -93,10 +103,7 @@ export async function createBrc39BackupBytes(
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  // Dump and encrypt as two steps so the Argon2id half can run in a worker.
-  const json = await withActiveStorageProvider((storage, identityKey) =>
-    exportBrc38JsonRepairingNulls(storage, identityKey),
-  )
+  const json = await runHistoryReplica(() => exportLiveBrc38Json())
   appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
   const out = asArrayBufferBytes(await encryptBrc39Document(json, password))
   // Every export is also a write-once on-device snapshot (never overwritten).
@@ -146,6 +153,10 @@ export async function importBrc39FromFile(
   return restoreBrc39BackupBytes(buf, password, 'merge')
 }
 
+/**
+ * Export under historyReplica only; encrypt + PUT run unlocked so a sequential
+ * mint / pay is not stuck on "Preparing payment" behind Argon2 + upload.
+ */
 export async function uploadBrc39Backup(
   password: string,
   opts: CreateBrc39Opts = {},
@@ -153,22 +164,22 @@ export async function uploadBrc39Backup(
   url: string
   exportedAt: number
 }> {
-  return runHistoryReplica(() => uploadBrc39BackupExclusive(password, opts))
-}
-
-async function uploadBrc39BackupExclusive(
-  password: string,
-  opts: CreateBrc39Opts,
-): Promise<{
-  url: string
-  exportedAt: number
-}> {
+  if (!opts.passwordAlreadyVerified) await revealRootKeyHex(password)
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)
-  const bytes = asArrayBufferBytes(await createBrc39BackupBytes(password, opts))
+
+  const json = await runHistoryReplica(() => exportLiveBrc38Json())
+  appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
+  const bytes = asArrayBufferBytes(await encryptBrc39Document(json, password))
+  await archiveBrc39Locally({
+    identityKey: active.identityKey,
+    bytes,
+    exportedAt: Date.now(),
+  })
+
   const exportedAt = Date.now()
   appendAppLog('info', `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url}`)
 

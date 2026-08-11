@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.143] - 2026-08-11
+
+### Fixed
+
+- **Pay hang on "Preparing payment":** BRC-39 auto-backup no longer holds the
+  wallet lock through Argon2 encrypt + upload (~26MB). Snapshot export stays
+  exclusive; encrypt/upload run unlocked. Post-spend backup defers while a
+  send is queued, and historyReplica yields the FIFO when spend priority is
+  raised. Identity-mint inputBEEF times out at 8s if the indexer is down.
+
 ## [1.2.142] - 2026-08-10
 
 ### Changed

@@ -181,14 +181,33 @@ export function runExclusiveSpend<T>(
   })
 }
 
+/**
+ * Thrown when a historyReplica job yields the FIFO to a waiting spend.
+ * Auto-backup catches this and reschedules; manual Sync should retry.
+ */
+export class HistoryDeferredForSpendError extends Error {
+  constructor() {
+    super('Wallet backup paused — a payment is waiting')
+    this.name = 'HistoryDeferredForSpendError'
+  }
+}
+
 /** BRC-39 push/pull/restore — exclusive with chain ingest and spend. */
 export function runHistoryReplica<T>(fn: () => Promise<T>): Promise<T> {
   if (context().recomposeDepth > 0) {
     return fn()
   }
   return topLevelQueue(async () => {
+    // Spends raise priority before enqueueing. If we got the FIFO slot first,
+    // exit without acquiring history so the queued spend can run.
+    if (shouldYieldChainIngestToSpend()) {
+      throw new HistoryDeferredForSpendError()
+    }
     const release = await acquireHistoryReplica()
     try {
+      if (shouldYieldChainIngestToSpend()) {
+        throw new HistoryDeferredForSpendError()
+      }
       return await fn()
     } finally {
       release()

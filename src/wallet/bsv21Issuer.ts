@@ -327,11 +327,15 @@ export async function enrichCreateActionForBsv21Issuer(
         ...existingInputs,
       ]
       try {
-        inputBEEF = await buildMergedInputBeef(
-          active,
-          [fundOutpoint],
-          normalizeDotOutpoint,
-        )
+        inputBEEF = await Promise.race([
+          buildMergedInputBeef(active, [fundOutpoint], normalizeDotOutpoint),
+          new Promise<never>((_, reject) =>
+            setTimeout(
+              () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
+              8_000,
+            ),
+          ),
+        ])
       } catch (err) {
         console.warn('[bsv21-issuer] inputBEEF failed; skipping forced fund input', err)
         inputs = existingInputs
