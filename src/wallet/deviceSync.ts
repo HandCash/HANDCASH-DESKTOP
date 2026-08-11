@@ -47,8 +47,11 @@ let pushTimer: ReturnType<typeof setTimeout> | null = null
 let pushInFlight: Promise<void> | null = null
 
 const PUSH_DEBOUNCE_MS = 2_500
-/** After spends — wait for sequential mint / pay chains before encrypting. */
-const POST_SPEND_PUSH_DEBOUNCE_MS = 12_000
+/**
+ * After spends — wait before Argon2 on ~26MB BRC-38. Encrypting on the UI thread
+ * right after sign/broadcast freezes the phone for tens of seconds (lab stalls).
+ */
+const POST_SPEND_PUSH_DEBOUNCE_MS = 45_000
 
 /** Unlock must not encrypt a ~26MB BRC-38 on the UI thread before first paint. */
 const UNLOCK_PUSH_DEBOUNCE_MS = 60_000

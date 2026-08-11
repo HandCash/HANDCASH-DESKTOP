@@ -1522,6 +1522,12 @@ async function signOrdinalTransfer(args: {
   const signed = await args.wallet.wallet.signAction({
     reference: args.signable.reference,
     spends,
+    options: {
+      // Sync broadcast on Android historically AbortError'd / hung for tens of
+      // seconds. Queue for the monitor; UI already has the txid.
+      acceptDelayedBroadcast: true,
+      returnTXIDOnly: true,
+    },
   })
   if (!signed.txid) throw new Error('Collectable transfer returned no txid')
   return signed.txid
@@ -1984,14 +1990,18 @@ export async function sendCollectable(args: {
     {
       outpoint,
       inputDescription: '1sat collectable',
-      unlockingScriptLength: 108,
+      // Plain soft P2PKH: omit unlockingScriptLength so createAction can
+      // signAndProcess in one shot. Declaring a length forces the signable →
+      // signAction round trip (~30s on phones in lab logs).
+      ...(tipKind.kind === 'softP2pkh' ? {} : { unlockingScriptLength: 108 }),
     },
     ...(priorLatch
       ? [
           {
             outpoint: priorLatch.outpoint,
             inputDescription: '1sat latch',
-            unlockingScriptLength: 108,
+            // Latch dust is plain P2PKH — same auto-sign win.
+            ...(tipKind.kind === 'softP2pkh' ? {} : { unlockingScriptLength: 108 }),
           },
         ]
       : []),

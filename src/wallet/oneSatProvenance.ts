@@ -738,6 +738,12 @@ export async function tryBuildProvenanceV2(args: {
    * parent — both are reused/extended before any lineage walk.
    */
   priorProvenance?: unknown
+  /**
+   * Walk tip→origin from chain when the tip BEEF has no path. Default false —
+   * Pixel Fox hydrates take tens of seconds on phones and usually omit under
+   * remittance budget. Soft-latch send must stay interactive.
+   */
+  allowLineageHydrate?: boolean
 }): Promise<ProvenanceV2 | null> {
   const tip = toUnderscore(args.tipOutpoint)
   const origin = toUnderscore(args.origin)
@@ -812,18 +818,22 @@ export async function tryBuildProvenanceV2(args: {
         ? args.path.map(toUnderscore)
         : deriveOneSatPathFromBeef(beef, tip, origin)
     if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
-      // The BEEF the wallet holds for a mined tip stops at that transaction, so
-      // there is nothing older to walk. Hydrate the ancestry from chain data
-      // rather than sending an item the receiver can only call unverified —
-      // but abort once the assembled BEEF cannot fit on the wire (Pixel Foxes
-      // lineages routinely exceed remittance budget; walking them only to omit
-      // blocked the phone for tens of seconds on send).
+      if (!args.allowLineageHydrate) {
+        console.info(
+          '[brc-150] omit provenance — no tip-local path (skip lineage hydrate on send)',
+        )
+        return null
+      }
+      // Offline / recovery callers may opt in. Abort once assembled BEEF cannot
+      // fit on the wire (Pixel Fox lineages routinely exceed remittance budget).
       const maxBeefBytes = Math.floor((REMITTANCE_MAX_BEEF_B64_CHARS * 3) / 4)
       const hydrated = await hydrateLineageForSend(args.wallet, tip, {
         maxBeefBytes,
       })
       if (!hydrated || hydrated.origin !== origin) {
-        console.warn('[brc-150] omit provenance — no complete one-sat path to origin under remittance budget')
+        console.warn(
+          '[brc-150] omit provenance — no complete one-sat path to origin under remittance budget',
+        )
         return null
       }
       path = hydrated.path

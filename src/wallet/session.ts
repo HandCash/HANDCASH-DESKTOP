@@ -133,6 +133,40 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
+ * Broadcast: Bitails first (fast public ARC), then Arcade / Gorilla / Taal / WoC.
+ * Default order burned soft-timeout budget on slow ARC hosts before Bitails.
+ * Tighten UntilSuccess soft caps so a dead endpoint cannot hold the UI for 30s.
+ */
+function installPostBeefPreferFast(services: Services): void {
+  try {
+    const collection = (
+      services as unknown as {
+        postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void }
+      }
+    ).postBeefServices
+    preferServiceOrder(collection, [
+      'Bitails',
+      'ArcadeBeef',
+      'GorillaPoolArcBeef',
+      'TaalArcBeef',
+      'WhatsOnChain',
+    ])
+    const s = services as Services & {
+      postBeefUntilSuccessSoftTimeoutMs?: number
+      postBeefUntilSuccessSoftTimeoutMaxMs?: number
+    }
+    if (typeof s.postBeefUntilSuccessSoftTimeoutMs === 'number') {
+      s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 2_500 : 3_500
+    }
+    if (typeof s.postBeefUntilSuccessSoftTimeoutMaxMs === 'number') {
+      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 10_000 : 15_000
+    }
+  } catch (err) {
+    console.warn('[postBeef] could not prefer fast broadcasters', err)
+  }
+}
+
+/**
  * TaskNewHeader polls `findChainTipHeader`. That call skipped our height/header
  * failover and died whenever Chaintracks 500'd — flooding the log with
  * `Failed to fetch` while proofs never solicited. Fall through to Bitails tip
@@ -221,6 +255,7 @@ export async function bootWallet(args: {
   installHeaderFailover(setup.services as Services, args.chain)
   installTipHeaderFailover(setup.services as Services, args.chain)
   installMerklePreferBitails(setup.services as Services)
+  installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
 
   try {

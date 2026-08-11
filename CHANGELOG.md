@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.175] - 2026-08-11
+
+### Fixed
+- **Faster soft-latch sign / broadcast.** Skip tip→origin lineage hydrate on the send hot path (it was burning seconds then omitting). Plain P2PKH tips no longer force the signable→signAction round trip. Bitails-first postBeef with tighter soft timeouts. Defer post-spend BRC-39 Argon2 so encrypt does not freeze the UI right after send.
+
 ## [1.2.174] - 2026-08-11
 
 ### Fixed

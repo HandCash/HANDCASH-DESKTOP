@@ -70,6 +70,24 @@ describe('tryBuildProvenanceV2', () => {
     resetBeefCacheForTests()
   })
 
+  it('skips lineage hydrate on the send hot path by default', async () => {
+    const origin = inscription()
+    const hop = transfer(origin)
+    const tip = transfer(hop)
+    const { wallet, getBeefForTxid } = walletServing([origin, hop, tip])
+
+    const provenance = await tryBuildProvenanceV2({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      origin: `${origin.id('hex')}_0`,
+      wallet,
+      inputBeef: minedBeef(tip, 900_002).toBinary(),
+    })
+
+    expect(provenance).toBeNull()
+    // Tip BEEF alone — no hop/origin fetches for a doomed wire remittance.
+    expect(getBeefForTxid).not.toHaveBeenCalled()
+  })
+
   it('hydrates the ancestry when the held BEEF stops at the tip', async () => {
     const origin = inscription()
     const hop = transfer(origin)
@@ -80,6 +98,7 @@ describe('tryBuildProvenanceV2', () => {
       tipOutpoint: `${tip.id('hex')}.0`,
       origin: `${origin.id('hex')}_0`,
       wallet,
+      allowLineageHydrate: true,
       // A mined tip's BEEF depends on nothing, which is the whole trap: without
       // hydration there is no path to derive and the send goes out unprovable.
       inputBeef: minedBeef(tip, 900_002).toBinary(),
