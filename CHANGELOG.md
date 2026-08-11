@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.172] - 2026-08-11
+
+### Fixed
+
+- **History recovery:** one-time previous-password field when the cloud blob is still legacy password-encrypted.
+
 ## [1.2.171] - 2026-08-11
 
 ### Changed

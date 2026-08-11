@@ -8,6 +8,7 @@ import { ensureSuggestedHistoryBackupUrl } from '../wallet/historyBackupPrefs'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { recomposeWallet } from '../wallet/recompose'
 import { playWalletSound } from '../wallet/soundService'
+import { PasswordField } from './PasswordField'
 
 type Props = {
   onDone: () => void
@@ -22,13 +23,15 @@ type RemoteProbe =
 
 /**
  * Post-restore gate: keys are sealed; replace local toolbox state from BRC-39
- * using the root key (no history password). Legacy password-encrypted blobs
- * still decrypt when the session unlock password matches the old cipher.
+ * using the root key. Optional legacy unlock password only for older blobs
+ * that were encrypted before root-key history (then re-uploaded as root-key).
  */
 export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [probe, setProbe] = useState<RemoteProbe>({ status: 'checking' })
+  const [showLegacy, setShowLegacy] = useState(false)
+  const [legacyPassword, setLegacyPassword] = useState('')
 
   useEffect(() => {
     let cancelled = false
@@ -61,11 +64,11 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
     try {
       ensureSuggestedHistoryBackupUrl()
       clearBackupBackoff()
-      // Root-key decrypt; session unlock password only for legacy blobs.
-      const legacy = getSessionBackupPassword()
+      const legacy =
+        legacyPassword.trim() || getSessionBackupPassword() || null
       await replaceLocalHistoryFromCloud(legacy)
       await recomposeWallet({
-        password: legacy,
+        password: getSessionBackupPassword(),
         history: 'skip',
         reason: 'restore-url',
       })
@@ -75,8 +78,9 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
       playWalletSound('error')
       const msg = err instanceof Error ? err.message : String(err)
       if (/decrypt|password|passphrase|auth|mac|argon|gcm|cipher|invalid/i.test(msg)) {
+        setShowLegacy(true)
         setError(
-          'Could not decrypt the history backup. If this blob was made before root-key history, unlock once on a device that still has the old password so it can re-upload — then try again.',
+          'This cloud backup was made with an older unlock password. Enter that password once below — we’ll re-seal history to your wallet key.',
         )
       } else {
         setError(msg)
@@ -111,6 +115,24 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
         <p className="wallet-sync-note is-error" role="alert">
           {error}
         </p>
+      ) : null}
+
+      {showLegacy ? (
+        <>
+          <PasswordField
+            id="history-legacy-password"
+            label="Previous unlock password (one-time)"
+            placeholder="Password that encrypted the old backup"
+            value={legacyPassword}
+            onChange={(e) => setLegacyPassword(e.target.value)}
+            autoComplete="current-password"
+            disabled={busy}
+          />
+          <p className="password-hint">
+            Only needed for backups made before root-key history. After this restore we
+            re-upload sealed to your key.
+          </p>
+        </>
       ) : null}
 
       <div className="auth-actions" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
