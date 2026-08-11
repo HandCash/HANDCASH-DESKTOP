@@ -39,7 +39,17 @@ export function DeviceHandoffPanel() {
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>
-        <button type="button" className="btn btn-primary" onClick={openKeys}>
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            playWalletSound('soft')
+            openSetting('trustholder-backup')
+          }}
+        >
+          Cloud key backup
+        </button>
+        <button type="button" className="btn btn-ghost" onClick={openKeys}>
           {hasPhrase ? 'Open key slices (or phrase)' : 'Open key slices'}
         </button>
         <button
@@ -51,16 +61,6 @@ export function DeviceHandoffPanel() {
           }}
         >
           History backup
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('trustholder-backup')
-          }}
-        >
-          Cloud key backup
         </button>
       </div>
 

@@ -20,6 +20,7 @@ export {
   depositSharesToTrustholders,
   type DepositOtpRequest,
   type DepositProgress,
+  type DepositRegisterRequest,
   type DepositResult,
   type TrustholderProvider,
 } from './enrollment'

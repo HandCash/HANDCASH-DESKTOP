@@ -22,9 +22,11 @@ import { setAutoPaySettings } from '../wallet/autoPay'
 import {
   clearNavChild,
   getNavState,
+  getSettingBackStack,
   openAppDetails,
   openCollectableDetails,
   openNavChild,
+  popSettingTo,
   setNavSection,
   subscribeNav,
   type NavSection,
@@ -242,7 +244,17 @@ export function WalletNav({
     if (child.type === 'scan') return [root, { label: 'Scan' }]
     if (child.type === 'receive') return [root, { label: 'Receive' }]
     if (child.type === 'add-friend') return [root, { label: 'Add friend' }]
-    if (child.type === 'setting') return [root, { label: settingLabel(child.settingId) }]
+    if (child.type === 'setting') {
+      const stack = getSettingBackStack()
+      return [
+        root,
+        ...stack.map((id) => ({
+          label: settingLabel(id),
+          onClick: () => popSettingTo(id),
+        })),
+        { label: settingLabel(child.settingId) },
+      ]
+    }
     if (child.type === 'friend') {
       const friend = getFriendById(child.friendId)
       return [root, { label: friend?.label || 'Friend' }]

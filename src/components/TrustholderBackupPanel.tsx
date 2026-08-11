@@ -1,17 +1,20 @@
-import { useCallback, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Prompt } from '@aeon-ui/react'
 import { markCloudKeysBackupConfirmed } from '../wallet/backupStatus'
 import { shareDownloadFilename } from '../wallet/brc140Backup'
 import { copyText } from '../wallet/clipboard'
+import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
   depositSharesToTrustholders,
+  fetchTrustholderInfo,
   getTrustholderEnrollments,
   listTrustholderProviders,
   TrustholderHttpError,
   type DepositOtpRequest,
   type DepositProgress,
+  type DepositRegisterRequest,
 } from '../wallet/trustholderBackup'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { TrustholderDestinationList } from './KeySliceList'
@@ -27,8 +30,31 @@ function downloadShare(filename: string, contents: string) {
   URL.revokeObjectURL(url)
 }
 
+async function openExternalUrl(url: string) {
+  if (window.handcash?.openExternal) {
+    await window.handcash.openExternal(url)
+    return
+  }
+  window.open(url, '_blank', 'noopener,noreferrer')
+}
+
+function withEmailQuery(portal: string, email: string): string {
+  try {
+    const url = new URL(portal)
+    if (email.includes('@')) url.searchParams.set('email', email.trim())
+    return url.toString()
+  } catch {
+    return portal
+  }
+}
+
 type OtpGate = DepositOtpRequest & {
   resolve: (code: string) => void
+  reject: (err: Error) => void
+}
+
+type RegisterGate = DepositRegisterRequest & {
+  resolve: () => void
   reject: (err: Error) => void
 }
 
@@ -43,6 +69,7 @@ export function TrustholderBackupPanel() {
   const [password, setPassword] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [progress, setProgress] = useState<DepositProgress | null>(null)
+  const [portals, setPortals] = useState<Partial<Record<string, string>>>({})
   const [localShare, setLocalShare] = useState<{
     share: string
     integrity: string
@@ -50,8 +77,34 @@ export function TrustholderBackupPanel() {
   } | null>(null)
   const [otpGate, setOtpGate] = useState<OtpGate | null>(null)
   const [otpDraft, setOtpDraft] = useState('')
+  const [registerGate, setRegisterGate] = useState<RegisterGate | null>(null)
   const otpRef = useRef<OtpGate | null>(null)
+  const registerRef = useRef<RegisterGate | null>(null)
   const skipOtpDismiss = useRef(false)
+  const skipRegisterDismiss = useRef(false)
+
+  useEffect(() => {
+    let cancelled = false
+    void (async () => {
+      const next: Partial<Record<string, string>> = {}
+      await Promise.all(
+        providers.map(async (p) => {
+          try {
+            const info = await fetchTrustholderInfo(p.baseUrl)
+            if (info.portal) next[p.operator] = info.portal
+          } catch {
+            /* portal links stay optional until deposit */
+          }
+        }),
+      )
+      if (!cancelled) setPortals(next)
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Providers are stable URL prefs for the session.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const requestOtp = useCallback((req: DepositOtpRequest) => {
     return new Promise<string>((resolve, reject) => {
@@ -59,6 +112,15 @@ export function TrustholderBackupPanel() {
       otpRef.current = gate
       setOtpDraft(req.devCode?.trim() || '')
       setOtpGate(gate)
+    })
+  }, [])
+
+  const requestRegister = useCallback((req: DepositRegisterRequest) => {
+    return new Promise<void>((resolve, reject) => {
+      const gate: RegisterGate = { ...req, resolve, reject }
+      registerRef.current = gate
+      setRegisterGate(gate)
+      void openExternalUrl(req.portal)
     })
   }, [])
 
@@ -80,6 +142,16 @@ export function TrustholderBackupPanel() {
     }
   }
 
+  const closeRegister = (ok: boolean) => {
+    const gate = registerRef.current
+    registerRef.current = null
+    if (ok) skipRegisterDismiss.current = true
+    setRegisterGate(null)
+    if (!gate) return
+    if (ok) gate.resolve()
+    else gate.reject(new Error('Cancelled'))
+  }
+
   const runDeposit = async () => {
     if (!password) return
     setBusy(true)
@@ -91,6 +163,7 @@ export function TrustholderBackupPanel() {
         email,
         onProgress: setProgress,
         onOtpNeeded: requestOtp,
+        onRegisterNeeded: requestRegister,
       })
       markCloudKeysBackupConfirmed()
       setEnrollments(result.enrollments)
@@ -107,10 +180,12 @@ export function TrustholderBackupPanel() {
     } catch (err) {
       playWalletSound('error')
       if (err instanceof TrustholderHttpError && err.code === 'not-registered') {
+        const portal = err.portal ? withEmailQuery(err.portal, email) : undefined
+        if (portal) void openExternalUrl(portal)
         toastError(
           'Register first',
-          err.portal
-            ? `${err.message} Portal: ${err.portal}`
+          portal
+            ? `Opened ${portal.split('?')[0]} — register, then try again.`
             : err.message,
         )
       } else if (err instanceof Error && err.message === 'Cancelled') {
@@ -175,7 +250,22 @@ export function TrustholderBackupPanel() {
         }}
       />
 
-      {!password ? (
+      {localShare ? (
+        <div className="actions" style={{ marginTop: 12 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => {
+              playWalletSound('soft')
+              openSetting('history-backup', { replace: true })
+            }}
+          >
+            Continue to history backup
+          </button>
+        </div>
+      ) : null}
+
+      {!localShare && !password ? (
         <ConfirmPasswordGate
           id="trustholder-deposit-password"
           title="Confirm it’s you"
@@ -183,7 +273,7 @@ export function TrustholderBackupPanel() {
           actionLabel="Unlock deposit"
           onVerified={(pw) => setPassword(pw)}
         />
-      ) : (
+      ) : !localShare ? (
         <div className="settings-form settings-form-compact" data-aeon-part="deposit-form">
           <div className="field">
             <label htmlFor="trustholder-email">Portal email</label>
@@ -198,9 +288,29 @@ export function TrustholderBackupPanel() {
             />
           </div>
           <p className="settings-row-desc">
-            Register this email at each trustholder portal if you have not already, then enter the
-            OTP sent for each provider.
+            Register the same email at each provider portal once, then deposit. OTP is required for
+            each trustholder.
           </p>
+          <div className="actions" style={{ flexWrap: 'wrap' }}>
+            {providers.map((p) => {
+              const portal = portals[p.operator]
+              if (!portal) return null
+              return (
+                <button
+                  key={p.operator}
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={busy}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void openExternalUrl(withEmailQuery(portal, email))
+                  }}
+                >
+                  Open {p.label} portal
+                </button>
+              )
+            })}
+          </div>
           {progress ? (
             <p className="settings-row-desc" data-aeon-part="deposit-progress" role="status">
               {progress.message}
@@ -232,7 +342,57 @@ export function TrustholderBackupPanel() {
             </button>
           </div>
         </div>
-      )}
+      ) : null}
+
+      <Prompt.Root
+        open={Boolean(registerGate)}
+        status={registerGate ? 'pending' : 'dismissed'}
+        onOpenChange={(open) => {
+          if (open) return
+          if (skipRegisterDismiss.current) {
+            skipRegisterDismiss.current = false
+            return
+          }
+          closeRegister(false)
+        }}
+      >
+        <Prompt.Portal>
+          <Prompt.Backdrop className="permission-backdrop" />
+          <Prompt.Positioner className="permission-positioner">
+            {registerGate ? (
+              <Prompt.Content
+                className="panel modal permission-modal"
+                data-aeon-scope="trustholder-register"
+              >
+                <Prompt.Title>Register at {registerGate.label}</Prompt.Title>
+                <Prompt.Description>
+                  {registerGate.email} is not registered yet. Finish registration in the browser,
+                  then continue here.
+                </Prompt.Description>
+                <div className="actions" style={{ marginTop: 12 }}>
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    onClick={() => void openExternalUrl(registerGate.portal)}
+                  >
+                    Open portal
+                  </button>
+                  <button type="button" className="btn btn-ghost" onClick={() => closeRegister(false)}>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    onClick={() => closeRegister(true)}
+                  >
+                    I’ve registered
+                  </button>
+                </div>
+              </Prompt.Content>
+            ) : null}
+          </Prompt.Positioner>
+        </Prompt.Portal>
+      </Prompt.Root>
 
       <Prompt.Root
         open={Boolean(otpGate)}
@@ -261,14 +421,6 @@ export function TrustholderBackupPanel() {
                     : otpGate.devCode
                       ? 'Local-only code (email not configured on this Worker)'
                       : 'Enter the email verification code'}
-                  {otpGate.portal ? (
-                    <>
-                      {' '}
-                      <a href={otpGate.portal} target="_blank" rel="noreferrer">
-                        Open portal
-                      </a>
-                    </>
-                  ) : null}
                 </Prompt.Description>
                 <div className="field" style={{ marginTop: 12 }}>
                   <label htmlFor="trustholder-otp">Code</label>
@@ -283,6 +435,15 @@ export function TrustholderBackupPanel() {
                   />
                 </div>
                 <div className="actions" style={{ marginTop: 12 }}>
+                  {otpGate.portal ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => void openExternalUrl(otpGate.portal!)}
+                    >
+                      Open portal
+                    </button>
+                  ) : null}
                   <button type="button" className="btn btn-ghost" onClick={() => closeOtp(false)}>
                     Cancel
                   </button>

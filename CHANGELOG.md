@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.164] - 2026-08-11
+
+### Added
+
+- **Cloud key backup:** register gate opens the trustholder portal (`openExternal`,
+  email prefilled); OTP continue after portal registration; settings back-stack so
+  Keys → Cloud backup → History navigates correctly.
+
+### Changed
+
+- **Settings Security:** Cloud key backup listed first (before Key slices).
+- **Key slices / Device handoff:** cloud backup is the primary recovery CTA.
+
+### Fixed
+
+- Trustholder deposit no longer falls through to silent `dev-token` when email-OTP
+  fails for a registered path.
+
 ## [1.2.163] - 2026-08-11
 
 ### Fixed

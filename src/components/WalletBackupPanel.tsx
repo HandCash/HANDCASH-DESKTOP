@@ -217,7 +217,8 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Save any two of three slices to recover your wallet. Email is the easiest option.
+        Prefer cloud key backup when you can. Otherwise save any two of three offline slices — email
+        is the easiest local option.
       </p>
 
       <button
@@ -229,9 +230,9 @@ export function WalletBackupPanel() {
           openSetting('trustholder-backup')
         }}
       >
-        <span className="backup-choice-title">Add trustholder backup</span>
+        <span className="backup-choice-title">Cloud key backup</span>
         <span className="backup-choice-desc">
-          Optional · store slices with recovery providers
+          Recommended · HandCash + Haste hold two slices for you
         </span>
       </button>
 

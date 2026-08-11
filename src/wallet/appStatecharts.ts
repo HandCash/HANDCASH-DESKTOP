@@ -343,12 +343,17 @@ const SETTINGS = `stateDiagram-v2
   settingsHome --> aboutHandCash : open
   changePassword --> settingsHome : back
   backupKeys --> settingsHome : back
+  backupKeys --> trustholderBackup : add trustholder
+  trustholderBackup --> backupKeys : back
+  trustholderBackup --> historyBackup : continue after offline slice
   trustholderBackup --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
   deviceHandoff --> historyBackup : open history
   deviceHandoff --> trustholderBackup : open cloud keys
   deviceHandoff --> settingsHome : back
   historyBackup --> settingsHome : back
+  historyBackup --> deviceHandoff : back
+  historyBackup --> backupKeys : back
   wipeWallet --> settingsHome : back / done
   aboutHandCash --> settingsHome : back
   aboutHandCash --> statecharts : view charts

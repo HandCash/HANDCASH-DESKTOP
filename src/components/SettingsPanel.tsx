@@ -32,14 +32,14 @@ const SETTING_GROUPS: SettingGroup[] = [
     title: 'Security',
     items: [
       {
-        id: 'backup',
-        label: 'Key slices',
-        description: '2-of-3 · cycle destinations · rotate',
-      },
-      {
         id: 'trustholder-backup',
         label: 'Cloud key backup',
         description: 'Deposit slices to HandCash + Haste',
+      },
+      {
+        id: 'backup',
+        label: 'Key slices',
+        description: '2-of-3 · email · offline copies',
       },
       {
         id: 'history-backup',

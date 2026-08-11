@@ -246,7 +246,10 @@ export async function saveCollectableImage(args: {
         if (!result.ok) throw new Error(result.error || 'save failed')
         if (result.canceled) return true
         playWalletSound('soft')
-        toastSuccess('Image saved')
+        const toGallery =
+          typeof navigator !== 'undefined' &&
+          /android|iphone|ipad/i.test(navigator.userAgent)
+        toastSuccess(toGallery ? 'Saved to gallery' : 'Image saved')
         return true
       }
     } catch (err) {

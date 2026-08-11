@@ -79,17 +79,22 @@ export function subscribeNav(cb: Listener): () => void {
 }
 
 export function setNavSection(section: NavSection) {
+  settingBackStack = []
   state = { section, child: null }
   emit()
 }
 
 export function openNavChild(section: NavSection, child: NavChild) {
+  if (section !== 'settings' || child.type !== 'setting') {
+    settingBackStack = []
+  }
   state = { section, child }
   emit()
 }
 
 export function clearNavChild() {
   if (!state.child) return
+  settingBackStack = []
   state = { ...state, child: null }
   emit()
 }
@@ -158,6 +163,50 @@ function resolveSettingId(settingId: SettingId): SettingId {
   return settingId
 }
 
-export function openSetting(settingId: SettingId) {
-  openNavChild('settings', { type: 'setting', settingId: resolveSettingId(settingId) })
+/** Nested Settings screens (Keys → Cloud backup, About → Statecharts). */
+let settingBackStack: SettingId[] = []
+
+export function getSettingBackStack(): readonly SettingId[] {
+  return settingBackStack
+}
+
+export function openSetting(
+  settingId: SettingId,
+  opts?: { replace?: boolean },
+) {
+  const resolved = resolveSettingId(settingId)
+  const current =
+    state.section === 'settings' && state.child?.type === 'setting'
+      ? state.child.settingId
+      : null
+  if (!opts?.replace && current && current !== resolved) {
+    settingBackStack = [...settingBackStack, current]
+  } else if (opts?.replace) {
+    // Keep stack as-is (e.g. Keys → History after confirm).
+  } else {
+    settingBackStack = []
+  }
+  openNavChild('settings', { type: 'setting', settingId: resolved })
+}
+
+/** Pop nested setting, or leave Settings child entirely. */
+export function backFromSetting() {
+  const prev = settingBackStack[settingBackStack.length - 1]
+  if (prev) {
+    settingBackStack = settingBackStack.slice(0, -1)
+    openNavChild('settings', { type: 'setting', settingId: prev })
+    return
+  }
+  clearNavChild()
+}
+
+export function popSettingTo(settingId: SettingId) {
+  const resolved = resolveSettingId(settingId)
+  const idx = settingBackStack.lastIndexOf(resolved)
+  if (idx >= 0) {
+    settingBackStack = settingBackStack.slice(0, idx)
+  } else {
+    settingBackStack = []
+  }
+  openNavChild('settings', { type: 'setting', settingId: resolved })
 }

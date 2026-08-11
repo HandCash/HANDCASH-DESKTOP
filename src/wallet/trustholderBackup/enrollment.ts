@@ -50,7 +50,7 @@ export function listTrustholderProviders(): TrustholderProvider[] {
 export type DepositProgress = {
   operator: TrustholderOperator
   label: string
-  phase: 'info' | 'auth' | 'otp' | 'deposit' | 'done' | 'error'
+  phase: 'info' | 'auth' | 'register' | 'otp' | 'deposit' | 'done' | 'error'
   message?: string
   portal?: string
   /** When email-otp returns a local-only code (Worker without Resend). */
@@ -66,6 +66,13 @@ export type DepositOtpRequest = {
   devCode?: string
 }
 
+export type DepositRegisterRequest = {
+  operator: TrustholderOperator
+  label: string
+  email: string
+  portal: string
+}
+
 export type DepositResult = {
   enrollments: TrustholderEnrollment[]
   /** Share kept offline (index 2). Download / print this — do not deposit it. */
@@ -75,13 +82,26 @@ export type DepositResult = {
   totalShares: number
 }
 
+function portalWithEmail(portal: string | undefined, email: string): string | undefined {
+  if (!portal) return undefined
+  try {
+    const url = new URL(portal)
+    if (email.includes('@')) url.searchParams.set('email', email.trim())
+    return url.toString()
+  } catch {
+    return portal
+  }
+}
+
 export async function depositSharesToTrustholders(args: {
   password: string
   email: string
-  /** Prefer email-otp when registered; fall back to dev-token if Worker allows. */
+  /** Prefer email-otp when registered; fall back to dev-token only if Worker lacks email-otp. */
   preferEmailOtp?: boolean
   onProgress?: (p: DepositProgress) => void
   onOtpNeeded: (req: DepositOtpRequest) => Promise<string>
+  /** Pause so the user can register at the provider portal, then continue. */
+  onRegisterNeeded?: (req: DepositRegisterRequest) => Promise<void>
 }): Promise<DepositResult> {
   const preferEmail = args.preferEmailOtp !== false
   const email = args.email.trim()
@@ -115,52 +135,79 @@ export async function depositSharesToTrustholders(args: {
       )
     }
 
+    const portal = portalWithEmail(info.portal, email)
+    const supportsEmailOtp = info.authMethods.includes('email-otp')
+
     args.onProgress?.({
       operator: provider.operator,
       label: provider.label,
       phase: 'auth',
       message: `Authenticating with ${provider.label}…`,
-      portal: info.portal,
+      portal,
     })
 
     let requestId: string
     let otpCode: string | undefined
     let emailHint: string | undefined
 
-    if (preferEmail) {
-      try {
+    if (preferEmail && supportsEmailOtp) {
+      const startEmail = async () => {
         const start = await startEmailOtpAuth(provider.baseUrl, email)
-        requestId = start.requestId
-        emailHint = start.action.hint
-        args.onProgress?.({
-          operator: provider.operator,
-          label: provider.label,
-          phase: 'otp',
-          message: `Enter the code sent for ${provider.label}`,
-          portal: info.portal,
-          devCode: start.action.devCode,
-        })
-        otpCode = await args.onOtpNeeded({
-          operator: provider.operator,
-          label: provider.label,
-          hint: start.action.hint,
-          portal: info.portal,
-          devCode: start.action.devCode,
-        })
+        return start
+      }
+
+      let start
+      try {
+        start = await startEmail()
       } catch (err) {
         if (err instanceof TrustholderHttpError && err.code === 'not-registered') {
-          throw new TrustholderHttpError(404, {
-            error: 'not-registered',
-            message:
-              err.message ||
-              `Register ${email} at the ${provider.label} portal first, then try again.`,
-            portal: err.portal || info.portal,
+          const registerPortal =
+            portalWithEmail(err.portal || info.portal, email) || portal
+          args.onProgress?.({
+            operator: provider.operator,
+            label: provider.label,
+            phase: 'register',
+            message: `Register ${email} at ${provider.label} first`,
+            portal: registerPortal,
           })
+          if (!args.onRegisterNeeded || !registerPortal) {
+            throw new TrustholderHttpError(404, {
+              error: 'not-registered',
+              message:
+                err.message ||
+                `Register ${email} at the ${provider.label} portal first, then try again.`,
+              portal: registerPortal || err.portal,
+            })
+          }
+          await args.onRegisterNeeded({
+            operator: provider.operator,
+            label: provider.label,
+            email,
+            portal: registerPortal,
+          })
+          start = await startEmail()
+        } else {
+          throw err
         }
-        // Fall back to dev-token when email-otp path is unavailable.
-        const start = await startDevTokenAuth(provider.baseUrl)
-        requestId = start.requestId
       }
+
+      requestId = start.requestId
+      emailHint = start.action.hint
+      args.onProgress?.({
+        operator: provider.operator,
+        label: provider.label,
+        phase: 'otp',
+        message: `Enter the code sent for ${provider.label}`,
+        portal,
+        devCode: start.action.devCode,
+      })
+      otpCode = await args.onOtpNeeded({
+        operator: provider.operator,
+        label: provider.label,
+        hint: start.action.hint,
+        portal,
+        devCode: start.action.devCode,
+      })
     } else {
       const start = await startDevTokenAuth(provider.baseUrl)
       requestId = start.requestId
