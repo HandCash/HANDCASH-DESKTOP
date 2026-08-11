@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.159] - 2026-08-11
+
+### Fixed
+
+- **Collectable receive:** latch-proven tips paint immediately (quick ingest) with
+  the corner loading circle while BRC-150 verifies in the background — no more
+  hiding the NFT behind “Item arriving” until lineage settles.
+- **Sync pill:** network refresh timeouts no longer show “Sync failed”; soft
+  “Network slow” while local balance stays usable.
+- **Handle claim errors:** clearer `invalid-ticket` copy when market and
+  BRC-CLOUD secrets diverge.
+
+### Changed
+
+- **SPV-forward providers:** prefer Bitails / JungleBus / CoinGecko ahead of
+  WhatsOnChain for raw tx, merkle proofs, address UTXO scan, tip headers, and FX
+  so chain work is less dependent on a single WoC rate budget.
+
 ## [1.2.158] - 2026-08-11
 
 ### Fixed

@@ -23,7 +23,7 @@ export type LegacyScanResult = {
   chain: Chain
   sats: number
   utxos: LegacyUtxo[]
-  source: 'services' | 'whatsonchain'
+  source: 'services' | 'whatsonchain' | 'bitails'
   error?: string
 }
 
@@ -34,25 +34,40 @@ type WocUnspent = {
   value: number
 }
 
+type BitailsUnspent = {
+  txid: string
+  vout: number
+  satoshis: number
+  blockheight?: number
+}
+
 function wocBase(chain: Chain): string {
   return chain === 'main'
     ? 'https://api.whatsonchain.com/v1/bsv/main'
     : 'https://api.whatsonchain.com/v1/bsv/test'
 }
 
+function bitailsBase(chain: Chain): string | null {
+  if (chain === 'main') return 'https://api.bitails.io'
+  if (chain === 'test') return 'https://test-api.bitails.io'
+  return null
+}
+
 /**
  * A throttled provider can hold a socket open far longer than anyone is willing
  * to wait, and this scan sits between a tap on Collect and the grid. Give up and
- * let the caller fall through to the toolbox services instead.
+ * let the caller fall through to the next host.
  */
 const SCAN_TIMEOUT_MS = 7_000
-/** Don't pay another 7s abort on every poll after WoC just failed. */
-const WOC_COOLDOWN_MS = 45_000
+/** Don't pay another 7s abort on every poll after a host just failed. */
+const HOST_COOLDOWN_MS = 45_000
 let wocCooldownUntil = 0
+let bitailsCooldownUntil = 0
 
-/** Test-only — clear the WhatsOnChain skip window. */
+/** Test-only — clear provider skip windows. */
 export function resetLegacyScanCooldownForTests(): void {
   wocCooldownUntil = 0
+  bitailsCooldownUntil = 0
 }
 
 async function fetchWithDeadline(url: string): Promise<Response> {
@@ -76,15 +91,52 @@ async function fetchWithDeadline(url: string): Promise<Response> {
 export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
+
+  const bitails = bitailsBase(chain)
+  if (bitails) {
+    try {
+      const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
+      if (res.status === 404) return false
+      if (res.ok) return true
+    } catch (err) {
+      console.warn('[legacy-scan] Bitails tx lookup failed', err)
+    }
+  }
+
   try {
     const res = await fetchWithDeadline(`${wocBase(chain)}/tx/hash/${id}`)
     if (res.status === 404) return false
     if (!res.ok) return null
     return true
   } catch (err) {
-    console.warn('[legacy-scan] tx lookup failed', err)
+    console.warn('[legacy-scan] WhatsOnChain tx lookup failed', err)
     return null
   }
+}
+
+/** Scan a legacy P2PKH address for UTXOs via Bitails (SPV-forward primary). */
+export async function scanAddressViaBitails(
+  address: string,
+  chain: Chain,
+): Promise<LegacyScanResult> {
+  const base = bitailsBase(chain)
+  if (!base) throw new Error(`Bitails has no endpoint for chain ${chain}`)
+  const url = `${base}/address/${encodeURIComponent(address)}/unspent`
+  const res = await fetchWithDeadline(url)
+  if (!res.ok) {
+    throw new Error(`Bitails ${res.status}: ${await res.text()}`)
+  }
+  const body = (await res.json()) as { unspent?: BitailsUnspent[] }
+  const rows = body.unspent ?? []
+  const utxos: LegacyUtxo[] = rows.map((r) => ({
+    outpoint: `${r.txid}.${r.vout}`,
+    txid: r.txid,
+    vout: r.vout,
+    satoshis: r.satoshis,
+    height: r.blockheight,
+  }))
+  const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
+  return { address, chain, sats, utxos, source: 'bitails' }
 }
 
 /** Scan a legacy P2PKH address for UTXOs via WhatsOnChain REST. */
@@ -133,12 +185,27 @@ export async function scanAddressViaServices(
   return { address, chain, sats, utxos, source: 'services' }
 }
 
-/** Prefer WhatsOnChain (has sat amounts); fall back to toolbox Services. */
+/** Prefer Bitails (independent budget); WhatsOnChain then toolbox Services. */
 export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<LegacyScanResult> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
 
-  let wocError: unknown
+  let lastError: unknown
+
+  if (bitailsBase(wallet.chain) && Date.now() >= bitailsCooldownUntil) {
+    try {
+      const bitails = await scanAddressViaBitails(wallet.address, wallet.chain)
+      bitailsCooldownUntil = 0
+      return bitails
+    } catch (err) {
+      lastError = err
+      bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+      console.warn('[legacy-scan] Bitails failed, trying WhatsOnChain', err)
+    }
+  } else if (bitailsBase(wallet.chain)) {
+    console.info('[legacy-scan] skipping Bitails (recently failed)')
+  }
+
   if (Date.now() < wocCooldownUntil) {
     console.info('[legacy-scan] skipping WhatsOnChain (recently failed)')
   } else {
@@ -167,8 +234,8 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
       }
       return woc
     } catch (err) {
-      wocError = err
-      wocCooldownUntil = Date.now() + WOC_COOLDOWN_MS
+      lastError = err
+      wocCooldownUntil = Date.now() + HOST_COOLDOWN_MS
       console.warn('[legacy-scan] WhatsOnChain failed, trying services', err)
     }
   }
@@ -190,11 +257,11 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
     }
   } catch (err) {
     console.warn('[legacy-scan] services failed', err)
-    if (wocError) throw wocError
+    if (lastError) throw lastError
     throw err
   }
 
-  if (wocError) throw wocError
+  if (lastError) throw lastError
   throw new Error('No UTXO scan provider available')
 }
 

@@ -8,7 +8,7 @@ import {
   resolveInscriptionPreferringOrigin,
   resolveOneSatInscription,
 } from './oneSatImport'
-import { PENDING_RETRY_MS, shouldResolveInscription } from './inscriptionCache'
+import { shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 import { buildLatchStateScript } from './oneSatLatch'
 
@@ -170,49 +170,40 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('retries a latch-proven tip on the pending window, not on every poll', async () => {
-    // BRC-156 pays tip at OUTPUT:0 and a 2-sat latch at OUTPUT:1. The latch is
-    // local proof an item landed, so the ten-minute dust backoff would keep a
-    // real transfer invisible. Retrying on every poll is the opposite failure:
-    // the poll drops to 8s while a tip is pending and each walk costs a request
-    // per input per hop, so the wallet throttles itself out of ever resolving.
+  it('imports a latch-proven tip immediately — authenticity walks after paint', async () => {
+    // Latch at OUTPUT:1 is local proof the item landed. Waiting on indexer /
+    // lineage before import hid the NFT behind "Item arriving". Quick ingest
+    // uses a provisional tip origin; proveHeldGenesis + corner spinner settle
+    // authenticity after the card is on the list.
     const TXID_D = 'd'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
-    const start = Date.now()
-    vi.useFakeTimers()
-    vi.setSystemTime(start)
 
     const scan = [utxo(`${TXID_D}.0`, 1), utxo(`${TXID_D}.1`, 2)]
-
-    announceItemsReceived.mockClear()
     const first = await classifyLegacyUtxos(scan, 'main')
-    expect(first.latches.map((u) => u.outpoint)).toEqual([`${TXID_D}.1`])
-    expect(first.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
-    expect(announceItemsReceived).not.toHaveBeenCalled()
 
+    expect(first.latches.map((u) => u.outpoint)).toEqual([`${TXID_D}.1`])
+    expect(first.pendingTips).toEqual([])
+    expect(first.oneSats).toEqual([
+      expect.objectContaining({
+        outpoint: `${TXID_D}.0`,
+        origin: `${TXID_D}_0`,
+      }),
+    ])
+
+    // Backoff: do not re-hammer the indexer on the next poll for the same tip.
     fetchMock.mockClear()
     const second = await classifyLegacyUtxos(scan, 'main')
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(second.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
+    expect(second.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_D}.0`])
+    expect(second.pendingTips).toEqual([])
 
-    // Still well inside the ten-minute stray-dust backoff.
-    vi.setSystemTime(start + PENDING_RETRY_MS + 1_000)
-    fetchMock.mockClear()
-    const third = await classifyLegacyUtxos(scan, 'main')
-    expect(fetchMock.mock.calls.length).toBeGreaterThan(0)
-    expect(third.pendingTips.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
-
-    vi.useRealTimers()
     vi.unstubAllGlobals()
   })
 
-  it('proves a latched tip from the chain when no indexer can name it', async () => {
-    // The failure this covers looks like a lost transfer: a latch says the item
-    // landed, but every indexer answers nothing — because it is behind, or simply
-    // unreachable — so ingest held the tip out of Collectables on an 8s loop
-    // forever. Its ancestry is chain data, so the wallet can settle the origin
-    // itself and let name/traits arrive later.
+  it('does not block latch ingest on a chain lineage walk', async () => {
+    // Indexer 404s; BEEF is available. Classify must still return the tip for
+    // immediate import — full BRC-150 is proveHeldGenesis's job after paint.
     const genesis = new Transaction()
     genesis.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
     const tip = new Transaction()
@@ -227,18 +218,11 @@ describe('classifyLegacyUtxos', () => {
 
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
-    const heights = new Map([
-      [genesis.id('hex'), 900_000],
-      [tipId, 900_001],
-    ])
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('classify must not walk lineage')
+    })
     activeWallet = {
-      services: {
-        getBeefForTxid: vi.fn(async (txid: string) => {
-          const height = heights.get(txid)
-          if (height == null) throw new Error(`no such transaction ${txid}`)
-          return minedBeef(txid === tipId ? tip : genesis, height)
-        }),
-      },
+      services: { getBeefForTxid },
     }
 
     const result = await classifyLegacyUtxos(
@@ -246,11 +230,12 @@ describe('classifyLegacyUtxos', () => {
       'main',
     )
 
+    expect(getBeefForTxid).not.toHaveBeenCalled()
     expect(result.pendingTips).toEqual([])
     expect(result.oneSats).toEqual([
       expect.objectContaining({
         outpoint: `${tipId}.0`,
-        origin: `${genesis.id('hex')}_0`,
+        origin: `${tipId}_0`,
       }),
     ])
     activeWallet = null

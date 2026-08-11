@@ -35,14 +35,14 @@ afterEach(() => {
 })
 
 describe('installRawTxFallback', () => {
-  it('appends providers after WhatsOnChain rather than replacing it', () => {
+  it('prefers Bitails and JungleBus ahead of WhatsOnChain', () => {
     const services = fakeServices()
     installRawTxFallback(services as never, 'main')
 
     expect(services.getRawTxServices.services.map((s) => s.name)).toEqual([
-      'WhatsOnChain',
       'BitailsRawTx',
       'JungleBusRawTx',
+      'WhatsOnChain',
     ])
   })
 
@@ -51,7 +51,7 @@ describe('installRawTxFallback', () => {
     const services = fakeServices()
     installRawTxFallback(services as never, 'main')
 
-    const bitails = services.getRawTxServices.services[1]
+    const bitails = services.getRawTxServices.services[0]
     expect(await bitails.service(TXID)).toEqual({
       name: 'BitailsRawTx',
       txid: TXID,
@@ -70,7 +70,7 @@ describe('installRawTxFallback', () => {
     installRawTxFallback(services as never, 'main')
 
     // A throw here would abort the rotation before the next provider is tried.
-    expect(await services.getRawTxServices.services[1].service(TXID)).toEqual({
+    expect(await services.getRawTxServices.services[0].service(TXID)).toEqual({
       name: 'BitailsRawTx',
       txid: TXID,
     })
@@ -81,7 +81,7 @@ describe('installRawTxFallback', () => {
     const services = fakeServices()
     installRawTxFallback(services as never, 'main')
 
-    expect(await services.getRawTxServices.services[1].service(TXID)).toEqual({
+    expect(await services.getRawTxServices.services[0].service(TXID)).toEqual({
       name: 'BitailsRawTx',
       txid: TXID,
     })
@@ -100,7 +100,7 @@ describe('installRawTxFallback', () => {
     const services = fakeServices()
     installRawTxFallback(services as never, 'main')
 
-    expect(await services.getRawTxServices.services[2].service(TXID)).toEqual({
+    expect(await services.getRawTxServices.services[1].service(TXID)).toEqual({
       name: 'JungleBusRawTx',
       txid: TXID,
       rawTx: raw,
@@ -111,8 +111,8 @@ describe('installRawTxFallback', () => {
     const test = fakeServices()
     installRawTxFallback(test as never, 'test')
     expect(test.getRawTxServices.services.map((s) => s.name)).toEqual([
-      'WhatsOnChain',
       'BitailsRawTx',
+      'WhatsOnChain',
     ])
 
     const local = fakeServices()

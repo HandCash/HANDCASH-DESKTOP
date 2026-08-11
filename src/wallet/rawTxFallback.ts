@@ -1,28 +1,22 @@
 /**
  * Extra providers for raw transaction lookups.
  *
- * The toolbox registers exactly one service for `getRawTx`: WhatsOnChain. Every
- * other lookup has two or three (merkle proofs alone can come from Arcade,
- * WhatsOnChain or Bitails), so WhatsOnChain being unreachable degrades most of
- * the wallet but *stops* anything that needs transaction bytes.
+ * The toolbox registers WhatsOnChain as the sole `getRawTx` service by default.
+ * Bringing a collectable in builds a BEEF over the tip and its unproven ancestry,
+ * and each hop is a `getRawTx`. Putting Bitails / JungleBus first keeps SPV
+ * imports off WhatsOnChain's shared rate budget — a throttled WoC reply carries
+ * no CORS headers, so the browser reports `TypeError: Failed to fetch` and the
+ * wallet surfaces the misleading "txid must be valid on chain main".
  *
- * Bringing a collectable in needs those bytes. `internalizeAction` builds a BEEF
- * over the tip and its unproven ancestry, and each of those is a `getRawTx`. A
- * device that WhatsOnChain is throttling — the throttled reply carries no CORS
- * headers, so the browser reports `TypeError: Failed to fetch` rather than 429 —
- * therefore imports nothing at all, and the wallet reports the honest but
- * misleading "The txid ... must be valid transaction on chain main" for
- * transactions that are perfectly valid and sitting on every other explorer.
- *
- * These providers answer the same question from hosts that are not already
- * carrying the rest of our traffic. The toolbox hashes every returned body and
- * rejects one that isn't the transaction it asked for, so a bad host can cost a
- * round trip but cannot corrupt a BEEF.
+ * The toolbox hashes every returned body and rejects one that isn't the
+ * transaction it asked for, so a bad host can cost a round trip but cannot
+ * corrupt a BEEF.
  */
 import { Utils } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
 
 import { appendAppLog } from './appLog'
+import { preferServiceOrder } from './serviceOrder'
 import type { Chain } from './vault'
 
 const REQUEST_TIMEOUT_MS = 8_000
@@ -92,19 +86,21 @@ function sourcesFor(chain: Chain): RawTxSource[] {
   return []
 }
 
-/** Minimal view of the toolbox's `ServiceCollection` — we only ever append. */
+/** Minimal view of the toolbox's `ServiceCollection`. */
 type Collection = {
   services?: Array<{ name: string }>
   add?: (entry: { name: string; service: (txid: string) => Promise<RawTxResult> }) => unknown
+  reset?: () => void
 }
 
 let loggedFallback = false
 
 /**
- * Give `Services.getRawTx` somewhere to go when WhatsOnChain will not answer.
+ * Give `Services.getRawTx` SPV-friendly hosts ahead of WhatsOnChain.
  *
- * Appending leaves WhatsOnChain first, so nothing changes on a healthy device;
- * these only run once the primary has failed and the collection rotates.
+ * Toolbox defaults to WhatsOnChain alone. We register Bitails + JungleBus and
+ * then put them first so BEEF ancestry does not burn the shared WoC budget on
+ * every hop. Bodies are still hashed to the requested txid by the toolbox.
  */
 export function installRawTxFallback(services: Services, chain: Chain): void {
   try {
@@ -113,7 +109,8 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
     if (typeof collection?.add !== 'function') return
 
     const registered = new Set((collection.services ?? []).map((s) => s.name))
-    for (const source of sourcesFor(chain)) {
+    const extras = sourcesFor(chain)
+    for (const source of extras) {
       if (registered.has(source.name)) continue
       collection.add({
         name: source.name,
@@ -126,13 +123,18 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
             loggedFallback = true
             appendAppLog(
               'info',
-              `[rawtx] serving transactions from ${source.name} while WhatsOnChain is unreachable`,
+              `[rawtx] serving transactions from ${source.name} (SPV-forward; WhatsOnChain not required)`,
             )
           }
           return { name: source.name, txid, rawTx }
         },
       })
     }
+
+    preferServiceOrder(
+      collection,
+      extras.map((s) => s.name).concat(['WhatsOnChain']),
+    )
   } catch (err) {
     console.warn('[rawtx] could not install raw transaction failover', err)
   }

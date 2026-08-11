@@ -21,8 +21,6 @@ import {
 } from './oneSatProvenance'
 import { rememberProvenVerdict } from './provenCache'
 import { announceItemVerified } from './itemArrivalToast'
-import { proveGenesisLineage } from './oneSatGenesisProof'
-import { getBeefForTxidCached } from './beefCache'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -123,6 +121,12 @@ function wocBase(chain: Chain): string {
   return chain === 'main'
     ? 'https://api.whatsonchain.com/v1/bsv/main'
     : 'https://api.whatsonchain.com/v1/bsv/test'
+}
+
+function bitailsBase(chain: Chain): string | null {
+  if (chain === 'main') return 'https://api.bitails.io'
+  if (chain === 'test') return 'https://test-api.bitails.io'
+  return null
 }
 
 function parseOutpoint(outpoint: string): { txid: string; vout: number } | null {
@@ -336,18 +340,44 @@ async function fetchGpTxo(outpointUnderscore: string, chain: Chain): Promise<GpT
   }
 }
 
-type WocVin = { txid?: string; vout?: number }
-type WocTx = { vin?: WocVin[] }
+type TxVin = { txid?: string; vout?: number }
+type TxGraph = { vin?: TxVin[] }
 
-async function fetchWocTx(txid: string, chain: Chain): Promise<WocTx | null> {
+async function fetchBitailsTxGraph(txid: string, chain: Chain): Promise<TxGraph | null> {
+  const base = bitailsBase(chain)
+  if (!base) return null
+  try {
+    const res = await fetch(`${base}/tx/${txid}`, { signal: AbortSignal.timeout(8000) })
+    if (!res.ok) return null
+    const body = (await res.json()) as {
+      inputs?: Array<{ source?: { txid?: string; index?: number } }>
+    }
+    const vin: TxVin[] = (body.inputs ?? [])
+      .map((input) => ({
+        txid: input.source?.txid,
+        vout: input.source?.index,
+      }))
+      .filter((v) => typeof v.txid === 'string' && Number.isInteger(v.vout))
+    return vin.length > 0 ? { vin } : null
+  } catch {
+    return null
+  }
+}
+
+async function fetchWocTx(txid: string, chain: Chain): Promise<TxGraph | null> {
   try {
     const url = `${wocBase(chain)}/tx/${txid}`
     const res = await fetch(url, { signal: AbortSignal.timeout(8000) })
     if (!res.ok) return null
-    return (await res.json()) as WocTx
+    return (await res.json()) as TxGraph
   } catch {
     return null
   }
+}
+
+/** Ancestry walk for legacy unlatched tips — Bitails first, WhatsOnChain second. */
+async function fetchTxGraph(txid: string, chain: Chain): Promise<TxGraph | null> {
+  return (await fetchBitailsTxGraph(txid, chain)) ?? (await fetchWocTx(txid, chain))
 }
 
 /** Inputs probed per hop before the walk commits to descending. */
@@ -454,7 +484,22 @@ async function fetchRawTxHexUncached(txid: string, chain: Chain): Promise<string
       return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
     }
   } catch {
-    // Fall through to the public endpoint.
+    // Fall through to public endpoints.
+  }
+  const bitails = bitailsBase(chain)
+  if (bitails) {
+    try {
+      const res = await fetch(`${bitails}/download/tx/${txid}/hex`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { Accept: 'text/plain' },
+      })
+      if (res.ok) {
+        const hex = (await res.text()).trim()
+        if (/^[0-9a-f]+$/i.test(hex) && hex.length % 2 === 0) return hex
+      }
+    } catch {
+      /* try WoC */
+    }
   }
   try {
     const res = await fetch(`${wocBase(chain)}/tx/${txid}/hex`, {
@@ -641,7 +686,7 @@ export async function resolveOneSatInscription(
 
     if (depth === maxDepth) break
 
-    const tx = await fetchWocTx(curTxid, chain)
+    const tx = await fetchTxGraph(curTxid, chain)
     const vins = tx?.vin ?? []
     if (vins.length === 0) break
 
@@ -746,8 +791,8 @@ async function rebuildBrc150Identity(
     } catch {
       // Toast / DOM may be unavailable in Node unit tests.
     }
-    // Same as proveLineageIdentity: a proven origin without an indexer hit is
-    // exactly the "verified but no traits" card. Ask about the origin now.
+    // A proven origin without an indexer hit is exactly the "verified but no
+    // traits" card. Ask about the origin now.
     const resolved = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
     if (resolved && (resolved.name || resolved.mimeType || resolved.traits.length > 0)) {
       return resolved
@@ -762,75 +807,6 @@ async function rebuildBrc150Identity(
     return null
   }
 }
-
-/** How often one waiting tip may repeat its "still holding" line. */
-const HOLD_LOG_INTERVAL_MS = 60_000
-const holdLoggedAt = new Map<string, number>()
-
-function shouldLogHold(outpoint: string, now = Date.now()): boolean {
-  const last = holdLoggedAt.get(outpoint)
-  if (last != null && now - last < HOLD_LOG_INTERVAL_MS) return false
-  holdLoggedAt.set(outpoint, now)
-  return true
-}
-
-/**
- * Prove a landed tip's origin from the chain when nothing can name it.
- *
- * `rebuildBrc150Identity` only sees the ancestry the wallet's own BEEF happens to
- * carry, and an indexer that is behind — or simply unreachable, which is most of
- * what "stuck receiving" turns out to be — answers nothing at all. A latch is
- * local proof the item landed, so the last resort is walking its parents
- * ourselves: a proven origin is all internalization needs, and the upgrade pass
- * fills in name and traits whenever an indexer can be reached again.
- */
-async function proveLineageIdentity(
-  txid: string,
-  vout: number,
-): Promise<ResolvedInscription | null> {
-  const wallet = getActiveWallet()
-  if (!wallet?.services?.getBeefForTxid) return null
-  const held = `${txid}.${vout}`
-  try {
-    const proof = await proveGenesisLineage({
-      tipOutpoint: held,
-      // One hop is one network round trip, and this runs on the chain poll while
-      // the panel is being painted. Yield first so a deep lineage cannot starve
-      // the basket read that shares this thread.
-      getBeef: async (hop) => {
-        await yieldToUi()
-        return await withTimeout(getBeefForTxidCached(wallet, hop), BEEF_TIMEOUT_MS)
-      },
-    })
-    if (!proof) return null
-    console.info(
-      `[brc-150] proved landing ${held} back to ${proof.origin} in ${proof.hops} hop(s)`,
-    )
-    rememberProvenVerdict(held, {
-      tier: 'brc150',
-      origin: proof.origin,
-      verifiedAt: Date.now(),
-    })
-    try {
-      announceItemVerified(held, 'BRC-150 lineage proven')
-    } catch {
-      // Toast / DOM may be unavailable in Node unit tests.
-    }
-    // The tip itself is often still unknown to the indexer after a transfer;
-    // the origin has usually been indexed for months. Ask about the origin so
-    // the card does not land as a truncated outpoint with empty traits while
-    // the content image (served from the origin URL) already paints.
-    const resolved = await resolveInscriptionAtOrigin(proof.origin, wallet.chain)
-    if (resolved && (resolved.name || resolved.mimeType || resolved.traits.length > 0)) {
-      return resolved
-    }
-    return { origin: proof.origin, traits: [], extras: [] }
-  } catch (err) {
-    console.warn('[brc-150] landing lineage walk failed', held, err)
-    return null
-  }
-}
-
 
 /**
  * Split scanned UTXOs.
@@ -970,47 +946,66 @@ export async function classifyLegacyUtxos(
             claimed.add(outpointKey(u.outpoint))
             continue
           }
-          // Authenticity/identity (BRC-150 only):
-          // 1. rebuild complete BRC-150 ancestry from wallet BEEF / remittance;
-          // 2. then ask indexers/chain walkers (unproven until lineage).
-          const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
-          let fetched =
-            brc150 ??
-            (latchProven
-              ? ((await resolveLatchedTip(u.txid, u.vout, chain)) ??
-                (await resolveOneSatInscription(u.txid, u.vout, chain)))
-              : await resolveOneSatInscription(u.txid, u.vout, chain))
-          // A latched tip nobody can name is the one case worth paying a full
-          // ancestry walk for on the poll: the alternative is holding an item the
-          // wallet already owns out of Collectables indefinitely, which is what
-          // "still arriving" looks like from the outside.
-          if (!fetched && latchProven) {
-            fetched = await proveLineageIdentity(u.txid, u.vout)
-          }
-          if (fetched && !isBsv21Mime(fetched.mimeType)) {
-            rememberResolvedInscription(cacheKey, fetched)
-            resolved = fetched
-          } else if (fetched && isBsv21Mime(fetched.mimeType)) {
-            const again = await resolveBsv21Holding(u.txid, u.vout, chain)
-            if (again) {
-              bsv21.push(again)
-              claimed.add(outpointKey(u.outpoint))
-              continue
+
+          if (latchProven) {
+            // Quick ingest: one cheap indexer peek for a name/image, then import
+            // with a provisional tip origin. Full BRC-150 lineage walks after the
+            // card paints (proveHeldGenesis + corner spinner) — never block the
+            // address poll on ancestry while the NFT is invisible.
+            const fetched =
+              (await resolveLatchedTip(u.txid, u.vout, chain)) ??
+              (await resolveOneSatInscription(u.txid, u.vout, chain))
+            if (fetched && !isBsv21Mime(fetched.mimeType)) {
+              rememberResolvedInscription(cacheKey, fetched)
+              resolved = fetched
+            } else if (fetched && isBsv21Mime(fetched.mimeType)) {
+              const again = await resolveBsv21Holding(u.txid, u.vout, chain)
+              if (again) {
+                bsv21.push(again)
+                claimed.add(outpointKey(u.outpoint))
+                continue
+              }
+              rememberUnresolved(cacheKey)
+            } else {
+              // Indexer miss — back off peeking, but still import below.
+              rememberUnresolved(cacheKey)
             }
-            rememberUnresolved(cacheKey)
+            // No name yet — still import. Tip-as-origin is enough to paint a
+            // card; authenticity settles behind the loading circle.
+            if (!resolved) {
+              resolved = {
+                origin: txidVoutUnderscore(u.txid, u.vout),
+                traits: [],
+                extras: [],
+              }
+            }
           } else {
-            rememberUnresolved(cacheKey)
+            // Unverified dust: remittance rebuild + indexer. Misses back off.
+            const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
+            const fetched =
+              brc150 ?? (await resolveOneSatInscription(u.txid, u.vout, chain))
+            if (fetched && !isBsv21Mime(fetched.mimeType)) {
+              rememberResolvedInscription(cacheKey, fetched)
+              resolved = fetched
+            } else if (fetched && isBsv21Mime(fetched.mimeType)) {
+              const again = await resolveBsv21Holding(u.txid, u.vout, chain)
+              if (again) {
+                bsv21.push(again)
+                claimed.add(outpointKey(u.outpoint))
+                continue
+              }
+              rememberUnresolved(cacheKey)
+            } else {
+              rememberUnresolved(cacheKey)
+            }
           }
-        }
-        if (!resolved && latchProven) {
-          // The poll drops to 8s while a tip is pending, so logging the same wait
-          // on every pass buries whatever is actually failing underneath it.
-          if (shouldLogHold(cacheKey)) {
-            console.info(
-              `[1sat] latch-proven tip ${cacheKey} has no origin yet — holding, will retry next sync`,
-            )
+        } else if (!resolved && latchProven) {
+          // Inside the pending backoff window — still import so the NFT shows.
+          resolved = {
+            origin: txidVoutUnderscore(u.txid, u.vout),
+            traits: [],
+            extras: [],
           }
-          pendingTips.push(u)
         }
       }
 

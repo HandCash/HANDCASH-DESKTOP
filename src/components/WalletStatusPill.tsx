@@ -141,6 +141,16 @@ function resolveStatus(
   // Chain ingest wins. History replica (BRC-39) is optional parity — never alarm as
   // "Out of sync" when funds/items are healthy on this device. See wallet/layers.ts.
   if (health.phase === 'ok') {
+    const timedOut =
+      typeof health.message === 'string' &&
+      /took too long|showing local balance/i.test(health.message)
+    if (timedOut) {
+      return {
+        label: 'Network slow',
+        tone: 'warn',
+        detail: health.message,
+      }
+    }
     return {
       label: 'Synced',
       tone: 'ok',

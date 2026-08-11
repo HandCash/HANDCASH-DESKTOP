@@ -60,10 +60,22 @@ function armSyncingWatchdog(): void {
       '[sync-health] syncing watchdog fired — clearing stuck Syncing pill',
       syncHealth.message,
     )
+    try {
+      void import('./appLog').then(({ appendAppLog }) => {
+        appendAppLog(
+          'warn',
+          `[sync-health] syncing watchdog fired — ${syncHealth.message ?? 'no message'}`,
+        )
+      })
+    } catch {
+      /* ignore */
+    }
+    // Not a hard failure — local keys/balance are fine; the network pass stalled
+    // (Bitails / Chaintracks / beef SPV). Avoid the "Sync failed" error pill.
     setSyncHealth({
-      phase: 'error',
+      phase: 'ok',
       message:
-        'Refresh took too long and was stopped. Your coins are safe — tap Sync to retry.',
+        'Network refresh took too long — showing local balance. Tap Sync to retry.',
     })
   }, SYNCING_WATCHDOG_MS)
 }

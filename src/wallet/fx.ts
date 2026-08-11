@@ -76,18 +76,18 @@ export async function refreshUsdPerBsv(force = false): Promise<number | null> {
     return cached.usdPerBsv
   }
   try {
-    const rate = await fetchFromWhatsOnChain()
-    writeCache(rate)
-    return rate
-  } catch (err) {
-    console.warn('[fx] WhatsOnChain rate failed', err)
-  }
-  try {
     const rate = await fetchFromCoinGecko()
     writeCache(rate)
     return rate
   } catch (err) {
     console.warn('[fx] CoinGecko rate failed', err)
+  }
+  try {
+    const rate = await fetchFromWhatsOnChain()
+    writeCache(rate)
+    return rate
+  } catch (err) {
+    console.warn('[fx] WhatsOnChain rate failed', err)
   }
   return cached?.usdPerBsv ?? null
 }

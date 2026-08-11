@@ -247,12 +247,48 @@ export async function refreshFromChainExclusive(
   let importedItems = 0
   let scannedTxids: string[] = []
 
+  /** Soft UI cap — clear Syncing while beef / SPV providers still finish under the ingest lock. */
+  const LEGACY_INGEST_SOFT_MS = 35_000
+
   try {
-    const ingest = await ingestLegacyAddressUtxos({
+    const ingestPromise = ingestLegacyAddressUtxos({
       active,
       knownItems: opts?.knownItems,
       fundingOnly,
     })
+    let softDeadlineHit = false
+    const softTimer = setTimeout(() => {
+      softDeadlineHit = true
+      console.warn(
+        `[chain-ingest] legacy ingest soft deadline (${LEGACY_INGEST_SOFT_MS}ms) — clearing Syncing pill`,
+      )
+      void import('./appLog')
+        .then(({ appendAppLog }) => {
+          appendAppLog(
+            'warn',
+            `[chain-ingest] legacy ingest soft deadline (${LEGACY_INGEST_SOFT_MS}ms)`,
+          )
+        })
+        .catch(() => {})
+      setSyncHealth({
+        phase: 'ok',
+        message:
+          'Network refresh took too long — showing local balance. Tap Sync to retry.',
+        heldOneSats: heldCount,
+        pendingTips,
+      })
+    }, LEGACY_INGEST_SOFT_MS)
+
+    let ingest: Awaited<ReturnType<typeof ingestLegacyAddressUtxos>>
+    try {
+      ingest = await ingestPromise
+    } finally {
+      clearTimeout(softTimer)
+    }
+    if (softDeadlineHit) {
+      // Pill already cleared; still apply inventory side-effects below.
+      console.info('[chain-ingest] legacy ingest finished after soft deadline')
+    }
     heldCount = ingest.heldOneSats
     pendingTips = ingest.pendingTips
     partialWarn = ingest.partialWarn

@@ -2,11 +2,13 @@ import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { installRawTxFallback } from './rawTxFallback'
+import { preferServiceOrder } from './serviceOrder'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
+import { appendAppLog } from './appLog'
 
 const { specOpWalletBalance } = sdk
 
@@ -111,6 +113,85 @@ function installHeaderFailover(services: Services, chain: Chain): void {
   }
 }
 
+/**
+ * Merkle proofs for BEEF — Bitails before WhatsOnChain.
+ *
+ * Arcade (own broadcasts) stays first when configured. Public SPV proofs should
+ * not share WhatsOnChain's rate budget with rawtx / UTXO / FX.
+ */
+function installMerklePreferBitails(services: Services): void {
+  try {
+    const collection = (
+      services as unknown as {
+        getMerklePathServices?: { services?: Array<{ name: string }>; reset?: () => void }
+      }
+    ).getMerklePathServices
+    preferServiceOrder(collection, ['Arcade', 'Bitails', 'WhatsOnChain'])
+  } catch (err) {
+    console.warn('[merkle] could not prefer Bitails', err)
+  }
+}
+
+/**
+ * TaskNewHeader polls `findChainTipHeader`. That call skipped our height/header
+ * failover and died whenever Chaintracks 500'd — flooding the log with
+ * `Failed to fetch` while proofs never solicited. Fall through to Bitails tip
+ * + self-proving public headers (same path as ordinal header ingest).
+ */
+function installTipHeaderFailover(services: Services, chain: Chain): void {
+  try {
+    const chaintracks = services.options.chaintracks as
+      | { findChainTipHeader?: () => Promise<unknown> }
+      | undefined
+    if (typeof chaintracks?.findChainTipHeader !== 'function') return
+    const original = chaintracks.findChainTipHeader.bind(chaintracks)
+    let logged = false
+    chaintracks.findChainTipHeader = async () => {
+      try {
+        const tip = await original()
+        if (tip != null) return tip
+      } catch {
+        // Public tip below.
+      }
+      const tipUrl =
+        chain === 'main'
+          ? 'https://api.bitails.io/block/latest'
+          : chain === 'test'
+            ? 'https://test-api.bitails.io/block/latest'
+            : null
+      if (tipUrl == null) throw new Error('No chain tip header provider')
+      const controller = new AbortController()
+      const timer = setTimeout(() => controller.abort(), 8_000)
+      try {
+        const res = await fetch(tipUrl, {
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        })
+        if (!res.ok) throw new Error(`tip ${res.status}`)
+        const body = (await res.json()) as { height?: number }
+        const height = body.height
+        if (typeof height !== 'number' || !Number.isFinite(height)) {
+          throw new Error('tip missing height')
+        }
+        const header = await fetchBlockHeaderForHeight(chain, height)
+        if (header == null) throw new Error(`no public header at ${height}`)
+        if (!logged) {
+          logged = true
+          appendAppLog(
+            'info',
+            `[headers] NewHeader tip from Bitails height ${height} (Chaintracks unreachable)`,
+          )
+        }
+        return header
+      } finally {
+        clearTimeout(timer)
+      }
+    }
+  } catch (err) {
+    console.warn('[chaintracker] could not install tip-header failover', err)
+  }
+}
+
 export function getActiveWallet(): ActiveWallet | null {
   return active
 }
@@ -138,6 +219,8 @@ export async function bootWallet(args: {
   installFallbackChainTracker(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
+  installTipHeaderFailover(setup.services as Services, args.chain)
+  installMerklePreferBitails(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
 
   try {

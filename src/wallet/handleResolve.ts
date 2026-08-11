@@ -99,7 +99,28 @@ export async function claimHandle(args: {
     }),
   })
   if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 160)
+    const raw = await res.text().catch(() => '')
+    let detail = raw.slice(0, 160)
+    try {
+      const body = JSON.parse(raw) as {
+        error?: string | { code?: string; message?: string }
+        message?: string
+      }
+      const err = body?.error
+      if (typeof err === 'string') detail = err
+      else if (err && typeof err === 'object') {
+        if (err.code === 'invalid-ticket') {
+          detail =
+            'invalid-ticket (market HANDLE_CLAIM_SECRET ≠ BRC-CLOUD — set the same value on Vercel Preview/preprod)'
+        } else {
+          detail = String(err.code || err.message || detail)
+        }
+      } else if (typeof body?.message === 'string') {
+        detail = body.message
+      }
+    } catch {
+      /* keep raw slice */
+    }
     throw new Error(`Handle claim failed (${res.status})${detail ? `: ${detail}` : ''}`)
   }
   const data = (await res.json()) as { display?: string; certificate?: unknown }

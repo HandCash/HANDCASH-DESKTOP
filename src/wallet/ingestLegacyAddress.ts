@@ -332,6 +332,18 @@ export async function ingestLegacyAddressUtxos(
       console.warn('[chain-ingest] 1sat import partial', itemResult)
       partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
     }
+    // Paint the NFT as soon as the basket has it — do not wait on funding /
+    // latch BEEF work. Authenticity walks after listCollectables paints.
+    if (newOneSatOutpoints.length > 0) {
+      void import('./collectables')
+        .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
+          rememberLiveOneSatOutpoints(scan.utxos)
+          return listCollectables(active)
+        })
+        .catch((err) => {
+          console.warn('[chain-ingest] early collectables paint failed', err)
+        })
+    }
   }
 
   if (newBsv21.length > 0 && !fundingOnly) {
