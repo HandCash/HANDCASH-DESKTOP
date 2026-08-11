@@ -33,6 +33,7 @@ import {
 } from '../wallet/trustholderBackup'
 import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
+import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 
 type Props = {
   mode: 'onboarding' | 'locked'
@@ -125,6 +126,12 @@ export function AuthScreen({
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
   const [pendingCreated, setPendingCreated] = useState<{
+    profile: WalletProfile
+    balanceSats: number
+    password: string
+  } | null>(null)
+  /** After key restore — pull BRC-39 before entering the wallet. */
+  const [pendingHistoryRecovery, setPendingHistoryRecovery] = useState<{
     profile: WalletProfile
     balanceSats: number
     password: string
@@ -248,20 +255,25 @@ export function AuthScreen({
       chain: unlocked.record.chain,
     }
     // Create only: ask for backup preferences. Restore already recovered keys —
-    // apply recommended history URL and recompose so BRC-39 + chain refill
-    // balance / TX history without a second "recommended setup" prompt.
+    // next step is history recovery (balance / activity / friends / apps).
     if (kind === 'create' && !getWalletConfigPrefs().mode) {
       setPendingCreated({ profile, balanceSats, password })
       setPreparing(null)
       setSessionBackupPassword(password)
       return
     }
-    if (kind === 'restore' && !getWalletConfigPrefs().mode) {
-      try {
-        applyDefaultRestoreWalletSetup()
-      } catch (err) {
-        console.warn('[auth] restore setup defaults failed', err)
+    if (kind === 'restore') {
+      if (!getWalletConfigPrefs().mode) {
+        try {
+          applyDefaultRestoreWalletSetup()
+        } catch (err) {
+          console.warn('[auth] restore setup defaults failed', err)
+        }
       }
+      setSessionBackupPassword(password)
+      setPendingHistoryRecovery({ profile, balanceSats, password })
+      setPreparing(null)
+      return
     }
     setPreparing(null)
     onCreated(profile, balanceSats)
@@ -461,6 +473,35 @@ export function AuthScreen({
     : formMode === 'create'
       ? 'Create'
       : 'Unlock'
+
+  if (pendingHistoryRecovery) {
+    return (
+      <section
+        className="auth-screen"
+        data-aeon-scope="auth"
+        data-aeon-state="history-recovery"
+      >
+        <HistoryRecoveryPanel
+          initialPassword={pendingHistoryRecovery.password}
+          onDone={(historyPassword) => {
+            const pending = pendingHistoryRecovery
+            if (!pending) return
+            setPendingHistoryRecovery(null)
+            setSessionBackupPassword(historyPassword)
+            onCreated(pending.profile, pending.balanceSats)
+          }}
+          onSkip={() => {
+            const pending = pendingHistoryRecovery
+            if (!pending) return
+            setPendingHistoryRecovery(null)
+            setSessionBackupPassword(pending.password)
+            onCreated(pending.profile, pending.balanceSats)
+            void recomposeWallet({ password: pending.password, reason: 'restore' })
+          }}
+        />
+      </section>
+    )
+  }
 
   if (pendingCreated) {
     return (
@@ -810,8 +851,8 @@ export function AuthScreen({
 
         {isRestoreMethod(formMode) ? (
           <p className="auth-lede auth-restore-note">
-            After restore we pull your history backup automatically (same password as
-            before). Collectables can also appear from the chain while that runs.
+            Next step restores your history backup (balance, activity, friends, apps).
+            Use the same password as the device that uploaded it.
           </p>
         ) : null}
       </form>

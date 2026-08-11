@@ -1,10 +1,21 @@
 # Changelog
 
+## [1.2.169] - 2026-08-11
+
+### Added
+
+- **Restore → history gate:** after keys are sealed, prompt to restore the
+  encrypted history backup (balance, activity, friends, connected apps) before
+  opening the wallet. Skip remains available for chain-only.
+
 ## [1.2.168] - 2026-08-11
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Restore:** skip the post-create “recommended setup” panel; apply default
+  history URL and recompose so balance + TX history pull from BRC-39.
+- **History pull:** empty-local BRC-39 recovery is no longer blocked by the
+  backup push watchdog; soft-latch dust alone no longer counts as “has history.”
 
 ## [1.2.167] - 2026-08-11
 
