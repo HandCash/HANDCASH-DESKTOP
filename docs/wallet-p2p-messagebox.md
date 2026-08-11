@@ -73,10 +73,12 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 **Done when:** a friend whose resolve returns another box URL can receive chat without code pointing only at `brc-cloud…/v1/messagebox`.
 ### Phase 2 — BRC-CLOUD box: converge on PeerServ
 
-1. Align request/response shapes with BRC-33 where cheap (`messageIds` array, status fields).  
-2. Plan **BRC-31** (or interim signed challenge) for send/list/ack — no anonymous list-by-recipient.  
-3. Keep `/files` as a HandCash extension; advertise it in box manifest; do not pretend it is core BRC-33.  
-4. Resolve response already exposes `messagebox` — keep that as the federation hook.
+1. [x] Align request/response shapes with BRC-33 (`status`, `sender`, `messageIds[]`).  
+2. [x] Interim identity auth (ECDSA headers) — full **BRC-103/104** still deferred.  
+3. [x] Keep `/files` as a HandCash extension; advertise auth mode on box manifest.  
+4. [x] Resolve response already exposes `messagebox` — keep that as the federation hook.
+
+**Still deferred:** BRC-169 §7 encrypted envelopes, tolls/reachability policy, BRC-103/104 mutual Authrite.
 
 ### Phase 3 — Robustness (from I/O map; pick in order)
 

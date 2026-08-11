@@ -40,6 +40,7 @@ import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurre
 import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { sendSatsToAddress } from '../wallet/sendPayment'
+import { getActiveWallet } from '../wallet/session'
 import {
   getPaymentProgress,
   subscribePaymentProgress,
@@ -507,8 +508,11 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     const friends = listFriends()
     const map = new Map(friends.map((f) => [f.identityKey.toLowerCase(), f.id]))
     const tick = () => {
+      const rootKeyHex = getActiveWallet()?.rootKeyHex
+      if (!rootKeyHex) return
       void pollInbound({
         identityKey,
+        rootKeyHex,
         peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
       }).then((n) => {
         if (n > 0) refresh()
@@ -668,15 +672,21 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
       })
       const recipient = getFriendById(msg.peerId)
       if (sent && recipient && identityKey) {
-        const delivered = await deliverOutbound({
-          recipientIdentityKey: recipient.identityKey,
-          senderIdentityKey: identityKey,
-          body: encodeMessageBody(sent),
-          peerId: msg.peerId,
-          messagebox: recipient.messagebox,
-        })
-        if (delivered.delivered !== 'cloud') {
-          setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
+        const rootKeyHex = getActiveWallet()?.rootKeyHex
+        if (!rootKeyHex) {
+          setHint('Payment sent on-chain, but chat delivery needs an unlocked wallet.')
+        } else {
+          const delivered = await deliverOutbound({
+            recipientIdentityKey: recipient.identityKey,
+            senderIdentityKey: identityKey,
+            rootKeyHex,
+            body: encodeMessageBody(sent),
+            peerId: msg.peerId,
+            messagebox: recipient.messagebox,
+          })
+          if (delivered.delivered !== 'cloud') {
+            setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
+          }
         }
       }
       playPaymentSuccessSound()
@@ -806,10 +816,12 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
 
   const sendPlain = async (peerId: string, friend: Friend, text: string) => {
     appendMessage(peerId, { direction: 'out', kind: 'text', text })
-    if (identityKey) {
+    const rootKeyHex = getActiveWallet()?.rootKeyHex
+    if (identityKey && rootKeyHex) {
       void deliverOutbound({
         recipientIdentityKey: friend.identityKey,
         senderIdentityKey: identityKey,
+        rootKeyHex,
         body: text,
         peerId,
         messagebox: friend.messagebox,
@@ -831,10 +843,13 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     setFileBusy(true)
     setHint(`Uploading ${file.name}…`)
     try {
+      const rootKeyHex = getActiveWallet()?.rootKeyHex
+      if (!rootKeyHex) throw new Error('Wallet locked')
       const attachment = await uploadChatFile({
         file,
         recipientIdentityKey: activeFriend.identityKey,
         senderIdentityKey: identityKey,
+        rootKeyHex,
         messagebox: activeFriend.messagebox,
       })
       const outbound = {
@@ -845,6 +860,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
       const delivered = await deliverOutbound({
         recipientIdentityKey: activeFriend.identityKey,
         senderIdentityKey: identityKey,
+        rootKeyHex,
         body: encodeMessageBody(outbound),
         peerId: activeFriend.id,
         messagebox: activeFriend.messagebox,
@@ -912,13 +928,17 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         },
       })
       if (identityKey) {
-        void deliverOutbound({
-          recipientIdentityKey: activeFriend.identityKey,
-          senderIdentityKey: identityKey,
-          body: encodeMessageBody(request),
-          peerId: activeFriend.id,
-          messagebox: activeFriend.messagebox,
-        })
+        const rootKeyHex = getActiveWallet()?.rootKeyHex
+        if (rootKeyHex) {
+          void deliverOutbound({
+            recipientIdentityKey: activeFriend.identityKey,
+            senderIdentityKey: identityKey,
+            rootKeyHex,
+            body: encodeMessageBody(request),
+            peerId: activeFriend.id,
+            messagebox: activeFriend.messagebox,
+          })
+        }
       }
       playWalletSound('soft')
       setDraft('')

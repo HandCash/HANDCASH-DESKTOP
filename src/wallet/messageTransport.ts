@@ -5,14 +5,19 @@
  * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
  * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
  *
- * BRC-33 deltas still open (Phase 2): no BRC-31 auth; list/ack pass `recipient`
- * in the body; `/files` is a HandCash extension; bodies are mostly plaintext /
- * `handcash-message:` cards rather than encrypted envelopes.
+ * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is interim
+ * ECDSA identity headers (`messageboxAuth.ts`) until BRC-103/104 Authrite.
+ * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
+ * encrypted envelopes deferred). `/files` is a HandCash extension.
  */
 import {
   DEFAULT_BRC_CLOUD_BASE_URL,
   DEFAULT_METANET_HANDLES_BASE_URL,
 } from './walletConfig'
+import {
+  messageboxAuthHeaders,
+  signMessageboxAuth,
+} from './messageboxAuth'
 import {
   appendMessage,
   type ChatAttachment,
@@ -65,6 +70,8 @@ export function isMessageboxFileUrl(url: string): boolean {
 export type OutboundEnvelope = {
   recipientIdentityKey: string
   senderIdentityKey: string
+  /** Required to sign BRC-33-lite auth headers. */
+  rootKeyHex: string
   senderHandle?: string
   body: string
   peerId: string
@@ -75,8 +82,17 @@ export type OutboundEnvelope = {
 export type ListedMessage = {
   messageId: string
   body: string
-  senderIdentityKey: string
+  /** BRC-33 field */
+  sender?: string
+  /** Legacy alias */
+  senderIdentityKey?: string
   createdAt: number
+}
+
+function listedSender(m: ListedMessage): string {
+  return String(m.sender || m.senderIdentityKey || '')
+    .trim()
+    .toLowerCase()
 }
 
 type WireMessage = {
@@ -191,6 +207,7 @@ export async function uploadChatFile(args: {
   file: File
   recipientIdentityKey: string
   senderIdentityKey: string
+  rootKeyHex: string
   /** Recipient messagebox base; defaults to HandCash BRC-CLOUD. */
   messagebox?: string | null
 }): Promise<ChatAttachment> {
@@ -199,18 +216,23 @@ export async function uploadChatFile(args: {
     throw new Error('Files are limited to 8 MB')
   }
   const box = normalizeMessageboxBase(args.messagebox)
+  const auth = signMessageboxAuth({
+    rootKeyHex: args.rootKeyHex,
+    method: 'files',
+    messageBox: 'inbox',
+  })
   const res = await fetch(`${box}/files`, {
     method: 'POST',
     headers: {
       'Content-Type': args.file.type || 'application/octet-stream',
       'X-HandCash-Recipient': args.recipientIdentityKey,
-      'X-HandCash-Sender': args.senderIdentityKey,
       'X-HandCash-Filename': encodeURIComponent(args.file.name),
+      ...messageboxAuthHeaders(auth),
     },
     body: args.file,
   })
   const data = (await res.json().catch(() => null)) as
-    | { file?: ChatAttachment; error?: string }
+    | { file?: ChatAttachment; error?: string; status?: string }
     | null
   if (!res.ok || !data?.file || !validAttachment(data.file)) {
     throw new Error(data?.error || `File upload failed (${res.status})`)
@@ -225,15 +247,24 @@ export async function deliverOutbound(
   const box = normalizeMessageboxBase(env.messagebox)
   const url = `${box}/sendMessage`
   try {
+    const auth = signMessageboxAuth({
+      rootKeyHex: env.rootKeyHex,
+      method: 'sendMessage',
+      messageBox: 'inbox',
+    })
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...messageboxAuthHeaders(auth),
+      },
       body: JSON.stringify({
         message: {
           recipient: env.recipientIdentityKey,
           messageBox: 'inbox',
           body: env.body,
-          sender: env.senderIdentityKey,
+          // Optional display claim only — server binds sender from auth.
           senderHandle: env.senderHandle,
         },
       }),
@@ -248,6 +279,7 @@ export async function deliverOutbound(
 /** Poll own messagebox for inbound; append when the sender maps to a friend. */
 export async function pollInbound(args: {
   identityKey: string
+  rootKeyHex: string
   peerIdForSender: (senderIdentityKey: string) => string | null
   /** Own messagebox base; defaults to HandCash BRC-CLOUD. */
   messagebox?: string | null
@@ -255,20 +287,29 @@ export async function pollInbound(args: {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
+    const auth = signMessageboxAuth({
+      rootKeyHex: args.rootKeyHex,
+      method: 'listMessages',
+      messageBox: 'inbox',
+    })
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({
-        messageBox: 'inbox',
-        recipient: args.identityKey,
-      }),
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...messageboxAuthHeaders(auth),
+      },
+      // BRC-33: only messageBox — recipient is the authenticated identity.
+      body: JSON.stringify({ messageBox: 'inbox' }),
     })
     if (!res.ok) return 0
-    const data = (await res.json()) as { messages?: ListedMessage[] }
+    const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
+    const ackIds: string[] = []
     let n = 0
     for (const m of list) {
-      const peerId = args.peerIdForSender(m.senderIdentityKey)
+      const senderKey = listedSender(m)
+      const peerId = args.peerIdForSender(senderKey)
       if (!peerId) continue
       const decoded = decodeMessageBody(m.body)
       appendMessage(peerId, {
@@ -278,10 +319,9 @@ export async function pollInbound(args: {
         createdAt: m.createdAt || Date.now(),
         meta: {
           ...decoded.meta,
-          identityKey: m.senderIdentityKey,
+          identityKey: senderKey,
           origin: 'messagebox',
           messagebox: box,
-          // Wire tip/pay cards are claims until chain verification exists.
           status:
             decoded.kind === 'tip' || decoded.kind === 'pay-sent'
               ? 'Claimed · unverified'
@@ -289,7 +329,10 @@ export async function pollInbound(args: {
         },
       })
       n += 1
-      void acknowledgeMessage(m.messageId, args.identityKey, box)
+      if (m.messageId) ackIds.push(String(m.messageId))
+    }
+    if (ackIds.length > 0) {
+      void acknowledgeMessages(ackIds, args.rootKeyHex, box)
     }
     return n
   } catch {
@@ -297,17 +340,26 @@ export async function pollInbound(args: {
   }
 }
 
-async function acknowledgeMessage(
-  messageId: string,
-  identityKey: string,
+async function acknowledgeMessages(
+  messageIds: string[],
+  rootKeyHex: string,
   messagebox?: string | null,
 ): Promise<void> {
   const box = normalizeMessageboxBase(messagebox)
   try {
+    const auth = signMessageboxAuth({
+      rootKeyHex,
+      method: 'acknowledgeMessage',
+      messageBox: 'inbox',
+    })
     await fetch(`${box}/acknowledgeMessage`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-      body: JSON.stringify({ messageId, recipient: identityKey }),
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        ...messageboxAuthHeaders(auth),
+      },
+      body: JSON.stringify({ messageBox: 'inbox', messageIds }),
     })
   } catch {
     /* ignore */

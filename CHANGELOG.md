@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- **BRC-33 messagebox compliance.** Chat send/list/ack use PeerServ response shapes (`status`, `sender`, `messageIds[]`) and interim ECDSA identity headers (sender/recipient bound by proof, not spoofable body fields). BRC-169 §7 encrypted envelopes and BRC-103/104 Authrite remain deferred.
+
 ### Added
 - **Federated messagebox addressing (Phase 1).** Handle resolve persists the peer `messagebox` URL on friends; chat send/file upload posts to that box (BRC-CLOUD remains the default fallback). Architecture SSoT: `docs/wallet-p2p-messagebox.md`. Settings statecharts gain Wallet I/O / Coordinator / Sign / Chain ingest / Messagebox maps.
 

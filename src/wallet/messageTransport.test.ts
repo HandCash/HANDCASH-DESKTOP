@@ -127,16 +127,23 @@ describe('messagebox base URL', () => {
   })
 
   it('posts deliverOutbound to a non-default messagebox base', async () => {
-    const calls: string[] = []
-    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      calls.push(String(input))
-      return new Response(JSON.stringify({ ok: true }), { status: 200 })
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    const calls: { url: string; headers: Headers; body: string }[] = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      calls.push({
+        url: String(input),
+        headers: new Headers(init?.headers),
+        body: String(init?.body || ''),
+      })
+      return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
 
     const result = await deliverOutbound({
       recipientIdentityKey: '02' + 'ab'.repeat(32),
-      senderIdentityKey: '03' + 'cd'.repeat(32),
+      senderIdentityKey: root.toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
       body: 'hello federation',
       peerId: 'peer-1',
       messagebox: 'https://mb.peer.example/v1/messagebox',
@@ -146,8 +153,17 @@ describe('messagebox base URL', () => {
       delivered: 'cloud',
       messagebox: 'https://mb.peer.example/v1/messagebox',
     })
-    expect(calls[0]).toBe('https://mb.peer.example/v1/messagebox/sendMessage')
-    expect(fetchMock).toHaveBeenCalledOnce()
+    expect(calls[0]?.url).toBe('https://mb.peer.example/v1/messagebox/sendMessage')
+    expect(calls[0]?.headers.get('X-BRC33-Identity')).toBe(
+      root.toPublicKey().toString().toLowerCase(),
+    )
+    expect(calls[0]?.headers.get('X-BRC33-Signature')).toMatch(/^[0-9a-f]{128}$/i)
+    expect(JSON.parse(calls[0]!.body).message).toMatchObject({
+      recipient: '02' + 'ab'.repeat(32),
+      messageBox: 'inbox',
+      body: 'hello federation',
+    })
+    expect(JSON.parse(calls[0]!.body).message.sender).toBeUndefined()
   })
 })
 
