@@ -29,7 +29,7 @@
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
 - BRC-150: `oneSatProvenance.ts` fully verifies/rebuilds v2 ancestry, every exact parent spend, one-sat continuity, AtomicBEEF subject, and the origin `ord` envelope; oversized/incomplete proofs are omitted. **Remittance is local basket metadata** — it does not ride a P2PKH lock to peers.
 - Authenticity order is fixed in `oneSatAuthenticity.ts`: complete BRC-150 → indexer identity marked `unproven`. Legacy `brc156` cache pins display as BRC-150. Never promote indexer data or marker-only scripts to proven.
-- BRC-156 soft-latch: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0156.md` — tip (1 sat) + discovery latch (**exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …`). Soft-latch send via `softLatchSendMachine`; covenant-locked tips refuse and may be abandoned. **Latch state is the P2P item-identity channel** (not BRC-150 remittance).
+- Soft-latch (BRC-156 withdrawn): `oneSatLatch.ts` — tip (1 sat) + discovery latch (**exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …` legacy marker). Soft-latch send via `softLatchSendMachine`; covenant-locked tips refuse and may be abandoned. **Latch state is the P2P item-identity channel** (not BRC-150 remittance). Advertise `147`+`150` only.
 - Messagebox: BRC-33 store-and-forward by identity key — optional chat/notify, never custody. Prefer resolved peer `messagebox` URL; BRC-CLOUD is the convenience fallback. Plan: `docs/wallet-p2p-messagebox.md`.
 ## Read first
 

@@ -109,7 +109,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
           publicKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
         },
         oneSat: {
-          brcs: ['147', '150', '153'],
+          brcs: ['147', '150'],
           baskets: ['1sat', '1sat-latch'],
           latchedSend: true,
           provenanceVerify: ['v2', 'v3'],
@@ -126,7 +126,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
       service: 'handcash-brc100',
       bridge: 'http',
       oneSat: {
-        brcs: ['147', '150', '153'],
+        brcs: ['147', '150'],
         baskets: ['1sat', '1sat-latch'],
         latchedSend: true,
         provenanceVerify: ['v2', 'v3'],

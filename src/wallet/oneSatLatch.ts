@@ -1,5 +1,6 @@
 /**
- * BRC-156 latched 1Sat provenance — basket `1sat-latch`, v3 remittance, O(1) verify.
+ * Soft-latch 1Sat discovery — basket `1sat-latch`, v3 remittance, O(1) tip naming.
+ * (BRC-156 hardened Commit/Settle is withdrawn; protocol pushdata stays `BRC156`.)
  *
  * Soft-latch (live): tip + latch are P2PKH outputs co-created in one settle-style
  * transfer. Remittance tip/latch may use relative `OUTPUT:N` refs resolved against
@@ -558,7 +559,12 @@ export function resolveLatchTipClaim(latchOutpoint: string, tipTag: string): str
   return toUnderscoreOutpoint(tipTag)
 }
 
-/** Advertised 1Sat BRC profile for manifest / capability negotiation (BRC-156). */
+/**
+ * Advertised 1Sat BRC profile for manifest / capability negotiation.
+ * BRC-156 is withdrawn — do not list `156`. Soft-latch is a HandCash discovery
+ * aid under BRC-147/150 (`latchedSend`); on-chain marker remains `BRC156` for
+ * legacy reads/writes.
+ */
 export type OneSatBrcCapabilities = {
   brcs: readonly string[]
   baskets: readonly string[]
@@ -570,7 +576,7 @@ export type OneSatBrcCapabilities = {
 
 export function getOneSatBrcCapabilities(): OneSatBrcCapabilities {
   return {
-    brcs: ['147', '150', '156'],
+    brcs: ['147', '150'],
     baskets: ['1sat', ONE_SAT_LATCH_BASKET],
     latchedSend: isLatchedSendEnabled(),
     provenanceVerify: ['v2', 'v3'],

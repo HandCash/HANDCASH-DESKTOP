@@ -176,8 +176,8 @@ describe('classifyLegacyUtxos', () => {
       }),
     ])
     // Soft-latch may peek rawtx for latch state — never the ordinal indexer.
-    const apiCalls = fetchMock.mock.calls.filter(([url]) =>
-      String(url).includes('/api/'),
+    const apiCalls = (fetchMock.mock.calls as unknown[][]).filter((call) =>
+      String(call[0] ?? '').includes('/api/'),
     )
     expect(apiCalls).toEqual([])
 

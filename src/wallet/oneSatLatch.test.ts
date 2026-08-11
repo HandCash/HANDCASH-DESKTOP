@@ -105,9 +105,9 @@ describe('BRC-156 latched provenance (soft-latch)', () => {
     expect(isLatchedSendEnabled()).toBe(true)
   })
 
-  it('advertises BRC-156 capability profile with latchedSend', () => {
+  it('advertises BRC-147/150 with latchedSend (156 withdrawn)', () => {
     expect(getOneSatBrcCapabilities()).toEqual({
-      brcs: ['147', '150', '156'],
+      brcs: ['147', '150'],
       baskets: ['1sat', '1sat-latch'],
       latchedSend: true,
       provenanceVerify: ['v2', 'v3'],

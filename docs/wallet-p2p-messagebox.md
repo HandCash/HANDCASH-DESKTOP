@@ -26,7 +26,7 @@ Device peer `:3340` and BRC-39 are **same-identity** sync — not counterparty P
 | Term | Spec | Travels to counterparty? |
 |------|------|---------------------------|
 | **BRC-150 remittance** | `customInstructions.provenance` + `beefB64` | **No** — BRC-100 local basket metadata; cannot ride a P2PKH lock |
-| **BRC-156 latch state** | `OP_FALSE OP_RETURN BRC156 <json>` on settle | **Yes** — P2P item identity (origin, name, app, mime, tip ref) |
+| **Soft-latch state** (legacy `BRC156` marker) | `OP_FALSE OP_RETURN BRC156 <json>` on settle | **Yes** — P2P item identity (origin, name, app, mime, tip ref); BRC-156 withdrawn |
 
 Soft-latch exists so **item naming/discovery does not need an indexer**. Sender still builds remittance locally; receiver rebuilds authenticity from chain BEEF later. GorillaPool after origin is known is **media CDN (grade C)**, not tip discovery.
 

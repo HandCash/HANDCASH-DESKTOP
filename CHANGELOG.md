@@ -2,11 +2,17 @@
 
 ## [Unreleased]
 
+## [1.2.183] - 2026-08-11
+
 ### Changed
 - **BRC-33 messagebox compliance.** Chat send/list/ack use PeerServ response shapes (`status`, `sender`, `messageIds[]`) and interim ECDSA identity headers (sender/recipient bound by proof, not spoofable body fields). BRC-169 §7 encrypted envelopes and BRC-103/104 Authrite remain deferred.
+- **Stop advertising withdrawn BRC-156.** Capability / health / manifest list `147`+`150` only (`latchedSend` remains for soft-latch). Desktop BRC-156 doc matches the withdrawn notice; on-chain `BRC156` marker kept for legacy soft-latch discovery.
 
 ### Added
 - **Federated messagebox addressing (Phase 1).** Handle resolve persists the peer `messagebox` URL on friends; chat send/file upload posts to that box (BRC-CLOUD remains the default fallback). Architecture SSoT: `docs/wallet-p2p-messagebox.md`. Settings statecharts gain Wallet I/O / Coordinator / Sign / Chain ingest / Messagebox maps.
+
+### Fixed
+- **Release build TypeScript.** `oneSatImport.test.ts` mock-call typing no longer fails `tsc --noEmit` (blocked v1.2.182 CI).
 
 ## [1.2.182] - 2026-08-11
 

@@ -23,7 +23,7 @@
  * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
  *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
- *   - **BRC-156 latch state** (`oneSatLatch.ts`) — OP_RETURN on soft-latch settle;
+ *   - **Soft-latch state** (`oneSatLatch.ts`) — OP_RETURN on soft-latch settle (`BRC156` marker, BRC withdrawn);
  *     **this** is peer-visible item identity (origin/name). Soft-latch receive must
  *     not use an ordinal indexer for naming.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
