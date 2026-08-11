@@ -52,6 +52,7 @@ vi.mock('./fungibles', () => ({
     errors: [],
     outpoints: items.map((i) => i.outpoint),
   })),
+  listFungibles: vi.fn(async () => []),
 }))
 
 const OUTPOINT = 'bb.0'

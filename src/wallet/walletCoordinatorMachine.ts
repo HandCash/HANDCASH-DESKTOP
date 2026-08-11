@@ -5,10 +5,13 @@ import { assign, setup } from 'xstate'
  * See `layers.ts` + `walletCoordinator.ts`.
  *
  * Parallel regions (all idle when depth === 0):
- * - chainIngest — Refresh / legacy import / 1sat import
+ * - chainIngest — Refresh / legacy import / 1sat + bsv21 import
  * - spend — send, BRC createAction, collectable transfer
  * - historyReplica — BRC-39 push/pull/restore
  * - recompose — unlock restore (history then chain)
+ *
+ * Runtime uses per-region serial queues (`walletCoordinator.ts`). Machine guards
+ * still forbid illegal overlaps; waiters for different regions do not share one FIFO.
  *
  * Illegal (guarded):
  * - chainIngest × spend (except spend-owned nested heal)

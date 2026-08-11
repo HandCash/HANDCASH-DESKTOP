@@ -314,11 +314,20 @@ export async function refreshFromChainExclusive(
       try {
         const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
         rememberLiveOneSatOutpoints(ingest.scan.utxos)
+        // Paint NFTs + tokens off the ingest critical path (parallel listOutputs).
         void listCollectables(active).catch((err) => {
           console.warn('[chain-ingest] collectables refresh failed', err)
         })
       } catch (err) {
         console.warn('[chain-ingest] collectables refresh skipped', err)
+      }
+      try {
+        const { listFungibles } = await import('./fungibles')
+        void listFungibles(active).catch((err) => {
+          console.warn('[chain-ingest] fungibles refresh failed', err)
+        })
+      } catch (err) {
+        console.warn('[chain-ingest] fungibles refresh skipped', err)
       }
     }
   } catch (err) {

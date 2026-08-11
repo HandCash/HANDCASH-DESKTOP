@@ -10,6 +10,7 @@ import {
   runChainIngest,
   runChainIngestDuringSpend,
   runExclusiveSpend,
+  runHistoryReplica,
   requestSpendPriority,
   releaseSpendPriority,
   shouldYieldChainIngestToSpend,
@@ -165,5 +166,43 @@ describe('walletCoordinator runtime', () => {
       HistoryDeferredForSpendError,
     )
     releaseSpendPriority()
+  })
+
+  it('lets spend acquire ahead of a waiting historyReplica (per-region queues)', async () => {
+    const order: string[] = []
+    let releaseChain!: () => void
+    const chainHold = new Promise<void>((resolve) => {
+      releaseChain = resolve
+    })
+
+    const chain = runChainIngest(async () => {
+      order.push('chain-start')
+      await chainHold
+      order.push('chain-end')
+    })
+    await Promise.resolve()
+
+    // History waits on the machine (chain busy) without occupying a shared FIFO.
+    const history = runHistoryReplica(async () => {
+      order.push('history')
+      return 'ok'
+    }).catch((err: unknown) => {
+      order.push(err instanceof Error ? err.name : 'history-err')
+    })
+
+    await Promise.resolve()
+    const spend = runExclusiveSpend(async () => {
+      order.push('spend')
+      return 'tx'
+    }, async () => async () => undefined)
+
+    releaseChain()
+    await Promise.all([chain, spend, history])
+
+    expect(order).toEqual(
+      expect.arrayContaining(['chain-start', 'chain-end', 'spend', 'HistoryDeferredForSpendError']),
+    )
+    expect(order.filter((x) => x === 'history')).toHaveLength(0)
+    expect(order.filter((x) => x === 'spend')).toHaveLength(1)
   })
 })

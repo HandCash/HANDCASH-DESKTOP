@@ -38,16 +38,16 @@ describe('localToolboxStateLooksEmpty', () => {
     expect(await localToolboxStateLooksEmpty()).toBe(false)
   })
 
-  it('is not empty when 1sat outs remain', async () => {
+  it('is not empty when bsv21 outs remain', async () => {
     balance.mockResolvedValue(0)
     listOutputs.mockImplementation(async (args: { basket?: string }) => {
-      if (args.basket === '1sat') return { totalOutputs: 2, outputs: [{}, {}] }
+      if (args.basket === 'bsv21') return { totalOutputs: 3, outputs: [{}, {}, {}] }
       return { totalOutputs: 0, outputs: [] }
     })
     listActions.mockResolvedValue({ totalActions: 0, actions: [] })
     const { inspectLocalToolboxState } = await import('./layers')
     const state = await inspectLocalToolboxState()
-    expect(state.oneSatOutputCount).toBe(2)
+    expect(state.bsv21OutputCount).toBe(3)
     expect(state.looksEmpty).toBe(false)
   })
 })

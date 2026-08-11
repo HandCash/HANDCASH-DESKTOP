@@ -32,6 +32,10 @@ vi.mock('./collectables', () => ({
   listCollectables: vi.fn(async () => []),
 }))
 
+vi.mock('./fungibles', () => ({
+  listFungibles: vi.fn(async () => []),
+}))
+
 vi.mock('./pendingSend', () => ({
   reconcilePendingSends: () => mockReconcilePendingSends(),
 }))

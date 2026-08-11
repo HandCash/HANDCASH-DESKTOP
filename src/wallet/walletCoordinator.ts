@@ -1,6 +1,7 @@
 /**
- * Runtime for `walletCoordinatorMachine` — single FIFO entry for wallet-layer work.
- * Replaces ad-hoc serial queues on chainIngest / spend / historyReplica.
+ * Runtime for `walletCoordinatorMachine` — per-region serial queues.
+ * Overlaps that the machine forbids still wait on acquire; distinct regions no
+ * longer share one FIFO (so a queued backup does not delay a waiting spend).
  */
 import { createActor, type Actor } from 'xstate'
 import { createSerialQueue } from './serialQueue'
@@ -16,12 +17,16 @@ import {
   type WalletCoordinatorSnapshot,
 } from './walletCoordinatorMachine'
 
-const topLevelQueue = createSerialQueue()
+/** One FIFO per region — serialize same-region work; machine owns cross-region exclusion. */
+const chainIngestQueue = createSerialQueue()
+const spendQueue = createSerialQueue()
+const historyReplicaQueue = createSerialQueue()
+const recomposeQueue = createSerialQueue()
 
 let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinatorMachine).start()
 
 /**
- * Count of spends waiting on / holding the FIFO. Chain ingest checks this to
+ * Count of spends waiting on / holding their region. Chain ingest checks this to
  * skip ordinal work and finish early so a queued send can begin.
  */
 let spendPriorityDepth = 0
@@ -148,14 +153,14 @@ async function acquireRecompose(): Promise<() => void> {
 }
 
 /**
- * Refresh / legacy import / migrate ingest — serialized; blocked during spend
- * (except nested spend heal) and historyReplica.
+ * Refresh / legacy import / migrate ingest — serialized within region; blocked
+ * during spend (except nested spend heal) and historyReplica by the machine.
  */
 export function runChainIngest<T>(fn: () => Promise<T>): Promise<T> {
   if (context().recomposeDepth > 0) {
     return fn()
   }
-  return topLevelQueue(async () => {
+  return chainIngestQueue(async () => {
     const release = await acquireChainIngest(false)
     try {
       return await fn()
@@ -167,7 +172,7 @@ export function runChainIngest<T>(fn: () => Promise<T>): Promise<T> {
 
 /**
  * Spend-path chain heal — only while `runExclusiveSpend` holds the spend region.
- * Does not re-enter the top-level queue (avoids deadlock with in-flight send).
+ * Does not re-enter the chain ingest queue (avoids deadlock with in-flight send).
  */
 export function runChainIngestDuringSpend<T>(fn: () => Promise<T>): Promise<T> {
   if (context().recomposeDepth > 0) {
@@ -192,12 +197,12 @@ export function runExclusiveSpend<T>(
   acquireLease: () => Promise<() => Promise<void>>,
   onSpendRegion?: () => void,
 ): Promise<T> {
-  // Before the FIFO waits — so a running refresh can yield ordinal work now.
+  // Before the region waits — so a running refresh can yield ordinal work now.
   requestSpendPriority()
-  return topLevelQueue(async () => {
+  return spendQueue(async () => {
     try {
       const releaseSpend = await acquireSpend()
-      // FIFO is free — drop "Waiting to send…" before the cross-device lease RTT.
+      // Region acquired — drop "Waiting to send…" before the cross-device lease RTT.
       onSpendRegion?.()
       const releaseLease = await acquireLease()
       try {
@@ -213,7 +218,7 @@ export function runExclusiveSpend<T>(
 }
 
 /**
- * Thrown when a historyReplica job yields the FIFO to a waiting spend.
+ * Thrown when a historyReplica job yields to a waiting spend.
  * Auto-backup catches this and reschedules; manual Sync should retry.
  */
 export class HistoryDeferredForSpendError extends Error {
@@ -228,9 +233,18 @@ export function runHistoryReplica<T>(fn: () => Promise<T>): Promise<T> {
   if (context().recomposeDepth > 0) {
     return fn()
   }
-  return topLevelQueue(async () => {
-    // Spends raise priority before enqueueing. If we got the FIFO slot first,
-    // exit without acquiring history so the queued spend can run.
+  return historyReplicaQueue(async () => {
+    // Spends raise priority before enqueueing. Exit without holding history so
+    // the waiting spend can acquire as soon as chain/history peers free the machine.
+    while (true) {
+      if (shouldYieldChainIngestToSpend()) {
+        throw new HistoryDeferredForSpendError()
+      }
+      if (canBeginHistoryReplica(context())) break
+      await waitFor(
+        () => canBeginHistoryReplica(context()) || shouldYieldChainIngestToSpend(),
+      )
+    }
     if (shouldYieldChainIngestToSpend()) {
       throw new HistoryDeferredForSpendError()
     }
@@ -248,7 +262,7 @@ export function runHistoryReplica<T>(fn: () => Promise<T>): Promise<T> {
 
 /** Unlock / restore recompose — owns the session; internal history + chain skip sub-acquires. */
 export function runRecompose<T>(fn: () => Promise<T>): Promise<T> {
-  return topLevelQueue(async () => {
+  return recomposeQueue(async () => {
     const release = await acquireRecompose()
     try {
       return await fn()

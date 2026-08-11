@@ -31,7 +31,7 @@ import {
   importOneSatOrdinals,
   type MigrationItem,
 } from './oneSatImport'
-import { importBsv21Tokens } from './fungibles'
+import { importBsv21Tokens, listFungibles } from './fungibles'
 import { getTokenIconDataUrl } from './tokenIconCache'
 import { filterNewOneSatOutpoints, isOneSatOutpointKnown } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
@@ -357,6 +357,11 @@ export async function ingestLegacyAddressUtxos(
       partialWarn =
         partialWarn ??
         `Some tokens didn’t import (${ftResult.failed}). Retrying automatically.`
+    }
+    if ((ftResult.outpoints ?? []).length > 0) {
+      void listFungibles(active).catch((err) => {
+        console.warn('[chain-ingest] early fungibles paint failed', err)
+      })
     }
   }
 

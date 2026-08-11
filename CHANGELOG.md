@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.161] - 2026-08-11
+
+### Fixed
+
+- **Tokens stay loaded:** BSV-21 list uses a durable cache (like NFTs), 20s
+  `listOutputs` timeout + in-flight coalesce, and keeps the last paint on
+  lock / transient failures instead of wiping Collect.
+- **Token re-import loop:** successful `bsv21` internalization marks outpoints
+  so chain polls do not re-BEEF the same tips every tick.
+- **Post-ingest token paint:** refresh + early import paths call `listFungibles`
+  off the critical path (parallel with collectables).
+- **Empty-wallet check:** toolbox emptiness includes basket `bsv21`.
+
+### Changed
+
+- **Coordinator:** per-region serial queues (chain / spend / history / recompose)
+  so a waiting backup no longer blocks a queued send behind one shared FIFO.
+  Machine guards still forbid unsafe overlaps.
+
 ## [1.2.160] - 2026-08-11
 
 ### Fixed

@@ -30,7 +30,14 @@ import {
   type Bsv21Utxo,
   type FungibleToken,
 } from './bsv21'
+import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
+import {
+  beginOneSatImport,
+  markOneSatImportFailed,
+  markOneSatImported,
+  releaseOneSatImport,
+} from './oneSatImportGuard'
 import { getTokenIconDataUrl } from './tokenIconCache'
 import { cacheTokenIconFromBeef, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
@@ -40,9 +47,87 @@ export { formatFungibleAmount, BSV21_BASKET }
 
 type Listener = (tokens: FungibleToken[]) => void
 
+const LIST_CACHE_KEY = 'handcash.fungibles.list.v1'
+const LIST_TIMEOUT_MS = 20_000
+
 let cached: FungibleToken[] = []
 let hydrated = false
+let listInFlight: Promise<FungibleToken[]> | null = null
 const listeners = new Set<Listener>()
+
+function isFungibleShape(x: unknown): x is FungibleToken {
+  if (!x || typeof x !== 'object') return false
+  const t = x as FungibleToken
+  return (
+    typeof t.tokenId === 'string' &&
+    typeof t.sym === 'string' &&
+    typeof t.amt === 'string' &&
+    typeof t.outpoint === 'string' &&
+    typeof t.utxoCount === 'number'
+  )
+}
+
+function loadDurableList(): FungibleToken[] {
+  try {
+    const raw = durableGetItem(LIST_CACHE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw) as { items?: unknown }
+    if (!Array.isArray(parsed?.items)) return []
+    return parsed.items.filter(isFungibleShape).map((t) => ({
+      ...t,
+      dec: Number.isFinite(t.dec) ? t.dec : 0,
+      spendKind:
+        t.spendKind === 'cosigned' || t.spendKind === 'mixed' ? t.spendKind : 'plain',
+    }))
+  } catch {
+    return []
+  }
+}
+
+function persistDurableList(items: FungibleToken[]): void {
+  try {
+    durableSetItem(
+      LIST_CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        items: items.map((t) => ({
+          tokenId: t.tokenId,
+          sym: t.sym,
+          amt: t.amt,
+          dec: t.dec,
+          utxoCount: t.utxoCount,
+          outpoint: t.outpoint,
+          spendKind: t.spendKind,
+          ...(t.icon ? { icon: t.icon } : {}),
+          ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
+          ...(t.cosign ? { cosign: t.cosign } : {}),
+          ...(t.issuer ? { issuer: t.issuer } : {}),
+          ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
+          ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
+          ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
+        })),
+      }),
+    )
+  } catch {
+    // Cache is an optimisation.
+  }
+}
+
+function setFungiblesCache(items: FungibleToken[]): void {
+  cached = items
+  hydrated = true
+  persistDurableList(items)
+  notify()
+}
+
+// Paint last session's tokens immediately — same pattern as collectables.
+{
+  const durable = loadDurableList()
+  if (durable.length > 0) {
+    cached = durable
+    hydrated = true
+  }
+}
 
 function notify() {
   for (const cb of listeners) cb(cached)
@@ -64,8 +149,7 @@ async function hydrateMissingTokenIcons(
     changed = true
   }
   if (changed) {
-    cached = [...cached]
-    notify()
+    setFungiblesCache([...cached])
   }
 }
 
@@ -159,28 +243,46 @@ function parseListedOutput(
 }
 
 /**
+ * Every Collect visit lists `bsv21` alongside `1sat`. Coalesce identical reads
+ * (same pattern as collectables) so nav flips do not stack listOutputs.
+ */
+export function listFungibles(active?: ActiveWallet | null): Promise<FungibleToken[]> {
+  if (listInFlight) return listInFlight
+  const run = listFungiblesNow(active)
+  listInFlight = run
+  void run
+    .catch(() => {})
+    .then(() => {
+      if (listInFlight === run) listInFlight = null
+    })
+  return run
+}
+
+/**
  * List live BSV-21 tips from basket `bsv21` and aggregate by token id.
  */
-export async function listFungibles(
+async function listFungiblesNow(
   active?: ActiveWallet | null,
 ): Promise<FungibleToken[]> {
   const wallet = active ?? getActiveWallet()
-  if (!wallet) {
-    cached = []
-    hydrated = true
-    notify()
-    return cached
-  }
+  // Locked / no session: keep last durable paint (mirrors collectables).
+  if (!wallet) return getCachedFungibles()
 
   try {
     await yieldToUi()
-    const listed = await wallet.wallet.listOutputs({
-      basket: BSV21_BASKET,
-      limit: 1000,
-      includeCustomInstructions: true,
-      includeTags: true,
-      include: 'locking scripts',
-    })
+    const listed = await Promise.race([
+      wallet.wallet.listOutputs({
+        basket: BSV21_BASKET,
+        limit: 1000,
+        includeCustomInstructions: true,
+        includeTags: true,
+        include: 'locking scripts',
+        seekPermission: false,
+      }),
+      new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('listOutputs timed out')), LIST_TIMEOUT_MS),
+      ),
+    ])
     await yieldToUi()
     const selfKey = wallet.identityKey.toLowerCase()
     const utxos: Bsv21Utxo[] = []
@@ -288,17 +390,14 @@ export async function listFungibles(
         ...(issuerHandle ? { issuerHandle } : {}),
       }
     })
-    cached = tokens
-    hydrated = true
-    notify()
+    setFungiblesCache(tokens)
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, tokens)
     return tokens
   } catch (err) {
     console.warn('[bsv21] listOutputs failed', err)
-    hydrated = true
-    notify()
-    return cached
+    // Keep prior cache — do not hydrate as empty on transient failures.
+    return getCachedFungibles()
   }
 }
 
@@ -347,8 +446,18 @@ export async function importBsv21Tokens(
     return { imported: 0, failed: 0, errors: [], outpoints: [] }
   }
 
+  // Same import guard as 1sat — without mark, every chain poll re-internalizes.
+  const claimed = beginOneSatImport(items.map((i) => i.outpoint))
+  const claimedSet = new Set(claimed)
+  const work = items.filter((i) =>
+    claimedSet.has(i.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')),
+  )
+  if (work.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
+  }
+
   const byTxid = new Map<string, Bsv21ImportItem[]>()
-  for (const item of items) {
+  for (const item of work) {
     const list = byTxid.get(item.txid) ?? []
     list.push(item)
     byTxid.set(item.txid, list)
@@ -360,6 +469,7 @@ export async function importBsv21Tokens(
   const outpoints: string[] = []
 
   for (const [txid, group] of byTxid) {
+    const groupOps = group.map((g) => g.outpoint)
     try {
       if (!wallet.services?.getBeefForTxid) {
         throw new Error('Wallet services unavailable for BEEF fetch')
@@ -386,6 +496,11 @@ export async function importBsv21Tokens(
           ...(item.dec != null ? { dec: String(item.dec) } : {}),
         }) || item.op === 'deploy+mint')
       })
+      const skipped = group.filter((item) => !valid.includes(item))
+      if (skipped.length > 0) {
+        releaseOneSatImport(skipped.map((i) => i.outpoint))
+        failed += skipped.length
+      }
       if (valid.length === 0) continue
 
       const remittanceOutputs = valid.map((item) => {
@@ -442,8 +557,11 @@ export async function importBsv21Tokens(
       await yieldToUi()
 
       imported += valid.length
-      outpoints.push(...valid.map((i) => i.outpoint))
+      const ops = valid.map((i) => i.outpoint)
+      outpoints.push(...ops)
+      markOneSatImported(ops)
     } catch (err) {
+      markOneSatImportFailed(groupOps)
       failed += group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const item of group) {

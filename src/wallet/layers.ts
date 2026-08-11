@@ -105,6 +105,8 @@ export type LocalToolboxState = {
   spendableSats: number
   defaultOutputCount: number
   oneSatOutputCount: number
+  /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
+  bsv21OutputCount: number
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
   looksEmpty: boolean
@@ -143,28 +145,33 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
       spendableSats: 0,
       defaultOutputCount: 0,
       oneSatOutputCount: 0,
+      bsv21OutputCount: 0,
       actionCount: 0,
       looksEmpty: true,
     }
   }
 
-  const [spendableSats, defaultOutputCount, oneSatOutputCount, actionCount] = await Promise.all([
-    fetchBalanceSats(active.wallet).catch(() => 0),
-    countOutputs('default'),
-    countOutputs('1sat'),
-    countActions(),
-  ])
+  const [spendableSats, defaultOutputCount, oneSatOutputCount, bsv21OutputCount, actionCount] =
+    await Promise.all([
+      fetchBalanceSats(active.wallet).catch(() => 0),
+      countOutputs('default'),
+      countOutputs('1sat'),
+      countOutputs('bsv21'),
+      countActions(),
+    ])
 
   const looksEmpty =
     spendableSats <= 0 &&
     defaultOutputCount <= 0 &&
     oneSatOutputCount <= 0 &&
+    bsv21OutputCount <= 0 &&
     actionCount <= 0
 
   return {
     spendableSats,
     defaultOutputCount,
     oneSatOutputCount,
+    bsv21OutputCount,
     actionCount,
     looksEmpty,
   }
