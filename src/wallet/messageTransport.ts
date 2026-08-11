@@ -345,7 +345,7 @@ export async function pollInboundTipHints(args: {
             messagebox: box,
             status:
               decoded.kind === 'tip' || decoded.kind === 'pay-sent'
-                ? 'Claimed · unverified'
+                ? 'Receiving…'
                 : decoded.meta?.status,
           },
         })

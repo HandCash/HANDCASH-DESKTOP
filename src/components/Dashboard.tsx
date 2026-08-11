@@ -283,10 +283,29 @@ export function Dashboard({
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
         })
         if (cancelled || hints.tipHints <= 0) return
-        // Chat tip/pay cards arrive before Bitails lists the UTXO. Acking the
-        // messagebox tip once means we must retry ingest ourselves — otherwise
-        // the card shows "Claimed" while the balance stays stale.
-        void chasePaymentIngest(hints.paymentTxids).finally(() => scheduleNext())
+        // SPV-first: tip/pay card hands us the txid → BEEF → sweep our outs.
+        // Address scan is only the fallback / secondary verify.
+        void (async () => {
+          try {
+            const { ingestPaymentsFromTipHints } = await import(
+              '../wallet/ingestPaymentByTxid'
+            )
+            const spv = await ingestPaymentsFromTipHints(hints.paymentTxids)
+            if (cancelled) return
+            if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
+            if (spv.imported > 0) {
+              scheduleNext()
+              return
+            }
+          } catch (err) {
+            console.warn(
+              '[dashboard] SPV payment ingest failed',
+              err instanceof Error ? err.message : String(err),
+            )
+          }
+          await chasePaymentIngest(hints.paymentTxids)
+          scheduleNext()
+        })()
       } catch {
         /* optional accelerator */
       }
@@ -424,7 +443,24 @@ export function Dashboard({
     const onPaymentHint = (ev: Event) => {
       if (cancelled) return
       const txids = (ev as CustomEvent<{ txids?: string[] }>).detail?.txids ?? []
-      void chasePaymentIngest(txids).finally(() => scheduleNext())
+      void (async () => {
+        try {
+          const { ingestPaymentsFromTipHints } = await import(
+            '../wallet/ingestPaymentByTxid'
+          )
+          const spv = await ingestPaymentsFromTipHints(txids)
+          if (cancelled) return
+          if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
+          if (spv.imported > 0) {
+            scheduleNext()
+            return
+          }
+        } catch {
+          /* fall through */
+        }
+        await chasePaymentIngest(txids)
+        scheduleNext()
+      })()
     }
     document.addEventListener('handcash:payment-hint', onPaymentHint)
 

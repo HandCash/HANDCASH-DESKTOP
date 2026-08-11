@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.2.188] - 2026-08-11
+
+### Changed
+- **DM tip/pay: SPV-first receive.** Tip cards now drive `ingestPaymentByTxid` (BEEF → sweep outs that pay us) with a Receiving… indicator. Address-index polling is only the fallback / secondary verify — same custody grade as soft-latch items, messagebox is just the wake-up.
+
+## [1.2.187] - 2026-08-11
+
+### Fixed
+- **DM tip/pay card before balance.** Messagebox tip/pay notifies now retry address ingest for ~12s until funding lands (Bitails often lags the chat card). Also treats `pay-sent` the same as `tip`.
+
 ## [1.2.186] - 2026-08-11
 
 ### Fixed

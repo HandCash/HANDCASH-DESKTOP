@@ -175,9 +175,11 @@ function payStatusLabel(msg: ChatMessage, payment: PaymentProgress): string {
   if (st === 'accepted') return 'Accepted'
   if (st === 'declined') return 'Declined'
   if (msg.direction === 'in' && (msg.kind === 'tip' || msg.kind === 'pay-sent')) {
-    return msg.meta?.txid
-      ? `Claimed · unverified · ${shortenTxid(msg.meta.txid)}`
-      : 'Claimed · unverified'
+    return msg.meta?.status
+      ? msg.meta.status
+      : msg.meta?.txid
+        ? `Receiving · ${shortenTxid(msg.meta.txid)}`
+        : 'Receiving…'
   }
   return msg.meta?.status ?? ''
 }
