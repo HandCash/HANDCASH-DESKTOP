@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.166] - 2026-08-11
+
+### Changed
+
+- **Cloud key backup:** email registration stays in the wallet OTP prompt — no
+  portal browser redirect. First deposit auto-enrolls the email with the provider.
+
 ## [1.2.165] - 2026-08-11
 
 ### Changed

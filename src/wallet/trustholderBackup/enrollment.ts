@@ -17,7 +17,6 @@ import {
   fetchTrustholderInfo,
   startDevTokenAuth,
   startEmailOtpAuth,
-  TrustholderHttpError,
 } from './client'
 import {
   getTrustholderSharePlan,
@@ -72,9 +71,8 @@ export function getProvider(operator: TrustholderOperator): TrustholderProvider 
 export type DepositProgress = {
   operator: TrustholderOperator
   label: string
-  phase: 'info' | 'auth' | 'register' | 'otp' | 'deposit' | 'done' | 'error'
+  phase: 'info' | 'auth' | 'otp' | 'deposit' | 'done' | 'error'
   message?: string
-  portal?: string
   /** When email-otp returns a local-only code (Worker without Resend). */
   devCode?: string
 }
@@ -83,16 +81,10 @@ export type DepositOtpRequest = {
   operator: TrustholderOperator
   label: string
   hint?: string
-  portal?: string
   /** Prefill when Worker returns a local-only code. */
   devCode?: string
-}
-
-export type DepositRegisterRequest = {
-  operator: TrustholderOperator
-  label: string
-  email: string
-  portal: string
+  /** First deposit — OTP registers the email in-app (no portal). */
+  enroll?: boolean
 }
 
 export type DepositOneResult = {
@@ -105,17 +97,6 @@ export type DepositOneResult = {
   /** How many recommended cloud operators are enrolled after this deposit. */
   enrolledRecommended: number
   recommendedTotal: number
-}
-
-function portalWithEmail(portal: string | undefined, email: string): string | undefined {
-  if (!portal) return undefined
-  try {
-    const url = new URL(portal)
-    if (email.includes('@')) url.searchParams.set('email', email.trim())
-    return url.toString()
-  } catch {
-    return portal
-  }
 }
 
 /** Create or reuse the 2-of-3 plan so independent deposits share integrity. */
@@ -148,6 +129,7 @@ export function getLocalOfflineShare(): string | null {
 /**
  * Deposit one share to a single trustholder. Operators are independent —
  * call once per provider. Shares come from one persisted 2-of-3 plan.
+ * First-time email OTP registers the account in-app (Worker auto-enroll).
  */
 export async function depositShareToTrustholder(args: {
   operator: TrustholderOperator
@@ -156,12 +138,11 @@ export async function depositShareToTrustholder(args: {
   preferEmailOtp?: boolean
   onProgress?: (p: DepositProgress) => void
   onOtpNeeded: (req: DepositOtpRequest) => Promise<string>
-  onRegisterNeeded?: (req: DepositRegisterRequest) => Promise<void>
 }): Promise<DepositOneResult> {
   const preferEmail = args.preferEmailOtp !== false
   const email = args.email.trim()
   if (preferEmail && !email.includes('@')) {
-    throw new Error('Enter the email registered at this provider’s portal')
+    throw new Error('Enter the email for this provider')
   }
 
   const provider = getProvider(args.operator)
@@ -183,7 +164,6 @@ export async function depositShareToTrustholder(args: {
     )
   }
 
-  const portal = portalWithEmail(info.portal, email)
   const supportsEmailOtp = info.authMethods.includes('email-otp')
 
   args.onProgress?.({
@@ -191,7 +171,6 @@ export async function depositShareToTrustholder(args: {
     label: provider.label,
     phase: 'auth',
     message: `Authenticating with ${provider.label}…`,
-    portal,
   })
 
   let requestId: string
@@ -199,59 +178,25 @@ export async function depositShareToTrustholder(args: {
   let emailHint: string | undefined
 
   if (preferEmail && supportsEmailOtp) {
-    const startEmail = async () => startEmailOtpAuth(provider.baseUrl, email)
-
-    let start
-    try {
-      start = await startEmail()
-    } catch (err) {
-      if (err instanceof TrustholderHttpError && err.code === 'not-registered') {
-        const registerPortal =
-          portalWithEmail(err.portal || info.portal, email) || portal
-        args.onProgress?.({
-          operator: provider.operator,
-          label: provider.label,
-          phase: 'register',
-          message: `Register ${email} at ${provider.label} first`,
-          portal: registerPortal,
-        })
-        if (!args.onRegisterNeeded || !registerPortal) {
-          throw new TrustholderHttpError(404, {
-            error: 'not-registered',
-            message:
-              err.message ||
-              `Register ${email} at the ${provider.label} portal first, then try again.`,
-            portal: registerPortal || err.portal,
-          })
-        }
-        await args.onRegisterNeeded({
-          operator: provider.operator,
-          label: provider.label,
-          email,
-          portal: registerPortal,
-        })
-        start = await startEmail()
-      } else {
-        throw err
-      }
-    }
-
+    const start = await startEmailOtpAuth(provider.baseUrl, email)
     requestId = start.requestId
     emailHint = start.action.hint
+    const enroll = Boolean(start.action.enroll)
     args.onProgress?.({
       operator: provider.operator,
       label: provider.label,
       phase: 'otp',
-      message: `Enter the code sent for ${provider.label}`,
-      portal,
+      message: enroll
+        ? `Enter the registration code for ${provider.label}`
+        : `Enter the code sent for ${provider.label}`,
       devCode: start.action.devCode,
     })
     otpCode = await args.onOtpNeeded({
       operator: provider.operator,
       label: provider.label,
       hint: start.action.hint,
-      portal,
       devCode: start.action.devCode,
+      enroll,
     })
   } else {
     const start = await startDevTokenAuth(provider.baseUrl)
@@ -315,7 +260,6 @@ export async function depositSharesToTrustholders(args: {
   preferEmailOtp?: boolean
   onProgress?: (p: DepositProgress) => void
   onOtpNeeded: (req: DepositOtpRequest) => Promise<string>
-  onRegisterNeeded?: (req: DepositRegisterRequest) => Promise<void>
 }): Promise<{
   enrollments: TrustholderEnrollment[]
   localShare: string
@@ -341,3 +285,4 @@ export async function depositSharesToTrustholders(args: {
   }
   return { enrollments, localShare, integrity, threshold, totalShares }
 }
+

@@ -33,7 +33,6 @@ export {
   LOCAL_SHARE_INDEX,
   type DepositOtpRequest,
   type DepositProgress,
-  type DepositRegisterRequest,
   type DepositOneResult,
   type TrustholderProvider,
 } from './enrollment'

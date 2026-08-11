@@ -159,7 +159,6 @@ export type TrustholderDestination = {
   state: 'pending' | 'enrolled' | 'busy' | 'ready'
   enrolledAt?: string
   recommended?: boolean
-  portal?: string
 }
 
 type TrustholderListProps = {
@@ -174,7 +173,6 @@ type TrustholderListProps = {
   } | null
   busyId?: string | null
   onDeposit?: (id: string) => void
-  onOpenPortal?: (id: string) => void
   onOfflineCopy?: () => void
   onOfflineSave?: () => void
 }
@@ -190,7 +188,6 @@ export function TrustholderDestinationList({
   offlineShare,
   busyId,
   onDeposit,
-  onOpenPortal,
   onOfflineCopy,
   onOfflineSave,
 }: TrustholderListProps) {
@@ -270,19 +267,9 @@ export function TrustholderDestinationList({
                 <p className="settings-row-desc">
                   {enrolled
                     ? 'This provider already holds one slice. You can deposit again to replace it.'
-                    : 'Register your email at this provider’s portal if needed, then deposit one slice here only.'}
+                    : 'Enter your email above, then deposit here. First time registers this email in-app with a code — no browser redirect.'}
                 </p>
                 <div className="actions split-backup-item-actions">
-                  {dest.portal && onOpenPortal ? (
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      disabled={busy}
-                      onClick={() => onOpenPortal(dest.id)}
-                    >
-                      Open portal
-                    </button>
-                  ) : null}
                   {onDeposit ? (
                     <button
                       type="button"

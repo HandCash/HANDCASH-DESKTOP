@@ -27,6 +27,8 @@ export type TrustholderAuthStart = {
     challenge?: string
     /** Present when Worker is in email-dev mode. */
     devCode?: string
+    /** True when this OTP also registers the email (first deposit). */
+    enroll?: boolean
   }
 }
 
