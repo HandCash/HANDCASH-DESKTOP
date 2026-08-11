@@ -30,7 +30,7 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { isBsv21Mime } from './bsv21'
-import { resolvePaymentAddress, resolvePaymentRecipient } from './friends'
+import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
 import {

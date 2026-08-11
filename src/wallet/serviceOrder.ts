@@ -38,5 +38,5 @@ export function preferServiceOrder(
 
   const rest = services.filter((s) => !used.has(s.name))
   services.splice(0, services.length, ...front, ...rest)
-  collection.reset?.()
+  collection?.reset?.()
 }

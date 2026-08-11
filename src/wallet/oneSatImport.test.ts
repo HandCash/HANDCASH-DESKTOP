@@ -1,4 +1,4 @@
-import { Beef, LockingScript, MerklePath, Transaction, UnlockingScript } from '@bsv/sdk'
+import { LockingScript, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
 import {
   MAX_UNKNOWN_RESOLVES_PER_PASS,
@@ -32,21 +32,6 @@ vi.mock('./itemArrivalToast', () => ({
 
 const ORD_ENVELOPE =
   '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
-
-/** One mined transaction carrying its own merkle proof, as a service returns it. */
-function minedBeef(tx: Transaction, height: number): Beef {
-  const beef = new Beef()
-  const entry = beef.mergeRawTx(tx.toBinary())
-  entry.bumpIndex = beef.mergeBump(
-    new MerklePath(height, [
-      [
-        { offset: 0, hash: tx.id('hex'), txid: true },
-        { offset: 1, duplicate: true },
-      ],
-    ]),
-  )
-  return beef
-}
 
 const TXID_A = 'a'.repeat(64)
 const TXID_B = 'b'.repeat(64)

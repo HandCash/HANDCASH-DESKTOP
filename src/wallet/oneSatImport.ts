@@ -975,8 +975,6 @@ export async function classifyLegacyUtxos(
             if (!resolved) {
               resolved = {
                 origin: txidVoutUnderscore(u.txid, u.vout),
-                traits: [],
-                extras: [],
               }
             }
           } else {
@@ -1003,8 +1001,6 @@ export async function classifyLegacyUtxos(
           // Inside the pending backoff window — still import so the NFT shows.
           resolved = {
             origin: txidVoutUnderscore(u.txid, u.vout),
-            traits: [],
-            extras: [],
           }
         }
       }

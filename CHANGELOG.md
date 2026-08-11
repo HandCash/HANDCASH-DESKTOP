@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.163] - 2026-08-11
+
+### Fixed
+
+- **Release CI:** TypeScript errors that blocked Mac/Windows/Linux installer
+  builds since 1.2.159 (unused imports, provisional inscription shape,
+  service-order nullability).
+
 ## [1.2.162] - 2026-08-11
 
 ### Changed
