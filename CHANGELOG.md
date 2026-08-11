@@ -2,9 +2,14 @@
 
 ## [1.2.158] - 2026-08-11
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Side column layout:** restore direct-child flex for Recent activity /
+  What is BSV (1.2.157 keep-mounted wrapper broke overflow/hidden text).
+- **Sync forever:** 45s syncing watchdog; poll retries soon after yielding to a
+  send; stuck payment progress clears after 90s.
+- **Visibility:** Settings → Statecharts shows a live layers strip (coordinator,
+  sync, payment, activity). Syncing pill tooltip includes coordinator summary.
 
 ## [1.2.157] - 2026-08-11
 
