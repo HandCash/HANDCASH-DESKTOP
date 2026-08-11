@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 import type { PendingPrompt } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
@@ -29,8 +29,13 @@ type Props = {
   pending: PendingPrompt
   onAllow: (autoPay?: AutoPayChoice) => void
   onDeny: () => void
-  /** Parent renders Accept/Decline in the bottom nav bar. */
-  onDecisionApi: (api: PermissionDecisionApi | null) => void
+  /**
+   * Mobile Activity tab: parent renders Accept/Decline in the bottom nav bar.
+   * Omit (or pass null handlers via `actions="inline"`) for desktop side-column.
+   */
+  onDecisionApi?: (api: PermissionDecisionApi | null) => void
+  /** When `inline`, render Deny/Approve in the panel (desktop right column). */
+  actions?: 'nav' | 'inline'
 }
 
 function isBsvPaymentAction(pending: PendingPrompt): boolean {
@@ -47,14 +52,21 @@ function isBsvPaymentAction(pending: PendingPrompt): boolean {
 }
 
 /**
- * Inline permission request for the Activity tab (mobile).
- * Decision buttons live in the wallet nav bar via onDecisionApi.
+ * Inline permission request — Activity tab (mobile, actions in nav) or
+ * dashboard right column (desktop, actions in panel).
  */
-export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi }: Props) {
+export function PermissionRequestPanel({
+  pending,
+  onAllow,
+  onDeny,
+  onDecisionApi,
+  actions = 'nav',
+}: Props) {
   const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
   const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
+  const inlineActions = actions === 'inline'
 
   useEffect(() => {
     setIconReady(false)
@@ -82,26 +94,29 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
   const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
   const allowDisabled = showAutoPay && autoEnabled && (!maxUsdValid || !hoursValid)
 
-  useEffect(() => {
-    const allow = () => {
-      if (pending.kind === 'connect' || !showAutoPay) {
-        onAllow()
-        return
-      }
-      onAllow({
-        enabled: autoEnabled,
-        maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-        windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-      })
+  const runAllow = () => {
+    if (pending.kind === 'connect' || !showAutoPay) {
+      onAllow()
+      return
     }
+    onAllow({
+      enabled: autoEnabled,
+      maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
+      windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
+    })
+  }
+
+  useEffect(() => {
+    if (inlineActions || !onDecisionApi) return
     onDecisionApi({
-      allow,
+      allow: runAllow,
       deny: onDeny,
       allowDisabled,
-      allowLabel: pending.kind === 'connect' ? 'Accept' : 'Accept',
+      allowLabel: 'Accept',
       denyLabel: 'Decline',
     })
     return () => onDecisionApi(null)
+    // runAllow closes over current allow inputs; deps below keep the nav API fresh.
   }, [
     pending,
     showAutoPay,
@@ -114,16 +129,46 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
     onAllow,
     onDeny,
     onDecisionApi,
+    inlineActions,
   ])
+
+  const actionButtons = inlineActions ? (
+    <div className="actions connect-actions permission-request-actions">
+      <button type="button" className="btn btn-ghost" onClick={onDeny}>
+        Deny
+      </button>
+      <button
+        type="button"
+        className="btn btn-primary"
+        autoFocus
+        disabled={allowDisabled}
+        onClick={runAllow}
+      >
+        {pending.kind === 'connect' ? 'Authorize' : 'Approve'}
+      </button>
+    </div>
+  ) : null
+
+  const wrap = (scope: string, body: ReactNode) => (
+    <div
+      className={
+        inlineActions
+          ? 'permission-request-panel permission-request-panel--column'
+          : 'permission-request-panel'
+      }
+      data-aeon-scope={scope}
+      data-aeon-state={iconReady ? 'pending' : 'loading'}
+    >
+      {inlineActions ? <div className="permission-request-scroll">{body}</div> : body}
+      {actionButtons}
+    </div>
+  )
 
   if (pending.kind === 'connect') {
     const home = appHomepage(pending.origin)
-    return (
-      <div
-        className="permission-request-panel"
-        data-aeon-scope="connect-permission-inline"
-        data-aeon-state={iconReady ? 'pending' : 'loading'}
-      >
+    return wrap(
+      'connect-permission-inline',
+      <>
         <div className="connect-app-hero">
           <AppAvatar
             origin={pending.origin}
@@ -162,9 +207,10 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
         </div>
 
         <p className="permission-note">
-          Payments and items still need separate approval. Disconnect anytime in Connected apps.
+          Payments and items still need separate approval. Disconnect anytime in Connected
+          apps.
         </p>
-      </div>
+      </>,
     )
   }
 
@@ -180,12 +226,9 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
       ? formatSecondaryFromSats(pending.amountSats, currency, usdPerBsv)
       : null
 
-  return (
-    <div
-      className="permission-request-panel"
-      data-aeon-scope="action-permission-inline"
-      data-aeon-state={iconReady ? 'pending' : 'loading'}
-    >
+  return wrap(
+    'action-permission-inline',
+    <>
       <div className="connect-app-hero">
         <AppAvatar
           origin={pending.origin}
@@ -271,6 +314,6 @@ export function PermissionRequestPanel({ pending, onAllow, onDeny, onDecisionApi
           ) : null}
         </div>
       ) : null}
-    </div>
+    </>,
   )
 }

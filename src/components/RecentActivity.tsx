@@ -2,8 +2,10 @@ import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import {
   ActivityIcon,
+  AppsIcon,
   CollectablesIcon,
   FilterIcon,
+  FriendsIcon,
   ReceiveIcon,
   SendIcon,
 } from './icons'
@@ -12,9 +14,11 @@ import { CollectableVerifyMark } from './CollectableVerifyMark'
 import {
   activityEntryKey,
   activityEntryTitle,
+  isEventActivity,
   isItemActivity,
   listRecentActivity,
   subscribeAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from '../wallet/appActivity'
 import {
@@ -147,21 +151,32 @@ function HistoryRow({
   verifying?: boolean
 }) {
   const spent = entry.kind === 'spent'
+  const event = isEventActivity(entry)
   const item = isItemActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
-  const amountLabel = item
-    ? shown?.name || 'Collectable'
-    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const signed = item
-    ? 'Item'
-    : currency === 'usd' && usdPerBsv == null
-      ? '—'
-      : spent
-        ? `−${amountLabel}`
-        : `+${amountLabel}`
-  const subtitle = item && shown?.app ? shown.app : null
+  const amountLabel = event
+    ? eventAmountLabel(entry)
+    : item
+      ? shown?.name || 'Collectable'
+      : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+  const signed = event
+    ? amountLabel
+    : item
+      ? 'Item'
+      : currency === 'usd' && usdPerBsv == null
+        ? '—'
+        : spent
+          ? `−${amountLabel}`
+          : `+${amountLabel}`
+  const subtitle = event
+    ? entry.origin !== WALLET_ACTIVITY_ORIGIN
+      ? entry.origin
+      : null
+    : item && shown?.app
+      ? shown.app
+      : null
 
   const entryKey = activityEntryKey(entry)
   const showVerify = Boolean(item && verifying && !spent)
@@ -181,7 +196,11 @@ function HistoryRow({
       >
         <div className="history-icon-wrap">
           <div className="history-icon">
-            {item && shown?.imageUrl ? (
+            {event ? (
+              <span className="history-item-thumb-icon" aria-hidden>
+                {eventIcon(entry)}
+              </span>
+            ) : item && shown?.imageUrl ? (
               <DeferredImage
                 className="history-item-thumb"
                 src={shown.imageUrl}
@@ -203,13 +222,15 @@ function HistoryRow({
             )}
           </div>
           <CollectableVerifyMark verifying={showVerify} />
-          <span
-            className={`history-action-badge ${spent ? 'is-send' : 'is-receive'}`}
-            aria-label={spent ? 'Send' : 'Receive'}
-            title={spent ? 'Send' : 'Receive'}
-          >
-            {spent ? <SendIcon size={6.75} /> : <ReceiveIcon size={9} />}
-          </span>
+          {!event ? (
+            <span
+              className={`history-action-badge ${spent ? 'is-send' : 'is-receive'}`}
+              aria-label={spent ? 'Send' : 'Receive'}
+              title={spent ? 'Send' : 'Receive'}
+            >
+              {spent ? <SendIcon size={6.75} /> : <ReceiveIcon size={9} />}
+            </span>
+          ) : null}
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
@@ -217,7 +238,11 @@ function HistoryRow({
         </div>
         <div className="history-amount-block">
           <span
-            className={item ? 'history-amount history-amount-item' : 'history-amount'}
+            className={
+              event || item
+                ? 'history-amount history-amount-item'
+                : 'history-amount'
+            }
             title={amountLabel}
           >
             {signed}
@@ -227,6 +252,24 @@ function HistoryRow({
       </button>
     </li>
   )
+}
+
+function eventAmountLabel(entry: ActivityEntry): string {
+  const m = entry.method
+  if (m === 'connect' || m === 'approve') return 'Allowed'
+  if (m === 'connect-deny' || m === 'deny') return 'Denied'
+  if (m === 'disconnect') return 'Removed'
+  if (m === 'add-friend') return 'Friend'
+  return 'Action'
+}
+
+function eventIcon(entry: ActivityEntry) {
+  const m = entry.method
+  if (m === 'add-friend') return <FriendsIcon size={18} />
+  if (m.startsWith('connect') || m === 'disconnect' || m === 'approve' || m === 'deny') {
+    return <AppsIcon size={18} />
+  }
+  return <ActivityIcon size={18} />
 }
 
 type FeedProps = {
@@ -420,7 +463,7 @@ export function ActivityFeed({
         title={entries.length === 0 ? emptyLabel : 'Nothing matches'}
         body={
           entries.length === 0
-            ? 'Sends, receives, and app payments will show up here.'
+            ? 'Sends, receives, connections, and other wallet actions show up here.'
             : 'Try clearing filters to see more activity.'
         }
       />

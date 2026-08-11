@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.138] - 2026-08-10
+
+### Changed
+
+- **Desktop approvals** fill the reserved right column (replace market + recent
+  activity) with scroll body and pinned Deny/Approve. Locked-wallet prompts stay
+  centered modals.
+- **Permission listeners** support multiple UI surfaces so prompts no longer
+  vanish after lock/unlock.
+
+### Added
+
+- **Activity events** for non-tx actions: connect/deny/approve/decline,
+  disconnect, and add friend. Unlinking an app no longer wipes that app's
+  history. Filter chip: Actions.
+
+### Fixed
+
+- **BSV-21 Sigma fund** — any spendable default UTXO can bind issuer Sigma
+  (not only ≥1000 sats).
+
 ## [1.2.137] - 2026-08-10
 
 ### Added

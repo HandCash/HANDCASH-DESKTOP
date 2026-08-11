@@ -3,7 +3,8 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
-export type ActivityKind = 'spent' | 'earned'
+/** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
+export type ActivityKind = 'spent' | 'earned' | 'event'
 
 /** Collectable / NFT remittance attached to an activity row. */
 export type ActivityItem = {
@@ -26,6 +27,8 @@ export type ActivityEntry = {
   /** Present when this row is an item transfer, not a BSV payment. */
   item?: ActivityItem
 }
+
+const ACTIVITY_KINDS = new Set<ActivityKind>(['spent', 'earned', 'event'])
 
 export type AppMoneySummary = {
   spent24h: number
@@ -60,15 +63,17 @@ function readAll(): ActivityEntry[] {
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
     const entries = parsed
-      .filter(
-        (e): e is ActivityEntry =>
-          !!e &&
-          typeof e === 'object' &&
-          typeof (e as ActivityEntry).origin === 'string' &&
-          typeof (e as ActivityEntry).sats === 'number' &&
-          typeof (e as ActivityEntry).at === 'number' &&
-          ((e as ActivityEntry).kind === 'spent' || (e as ActivityEntry).kind === 'earned'),
-      )
+      .filter((e): e is ActivityEntry => {
+        if (!e || typeof e !== 'object') return false
+        const row = e as ActivityEntry
+        return (
+          typeof row.origin === 'string' &&
+          typeof row.sats === 'number' &&
+          typeof row.at === 'number' &&
+          ACTIVITY_KINDS.has(row.kind) &&
+          typeof row.method === 'string'
+        )
+      })
       .map((e) => {
         const item = normalizeActivityItem((e as ActivityEntry).item)
         return item ? { ...e, item } : { ...e, item: undefined }
@@ -128,9 +133,11 @@ export function recordAppActivity(args: {
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
+  const isEvent = args.kind === 'event'
   // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
-  // because the money amount is dust.
-  if (sats <= 0 && !item) return
+  // because the money amount is dust. Events (connect, friend, …) may be zero-sats.
+  if (sats <= 0 && !item && !isEvent) return
+  if (isEvent && !(args.note?.trim() || args.method.trim())) return
   const origin = normalizeAppHost(args.origin)
   // readAll shares its array — append to a copy rather than mutating the cache.
   writeAll([
@@ -139,7 +146,7 @@ export function recordAppActivity(args: {
       id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       origin,
       kind: args.kind,
-      sats,
+      sats: isEvent ? 0 : sats,
       at: Date.now(),
       method: args.method,
       note: args.note,
@@ -147,6 +154,26 @@ export function recordAppActivity(args: {
       ...(item ? { item } : {}),
     },
   ])
+}
+
+/** Non-tx wallet action (permission decision, friend, disconnect, …). */
+export function recordWalletEvent(args: {
+  origin?: string
+  method: string
+  note: string
+}): void {
+  recordAppActivity({
+    origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
+    kind: 'event',
+    sats: 0,
+    method: args.method,
+    note: args.note.trim().slice(0, 160),
+  })
+}
+
+/** True when the row is a permission / friend / other non-money action. */
+export function isEventActivity(entry: ActivityEntry): boolean {
+  return entry.kind === 'event'
 }
 
 function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | undefined {
@@ -176,7 +203,10 @@ export function isItemActivity(entry: ActivityEntry): boolean {
  * Breadcrumb / empty-state label for an activity detail.
  * Prefer "Transaction" — reserve "Payment" for explicit BSV payments (app money).
  */
-export function activityDetailLabel(entry: ActivityEntry): 'Payment' | 'Transaction' {
+export function activityDetailLabel(
+  entry: ActivityEntry,
+): 'Payment' | 'Transaction' | 'Activity' {
+  if (isEventActivity(entry)) return 'Activity'
   if (isItemActivity(entry)) return 'Transaction'
   if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return 'Payment'
   return 'Transaction'
@@ -258,13 +288,19 @@ export function activityEntryKey(entry: ActivityEntry): string {
   if (txid) return `tx:${txid}:${kind}`
   const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
   if (outpoint) return `item:${outpoint}:${kind}`
+  if (kind === 'event') {
+    return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
+  }
   // Nothing on-chain to key on (a local-only row): the timestamp it was written
   // with is as stable as this row gets.
   return `at:${entry.at}:${kind}:${entry.sats}`
 }
 
-/** Human title for an activity row (payment or collectable). */
+/** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
+  if (entry.kind === 'event') {
+    return entry.note?.trim() || entry.method || 'Activity'
+  }
   if (entry.item?.name) {
     const name = entry.item.name
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {

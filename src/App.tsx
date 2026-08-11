@@ -25,7 +25,6 @@ import { UpdatePrompt } from './components/UpdatePrompt'
 import { ScreenshotToast } from './components/ScreenshotToast'
 import { AppToastHost } from './components/AppToastHost'
 import { setAutoPaySettings } from './wallet/autoPay'
-import { isMobileWalletPlatform } from './wallet/isMobilePlatform'
 import { UpdateProvider } from './wallet/updateProvider'
 import { playWalletSound } from './wallet/soundService'
 import { showToast, toastError, toastSuccess } from './wallet/toast'
@@ -258,11 +257,11 @@ export function App() {
         <ScreenshotToast />
 
         {/*
-          Desktop: modal prompts.
-          Mobile unlocked: Activity + bottom Accept/Decline (WalletNav).
-          Mobile locked: keep modals so a request can still be decided after unlock UI.
+          Unlocked desktop: right column (Dashboard).
+          Unlocked mobile: Activity + bottom Accept/Decline (WalletNav).
+          Locked (any): modal prompts so a request can still be decided.
         */}
-        {(!isMobileWalletPlatform() || !walletUnlocked) && (
+        {!walletUnlocked && (
           <>
             <ConnectPermissionDialog
               pending={pendingConnect}

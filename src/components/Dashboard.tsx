@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
+import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
 import {
   formatUsdFromSats,
   getCachedUsdPerBsv,
@@ -14,7 +15,6 @@ import {
   toggleDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
-import { clearAppActivity } from '../wallet/appActivity'
 import type { WalletProfile } from '../machines/appMachine'
 import {
   SendIcon,
@@ -26,15 +26,22 @@ import {
 import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
+  resolvePermission,
   revokeOrigin,
   subscribeConnectedApps,
+  subscribePermissionRequests,
   type ConnectedApp,
+  type PendingPrompt,
 } from '../wallet/permissions'
 import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { toastSuccess } from '../wallet/toast'
+import { appDisplayName } from '../wallet/appIdentity'
+import { setAutoPaySettings } from '../wallet/autoPay'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
+import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
@@ -82,12 +89,45 @@ export function Dashboard({
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
+  const sideRef = useRef<HTMLElement>(null)
+  const sideApproval = !isMobileWalletPlatform() && pendingPrompt != null
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
+  useEffect(() => {
+    if (isMobileWalletPlatform()) return
+    return subscribePermissionRequests(setPendingPrompt)
+  }, [])
+  useEffect(() => {
+    if (!sideApproval || !sideRef.current) return
+    sideRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
+  }, [sideApproval, pendingPrompt?.id])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+
+  const onPermissionAllow = useCallback(
+    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
+      if (!pendingPrompt) return
+      if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
+      const name = appDisplayName(pendingPrompt.origin)
+      resolvePermission(pendingPrompt.id, 'allow')
+      playWalletSound('connect')
+      if (pendingPrompt.kind === 'connect') {
+        toastSuccess('Connected', `${name} can use your wallet`)
+      } else {
+        toastSuccess('Approved', pendingPrompt.title || name)
+      }
+    },
+    [pendingPrompt],
+  )
+
+  const onPermissionDeny = useCallback(() => {
+    if (!pendingPrompt) return
+    resolvePermission(pendingPrompt.id, 'deny')
+    playWalletSound('deny')
+  }, [pendingPrompt])
   useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
   useEffect(() => {
     // Mobile uses this lifecycle to keep the unlocked wallet's foreground
@@ -338,15 +378,35 @@ export function Dashboard({
           onFail={onFail}
           onRevoke={(origin) => {
             revokeOrigin(origin)
-            clearAppActivity(origin)
             setConnectedApps(listConnectedApps())
           }}
         />
       </div>
 
-      <aside className="dashboard-side">
-        <WhatIsBsvPanel />
-        <RecentActivityPanel chain={profile.chain} />
+      <aside
+        ref={sideRef}
+        className="dashboard-side"
+        data-aeon-scope="dashboard-side"
+        data-aeon-state={sideApproval ? 'permission' : 'idle'}
+      >
+        {sideApproval && pendingPrompt ? (
+          <section
+            className="panel permission-side-panel"
+            aria-label="Permission request"
+          >
+            <PermissionRequestPanel
+              pending={pendingPrompt}
+              onAllow={onPermissionAllow}
+              onDeny={onPermissionDeny}
+              actions="inline"
+            />
+          </section>
+        ) : (
+          <>
+            <WhatIsBsvPanel />
+            <RecentActivityPanel chain={profile.chain} />
+          </>
+        )}
       </aside>
     </section>
   )

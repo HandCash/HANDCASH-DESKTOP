@@ -240,6 +240,7 @@ function FungibleListItem({ token }: { token: FungibleToken }) {
           <span className="connected-app-host">
             {amount}
             {issuerLabel ? ` · ${issuerLabel}` : ''}
+            {token.issuerAttested ? ' · signed' : ''}
             {' · '}
             {idShort}
           </span>

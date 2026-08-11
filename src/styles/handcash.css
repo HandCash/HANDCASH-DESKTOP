@@ -1092,6 +1092,7 @@ body {
 .dashboard-side {
   min-width: 0;
   min-height: 0;
+  height: 100%;
   display: flex;
   flex-direction: column;
   gap: 12px;
@@ -1106,6 +1107,84 @@ body {
 .dashboard-side > .history-panel {
   flex: 1 1 0;
   min-height: 0;
+}
+
+/*
+ * Connect / pay approval occupies the whole reserved right column
+ * (replaces market + recent activity). Scroll body + pinned Deny/Approve.
+ */
+.dashboard-side[data-aeon-state='permission'] {
+  gap: 0;
+}
+
+.dashboard-side > .permission-side-panel {
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 35%, transparent);
+  box-shadow: 0 0 0 1px rgba(87, 255, 151, 0.08);
+  animation: rise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-panel--column {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+  gap: 0;
+  overflow: hidden;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-title {
+  font-size: 1.05rem;
+  word-break: break-word;
+}
+
+.dashboard-side > .permission-side-panel .connect-app-hero {
+  margin-bottom: 0;
+  align-items: flex-start;
+}
+
+.dashboard-side > .permission-side-panel .permission-meta,
+.dashboard-side > .permission-side-panel .scope-list {
+  margin: 0;
+}
+
+.dashboard-side > .permission-side-panel .permission-note {
+  margin: 0;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-actions {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 12px 14px;
+  border-top: 1px solid color-mix(in srgb, var(--hc-accent) 22%, transparent);
+  background: color-mix(in srgb, var(--hc-bg, #0b1210) 55%, transparent);
+  justify-content: stretch;
+  gap: 8px;
+}
+
+.dashboard-side > .permission-side-panel .permission-request-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
 }
 
 .what-is-bsv {
@@ -1512,6 +1591,11 @@ body {
     min-height: min(70vh, 640px);
   }
 
+  /* Keep the approval column tall enough when the grid stacks. */
+  .dashboard-side[data-aeon-state='permission'] {
+    min-height: min(70vh, 560px);
+  }
+
   .wallet-hero-main {
     flex-wrap: wrap;
   }
@@ -1593,12 +1677,22 @@ button.wallet-detail-value.is-copied {
 
 /* Dialog/Prompt shell + titles: Aeon consumer-shell.css. Product z-index / width only. */
 .permission-backdrop {
-  z-index: 60;
+  z-index: 1100;
   background: rgba(0, 0, 0, 0.82);
 }
 
+/* Locked-wallet fallback — center like Aeon dialog positioner (above titlebar). */
 .permission-positioner {
-  z-index: 61;
+  z-index: 1101;
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  box-sizing: border-box;
 }
 
 .modal {

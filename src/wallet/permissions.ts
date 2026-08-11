@@ -84,7 +84,8 @@ const ACTION_METHODS = new Set([
 ])
 
 let idCounter = 1
-let listener: PromptListener | null = null
+/** Multiple UI surfaces (Dashboard column + locked modals + mobile nav) may listen. */
+const promptListeners = new Set<PromptListener>()
 const connectedListeners = new Set<ConnectedListener>()
 let current: {
   request: PendingPrompt
@@ -156,7 +157,8 @@ function writeConnected(apps: ConnectedApp[]): void {
 }
 
 function notify(): void {
-  listener?.(current?.request ?? null)
+  const pending = current?.request ?? null
+  for (const cb of promptListeners) cb(pending)
 }
 
 function pumpQueue(): void {
@@ -322,9 +324,18 @@ function patchItemAccess(
 
 export function revokeOrigin(origin: string): void {
   const key = normalizeOrigin(origin)
+  const name = appDisplayName(key)
   writeConnected(readConnected().filter((a) => a.origin !== key))
   clearAutoPaySettings(key)
   clearPermissionSession(key)
+  // Keep history — only drop the live connection. Activity still shows the unlink.
+  void import('./appActivity').then(({ recordWalletEvent }) => {
+    recordWalletEvent({
+      origin: key,
+      method: 'disconnect',
+      note: `Disconnected ${name}`,
+    })
+  })
 }
 
 export function revokeAllOrigins(): void {
@@ -334,10 +345,10 @@ export function revokeAllOrigins(): void {
 }
 
 export function subscribePermissionRequests(cb: PromptListener): () => void {
-  listener = cb
+  promptListeners.add(cb)
   cb(current?.request ?? null)
   return () => {
-    if (listener === cb) listener = null
+    promptListeners.delete(cb)
   }
 }
 
@@ -356,8 +367,28 @@ export function subscribeAllowedOrigins(cb: (origins: string[]) => void): () => 
 
 export function resolvePermission(id: number, decision: PermissionDecision): void {
   if (!current || current.request.id !== id) return
+  const prompt = current.request
   const { resolve } = current
   current = null
+  void import('./appActivity').then(({ recordWalletEvent }) => {
+    const name = appDisplayName(prompt.origin)
+    if (prompt.kind === 'connect') {
+      recordWalletEvent({
+        origin: prompt.origin,
+        method: decision === 'allow' ? 'connect' : 'connect-deny',
+        note: decision === 'allow' ? `Connected ${name}` : `Denied ${name}`,
+      })
+      return
+    }
+    recordWalletEvent({
+      origin: prompt.origin,
+      method: decision === 'allow' ? 'approve' : 'deny',
+      note:
+        decision === 'allow'
+          ? `Approved ${prompt.title}`
+          : `Declined ${prompt.title}`,
+    })
+  })
   resolve(decision)
   pumpQueue()
 }

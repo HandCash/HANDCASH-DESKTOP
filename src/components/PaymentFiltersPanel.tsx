@@ -19,6 +19,7 @@ const KIND_OPTIONS: { id: PaymentKindFilter; label: string }[] = [
   { id: 'all', label: 'All' },
   { id: 'spent', label: 'Sent' },
   { id: 'earned', label: 'Received' },
+  { id: 'event', label: 'Actions' },
 ]
 
 const TIME_OPTIONS: { id: PaymentTimeFilter; label: string }[] = [

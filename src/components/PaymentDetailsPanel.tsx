@@ -7,6 +7,7 @@ import {
   activityDetailLabel,
   activityEntryTitle,
   getActivityById,
+  isEventActivity,
   isItemActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -74,6 +75,61 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   if (!entry) {
     return <p className="connected-empty-line">Transaction not found</p>
+  }
+
+  if (isEventActivity(entry)) {
+    const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
+    return (
+      <div
+        className="nav-child-panel payment-details"
+        data-aeon-scope="payment-details"
+        data-aeon-state="event"
+      >
+        <div className="payment-details-hero">
+          <div className="history-icon">
+            {isWallet ? (
+              <ReceiveIcon size={16} />
+            ) : (
+              <AppAvatar
+                origin={entry.origin}
+                name={appDisplayName(entry.origin)}
+                size="sm"
+                onReady={() => setIconReady(true)}
+              />
+            )}
+          </div>
+          <div className="payment-details-copy">
+            <div className="payment-details-title-row">
+              <strong className="payment-details-title">{activityEntryTitle(entry)}</strong>
+            </div>
+            <p className="history-when">
+              {new Date(entry.at).toLocaleString(undefined, {
+                dateStyle: 'medium',
+                timeStyle: 'short',
+              })}
+            </p>
+          </div>
+        </div>
+        <div className="app-details-section">
+          <dl className="wallet-details">
+            <div className="wallet-detail">
+              <span>Type</span>
+              <span className="wallet-detail-value">{activityDetailLabel(entry)}</span>
+            </div>
+            <div className="wallet-detail">
+              <span>Action</span>
+              <span className="wallet-detail-value mono">{entry.method}</span>
+            </div>
+            {!isWallet ? (
+              <div className="wallet-detail">
+                <span>App</span>
+                <span className="wallet-detail-value">{appDisplayName(entry.origin)}</span>
+              </div>
+            ) : null}
+          </dl>
+        </div>
+      </div>
+    )
   }
 
   const spent = entry.kind === 'spent'

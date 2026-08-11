@@ -225,8 +225,9 @@ export async function enrichCreateActionForBsv21Issuer(
       basket: 'default',
       limit: 50,
     })
+    // Any spendable default tip can bind Sigma as vin 0; prefer larger for fees.
     const fund = (listed.outputs ?? [])
-      .filter((o) => (o.satoshis ?? 0) >= 1000 && o.outpoint)
+      .filter((o) => (o.satoshis ?? 0) >= 1 && o.outpoint)
       .sort((a, b) => (b.satoshis ?? 0) - (a.satoshis ?? 0))[0]
     if (fund?.outpoint) {
       fundOutpoint = normalizeDotOutpoint(fund.outpoint)

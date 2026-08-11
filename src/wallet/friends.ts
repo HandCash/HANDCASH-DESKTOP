@@ -150,6 +150,13 @@ export function addFriend(args: { label: string; identityKey: string }): Friend 
     createdAt: Date.now(),
   }
   writeAll([...friends, friend])
+  void import('./appActivity').then(({ recordWalletEvent, WALLET_ACTIVITY_ORIGIN }) => {
+    recordWalletEvent({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      method: 'add-friend',
+      note: `Added friend ${label}`,
+    })
+  })
   return friend
 }
 

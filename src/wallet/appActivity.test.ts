@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   activityDetailLabel,
   activityEntryKey,
+  activityEntryTitle,
+  isEventActivity,
   isItemActivity,
   type ActivityEntry,
 } from './appActivity'
@@ -38,6 +40,19 @@ describe('activityDetailLabel', () => {
 
   it('labels wallet BSV sends as Transaction', () => {
     expect(activityDetailLabel(entry({ method: 'send', sats: 5000 }))).toBe('Transaction')
+  })
+
+  it('labels permission / friend rows as Activity', () => {
+    const row = entry({
+      kind: 'event',
+      sats: 0,
+      method: 'connect',
+      note: 'Connected market.example',
+      origin: 'market.example',
+    })
+    expect(isEventActivity(row)).toBe(true)
+    expect(activityDetailLabel(row)).toBe('Activity')
+    expect(activityEntryTitle(row)).toBe('Connected market.example')
   })
 })
 

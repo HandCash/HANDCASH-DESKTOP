@@ -26,20 +26,24 @@ function MetaRow({
 }: {
   label: string
   value: string
-  onCopy: () => void
+  onCopy?: () => void
 }) {
   return (
     <>
       <dt>{label}</dt>
       <dd>
-        <button
-          type="button"
-          className="mono collectable-meta-copy"
-          title={`Click to copy ${label.toLowerCase()}\n${value}`}
-          onClick={onCopy}
-        >
-          {value}
-        </button>
+        {onCopy ? (
+          <button
+            type="button"
+            className="mono collectable-meta-copy"
+            title={`Click to copy ${label.toLowerCase()}\n${value}`}
+            onClick={onCopy}
+          >
+            {value}
+          </button>
+        ) : (
+          <span className="mono">{value}</span>
+        )}
       </dd>
     </>
   )
@@ -105,6 +109,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           {[
             token.issuerHandle ||
               (token.issuer ? shortIssuerLabel(token.issuer) : ''),
+            token.issuerAttested ? 'Sigma signed' : '',
             token.utxoCount === 1
               ? '1 token output'
               : `${token.utxoCount} token outputs`,
@@ -150,6 +155,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               void copyText(token.issuer!)
             }}
           />
+        ) : null}
+        {token.issuerAttested ? (
+          <MetaRow label="Attestation" value="Sigma signed (BRC-77)" />
         ) : null}
         {token.cosign?.pubkey ? (
           <MetaRow
