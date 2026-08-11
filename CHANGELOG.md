@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.2.186] - 2026-08-11
+
+### Fixed
+- **Messagebox tip hints now kick ingest immediately.** Tip-hint poll runs every ~1.5s in the foreground and forces a chain refresh as soon as a peer soft-latch notify lands — no waiting for the 5s address-scan tick.
+
+## [1.2.185] - 2026-08-11
+
+### Fixed
+- **Slow peer item receives (~30–60s).** Foreground chain poll is 5s (30s only when backgrounded). Soft-latch sends also drop a messagebox tip hint with the txid so the peer’s next tick runs chain ingest immediately.
+
 ## [1.2.184] - 2026-08-11
 
 ### Fixed

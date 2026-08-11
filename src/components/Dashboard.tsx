@@ -61,6 +61,12 @@ import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 
+/**
+ * Messagebox tip-hint poll — independent of the address-scan interval so a
+ * peer soft-latch notify can kick ingest in ~1s, not wait for the next chain tick.
+ */
+const TIP_HINT_POLL_MS = 1_500
+const TIP_HINT_POLL_HIDDEN_MS = 15_000
 /** Cloud history is merged far less often than the chain poll — it is a network round trip. */
 const HISTORY_PULL_INTERVAL_MS = 60_000
 /**
@@ -232,6 +238,7 @@ export function Dashboard({
     let lastHistoryPull = 0
     let tickInFlight = false
     let pollTimer: number | null = null
+    let tipHintTimer: number | null = null
     let scheduledDelayMs = 0
 
     const scheduleNext = (delayMs?: number) => {
@@ -242,6 +249,45 @@ export function Dashboard({
       pollTimer = window.setTimeout(() => {
         void sync().finally(() => scheduleNext())
       }, delay)
+    }
+
+    const scheduleTipHintPoll = (delayMs?: number) => {
+      if (cancelled) return
+      if (tipHintTimer != null) window.clearTimeout(tipHintTimer)
+      const hidden =
+        typeof document !== 'undefined' && document.visibilityState === 'hidden'
+      const delay =
+        delayMs ?? (hidden ? TIP_HINT_POLL_HIDDEN_MS : TIP_HINT_POLL_MS)
+      tipHintTimer = window.setTimeout(() => {
+        void pollTipHints().finally(() => scheduleTipHintPoll())
+      }, delay)
+    }
+
+    const pollTipHints = async () => {
+      if (cancelled) return
+      if (hasPendingPermissionPrompt()) return
+      if (shouldYieldChainIngestToSpend()) return
+      if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+        return
+      }
+      try {
+        const active = getActiveWallet()
+        if (!active?.rootKeyHex) return
+        const { pollInboundTipHints } = await import('../wallet/messageTransport')
+        const { listFriends } = await import('../wallet/friends')
+        const map = new Map(
+          listFriends().map((f) => [f.identityKey.toLowerCase(), f.id]),
+        )
+        const hints = await pollInboundTipHints({
+          rootKeyHex: active.rootKeyHex,
+          peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
+        })
+        if (cancelled || hints.tipHints <= 0) return
+        // Tip hint landed — ingest now, do not wait for the chain poll timer.
+        void sync({ forceReview: true }).finally(() => scheduleNext())
+      } catch {
+        /* optional accelerator */
+      }
     }
 
     const sync = async (opts?: { forceReview?: boolean }) => {
@@ -272,27 +318,6 @@ export function Dashboard({
             return
           }
         }
-        // Tip hints from peers (messagebox) — grade B accelerator so soft-latch
-        // receives do not wait for the next address-scan tick alone.
-        try {
-          const active = getActiveWallet()
-          if (active?.rootKeyHex) {
-            const { pollInboundTipHints } = await import('../wallet/messageTransport')
-            const { listFriends } = await import('../wallet/friends')
-            const map = new Map(
-              listFriends().map((f) => [f.identityKey.toLowerCase(), f.id]),
-            )
-            const hints = await pollInboundTipHints({
-              rootKeyHex: active.rootKeyHex,
-              peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
-            })
-            if (hints.tipHints > 0) {
-              // Fall through into refreshFromChain immediately this tick.
-            }
-          }
-        } catch {
-          /* optional */
-        }
         // Background polls never audit: reviewSpendableOutputs is report-only and
         // was colliding with nav taps right after unlock. Manual Refresh / online
         // recovery still force the audit.
@@ -315,7 +340,10 @@ export function Dashboard({
     let deferTimer: number | null = null
     const startFirst = () => {
       if (cancelled) return
-      void sync().finally(() => scheduleNext())
+      void sync().finally(() => {
+        scheduleNext()
+        scheduleTipHintPoll(0)
+      })
     }
     if (isPhoneShell()) {
       if (typeof requestIdleCallback === 'function') {
@@ -341,6 +369,7 @@ export function Dashboard({
     const onAppActive = () => {
       if (cancelled) return
       void sync({ forceReview: true }).finally(() => scheduleNext())
+      scheduleTipHintPoll(0)
     }
     document.addEventListener('handcash:app-active', onAppActive)
 
@@ -348,6 +377,7 @@ export function Dashboard({
       if (cancelled || document.visibilityState !== 'visible') return
       // Foreground again — do not sit on a leftover 30s hidden timer.
       void sync().finally(() => scheduleNext())
+      scheduleTipHintPoll(0)
     }
     document.addEventListener('visibilitychange', onVisibility)
 
@@ -357,6 +387,7 @@ export function Dashboard({
       document.removeEventListener('handcash:app-active', onAppActive)
       document.removeEventListener('visibilitychange', onVisibility)
       if (pollTimer != null) window.clearTimeout(pollTimer)
+      if (tipHintTimer != null) window.clearTimeout(tipHintTimer)
       if (idleHandle != null && typeof cancelIdleCallback === 'function') {
         cancelIdleCallback(idleHandle)
       }
