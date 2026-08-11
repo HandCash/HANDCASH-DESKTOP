@@ -175,6 +175,7 @@ export function PairDevicePanel() {
             ? `kept local history (${result.skippedPullReason})`
             : 'kept local history',
         result.friendsMerged ? `${result.friendsMerged} friends added` : null,
+        result.activityMerged ? `${result.activityMerged} activity rows` : null,
         result.uploaded ? 'uploaded' : null,
         recomposed.spendableSats != null ? `chain ${recomposed.spendableSats} sats` : null,
       ].filter(Boolean)

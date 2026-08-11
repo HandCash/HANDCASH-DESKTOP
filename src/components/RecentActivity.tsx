@@ -238,7 +238,10 @@ function HistoryRow({
               <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
             )}
           </div>
-          <CollectableVerifyMark verifying={showVerify} />
+          <CollectableVerifyMark
+            verifying={showVerify}
+            outpoint={entry.item?.outpoint}
+          />
           {!event ? (
             <span
               className={`history-action-badge is-${badgeKind}`}

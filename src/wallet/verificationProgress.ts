@@ -137,8 +137,9 @@ export function peekPreferredCollectableVerification(): string | null {
 }
 
 /**
- * True while this tip is waiting on authenticity or is the active walk target.
- * Used by the corner spinner — must stay true from receive until verified.
+ * True while this tip is waiting on authenticity or is the active *verify*
+ * walk. Indexer `identifying` must not drive the corner spinner — Collect
+ * remounts re-run identify/upgrade and that looked like a fresh verification.
  */
 export function isOutpointVerifying(
   outpoint: string | null | undefined,
@@ -154,7 +155,7 @@ export function isOutpointVerifying(
     return false
   }
   if (awaitingVerify.has(key)) return true
-  if (current.phase === 'idle' || !current.outpoint) return false
+  if (current.phase !== 'verifying' || !current.outpoint) return false
   return key === current.outpoint
 }
 

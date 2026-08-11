@@ -43,6 +43,10 @@ export function ownershipFate(args: {
 
   if (covenantLike) return 'keepCovenant'
 
+  // Tip still locks to us — address scan may lag Bitails / WoC. Relinquishing
+  // here orphaned inventory while Activity still showed the receive.
+  if (args.paysOurAddress === true) return 'graceHold'
+
   // softP2pkh / unknown past grace and missing from the address set → drop.
   return 'ghostDrop'
 }

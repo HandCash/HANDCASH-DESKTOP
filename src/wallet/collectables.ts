@@ -97,7 +97,7 @@ import { collectableSendMachine } from './collectableSendMachine'
 import { softLatchSendMachine } from './softLatchSendMachine'
 import { createActor } from 'xstate'
 import { scanLegacyAddress } from './legacyScan'
-import { isItemSent, markItemsSent } from './sentItemGuard'
+import { isItemSent, markItemsSent, forgetItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
   getProvenVerdict,
@@ -1235,6 +1235,22 @@ async function listCollectablesNow(
   // Covenant tips never appear on the P2PKH address scan (only their beacon does).
   const live = resolveLiveOneSatKeys(wallet)
   if (live) {
+    // Tip still on our address cannot stay hidden as "sent" — failed soft-latch
+    // broadcasts and restores otherwise leave Activity receive rows with no card.
+    const unhide: string[] = []
+    for (const o of outputs) {
+      const op = outpointKey(o.outpoint)
+      if (!op || (o.satoshis ?? 1) !== 1) continue
+      if (o.tags?.includes(LATCH_TAG)) continue
+      if (live.keys.has(op) && isItemSent(op)) unhide.push(op)
+    }
+    if (unhide.length > 0) {
+      forgetItemsSent(unhide)
+      console.info(
+        `[collectables] un-hiding ${unhide.length} tip(s) still on address`,
+        unhide,
+      )
+    }
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []

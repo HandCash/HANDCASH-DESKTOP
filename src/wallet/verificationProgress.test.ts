@@ -54,4 +54,13 @@ describe('verificationProgress', () => {
     cache.rememberProvenVerdict('dd.3', { tier: 'brc150', verifiedAt: 2 })
     expect(vp2.isOutpointVerifying('dd.3')).toBe(false)
   })
+
+  it('identifying progress does not drive the corner spinner', async () => {
+    const vp = await import('./verificationProgress')
+    vp.resetVerificationProgressForTests()
+    vp.setVerificationProgress('identifying', 'ee.4', 'indexer')
+    expect(vp.isOutpointVerifying('ee.4')).toBe(false)
+    vp.setVerificationProgress('verifying', 'ee.4', 'walk')
+    expect(vp.isOutpointVerifying('ee.4')).toBe(true)
+  })
 })

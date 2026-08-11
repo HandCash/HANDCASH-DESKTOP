@@ -106,7 +106,7 @@ function CollectableGridItem({
             decoding="async"
           />
           <CollectableSendingMark sending={sending} />
-          <CollectableVerifyMark verifying={verifying} />
+          <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <strong className="collection-grid-name" title={item.name}>
           {item.name}
@@ -171,7 +171,7 @@ function CollectableListItem({
             decoding="async"
           />
           <CollectableSendingMark sending={sending} />
-          <CollectableVerifyMark verifying={verifying} />
+          <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{item.name}</strong>

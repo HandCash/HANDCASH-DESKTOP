@@ -113,6 +113,16 @@ export function friendsBackupObjectUrl(
   return `${base}/v1/wallets/${id}/friends.json`
 }
 
+export function activityBackupObjectUrl(
+  identityKey: string,
+  prefs = getHistoryBackupPrefs(),
+): string {
+  const base = resolveHistoryBackupBaseUrl(prefs)
+  if (!base) throw new Error('Set a backup URL first')
+  const id = encodeURIComponent(identityKey.trim())
+  return `${base}/v1/wallets/${id}/activity.json`
+}
+
 export function backupUrlsMatch(a: string, b: string): boolean {
   return normalizeBase(a).toLowerCase() === normalizeBase(b).toLowerCase()
 }
@@ -167,6 +177,61 @@ export async function downloadAndMergeFriendsBackup(): Promise<number> {
   return mergeFriends(incoming)
 }
 
+/** Push Activity panel rows (local durable store) beside BRC-39 / friends. */
+export async function uploadActivityBackup(): Promise<{ url: string; count: number }> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
+  assertDeviceLinkBackupUrl()
+  const { exportAllActivity } = await import('./appActivity')
+  const entries = exportAllActivity()
+  const url = activityBackupObjectUrl(active.identityKey)
+  const res = await fetch(url, {
+    method: 'PUT',
+    headers: {
+      'Content-Type': 'application/json',
+      Accept: 'application/json, */*',
+    },
+    body: JSON.stringify({
+      v: 1,
+      identityKey: active.identityKey,
+      updatedAt: Date.now(),
+      entries,
+    }),
+  })
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 160)
+    throw new Error(`Activity upload failed (${res.status})${detail ? `: ${detail}` : ''}`)
+  }
+  return { url, count: entries.length }
+}
+
+/** Pull + merge Activity rows from the shared backup host. */
+export async function downloadAndMergeActivityBackup(): Promise<number> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
+  assertDeviceLinkBackupUrl()
+  const url = activityBackupObjectUrl(active.identityKey)
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json, */*' },
+  })
+  if (res.status === 404) return 0
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 160)
+    throw new Error(`Activity download failed (${res.status})${detail ? `: ${detail}` : ''}`)
+  }
+  const data = (await res.json()) as {
+    entries?: unknown
+    identityKey?: string
+  }
+  if (data.identityKey && data.identityKey !== active.identityKey) {
+    throw new Error('Activity backup identity does not match this wallet')
+  }
+  const incoming = Array.isArray(data.entries) ? data.entries : []
+  const { mergeActivityEntries } = await import('./appActivity')
+  return mergeActivityEntries(incoming as import('./appActivity').ActivityEntry[])
+}
+
 /**
  * True when remote history is strictly newer than what this device last pushed.
  * If age is unknown, refuse to pull (safe default — never go backwards).
@@ -193,6 +258,7 @@ export function shouldPullRemoteHistory(
 export async function syncDevicesViaBackupUrl(password: string): Promise<{
   brc39: { inserts: number; updates: number } | null
   friendsMerged: number
+  activityMerged: number
   uploaded: boolean
   pulled: boolean
   skippedPullReason: string | null
@@ -230,6 +296,7 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
   }
 
   const friendsMerged = await downloadAndMergeFriendsBackup()
+  const activityMerged = await downloadAndMergeActivityBackup().catch(() => 0)
   try {
     await uploadBrc39Backup(password)
   } catch (err) {
@@ -237,6 +304,7 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
       return {
         brc39,
         friendsMerged,
+        activityMerged,
         uploaded: false,
         pulled,
         skippedPullReason:
@@ -247,9 +315,17 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
     throw err
   }
   await uploadFriendsBackup()
+  await uploadActivityBackup().catch(() => undefined)
   setHistoryBackupPrefs({ lastError: null })
 
-  return { brc39, friendsMerged, uploaded: true, pulled, skippedPullReason }
+  return {
+    brc39,
+    friendsMerged,
+    activityMerged,
+    uploaded: true,
+    pulled,
+    skippedPullReason,
+  }
 }
 
 /**
@@ -432,6 +508,8 @@ export async function autoPushHistoryBackupIfConfigured(
         try {
           await downloadAndRestoreBrc39Backup(password)
           result.pulled = true
+          await downloadAndMergeFriendsBackup().catch(() => 0)
+          await downloadAndMergeActivityBackup().catch(() => 0)
         } catch (err) {
           const msg = err instanceof Error ? err.message : String(err)
           result.pullError = msg
@@ -481,6 +559,7 @@ export async function autoPushHistoryBackupIfConfigured(
         if (gate.refusePush) {
           appendAppLog('info', `[cloud-backup] skip push — ${gate.reason}`)
           await uploadFriendsBackup().catch(() => undefined)
+          await uploadActivityBackup().catch(() => undefined)
           return
         }
 
@@ -509,6 +588,7 @@ export async function autoPushHistoryBackupIfConfigured(
         closeBackupAttempt(true)
         attemptOpen = false
         await uploadFriendsBackup()
+        await uploadActivityBackup().catch(() => undefined)
         historyDirty = false
       })(),
       new Promise<never>((_, reject) =>
@@ -602,6 +682,8 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
       return { pulled: false, reason: 'local history dirty' }
     }
     await downloadAndRestoreBrc39Backup(password)
+    await downloadAndMergeFriendsBackup().catch(() => 0)
+    await downloadAndMergeActivityBackup().catch(() => 0)
     try {
       const { clearCollectablesCache } = await import('./collectables')
       clearCollectablesCache()

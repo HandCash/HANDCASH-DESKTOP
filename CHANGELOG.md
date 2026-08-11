@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.184] - 2026-08-11
+
+### Fixed
+- **Verify checkmark on every Collect visit.** Corner mark only spins for real authenticity work (not indexer identify) and only flashes a check when the tip is actually proven.
+- **Restore missing Activity history.** Device backup now stores/merges `activity.json` beside BRC-39 and friends.
+- **NFT in Activity but missing from inventory.** Tips whose locking script still pays us are no longer ghost-dropped when the address scan lags; tips still on our address are un-hidden from stale “sent” marks.
+
 ## [1.2.183] - 2026-08-11
 
 ### Changed
