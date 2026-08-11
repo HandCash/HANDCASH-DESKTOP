@@ -118,17 +118,19 @@ function cacheCreateActionBeef(txid: string, result: unknown): void {
   const id = txid.trim().toLowerCase()
   try {
     const asBeef = Beef.fromBinary(binary)
-    if (asBeef.findTxid(id)?.tx) {
+    asBeef.atomicTxid = undefined
+    if (asBeef.findTxid(id)?.tx && asBeef.verifyValid(true).valid) {
       rememberBeefBinary(id, asBeef.toBinary())
       return
     }
   } catch {
-    // not AtomicBEEF
+    // not AtomicBEEF / not verifiable
   }
   try {
     const wrapped = new Beef()
     wrapped.mergeTransaction(Transaction.fromBinary(binary))
-    if (wrapped.findTxid(id)?.tx) {
+    wrapped.atomicTxid = undefined
+    if (wrapped.findTxid(id)?.tx && wrapped.verifyValid(true).valid) {
       rememberBeefBinary(id, wrapped.toBinary())
     }
   } catch {

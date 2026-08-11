@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.150] - 2026-08-11
+
+### Fixed
+
+- **Mint `inputBEEF` / trustSelf:** never attach an AtomicBEEF or tip-only wrap
+  that fails `verifyValid(true)`. That was surfacing as "The inputBEEF parameter
+  must be valid Beef when factoring options.trustSelf". Prefer a verifiable BEEF,
+  otherwise omit and rely on `trustSelf:'known'` + `knownTxids` for tips already
+  in wallet storage.
+
 ## [1.2.149] - 2026-08-11
 
 ### Fixed

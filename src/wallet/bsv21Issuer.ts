@@ -528,6 +528,8 @@ export async function enrichCreateActionForBsv21Issuer(
   // otherwise the toolbox fails with "Every signableTransaction input must have
   // a sourceTransaction". Prefer caller BEEF (fresh deploy AtomicBEEF), then
   // session cache / indexer, then raw-tx wrap — never drop a good caller BEEF.
+  // Never attach a Beef that fails structural verifyValid(true): that surfaces as
+  // "inputBEEF must be valid Beef when factoring options.trustSelf".
   if (inputs.length > 0) {
     const beefOps = [
       ...new Set(inputs.map((i) => normalizeDotOutpoint(i.outpoint)).filter(Boolean)),
@@ -538,12 +540,6 @@ export async function enrichCreateActionForBsv21Issuer(
         (i) => normalizeDotOutpoint(i.outpoint) !== fundOutpoint,
       )
     }
-  }
-
-  if (inputs.length > 0 && !inputBEEF) {
-    throw new Error(
-      'Could not load the source transaction for this token mint (auth tip). Wait a moment after deploy, then try Mint more.',
-    )
   }
 
   // Same as collectables: declare tip/fund txids as known so fee UTXOs + tip
@@ -560,6 +556,8 @@ export async function enrichCreateActionForBsv21Issuer(
     ...args,
     outputs: nextOutputs,
     ...(inputs.length ? { inputs } : {}),
+    // Omit when tips are already in storage — trustSelf:'known' is enough, and a
+    // half-built AtomicBEEF is worse than none (verify fails before spend).
     ...(inputBEEF ? { inputBEEF } : {}),
     options: {
       ...(args.options ?? {}),
@@ -577,8 +575,29 @@ function beefHasTx(beef: Beef, txid: string): boolean {
 }
 
 /**
+ * inputBEEF for createAction must be ordinary BEEF that passes
+ * `verifyValid(true)`. AtomicBEEF / tip-only raw wraps often fail that check and
+ * the toolbox reports "valid Beef when factoring options.trustSelf".
+ */
+function asVerifiableInputBeef(beef: Beef): number[] | undefined {
+  try {
+    beef.atomicTxid = undefined
+    if (!beef.verifyValid(true).valid) return undefined
+    const bin = beef.toBinary()
+    // Round-trip: toBinary must stay verifiable (no atomic header sneak-back).
+    const check = Beef.fromBinary(bin)
+    check.atomicTxid = undefined
+    return check.verifyValid(true).valid ? bin : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Build inputBEEF covering every spend outpoint. Merges caller-supplied BEEF
  * first so a just-broadcast deploy tip is available before the indexer.
+ * Returns undefined when the tip is already known to the wallet — omit inputBEEF
+ * and rely on options.trustSelf:'known' (collectables pattern).
  */
 async function ensureBsv21InputBeef(
   active: ActiveWallet,
@@ -592,7 +611,7 @@ async function ensureBsv21InputBeef(
         .filter((t): t is string => !!t),
     ),
   ]
-  if (txids.length === 0) return prefer
+  if (txids.length === 0) return undefined
 
   const merged = new Beef()
   if (prefer?.length) {
@@ -605,25 +624,26 @@ async function ensureBsv21InputBeef(
 
   const missing = () => txids.filter((txid) => !beefHasTx(merged, txid))
   let need = missing()
-  if (need.length === 0) return merged.toBinary()
 
-  try {
-    const built = await Promise.race([
-      buildMergedInputBeef(
-        active,
-        need.map((txid) => `${txid}.0`),
-        normalizeDotOutpoint,
-      ),
-      new Promise<never>((_, reject) =>
-        setTimeout(
-          () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
-          8_000,
+  if (need.length > 0) {
+    try {
+      const built = await Promise.race([
+        buildMergedInputBeef(
+          active,
+          need.map((txid) => `${txid}.0`),
+          normalizeDotOutpoint,
         ),
-      ),
-    ])
-    merged.mergeBeef(built)
-  } catch (err) {
-    console.warn('[bsv21-issuer] inputBEEF for tip spends failed', err)
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
+            8_000,
+          ),
+        ),
+      ])
+      merged.mergeBeef(built)
+    } catch (err) {
+      console.warn('[bsv21-issuer] inputBEEF for tip spends failed', err)
+    }
   }
 
   need = missing()
@@ -636,8 +656,18 @@ async function ensureBsv21InputBeef(
           const wrap = new Beef()
           wrap.mergeTransaction(Transaction.fromHex(hex))
           if (!wrap.findTxid(txid)?.tx) return
-          rememberBeef(txid, wrap)
-          merged.mergeBeef(wrap.toBinary())
+          // Tip-only raw wraps almost never verifyValid — only keep if they do.
+          const ok = asVerifiableInputBeef(wrap)
+          if (!ok) {
+            console.warn(
+              '[bsv21-issuer] raw-tx wrap for',
+              txid,
+              'is not a verifiable BEEF — skipping',
+            )
+            return
+          }
+          rememberBeefBinary(txid, ok)
+          merged.mergeBeef(ok)
         } catch (err) {
           console.warn('[bsv21-issuer] raw-tx inputBEEF fallback failed', txid, err)
         }
@@ -646,11 +676,21 @@ async function ensureBsv21InputBeef(
   }
 
   need = missing()
-  if (need.length === 0) return merged.toBinary()
-  // Partial coverage or caller BEEF that still lacks a tip → fail closed.
-  if (prefer?.length || txids.some((txid) => beefHasTx(merged, txid))) {
-    throw new Error(
-      `Could not load source transaction(s) for mint input(s): ${need.join(', ')}`,
+  const verifiable = need.length === 0 ? asVerifiableInputBeef(merged) : undefined
+  if (verifiable) return verifiable
+
+  // Prefer omitting over attaching a Beef createAction will reject. Wallet
+  // storage + trustSelf:'known' covers tips that were just created / internalized.
+  if (need.length > 0) {
+    console.warn(
+      '[bsv21-issuer] incomplete inputBEEF for',
+      need.join(', '),
+      '— omitting; trustSelf known may still spend',
+    )
+  } else {
+    console.warn(
+      '[bsv21-issuer] inputBEEF failed verifyValid — omitting; trustSelf known may still spend',
+      merged.toLogString?.() ?? '',
     )
   }
   return undefined
@@ -751,12 +791,22 @@ export async function completeBsv21SignableWithRootP2pkh(
       const wrap = new Beef()
       wrap.mergeBeef(signable.tx)
       wrap.mergeTransaction(unsigned)
-      txBinary = wrap.toBinary()
+      wrap.atomicTxid = undefined
+      txBinary = asVerifiableInputBeef(wrap)
     } catch (err) {
       console.warn('[bsv21-issuer] could not wrap signed mint tx for BEEF cache', err)
     }
   }
-  if (txBinary?.length) rememberBeefBinary(txid, txBinary)
+  if (txBinary?.length) {
+    // Always store a non-atomic verifiable BEEF for the follow-up mint.
+    try {
+      const stored = asVerifiableInputBeef(Beef.fromBinary(txBinary)) ?? txBinary
+      rememberBeefBinary(txid, stored)
+      txBinary = stored
+    } catch {
+      rememberBeefBinary(txid, txBinary)
+    }
+  }
 
   return {
     txid,
