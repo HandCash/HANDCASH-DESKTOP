@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.177] - 2026-08-11
+
+### Fixed
+- **Mobile soft-latch ghost txids (WoC/Bitails 404).** `signAction` had been set to delayed broadcast for speed; the phone returned a txid without a successful network post. Soft-latch now sync-broadcasts and confirms via `postBeef` before success. PostBeef soft timeouts raised again so large ordinal BEEFs are not raced out.
+
 ## [1.2.176] - 2026-08-11
 
 ### Fixed

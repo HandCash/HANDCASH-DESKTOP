@@ -1519,18 +1519,52 @@ async function signOrdinalTransfer(args: {
     spends[vin] = { unlockingScript }
   }
 
+  // Must land on the network before we return a txid. Delayed broadcast on phone
+  // returned ghost txids that 404 on WoC/Bitails while Desktop sync posts worked.
   const signed = await args.wallet.wallet.signAction({
     reference: args.signable.reference,
     spends,
     options: {
-      // Sync broadcast on Android historically AbortError'd / hung for tens of
-      // seconds. Queue for the monitor; UI already has the txid.
-      acceptDelayedBroadcast: true,
-      returnTXIDOnly: true,
+      acceptDelayedBroadcast: false,
     },
   })
-  if (!signed.txid) throw new Error('Collectable transfer returned no txid')
-  return signed.txid
+  const txid =
+    typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
+  if (!txid) throw new Error('Collectable transfer returned no txid')
+
+  // Belt: sync signAction should have posted; re-post so a soft-timeout / Abort
+  // path cannot leave a local-only txid. "Already in mempool" counts as success.
+  try {
+    let beefBin: number[] | undefined = Array.isArray(signed.tx)
+      ? (signed.tx as number[])
+      : undefined
+    if (!beefBin?.length) {
+      const wrap = new Beef()
+      wrap.mergeBeef(args.signable.tx)
+      wrap.mergeTransaction(unsigned)
+      wrap.atomicTxid = undefined
+      beefBin = wrap.toBinary()
+    }
+    const results = await args.wallet.services.postBeef(
+      Beef.fromBinary(beefBin),
+      [txid],
+    )
+    const ok = results.some((r) => r.status === 'success')
+    if (!ok) {
+      const detail = results.map((r) => `${r.name}:${r.status}`).join(', ')
+      throw new Error(
+        `Broadcast failed — not accepted by the network (${detail || 'no services'})`,
+      )
+    }
+  } catch (err) {
+    if (err instanceof Error && /Broadcast failed/.test(err.message)) throw err
+    console.warn('[collectables] postBeef confirm failed', err)
+    throw err instanceof Error
+      ? err
+      : new Error('Broadcast failed — could not confirm with the network')
+  }
+
+  return txid
 }
 
 /** Find the soft-latch UTXO paired with this tip (same origin, tip: tag match). */

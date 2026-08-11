@@ -134,8 +134,8 @@ function installMerklePreferBitails(services: Services): void {
 
 /**
  * Broadcast: Bitails first (fast public ARC), then Arcade / Gorilla / Taal / WoC.
- * Default order burned soft-timeout budget on slow ARC hosts before Bitails.
- * Tighten UntilSuccess soft caps so a dead endpoint cannot hold the UI for 30s.
+ * Soft timeouts must stay long enough for ordinal BEEFs — 2.5s races caused
+ * false failures and delayed paths that returned ghost txids (WoC 404).
  */
 function installPostBeefPreferFast(services: Services): void {
   try {
@@ -156,10 +156,10 @@ function installPostBeefPreferFast(services: Services): void {
       postBeefUntilSuccessSoftTimeoutMaxMs?: number
     }
     if (typeof s.postBeefUntilSuccessSoftTimeoutMs === 'number') {
-      s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 2_500 : 3_500
+      s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 8_000 : 5_000
     }
     if (typeof s.postBeefUntilSuccessSoftTimeoutMaxMs === 'number') {
-      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 10_000 : 15_000
+      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 30_000 : 20_000
     }
   } catch (err) {
     console.warn('[postBeef] could not prefer fast broadcasters', err)
