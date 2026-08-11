@@ -55,16 +55,91 @@ describe('beefCache', () => {
           resolveFetch = resolve
         }),
     )
-    const wallet = { services: { getBeefForTxid } } as unknown as ActiveWallet
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
 
     const a = getBeefForTxidCached(wallet, txid)
     const b = getBeefForTxidCached(wallet, txid)
+    // Storage probe is async — wait until the shared indexer call is armed.
+    await vi.waitFor(() => {
+      expect(getBeefForTxid).toHaveBeenCalledTimes(1)
+      expect(typeof resolveFetch).toBe('function')
+    })
     const beef = new Beef()
     beef.mergeRawTx(tx.toBinary())
     resolveFetch(beef)
     await Promise.all([a, b])
 
     expect(getBeefForTxid).toHaveBeenCalledTimes(1)
+  })
+
+  it('times out a hung indexer fetch instead of hanging forever', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const getBeefForTxid = vi.fn(
+      () =>
+        new Promise<Beef>(() => {
+          /* never resolves */
+        }),
+    )
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    await expect(getBeefForTxidCached(wallet, 'a'.repeat(64))).rejects.toThrow(
+      /timed out/i,
+    )
+  }, 15_000)
+
+  it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {
+    const { hydrateInputBeef, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_001, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 9_900,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+
+    const ready = new Beef()
+    ready.mergeRawTx(parent.toBinary())
+    ready.mergeBump(parentProof)
+    ready.mergeTransaction(tip)
+    expect(ready.verifyValid(false).valid).toBe(true)
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const shaped = await hydrateInputBeef(wallet, ready)
+    expect(shaped).toBeTruthy()
+    expect(getBeefForTxid).not.toHaveBeenCalled()
   })
 
   it('hydrates missing parents with proofs — never leaves txidOnly stubs', async () => {

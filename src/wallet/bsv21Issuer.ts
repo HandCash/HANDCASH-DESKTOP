@@ -562,13 +562,33 @@ export async function enrichCreateActionForBsv21Issuer(
       trustSelf: 'known',
       ...(knownTxids.length > 0 ? { knownTxids } : {}),
       signAndProcess: true,
-      acceptDelayedBroadcast: false,
+      // Skip processAction's immediate chainTracker verify. WoC/Chaintracks
+      // outages otherwise surface as "merged Beef failed validation" even when
+      // the BEEF is structurally broadcast-safe. Monitor posts when headers
+      // recover; createAction still returns txid immediately.
+      acceptDelayedBroadcast: true,
     },
   }
 }
 
+/**
+ * True when Beef has a raw body for `txid` (not txidOnly).
+ */
 function beefHasTx(beef: Beef, txid: string): boolean {
   return beef.findTxid(txid.trim().toLowerCase())?.tx != null
+}
+
+function broadcastSafeBeefBinary(beef: Beef): number[] | undefined {
+  try {
+    const work = beef.clone()
+    work.atomicTxid = undefined
+    const bin = work.toBinary()
+    const check = Beef.fromBinary(bin)
+    check.atomicTxid = undefined
+    return check.verifyValid(false).valid ? bin : undefined
+  } catch {
+    return undefined
+  }
 }
 
 /**
@@ -602,6 +622,16 @@ async function ensureBsv21InputBeef(
 
   const missing = () => txids.filter((txid) => !beefHasTx(merged, txid))
   let need = missing()
+
+  // Fresh deploy AtomicBEEF already has tip raw + parent proofs. Use it
+  // immediately — never wait on the indexer for a BEEF the caller already sent.
+  if (need.length === 0) {
+    const ready = broadcastSafeBeefBinary(merged)
+    if (ready) {
+      for (const txid of txids) rememberBeefBinary(txid, ready)
+      return ready
+    }
+  }
 
   if (need.length > 0) {
     try {
@@ -651,6 +681,16 @@ async function ensureBsv21InputBeef(
       need.join(', '),
     )
     return undefined
+  }
+
+  // Prefer may already be broadcast-safe after merges — check before hydrate
+  // so a dead indexer cannot hang the mint after tips are present.
+  {
+    const ready = broadcastSafeBeefBinary(merged)
+    if (ready) {
+      for (const txid of txids) rememberBeefBinary(txid, ready)
+      return ready
+    }
   }
 
   const shaped = await hydrateInputBeef(active, merged)

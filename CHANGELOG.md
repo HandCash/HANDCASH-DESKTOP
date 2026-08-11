@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.153] - 2026-08-11
+
+### Fixed
+
+- **Mint hang / indexer outage:** bound `getBeefForTxid` and hydrate with
+  timeouts; prefer local storage proofs; short-circuit when the caller's deploy
+  AtomicBEEF is already broadcast-safe. Identity mint uses
+  `acceptDelayedBroadcast` so WoC/Chaintracks downtime cannot surface as
+  "merged Beef failed validation" on an otherwise valid BEEF.
+
 ## [1.2.152] - 2026-08-11
 
 ### Fixed

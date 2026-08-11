@@ -13,11 +13,48 @@ import type { ActiveWallet } from './session'
 
 const TTL_MS = 10 * 60_000
 const MAX = 200
+/** Per-txid fetch — indexer / WoC must not wedge mint or send forever. */
+const BEEF_FETCH_TIMEOUT_MS = 8_000
+/** Whole hydrate pass across missing parents. */
+const HYDRATE_DEADLINE_MS = 12_000
 
 const cache = new Map<string, { at: number; binary: number[] }>()
 const inflight = new Map<string, Promise<Beef>>()
 
 const keyOf = (txid: string): string => txid.trim().toLowerCase()
+
+async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let settled = false
+  // If we time out first, swallow a later settle so it is not an unhandled rejection.
+  void work.then(
+    () => undefined,
+    () => undefined,
+  )
+  try {
+    return await new Promise<T>((resolve, reject) => {
+      timer = setTimeout(() => {
+        if (settled) return
+        settled = true
+        reject(new Error(`${label} timed out after ${ms}ms`))
+      }, ms)
+      work.then(
+        (value) => {
+          if (settled) return
+          settled = true
+          resolve(value)
+        },
+        (err) => {
+          if (settled) return
+          settled = true
+          reject(err)
+        },
+      )
+    })
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
 
 function read(txid: string): Beef | null {
   const hit = cache.get(keyOf(txid))
@@ -51,6 +88,34 @@ export function rememberBeefBinary(txid: string, binary: number[]): void {
   }
 }
 
+/**
+ * Prefer local proven_tx / proven_tx_req before hitting WhatsOnChain.
+ * When the indexer is unreachable this is the only path that still works for
+ * tips the wallet itself created (fresh deploy → mint).
+ */
+async function getBeefFromLocalStorage(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<Beef | null> {
+  try {
+    const storageApi = wallet.wallet.storage
+    if (!storageApi?.isActiveStorageProvider?.()) return null
+    if (typeof storageApi.runAsStorageProvider !== 'function') return null
+    return await withTimeout(
+      storageApi.runAsStorageProvider(async (storage) => {
+        const beef = await storage.getBeefForTransaction(txid, {
+          ignoreServices: true,
+        })
+        return beef.findTxid(keyOf(txid))?.tx ? beef : null
+      }),
+      BEEF_FETCH_TIMEOUT_MS,
+      `storage BEEF ${txid.slice(0, 8)}`,
+    )
+  } catch {
+    return null
+  }
+}
+
 export async function getBeefForTxidCached(
   wallet: ActiveWallet,
   txid: string,
@@ -62,19 +127,30 @@ export async function getBeefForTxidCached(
   const pending = inflight.get(key)
   if (pending) return pending
 
-  if (!wallet.services?.getBeefForTxid) {
-    throw new Error('Cannot prove the collectable input offline. Try again when connected.')
-  }
+  const request = (async () => {
+    const local = await getBeefFromLocalStorage(wallet, txid)
+    if (local) {
+      write(txid, local)
+      return local
+    }
 
-  const request = wallet.services
-    .getBeefForTxid(txid)
-    .then((beef) => {
-      write(txid, beef)
-      return beef
-    })
-    .finally(() => {
-      inflight.delete(key)
-    })
+    if (!wallet.services?.getBeefForTxid) {
+      throw new Error(
+        'Cannot prove the collectable input offline. Try again when connected.',
+      )
+    }
+
+    const beef = await withTimeout(
+      wallet.services.getBeefForTxid(txid),
+      BEEF_FETCH_TIMEOUT_MS,
+      `indexer BEEF ${txid.slice(0, 8)}`,
+    )
+    write(txid, beef)
+    return beef
+  })().finally(() => {
+    inflight.delete(key)
+  })
+
   inflight.set(key, request)
   return request
 }
@@ -122,11 +198,15 @@ function roundTripBroadcastSafe(bin: number[]): number[] | undefined {
 /**
  * Ensure inputBEEF has raw tip bodies **and** full parent proofs (no txidOnly).
  * Safe for createAction trustSelf verify and for processAction broadcast verify.
+ *
+ * Bounded: never waits longer than {@link HYDRATE_DEADLINE_MS} total, and each
+ * parent fetch is capped by {@link BEEF_FETCH_TIMEOUT_MS}.
  */
 export async function hydrateInputBeef(
   wallet: ActiveWallet,
   beef: Beef,
 ): Promise<number[] | undefined> {
+  const deadline = Date.now() + HYDRATE_DEADLINE_MS
   try {
     let work = beef.clone()
     work.atomicTxid = undefined
@@ -135,11 +215,17 @@ export async function hydrateInputBeef(
       const ok = roundTripBroadcastSafe(work.toBinary())
       if (ok) return ok
 
+      if (Date.now() >= deadline) {
+        console.warn('[beef] hydrate deadline exceeded')
+        break
+      }
+
       const need = incompleteProofTxids(work)
       if (need.length === 0) break
 
       let added = false
       for (const txid of need) {
+        if (Date.now() >= deadline) break
         try {
           const proved = await getBeefForTxidCached(wallet, txid)
           // mergeBeef upgrades an existing txidOnly entry when raw+proof arrives.
