@@ -5,8 +5,7 @@
  * `customInstructions.issuer` and tag `issuer:<pubkey>` are remittance mirrors only.
  */
 
-import { Beef, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
+import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
 import { buildMergedInputBeef } from './beefCache'
 import { normalizeTokenId } from './bsv21'
@@ -624,11 +623,23 @@ export async function completeBsv21SignableWithRootP2pkh(
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
-    const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
-    if (typeof satoshis !== 'number') {
+    const sourceOut =
+      input.sourceTransaction?.outputs[input.sourceOutputIndex]
+    const satoshis = sourceOut?.satoshis
+    const lockingScript = sourceOut?.lockingScript
+    if (typeof satoshis !== 'number' || !lockingScript) {
       throw new Error('BSV-21 mint input is missing its source transaction')
     }
-    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, satoshis)
+    // Auth tips are inscription ‖ P2PKH ‖ Sigma — sighash scriptCode must be the
+    // full locking script. SetupClient.getUnlockP2PKH only hashes plain P2PKH
+    // and fails CHECKSIG on ordinal tips (soft-latch dust is plain P2PKH).
+    input.unlockingScriptTemplate = new P2PKH().unlock(
+      rootKey,
+      'all',
+      false,
+      satoshis,
+      lockingScript,
+    )
   }
   await unsigned.sign()
   for (const vin of vins) {

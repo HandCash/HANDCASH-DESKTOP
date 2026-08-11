@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.147] - 2026-08-11
+
+### Fixed
+
+- **Auth tip CHECKSIG fail on mint:** finishing identity-mint signables now
+  sighashes the full inscription‖P2PKH‖Sigma locking script (not plain P2PKH).
+  Matches the on-chain auth tip scriptCode so remints unlock cleanly.
+
 ## [1.2.146] - 2026-08-11
 
 ### Fixed

@@ -1,4 +1,4 @@
-import { PrivateKey, Script, Transaction } from '@bsv/sdk'
+import { PrivateKey, P2PKH, Script, Spend, Transaction } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import {
   issuerFromRemittance,
@@ -149,5 +149,59 @@ describe('bsv21Issuer', () => {
       sym: 'DEMO',
       amt: '500',
     })
+  })
+
+  it('unlocks inscription‖P2PKH‖Sigma tips with full locking-script sighash', async () => {
+    const plain = new P2PKH().lock(root.toAddress())
+    const json = new TextEncoder().encode(
+      JSON.stringify({ p: 'bsv-20', op: 'deploy+auth', sym: 'FOX', dec: '0' }),
+    )
+    const insc =
+      '0063036f726451126170706c69636174696f6e2f6273762d323000' +
+      '4c' +
+      json.length.toString(16).padStart(2, '0') +
+      Buffer.from(json).toString('hex') +
+      '68' +
+      plain.toHex()
+    const signedHex = sigmaSignDeployLockingScript({
+      lockingScriptHex: insc,
+      fundTxid: 'ab'.repeat(32),
+      fundVout: 0,
+      identityKeyHex: root.toHex(),
+    })
+    const lockingScript = Script.fromHex(signedHex)
+    expect(signedHex).toContain('5349474d41')
+
+    const source = new Transaction()
+    source.addOutput({ satoshis: 1, lockingScript })
+    const spend = new Transaction()
+    spend.addInput({
+      sourceTransaction: source,
+      sourceOutputIndex: 0,
+      unlockingScriptTemplate: new P2PKH().unlock(
+        root,
+        'all',
+        false,
+        1,
+        lockingScript,
+      ),
+    })
+    spend.addOutput({ satoshis: 1, lockingScript: plain })
+    await spend.sign()
+
+    const check = new Spend({
+      sourceTXID: source.id('hex'),
+      sourceOutputIndex: 0,
+      sourceSatoshis: 1,
+      lockingScript,
+      transactionVersion: spend.version,
+      otherInputs: [],
+      inputIndex: 0,
+      unlockingScript: spend.inputs[0]!.unlockingScript!,
+      outputs: spend.outputs,
+      inputSequence: spend.inputs[0]!.sequence ?? 0xffffffff,
+      lockTime: spend.lockTime,
+    })
+    expect(check.validate()).toBe(true)
   })
 })
