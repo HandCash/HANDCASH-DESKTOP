@@ -75,18 +75,31 @@ export async function proveGenesisLineage(args: {
    * CPU, so yielding between fetches is not enough on a phone.
    */
   shouldStop?: () => boolean
+  /**
+   * Abort once merged BEEF inputs exceed this many bytes (upper bound via sum of
+   * fetched piece lengths). Used by send remittance so we do not walk a deep
+   * lineage only to omit it for being over the wire budget.
+   */
+  maxBeefBytes?: number
 }): Promise<GenesisProof | null> {
   const tip = toPoint(args.tipOutpoint)
   if (!POINT.test(tip)) return null
   const maxHops = args.maxHops ?? MAX_GENESIS_HOPS
+  const maxBeefBytes = args.maxBeefBytes
 
   const merged = new Beef()
   const fetched = new Set<string>()
+  let fetchedBytes = 0
 
   const hydrate = async (txid: string): Promise<void> => {
     if (fetched.has(txid)) return
     fetched.add(txid)
-    merged.mergeBeef((await args.getBeef(txid)).toBinary())
+    const piece = (await args.getBeef(txid)).toBinary()
+    fetchedBytes += piece.length
+    if (maxBeefBytes != null && fetchedBytes > maxBeefBytes) {
+      throw new Error('genesis-lineage-over-budget')
+    }
+    merged.mergeBeef(piece)
   }
 
   const outputAt = (point: string) => {
@@ -101,11 +114,20 @@ export async function proveGenesisLineage(args: {
   let hops = 0
   for (; hops <= maxHops; hops++) {
     if (args.shouldStop?.()) return null
+    // Let the UI paint between hops — phone main thread otherwise freezes for
+    // the whole walk (tens of seconds on deep Pixel Foxes lineages).
+    if (hops > 0) await new Promise<void>((r) => setTimeout(r, 0))
     const match = POINT.exec(point)
     if (!match) return null
     try {
       await hydrate(match[1]!)
-    } catch {
+    } catch (err) {
+      if (err instanceof Error && err.message === 'genesis-lineage-over-budget') {
+        console.info(
+          `[brc-150] stop lineage hydrate — assembled BEEF would exceed remittance budget (${fetchedBytes} bytes, ${hops} hop(s))`,
+        )
+        return null
+      }
       return null
     }
 
@@ -127,7 +149,13 @@ export async function proveGenesisLineage(args: {
       if (!/^[0-9a-f]{64}$/.test(srcTxid) || !Number.isSafeInteger(srcVout)) return null
       try {
         await hydrate(srcTxid)
-      } catch {
+      } catch (err) {
+        if (err instanceof Error && err.message === 'genesis-lineage-over-budget') {
+          console.info(
+            `[brc-150] stop lineage hydrate — assembled BEEF would exceed remittance budget (${fetchedBytes} bytes, ${hops} hop(s))`,
+          )
+          return null
+        }
         return null
       }
       const ordinalVin = findOrdinalParentVin(merged, here.tx, vout)
@@ -155,6 +183,12 @@ export async function proveGenesisLineage(args: {
   const path = deriveOneSatPathFromBeef(merged, tip, origin)
   if (!path || path[0] !== tip || path[path.length - 1] !== origin) return null
   const beef = merged.toBinary()
+  if (maxBeefBytes != null && beef.length > maxBeefBytes) {
+    console.info(
+      `[brc-150] omit assembled lineage — ${beef.length} bytes > remittance budget ${maxBeefBytes}`,
+    )
+    return null
+  }
   const result = verifyProvenanceV2(
     { v: 2, origin, tip, path, beefB64: bytesToBase64(beef) },
     tip,

@@ -1916,6 +1916,11 @@ export async function sendCollectable(args: {
   const softChart = createActor(softLatchSendMachine).start()
   softChart.send({ type: 'START', outpoint })
 
+  setPaymentProgress(
+    'building',
+    'Preparing authenticity proof',
+    outpoint,
+  )
   const provenance = await tryBuildProvenanceForSend({
     tipOutpoint: outpoint,
     origin,
@@ -1949,7 +1954,9 @@ export async function sendCollectable(args: {
     setPaymentProgress(
       'broadcasting',
       'Signing and broadcasting the collectable',
+      outpoint,
     )
+    console.info('[collectables] createAction softLatch start')
     result = await wallet.wallet.createAction({
       description: `Send ${name}`.slice(0, 50),
       labels: [
@@ -2014,6 +2021,9 @@ export async function sendCollectable(args: {
       },
     })
     softChart.send({ type: 'CREATED', txid: result.txid })
+    console.info(
+      `[collectables] createAction softLatch done txid=${result.txid ?? 'signable'}`,
+    )
   } catch (err) {
     if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
     softChart.send({

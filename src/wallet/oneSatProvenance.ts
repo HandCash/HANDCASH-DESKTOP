@@ -686,6 +686,7 @@ export function verifyProvenance(
 async function hydrateLineageForSend(
   wallet: ActiveWallet,
   tip: string,
+  opts?: { maxBeefBytes?: number; shouldStop?: () => boolean },
 ): Promise<{ origin: string; path: string[]; beef: number[] } | null> {
   if (!wallet.services?.getBeefForTxid) return null
   try {
@@ -696,6 +697,8 @@ async function hydrateLineageForSend(
     const proof = await proveGenesisLineage({
       tipOutpoint: tip,
       getBeef: (hop) => getBeefForTxidCached(wallet, hop),
+      maxBeefBytes: opts?.maxBeefBytes,
+      shouldStop: opts?.shouldStop,
     })
     if (!proof) return null
     console.info(
@@ -811,10 +814,16 @@ export async function tryBuildProvenanceV2(args: {
     if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
       // The BEEF the wallet holds for a mined tip stops at that transaction, so
       // there is nothing older to walk. Hydrate the ancestry from chain data
-      // rather than sending an item the receiver can only call unverified.
-      const hydrated = await hydrateLineageForSend(args.wallet, tip)
+      // rather than sending an item the receiver can only call unverified —
+      // but abort once the assembled BEEF cannot fit on the wire (Pixel Foxes
+      // lineages routinely exceed remittance budget; walking them only to omit
+      // blocked the phone for tens of seconds on send).
+      const maxBeefBytes = Math.floor((REMITTANCE_MAX_BEEF_B64_CHARS * 3) / 4)
+      const hydrated = await hydrateLineageForSend(args.wallet, tip, {
+        maxBeefBytes,
+      })
       if (!hydrated || hydrated.origin !== origin) {
-        console.warn('[brc-150] omit provenance — no complete one-sat path to origin')
+        console.warn('[brc-150] omit provenance — no complete one-sat path to origin under remittance budget')
         return null
       }
       path = hydrated.path
