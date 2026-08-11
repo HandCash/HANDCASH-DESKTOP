@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.144] - 2026-08-11
+
+### Fixed
+
+- **Working / Starting… stuck after mint:** approving View items no longer
+  starts the payment progress panel (only createAction / signAction do).
+- **Token list:** tips that share the same issuer + ticker are one Collect
+  row with a summed balance (separate deploy ids still track underneath).
+
 ## [1.2.143] - 2026-08-11
 
 ### Fixed

@@ -115,6 +115,11 @@ export type FungibleToken = {
   issuerHandle?: string
   /** Issuer claimed and Sigma address matched (not full vin proof). */
   issuerAttested?: boolean
+  /**
+   * When several deploy ids share the same issuer + ticker, all member token
+   * ids (representative `tokenId` is also listed here).
+   */
+  tokenIds?: string[]
 }
 
 export function normalizeTokenId(raw: string): string | null {
@@ -327,18 +332,37 @@ export function cosignFromRemittance(args: {
   return null
 }
 
+/** Group key: same issuer + ticker share one Collect row; else per token id. */
+export function fungibleGroupKey(u: {
+  tokenId: string
+  sym?: string
+  issuer?: string
+}): string {
+  const issuer = normalizeIssuerPubKey(u.issuer)
+  const sym = (u.sym ?? '').trim().toLowerCase()
+  if (issuer && sym) return `issuer:${issuer}|sym:${sym}`
+  return `id:${normalizeTokenId(u.tokenId) ?? u.tokenId}`
+}
+
 export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
-  const byId = new Map<
+  const byKey = new Map<
     string,
-    FungibleToken & { _sum: bigint; _plain: boolean; _cosigned: boolean }
+    FungibleToken & {
+      _sum: bigint
+      _plain: boolean
+      _cosigned: boolean
+      _ids: Set<string>
+      _bestAmt: bigint
+    }
   >()
   for (const u of utxos) {
     if (!isBalanceBearingOp(u.op)) continue
-    const existing = byId.get(u.tokenId)
+    const key = fungibleGroupKey(u)
+    const existing = byKey.get(key)
     const add = BigInt(u.amt.replace(/\D/g, '') || '0')
     const tipCosigned = Boolean(u.cosign?.pubkey)
     if (!existing) {
-      byId.set(u.tokenId, {
+      byKey.set(key, {
         tokenId: u.tokenId,
         sym: u.sym || shortTokenLabel(u.tokenId),
         amt: u.amt,
@@ -353,15 +377,24 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
+        _ids: new Set([u.tokenId]),
+        _bestAmt: add,
       })
       continue
     }
     existing._sum += add
     existing.utxoCount += 1
+    existing._ids.add(u.tokenId)
     if (!existing.sym && u.sym) existing.sym = u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
     if (u.issuerAttested) existing.issuerAttested = true
+    // Prefer the tip with the largest balance as the representative token id.
+    if (add > existing._bestAmt) {
+      existing._bestAmt = add
+      existing.tokenId = u.tokenId
+      existing.outpoint = u.outpoint
+    }
     if (tipCosigned) {
       existing._cosigned = true
       if (!existing.cosign && u.cosign) existing.cosign = u.cosign
@@ -369,13 +402,21 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
       existing._plain = true
     }
   }
-  return [...byId.values()]
-    .map(({ _sum, _plain, _cosigned, ...row }) => ({
-      ...row,
-      amt: _sum.toString(),
-      spendKind:
-        _plain && _cosigned ? ('mixed' as const) : _cosigned ? ('cosigned' as const) : ('plain' as const),
-    }))
+  return [...byKey.values()]
+    .map(({ _sum, _plain, _cosigned, _ids, _bestAmt: _b, ...row }) => {
+      const tokenIds = [..._ids].sort()
+      return {
+        ...row,
+        amt: _sum.toString(),
+        ...(tokenIds.length > 1 ? { tokenIds } : {}),
+        spendKind:
+          _plain && _cosigned
+            ? ('mixed' as const)
+            : _cosigned
+              ? ('cosigned' as const)
+              : ('plain' as const),
+      }
+    })
     .sort(
       (a, b) =>
         (a.issuer ?? '').localeCompare(b.issuer ?? '') ||

@@ -44,6 +44,7 @@ import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
 import {
+  clearPaymentProgress,
   getPaymentProgress,
   setPaymentProgress,
   subscribePaymentProgress,
@@ -133,9 +134,22 @@ export function Dashboard({
       if (!pendingPrompt) return
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
-      if (pendingPrompt.kind === 'action') {
+      // Only spends drive the Working / Sending… panel. Approving View items
+      // (listOutputs) used to set Starting… and never clear it.
+      if (
+        pendingPrompt.kind === 'action' &&
+        (pendingPrompt.method === 'createAction' ||
+          pendingPrompt.method === 'signAction')
+      ) {
         setLastApproved(pendingPrompt)
         setPaymentProgress('preparing', 'Starting…')
+      } else if (
+        pendingPrompt.kind === 'action' &&
+        getPaymentProgress().detail === 'Starting…'
+      ) {
+        // Recover from a prior View-items approve that left Working stuck.
+        clearPaymentProgress()
+        setLastApproved(null)
       }
       resolvePermission(pendingPrompt.id, 'allow')
       playWalletSound('connect')

@@ -230,7 +230,11 @@ export async function listFungibles(
 export function getFungible(tokenId: string): FungibleToken | null {
   const id = normalizeTokenId(tokenId)
   if (!id) return null
-  return cached.find((t) => t.tokenId === id) ?? null
+  return (
+    cached.find(
+      (t) => t.tokenId === id || t.tokenIds?.some((x) => normalizeTokenId(x) === id),
+    ) ?? null
+  )
 }
 
 /** Build a display row from an import candidate (before basket read). */

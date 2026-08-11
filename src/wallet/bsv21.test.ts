@@ -104,6 +104,70 @@ describe('bsv21 parse', () => {
     })
   })
 
+  it('aggregates distinct deploy ids that share issuer + ticker', () => {
+    const issuer = '02' + 'ab'.repeat(32)
+    const idA = `${'11'.repeat(32)}_0`
+    const idB = `${'22'.repeat(32)}_0`
+    const rows = aggregateFungibles([
+      {
+        outpoint: `${'11'.repeat(32)}.0`,
+        tokenId: idA,
+        amt: '100',
+        op: 'deploy+mint',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+        issuer,
+      },
+      {
+        outpoint: `${'22'.repeat(32)}.0`,
+        tokenId: idB,
+        amt: '250',
+        op: 'deploy+mint',
+        sym: 'demo',
+        dec: 0,
+        satoshis: 1,
+        issuer,
+      },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      tokenId: idB, // larger balance wins representative id
+      amt: '350',
+      utxoCount: 2,
+      sym: 'DEMO',
+      issuer,
+    })
+    expect(rows[0]?.tokenIds?.sort()).toEqual([idA, idB].sort())
+  })
+
+  it('does not merge same ticker without a shared issuer', () => {
+    const idA = `${'11'.repeat(32)}_0`
+    const idB = `${'22'.repeat(32)}_0`
+    const rows = aggregateFungibles([
+      {
+        outpoint: `${'11'.repeat(32)}.0`,
+        tokenId: idA,
+        amt: '100',
+        op: 'deploy+mint',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+      },
+      {
+        outpoint: `${'22'.repeat(32)}.0`,
+        tokenId: idB,
+        amt: '50',
+        op: 'deploy+mint',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+        issuer: '02' + 'cd'.repeat(32),
+      },
+    ])
+    expect(rows).toHaveLength(2)
+  })
+
   it('aggregates cosigned tips and marks spendKind', () => {
     const pubkey = `02${'cd'.repeat(32)}`
     const rows = aggregateFungibles([

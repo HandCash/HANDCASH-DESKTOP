@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react'
 import { copyText } from '../wallet/clipboard'
 import {
   formatFungibleAmount,
-  getCachedFungibles,
   getFungible,
   listFungibles,
   subscribeFungibles,
@@ -51,12 +50,16 @@ function MetaRow({
 
 export function FungibleDetailsPanel({ tokenId }: Props) {
   const [token, setToken] = useState<FungibleToken | null>(
-    () => getFungible(tokenId) ?? getCachedFungibles().find((t) => t.tokenId === tokenId) ?? null,
+    () => getFungible(tokenId),
   )
 
   useEffect(() => {
     return subscribeFungibles((list) => {
-      setToken(list.find((t) => t.tokenId === tokenId) ?? null)
+      setToken(
+        list.find(
+          (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId),
+        ) ?? null,
+      )
     })
   }, [tokenId])
 
@@ -64,7 +67,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     let cancelled = false
     void listFungibles().then((list) => {
       if (cancelled) return
-      setToken(list.find((t) => t.tokenId === tokenId) ?? null)
+      setToken(
+        list.find(
+          (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId),
+        ) ?? null,
+      )
     })
     return () => {
       cancelled = true
