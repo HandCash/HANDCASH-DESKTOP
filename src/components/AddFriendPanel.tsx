@@ -1,29 +1,32 @@
 import { useState, type FormEvent } from 'react'
-import { addFriend } from '../wallet/friends'
+import { addFriendFromRecipient } from '../wallet/friends'
 import { clearNavChild, getNavState } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 
-function initialFromNav(): { label: string; identityKey: string } {
+function initialFromNav(): { label: string; recipient: string } {
   const child = getNavState().child
-  if (child?.type !== 'add-friend') return { label: '', identityKey: '' }
+  if (child?.type !== 'add-friend') return { label: '', recipient: '' }
   return {
     label: child.label?.trim() ?? '',
-    identityKey: child.identityKey?.trim() ?? '',
+    recipient: child.identityKey?.trim() ?? '',
   }
 }
 
 export function AddFriendPanel() {
   const seeded = initialFromNav()
   const [label, setLabel] = useState(seeded.label)
-  const [identityKey, setIdentityKey] = useState(seeded.identityKey)
+  const [recipient, setRecipient] = useState(seeded.recipient)
+  const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  const onAdd = (e: FormEvent) => {
+  const onAdd = async (e: FormEvent) => {
     e.preventDefault()
+    if (busy) return
     setError(null)
+    setBusy(true)
     try {
-      addFriend({ label, identityKey })
+      await addFriendFromRecipient({ label, recipient })
       playWalletSound('soft')
       toastSuccess('Friend added')
       clearNavChild()
@@ -32,33 +35,37 @@ export function AddFriendPanel() {
       setError(message)
       playWalletSound('error')
       toastError('Couldn’t add friend', message)
+    } finally {
+      setBusy(false)
     }
   }
 
   return (
     <div className="nav-child-panel add-friend-panel" data-aeon-scope="add-friend">
-      <form className="friends-add-form" onSubmit={onAdd}>
+      <form className="friends-add-form" onSubmit={(e) => void onAdd(e)}>
         <div className="field">
           <label htmlFor="friend-label">Label</label>
           <input
             id="friend-label"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            placeholder="Alice"
+            placeholder="Alice (optional for $handles)"
             autoComplete="off"
             autoFocus
+            disabled={busy}
           />
         </div>
         <div className="field">
-          <label htmlFor="friend-key">Identity key</label>
+          <label htmlFor="friend-key">Handle or identity key</label>
           <input
             id="friend-key"
             className="mono"
-            value={identityKey}
-            onChange={(e) => setIdentityKey(e.target.value)}
-            placeholder="02… or 03… (66 hex chars)"
+            value={recipient}
+            onChange={(e) => setRecipient(e.target.value)}
+            placeholder="$alice, peerpay:…, or 02… / 03…"
             autoComplete="off"
             spellCheck={false}
+            disabled={busy}
           />
         </div>
         {error && (
@@ -70,11 +77,16 @@ export function AddFriendPanel() {
           <button
             type="submit"
             className="btn btn-primary"
-            disabled={!label.trim() || !identityKey.trim()}
+            disabled={busy || !recipient.trim()}
           >
-            Add friend
+            {busy ? 'Adding…' : 'Add friend'}
           </button>
-          <button type="button" className="btn btn-ghost" onClick={() => clearNavChild()}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => clearNavChild()}
+            disabled={busy}
+          >
             Cancel
           </button>
         </div>

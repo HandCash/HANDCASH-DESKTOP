@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.178] - 2026-08-11
+
+### Added
+- **Add friend by $handle.** Friends → Add accepts `$handle` / `@handle` / bare handle (and peerpay URIs); resolves via BRC-CLOUD to an identity key and defaults the label to `$handle`.
+
 ## [1.2.177] - 2026-08-11
 
 ### Fixed

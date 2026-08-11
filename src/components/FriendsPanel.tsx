@@ -142,7 +142,7 @@ export function FriendsPanel({ chain }: Props) {
         <EmptyState
           icon={<PersonAddIcon size={28} />}
           title="No friends yet"
-          body="Add someone by identity key so you can send and recognize them quickly."
+          body="Add someone by $handle or identity key so you can send and recognize them quickly."
           action={
             <button
               type="button"

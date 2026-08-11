@@ -1,6 +1,7 @@
 import { P2PKH, PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { formatHandCashHandle } from './handleFormat'
 import { tryParsePeerPayUri } from './peerPayUri'
 import { parseHandleInput, resolveHandle } from './handleResolve'
 
@@ -187,6 +188,39 @@ export function addFriend(args: { label: string; identityKey: string }): Friend 
     })
   })
   return friend
+}
+
+/**
+ * Add a friend from `$handle` / `@handle` / bare handle, peerpay URI, or
+ * identity key. Handle resolve uses BRC-CLOUD; label defaults to `$handle`
+ * when omitted.
+ */
+export async function addFriendFromRecipient(args: {
+  label?: string
+  recipient: string
+}): Promise<Friend> {
+  const value = args.recipient.trim()
+  if (!value) throw new Error('Handle or identity key is required')
+
+  let identityKey: string
+  let suggestedLabel = ''
+
+  const peer = tryParsePeerPayUri(value)
+  if (peer) {
+    identityKey = normalizeIdentityKey(peer.identityKey)
+  } else if (parseHandleInput(value)) {
+    const resolved = await resolveHandle(value)
+    identityKey = normalizeIdentityKey(resolved.identityKey)
+    suggestedLabel = formatHandCashHandle(resolved.handle, resolved.domain)
+  } else {
+    identityKey = normalizeIdentityKey(value)
+    const invalid = validateIdentityKey(identityKey)
+    if (invalid) throw new Error(invalid)
+  }
+
+  const label = args.label?.trim() || suggestedLabel
+  if (!label) throw new Error('Label is required')
+  return addFriend({ label, identityKey })
 }
 
 export function getFriendById(id: string): Friend | null {
