@@ -175,13 +175,66 @@ describe('classifyLegacyUtxos', () => {
         origin: `${TXID_D}_0`,
       }),
     ])
+    // Soft-latch may peek rawtx for latch state — never the ordinal indexer.
+    const apiCalls = fetchMock.mock.calls.filter(([url]) =>
+      String(url).includes('/api/'),
+    )
+    expect(apiCalls).toEqual([])
 
-    // Backoff: do not re-hammer the indexer on the next poll for the same tip.
+    // Backoff: do not re-hammer the network on the next poll for the same tip.
     fetchMock.mockClear()
     const second = await classifyLegacyUtxos(scan, 'main')
     expect(fetchMock).not.toHaveBeenCalled()
     expect(second.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_D}.0`])
     expect(second.pendingTips).toEqual([])
+
+    vi.unstubAllGlobals()
+  })
+
+  it('names a soft-latch tip from latch state without GorillaPool', async () => {
+    const origin = `${TXID_A}_0`
+    const settle = new Transaction()
+    settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    settle.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
+    settle.addOutput({
+      satoshis: 0,
+      lockingScript: LockingScript.fromHex(
+        buildLatchStateScript({
+          schema: 1,
+          origin,
+          tip: 'OUTPUT:0',
+          parentLatch: `${TXID_B}_1`,
+          name: 'P2P Fox',
+          app: 'HandCash',
+        }),
+      ),
+    })
+    const settleTxid = settle.id('hex')
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes(`/tx/${settleTxid}/hex`)) {
+        return new Response(settle.toHex(), { status: 200 })
+      }
+      // Any indexer hit would make a burst of receives crawl.
+      return new Response('null', { status: 404 })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const result = await classifyLegacyUtxos(
+      [utxo(`${settleTxid}.0`, 1), utxo(`${settleTxid}.1`, 2)],
+      'main',
+    )
+
+    expect(result.oneSats).toEqual([
+      expect.objectContaining({
+        outpoint: `${settleTxid}.0`,
+        origin,
+        name: 'P2P Fox',
+        app: 'HandCash',
+      }),
+    ])
+    expect(
+      fetchMock.mock.calls.every(([url]) => !String(url).includes('/api/')),
+    ).toBe(true)
 
     vi.unstubAllGlobals()
   })

@@ -42,6 +42,7 @@ import {
   isLatchDustSats,
   latchOutputTags,
 } from './oneSatLatch'
+import { getBeefForTxidCached } from './beefCache'
 import {
   isBsv21Mime,
   normalizeTokenId,
@@ -385,6 +386,31 @@ const VIN_PROBE_LIMIT = 4
 
 /** Unknown one-satoshi outputs identified per classify pass. */
 export const MAX_UNKNOWN_RESOLVES_PER_PASS = 6
+/** Concurrent soft-latch / tip internalizations — BEEF + AtomicBEEF are heavy. */
+export const IMPORT_TX_CONCURRENCY = 3
+/** Parallel latch-state rawtx peeks while classifying a burst of P2P receives. */
+export const LATCH_TIP_WARM_CONCURRENCY = 4
+
+async function mapPool<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  if (items.length === 0) return []
+  const results: R[] = new Array(items.length)
+  let next = 0
+  const workers = Math.min(Math.max(1, concurrency), items.length)
+  await Promise.all(
+    Array.from({ length: workers }, async () => {
+      for (;;) {
+        const i = next++
+        if (i >= items.length) return
+        results[i] = await fn(items[i]!, i)
+      }
+    }),
+  )
+  return results
+}
 
 /**
  * A mined transaction body never changes, so fetching one twice is pure latency.
@@ -884,6 +910,28 @@ export async function classifyLegacyUtxos(
     if (isLatchDustSats(u.satoshis)) latchTxids.add(u.txid.trim().toLowerCase())
   }
 
+  // Soft-latch burst: warm latch-state rawtxs in parallel so five P2P receives
+  // do not serialize five indexer + ancestry walks before the first card paints.
+  if (!opts.fundingOnly && latchTxids.size > 0) {
+    const toWarm = candidates.filter((u) => {
+      if (u.satoshis !== 1 || u.vout !== 0) return false
+      if (!latchTxids.has(u.txid.trim().toLowerCase())) return false
+      if (claimed.has(outpointKey(u.outpoint))) return false
+      const cacheKey = `${u.txid}.${u.vout}`
+      if (getResolvedInscription(cacheKey)) return false
+      return shouldResolveInscription(cacheKey, Date.now(), PENDING_RETRY_MS)
+    })
+    if (toWarm.length > 0) {
+      await mapPool(toWarm, LATCH_TIP_WARM_CONCURRENCY, async (u) => {
+        const cacheKey = `${u.txid}.${u.vout}`
+        const fetched = await resolveLatchedTip(u.txid, u.vout, chain)
+        if (fetched && !isBsv21Mime(fetched.mimeType)) {
+          rememberResolvedInscription(cacheKey, fetched)
+        }
+      })
+    }
+  }
+
   for (const u of candidates) {
     if (claimed.has(outpointKey(u.outpoint))) continue
 
@@ -933,12 +981,33 @@ export async function classifyLegacyUtxos(
         // is waiting on.
         const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
         const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
-        if (
+        if (latchProven) {
+          // Soft-latch receive: latch state (one rawtx) names the tip. Never
+          // call GorillaPool / ancestry here — five inbound P2P tips were
+          // waiting on five indexer walks before any basket insert.
+          if (
+            !resolved &&
+            shouldResolveInscription(cacheKey, Date.now(), retryMs)
+          ) {
+            const fetched = await resolveLatchedTip(u.txid, u.vout, chain)
+            if (fetched && !isBsv21Mime(fetched.mimeType)) {
+              rememberResolvedInscription(cacheKey, fetched)
+              resolved = fetched
+            }
+          }
+          // Tip-as-origin is enough to paint a card; authenticity + traits
+          // settle behind the loading circle after listCollectables paints.
+          if (!resolved) {
+            resolved = {
+              origin: txidVoutUnderscore(u.txid, u.vout),
+            }
+          }
+        } else if (
           !resolved &&
           shouldResolveInscription(cacheKey, Date.now(), retryMs) &&
-          (latchProven || resolveBudget > 0)
+          resolveBudget > 0
         ) {
-          if (!latchProven) resolveBudget--
+          resolveBudget--
           // Fungibles first — same indexer hit, divert before NFT identity.
           const ft = await resolveBsv21Holding(u.txid, u.vout, chain)
           if (ft) {
@@ -947,60 +1016,23 @@ export async function classifyLegacyUtxos(
             continue
           }
 
-          if (latchProven) {
-            // Quick ingest: one cheap indexer peek for a name/image, then import
-            // with a provisional tip origin. Full BRC-150 lineage walks after the
-            // card paints (proveHeldGenesis + corner spinner) — never block the
-            // address poll on ancestry while the NFT is invisible.
-            const fetched =
-              (await resolveLatchedTip(u.txid, u.vout, chain)) ??
-              (await resolveOneSatInscription(u.txid, u.vout, chain))
-            if (fetched && !isBsv21Mime(fetched.mimeType)) {
-              rememberResolvedInscription(cacheKey, fetched)
-              resolved = fetched
-            } else if (fetched && isBsv21Mime(fetched.mimeType)) {
-              const again = await resolveBsv21Holding(u.txid, u.vout, chain)
-              if (again) {
-                bsv21.push(again)
-                claimed.add(outpointKey(u.outpoint))
-                continue
-              }
-              rememberUnresolved(cacheKey)
-            } else {
-              // Indexer miss — back off peeking, but still import below.
-              rememberUnresolved(cacheKey)
+          // Unverified dust: remittance rebuild + indexer. Misses back off.
+          const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
+          const fetched =
+            brc150 ?? (await resolveOneSatInscription(u.txid, u.vout, chain))
+          if (fetched && !isBsv21Mime(fetched.mimeType)) {
+            rememberResolvedInscription(cacheKey, fetched)
+            resolved = fetched
+          } else if (fetched && isBsv21Mime(fetched.mimeType)) {
+            const again = await resolveBsv21Holding(u.txid, u.vout, chain)
+            if (again) {
+              bsv21.push(again)
+              claimed.add(outpointKey(u.outpoint))
+              continue
             }
-            // No name yet — still import. Tip-as-origin is enough to paint a
-            // card; authenticity settles behind the loading circle.
-            if (!resolved) {
-              resolved = {
-                origin: txidVoutUnderscore(u.txid, u.vout),
-              }
-            }
+            rememberUnresolved(cacheKey)
           } else {
-            // Unverified dust: remittance rebuild + indexer. Misses back off.
-            const brc150 = await rebuildBrc150Identity(u.txid, u.vout)
-            const fetched =
-              brc150 ?? (await resolveOneSatInscription(u.txid, u.vout, chain))
-            if (fetched && !isBsv21Mime(fetched.mimeType)) {
-              rememberResolvedInscription(cacheKey, fetched)
-              resolved = fetched
-            } else if (fetched && isBsv21Mime(fetched.mimeType)) {
-              const again = await resolveBsv21Holding(u.txid, u.vout, chain)
-              if (again) {
-                bsv21.push(again)
-                claimed.add(outpointKey(u.outpoint))
-                continue
-              }
-              rememberUnresolved(cacheKey)
-            } else {
-              rememberUnresolved(cacheKey)
-            }
-          }
-        } else if (!resolved && latchProven) {
-          // Inside the pending backoff window — still import so the NFT shows.
-          resolved = {
-            origin: txidVoutUnderscore(u.txid, u.vout),
+            rememberUnresolved(cacheKey)
           }
         }
       }
@@ -1061,19 +1093,18 @@ export async function importOneSatOrdinals(
     byTxid.set(txid, list)
   }
 
-  let imported = 0
-  let failed = 0
-  const errors: string[] = []
-  const outpoints: string[] = []
-
-  for (const [txid, group] of byTxid) {
+  const groups = [...byTxid.entries()]
+  const parts = await mapPool(groups, IMPORT_TX_CONCURRENCY, async ([txid, group]) => {
     const groupOps = group.map((g) => g.outpoint)
+    const part: OneSatImportResult = {
+      imported: 0,
+      failed: 0,
+      errors: [],
+      outpoints: [],
+    }
     try {
-      if (!wallet.services?.getBeefForTxid) {
-        throw new Error('Wallet services unavailable for BEEF fetch')
-      }
       await yieldToUi()
-      const beef = await wallet.services.getBeefForTxid(txid)
+      const beef = await getBeefForTxidCached(wallet, txid)
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
 
@@ -1093,7 +1124,7 @@ export async function importOneSatOrdinals(
         releaseOneSatImport(notOrdinal.map((i) => i.outpoint))
       }
       const ordinals = group.filter((item) => !notOrdinal.includes(item))
-      if (ordinals.length === 0) continue
+      if (ordinals.length === 0) return part
 
       const remittanceOutputs = []
       for (const item of ordinals) {
@@ -1129,8 +1160,8 @@ export async function importOneSatOrdinals(
       })
       await yieldToUi()
 
-      imported += ordinals.length
-      outpoints.push(...ordinals.map((i) => i.outpoint))
+      part.imported = ordinals.length
+      part.outpoints = ordinals.map((i) => i.outpoint)
       markOneSatImported(ordinals.map((i) => i.outpoint))
       // Tags lose casing under the SDK validator; keep the display name where
       // the inventory list already reads it from.
@@ -1148,16 +1179,217 @@ export async function importOneSatOrdinals(
       }
     } catch (err) {
       markOneSatImportFailed(groupOps)
-      failed += group.length
+      part.failed = group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const item of group) {
-        errors.push(`${item.outpoint}: ${msg}`)
+        part.errors.push(`${item.outpoint}: ${msg}`)
       }
       console.warn('[1sat] internalize failed', txid, err)
     }
+    return part
+  })
+
+  return {
+    imported: parts.reduce((n, p) => n + p.imported, 0),
+    failed: parts.reduce((n, p) => n + p.failed, 0),
+    errors: parts.flatMap((p) => p.errors),
+    outpoints: parts.flatMap((p) => p.outpoints),
+  }
+}
+
+/**
+ * Internalize a soft-latch settle in one BEEF: tip → `1sat` and latch →
+ * `1sat-latch`. Same-tx tip+latch used to fetch BEEF twice and serialize.
+ */
+export async function importSoftLatchSettlements(
+  tips: MigrationItem[],
+  latches: LegacyUtxo[],
+  active?: ActiveWallet | null,
+): Promise<OneSatImportResult> {
+  const wallet = active ?? getActiveWallet()
+  if (!wallet) throw new Error('Wallet locked')
+
+  const normalizedTips = tips
+    .map(normalizeMigrationItem)
+    .filter((x): x is MigrationItem => x != null)
+  if (normalizedTips.length === 0 || latches.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
   }
 
-  return { imported, failed, errors, outpoints }
+  const tipsByTxid = new Map<string, MigrationItem[]>()
+  for (const tip of normalizedTips) {
+    const key = tip.txid!.toLowerCase()
+    const list = tipsByTxid.get(key) ?? []
+    list.push(tip)
+    tipsByTxid.set(key, list)
+  }
+  const latchesByTxid = new Map<string, LegacyUtxo[]>()
+  for (const latch of latches) {
+    const key = latch.txid.trim().toLowerCase()
+    const list = latchesByTxid.get(key) ?? []
+    list.push(latch)
+    latchesByTxid.set(key, list)
+  }
+
+  const txids = [...tipsByTxid.keys()].filter((id) => latchesByTxid.has(id))
+  if (txids.length === 0) {
+    return { imported: 0, failed: 0, errors: [], outpoints: [] }
+  }
+
+  const parts = await mapPool(txids, IMPORT_TX_CONCURRENCY, async (txidKey) => {
+    const tipGroup = tipsByTxid.get(txidKey) ?? []
+    const latchGroup = latchesByTxid.get(txidKey) ?? []
+    const allOps = [
+      ...tipGroup.map((t) => t.outpoint),
+      ...latchGroup.map((l) => l.outpoint),
+    ]
+    const part: OneSatImportResult = {
+      imported: 0,
+      failed: 0,
+      errors: [],
+      outpoints: [],
+    }
+    const claimed = beginOneSatImport(allOps)
+    if (claimed.length === 0) return part
+    const claimedSet = new Set(claimed)
+    const tipsClaimed = tipGroup.filter((t) =>
+      claimedSet.has(t.outpoint.trim().toLowerCase()),
+    )
+    const latchesClaimed = latchGroup.filter((l) =>
+      claimedSet.has(l.outpoint.trim().toLowerCase()),
+    )
+    if (tipsClaimed.length === 0 && latchesClaimed.length === 0) return part
+
+    const txid = tipsClaimed[0]?.txid ?? latchesClaimed[0]!.txid
+    try {
+      await yieldToUi()
+      const beef = await getBeefForTxidCached(wallet, txid)
+      await yieldToUi()
+      const atomic = beef.toBinaryAtomic(txid)
+      const sourceTx = beef.findAtomicTransaction(txid)
+
+      const remittanceOutputs: Array<{
+        outputIndex: number
+        protocol: 'basket insertion'
+        insertionRemittance: {
+          basket: string
+          tags: string[]
+          customInstructions: string
+        }
+      }> = []
+
+      for (const item of tipsClaimed) {
+        const sats = sourceTx?.outputs?.[item.vout!]?.satoshis
+        if (typeof sats === 'number' && sats !== 1) {
+          console.warn(
+            `[1sat] refusing to internalize ${item.outpoint} — output is not 1 satoshi`,
+          )
+          releaseOneSatImport([item.outpoint])
+          continue
+        }
+        const origin = item.origin ?? item.outpoint.replace(/\.(\d+)$/, '_$1')
+        remittanceOutputs.push({
+          outputIndex: item.vout!,
+          protocol: 'basket insertion',
+          insertionRemittance: {
+            basket: '1sat',
+            tags: [
+              'ordinal',
+              `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
+              ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
+              ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
+            ],
+            customInstructions: buildInternalizeCustomInstructions({
+              origin,
+              name: item.name ?? 'Collectable',
+              app: item.app,
+            }),
+          },
+        })
+      }
+
+      const tipOrigin =
+        tipsClaimed[0]?.origin ??
+        (tipsClaimed[0]
+          ? txidVoutUnderscore(tipsClaimed[0].txid!, tipsClaimed[0].vout!)
+          : `${txid}_0`)
+
+      for (const latch of latchesClaimed) {
+        const sats = sourceTx?.outputs?.[latch.vout]?.satoshis
+        if (typeof sats === 'number' && !isLatchDustSats(sats)) {
+          console.warn(
+            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch dust (${sats})`,
+          )
+          releaseOneSatImport([latch.outpoint])
+          continue
+        }
+        const originU = tipOrigin.includes('.')
+          ? tipOrigin.replace(/\.(\d+)$/, '_$1')
+          : tipOrigin.includes('_')
+            ? tipOrigin
+            : `${txid}_0`
+        remittanceOutputs.push({
+          outputIndex: latch.vout,
+          protocol: 'basket insertion',
+          insertionRemittance: {
+            basket: ONE_SAT_LATCH_BASKET,
+            tags: latchOutputTags({ origin: originU, tip: 'OUTPUT:0' }),
+            customInstructions: JSON.stringify({
+              schema: 1,
+              origin: originU.toLowerCase(),
+              tip: 'OUTPUT:0',
+            }),
+          },
+        })
+      }
+
+      if (remittanceOutputs.length === 0) return part
+
+      await yieldToUi()
+      await wallet.wallet.internalizeAction({
+        tx: atomic,
+        description: 'Import soft-latch tip + latch',
+        labels: ['1sat', '1sat-latch', 'migration'],
+        outputs: remittanceOutputs,
+        seekPermission: false,
+      })
+      await yieldToUi()
+
+      const importedOps = remittanceOutputs.map(
+        (o) => `${txid}.${o.outputIndex}`,
+      )
+      part.imported = remittanceOutputs.length
+      part.outpoints = importedOps
+      markOneSatImported(importedOps)
+
+      for (const item of tipsClaimed) {
+        if (!item.name) continue
+        const op = item.outpoint.trim().toLowerCase()
+        if (getResolvedInscription(op)) continue
+        rememberResolvedInscription(op, {
+          origin: item.origin ?? op.replace(/\.(\d+)$/, '_$1'),
+          name: item.name,
+          ...(item.app ? { app: item.app } : {}),
+          traits: [],
+          extras: [],
+        })
+      }
+    } catch (err) {
+      markOneSatImportFailed(allOps)
+      part.failed = tipsClaimed.length + latchesClaimed.length
+      const msg = err instanceof Error ? err.message : String(err)
+      for (const op of allOps) part.errors.push(`${op}: ${msg}`)
+      console.warn('[soft-latch] combined internalize failed', txid, err)
+    }
+    return part
+  })
+
+  return {
+    imported: parts.reduce((n, p) => n + p.imported, 0),
+    failed: parts.reduce((n, p) => n + p.failed, 0),
+    errors: parts.flatMap((p) => p.errors),
+    outpoints: parts.flatMap((p) => p.outpoints),
+  }
 }
 
 /**
@@ -1189,21 +1421,20 @@ export async function importOneSatLatches(
     byTxid.set(latch.txid, list)
   }
 
-  let imported = 0
-  let failed = 0
-  const errors: string[] = []
-  const outpoints: string[] = []
-
-  for (const [txid, group] of byTxid) {
+  const groups = [...byTxid.entries()]
+  const parts = await mapPool(groups, IMPORT_TX_CONCURRENCY, async ([txid, group]) => {
     const groupOps = group.map((g) => g.outpoint)
+    const part: OneSatImportResult = {
+      imported: 0,
+      failed: 0,
+      errors: [],
+      outpoints: [],
+    }
     try {
-      if (!wallet.services?.getBeefForTxid) {
-        throw new Error('Wallet services unavailable for BEEF fetch')
-      }
       // BEEF serialize + AtomicBEEF validate inside internalizeAction are sync
       // CPU on the WebView thread — yield around them so nav taps stay live.
       await yieldToUi()
-      const beef = await wallet.services.getBeefForTxid(txid)
+      const beef = await getBeefForTxidCached(wallet, txid)
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)
@@ -1243,7 +1474,7 @@ export async function importOneSatLatches(
           },
         })
       }
-      if (remittanceOutputs.length === 0) continue
+      if (remittanceOutputs.length === 0) return part
 
       await yieldToUi()
       await wallet.wallet.internalizeAction({
@@ -1258,21 +1489,27 @@ export async function importOneSatLatches(
       const importedOps = remittanceOutputs.map(
         (o) => `${txid}.${o.outputIndex}`,
       )
-      imported += remittanceOutputs.length
-      outpoints.push(...importedOps)
+      part.imported = remittanceOutputs.length
+      part.outpoints = importedOps
       markOneSatImported(importedOps)
     } catch (err) {
       markOneSatImportFailed(groupOps)
-      failed += group.length
+      part.failed = group.length
       const msg = err instanceof Error ? err.message : String(err)
       for (const latch of group) {
-        errors.push(`${latch.outpoint}: ${msg}`)
+        part.errors.push(`${latch.outpoint}: ${msg}`)
       }
       console.warn('[1sat-latch] internalize failed', txid, err)
     }
-  }
+    return part
+  })
 
-  return { imported, failed, errors, outpoints }
+  return {
+    imported: parts.reduce((n, p) => n + p.imported, 0),
+    failed: parts.reduce((n, p) => n + p.failed, 0),
+    errors: parts.flatMap((p) => p.errors),
+    outpoints: parts.flatMap((p) => p.outpoints),
+  }
 }
 
 export function contentUrlForOrigin(origin: string, chain: Chain = 'main'): string {

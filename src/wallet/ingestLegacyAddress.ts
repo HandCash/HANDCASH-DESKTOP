@@ -29,6 +29,7 @@ import {
   contentUrlForOrigin,
   importOneSatLatches,
   importOneSatOrdinals,
+  importSoftLatchSettlements,
   type MigrationItem,
 } from './oneSatImport'
 import { importBsv21Tokens, listFungibles } from './fungibles'
@@ -322,19 +323,74 @@ export async function ingestLegacyAddressUtxos(
 
   await yieldToUi()
 
-  if (newOneSatCandidates.length > 0) {
-    const itemResult = await importOneSatOrdinals(newOneSatCandidates, active)
-    importedItems = itemResult.imported
-    itemsFailed = itemResult.failed
-    newOneSatOutpoints = itemResult.outpoints ?? []
-    recordItemReceipts(newOneSatOutpoints, oneSats, active.chain)
+  // Soft-latch tips share a settle tx with their latch dust. Import both in one
+  // BEEF so five P2P receives are not ten serial internalizeActions.
+  const latchTxidsNew = new Set(
+    newLatches.map((l) => l.txid.trim().toLowerCase()),
+  )
+  const bundledTips = newOneSatCandidates.filter(
+    (i) => i.txid && latchTxidsNew.has(i.txid.trim().toLowerCase()),
+  )
+  const soloTips = newOneSatCandidates.filter(
+    (i) => !i.txid || !latchTxidsNew.has(i.txid.trim().toLowerCase()),
+  )
+  const bundledTipTxids = new Set(
+    bundledTips.map((i) => i.txid!.trim().toLowerCase()),
+  )
+  const bundledLatches = newLatches.filter((l) =>
+    bundledTipTxids.has(l.txid.trim().toLowerCase()),
+  )
+  const soloLatches = newLatches.filter(
+    (l) => !bundledTipTxids.has(l.txid.trim().toLowerCase()),
+  )
+
+  if (bundledTips.length > 0 && bundledLatches.length > 0 && !fundingOnly) {
+    const bundleResult = await importSoftLatchSettlements(
+      bundledTips,
+      bundledLatches,
+      active,
+    )
+    const tipOpKeys = new Set(
+      bundledTips.map((t) => t.outpoint.trim().toLowerCase()),
+    )
+    const tipOps = (bundleResult.outpoints ?? []).filter((op) =>
+      tipOpKeys.has(op.trim().toLowerCase()),
+    )
+    importedItems += tipOps.length
+    itemsFailed += bundleResult.failed
+    newOneSatOutpoints.push(...tipOps)
+    recordItemReceipts(tipOps, oneSats, active.chain)
+    if (bundleResult.failed > 0) {
+      console.warn('[chain-ingest] soft-latch bundle import partial', bundleResult)
+      partialWarn = `Some items didn’t import (${bundleResult.failed}). Retrying automatically.`
+    }
+    if (tipOps.length > 0) {
+      void import('./collectables')
+        .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
+          rememberLiveOneSatOutpoints(scan.utxos)
+          return listCollectables(active)
+        })
+        .catch((err) => {
+          console.warn('[chain-ingest] early collectables paint failed', err)
+        })
+    }
+  }
+
+  if (soloTips.length > 0) {
+    const itemResult = await importOneSatOrdinals(soloTips, active)
+    importedItems += itemResult.imported
+    itemsFailed += itemResult.failed
+    newOneSatOutpoints.push(...(itemResult.outpoints ?? []))
+    recordItemReceipts(itemResult.outpoints ?? [], oneSats, active.chain)
     if (itemResult.failed > 0) {
       console.warn('[chain-ingest] 1sat import partial', itemResult)
-      partialWarn = `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
+      partialWarn =
+        partialWarn ??
+        `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
     }
     // Paint the NFT as soon as the basket has it — do not wait on funding /
     // latch BEEF work. Authenticity walks after listCollectables paints.
-    if (newOneSatOutpoints.length > 0) {
+    if ((itemResult.outpoints ?? []).length > 0) {
       void import('./collectables')
         .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
           rememberLiveOneSatOutpoints(scan.utxos)
@@ -366,13 +422,14 @@ export async function ingestLegacyAddressUtxos(
   }
 
   // Latch dust is never spendable, so its BEEF work has no place in a send.
-  if (newLatches.length > 0 && !fundingOnly) {
+  // Bundled tip+latch already internalized above — only orphan latches remain.
+  if (soloLatches.length > 0 && !fundingOnly) {
     const tipOrigins = new Map<string, string>()
     for (const tip of oneSats) {
       if (tip.txid && tip.origin) tipOrigins.set(tip.txid.toLowerCase(), tip.origin)
     }
     await yieldToUi()
-    const latchResult = await importOneSatLatches(newLatches, tipOrigins, active)
+    const latchResult = await importOneSatLatches(soloLatches, tipOrigins, active)
     if (latchResult.failed > 0) {
       console.warn('[chain-ingest] latch import partial', latchResult)
     }

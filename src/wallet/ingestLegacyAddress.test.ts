@@ -42,6 +42,12 @@ vi.mock('./oneSatImport', () => ({
     errors: [],
     outpoints: [],
   })),
+  importSoftLatchSettlements: vi.fn(async () => ({
+    imported: 0,
+    failed: 0,
+    errors: [],
+    outpoints: [],
+  })),
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
