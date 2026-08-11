@@ -284,6 +284,26 @@ export async function pollInbound(args: {
   /** Own messagebox base; defaults to HandCash BRC-CLOUD. */
   messagebox?: string | null
 }): Promise<number> {
+  const result = await pollInboundTipHints({
+    rootKeyHex: args.rootKeyHex,
+    peerIdForSender: args.peerIdForSender,
+    messagebox: args.messagebox,
+  })
+  return result.messages
+}
+
+/**
+ * List inbox; append chat for known friends; return how many tip hints carried a
+ * txid so the wallet can force a chain ingest immediately.
+ *
+ * Tip hints are grade B (messagebox) — custody still comes from the address scan.
+ * Unknown senders still accelerate ingest; chat rows require a friend mapping.
+ */
+export async function pollInboundTipHints(args: {
+  rootKeyHex: string
+  peerIdForSender?: (senderIdentityKey: string) => string | null
+  messagebox?: string | null
+}): Promise<{ messages: number; tipHints: number }> {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
@@ -299,45 +319,85 @@ export async function pollInbound(args: {
         Accept: 'application/json',
         ...messageboxAuthHeaders(auth),
       },
-      // BRC-33: only messageBox — recipient is the authenticated identity.
       body: JSON.stringify({ messageBox: 'inbox' }),
     })
-    if (!res.ok) return 0
+    if (!res.ok) return { messages: 0, tipHints: 0 }
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
     const ackIds: string[] = []
-    let n = 0
+    let messages = 0
+    let tipHints = 0
     for (const m of list) {
       const senderKey = listedSender(m)
-      const peerId = args.peerIdForSender(senderKey)
-      if (!peerId) continue
+      const peerId = args.peerIdForSender?.(senderKey) ?? null
       const decoded = decodeMessageBody(m.body)
-      appendMessage(peerId, {
-        direction: 'in',
-        kind: decoded.kind,
-        text: decoded.text,
-        createdAt: m.createdAt || Date.now(),
-        meta: {
-          ...decoded.meta,
-          identityKey: senderKey,
-          origin: 'messagebox',
-          messagebox: box,
-          status:
-            decoded.kind === 'tip' || decoded.kind === 'pay-sent'
-              ? 'Claimed · unverified'
-              : decoded.meta?.status,
-        },
-      })
-      n += 1
+      if (peerId) {
+        appendMessage(peerId, {
+          direction: 'in',
+          kind: decoded.kind,
+          text: decoded.text,
+          createdAt: m.createdAt || Date.now(),
+          meta: {
+            ...decoded.meta,
+            identityKey: senderKey,
+            origin: 'messagebox',
+            messagebox: box,
+            status:
+              decoded.kind === 'tip' || decoded.kind === 'pay-sent'
+                ? 'Claimed · unverified'
+                : decoded.meta?.status,
+          },
+        })
+        messages += 1
+      }
+      if (
+        decoded.kind === 'tip' &&
+        typeof decoded.meta?.txid === 'string' &&
+        /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
+      ) {
+        tipHints += 1
+      }
       if (m.messageId) ackIds.push(String(m.messageId))
     }
     if (ackIds.length > 0) {
       void acknowledgeMessages(ackIds, args.rootKeyHex, box)
     }
-    return n
+    return { messages, tipHints }
   } catch {
-    return 0
+    return { messages: 0, tipHints: 0 }
   }
+}
+
+/**
+ * Best-effort peer notify after a soft-latch item send — accelerates the
+ * recipient's next ingest. Failures are ignored; chain custody still works.
+ */
+export async function notifyPeerItemIncoming(args: {
+  recipientIdentityKey: string
+  rootKeyHex: string
+  senderIdentityKey: string
+  senderHandle?: string | null
+  messagebox?: string | null
+  txid: string
+  itemName: string
+}): Promise<{ delivered: 'local' | 'cloud' }> {
+  const txid = args.txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
+  const name = args.itemName.trim() || 'item'
+  const body = encodeMessageBody({
+    kind: 'tip',
+    text: `Sent you ${name}`,
+    meta: { txid, sats: 1, status: 'Incoming', memo: name },
+  })
+  return deliverOutbound({
+    recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
+    rootKeyHex: args.rootKeyHex,
+    senderIdentityKey: args.senderIdentityKey,
+    senderHandle: args.senderHandle ?? undefined,
+    messagebox: args.messagebox,
+    body,
+    peerId: args.recipientIdentityKey.trim().toLowerCase(),
+  })
 }
 
 async function acknowledgeMessages(

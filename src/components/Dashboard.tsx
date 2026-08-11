@@ -56,25 +56,36 @@ import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
+import { getActiveWallet } from '../wallet/session'
 import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 
 /** Cloud history is merged far less often than the chain poll — it is a network round trip. */
 const HISTORY_PULL_INTERVAL_MS = 60_000
-/** Quiet steady-state chain poll. */
-const CHAIN_POLL_MS = 30_000
-/** Device-parity steady-state poll. */
-const CHAIN_POLL_PARITY_MS = 12_000
+/**
+ * Quiet poll while the app is backgrounded. Soft-latch receives are discover-
+ * by-scan; 30s is fine when nobody is watching.
+ */
+const CHAIN_POLL_HIDDEN_MS = 30_000
+/**
+ * Foreground unlocked poll. Peer item sends only land when the next address
+ * scan runs — 30s made same-session transfers feel broken.
+ */
+const CHAIN_POLL_MS = 5_000
+/** Device-parity foreground poll (same target as quiet unlocked). */
+const CHAIN_POLL_PARITY_MS = 5_000
 /**
  * While latch-proven tips are waiting on GorillaPool / BEEF, poll hard so the
- * ordinal lands in Collectables as soon as the indexer catches up — not after
- * another quiet 30s tick.
+ * ordinal lands in Collectables as soon as the indexer catches up.
  */
-const CHAIN_POLL_PENDING_MS = 8_000
+const CHAIN_POLL_PENDING_MS = 4_000
 
 function nextChainPollMs(pendingTips: number): number {
   if (pendingTips > 0) return CHAIN_POLL_PENDING_MS
+  if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
+    return CHAIN_POLL_HIDDEN_MS
+  }
   return isDeviceParityEnabled() ? CHAIN_POLL_PARITY_MS : CHAIN_POLL_MS
 }
 
@@ -261,6 +272,27 @@ export function Dashboard({
             return
           }
         }
+        // Tip hints from peers (messagebox) — grade B accelerator so soft-latch
+        // receives do not wait for the next address-scan tick alone.
+        try {
+          const active = getActiveWallet()
+          if (active?.rootKeyHex) {
+            const { pollInboundTipHints } = await import('../wallet/messageTransport')
+            const { listFriends } = await import('../wallet/friends')
+            const map = new Map(
+              listFriends().map((f) => [f.identityKey.toLowerCase(), f.id]),
+            )
+            const hints = await pollInboundTipHints({
+              rootKeyHex: active.rootKeyHex,
+              peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
+            })
+            if (hints.tipHints > 0) {
+              // Fall through into refreshFromChain immediately this tick.
+            }
+          }
+        } catch {
+          /* optional */
+        }
         // Background polls never audit: reviewSpendableOutputs is report-only and
         // was colliding with nav taps right after unlock. Manual Refresh / online
         // recovery still force the audit.
@@ -312,10 +344,18 @@ export function Dashboard({
     }
     document.addEventListener('handcash:app-active', onAppActive)
 
+    const onVisibility = () => {
+      if (cancelled || document.visibilityState !== 'visible') return
+      // Foreground again — do not sit on a leftover 30s hidden timer.
+      void sync().finally(() => scheduleNext())
+    }
+    document.addEventListener('visibilitychange', onVisibility)
+
     return () => {
       cancelled = true
       unsubHealth()
       document.removeEventListener('handcash:app-active', onAppActive)
+      document.removeEventListener('visibilitychange', onVisibility)
       if (pollTimer != null) window.clearTimeout(pollTimer)
       if (idleHandle != null && typeof cancelIdleCallback === 'function') {
         cancelIdleCallback(idleHandle)

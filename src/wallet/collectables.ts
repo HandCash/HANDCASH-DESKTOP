@@ -2118,6 +2118,31 @@ export async function sendCollectable(args: {
     void listCollectables(wallet).catch((err) => {
       console.warn('[collectables] post-send refresh failed', err)
     })
+    // Grade B accelerator: tip the peer's messagebox so their next poll
+    // triggers chain ingest instead of waiting on the quiet address scan.
+    const peerIk = args.recipientIdentityKey?.trim()
+    if (peerIk && !selfReceive) {
+      void (async () => {
+        const { notifyPeerItemIncoming } = await import('./messageTransport')
+        const { listFriends } = await import('./friends')
+        const friend = listFriends().find(
+          (f) => f.identityKey.toLowerCase() === peerIk.toLowerCase(),
+        )
+        await notifyPeerItemIncoming({
+          recipientIdentityKey: peerIk,
+          rootKeyHex: wallet.rootKeyHex,
+          senderIdentityKey: wallet.identityKey,
+          messagebox: friend?.messagebox,
+          txid,
+          itemName: name,
+        })
+      })().catch((err) => {
+        console.info(
+          '[collectables] peer tip hint skipped',
+          err instanceof Error ? err.message : String(err),
+        )
+      })
+    }
     chart.send({ type: 'SUCCESS', txid })
     chart.stop()
     return { txid }
