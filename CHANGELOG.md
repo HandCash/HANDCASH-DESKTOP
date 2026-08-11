@@ -2,9 +2,13 @@
 
 ## [1.2.156] - 2026-08-11
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Send collectable toasts:** outbound soft-latch tips no longer toast
+  “Item received” / “Authenticity verified” on the sender. Foreign locks are
+  ghost-dropped immediately; self-receive still announces correctly.
+- **Identity handle:** show claimed `$handle` on the Identity page (or a claim
+  CTA); shorten the identity-key note and QR copy hint.
 
 ## [1.2.155] - 2026-08-11
 
