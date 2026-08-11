@@ -1,14 +1,7 @@
-/**
- * Paints an activity row's collectable from what the wallet knows now.
- *
- * A row stores the item's name, origin and image URL as they looked the moment
- * the transfer was recorded. Identity is not part of that event, though: an
- * origin the sender had wrong — or one the indexer had not indexed yet — is
- * frozen into the row, so its thumbnail 404s forever even after Collect repairs
- * the very same tip. Read identity through here instead of off the stored row.
- */
 import type { ActivityItem } from './appActivity'
 import { getCachedCollectables } from './collectables'
+import { getCachedFungibles } from './fungibles'
+import { getTokenIconDataUrl } from './tokenIconCache'
 import { getResolvedInscription, isThinResolution } from './inscriptionCache'
 import { contentUrlForOrigin } from './oneSatImport'
 import { getProvenVerdict } from './provenCache'
@@ -18,6 +11,29 @@ const asOutpoint = (v: string) => v.trim().toLowerCase().replace(/_(\d+)$/, '.$1
 const asOrigin = (v: string) => v.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
 
 export function viewActivityItem(item: ActivityItem): ActivityItem {
+  if (item.tokenId?.trim()) {
+    const tokenId = item.tokenId.trim().toLowerCase()
+    const held = getCachedFungibles().find(
+      (t) =>
+        t.tokenId === tokenId ||
+        t.tokenIds?.some((x) => x.toLowerCase() === tokenId),
+    )
+    if (held) {
+      return {
+        ...item,
+        name: held.sym || item.name,
+        origin: held.tokenId,
+        tokenId: held.tokenId,
+        imageUrl:
+          held.iconUrl ||
+          (held.icon ? getTokenIconDataUrl(held.icon) : undefined) ||
+          item.imageUrl,
+      }
+    }
+    const iconUrl = item.imageUrl || (item.origin ? getTokenIconDataUrl(item.origin) : undefined)
+    return iconUrl ? { ...item, imageUrl: iconUrl } : item
+  }
+
   const outpoint = item.outpoint ? asOutpoint(item.outpoint) : null
   if (!outpoint) return item
 

@@ -6,13 +6,16 @@ const STORAGE_KEY = 'handcash.brc100.appActivity'
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
 export type ActivityKind = 'spent' | 'earned' | 'event'
 
-/** Collectable / NFT remittance attached to an activity row. */
+/** Collectable / NFT / fungible remittance attached to an activity row. */
 export type ActivityItem = {
   name: string
+  /** NFT origin, or BSV-21 token id when {@link tokenId} is set. */
   origin: string
   outpoint?: string
   imageUrl?: string
   app?: string
+  /** When set, this row is a BSV-21 fungible tip (not a 1Sat collectable). */
+  tokenId?: string
 }
 
 export type ActivityEntry = {
@@ -191,12 +194,31 @@ function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | un
       ? { imageUrl: raw.imageUrl.trim() }
       : {}),
     ...(typeof raw.app === 'string' && raw.app.trim() ? { app: raw.app.trim().slice(0, 40) } : {}),
+    ...(typeof raw.tokenId === 'string' && raw.tokenId.trim()
+      ? { tokenId: raw.tokenId.trim().toLowerCase() }
+      : {}),
   }
 }
 
 /** True when this row is a collectable transfer (not a BSV payment). */
+/** True when the row is a collectable / ordinal tip transfer. */
 export function isItemActivity(entry: ActivityEntry): boolean {
-  return Boolean(entry.item) || entry.method === 'send-collectable' || /collectable|1sat|ordinal/i.test(entry.method)
+  if (isTokenActivity(entry)) return true
+  return (
+    Boolean(entry.item) ||
+    entry.method === 'send-collectable' ||
+    /collectable|1sat|ordinal/i.test(entry.method)
+  )
+}
+
+/** True when the row is a BSV-21 fungible tip (Collect → Tokens). */
+export function isTokenActivity(entry: ActivityEntry): boolean {
+  if (entry.item?.tokenId?.trim()) return true
+  return (
+    entry.method === 'receive-token' ||
+    entry.method === 'send-token' ||
+    /bsv-?21|fungible|receive-token|send-token/i.test(entry.method)
+  )
 }
 
 /**
@@ -284,10 +306,11 @@ export function getSpentSatsSince(origin: string | undefined, sinceMs: number): 
  */
 export function activityEntryKey(entry: ActivityEntry): string {
   const kind = entry.kind
-  const txid = entry.txid?.trim().toLowerCase()
-  if (txid) return `tx:${txid}:${kind}`
+  // Item / token tips: outpoint is the durable identity (one tx can carry many tips).
   const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
   if (outpoint) return `item:${outpoint}:${kind}`
+  const txid = entry.txid?.trim().toLowerCase()
+  if (txid) return `tx:${txid}:${kind}`
   if (kind === 'event') {
     return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
   }

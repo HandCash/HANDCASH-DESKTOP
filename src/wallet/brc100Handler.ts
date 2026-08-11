@@ -1,4 +1,5 @@
 import type { WalletInterface } from '@bsv/sdk'
+import { Beef, Transaction } from '@bsv/sdk'
 import { getActiveWallet, fetchBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
@@ -9,11 +10,18 @@ import {
   requestItemViewApproval,
 } from './permissions'
 import { isItemBasket, isItemSpendArgs, prepareItemBasketArgs } from './itemAccess'
-import { extractSatsFromArgs, recordAppActivity } from './appActivity'
+import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberTokenIcon } from './tokenIconCache'
+import { rememberBeefBinary } from './beefCache'
+import {
+  enrichCreateActionForBsv21Issuer,
+  isBsv21IdentityMintArgs,
+  bsv21IdentityMintHints,
+} from './bsv21Issuer'
+import { normalizeTokenId } from './bsv21'
 import {
   claimCloudHandlePayload,
   getClaimedCloudHandlePayload,
@@ -31,7 +39,6 @@ import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
-import { enrichCreateActionForBsv21Issuer, isBsv21IdentityMintArgs } from './bsv21Issuer'
 import { canAutoProcessPayment } from './autoPay'
 import {
   clearPaymentProgress,
@@ -86,6 +93,153 @@ function cacheImageIconsFromCreateAction(txid: string, args: unknown): void {
     const mime = env.contentType.toLowerCase().split(';')[0]!.trim()
     if (!mime.startsWith('image/')) continue
     rememberTokenIcon(`${id}_${vout}`, env.body, mime)
+  }
+}
+
+/** Keep AtomicBEEF / tx bytes from createAction so a follow-up spend can prove inputs. */
+function cacheCreateActionBeef(txid: string, result: unknown): void {
+  if (!result || typeof result !== 'object') return
+  const raw = (result as { tx?: unknown }).tx
+  let binary: number[] | null = null
+  if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+    binary = raw as number[]
+  } else if (raw instanceof Uint8Array) {
+    binary = Array.from(raw)
+  } else if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const bin = atob(raw.trim())
+      binary = Array.from(bin, (c) => c.charCodeAt(0))
+    } catch {
+      binary = null
+    }
+  }
+  if (!binary?.length) return
+  const id = txid.trim().toLowerCase()
+  try {
+    const asBeef = Beef.fromBinary(binary)
+    if (asBeef.findTxid(id)?.tx) {
+      rememberBeefBinary(id, asBeef.toBinary())
+      return
+    }
+  } catch {
+    // not AtomicBEEF
+  }
+  try {
+    const wrapped = new Beef()
+    wrapped.mergeTransaction(Transaction.fromBinary(binary))
+    if (wrapped.findTxid(id)?.tx) {
+      rememberBeefBinary(id, wrapped.toBinary())
+    }
+  } catch {
+    // ignore — follow-up spend may still fetch from services
+  }
+}
+
+/**
+ * Identity mint / remint: activity as received tokens (not a BSV payment spend).
+ * Mint tips use tip outpoint as the activity key; genesis-only deploy+auth is an event.
+ */
+function recordIdentityMintActivity(
+  txid: string,
+  args: unknown,
+  originator: string | undefined,
+): void {
+  const hints = bsv21IdentityMintHints(args)
+  const sym = hints.sym?.trim() || 'Token'
+  const outputs =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as { outputs?: unknown[] }).outputs
+      : undefined
+  if (!Array.isArray(outputs) || outputs.length === 0) {
+    recordAppActivity({
+      origin: originator ?? WALLET_ACTIVITY_ORIGIN,
+      kind: 'event',
+      sats: 0,
+      method: 'mint-token',
+      note: `Minted ${sym}`,
+      txid,
+    })
+    return
+  }
+
+  const id = txid.trim().toLowerCase()
+  let recordedMint = false
+  for (let vout = 0; vout < outputs.length; vout++) {
+    const raw = outputs[vout]
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as {
+      basket?: string
+      tags?: string[]
+      customInstructions?: string
+    }
+    if ((out.basket ?? '').trim().toLowerCase() !== 'bsv21') continue
+    let op = ''
+    let tokenId: string | null = null
+    let amt: string | null = hints.amt
+    let tipSym = sym
+    for (const tag of out.tags ?? []) {
+      const t = tag.trim()
+      const lower = t.toLowerCase()
+      if (lower.startsWith('op:')) op = t.slice(3).trim().toLowerCase()
+      if (lower.startsWith('bsv21:')) {
+        tokenId = normalizeTokenId(t.slice('bsv21:'.length))
+      }
+      if (lower.startsWith('amt:')) amt = t.slice(4).trim() || amt
+      if (lower.startsWith('sym:')) tipSym = t.slice(4).trim() || tipSym
+    }
+    if (out.customInstructions) {
+      try {
+        const ci = JSON.parse(out.customInstructions) as {
+          op?: unknown
+          id?: unknown
+          amt?: unknown
+          sym?: unknown
+        }
+        if (!op && typeof ci.op === 'string') op = ci.op.trim().toLowerCase()
+        if (!tokenId && typeof ci.id === 'string') {
+          tokenId = normalizeTokenId(ci.id)
+        }
+        if (!amt && typeof ci.amt === 'string') amt = ci.amt.trim()
+        if (typeof ci.sym === 'string' && ci.sym.trim()) tipSym = ci.sym.trim()
+      } catch {
+        // ignore
+      }
+    }
+    if (op === 'deploy+mint') {
+      tokenId = tokenId ?? normalizeTokenId(`${id}_${vout}`)
+    }
+    if (op !== 'mint' && op !== 'deploy+mint') continue
+    if (!tokenId || !amt) continue
+    const outpoint = `${id}.${vout}`
+    recordedMint = true
+    recordAppActivity({
+      origin: originator ?? WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-token',
+      note: `Received ${tipSym}`,
+      txid: id,
+      item: {
+        name: tipSym,
+        origin: tokenId,
+        outpoint,
+        tokenId,
+      },
+    })
+  }
+
+  if (!recordedMint) {
+    // deploy+auth (or mint args without parseable tip) — still surface the action.
+    recordAppActivity({
+      origin: originator ?? WALLET_ACTIVITY_ORIGIN,
+      kind: 'event',
+      sats: 0,
+      method: 'mint-token',
+      note: hints.amt
+        ? `Minted ${sym}`
+        : `Deployed ${sym}`,
+      txid: id,
+    })
   }
 }
 
@@ -408,22 +562,30 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       else playWalletSound('soft')
     } else if (method === 'createAction') {
       const txid = extractTxid(result)
-      if (txid) cacheImageIconsFromCreateAction(txid, args)
-      const sats = extractSatsFromArgs(method, args)
-      if (sats > 0) {
-        recordAppActivity({
-          origin: originator,
-          kind: 'spent',
-          sats,
-          method,
-          note: typeof (args as { description?: string })?.description === 'string'
-            ? (args as { description: string }).description
-            : undefined,
-          txid,
-        })
+      if (txid) {
+        cacheImageIconsFromCreateAction(txid, args)
+        cacheCreateActionBeef(txid, result)
+      }
+      if (isBsv21IdentityMintArgs(method, args) && txid) {
+        recordIdentityMintActivity(txid, args, originator)
         playWalletSound('success')
       } else {
-        playWalletSound('soft')
+        const sats = extractSatsFromArgs(method, args)
+        if (sats > 0) {
+          recordAppActivity({
+            origin: originator,
+            kind: 'spent',
+            sats,
+            method,
+            note: typeof (args as { description?: string })?.description === 'string'
+              ? (args as { description: string }).description
+              : undefined,
+            txid,
+          })
+          playWalletSound('success')
+        } else {
+          playWalletSound('soft')
+        }
       }
       // P2P createAction mutates toolbox outs + remittance metadata — backup BRC-39.
       scheduleHistoryBackupPush('createAction')

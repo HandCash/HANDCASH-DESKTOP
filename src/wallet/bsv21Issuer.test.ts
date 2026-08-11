@@ -103,4 +103,51 @@ describe('bsv21Issuer', () => {
       }),
     ).toBe(false)
   })
+
+  it('detects identity-backed deploy+auth and mint createAction args', () => {
+    expect(
+      isBsv21IdentityMintArgs('createAction', {
+        outputs: [
+          {
+            satoshis: 1,
+            basket: 'bsv21',
+            tags: ['bsv21', 'op:deploy+auth', 'sym:DEMO'],
+            customInstructions: JSON.stringify({
+              p: 'bsv-20',
+              op: 'deploy+auth',
+              sym: 'DEMO',
+              dec: '0',
+            }),
+          },
+        ],
+      }),
+    ).toBe(true)
+    const mintArgs = {
+      outputs: [
+        {
+          satoshis: 1,
+          basket: 'bsv21',
+          tags: [
+            'bsv21',
+            `bsv21:${'aa'.repeat(32)}_0`,
+            'op:mint',
+            'amt:500',
+            'sym:DEMO',
+          ],
+          customInstructions: JSON.stringify({
+            p: 'bsv-20',
+            op: 'mint',
+            id: `${'aa'.repeat(32)}_0`,
+            amt: '500',
+            sym: 'DEMO',
+          }),
+        },
+      ],
+    }
+    expect(isBsv21IdentityMintArgs('createAction', mintArgs)).toBe(true)
+    expect(bsv21IdentityMintHints(mintArgs)).toEqual({
+      sym: 'DEMO',
+      amt: '500',
+    })
+  })
 })

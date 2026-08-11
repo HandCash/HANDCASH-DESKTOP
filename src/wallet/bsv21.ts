@@ -236,8 +236,9 @@ export function tokenIdForPayload(
 }
 
 /**
- * Token id for a held basket tip. `deploy+mint` has no `id` in the inscription —
- * the tip outpoint *is* the token id (BRC-161).
+ * Token id for a held basket tip.
+ * - `deploy+mint` / `deploy+auth`: tip outpoint is the token id (BRC-161).
+ * - `mint` / `transfer` / …: inscription `id` (or `bsv21:<id>` tag).
  */
 export function tokenIdForListedTip(args: {
   outpoint: string
@@ -250,7 +251,9 @@ export function tokenIdForListedTip(args: {
     (args.idTag ? normalizeTokenId(args.idTag) : null)
   if (fromId) return fromId
   const op = (args.op ?? '').trim()
-  if (op === 'deploy+mint') return normalizeTokenId(args.outpoint)
+  if (op === 'deploy+mint' || op === 'deploy+auth') {
+    return normalizeTokenId(args.outpoint)
+  }
   return null
 }
 
@@ -332,39 +335,85 @@ export function cosignFromRemittance(args: {
   return null
 }
 
-/** Group key: same issuer + ticker share one Collect row; else per token id. */
+/**
+ * Primary Collect group key = token id (true BSV-21 fungibility).
+ * Legacy sibling deploy+mints are merged in {@link aggregateFungibles} via issuer+sym.
+ */
 export function fungibleGroupKey(u: {
   tokenId: string
   sym?: string
   issuer?: string
 }): string {
-  const issuer = normalizeIssuerPubKey(u.issuer)
-  const sym = (u.sym ?? '').trim().toLowerCase()
-  if (issuer && sym) return `issuer:${issuer}|sym:${sym}`
   return `id:${normalizeTokenId(u.tokenId) ?? u.tokenId}`
 }
 
+/** Soft merge key for accidental sibling geneses (same issuer + ticker). */
+export function issuerSymGroupKey(u: {
+  sym?: string
+  issuer?: string
+}): string | null {
+  const issuer = normalizeIssuerPubKey(u.issuer)
+  const sym = (u.sym ?? '').trim().toLowerCase()
+  if (issuer && sym) return `issuer:${issuer}|sym:${sym}`
+  return null
+}
+
+function mergeFungibleRows(
+  into: FungibleToken & {
+    _sum: bigint
+    _plain: boolean
+    _cosigned: boolean
+    _ids: Set<string>
+    _bestAmt: bigint
+  },
+  from: FungibleToken & {
+    _sum: bigint
+    _plain: boolean
+    _cosigned: boolean
+    _ids: Set<string>
+    _bestAmt: bigint
+  },
+): void {
+  into._sum += from._sum
+  into.utxoCount += from.utxoCount
+  for (const id of from._ids) into._ids.add(id)
+  if (from.sym) into.sym = into.sym || from.sym
+  if (into.dec === 0 && from.dec > 0) into.dec = from.dec
+  if (!into.issuer && from.issuer) into.issuer = from.issuer
+  if (from.issuerAttested) into.issuerAttested = true
+  if (!into.icon && from.icon) into.icon = from.icon
+  if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
+  if (from._bestAmt > into._bestAmt) {
+    into._bestAmt = from._bestAmt
+    into.tokenId = from.tokenId
+    into.outpoint = from.outpoint
+  }
+  if (from._cosigned) {
+    into._cosigned = true
+    if (!into.cosign && from.cosign) into.cosign = from.cosign
+  }
+  if (from._plain) into._plain = true
+}
+
 export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
-  const byKey = new Map<
-    string,
-    FungibleToken & {
-      _sum: bigint
-      _plain: boolean
-      _cosigned: boolean
-      _ids: Set<string>
-      _bestAmt: bigint
-    }
-  >()
+  type Acc = FungibleToken & {
+    _sum: bigint
+    _plain: boolean
+    _cosigned: boolean
+    _ids: Set<string>
+    _bestAmt: bigint
+  }
+  const byId = new Map<string, Acc>()
   for (const u of utxos) {
     if (!isBalanceBearingOp(u.op)) continue
     const key = fungibleGroupKey(u)
-    const existing = byKey.get(key)
+    const existing = byId.get(key)
     const add = BigInt(u.amt.replace(/\D/g, '') || '0')
     const tipCosigned = Boolean(u.cosign?.pubkey)
     if (!existing) {
-      byKey.set(key, {
+      byId.set(key, {
         tokenId: u.tokenId,
-        sym: u.sym || shortTokenLabel(u.tokenId),
+        sym: u.sym || '',
         amt: u.amt,
         dec: u.dec,
         iconUrl: undefined,
@@ -374,6 +423,7 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.cosign ? { cosign: u.cosign } : {}),
         ...(u.issuer ? { issuer: u.issuer } : {}),
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
+        ...(u.icon ? { icon: u.icon } : {}),
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
@@ -385,11 +435,11 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     existing._sum += add
     existing.utxoCount += 1
     existing._ids.add(u.tokenId)
-    if (!existing.sym && u.sym) existing.sym = u.sym
+    if (u.sym) existing.sym = existing.sym || u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
     if (u.issuerAttested) existing.issuerAttested = true
-    // Prefer the tip with the largest balance as the representative token id.
+    if (!existing.icon && u.icon) existing.icon = u.icon
     if (add > existing._bestAmt) {
       existing._bestAmt = add
       existing.tokenId = u.tokenId
@@ -402,11 +452,30 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
       existing._plain = true
     }
   }
-  return [...byKey.values()]
+
+  // Pass 2: merge distinct token ids that share issuer + ticker (legacy siblings).
+  const bySoft = new Map<string, Acc>()
+  const singles: Acc[] = []
+  for (const row of byId.values()) {
+    const soft = issuerSymGroupKey(row)
+    if (!soft) {
+      singles.push(row)
+      continue
+    }
+    const existing = bySoft.get(soft)
+    if (!existing) {
+      bySoft.set(soft, row)
+      continue
+    }
+    mergeFungibleRows(existing, row)
+  }
+
+  return [...singles, ...bySoft.values()]
     .map(({ _sum, _plain, _cosigned, _ids, _bestAmt: _b, ...row }) => {
       const tokenIds = [..._ids].sort()
       return {
         ...row,
+        sym: row.sym || shortTokenLabel(row.tokenId),
         amt: _sum.toString(),
         ...(tokenIds.length > 1 ? { tokenIds } : {}),
         spendKind:

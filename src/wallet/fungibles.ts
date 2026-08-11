@@ -184,24 +184,99 @@ export async function listFungibles(
     await yieldToUi()
     const selfKey = wallet.identityKey.toLowerCase()
     const utxos: Bsv21Utxo[] = []
+    /** Metadata from any tip (incl. deploy+auth / auth) keyed by token id. */
+    const metaById = new Map<
+      string,
+      { sym?: string; icon?: string; dec?: number; issuer?: string }
+    >()
     for (const row of listed.outputs ?? []) {
-      const parsed = parseListedOutput(
-        row as {
-          outpoint?: string
-          satoshis?: number
-          tags?: string[]
-          customInstructions?: string
-          lockingScript?: string
-        },
-        selfKey,
-      )
+      const raw = row as {
+        outpoint?: string
+        satoshis?: number
+        tags?: string[]
+        customInstructions?: string
+        lockingScript?: string
+      }
+      const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
+      let loose: {
+        op?: string
+        sym?: string
+        icon?: string
+        id?: string
+        dec?: number
+        issuer?: string
+      } = {}
+      if (raw.customInstructions) {
+        try {
+          const o = JSON.parse(raw.customInstructions) as Record<string, unknown>
+          if (typeof o.op === 'string') loose.op = o.op.trim().toLowerCase()
+          if (typeof o.sym === 'string' && o.sym.trim()) loose.sym = o.sym.trim()
+          if (typeof o.icon === 'string') {
+            loose.icon = normalizeTokenId(o.icon) ?? undefined
+          }
+          if (typeof o.id === 'string') {
+            loose.id = normalizeTokenId(o.id) ?? undefined
+          }
+          if (typeof o.dec === 'string' && /^\d{1,2}$/.test(o.dec)) {
+            loose.dec = Number(o.dec)
+          } else if (typeof o.dec === 'number' && Number.isInteger(o.dec)) {
+            loose.dec = o.dec
+          }
+          if (typeof o.issuer === 'string') {
+            loose.issuer =
+              issuerFromRemittance({ customInstructions: raw.customInstructions }) ??
+              undefined
+          }
+        } catch {
+          // ignore
+        }
+      }
+      const op = (fromCi?.op ?? loose.op ?? tagValue(raw.tags, 'op:') ?? '') as string
+      const tipId = tokenIdForListedTip({
+        outpoint: (raw.outpoint ?? '').trim().toLowerCase(),
+        op,
+        id: fromCi?.id ?? loose.id,
+        idTag: tokenIdFromBsv21Tags(raw.tags),
+      })
+      if (tipId) {
+        const prev = metaById.get(tipId) ?? {}
+        const sym =
+          fromCi?.sym ?? loose.sym ?? tagValue(raw.tags, 'sym:') ?? prev.sym
+        const icon = fromCi?.icon ?? loose.icon ?? prev.icon
+        const dec = fromCi?.dec ?? loose.dec ?? prev.dec
+        const issuer =
+          issuerFromRemittance({
+            customInstructions: raw.customInstructions,
+            tags: raw.tags,
+          }) ??
+          loose.issuer ??
+          prev.issuer
+        metaById.set(tipId, {
+          ...(sym ? { sym } : {}),
+          ...(icon ? { icon } : {}),
+          ...(dec != null ? { dec } : {}),
+          ...(issuer ? { issuer } : {}),
+        })
+      }
+      const parsed = parseListedOutput(raw, selfKey)
       if (parsed) utxos.push(parsed)
+    }
+    for (const u of utxos) {
+      const meta = metaById.get(u.tokenId)
+      if (!meta) continue
+      if (!u.sym && meta.sym) u.sym = meta.sym
+      if (!u.icon && meta.icon) u.icon = meta.icon
+      if (u.dec === 0 && meta.dec != null && meta.dec > 0) u.dec = meta.dec
+      if (!u.issuer && meta.issuer) u.issuer = meta.issuer
     }
     const selfHandle = wallet.handle
       ? formatHandCashHandle(wallet.handle.replace(/^[$@]/, ''), null)
       : ''
     const tokens = aggregateFungibles(utxos).map((t) => {
-      const iconOrigin = utxos.find((u) => u.tokenId === t.tokenId)?.icon
+      const iconOrigin =
+        t.icon ??
+        utxos.find((u) => u.tokenId === t.tokenId)?.icon ??
+        metaById.get(t.tokenId)?.icon
       const issuerHandle =
         t.issuer && t.issuer === selfKey && selfHandle ? selfHandle : undefined
       const iconUrl = iconOrigin ? getTokenIconDataUrl(iconOrigin) : undefined

@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.2.145] - 2026-08-11
+
+### Fixed
+
+- **Auth mint `sourceTransaction`:** BSV-21 remints now attach `inputBEEF` for
+  auth tip (and Sigma fund) inputs; deploy createAction txs are cached so the
+  follow-up mint can prove the tip immediately.
+- **Token receives missing from Activity:** newly imported BSV-21 tips write a
+  Received row; identity mints log as token activity (not a 1-sat payment spend).
+
+### Changed
+
+- **Fungible remints:** identity issuance enrich covers `deploy+auth` / `mint`;
+  Collect aggregates primarily by token id (issuer+ticker merge remains for
+  legacy sibling deploy+mints).
+
 ## [1.2.144] - 2026-08-11
 
 ### Fixed

@@ -46,11 +46,11 @@ vi.mock('./oneSatImport', () => ({
 }))
 
 vi.mock('./fungibles', () => ({
-  importBsv21Tokens: vi.fn(async () => ({
-    imported: 0,
+  importBsv21Tokens: vi.fn(async (items: Array<{ outpoint: string }>) => ({
+    imported: items.length,
     failed: 0,
     errors: [],
-    outpoints: [],
+    outpoints: items.map((i) => i.outpoint),
   })),
 }))
 
@@ -271,5 +271,62 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
 
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
     vi.useRealTimers()
+  })
+
+  it('writes a Received activity row for newly imported BSV-21 tips', async () => {
+    const tipOp = `${'aa'.repeat(32)}.0`
+    const tokenId = `${'aa'.repeat(32)}_0`
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main' as const,
+      sats: 1,
+      utxos: [{ outpoint: tipOp, txid: 'aa'.repeat(32), vout: 0, satoshis: 1 }],
+      source: 'whatsonchain' as const,
+    })
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [],
+      oneSats: [],
+      bsv21: [
+        {
+          outpoint: tipOp,
+          txid: 'aa'.repeat(32),
+          vout: 0,
+          tokenId,
+          amt: '1000',
+          op: 'mint',
+          sym: 'DEMO',
+        },
+      ],
+      latches: [],
+      heldOneSats: [],
+      pendingTips: [],
+    })
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 0,
+      importedOutpoints: [],
+      importedReceipts: [],
+    })
+
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    await ingestLegacyAddressUtxos({ active })
+
+    const { listRecentActivity, isTokenActivity } = await import('./appActivity')
+    const tokenRow = listRecentActivity(10).find((e) => e.method === 'receive-token')
+    expect(tokenRow).toMatchObject({
+      kind: 'earned',
+      method: 'receive-token',
+      note: 'Received DEMO',
+      txid: 'aa'.repeat(32),
+      item: expect.objectContaining({
+        name: 'DEMO',
+        tokenId,
+        outpoint: tipOp,
+      }),
+    })
+    expect(tokenRow && isTokenActivity(tokenRow)).toBe(true)
   })
 })

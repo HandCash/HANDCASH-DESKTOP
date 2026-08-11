@@ -16,6 +16,7 @@ import {
   activityEntryTitle,
   isEventActivity,
   isItemActivity,
+  isTokenActivity,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -153,18 +154,21 @@ function HistoryRow({
   const spent = entry.kind === 'spent'
   const event = isEventActivity(entry)
   const item = isItemActivity(entry)
+  const token = isTokenActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
   const amountLabel = event
     ? eventAmountLabel(entry)
     : item
-      ? shown?.name || 'Collectable'
+      ? shown?.name || (token ? 'Token' : 'Collectable')
       : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
     ? amountLabel
     : item
-      ? 'Item'
+      ? token
+        ? 'Token'
+        : 'Item'
       : currency === 'usd' && usdPerBsv == null
         ? '—'
         : spent

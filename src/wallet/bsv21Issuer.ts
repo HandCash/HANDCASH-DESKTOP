@@ -8,6 +8,8 @@
 import { PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
 import { buildMergedInputBeef } from './beefCache'
+import { normalizeTokenId } from './bsv21'
+import { parseOrdEnvelope } from './ordinalOwnership'
 import type { ActiveWallet } from './session'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
@@ -147,13 +149,43 @@ type CreateActionArgs = {
   options?: Record<string, unknown>
 }
 
+function bsv21OpFromOutput(out: CreateActionOutput): string | null {
+  for (const tag of out.tags ?? []) {
+    const t = tag.trim().toLowerCase()
+    if (t.startsWith('op:')) return t.slice(3) || null
+  }
+  if (out.customInstructions) {
+    try {
+      const ci = JSON.parse(out.customInstructions) as { op?: unknown }
+      if (typeof ci.op === 'string') return ci.op.trim().toLowerCase()
+    } catch {
+      // ignore
+    }
+  }
+  return null
+}
+
 /** True when an output is a BSV-21 deploy+mint tip (basket + op). */
 export function isBsv21DeployMintOutput(out: CreateActionOutput): boolean {
   const basket = (out.basket ?? '').trim().toLowerCase()
   if (basket !== 'bsv21') return false
-  const ci = (out.customInstructions ?? '').toLowerCase()
-  if (ci.includes('deploy+mint')) return true
-  return (out.tags ?? []).some((t) => t.toLowerCase() === 'op:deploy+mint')
+  return bsv21OpFromOutput(out) === 'deploy+mint'
+}
+
+/** Genesis or mint tips HandCash backs with identity (CI/tag issuer ± Sigma). */
+export function isBsv21IdentityIssuanceOutput(out: CreateActionOutput): boolean {
+  const basket = (out.basket ?? '').trim().toLowerCase()
+  if (basket !== 'bsv21') return false
+  const op = bsv21OpFromOutput(out)
+  return op === 'deploy+mint' || op === 'deploy+auth' || op === 'mint'
+}
+
+/** Deploy tips that receive Sigma (genesis only). */
+export function isBsv21SigmaDeployOutput(out: CreateActionOutput): boolean {
+  const basket = (out.basket ?? '').trim().toLowerCase()
+  if (basket !== 'bsv21') return false
+  const op = bsv21OpFromOutput(out)
+  return op === 'deploy+mint' || op === 'deploy+auth'
 }
 
 /**
@@ -165,10 +197,10 @@ export function isBsv21IdentityMintArgs(method: string, args: unknown): boolean 
   if (!args || typeof args !== 'object' || Array.isArray(args)) return false
   const outputs = (args as CreateActionArgs).outputs
   if (!Array.isArray(outputs) || outputs.length === 0) return false
-  return outputs.some((o) => isBsv21DeployMintOutput(o))
+  return outputs.some((o) => isBsv21IdentityIssuanceOutput(o))
 }
 
-/** Best-effort symbol / amount from deploy+mint tags or customInstructions. */
+/** Best-effort symbol / amount from identity-mint tags or customInstructions. */
 export function bsv21IdentityMintHints(args: unknown): {
   sym: string | null
   amt: string | null
@@ -177,10 +209,10 @@ export function bsv21IdentityMintHints(args: unknown): {
     return { sym: null, amt: null }
   }
   const outputs = (args as CreateActionArgs).outputs ?? []
+  let sym: string | null = null
+  let amt: string | null = null
   for (const out of outputs) {
-    if (!isBsv21DeployMintOutput(out)) continue
-    let sym: string | null = null
-    let amt: string | null = null
+    if (!isBsv21IdentityIssuanceOutput(out)) continue
     for (const tag of out.tags ?? []) {
       const t = tag.trim()
       const lower = t.toLowerCase()
@@ -203,12 +235,15 @@ export function bsv21IdentityMintHints(args: unknown): {
         // ignore
       }
     }
-    return { sym, amt }
   }
-  return { sym: null, amt: null }
+  return { sym, amt }
 }
 
-function mergeIssuerIntoCi(ci: string | undefined, issuer: string): string {
+function mergeIssuerIntoCi(
+  ci: string | undefined,
+  issuer: string,
+  extra?: { icon?: string },
+): string {
   let body: Record<string, unknown> = {}
   if (ci) {
     try {
@@ -221,7 +256,127 @@ function mergeIssuerIntoCi(ci: string | undefined, issuer: string): string {
     }
   }
   body.issuer = issuer
+  if (extra?.icon && !body.icon) body.icon = extra.icon
   return JSON.stringify(body)
+}
+
+function iconFromCi(ci: string | undefined): string | null {
+  if (!ci) return null
+  try {
+    const o = JSON.parse(ci) as { icon?: unknown }
+    if (typeof o.icon !== 'string') return null
+    return normalizeTokenId(o.icon)
+  } catch {
+    return null
+  }
+}
+
+function pushDataHex(data: Uint8Array): string {
+  const n = data.length
+  const body = [...data].map((b) => b.toString(16).padStart(2, '0')).join('')
+  if (n <= 75) return n.toString(16).padStart(2, '0') + body
+  if (n <= 255) return `4c${n.toString(16).padStart(2, '0')}${body}`
+  if (n <= 65535) {
+    const lo = (n & 0xff).toString(16).padStart(2, '0')
+    const hi = ((n >> 8) & 0xff).toString(16).padStart(2, '0')
+    return `4d${lo}${hi}${body}`
+  }
+  throw new Error('Inscription payload too large')
+}
+
+/**
+ * Inject `icon` into a deploy+mint / deploy+auth inscription locking script when missing.
+ * Preserves the trailing P2PKH. Returns null when unchanged / not applicable.
+ */
+export function injectIconIntoBsv21DeployScript(
+  lockingScriptHex: string,
+  iconOutpoint: string,
+): string | null {
+  const icon = normalizeTokenId(iconOutpoint)
+  if (!icon) return null
+  const hex = lockingScriptHex.trim().toLowerCase()
+  const env = parseOrdEnvelope(hex)
+  if (!env?.body?.length) return null
+  let json: Record<string, unknown>
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(env.body)) as unknown
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null
+    json = { ...(parsed as Record<string, unknown>) }
+  } catch {
+    return null
+  }
+  if (json.p !== 'bsv-20') return null
+  if (json.op !== 'deploy+mint' && json.op !== 'deploy+auth') return null
+  if (typeof json.icon === 'string' && normalizeTokenId(json.icon)) return null
+
+  json.icon = icon
+  const p2pkh = hex.match(/(76a914[0-9a-f]{40}88ac)$/)?.[1]
+  if (!p2pkh) return null
+
+  const enc = new TextEncoder()
+  const mime = env.contentType?.trim() || 'application/bsv-20'
+  const envelope =
+    '00' +
+    '63' +
+    pushDataHex(enc.encode('ord')) +
+    '51' +
+    pushDataHex(enc.encode(mime)) +
+    '00' +
+    pushDataHex(enc.encode(JSON.stringify(json))) +
+    '68'
+  return (envelope + p2pkh).toLowerCase()
+}
+
+/**
+ * Reuse a prior on-chain icon for the same issuer + symbol from basket tips.
+ */
+export async function findPriorBsv21Icon(
+  active: ActiveWallet,
+  sym: string,
+  issuer: string,
+): Promise<string | null> {
+  const wantSym = sym.trim().toUpperCase()
+  const wantIssuer = normalizeIssuerPubKey(issuer)
+  if (!wantSym || !wantIssuer) return null
+  try {
+    const listed = await active.wallet.listOutputs({
+      basket: 'bsv21',
+      limit: 100,
+      includeCustomInstructions: true,
+      includeTags: true,
+    })
+    for (const o of listed.outputs ?? []) {
+      const tipIssuer = issuerFromRemittance({
+        customInstructions: o.customInstructions,
+        tags: o.tags,
+      })
+      if (tipIssuer !== wantIssuer) continue
+
+      let tipSym: string | null = null
+      for (const tag of o.tags ?? []) {
+        const t = tag.trim()
+        if (t.toLowerCase().startsWith('sym:')) {
+          tipSym = t.slice(4).trim().toUpperCase() || null
+          break
+        }
+      }
+      let tipIcon = iconFromCi(o.customInstructions)
+      if (o.customInstructions) {
+        try {
+          const ci = JSON.parse(o.customInstructions) as { sym?: unknown }
+          if (!tipSym && typeof ci.sym === 'string' && ci.sym.trim()) {
+            tipSym = ci.sym.trim().toUpperCase()
+          }
+        } catch {
+          // ignore
+        }
+      }
+      if (tipSym === wantSym && tipIcon) return tipIcon
+    }
+  } catch (err) {
+    console.warn('[bsv21-issuer] prior icon lookup failed', err)
+  }
+  return null
 }
 
 function normalizeDotOutpoint(op: string): string {
@@ -234,9 +389,9 @@ function normalizeDotOutpoint(op: string): string {
 }
 
 /**
- * Enrich a BRC-100 createAction for basket `bsv21` deploy+mint:
- * - CI + tag issuer mirror
- * - Sigma-sign locking scripts bound to a wallet funding input as vin 0
+ * Enrich a BRC-100 createAction for basket `bsv21` identity issuance:
+ * - CI + tag issuer mirror on deploy+mint / deploy+auth / mint
+ * - Sigma-sign genesis locking scripts (deploy+mint / deploy+auth) bound to vin 0
  */
 export async function enrichCreateActionForBsv21Issuer(
   active: ActiveWallet,
@@ -244,16 +399,54 @@ export async function enrichCreateActionForBsv21Issuer(
 ): Promise<CreateActionArgs> {
   const outputs = args.outputs
   if (!outputs?.length) return args
-  const deployIdxs = outputs
-    .map((o, i) => (isBsv21DeployMintOutput(o) ? i : -1))
+  const issuanceIdxs = outputs
+    .map((o, i) => (isBsv21IdentityIssuanceOutput(o) ? i : -1))
     .filter((i) => i >= 0)
-  if (deployIdxs.length === 0) return args
+  if (issuanceIdxs.length === 0) return args
 
   const issuer = normalizeIssuerPubKey(active.identityKey)
   if (!issuer) return args
 
   const nextOutputs = outputs.map((o) => ({ ...o }))
+
+  const deployIdxs = nextOutputs
+    .map((o, i) => (isBsv21SigmaDeployOutput(o) ? i : -1))
+    .filter((i) => i >= 0)
+  const allIssuanceIdxs = issuanceIdxs
+
+  // Reuse a prior icon for the same issuer+sym when genesis omitted it.
+  const priorIconBySym = new Map<string, string | null>()
   for (const i of deployIdxs) {
+    const out = nextOutputs[i]!
+    if (iconFromCi(out.customInstructions)) continue
+    const sym = symFromOutput(out)
+    if (!sym) continue
+    const key = sym.toUpperCase()
+    if (!priorIconBySym.has(key)) {
+      priorIconBySym.set(key, await findPriorBsv21Icon(active, sym, issuer))
+    }
+    const prior = priorIconBySym.get(key)
+    if (!prior) continue
+
+    let lockingScript = out.lockingScript
+    if (lockingScript) {
+      try {
+        const injected = injectIconIntoBsv21DeployScript(lockingScript, prior)
+        if (injected) lockingScript = injected
+      } catch (err) {
+        console.warn('[bsv21-issuer] icon inject into locking script failed', err)
+      }
+    }
+    nextOutputs[i] = {
+      ...out,
+      lockingScript,
+      customInstructions: mergeIssuerIntoCi(out.customInstructions, issuer, {
+        icon: prior,
+      }),
+    }
+  }
+
+  for (const i of allIssuanceIdxs) {
     const out = nextOutputs[i]!
     const tags = [...(out.tags ?? [])]
     if (!tags.some((t) => t === 'bsv21' || t.startsWith('bsv21:'))) {
@@ -269,30 +462,34 @@ export async function enrichCreateActionForBsv21Issuer(
     }
   }
 
-  // Funding input for Sigma vin-binding.
+  // Funding input for Sigma vin-binding (genesis deploy only).
   let fundOutpoint: string | null = null
   let fundTxid = ''
   let fundVout = 0
-  try {
-    const listed = await active.wallet.listOutputs({
-      basket: 'default',
-      limit: 50,
-    })
-    // Any spendable default tip can bind Sigma as vin 0; prefer larger for fees.
-    const fund = (listed.outputs ?? [])
-      .filter((o) => (o.satoshis ?? 0) >= 1 && o.outpoint)
-      .sort((a, b) => (b.satoshis ?? 0) - (a.satoshis ?? 0))[0]
-    if (fund?.outpoint) {
-      fundOutpoint = normalizeDotOutpoint(fund.outpoint)
-      const [txid, voutS] = fundOutpoint.split('.')
-      fundTxid = txid ?? ''
-      fundVout = Number(voutS)
+  if (deployIdxs.length > 0) {
+    try {
+      const listed = await active.wallet.listOutputs({
+        basket: 'default',
+        limit: 50,
+      })
+      const fund = (listed.outputs ?? [])
+        .filter((o) => (o.satoshis ?? 0) >= 1 && o.outpoint)
+        .sort((a, b) => (b.satoshis ?? 0) - (a.satoshis ?? 0))[0]
+      if (fund?.outpoint) {
+        fundOutpoint = normalizeDotOutpoint(fund.outpoint)
+        const [txid, voutS] = fundOutpoint.split('.')
+        fundTxid = txid ?? ''
+        fundVout = Number(voutS)
+      }
+    } catch (err) {
+      console.warn('[bsv21-issuer] listOutputs for Sigma fund failed', err)
     }
-  } catch (err) {
-    console.warn('[bsv21-issuer] listOutputs for Sigma fund failed', err)
   }
 
-  if (fundOutpoint && fundTxid && Number.isFinite(fundVout)) {
+  let inputs = [...(args.inputs ?? [])]
+  let inputBEEF = args.inputBEEF
+
+  if (fundOutpoint && fundTxid && Number.isFinite(fundVout) && deployIdxs.length > 0) {
     for (const i of deployIdxs) {
       const out = nextOutputs[i]!
       if (!out.lockingScript) continue
@@ -311,12 +508,9 @@ export async function enrichCreateActionForBsv21Issuer(
       }
     }
 
-    const existingInputs = args.inputs ?? []
     const already =
-      existingInputs.length > 0 &&
-      normalizeDotOutpoint(existingInputs[0]!.outpoint) === fundOutpoint
-    let inputs = existingInputs
-    let inputBEEF = args.inputBEEF
+      inputs.length > 0 &&
+      normalizeDotOutpoint(inputs[0]!.outpoint) === fundOutpoint
     if (!already) {
       inputs = [
         {
@@ -324,36 +518,68 @@ export async function enrichCreateActionForBsv21Issuer(
           inputDescription: 'bsv21 issuer Sigma fund',
           unlockingScriptLength: 108,
         },
-        ...existingInputs,
+        ...inputs,
       ]
-      try {
-        inputBEEF = await Promise.race([
-          buildMergedInputBeef(active, [fundOutpoint], normalizeDotOutpoint),
-          new Promise<never>((_, reject) =>
-            setTimeout(
-              () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
-              8_000,
-            ),
-          ),
-        ])
-      } catch (err) {
-        console.warn('[bsv21-issuer] inputBEEF failed; skipping forced fund input', err)
-        inputs = existingInputs
-      }
-    }
-
-    return {
-      ...args,
-      outputs: nextOutputs,
-      inputs,
-      ...(inputBEEF ? { inputBEEF } : {}),
-      options: {
-        ...(args.options ?? {}),
-        // Keep deploy tip vout stable when possible; Sigma is in-script either way.
-        randomizeOutputs: false,
-      },
     }
   }
 
-  return { ...args, outputs: nextOutputs }
+  // Auth remint / any explicit tip spend must carry source txs in inputBEEF —
+  // otherwise the toolbox fails with "Every signableTransaction input must have
+  // a sourceTransaction".
+  if (inputs.length > 0) {
+    const beefOps = [
+      ...new Set(inputs.map((i) => normalizeDotOutpoint(i.outpoint)).filter(Boolean)),
+    ]
+    try {
+      inputBEEF = await Promise.race([
+        buildMergedInputBeef(active, beefOps, normalizeDotOutpoint),
+        new Promise<never>((_, reject) =>
+          setTimeout(
+            () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
+            8_000,
+          ),
+        ),
+      ])
+    } catch (err) {
+      console.warn('[bsv21-issuer] inputBEEF for tip spends failed', err)
+      // Keep caller-supplied BEEF if any; without it createAction will fail loudly.
+      if (!inputBEEF && fundOutpoint) {
+        inputs = inputs.filter(
+          (i) => normalizeDotOutpoint(i.outpoint) !== fundOutpoint,
+        )
+      }
+    }
+  }
+
+  if (inputs.length > 0 && !inputBEEF) {
+    throw new Error(
+      'Could not load the source transaction for this token mint (auth tip). Wait a moment after deploy, then try Mint more.',
+    )
+  }
+
+  return {
+    ...args,
+    outputs: nextOutputs,
+    ...(inputs.length ? { inputs } : {}),
+    ...(inputBEEF ? { inputBEEF } : {}),
+    options: {
+      ...(args.options ?? {}),
+      randomizeOutputs: false,
+    },
+  }
+}
+
+function symFromOutput(out: CreateActionOutput): string | null {
+  for (const tag of out.tags ?? []) {
+    if (tag.toLowerCase().startsWith('sym:')) return tag.slice(4).trim() || null
+  }
+  if (out.customInstructions) {
+    try {
+      const ci = JSON.parse(out.customInstructions) as { sym?: unknown }
+      if (typeof ci.sym === 'string' && ci.sym.trim()) return ci.sym.trim()
+    } catch {
+      // ignore
+    }
+  }
+  return null
 }

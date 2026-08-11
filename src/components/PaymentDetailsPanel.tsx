@@ -9,6 +9,7 @@ import {
   getActivityById,
   isEventActivity,
   isItemActivity,
+  isTokenActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
   type ActivityItem,
@@ -29,7 +30,7 @@ import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
 import { getCachedCollectables, normalizeOutpoint } from '../wallet/collectables'
-import { openCollectableDetails } from '../wallet/navStore'
+import { openCollectableDetails, openFungibleDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
@@ -48,6 +49,7 @@ function openExplorer(url: string) {
 /** Prefer a tip we still hold for this origin; fall back to a received outpoint. */
 function itemLinkOutpoint(entry: ActivityEntry, item: ActivityItem | undefined): string | null {
   if (!item) return null
+  if (item.tokenId?.trim()) return null
   const originKey = item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const held = getCachedCollectables().find(
     (c) => c.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === originKey,
@@ -58,6 +60,11 @@ function itemLinkOutpoint(entry: ActivityEntry, item: ActivityItem | undefined):
     return normalizeOutpoint(item.outpoint)
   }
   return null
+}
+
+function tokenLinkId(item: ActivityItem | undefined): string | null {
+  const id = item?.tokenId?.trim().toLowerCase()
+  return id || null
 }
 
 export function PaymentDetailsPanel({ entryId, chain }: Props) {
@@ -134,21 +141,30 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
+  const token = isTokenActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
   const itemOutpoint = itemLinkOutpoint(entry, shownItem)
-  const openItem = itemOutpoint
+  const tokenId = tokenLinkId(shownItem ?? entry.item)
+  const openItem = tokenId
     ? () => {
         playWalletSound('soft')
-        openCollectableDetails(itemOutpoint)
+        openFungibleDetails(tokenId)
       }
-    : null
+    : itemOutpoint
+      ? () => {
+          playWalletSound('soft')
+          openCollectableDetails(itemOutpoint)
+        }
+      : null
   const primary = item
-    ? shownItem?.name || 'Collectable'
+    ? shownItem?.name || (token ? 'Token' : 'Collectable')
     : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const secondary = item
-    ? shownItem?.app || '1Sat collectable'
+    ? token
+      ? shownItem?.app || 'BSV-21 token'
+      : shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN

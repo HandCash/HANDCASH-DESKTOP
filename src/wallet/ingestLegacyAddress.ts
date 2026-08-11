@@ -31,6 +31,7 @@ import {
   type MigrationItem,
 } from './oneSatImport'
 import { importBsv21Tokens } from './fungibles'
+import { getTokenIconDataUrl } from './tokenIconCache'
 import { filterNewOneSatOutpoints, isOneSatOutpointKnown } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
@@ -151,6 +152,53 @@ function recordItemReceipts(
       },
     })
   }
+}
+
+/** Activity rows for newly internalized BSV-21 fungible tips. */
+function recordTokenReceipts(
+  importedOutpoints: string[],
+  candidates: import('./bsv21').Bsv21ImportItem[],
+): void {
+  if (importedOutpoints.length === 0) return
+  const byOp = new Map(
+    candidates.map((item) => [
+      item.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+      item,
+    ]),
+  )
+  for (const raw of importedOutpoints) {
+    const op = raw.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+    if (!op || hasActivityItemOutpoint(op)) continue
+    const tip = byOp.get(op)
+    const receiveTxid =
+      tip?.txid?.trim().toLowerCase() || op.split(/[._]/)[0]
+    const tokenId =
+      tip?.tokenId?.trim().toLowerCase() ||
+      op.replace(/\.(\d+)$/, '_$1')
+    const name = tip?.sym?.trim() || shortTokenLabelSafe(tokenId)
+    const iconUrl = tip?.icon ? getTokenIconDataUrl(tip.icon) : undefined
+    recordAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-token',
+      note: `Received ${name}`,
+      txid: receiveTxid || undefined,
+      item: {
+        name,
+        origin: tokenId,
+        outpoint: op,
+        tokenId,
+        ...(iconUrl ? { imageUrl: iconUrl } : {}),
+      },
+    })
+  }
+}
+
+function shortTokenLabelSafe(tokenId: string): string {
+  const id = tokenId.trim().toLowerCase()
+  if (id.length < 12) return id || 'Token'
+  return `${id.slice(0, 6)}…${id.slice(-4)}`
 }
 
 /**
@@ -280,6 +328,7 @@ export async function ingestLegacyAddressUtxos(
     const ftResult = await importBsv21Tokens(newBsv21, active)
     importedItems += ftResult.imported
     itemsFailed += ftResult.failed
+    recordTokenReceipts(ftResult.outpoints ?? [], newBsv21)
     if (ftResult.failed > 0) {
       console.warn('[chain-ingest] bsv21 import partial', ftResult)
       partialWarn =

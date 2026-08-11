@@ -141,6 +141,68 @@ describe('bsv21 parse', () => {
     expect(rows[0]?.tokenIds?.sort()).toEqual([idA, idB].sort())
   })
 
+  it('aggregates mint tips that share one genesis token id', () => {
+    const issuer = '02' + 'ab'.repeat(32)
+    const genesis = `${'33'.repeat(32)}_0`
+    const rows = aggregateFungibles([
+      {
+        outpoint: `${'44'.repeat(32)}.0`,
+        tokenId: genesis,
+        amt: '1000',
+        op: 'mint',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+        issuer,
+      },
+      {
+        outpoint: `${'55'.repeat(32)}.0`,
+        tokenId: genesis,
+        amt: '400',
+        op: 'mint',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+        issuer,
+      },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      tokenId: genesis,
+      amt: '1400',
+      utxoCount: 2,
+      sym: 'DEMO',
+      issuer,
+    })
+    expect(rows[0]?.tokenIds).toBeUndefined()
+  })
+
+  it('groups by token id even when issuer/sym missing on one tip', () => {
+    const genesis = `${'33'.repeat(32)}_0`
+    const rows = aggregateFungibles([
+      {
+        outpoint: `${'44'.repeat(32)}.0`,
+        tokenId: genesis,
+        amt: '10',
+        op: 'mint',
+        dec: 0,
+        satoshis: 1,
+      },
+      {
+        outpoint: `${'55'.repeat(32)}.0`,
+        tokenId: genesis,
+        amt: '5',
+        op: 'transfer',
+        sym: 'DEMO',
+        dec: 0,
+        satoshis: 1,
+      },
+    ])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.amt).toBe('15')
+    expect(rows[0]?.sym).toBe('DEMO')
+  })
+
   it('does not merge same ticker without a shared issuer', () => {
     const idA = `${'11'.repeat(32)}_0`
     const idB = `${'22'.repeat(32)}_0`
