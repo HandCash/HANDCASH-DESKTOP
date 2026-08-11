@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.140] - 2026-08-10
+
+### Fixed
+
+- **Typecheck:** Dashboard processing copy only reads `title` from action prompts.
+
 ## [1.2.139] - 2026-08-10
 
 ### Fixed

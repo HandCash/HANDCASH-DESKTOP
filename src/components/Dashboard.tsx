@@ -31,6 +31,7 @@ import {
   subscribeConnectedApps,
   subscribePermissionRequests,
   type ConnectedApp,
+  type PendingAction,
   type PendingPrompt,
 } from '../wallet/permissions'
 import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
@@ -99,7 +100,7 @@ export function Dashboard({
   const [paymentProgress, setPaymentProgressState] = useState<PaymentProgress>(() =>
     getPaymentProgress(),
   )
-  const [lastApproved, setLastApproved] = useState<PendingPrompt | null>(null)
+  const [lastApproved, setLastApproved] = useState<PendingAction | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
   const sideRef = useRef<HTMLElement>(null)
