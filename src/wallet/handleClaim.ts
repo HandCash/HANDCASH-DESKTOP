@@ -80,11 +80,16 @@ export async function claimCloudHandlePayload(args: {
     const handle = normalizeCloudHandle(args.handle)
     const claimTicket =
       typeof args.claimTicket === 'string' ? args.claimTicket.trim() : ''
+    if (!claimTicket) {
+      throw new Error(
+        'Handle claim requires a HandCash claim ticket. Open /claim-handle while signed in.',
+      )
+    }
 
     const result = await claimHandle({
       handle,
       identityKey: active.identityKey,
-      ...(claimTicket ? { claimTicket } : {}),
+      claimTicket,
     })
 
     const state: ClaimedHandleState = {
