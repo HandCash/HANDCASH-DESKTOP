@@ -168,10 +168,12 @@ function notify(): void {
 function pumpQueue(): void {
   if (current || queue.length === 0) {
     notify()
+    syncPermissionSpendPriority()
     return
   }
   current = queue.shift() ?? null
   notify()
+  syncPermissionSpendPriority()
   const focus = () => {
     void window.handcash?.focusWindow?.()
   }
@@ -200,6 +202,28 @@ function pumpQueue(): void {
       // Non-DOM environments (tests) — ignore.
     }
   }
+}
+
+/**
+ * While a connect/pay prompt is open, yield the wallet FIFO the same way a
+ * queued spend does — so BRC-39 encrypt/upload cannot sit ahead of Approve.
+ */
+let permissionSpendPriorityHeld = false
+function syncPermissionSpendPriority(): void {
+  void import('./walletCoordinator')
+    .then(({ requestSpendPriority, releaseSpendPriority }) => {
+      const want = current != null || queue.length > 0
+      if (want && !permissionSpendPriorityHeld) {
+        requestSpendPriority()
+        permissionSpendPriorityHeld = true
+      } else if (!want && permissionSpendPriorityHeld) {
+        releaseSpendPriority()
+        permissionSpendPriorityHeld = false
+      }
+    })
+    .catch(() => {
+      /* coordinator optional in tests */
+    })
 }
 
 function enqueuePrompt(request: PendingPrompt): Promise<PermissionDecision> {
@@ -379,6 +403,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): voi
   const prompt = current.request
   const { resolve } = current
   current = null
+  syncPermissionSpendPriority()
   void import('./appActivity').then(({ recordWalletEvent }) => {
     const name = appDisplayName(prompt.origin)
     if (prompt.kind === 'connect') {
@@ -413,6 +438,7 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
     resolve('deny')
   }
   for (const item of waiting) item.resolve('deny')
+  syncPermissionSpendPriority()
   notify()
 }
 

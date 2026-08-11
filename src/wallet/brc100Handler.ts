@@ -15,7 +15,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberTokenIcon } from './tokenIconCache'
-import { rememberBeefBinary } from './beefCache'
+import { rememberBeefBinary, asTrustSelfInputBeef } from './beefCache'
 import {
   enrichCreateActionForBsv21Issuer,
   finishBsv21IdentityMintCreateAction,
@@ -119,19 +119,21 @@ function cacheCreateActionBeef(txid: string, result: unknown): void {
   try {
     const asBeef = Beef.fromBinary(binary)
     asBeef.atomicTxid = undefined
-    if (asBeef.findTxid(id)?.tx && asBeef.verifyValid(true).valid) {
-      rememberBeefBinary(id, asBeef.toBinary())
+    const shaped = asTrustSelfInputBeef(asBeef)
+    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
+      rememberBeefBinary(id, shaped)
       return
     }
   } catch {
-    // not AtomicBEEF / not verifiable
+    // not AtomicBEEF / not shapeable
   }
   try {
     const wrapped = new Beef()
     wrapped.mergeTransaction(Transaction.fromBinary(binary))
     wrapped.atomicTxid = undefined
-    if (wrapped.findTxid(id)?.tx && wrapped.verifyValid(true).valid) {
-      rememberBeefBinary(id, wrapped.toBinary())
+    const shaped = asTrustSelfInputBeef(wrapped)
+    if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
+      rememberBeefBinary(id, shaped)
     }
   } catch {
     // ignore — follow-up spend may still fetch from services

@@ -66,4 +66,39 @@ describe('beefCache', () => {
 
     expect(getBeefForTxid).toHaveBeenCalledTimes(1)
   })
+
+  it('patches missing parents as txidOnly so tip-only wraps verify under trustSelf', async () => {
+    const { asTrustSelfInputBeef, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const parentId = parent.id('hex')
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tip.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const tipId = tip.id('hex')
+
+    const wrap = new Beef()
+    wrap.mergeTransaction(tip)
+    expect(wrap.verifyValid(true).valid).toBe(false)
+
+    const shaped = asTrustSelfInputBeef(wrap)
+    expect(shaped).toBeTruthy()
+    const beef = Beef.fromBinary(shaped!)
+    expect(beef.findTxid(tipId)?.tx).toBeTruthy()
+    expect(beef.findTxid(parentId)?.isTxidOnly).toBe(true)
+    expect(beef.verifyValid(true).valid).toBe(true)
+  })
 })

@@ -80,6 +80,61 @@ export async function getBeefForTxidCached(
 }
 
 /**
+ * Shape a BEEF so createAction with `trustSelf:'known'` accepts it AND so
+ * signable user inputs can resolve `sourceTransaction` from raw tip bodies.
+ *
+ * Tip-only / AtomicBEEF wraps often fail `verifyValid(true)` because parents
+ * are missing. Patch those parents as txidOnly — the toolbox vouchers them via
+ * storage when trustSelf is on. Never strip the tip raw txs: omitting inputBEEF
+ * surfaces as "Every signableTransaction input must have a sourceTransaction".
+ */
+export function asTrustSelfInputBeef(beef: Beef): number[] | undefined {
+  try {
+    let work = beef.clone()
+    work.atomicTxid = undefined
+
+    for (let pass = 0; pass < 12; pass++) {
+      if (work.verifyValid(true).valid) {
+        const bin = work.toBinary()
+        const check = Beef.fromBinary(bin)
+        check.atomicTxid = undefined
+        if (check.verifyValid(true).valid) return bin
+        work = check
+        continue
+      }
+
+      let added = false
+      for (const btx of [...work.txs]) {
+        if (btx.isTxidOnly || !btx.tx) continue
+        for (const parent of btx.inputTxids ?? []) {
+          const id = parent.trim().toLowerCase()
+          if (!id || work.findTxid(id)) continue
+          work.mergeTxidOnly(id)
+          added = true
+        }
+      }
+      const sorted = work.sortTxs()
+      for (const parent of sorted.missingInputs ?? []) {
+        const id = String(parent).trim().toLowerCase()
+        if (!id || work.findTxid(id)) continue
+        work.mergeTxidOnly(id)
+        added = true
+      }
+      if (!added) break
+    }
+
+    work.atomicTxid = undefined
+    if (!work.verifyValid(true).valid) return undefined
+    const bin = work.toBinary()
+    const check = Beef.fromBinary(bin)
+    check.atomicTxid = undefined
+    return check.verifyValid(true).valid ? bin : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Merge BEEFs for every unique spend txid, fetching in parallel and sharing the
  * session cache with provenance / hardened settle / origin script lookups.
  */
@@ -119,7 +174,7 @@ export async function buildMergedInputBeef(
     )
   }
 
-  return merged.toBinary()
+  return asTrustSelfInputBeef(merged) ?? merged.toBinary()
 }
 
 export function resetBeefCacheForTests(): void {
