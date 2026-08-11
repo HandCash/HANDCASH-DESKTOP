@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.162] - 2026-08-11
+
+### Changed
+
+- **Collect tokens:** one-row horizontal carousel (icon + ticker + amount) above items.
+
 ## [1.2.161] - 2026-08-11
 
 ### Fixed

@@ -6278,6 +6278,89 @@ a.app-details-host:hover {
   margin-top: 0.5rem;
 }
 
+/* One-row horizontal token carousel (Collect). */
+.collect-token-carousel {
+  margin: 0 -4px;
+  padding: 0 4px 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  -webkit-overflow-scrolling: touch;
+  scrollbar-width: thin;
+}
+
+.collect-token-carousel-track {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 8px;
+  width: max-content;
+  min-width: 100%;
+}
+
+.collect-token-card {
+  flex: 0 0 auto;
+  width: 96px;
+  scroll-snap-align: start;
+  border-radius: calc(var(--hc-radius) + 2px);
+  border: 1px solid hsl(var(--border));
+  background: rgba(255, 255, 255, 0.02);
+  overflow: hidden;
+}
+
+.collect-token-card:hover {
+  border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
+  background: rgba(87, 255, 151, 0.04);
+}
+
+.collect-token-card-main {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  width: 100%;
+  margin: 0;
+  padding: 10px 8px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: center;
+  cursor: pointer;
+}
+
+.collect-token-card-media {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid hsl(var(--border));
+}
+
+.collect-token-card-sym {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 650;
+  line-height: 1.15;
+}
+
+.collect-token-card-amt {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-muted);
+  font-size: 0.68rem;
+  line-height: 1.15;
+}
+
 /* Square token face — override Aeon Avatar’s always-round clip. */
 .fungible-avatar {
   width: 160px !important;

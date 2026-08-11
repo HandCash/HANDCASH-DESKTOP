@@ -199,42 +199,28 @@ function CollectableListItem({
 }
 
 
-function FungibleListItem({ token }: { token: FungibleToken }) {
+function FungibleCarouselCard({ token }: { token: FungibleToken }) {
   const amount = formatFungibleAmount(token.amt, token.dec)
-  const issuerLabel =
-    token.issuerHandle ||
-    (token.issuer
-      ? `${token.issuer.slice(0, 8)}…${token.issuer.slice(-6)}`
-      : null)
-  const idShort = `${token.tokenId.slice(0, 6)}…${token.tokenId.slice(-4)}`
   return (
-    <li className="connected-app-row collectable-row fungible-row">
+    <li className="collect-token-card">
       <button
         type="button"
-        className="connected-app-main collectable-row-main"
+        className="collect-token-card-main"
         onClick={() => {
           playWalletSound('soft')
           openFungibleDetails(token.tokenId)
         }}
       >
-        <div className="collectable-media collectable-media-sm">
+        <div className="collect-token-card-media">
           <FungibleTokenFace
             tokenId={token.tokenId}
             sym={token.sym}
             iconUrl={token.iconUrl}
-            size={48}
+            size={56}
           />
         </div>
-        <div className="connected-app-body">
-          <strong className="connected-app-name">{token.sym}</strong>
-          <span className="connected-app-host">
-            {amount}
-            {issuerLabel ? ` · ${issuerLabel}` : ''}
-            {token.issuerAttested ? ' · signed' : ''}
-            {' · '}
-            {idShort}
-          </span>
-        </div>
+        <strong className="collect-token-card-sym">{token.sym}</strong>
+        <span className="collect-token-card-amt">{amount}</span>
       </button>
     </li>
   )
@@ -377,11 +363,13 @@ export function InventoryPanel() {
       {tokens.length > 0 ? (
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
-          <ul className="connected-app-list">
-            {tokens.map((token) => (
-              <FungibleListItem key={token.tokenId} token={token} />
-            ))}
-          </ul>
+          <div className="collect-token-carousel" role="region" aria-label="Token carousel">
+            <ul className="collect-token-carousel-track">
+              {tokens.map((token) => (
+                <FungibleCarouselCard key={token.tokenId} token={token} />
+              ))}
+            </ul>
+          </div>
         </section>
       ) : null}
 
