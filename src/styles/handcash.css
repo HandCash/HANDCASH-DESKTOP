@@ -3491,6 +3491,10 @@ a.history-row-link:hover .history-tx-hint {
   background: #2da76f;
 }
 
+.history-action-badge.is-mint {
+  background: #c9852a;
+}
+
 /* Opposite corner from the send/receive badge. */
 .history-icon-wrap .collectable-verify-mark {
   top: -2px;

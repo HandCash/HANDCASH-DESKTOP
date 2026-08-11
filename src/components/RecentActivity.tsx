@@ -6,6 +6,7 @@ import {
   CollectablesIcon,
   FilterIcon,
   FriendsIcon,
+  MintIcon,
   ReceiveIcon,
   SendIcon,
 } from './icons'
@@ -14,8 +15,10 @@ import { CollectableVerifyMark } from './CollectableVerifyMark'
 import {
   activityEntryKey,
   activityEntryTitle,
+  activityTokenAmountDisplay,
   isEventActivity,
   isItemActivity,
+  isMintTokenActivity,
   isTokenActivity,
   listRecentActivity,
   subscribeAppActivity,
@@ -29,6 +32,7 @@ import {
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
 import { subscribeCollectables } from '../wallet/collectables'
+import { subscribeFungibles } from '../wallet/fungibles'
 import {
   getVerificationProgress,
   isOutpointVerifying,
@@ -155,25 +159,28 @@ function HistoryRow({
   const event = isEventActivity(entry)
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
+  const minted = isMintTokenActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
   const amountLabel = event
     ? eventAmountLabel(entry)
-    : item
-      ? shown?.name || (token ? 'Token' : 'Collectable')
-      : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+    : token
+      ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
+      : item
+        ? shown?.name || 'Collectable'
+        : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
     ? amountLabel
-    : item
-      ? token
-        ? 'Token'
-        : 'Item'
-      : currency === 'usd' && usdPerBsv == null
-        ? '—'
-        : spent
-          ? `−${amountLabel}`
-          : `+${amountLabel}`
+    : token
+      ? amountLabel
+      : item
+        ? 'Item'
+        : currency === 'usd' && usdPerBsv == null
+          ? '—'
+          : spent
+            ? `−${amountLabel}`
+            : `+${amountLabel}`
   const subtitle = event
     ? entry.origin !== WALLET_ACTIVITY_ORIGIN
       ? entry.origin
@@ -184,6 +191,8 @@ function HistoryRow({
 
   const entryKey = activityEntryKey(entry)
   const showVerify = Boolean(item && verifying && !spent)
+  const badgeKind = minted ? 'mint' : spent ? 'send' : 'receive'
+  const badgeLabel = minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
   return (
     <li
@@ -228,11 +237,17 @@ function HistoryRow({
           <CollectableVerifyMark verifying={showVerify} />
           {!event ? (
             <span
-              className={`history-action-badge ${spent ? 'is-send' : 'is-receive'}`}
-              aria-label={spent ? 'Send' : 'Receive'}
-              title={spent ? 'Send' : 'Receive'}
+              className={`history-action-badge is-${badgeKind}`}
+              aria-label={badgeLabel}
+              title={badgeLabel}
             >
-              {spent ? <SendIcon size={6.75} /> : <ReceiveIcon size={9} />}
+              {minted ? (
+                <MintIcon size={8} />
+              ) : spent ? (
+                <SendIcon size={6.75} />
+              ) : (
+                <ReceiveIcon size={9} />
+              )}
             </span>
           ) : null}
         </div>
@@ -307,13 +322,14 @@ function useActivityFeed(limit: number) {
     }
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
-    // A repaired collectable changes what item rows should show, so pick it up
-    // rather than waiting for the next unrelated render.
+    // A repaired collectable / resolved token icon changes what item rows show.
     const unsubItems = subscribeCollectables(refresh)
+    const unsubTokens = subscribeFungibles(refresh)
     return () => {
       unsubActivity()
       unsubApps()
       unsubItems()
+      unsubTokens()
     }
   }, [limit])
 

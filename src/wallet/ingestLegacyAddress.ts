@@ -22,6 +22,7 @@ import {
   hasActivityTxid,
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
+  formatActivityTokenAmt,
 } from './appActivity'
 import {
   classifyLegacyUtxos,
@@ -176,19 +177,29 @@ function recordTokenReceipts(
       tip?.tokenId?.trim().toLowerCase() ||
       op.replace(/\.(\d+)$/, '_$1')
     const name = tip?.sym?.trim() || shortTokenLabelSafe(tokenId)
-    const iconUrl = tip?.icon ? getTokenIconDataUrl(tip.icon) : undefined
+    const icon = tip?.icon ? tip.icon.trim().toLowerCase().replace('.', '_') : undefined
+    const iconUrl = icon ? getTokenIconDataUrl(icon) : undefined
+    const isMint = tip?.op === 'mint' || tip?.op === 'deploy+mint'
+    const qty =
+      tip?.amt && /^\d+$/.test(tip.amt)
+        ? formatActivityTokenAmt(tip.amt, tip.dec ?? 0)
+        : null
+    const verb = isMint ? 'Minted' : 'Received'
     recordAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: 1,
-      method: 'receive-token',
-      note: `Received ${name}`,
+      method: isMint ? 'mint-token' : 'receive-token',
+      note: qty ? `${verb} ${qty} ${name}` : `${verb} ${name}`,
       txid: receiveTxid || undefined,
       item: {
         name,
         origin: tokenId,
         outpoint: op,
         tokenId,
+        ...(tip?.amt && /^\d+$/.test(tip.amt) ? { amt: tip.amt } : {}),
+        ...(typeof tip?.dec === 'number' ? { dec: tip.dec } : {}),
+        ...(icon ? { icon } : {}),
         ...(iconUrl ? { imageUrl: iconUrl } : {}),
       },
     })

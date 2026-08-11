@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.154] - 2026-08-11
+
+### Fixed
+
+- **Activity token icons:** resolve icons from the icon inscription outpoint (and
+  held fungibles), not the token id — mint/send/receive rows show the ticker
+  image instead of the generic collectable glyph.
+- **Activity token context:** show quantity with distinct Minted / Sent /
+  Received titles, a mint badge, and amount-column `±qty`; identity mint and
+  transfers record `amt`/`dec`/`icon` on the activity item.
+
 ## [1.2.153] - 2026-08-11
 
 ### Fixed

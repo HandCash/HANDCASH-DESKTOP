@@ -10,11 +10,11 @@ import {
   requestItemViewApproval,
 } from './permissions'
 import { isItemBasket, isItemSpendArgs, prepareItemBasketArgs } from './itemAccess'
-import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN, formatActivityTokenAmt, hasActivityItemOutpoint } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
-import { rememberTokenIcon } from './tokenIconCache'
+import { rememberTokenIcon, getTokenIconDataUrl } from './tokenIconCache'
 import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
 import {
   enrichCreateActionForBsv21Issuer,
@@ -145,7 +145,7 @@ async function cacheCreateActionBeef(
 }
 
 /**
- * Identity mint / remint: activity as received tokens (not a BSV payment spend).
+ * Identity mint / remint: activity as minted tokens (not a plain receive or BSV spend).
  * Mint tips use tip outpoint as the activity key; genesis-only deploy+auth is an event.
  */
 function recordIdentityMintActivity(
@@ -165,7 +165,9 @@ function recordIdentityMintActivity(
       kind: 'event',
       sats: 0,
       method: 'mint-token',
-      note: `Minted ${sym}`,
+      note: hints.amt
+        ? `Minted ${formatActivityTokenAmt(hints.amt, hints.dec ?? 0)} ${sym}`
+        : `Minted ${sym}`,
       txid,
     })
     return
@@ -186,6 +188,8 @@ function recordIdentityMintActivity(
     let tokenId: string | null = null
     let amt: string | null = hints.amt
     let tipSym = sym
+    let dec: number | undefined = hints.dec ?? undefined
+    let icon: string | null = hints.icon
     for (const tag of out.tags ?? []) {
       const t = tag.trim()
       const lower = t.toLowerCase()
@@ -195,6 +199,13 @@ function recordIdentityMintActivity(
       }
       if (lower.startsWith('amt:')) amt = t.slice(4).trim() || amt
       if (lower.startsWith('sym:')) tipSym = t.slice(4).trim() || tipSym
+      if (lower.startsWith('dec:')) {
+        const n = Number(t.slice(4).trim())
+        if (Number.isInteger(n) && n >= 0 && n <= 18) dec = n
+      }
+      if (lower.startsWith('icon:')) {
+        icon = normalizeTokenId(t.slice(5)) || icon
+      }
     }
     if (out.customInstructions) {
       try {
@@ -203,6 +214,8 @@ function recordIdentityMintActivity(
           id?: unknown
           amt?: unknown
           sym?: unknown
+          dec?: unknown
+          icon?: unknown
         }
         if (!op && typeof ci.op === 'string') op = ci.op.trim().toLowerCase()
         if (!tokenId && typeof ci.id === 'string') {
@@ -210,6 +223,18 @@ function recordIdentityMintActivity(
         }
         if (!amt && typeof ci.amt === 'string') amt = ci.amt.trim()
         if (typeof ci.sym === 'string' && ci.sym.trim()) tipSym = ci.sym.trim()
+        if (
+          dec == null &&
+          typeof ci.dec === 'number' &&
+          Number.isInteger(ci.dec) &&
+          ci.dec >= 0 &&
+          ci.dec <= 18
+        ) {
+          dec = ci.dec
+        }
+        if (!icon && typeof ci.icon === 'string') {
+          icon = normalizeTokenId(ci.icon)
+        }
       } catch {
         // ignore
       }
@@ -221,18 +246,24 @@ function recordIdentityMintActivity(
     if (!tokenId || !amt) continue
     const outpoint = `${id}.${vout}`
     recordedMint = true
+    const qty = formatActivityTokenAmt(amt, dec ?? 0)
+    const imageUrl = icon ? getTokenIconDataUrl(icon) : undefined
     recordAppActivity({
       origin: originator ?? WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: 1,
-      method: 'receive-token',
-      note: `Received ${tipSym}`,
+      method: 'mint-token',
+      note: `Minted ${qty} ${tipSym}`,
       txid: id,
       item: {
         name: tipSym,
         origin: tokenId,
         outpoint,
         tokenId,
+        amt,
+        ...(dec != null ? { dec } : {}),
+        ...(icon ? { icon } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
       },
     })
   }
@@ -245,11 +276,122 @@ function recordIdentityMintActivity(
       sats: 0,
       method: 'mint-token',
       note: hints.amt
-        ? `Minted ${sym}`
+        ? `Minted ${formatActivityTokenAmt(hints.amt, hints.dec ?? 0)} ${sym}`
         : `Deployed ${sym}`,
       txid: id,
     })
   }
+}
+
+/**
+ * App createAction that transfers BSV-21 tips — record as send-token (not a 1-sat BSV spend).
+ * Returns true when at least one tip was recorded.
+ */
+function recordBsv21TransferSends(
+  txid: string,
+  args: unknown,
+  originator: string | undefined,
+): boolean {
+  const outputs =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? (args as { outputs?: unknown[] }).outputs
+      : undefined
+  if (!Array.isArray(outputs) || outputs.length === 0) return false
+
+  const id = txid.trim().toLowerCase()
+  let recorded = false
+  for (let vout = 0; vout < outputs.length; vout++) {
+    const raw = outputs[vout]
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as {
+      basket?: string
+      tags?: string[]
+      customInstructions?: string
+    }
+    if ((out.basket ?? '').trim().toLowerCase() !== 'bsv21') continue
+    let op = ''
+    let tokenId: string | null = null
+    let amt: string | null = null
+    let tipSym = 'Token'
+    let dec: number | undefined
+    let icon: string | null = null
+    for (const tag of out.tags ?? []) {
+      const t = tag.trim()
+      const lower = t.toLowerCase()
+      if (lower.startsWith('op:')) op = t.slice(3).trim().toLowerCase()
+      if (lower.startsWith('bsv21:')) {
+        tokenId = normalizeTokenId(t.slice('bsv21:'.length))
+      }
+      if (lower.startsWith('id:')) tokenId = normalizeTokenId(t.slice(3))
+      if (lower.startsWith('amt:')) amt = t.slice(4).trim() || amt
+      if (lower.startsWith('sym:')) tipSym = t.slice(4).trim() || tipSym
+      if (lower.startsWith('dec:')) {
+        const n = Number(t.slice(4).trim())
+        if (Number.isInteger(n) && n >= 0 && n <= 18) dec = n
+      }
+      if (lower.startsWith('icon:')) {
+        icon = normalizeTokenId(t.slice(5)) || icon
+      }
+    }
+    if (out.customInstructions) {
+      try {
+        const ci = JSON.parse(out.customInstructions) as {
+          op?: unknown
+          id?: unknown
+          amt?: unknown
+          sym?: unknown
+          dec?: unknown
+          icon?: unknown
+        }
+        if (!op && typeof ci.op === 'string') op = ci.op.trim().toLowerCase()
+        if (!tokenId && typeof ci.id === 'string') {
+          tokenId = normalizeTokenId(ci.id)
+        }
+        if (!amt && typeof ci.amt === 'string') amt = ci.amt.trim()
+        if (typeof ci.sym === 'string' && ci.sym.trim()) tipSym = ci.sym.trim()
+        if (
+          dec == null &&
+          typeof ci.dec === 'number' &&
+          Number.isInteger(ci.dec) &&
+          ci.dec >= 0 &&
+          ci.dec <= 18
+        ) {
+          dec = ci.dec
+        }
+        if (!icon && typeof ci.icon === 'string') {
+          icon = normalizeTokenId(ci.icon)
+        }
+      } catch {
+        // ignore
+      }
+    }
+    if (op !== 'transfer') continue
+    if (!tokenId || !amt) continue
+    const outpoint = `${id}.${vout}`
+    if (hasActivityItemOutpoint(outpoint)) continue
+    recorded = true
+    const qty = formatActivityTokenAmt(amt, dec ?? 0)
+    const imageUrl = icon ? getTokenIconDataUrl(icon) : undefined
+    recordAppActivity({
+      origin: originator ?? WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 1,
+      method: 'send-token',
+      note: `Sent ${qty} ${tipSym}`,
+      txid: id,
+      item: {
+        name: tipSym,
+        origin: tokenId,
+        outpoint,
+        tokenId,
+        amt,
+        ...(dec != null ? { dec } : {}),
+        ...(icon ? { icon } : {}),
+        ...(imageUrl ? { imageUrl } : {}),
+      },
+    })
+  }
+  return recorded
 }
 
 async function dispatchWalletMethod(
@@ -600,6 +742,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       }
       if (isBsv21IdentityMintArgs(method, args) && txid) {
         recordIdentityMintActivity(txid, args, originator)
+        playWalletSound('success')
+      } else if (txid && recordBsv21TransferSends(txid, args, originator)) {
         playWalletSound('success')
       } else {
         const sats = extractSatsFromArgs(method, args)

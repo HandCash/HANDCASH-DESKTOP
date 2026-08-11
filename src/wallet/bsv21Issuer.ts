@@ -201,17 +201,21 @@ export function isBsv21IdentityMintArgs(method: string, args: unknown): boolean 
   return outputs.some((o) => isBsv21IdentityIssuanceOutput(o))
 }
 
-/** Best-effort symbol / amount from identity-mint tags or customInstructions. */
+/** Best-effort symbol / amount / decimals / icon from identity-mint tags or CI. */
 export function bsv21IdentityMintHints(args: unknown): {
   sym: string | null
   amt: string | null
+  dec: number | null
+  icon: string | null
 } {
   if (!args || typeof args !== 'object' || Array.isArray(args)) {
-    return { sym: null, amt: null }
+    return { sym: null, amt: null, dec: null, icon: null }
   }
   const outputs = (args as CreateActionArgs).outputs ?? []
   let sym: string | null = null
   let amt: string | null = null
+  let dec: number | null = null
+  let icon: string | null = null
   for (const out of outputs) {
     if (!isBsv21IdentityIssuanceOutput(out)) continue
     for (const tag of out.tags ?? []) {
@@ -219,12 +223,21 @@ export function bsv21IdentityMintHints(args: unknown): {
       const lower = t.toLowerCase()
       if (lower.startsWith('sym:') && !sym) sym = t.slice(4).trim() || null
       if (lower.startsWith('amt:') && !amt) amt = t.slice(4).trim() || null
+      if (lower.startsWith('dec:') && dec == null) {
+        const n = Number(t.slice(4).trim())
+        if (Number.isInteger(n) && n >= 0 && n <= 18) dec = n
+      }
+      if (lower.startsWith('icon:') && !icon) {
+        icon = normalizeTokenId(t.slice(5)) || null
+      }
     }
     if (out.customInstructions) {
       try {
         const ci = JSON.parse(out.customInstructions) as {
           sym?: unknown
           amt?: unknown
+          dec?: unknown
+          icon?: unknown
         }
         if (!sym && typeof ci.sym === 'string' && ci.sym.trim()) {
           sym = ci.sym.trim()
@@ -232,12 +245,24 @@ export function bsv21IdentityMintHints(args: unknown): {
         if (!amt && typeof ci.amt === 'string' && ci.amt.trim()) {
           amt = ci.amt.trim()
         }
+        if (
+          dec == null &&
+          typeof ci.dec === 'number' &&
+          Number.isInteger(ci.dec) &&
+          ci.dec >= 0 &&
+          ci.dec <= 18
+        ) {
+          dec = ci.dec
+        }
+        if (!icon && typeof ci.icon === 'string') {
+          icon = normalizeTokenId(ci.icon) || null
+        }
       } catch {
         // ignore
       }
     }
   }
-  return { sym, amt }
+  return { sym, amt, dec, icon }
 }
 
 function mergeIssuerIntoCi(

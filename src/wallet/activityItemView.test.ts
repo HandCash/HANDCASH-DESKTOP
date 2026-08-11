@@ -5,10 +5,16 @@ const WRONG_ORIGIN = `${'ab'.repeat(32)}_0`
 const TRUE_ORIGIN = `${'cd'.repeat(32)}_1`
 
 const held = vi.fn(() => [] as Array<Record<string, unknown>>)
+const heldTokens = vi.fn(() => [] as Array<Record<string, unknown>>)
 const resolved = vi.fn(() => null as Record<string, unknown> | null)
 const verdict = vi.fn(() => null as Record<string, unknown> | null)
 
 vi.mock('./collectables', () => ({ getCachedCollectables: () => held() }))
+vi.mock('./fungibles', () => ({ getCachedFungibles: () => heldTokens() }))
+vi.mock('./tokenIconCache', () => ({
+  getTokenIconDataUrl: (op: string | undefined | null) =>
+    op ? `data:image/png;base64,${op}` : undefined,
+}))
 vi.mock('./inscriptionCache', () => ({
   getResolvedInscription: () => resolved(),
   isThinResolution: (r: { mimeType?: string; traits?: unknown[] } | null) =>
@@ -32,8 +38,24 @@ const frozen = {
 describe('viewActivityItem', () => {
   beforeEach(() => {
     held.mockReturnValue([])
+    heldTokens.mockReturnValue([])
     resolved.mockReturnValue(null)
     verdict.mockReturnValue(null)
+  })
+
+  it('resolves token icons from the icon outpoint — not the token id', () => {
+    const icon = `${'ef'.repeat(32)}_0`
+    const tokenId = `${'aa'.repeat(32)}_0`
+    expect(
+      viewActivityItem({
+        name: 'DEMO',
+        origin: tokenId,
+        tokenId,
+        icon,
+      }),
+    ).toMatchObject({
+      imageUrl: `data:image/png;base64,${icon}`,
+    })
   })
 
   it('paints a held tip from the inventory', () => {

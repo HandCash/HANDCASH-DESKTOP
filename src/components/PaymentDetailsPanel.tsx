@@ -6,9 +6,11 @@ import { appDisplayName } from '../wallet/appIdentity'
 import {
   activityDetailLabel,
   activityEntryTitle,
+  activityTokenAmountDisplay,
   getActivityById,
   isEventActivity,
   isItemActivity,
+  isMintTokenActivity,
   isTokenActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -142,6 +144,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const spent = entry.kind === 'spent'
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
+  const minted = isMintTokenActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
@@ -158,12 +161,23 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           openCollectableDetails(itemOutpoint)
         }
       : null
-  const primary = item
-    ? shownItem?.name || (token ? 'Token' : 'Collectable')
-    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+  const viewed = shownItem ? { ...entry, item: shownItem } : entry
+  const primary = token
+    ? activityTokenAmountDisplay(viewed)
+    : item
+      ? shownItem?.name || 'Collectable'
+      : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const secondary = item
     ? token
-      ? shownItem?.app || 'BSV-21 token'
+      ? minted
+        ? shownItem?.name
+          ? `Minted · ${shownItem.name}`
+          : 'Minted BSV-21'
+        : spent
+          ? shownItem?.name
+            ? `Sent · ${shownItem.name}`
+            : 'Sent BSV-21'
+          : shownItem?.app || shownItem?.name || 'BSV-21 token'
       : shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
   const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
@@ -264,7 +278,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         <>
           <div className="payment-details-amount">
             <strong>
-              {item ? primary : spent ? `−${primary}` : `+${primary}`}
+              {token || item ? primary : spent ? `−${primary}` : `+${primary}`}
             </strong>
             <span className="payment-details-secondary">{secondary}</span>
           </div>

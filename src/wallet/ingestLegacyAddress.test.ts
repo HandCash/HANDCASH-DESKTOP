@@ -315,16 +315,17 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     await ingestLegacyAddressUtxos({ active })
 
     const { listRecentActivity, isTokenActivity } = await import('./appActivity')
-    const tokenRow = listRecentActivity(10).find((e) => e.method === 'receive-token')
+    const tokenRow = listRecentActivity(10).find((e) => e.method === 'mint-token')
     expect(tokenRow).toMatchObject({
       kind: 'earned',
-      method: 'receive-token',
-      note: 'Received DEMO',
+      method: 'mint-token',
+      note: 'Minted 1,000 DEMO',
       txid: 'aa'.repeat(32),
       item: expect.objectContaining({
         name: 'DEMO',
         tokenId,
         outpoint: tipOp,
+        amt: '1000',
       }),
     })
     expect(tokenRow && isTokenActivity(tokenRow)).toBe(true)

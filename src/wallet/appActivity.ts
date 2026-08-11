@@ -16,6 +16,12 @@ export type ActivityItem = {
   app?: string
   /** When set, this row is a BSV-21 fungible tip (not a 1Sat collectable). */
   tokenId?: string
+  /** Integer token units (BSV-21 `amt`); formatted with {@link dec}. */
+  amt?: string
+  /** Deploy decimals for {@link amt} (0–18). */
+  dec?: number
+  /** BSV-21 icon inscription outpoint (`txid_vout`) when known. */
+  icon?: string
 }
 
 export type ActivityEntry = {
@@ -184,6 +190,18 @@ function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | un
   const name = typeof raw.name === 'string' ? raw.name.trim() : ''
   const origin = typeof raw.origin === 'string' ? raw.origin.trim() : ''
   if (!name || !origin) return undefined
+  const amt =
+    typeof raw.amt === 'string' && /^\d+$/.test(raw.amt.trim())
+      ? raw.amt.trim()
+      : undefined
+  const decRaw = raw.dec
+  const dec =
+    typeof decRaw === 'number' &&
+    Number.isInteger(decRaw) &&
+    decRaw >= 0 &&
+    decRaw <= 18
+      ? decRaw
+      : undefined
   return {
     name: name.slice(0, 80),
     origin,
@@ -196,6 +214,11 @@ function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | un
     ...(typeof raw.app === 'string' && raw.app.trim() ? { app: raw.app.trim().slice(0, 40) } : {}),
     ...(typeof raw.tokenId === 'string' && raw.tokenId.trim()
       ? { tokenId: raw.tokenId.trim().toLowerCase() }
+      : {}),
+    ...(amt ? { amt } : {}),
+    ...(dec != null ? { dec } : {}),
+    ...(typeof raw.icon === 'string' && raw.icon.trim()
+      ? { icon: raw.icon.trim().toLowerCase().replace('.', '_') }
       : {}),
   }
 }
@@ -217,8 +240,58 @@ export function isTokenActivity(entry: ActivityEntry): boolean {
   return (
     entry.method === 'receive-token' ||
     entry.method === 'send-token' ||
-    /bsv-?21|fungible|receive-token|send-token/i.test(entry.method)
+    entry.method === 'mint-token' ||
+    /bsv-?21|fungible|receive-token|send-token|mint-token/i.test(entry.method)
   )
+}
+
+/** True when this row is a token create / issue (not a transfer). */
+export function isMintTokenActivity(entry: ActivityEntry): boolean {
+  if (entry.method === 'mint-token') return true
+  return isTokenActivity(entry) && /\bmint\b/i.test(entry.note ?? '')
+}
+
+/**
+ * Format BSV-21 integer `amt` with deploy decimals for activity rows.
+ * Kept local so appActivity does not import the full fungibles stack.
+ */
+export function formatActivityTokenAmt(amt: string, dec = 0): string {
+  const safeDec = Number.isInteger(dec) && dec >= 0 && dec <= 18 ? dec : 0
+  const digits = String(amt).replace(/\D/g, '') || '0'
+  if (safeDec === 0) {
+    try {
+      return BigInt(digits).toLocaleString('en-US')
+    } catch {
+      return digits
+    }
+  }
+  const padded = digits.padStart(safeDec + 1, '0')
+  const whole = padded.slice(0, -safeDec) || '0'
+  const frac = padded.slice(-safeDec).replace(/0+$/, '')
+  let wholeFmt = whole
+  try {
+    wholeFmt = BigInt(whole).toLocaleString('en-US')
+  } catch {
+    // keep raw
+  }
+  return frac ? `${wholeFmt}.${frac}` : wholeFmt
+}
+
+/** Quantity label for a token row, or null when amt was never stored. */
+export function activityTokenQuantity(item: ActivityItem | undefined): string | null {
+  if (!item?.amt?.trim()) return null
+  return formatActivityTokenAmt(item.amt, item.dec ?? 0)
+}
+
+/** Right-column amount for token rows (signed quantity). */
+export function activityTokenAmountDisplay(entry: ActivityEntry): string {
+  const qty = activityTokenQuantity(entry.item)
+  if (!qty) {
+    if (isMintTokenActivity(entry)) return 'Minted'
+    return entry.kind === 'spent' ? 'Sent' : 'Received'
+  }
+  if (isMintTokenActivity(entry) || entry.kind === 'earned') return `+${qty}`
+  return `−${qty}`
 }
 
 /**
@@ -323,6 +396,16 @@ export function activityEntryKey(entry: ActivityEntry): string {
 export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.kind === 'event') {
     return entry.note?.trim() || entry.method || 'Activity'
+  }
+  if (entry.item?.tokenId || isTokenActivity(entry)) {
+    const name = entry.item?.name?.trim() || 'Token'
+    const qty = activityTokenQuantity(entry.item)
+    const withQty = qty ? `${qty} ${name}` : name
+    if (isMintTokenActivity(entry)) return `Minted ${withQty}`
+    if (entry.kind === 'spent' || entry.method === 'send-token') {
+      return `Sent ${withQty}`
+    }
+    return `Received ${withQty}`
   }
   if (entry.item?.name) {
     const name = entry.item.name

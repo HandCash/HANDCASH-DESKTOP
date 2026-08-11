@@ -20,6 +20,54 @@ function entry(partial: Partial<ActivityEntry>): ActivityEntry {
   }
 }
 
+describe('activityEntryTitle', () => {
+  it('labels mint tips with quantity, distinct from send/receive', () => {
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: 'earned',
+          method: 'mint-token',
+          item: {
+            name: 'DEMO',
+            origin: 'aa_0',
+            tokenId: 'aa_0',
+            amt: '1000',
+            dec: 0,
+          },
+        }),
+      ),
+    ).toBe('Minted 1,000 DEMO')
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: 'spent',
+          method: 'send-token',
+          item: {
+            name: 'DEMO',
+            origin: 'aa_0',
+            tokenId: 'aa_0',
+            amt: '50',
+          },
+        }),
+      ),
+    ).toBe('Sent 50 DEMO')
+    expect(
+      activityEntryTitle(
+        entry({
+          kind: 'earned',
+          method: 'receive-token',
+          item: {
+            name: 'DEMO',
+            origin: 'aa_0',
+            tokenId: 'aa_0',
+            amt: '25',
+          },
+        }),
+      ),
+    ).toBe('Received 25 DEMO')
+  })
+})
+
 describe('activityDetailLabel', () => {
   it('labels collectable rows as Transaction', () => {
     const row = entry({
