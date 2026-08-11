@@ -31,7 +31,8 @@ import {
   type FungibleToken,
 } from './bsv21'
 import { formatHandCashHandle } from './handleFormat'
-import { contentUrlForOrigin } from './oneSatImport'
+import { getTokenIconDataUrl } from './tokenIconCache'
+import { cacheTokenIconFromBeef, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
@@ -45,6 +46,27 @@ const listeners = new Set<Listener>()
 
 function notify() {
   for (const cb of listeners) cb(cached)
+}
+
+async function hydrateMissingTokenIcons(
+  wallet: ActiveWallet,
+  tokens: FungibleToken[],
+): Promise<void> {
+  let changed = false
+  for (const token of tokens) {
+    const icon = token.icon
+    if (!icon || token.iconUrl) continue
+    const url = await resolveTokenIconDataUrl(icon, wallet)
+    if (!url) continue
+    const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
+    if (idx < 0) continue
+    cached[idx] = { ...cached[idx]!, iconUrl: url }
+    changed = true
+  }
+  if (changed) {
+    cached = [...cached]
+    notify()
+  }
 }
 
 export function getCachedFungibles(): FungibleToken[] {
@@ -182,18 +204,20 @@ export async function listFungibles(
       const iconOrigin = utxos.find((u) => u.tokenId === t.tokenId)?.icon
       const issuerHandle =
         t.issuer && t.issuer === selfKey && selfHandle ? selfHandle : undefined
+      const iconUrl = iconOrigin ? getTokenIconDataUrl(iconOrigin) : undefined
       return {
         ...t,
         sym: t.sym || shortTokenLabel(t.tokenId),
-        ...(iconOrigin
-          ? { iconUrl: contentUrlForOrigin(iconOrigin, wallet.chain) }
-          : {}),
+        ...(iconUrl ? { iconUrl } : {}),
+        ...(iconOrigin ? { icon: iconOrigin } : {}),
         ...(issuerHandle ? { issuerHandle } : {}),
       }
     })
     cached = tokens
     hydrated = true
     notify()
+    // Fill missing icons from local/session BEEF (no HTTP content indexer).
+    void hydrateMissingTokenIcons(wallet, tokens)
     return tokens
   } catch (err) {
     console.warn('[bsv21] listOutputs failed', err)
@@ -212,8 +236,9 @@ export function getFungible(tokenId: string): FungibleToken | null {
 /** Build a display row from an import candidate (before basket read). */
 export function fungibleFromImport(
   item: Bsv21ImportItem,
-  chain: Chain = 'main',
+  _chain: Chain = 'main',
 ): FungibleToken {
+  const iconUrl = item.icon ? getTokenIconDataUrl(item.icon) : undefined
   return {
     tokenId: item.tokenId,
     sym: item.sym || shortTokenLabel(item.tokenId),
@@ -224,9 +249,8 @@ export function fungibleFromImport(
     spendKind: item.cosign ? 'cosigned' : 'plain',
     ...(item.cosign ? { cosign: item.cosign } : {}),
     ...(item.issuer ? { issuer: item.issuer } : {}),
-    ...(item.icon
-      ? { iconUrl: contentUrlForOrigin(item.icon, chain) }
-      : {}),
+    ...(item.icon ? { icon: item.icon } : {}),
+    ...(iconUrl ? { iconUrl } : {}),
   }
 }
 
@@ -295,6 +319,11 @@ export async function importBsv21Tokens(
           console.info(
             `[bsv21] tip ${item.outpoint} cosigned pubkey=${cosign.pubkey.slice(0, 16)}…`,
           )
+        }
+        if (item.icon) {
+          // Decode from tip BEEF when the icon tx is already present; else local services.
+          cacheTokenIconFromBeef(item.icon, beef)
+          void resolveTokenIconDataUrl(item.icon, wallet)
         }
         return {
           outputIndex: item.vout,

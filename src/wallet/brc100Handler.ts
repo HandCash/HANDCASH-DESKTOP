@@ -12,6 +12,8 @@ import { isItemBasket, isItemSpendArgs, prepareItemBasketArgs } from './itemAcce
 import { extractSatsFromArgs, recordAppActivity } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
+import { parseOrdEnvelope } from './ordinalOwnership'
+import { rememberTokenIcon } from './tokenIconCache'
 import {
   claimCloudHandlePayload,
   getClaimedCloudHandlePayload,
@@ -66,6 +68,25 @@ function parseOrigin(headers: Record<string, string>): string | undefined {
 
 function methodFromPath(path: string): string {
   return path.replace(/^\//, '').split('?')[0] || ''
+}
+
+/** Cache image-inscription outputs we just authored (BSV-21 ticker icons). */
+function cacheImageIconsFromCreateAction(txid: string, args: unknown): void {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return
+  const outputs = (args as { outputs?: unknown }).outputs
+  if (!Array.isArray(outputs)) return
+  const id = txid.trim().toLowerCase()
+  for (let vout = 0; vout < outputs.length; vout++) {
+    const raw = outputs[vout]
+    if (!raw || typeof raw !== 'object') continue
+    const script = (raw as { lockingScript?: unknown }).lockingScript
+    if (typeof script !== 'string' || !script) continue
+    const env = parseOrdEnvelope(script)
+    if (!env?.contentType) continue
+    const mime = env.contentType.toLowerCase().split(';')[0]!.trim()
+    if (!mime.startsWith('image/')) continue
+    rememberTokenIcon(`${id}_${vout}`, env.body, mime)
+  }
 }
 
 async function dispatchWalletMethod(
@@ -385,6 +406,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       else playWalletSound('soft')
     } else if (method === 'createAction') {
       const txid = extractTxid(result)
+      if (txid) cacheImageIconsFromCreateAction(txid, args)
       const sats = extractSatsFromArgs(method, args)
       if (sats > 0) {
         recordAppActivity({

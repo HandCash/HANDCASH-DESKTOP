@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.141] - 2026-08-10
+
+### Changed
+
+- **BSV-21 ticker icons are P2P-local:** mint caches inscription bytes; Collect
+  resolves icons from durable cache / BEEF (no Gorilla content URL). Hash
+  identicon when bytes are missing. Aligns with BRC-163 Icon media.
+
 ## [1.2.140] - 2026-08-10
 
 ### Fixed

@@ -96,6 +96,9 @@ export type FungibleToken = {
   sym: string
   amt: string
   dec: number
+  /** Deploy icon outpoint (`txid_vout`) when known. */
+  icon?: string
+  /** Local data URL (from remittance BEEF / own mint) — never an indexer HTTP URL. */
   iconUrl?: string
   utxoCount: number
   /** Representative tip outpoint (first UTXO). */
