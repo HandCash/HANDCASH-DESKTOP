@@ -22,5 +22,6 @@ Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md
 
 1. Custody paths stay grade A; never gate collectable/BSV success on messagebox.
 2. Do not describe remittance as “sent to the peer.”
-3. Chat delivery takes a box base URL (`Friend.messagebox` → `deliverOutbound`); BRC-CLOUD is fallback only.
+3. Chat delivery takes a box base URL (`Friend.messagebox` → `deliverOutbound`); BRC-CLOUD is fallback only. Requests use interim `X-BRC33-*` ECDSA auth (`messageboxAuth.ts`) — not full BRC-103 yet.
 4. Settings statecharts + `layers.ts` glossary must stay accurate if behaviour changes.
+5. Do not regress BRC-33 field names (`sender`, `messageIds`, `status: success`).
