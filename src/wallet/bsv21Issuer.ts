@@ -7,7 +7,7 @@
 
 import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
-import { buildMergedInputBeef, rememberBeef, rememberBeefBinary } from './beefCache'
+import { buildMergedInputBeef, rememberBeefBinary } from './beefCache'
 import { normalizeTokenId } from './bsv21'
 import { fetchRawTxHex } from './oneSatImport'
 import { parseOrdEnvelope } from './ordinalOwnership'
