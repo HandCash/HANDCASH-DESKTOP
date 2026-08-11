@@ -1,0 +1,26 @@
+---
+description: P2P grades, remittance vs latch state, messagebox (BRC-33 vs BRC-CLOUD)
+alwaysApply: true
+---
+
+# Wallet P2P + messagebox
+
+Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md).
+
+## Vocabulary
+
+- **P2P** = counterparty gets value/facts without an indexer deciding ownership/identity.
+  - **A** chain custody (P2PKH, soft-latch tip+latch+OP_RETURN)
+  - **B** identity messagebox (BRC-33; any host)
+  - **C** convenience (GorillaPool content, handle resolve)
+- **BRC-150 remittance** (`customInstructions.provenance`) is **local** — does not travel on P2PKH.
+- **BRC-156 latch state** (OP_RETURN on settle) **is** P2P item identity. Soft-latch classify must not call GorillaPool.
+- **Messagebox** = BRC-33 store-and-forward. **BRC-CLOUD is a convenience host**, not required for custody. Prefer resolved `messagebox` URL from handle resolve; do not hardcode our cloud as the only box forever.
+- Device peer / BRC-39 = same-identity sync, not counterparty P2P.
+
+## When changing send / receive / chat
+
+1. Custody paths stay grade A; never gate collectable/BSV success on messagebox.
+2. Do not describe remittance as “sent to the peer.”
+3. Chat delivery takes a box base URL (`Friend.messagebox` → `deliverOutbound`); BRC-CLOUD is fallback only.
+4. Settings statecharts + `layers.ts` glossary must stay accurate if behaviour changes.
