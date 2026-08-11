@@ -22,12 +22,13 @@ export function trustholderStatus(): SettingRowStatus {
   const hc = getEnrollmentForOperator('handcash')
   const haste = getEnrollmentForOperator('haste')
   if (hc && haste) {
-    return { text: 'HandCash + Haste enrolled', tone: 'ok' }
+    return { text: 'HandCash & Haste enrolled', tone: 'ok' }
   }
   if (enrollments.length === 1) {
-    return { text: `${enrollments[0]!.operator} only · finish deposit`, tone: 'warn' }
+    const label = enrollments[0]!.operator === 'haste' ? 'Haste' : 'HandCash'
+    return { text: `${label} enrolled · add another anytime`, tone: 'ok' }
   }
-  return { text: 'Deposit key shares to HandCash + Haste', tone: 'muted' }
+  return { text: 'Independent providers · recommend two', tone: 'muted' }
 }
 
 export function keysStatus(): SettingRowStatus {

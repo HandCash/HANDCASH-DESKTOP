@@ -232,7 +232,7 @@ export function WalletBackupPanel() {
       >
         <span className="backup-choice-title">Cloud key backup</span>
         <span className="backup-choice-desc">
-          Recommended · HandCash + Haste hold two slices for you
+          Recommended · independent providers (HandCash, Haste)
         </span>
       </button>
 

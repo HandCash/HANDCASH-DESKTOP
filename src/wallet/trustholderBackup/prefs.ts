@@ -2,10 +2,20 @@ import { durableGetItem, durableSetItem } from '../durableStorage'
 import type { TrustholderEnrollment, TrustholderOperator } from './types'
 
 const KEY = 'handcash.brc100.trustholderEnrollments.v1'
+const PLAN_KEY = 'handcash.brc100.trustholderSharePlan.v1'
 
 export type TrustholderEnrollmentState = {
   enrollments: TrustholderEnrollment[]
   updatedAt: number | null
+}
+
+/** Local 2-of-3 plan so each trustholder can enroll independently. */
+export type TrustholderSharePlan = {
+  integrity: string
+  threshold: number
+  totalShares: number
+  shares: string[]
+  createdAt: string
 }
 
 const DEFAULTS: TrustholderEnrollmentState = {
@@ -60,4 +70,38 @@ export function getEnrollmentForOperator(
   return (
     getTrustholderEnrollments().enrollments.find((e) => e.operator === operator) ?? null
   )
+}
+
+export function getTrustholderSharePlan(): TrustholderSharePlan | null {
+  try {
+    const raw = durableGetItem(PLAN_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<TrustholderSharePlan>
+    if (
+      typeof parsed.integrity !== 'string' ||
+      !Array.isArray(parsed.shares) ||
+      parsed.shares.length < 3 ||
+      typeof parsed.threshold !== 'number' ||
+      typeof parsed.totalShares !== 'number'
+    ) {
+      return null
+    }
+    return {
+      integrity: parsed.integrity,
+      threshold: parsed.threshold,
+      totalShares: parsed.totalShares,
+      shares: parsed.shares.map(String),
+      createdAt: typeof parsed.createdAt === 'string' ? parsed.createdAt : '',
+    }
+  } catch {
+    return null
+  }
+}
+
+export function setTrustholderSharePlan(plan: TrustholderSharePlan): void {
+  durableSetItem(PLAN_KEY, JSON.stringify(plan))
+}
+
+export function clearTrustholderSharePlan(): void {
+  durableSetItem(PLAN_KEY, '')
 }

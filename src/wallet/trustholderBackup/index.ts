@@ -1,4 +1,8 @@
-export type { TrustholderEnrollment, TrustholderInfo, TrustholderOperator } from './types'
+export type {
+  TrustholderEnrollment,
+  TrustholderInfo,
+  TrustholderOperator,
+} from './types'
 export {
   TrustholderHttpError,
   fetchTrustholderInfo,
@@ -14,13 +18,22 @@ export {
   getEnrollmentForOperator,
   setTrustholderEnrollments,
   upsertTrustholderEnrollment,
+  getTrustholderSharePlan,
+  setTrustholderSharePlan,
+  clearTrustholderSharePlan,
+  type TrustholderSharePlan,
 } from './prefs'
 export {
   listTrustholderProviders,
+  getProvider,
+  ensureTrustholderSharePlan,
+  getLocalOfflineShare,
+  depositShareToTrustholder,
   depositSharesToTrustholders,
+  LOCAL_SHARE_INDEX,
   type DepositOtpRequest,
   type DepositProgress,
   type DepositRegisterRequest,
-  type DepositResult,
+  type DepositOneResult,
   type TrustholderProvider,
 } from './enrollment'

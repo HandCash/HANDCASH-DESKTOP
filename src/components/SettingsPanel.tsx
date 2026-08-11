@@ -34,7 +34,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'trustholder-backup',
         label: 'Cloud key backup',
-        description: 'Deposit slices to HandCash + Haste',
+        description: 'Independent providers · recommend two',
       },
       {
         id: 'backup',

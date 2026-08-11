@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.165] - 2026-08-11
+
+### Changed
+
+- **Cloud key backup:** each trustholder is independent — deposit HandCash or Haste
+  one at a time. Recommend two providers + offline slice; no coupled “both at once”
+  button. Shared 2-of-3 share plan persists across enrollments.
+
 ## [1.2.164] - 2026-08-11
 
 ### Added

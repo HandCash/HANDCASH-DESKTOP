@@ -156,52 +156,69 @@ export type TrustholderDestination = {
   id: string
   label: string
   description: string
-  state: 'pending' | 'enrolled' | 'ready'
+  state: 'pending' | 'enrolled' | 'busy' | 'ready'
   enrolledAt?: string
+  recommended?: boolean
+  portal?: string
 }
 
 type TrustholderListProps = {
   destinations: TrustholderDestination[]
+  recommendedDone: number
+  recommendedTotal: number
   offlineShare?: {
     share: string
     integrity: string
     total: number
     index: number
   } | null
+  busyId?: string | null
+  onDeposit?: (id: string) => void
+  onOpenPortal?: (id: string) => void
   onOfflineCopy?: () => void
   onOfflineSave?: () => void
 }
 
 /**
- * Cloud trustholder rows + optional offline slice (same list vocabulary as KeySliceList).
+ * Independent trustholder rows — each deposits on its own.
+ * Recommended: enroll both cloud providers + keep the offline slice.
  */
 export function TrustholderDestinationList({
   destinations,
+  recommendedDone,
+  recommendedTotal,
   offlineShare,
+  busyId,
+  onDeposit,
+  onOpenPortal,
   onOfflineCopy,
   onOfflineSave,
 }: TrustholderListProps) {
-  const cloudSaved = destinations.filter((d) => d.state === 'enrolled').length
-  const cloudTotal = destinations.length
   const offlineReady = Boolean(offlineShare)
 
   return (
     <div
       className="key-slice-list"
       data-aeon-scope="trustholder-destinations"
-      data-aeon-state={offlineReady ? 'complete' : cloudSaved > 0 ? 'partial' : 'pending'}
+      data-aeon-state={
+        offlineReady && recommendedDone >= recommendedTotal
+          ? 'complete'
+          : recommendedDone > 0
+            ? 'partial'
+            : 'pending'
+      }
     >
       <div className="key-slice-progress-block" data-aeon-part="progress">
         <div className="key-slice-progress-meta">
           <span className="key-slice-progress-label">
-            {offlineReady
-              ? 'Cloud slices deposited — save your offline copy'
-              : `${cloudSaved} of ${cloudTotal} cloud trustholders enrolled`}
+            {recommendedDone >= recommendedTotal && offlineReady
+              ? 'Recommended setup complete'
+              : `${recommendedDone} of ${recommendedTotal} recommended providers · each is optional on its own`}
           </span>
         </div>
         <Progress.Root
-          value={cloudSaved + (offlineReady ? 1 : 0)}
-          max={cloudTotal + 1}
+          value={recommendedDone}
+          max={Math.max(recommendedTotal, 1)}
           className="key-slice-progress"
         >
           <Progress.Track className="key-slice-progress-track">
@@ -210,30 +227,82 @@ export function TrustholderDestinationList({
         </Progress.Root>
       </div>
 
-      <ul className="key-slice-static-list" role="list">
-        {destinations.map((dest) => (
-          <li key={dest.id} className="key-slice-static-item" data-aeon-state={dest.state}>
-            <ListRow.Root as="div" className="key-slice-row">
-              <ListRow.Leading className="key-slice-leading key-slice-leading--cloud" aria-hidden>
-                ☁
-              </ListRow.Leading>
-              <span className="key-slice-row-text">
-                <ListRow.Label className="key-slice-label">{dest.label}</ListRow.Label>
-                <ListRow.Description className="key-slice-desc">{dest.description}</ListRow.Description>
-              </span>
-              <ListRow.Trailing className="key-slice-trailing">
-                <span className="key-slice-status" data-aeon-state={dest.state}>
-                  {dest.state === 'enrolled'
-                    ? 'Deposited'
-                    : dest.state === 'ready'
-                      ? 'Ready'
-                      : 'Pending'}
-                </span>
-              </ListRow.Trailing>
-            </ListRow.Root>
-          </li>
-        ))}
-      </ul>
+      <Accordion.Root collapsible className="key-slice-accordion">
+        {destinations.map((dest) => {
+          const itemId = dest.id
+          const enrolled = dest.state === 'enrolled'
+          const busy = busyId === dest.id || dest.state === 'busy'
+          return (
+            <Accordion.Item
+              key={dest.id}
+              value={itemId}
+              className="key-slice-item"
+              data-aeon-state={enrolled ? 'saved' : busy ? 'busy' : 'pending'}
+            >
+              <Accordion.ItemTrigger value={itemId} className="key-slice-trigger">
+                <ListRow.Root as="div" className="key-slice-row">
+                  <ListRow.Leading className="key-slice-leading key-slice-leading--cloud" aria-hidden>
+                    {dest.label.slice(0, 1)}
+                  </ListRow.Leading>
+                  <span className="key-slice-row-text">
+                    <ListRow.Label className="key-slice-label">
+                      {dest.label}
+                      {dest.recommended ? (
+                        <span className="key-slice-desc"> · recommended</span>
+                      ) : null}
+                    </ListRow.Label>
+                    <ListRow.Description className="key-slice-desc">
+                      {dest.description}
+                    </ListRow.Description>
+                  </span>
+                  <ListRow.Trailing className="key-slice-trailing">
+                    <span
+                      className="key-slice-status"
+                      data-aeon-state={enrolled ? 'saved' : busy ? 'pending' : 'pending'}
+                    >
+                      {enrolled ? 'Deposited' : busy ? 'Working…' : 'Open'}
+                    </span>
+                  </ListRow.Trailing>
+                  <Accordion.ItemIndicator aria-hidden />
+                </ListRow.Root>
+              </Accordion.ItemTrigger>
+              <Accordion.ItemContent value={itemId} className="key-slice-body">
+                <p className="settings-row-desc">
+                  {enrolled
+                    ? 'This provider already holds one slice. You can deposit again to replace it.'
+                    : 'Register your email at this provider’s portal if needed, then deposit one slice here only.'}
+                </p>
+                <div className="actions split-backup-item-actions">
+                  {dest.portal && onOpenPortal ? (
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      disabled={busy}
+                      onClick={() => onOpenPortal(dest.id)}
+                    >
+                      Open portal
+                    </button>
+                  ) : null}
+                  {onDeposit ? (
+                    <button
+                      type="button"
+                      className="btn btn-primary"
+                      disabled={busy}
+                      onClick={() => onDeposit(dest.id)}
+                    >
+                      {busy
+                        ? 'Depositing…'
+                        : enrolled
+                          ? `Re-deposit to ${dest.label}`
+                          : `Deposit to ${dest.label}`}
+                    </button>
+                  ) : null}
+                </div>
+              </Accordion.ItemContent>
+            </Accordion.Item>
+          )
+        })}
+      </Accordion.Root>
 
       {offlineShare ? (
         <Accordion.Root collapsible defaultValue={['offline']} className="key-slice-accordion">
@@ -246,7 +315,7 @@ export function TrustholderDestinationList({
                 <span className="key-slice-row-text">
                   <ListRow.Label className="key-slice-label">Your offline slice</ListRow.Label>
                   <ListRow.Description className="key-slice-desc">
-                    Keep this one — not stored in the cloud
+                    Keep this one — not stored with any trustholder
                   </ListRow.Description>
                 </span>
                 <ListRow.Trailing className="key-slice-trailing">

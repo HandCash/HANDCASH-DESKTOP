@@ -7,14 +7,18 @@ import { openSetting } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
-  depositSharesToTrustholders,
+  depositShareToTrustholder,
   fetchTrustholderInfo,
+  getLocalOfflineShare,
   getTrustholderEnrollments,
+  getTrustholderSharePlan,
   listTrustholderProviders,
+  LOCAL_SHARE_INDEX,
   TrustholderHttpError,
   type DepositOtpRequest,
   type DepositProgress,
   type DepositRegisterRequest,
+  type TrustholderOperator,
 } from '../wallet/trustholderBackup'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { TrustholderDestinationList } from './KeySliceList'
@@ -59,22 +63,27 @@ type RegisterGate = DepositRegisterRequest & {
 }
 
 /**
- * BRC-232 deposit: 2-of-3 shares → HandCash + Haste; keep one share offline.
- * Modular: wallet/trustholderBackup owns the wire; this panel is presentation only.
+ * BRC-232: each trustholder is independent. Recommended: HandCash + Haste +
+ * one offline slice (2-of-3). Deposit one provider at a time.
  */
 export function TrustholderBackupPanel() {
   const providers = listTrustholderProviders()
   const [enrollments, setEnrollments] = useState(() => getTrustholderEnrollments().enrollments)
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
+  const [busyId, setBusyId] = useState<string | null>(null)
   const [progress, setProgress] = useState<DepositProgress | null>(null)
   const [portals, setPortals] = useState<Partial<Record<string, string>>>({})
   const [localShare, setLocalShare] = useState<{
     share: string
     integrity: string
     total: number
-  } | null>(null)
+  } | null>(() => {
+    const plan = getTrustholderSharePlan()
+    const share = getLocalOfflineShare()
+    if (!plan || !share) return null
+    return { share, integrity: plan.integrity, total: plan.totalShares }
+  })
   const [otpGate, setOtpGate] = useState<OtpGate | null>(null)
   const [otpDraft, setOtpDraft] = useState('')
   const [registerGate, setRegisterGate] = useState<RegisterGate | null>(null)
@@ -93,7 +102,7 @@ export function TrustholderBackupPanel() {
             const info = await fetchTrustholderInfo(p.baseUrl)
             if (info.portal) next[p.operator] = info.portal
           } catch {
-            /* portal links stay optional until deposit */
+            /* portal optional until deposit */
           }
         }),
       )
@@ -102,7 +111,6 @@ export function TrustholderBackupPanel() {
     return () => {
       cancelled = true
     }
-    // Providers are stable URL prefs for the session.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -152,30 +160,41 @@ export function TrustholderBackupPanel() {
     else gate.reject(new Error('Cancelled'))
   }
 
-  const runDeposit = async () => {
-    if (!password) return
-    setBusy(true)
+  const runDeposit = async (operator: TrustholderOperator) => {
+    if (!password) {
+      toastError('Unlock first', 'Confirm your password before depositing.')
+      return
+    }
+    if (!email.includes('@')) {
+      toastError('Email required', 'Enter the portal email for this provider.')
+      return
+    }
+    setBusyId(operator)
     setProgress(null)
-    setLocalShare(null)
     try {
-      const result = await depositSharesToTrustholders({
+      const result = await depositShareToTrustholder({
+        operator,
         password,
         email,
         onProgress: setProgress,
         onOtpNeeded: requestOtp,
         onRegisterNeeded: requestRegister,
       })
-      markCloudKeysBackupConfirmed()
-      setEnrollments(result.enrollments)
+      setEnrollments(getTrustholderEnrollments().enrollments)
       setLocalShare({
         share: result.localShare,
         integrity: result.integrity,
         total: result.totalShares,
       })
+      if (result.enrolledRecommended >= 1) {
+        markCloudKeysBackupConfirmed()
+      }
       playWalletSound('success')
       toastSuccess(
-        'Key shares deposited',
-        `Save your offline slice (${result.threshold}-of-${result.totalShares})`,
+        `${result.enrollment.operator === 'haste' ? 'Haste' : 'HandCash'} enrolled`,
+        result.enrolledRecommended >= result.recommendedTotal
+          ? 'Recommended providers done — save your offline slice'
+          : `Save your offline slice · ${result.enrolledRecommended}/${result.recommendedTotal} recommended`,
       )
     } catch (err) {
       playWalletSound('error')
@@ -185,7 +204,7 @@ export function TrustholderBackupPanel() {
         toastError(
           'Register first',
           portal
-            ? `Opened ${portal.split('?')[0]} — register, then try again.`
+            ? `Opened portal — register, then deposit again.`
             : err.message,
         )
       } else if (err instanceof Error && err.message === 'Cancelled') {
@@ -194,13 +213,15 @@ export function TrustholderBackupPanel() {
         toastError('Deposit failed', err instanceof Error ? err.message : String(err))
       }
     } finally {
-      setBusy(false)
+      setBusyId(null)
       setProgress(null)
     }
   }
 
-  const hc = enrollments.find((e) => e.operator === 'handcash')
-  const haste = enrollments.find((e) => e.operator === 'haste')
+  const recommended = providers.filter((p) => p.recommended)
+  const recommendedDone = recommended.filter((p) =>
+    enrollments.some((e) => e.operator === p.operator),
+  ).length
 
   const destinations = providers.map((p) => {
     const enrolled = enrollments.find((e) => e.operator === p.operator)
@@ -209,9 +230,16 @@ export function TrustholderBackupPanel() {
       label: p.label,
       description: enrolled
         ? `Deposited ${new Date(enrolled.enrolledAt).toLocaleDateString()}`
-        : 'Deposit a slice during enrollment below',
-      state: enrolled ? ('enrolled' as const) : ('pending' as const),
+        : 'Independent · deposit only this provider',
+      state:
+        busyId === p.operator
+          ? ('busy' as const)
+          : enrolled
+            ? ('enrolled' as const)
+            : ('pending' as const),
       enrolledAt: enrolled?.enrolledAt,
+      recommended: p.recommended,
+      portal: portals[p.operator],
     }
   })
 
@@ -219,30 +247,95 @@ export function TrustholderBackupPanel() {
     <div
       className="nav-section-body settings-scroll"
       data-aeon-scope="trustholder-backup"
-      data-aeon-state={busy ? 'busy' : localShare ? 'local-share' : 'idle'}
+      data-aeon-state={busyId ? 'busy' : localShare ? 'local-share' : 'idle'}
     >
       <p className="settings-hint">
-        Recommended recovery: deposit one key slice to HandCash and one to Haste (BRC-232). Keep the
-        third slice offline. Any two slices restore your wallet.
+        Each trustholder is independent. We recommend HandCash and Haste (one slice each) plus an
+        offline slice — any two restore the wallet. Deposit one provider at a time.
       </p>
+
+      {!password ? (
+        <ConfirmPasswordGate
+          id="trustholder-deposit-password"
+          title="Confirm it’s you"
+          lede="Unlock once, then deposit to whichever providers you want."
+          actionLabel="Unlock"
+          onVerified={(pw) => setPassword(pw)}
+        />
+      ) : (
+        <div className="settings-form settings-form-compact" data-aeon-part="deposit-form">
+          <div className="field">
+            <label htmlFor="trustholder-email">Portal email</label>
+            <input
+              id="trustholder-email"
+              type="email"
+              autoComplete="email"
+              placeholder="you@example.com"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              disabled={Boolean(busyId)}
+            />
+          </div>
+          <p className="settings-row-desc">
+            Same email can register at each portal. OTP is per provider when you deposit.
+          </p>
+          {progress ? (
+            <p className="settings-row-desc" data-aeon-part="deposit-progress" role="status">
+              {progress.message}
+            </p>
+          ) : null}
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={Boolean(busyId)}
+              onClick={() => {
+                setPassword(null)
+                playWalletSound('soft')
+              }}
+            >
+              Lock again
+            </button>
+          </div>
+        </div>
+      )}
 
       <TrustholderDestinationList
         destinations={destinations}
+        recommendedDone={recommendedDone}
+        recommendedTotal={recommended.length}
+        busyId={busyId}
         offlineShare={
           localShare
             ? {
                 share: localShare.share,
                 integrity: localShare.integrity,
                 total: localShare.total,
-                index: localShare.total - 1,
+                index: LOCAL_SHARE_INDEX,
               }
             : null
         }
+        onDeposit={(id) => {
+          if (!password) {
+            toastError('Unlock first')
+            return
+          }
+          void runDeposit(id as TrustholderOperator)
+        }}
+        onOpenPortal={(id) => {
+          const portal = portals[id]
+          if (!portal) {
+            toastError('Portal unavailable', 'Could not load provider info yet.')
+            return
+          }
+          playWalletSound('soft')
+          void openExternalUrl(withEmailQuery(portal, email))
+        }}
         onOfflineCopy={() => void copyText(localShare?.share ?? '', { label: 'offline slice' })}
         onOfflineSave={() => {
           if (!localShare) return
           downloadShare(
-            shareDownloadFilename(localShare.total - 1, localShare.total, localShare.integrity),
+            shareDownloadFilename(LOCAL_SHARE_INDEX, localShare.total, localShare.integrity),
             `${localShare.share}\n`,
           )
           playWalletSound('soft')
@@ -250,7 +343,7 @@ export function TrustholderBackupPanel() {
         }}
       />
 
-      {localShare ? (
+      {localShare && recommendedDone >= recommended.length ? (
         <div className="actions" style={{ marginTop: 12 }}>
           <button
             type="button"
@@ -262,85 +355,6 @@ export function TrustholderBackupPanel() {
           >
             Continue to history backup
           </button>
-        </div>
-      ) : null}
-
-      {!localShare && !password ? (
-        <ConfirmPasswordGate
-          id="trustholder-deposit-password"
-          title="Confirm it’s you"
-          lede="Unlock to create BRC-140 slices and deposit them to HandCash and Haste."
-          actionLabel="Unlock deposit"
-          onVerified={(pw) => setPassword(pw)}
-        />
-      ) : !localShare ? (
-        <div className="settings-form settings-form-compact" data-aeon-part="deposit-form">
-          <div className="field">
-            <label htmlFor="trustholder-email">Portal email</label>
-            <input
-              id="trustholder-email"
-              type="email"
-              autoComplete="email"
-              placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              disabled={busy}
-            />
-          </div>
-          <p className="settings-row-desc">
-            Register the same email at each provider portal once, then deposit. OTP is required for
-            each trustholder.
-          </p>
-          <div className="actions" style={{ flexWrap: 'wrap' }}>
-            {providers.map((p) => {
-              const portal = portals[p.operator]
-              if (!portal) return null
-              return (
-                <button
-                  key={p.operator}
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={busy}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    void openExternalUrl(withEmailQuery(portal, email))
-                  }}
-                >
-                  Open {p.label} portal
-                </button>
-              )
-            })}
-          </div>
-          {progress ? (
-            <p className="settings-row-desc" data-aeon-part="deposit-progress" role="status">
-              {progress.message}
-            </p>
-          ) : null}
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-primary"
-              disabled={busy || !email.includes('@')}
-              onClick={() => void runDeposit()}
-            >
-              {busy
-                ? 'Depositing…'
-                : hc && haste
-                  ? 'Re-deposit shares'
-                  : 'Deposit to HandCash + Haste'}
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={busy}
-              onClick={() => {
-                setPassword(null)
-                playWalletSound('soft')
-              }}
-            >
-              Lock again
-            </button>
-          </div>
         </div>
       ) : null}
 
@@ -463,8 +477,8 @@ export function TrustholderBackupPanel() {
       </Prompt.Root>
 
       <SettingsFeatureAbout tags={['BRC-232', 'BRC-140']}>
-        Trustholders hold encrypted key slices you authorize. HandCash never sees your full key —
-        recovery needs any two of three slices.
+        Providers are modular. Recommend two cloud slices plus one offline — recovery needs any two
+        of three. HandCash never sees your full key.
       </SettingsFeatureAbout>
     </div>
   )
