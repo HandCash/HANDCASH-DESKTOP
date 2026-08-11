@@ -2,9 +2,15 @@
 
 ## [1.2.157] - 2026-08-11
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Send feel:** Review skips toolbox balance when the painted balance already
+  covers the amount; raises spend priority otherwise so sync yields. BSV send
+  leaves “Waiting to send” as soon as the spend region is held.
+- **Activity after send:** keep the feed mounted during Working, bust feed cache
+  on every activity write, and record collectable sends as soon as the txid
+  exists. Chain ingest no longer awaits `listCollectables` on the coordinator
+  path (background paint instead).
 
 ## [1.2.156] - 2026-08-11
 
