@@ -1519,21 +1519,66 @@ async function signOrdinalTransfer(args: {
     spends[vin] = { unlockingScript }
   }
 
-  // Must land on the network before we return a txid. Delayed broadcast on phone
-  // returned ghost txids that 404 on WoC/Bitails while Desktop sync posts worked.
-  const signed = await args.wallet.wallet.signAction({
-    reference: args.signable.reference,
-    spends,
-    options: {
-      acceptDelayedBroadcast: false,
-    },
-  })
+  // Delayed broadcast returns a local txid without throwing WERR_REVIEW_ACTIONS
+  // on doubleSpend (undelayed mode does). We still require a network post before
+  // treating the send as success — postBeef below is the gate that killed ghosts.
+  let signed
+  try {
+    signed = await args.wallet.wallet.signAction({
+      reference: args.signable.reference,
+      spends,
+      options: {
+        acceptDelayedBroadcast: true,
+      },
+    })
+  } catch (err) {
+    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
+      await import('./actionReview')
+    if (isReviewActionsError(err)) {
+      await recoverFromReviewActions({
+        err,
+        reference: args.signable.reference,
+        tipOutpoints: [...args.outpoints],
+        active: args.wallet,
+      })
+      throw new Error(formatReviewActionsError(err))
+    }
+    throw err
+  }
+
   const txid =
     typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
   if (!txid) throw new Error('Collectable transfer returned no txid')
 
-  // Belt: sync signAction should have posted; re-post so a soft-timeout / Abort
-  // path cannot leave a local-only txid. "Already in mempool" counts as success.
+  const {
+    sendWithHasFailure,
+    formatReviewActionsError,
+    recoverFromReviewActions,
+  } = await import('./actionReview')
+  const sendWith = (signed as { sendWithResults?: Array<{ status?: string }> })
+    .sendWithResults
+  if (sendWithHasFailure(sendWith)) {
+    await recoverFromReviewActions({
+      err: {
+        name: 'WERR_REVIEW_ACTIONS',
+        sendWithResults: sendWith,
+        txid,
+        message: 'SendWith reported failure',
+      },
+      reference: args.signable.reference,
+      tipOutpoints: [...args.outpoints],
+      active: args.wallet,
+    })
+    throw new Error(
+      formatReviewActionsError({
+        sendWithResults: sendWith,
+        reviewActionResults: [],
+      }),
+    )
+  }
+
+  // Belt: delayed signAction may return before the network accepts. Confirm via
+  // postBeef — "Already in mempool" counts as success.
   try {
     let beefBin: number[] | undefined = Array.isArray(signed.tx)
       ? (signed.tx as number[])
@@ -1557,6 +1602,17 @@ async function signOrdinalTransfer(args: {
       )
     }
   } catch (err) {
+    try {
+      await args.wallet.wallet.abortAction({ reference: args.signable.reference })
+    } catch (abortErr) {
+      console.warn('[collectables] abort after broadcast fail skipped', abortErr)
+    }
+    await recoverFromReviewActions({
+      err,
+      reference: null,
+      tipOutpoints: [...args.outpoints],
+      active: args.wallet,
+    })
     if (err instanceof Error && /Broadcast failed/.test(err.message)) throw err
     console.warn('[collectables] postBeef confirm failed', err)
     throw err instanceof Error
@@ -2104,7 +2160,9 @@ export async function sendCollectable(args: {
         trustSelf: 'known',
         ...(knownTxids.length > 0 ? { knownTxids } : {}),
         randomizeOutputs: false,
-        acceptDelayedBroadcast: false,
+        // Delayed + postBeef confirm in signOrdinalTransfer — undelayed throws
+        // WERR_REVIEW_ACTIONS ("require review") on prior ghost doubleSpends.
+        acceptDelayedBroadcast: true,
         signAndProcess: true,
       },
     })
@@ -2114,6 +2172,18 @@ export async function sendCollectable(args: {
     )
   } catch (err) {
     if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
+      await import('./actionReview')
+    if (isReviewActionsError(err)) {
+      await recoverFromReviewActions({
+        err,
+        tipOutpoints: spendOutpoints,
+        active: wallet,
+      })
+      softChart.send({ type: 'FAIL', error: formatReviewActionsError(err) })
+      softChart.stop()
+      return failSend(new Error(formatReviewActionsError(err)))
+    }
     softChart.send({
       type: 'FAIL',
       error: err instanceof Error ? err.message : String(err),
@@ -2143,6 +2213,19 @@ export async function sendCollectable(args: {
       softChart.send({ type: 'SIGNED', txid })
     } catch (err) {
       if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+      const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
+        await import('./actionReview')
+      if (isReviewActionsError(err)) {
+        await recoverFromReviewActions({
+          err,
+          reference: result.signableTransaction?.reference,
+          tipOutpoints: spendOutpoints,
+          active: wallet,
+        })
+        softChart.send({ type: 'FAIL', error: formatReviewActionsError(err) })
+        softChart.stop()
+        return failSend(new Error(formatReviewActionsError(err)))
+      }
       softChart.send({
         type: 'FAIL',
         error: err instanceof Error ? err.message : String(err),

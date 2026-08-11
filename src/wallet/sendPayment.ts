@@ -81,13 +81,37 @@ export async function sendSatsToAddress(opts: {
             },
           ],
           options: {
-            acceptDelayedBroadcast: false,
+            // Delayed + activity only after txid; undelayed throws WERR_REVIEW_ACTIONS
+            // on prior ghost conflicts ("require review").
+            acceptDelayedBroadcast: true,
             signAndProcess: true,
           },
         })
 
         const realTxid = (result as { txid?: string })?.txid
         const txid = realTxid ?? `local-${Date.now().toString(16)}`
+        const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
+          .sendWithResults
+        const { sendWithHasFailure } = await import('./actionReview')
+        if (sendWithHasFailure(sendWith) || !realTxid) {
+          const { formatReviewActionsError, recoverFromReviewActions } = await import(
+            './actionReview'
+          )
+          await recoverFromReviewActions({
+            err: {
+              name: 'WERR_REVIEW_ACTIONS',
+              sendWithResults: sendWith,
+              txid: realTxid,
+            },
+            active,
+          })
+          throw new Error(
+            formatReviewActionsError({
+              sendWithResults: sendWith,
+              reviewActionResults: [],
+            }),
+          )
+        }
         chart.send({ type: 'BROADCASTED', txid })
         completePendingSend(pending.id, txid)
 
@@ -115,6 +139,14 @@ export async function sendSatsToAddress(opts: {
       } catch (err) {
         clearPendingSend(pending.id)
         if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+        const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
+          await import('./actionReview')
+        if (isReviewActionsError(err)) {
+          await recoverFromReviewActions({ err, active })
+          const message = formatReviewActionsError(err)
+          chart.send({ type: 'FAIL', error: message })
+          throw new Error(message)
+        }
         chart.send({
           type: 'FAIL',
           error: err instanceof Error ? err.message : String(err),

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.180] - 2026-08-11
+
+### Fixed
+- **“Undelayed … results require review” on mobile send.** Soft-latch / BSV sends use delayed broadcast again, but still require `postBeef` (or clean sendWith) before success. Prior ghost doubleSpends are unfailed on Refresh and on this error so the tip is spendable again.
+
 ## [1.2.179] - 2026-08-11
 
 ### Fixed

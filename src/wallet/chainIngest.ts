@@ -244,6 +244,12 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] ghost-sent heal skipped', err)
   }
 
+  try {
+    await active.wallet.listFailedActions({ labels: [], limit: 100 }, true)
+  } catch (err) {
+    console.warn('[chain-ingest] failed-action unfail skipped', err)
+  }
+
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
       heldCount: 0,

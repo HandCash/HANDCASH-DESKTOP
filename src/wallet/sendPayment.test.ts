@@ -4,6 +4,7 @@ type CreateActionArgs = { options?: { acceptDelayedBroadcast?: boolean } }
 
 const createAction = vi.fn(async (_args: CreateActionArgs) => ({
   txid: 'a'.repeat(64),
+  sendWithResults: [{ txid: 'a'.repeat(64), status: 'unproven' }],
 }))
 const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
 
@@ -47,16 +48,14 @@ describe('sendSatsToAddress', () => {
     createAction.mockClear()
   })
 
-  it('broadcasts immediately instead of queuing for the monitor', async () => {
-    // acceptDelayedBroadcast defaults to TRUE in the SDK: the transaction is
-    // handed to the monitor's TaskSendWaiting loop rather than sent here, and a
-    // failed broadcast does not throw. That is how a payment could report a txid
-    // and still never reach the network.
+  it('uses delayed createAction and rejects failed sendWith results', async () => {
+    // Undelayed mode throws WERR_REVIEW_ACTIONS on prior ghost doubleSpends
+    // ("require review"). Delayed returns; we refuse success unless sendWith is clean.
     const { sendSatsToAddress } = await import('./sendPayment')
     await sendSatsToAddress({ to: ADDRESS, satoshis: 1_000 })
 
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0]
-    expect(args?.options?.acceptDelayedBroadcast).toBe(false)
+    expect(args?.options?.acceptDelayedBroadcast).toBe(true)
   })
 })
