@@ -16,7 +16,7 @@ import {
   historyBackupObjectUrl,
   setHistoryBackupPrefs,
 } from './historyBackupPrefs'
-import { getActiveWallet } from './session'
+import { getActiveWallet, clearActiveWallet, bootWallet } from './session'
 import { revealRootKeyHex } from './vault'
 import { refreshCloudBackupHealth } from './cloudBackupHealth'
 import {
@@ -277,8 +277,75 @@ async function downloadAndRestoreBrc39BackupExclusive(
         ? Math.max(remoteExportedAt, prefs.lastUploadedAt ?? 0)
         : Date.now(),
   })
-  appendAppLog('info', `[cloud-backup] restored ${buf.byteLength} bytes`)
+  appendAppLog(
+    'info',
+    `[cloud-backup] restored ${buf.byteLength} bytes (merge inserts=${result.inserts} updates=${result.updates})`,
+  )
   void refreshCloudBackupHealth()
+  return result
+}
+
+function deleteIdbDatabase(name: string): Promise<void> {
+  return new Promise((resolve) => {
+    try {
+      const req = indexedDB.deleteDatabase(name)
+      req.onsuccess = () => resolve()
+      req.onerror = () => resolve()
+      req.onblocked = () => resolve()
+    } catch {
+      resolve()
+    }
+  })
+}
+
+/**
+ * Recovery / replace: wipe this wallet's toolbox IndexedDB, reboot, then merge
+ * remote BRC-39 into a clean localState. Avoids LWW merge against soft-latch
+ * dust that raced a prior pull (under-restored spendable balance).
+ *
+ * Keeps the sealed vault (keys). Call only from the history recovery gate or
+ * an explicit Settings "Replace from cloud" action — not from soft poll.
+ */
+export async function replaceLocalHistoryFromCloud(
+  password: string,
+): Promise<BRC38ImportResult> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
+  const { rootKeyHex, handle, chain, identityKey } = active
+  const dbName = `handcash-brc100-${chain}-${handle}`
+
+  appendAppLog(
+    'info',
+    `[cloud-backup] replace local history — wiping ${dbName} then pulling BRC-39`,
+  )
+
+  try {
+    active.monitor?.stopTasks?.()
+  } catch {
+    /* optional */
+  }
+  clearActiveWallet()
+  await deleteIdbDatabase(dbName)
+
+  await bootWallet({ rootKeyHex, handle, chain })
+  const next = getActiveWallet()
+  if (!next || next.identityKey !== identityKey) {
+    throw new Error('Wallet reboot after history wipe failed')
+  }
+
+  const result = await downloadAndRestoreBrc39Backup(password)
+  try {
+    const { inspectLocalToolboxState } = await import('./layers')
+    const { fetchBalanceSats } = await import('./session')
+    const state = await inspectLocalToolboxState()
+    const managed = await fetchBalanceSats(next.wallet)
+    appendAppLog(
+      'info',
+      `[cloud-backup] after replace: managed=${managed} defaultOuts=${state.defaultOutputCount} actions=${state.actionCount} oneSat=${state.oneSatOutputCount}`,
+    )
+  } catch {
+    /* diagnostic only */
+  }
   return result
 }
 

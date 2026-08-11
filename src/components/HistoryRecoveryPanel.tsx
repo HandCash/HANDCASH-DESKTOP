@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { clearBackupBackoff } from '../wallet/backupWatchdog'
 import {
-  downloadAndRestoreBrc39Backup,
   fetchRemoteBrc39Meta,
+  replaceLocalHistoryFromCloud,
 } from '../wallet/historyBackup'
 import { ensureSuggestedHistoryBackupUrl } from '../wallet/historyBackupPrefs'
 import { recomposeWallet } from '../wallet/recompose'
@@ -23,8 +23,9 @@ type RemoteProbe =
   | { status: 'error'; message: string }
 
 /**
- * Post-restore gate: keys are sealed; pull BRC-39 so balance, activity, friends,
- * and connected apps return before entering the wallet.
+ * Post-restore gate: keys are sealed; replace local toolbox state from BRC-39
+ * (wipe IDB then pull) so balance, activity, friends, and apps return before
+ * entering the wallet — avoids merge races with chain soft-latch dust.
  */
 export function HistoryRecoveryPanel({
   initialPassword,
@@ -71,7 +72,7 @@ export function HistoryRecoveryPanel({
     try {
       ensureSuggestedHistoryBackupUrl()
       clearBackupBackoff()
-      await downloadAndRestoreBrc39Backup(password)
+      await replaceLocalHistoryFromCloud(password)
       await recomposeWallet({
         password,
         history: 'skip',

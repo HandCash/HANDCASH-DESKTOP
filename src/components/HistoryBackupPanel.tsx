@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  downloadAndRestoreBrc39Backup,
   exportBrc39ToFile,
   importBrc39FromFile,
   listLocalBrc39Archive,
+  replaceLocalHistoryFromCloud,
   restoreLocalBrc39Archive,
   uploadBrc39Backup,
 } from '../wallet/historyBackup'
@@ -164,7 +164,10 @@ export function HistoryBackupPanel() {
     setBusy('restore')
     try {
       ensureSuggestedHistoryBackupUrl()
-      const result = await downloadAndRestoreBrc39Backup(password)
+      clearBackupBackoff()
+      // Wipe toolbox IDB then pull — merge alone can under-restore after a
+      // soft-latch race left local rows that win LWW over cloud spendable outs.
+      const result = await replaceLocalHistoryFromCloud(password)
       const recomposed = await recomposeWallet({
         password,
         history: 'skip',
@@ -172,7 +175,7 @@ export function HistoryBackupPanel() {
       })
       playWalletSound('success')
       toastSuccess(
-        'Restored from history',
+        'Replaced from history',
         `${result.inserts + result.updates} changes` +
           (recomposed.spendableSats != null
             ? ` · chain ${recomposed.spendableSats} sats`
@@ -293,7 +296,7 @@ export function HistoryBackupPanel() {
               disabled={busy !== null || !effectiveUrl}
               onClick={() => void runRestoreUrl()}
             >
-              {busy === 'restore' ? 'Restoring…' : 'Restore from URL'}
+              {busy === 'restore' ? 'Replacing…' : 'Replace from cloud'}
             </button>
           </div>
           <input
