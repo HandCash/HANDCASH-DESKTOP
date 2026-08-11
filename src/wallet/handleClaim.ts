@@ -62,6 +62,35 @@ export function readClaimedCloudHandle(): ClaimedHandleState | null {
   }
 }
 
+/** Claim for this wallet’s identity key, if any. */
+export function claimedHandleForIdentity(
+  identityKey: string | null | undefined,
+): ClaimedHandleState | null {
+  const claimed = readClaimedCloudHandle()
+  if (!claimed || !identityKey) return null
+  return claimed.identityKey === identityKey.trim().toLowerCase() ? claimed : null
+}
+
+const claimListeners = new Set<() => void>()
+
+function notifyClaimListeners(): void {
+  for (const fn of claimListeners) {
+    try {
+      fn()
+    } catch {
+      // ignore listener errors
+    }
+  }
+}
+
+/** Re-read when a claim lands (same session / after bridge mint). */
+export function subscribeClaimedCloudHandle(listener: () => void): () => void {
+  claimListeners.add(listener)
+  return () => {
+    claimListeners.delete(listener)
+  }
+}
+
 export function getClaimedCloudHandlePayload(): ClaimedHandleState | null {
   return readClaimedCloudHandle()
 }
@@ -99,6 +128,7 @@ export async function claimCloudHandlePayload(args: {
       claimedAt: Date.now(),
     }
     durableSetItem(STORAGE_KEY, JSON.stringify(state))
+    notifyClaimListeners()
     return state
   })().finally(() => {
     claimInFlight = null

@@ -52,6 +52,16 @@ export const DEFAULT_MARKET_BASE_URL =
 /** Buy BSV with other crypto; pays into this device over the BRC-100 bridge. */
 export const ADD_MONEY_URL = `${DEFAULT_MARKET_BASE_URL.replace(/\/+$/, '')}/wallet/swap`
 
+/**
+ * Claim $handle → identityKey (items-market `/claim-handle`).
+ * Default: preprod until prod secrets are live; override with VITE_CLAIM_HANDLE_URL.
+ */
+export const CLAIM_HANDLE_URL =
+  (typeof import.meta !== 'undefined' &&
+    typeof import.meta.env?.VITE_CLAIM_HANDLE_URL === 'string' &&
+    import.meta.env.VITE_CLAIM_HANDLE_URL.trim()) ||
+  'https://preprod-market.handcash.io/claim-handle'
+
 export const HASTE_BACKUP_SERVICE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_HASTE_BACKUP_SERVICE_URL === 'string' &&

@@ -26,6 +26,28 @@ describe('ownershipFate', () => {
     ).toBe('graceHold')
   })
 
+  it('ghost-drops soft tips locked to someone else even during grace', () => {
+    expect(
+      ownershipFate({
+        tipKind: classifyTipKind(P2PKH),
+        inLiveSet: false,
+        unjudged: true,
+        paysOurAddress: false,
+      }),
+    ).toBe('ghostDrop')
+  })
+
+  it('still grace-holds our soft tips when the address scan lags', () => {
+    expect(
+      ownershipFate({
+        tipKind: classifyTipKind(P2PKH),
+        inLiveSet: false,
+        unjudged: true,
+        paysOurAddress: true,
+      }),
+    ).toBe('graceHold')
+  })
+
   it('keeps covenant tips missing from the address scan past grace', () => {
     expect(
       ownershipFate({

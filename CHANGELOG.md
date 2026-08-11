@@ -1,10 +1,17 @@
 # Changelog
 
-## [1.2.155] - 2026-08-11
+## [1.2.156] - 2026-08-11
 
 ### Changed
 
 - Patch release (every push must ship a new version).
+
+## [1.2.155] - 2026-08-11
+
+### Fixed
+
+- **Handle claim:** `claimCloudHandle` requires a HandCash `claimTicket` from
+  items-market (Auth0 + `$alias` ownership) before minting on BRC-CLOUD.
 
 ## [1.2.154] - 2026-08-11
 

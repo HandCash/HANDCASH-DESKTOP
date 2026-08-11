@@ -1209,11 +1209,15 @@ async function listCollectablesNow(
         graceMs: OWNERSHIP_SETTLE_GRACE_MS,
       })
       const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
+      const lockHex = o.lockingScript?.trim() ? o.lockingScript : null
+      const paysOurAddress =
+        lockHex != null ? scriptPaysAddress(lockHex, wallet.address) : null
       const fate = ownershipFate({
         tipKind: classifyTipKind(o.lockingScript),
         inLiveSet: false,
         unjudged,
         provenTier: verdict?.tier ?? null,
+        paysOurAddress,
       })
       if (fate === 'ghostDrop') ghosts.push(o)
       else keptMissing.push(o)
@@ -1822,16 +1826,13 @@ export async function sendCollectable(args: {
       { outpoint, txid },
       ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
     ])
-    // Soft-latch remittance proves the spent tip; the new tip inherits that
-    // proof on receive via verifyProvenanceForHeldTip. Pin BRC-150 for the
-    // sender's new tip when we built remittance (self-pay / local cache).
-    if (opts?.remittanceBuilt) {
-      rememberProvenVerdict(`${txid.trim().toLowerCase()}.0`, {
-        tier: 'brc150',
-        origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
-        verifiedAt: Date.now(),
-      })
-    }
+    const tx = txid.trim().toLowerCase()
+    const newTip = `${tx}.0`
+    const newLatch = isLatchedSendEnabled() ? `${tx}.1` : null
+    // createAction files the recipient tip in *this* wallet's `1sat` basket.
+    // That is remittance metadata for the sender, not ownership — unless the
+    // lock pays us (true self-receive).
+    const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
     invalidateLiveOneSatOutpoints()
     await relinquishSpentOutputs(wallet, [
       { outpoint, basket: '1sat' },
@@ -1839,6 +1840,22 @@ export async function sendCollectable(args: {
         ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
         : []),
     ])
+    if (!selfReceive) {
+      await relinquishSpentOutputs(wallet, [
+        { outpoint: newTip, basket: '1sat' },
+        ...(newLatch
+          ? [{ outpoint: newLatch, basket: ONE_SAT_LATCH_BASKET }]
+          : []),
+      ])
+    } else if (opts?.remittanceBuilt) {
+      // Soft-latch remittance proves the spent tip; pin BRC-150 on the tip we
+      // still hold (self-pay) so receive can show authenticity verified.
+      rememberProvenVerdict(newTip, {
+        tier: 'brc150',
+        origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
+        verifiedAt: Date.now(),
+      })
+    }
     setPaymentProgress('finishing')
     setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
     scheduleHistoryBackupPush('sendCollectable')

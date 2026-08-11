@@ -3062,12 +3062,11 @@ button.identity-qr-copy:focus-visible {
 }
 
 .identity-key-note {
-  margin: 6px 0 0;
+  margin: 4px 0 0;
   color: var(--hc-muted);
-  font-size: 0.74rem;
-  text-align: center;
-  line-height: 1.35;
-  max-width: 220px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  max-width: 28rem;
 }
 
 .identity-info {
@@ -3088,6 +3087,47 @@ button.identity-qr-copy:focus-visible {
   letter-spacing: 0.08em;
   text-transform: uppercase;
   font-weight: 600;
+}
+
+.identity-handle {
+  appearance: none;
+  width: fit-content;
+  max-width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: #ffffff;
+  font-size: 1.65rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1.2;
+  text-align: left;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.identity-handle:hover {
+  color: var(--hc-accent);
+}
+
+.identity-handle-empty {
+  display: grid;
+  gap: 10px;
+  justify-items: start;
+}
+
+.identity-handle-missing {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+
+.identity-claim-btn {
+  width: fit-content;
+  padding: 8px 14px;
+  font-size: 0.85rem;
 }
 
 .identity-network {
@@ -3141,8 +3181,22 @@ button.identity-qr-copy:focus-visible {
     width: 100%;
   }
 
+  .identity-handle,
   .identity-key {
     text-align: center;
+  }
+
+  .identity-handle {
+    width: 100%;
+  }
+
+  .identity-handle-empty {
+    justify-items: center;
+  }
+
+  .identity-key-note {
+    text-align: center;
+    margin-inline: auto;
   }
 }
 
