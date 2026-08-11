@@ -66,4 +66,21 @@ describe('parseHandleInput $ preference', () => {
       domain: 'handcash.io',
     })
   })
+
+  it('accepts bare local-part and paymail-shaped input', () => {
+    expect(parseHandleInput('alice')).toEqual({ handle: 'alice', domain: null })
+    expect(parseHandleInput('alice@handcash.io')).toEqual({
+      handle: 'alice',
+      domain: 'handcash.io',
+    })
+  })
+
+  it('does not treat P2PKH addresses or identity keys as bare handles', () => {
+    expect(parseHandleInput('1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2')).toBeNull()
+    expect(
+      parseHandleInput(
+        '032558218f9d2be30fe57d6d9cbb053dab7a3548f53f1c3f2b7a9fee4e37e2fd6c',
+      ),
+    ).toBeNull()
+  })
 })

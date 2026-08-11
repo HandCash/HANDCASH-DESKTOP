@@ -30,7 +30,7 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { isBsv21Mime } from './bsv21'
-import { resolvePaymentAddress } from './friends'
+import { resolvePaymentAddress, resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
 import {
@@ -1660,7 +1660,7 @@ export async function sendCollectable(args: {
     'Preparing the collectable for transfer',
     outpoint,
   )
-  const to = resolvePaymentAddress(args.toAddress, wallet.chain)
+  const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
 
   let lockingScript: string
   try {

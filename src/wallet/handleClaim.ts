@@ -5,9 +5,9 @@
  * Production minting requires a short-lived `claimTicket` from HandCash
  * (items-market) proving ownership of the cloud $alias.
  */
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { getActiveWallet } from './session'
-import { claimHandle } from './handleResolve'
+import { claimHandle, resolveHandle } from './handleResolve'
 import { formatHandCashHandle, normalizeHandleName } from './handleFormat'
 import { isMigrationOrigin } from './migration'
 
@@ -21,7 +21,11 @@ export type ClaimedHandleState = {
 }
 
 export function isHandleClaimMethod(method: string): boolean {
-  return method === 'claimCloudHandle' || method === 'getClaimedCloudHandle'
+  return (
+    method === 'claimCloudHandle' ||
+    method === 'getClaimedCloudHandle' ||
+    method === 'clearClaimedCloudHandle'
+  )
 }
 
 export function isHandleClaimOrigin(origin: string | undefined): boolean {
@@ -93,6 +97,33 @@ export function subscribeClaimedCloudHandle(listener: () => void): () => void {
 
 export function getClaimedCloudHandlePayload(): ClaimedHandleState | null {
   return readClaimedCloudHandle()
+}
+
+/** Drop local claim cache (does not revoke on BRC-CLOUD). */
+export function clearClaimedCloudHandlePayload(): { cleared: true } {
+  durableRemoveItem(STORAGE_KEY)
+  notifyClaimListeners()
+  return { cleared: true }
+}
+
+/**
+ * Return the local claim only if BRC-CLOUD still binds it to this identity.
+ * Stale cache after an ops clear used to block reclaim and break $handle send.
+ */
+export async function getClaimedCloudHandleVerified(): Promise<ClaimedHandleState | null> {
+  const local = readClaimedCloudHandle()
+  if (!local) return null
+  try {
+    const resolved = await resolveHandle(`$${local.handle}`)
+    if (resolved.identityKey.toLowerCase() !== local.identityKey.toLowerCase()) {
+      clearClaimedCloudHandlePayload()
+      return null
+    }
+    return local
+  } catch {
+    clearClaimedCloudHandlePayload()
+    return null
+  }
 }
 
 let claimInFlight: Promise<ClaimedHandleState> | null = null

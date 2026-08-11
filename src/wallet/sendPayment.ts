@@ -10,7 +10,7 @@ import {
   clearPendingSend,
   completePendingSend,
 } from './pendingSend'
-import { resolvePaymentAddress } from './friends'
+import { resolvePaymentRecipient } from './friends'
 import { fetchBalanceSats, getActiveWallet } from './session'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
@@ -50,7 +50,7 @@ export async function sendSatsToAddress(opts: {
       const active = getActiveWallet()
       if (!active) throw new Error('Wallet locked')
 
-      const to = resolvePaymentAddress(opts.to, active.chain)
+      const to = await resolvePaymentRecipient(opts.to, active.chain)
       const satoshis = opts.satoshis
       if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 

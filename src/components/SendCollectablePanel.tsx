@@ -92,14 +92,49 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const applyRecipientInput = (value: string) => {
     setRecipientQuery(value)
     setShowMatches(true)
-    setTo(value.trim())
     setFriendLabel(null)
+    setError(null)
     const wallet = getActiveWallet()
-    let key = identityKeyFromRecipient(value)
-    // Own P2PKH address still hardens — we know our identity key.
+    const trimmed = value.trim()
+
+    const peer = tryParsePeerPayUri(trimmed)
+    if (peer) {
+      try {
+        setTo(addressFromIdentityKey(peer.identityKey, chain))
+        setRecipientIdentityKey(peer.identityKey)
+      } catch (err) {
+        setTo('')
+        setRecipientIdentityKey(null)
+        setError(err instanceof Error ? err.message : String(err))
+      }
+      return
+    }
+
+    if (parseHandleInput(trimmed)) {
+      // Do not park the raw $handle in `to` — send would treat it as an address.
+      setTo('')
+      setRecipientIdentityKey(null)
+      void (async () => {
+        try {
+          const resolved = await resolveHandle(trimmed)
+          setTo(addressFromIdentityKey(resolved.identityKey, chain))
+          setRecipientIdentityKey(resolved.identityKey)
+          setFriendLabel(resolved.display)
+          setError(null)
+        } catch (err) {
+          setTo('')
+          setRecipientIdentityKey(null)
+          setError(err instanceof Error ? err.message : String(err))
+        }
+      })()
+      return
+    }
+
+    setTo(trimmed)
+    let key = identityKeyFromRecipient(trimmed)
     if (!key && wallet?.address && wallet.identityKey) {
       try {
-        if (resolvePaymentAddress(value, chain) === wallet.address) {
+        if (resolvePaymentAddress(trimmed, chain) === wallet.address) {
           key = wallet.identityKey
         }
       } catch {
@@ -107,32 +142,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       }
     }
     setRecipientIdentityKey(key)
-
-    const peer = tryParsePeerPayUri(value)
-    if (peer) {
-      try {
-        setTo(addressFromIdentityKey(peer.identityKey, chain))
-        setRecipientIdentityKey(peer.identityKey)
-        setError(null)
-      } catch (err) {
-        setError(err instanceof Error ? err.message : String(err))
-      }
-      return
-    }
-
-    if (parseHandleInput(value)) {
-      void (async () => {
-        try {
-          const resolved = await resolveHandle(value)
-          setTo(addressFromIdentityKey(resolved.identityKey, chain))
-          setRecipientIdentityKey(resolved.identityKey)
-          setFriendLabel(resolved.display)
-          setError(null)
-        } catch (err) {
-          setError(err instanceof Error ? err.message : String(err))
-        }
-      })()
-    }
   }
 
   const selectFriend = (friend: Friend) => {

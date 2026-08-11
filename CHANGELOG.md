@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.160] - 2026-08-11
+
+### Fixed
+
+- **Handle send:** `$handle` recipients resolve through BRC-CLOUD before payment
+  (no more “Invalid recipient address…” when the to-field still holds a handle).
+- **Stale claim cache:** `getClaimedCloudHandle` re-checks the registry and clears
+  local “claimed” state when the handle was wiped, so /claim-handle can remint.
+
 ## [1.2.159] - 2026-08-11
 
 ### Fixed

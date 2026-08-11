@@ -2,6 +2,7 @@ import { P2PKH, PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { tryParsePeerPayUri } from './peerPayUri'
+import { parseHandleInput, resolveHandle } from './handleResolve'
 
 const STORAGE_KEY = 'handcash.brc100.friends'
 
@@ -93,8 +94,36 @@ export function resolvePaymentAddress(recipient: string, chain: Chain): string {
   try {
     return addressFromIdentityKey(value, chain)
   } catch {
+    if (parseHandleInput(value)) {
+      throw new Error(
+        'Handle must be resolved before send — use $handle in the recipient field and wait for it to resolve',
+      )
+    }
     throw new Error('Invalid recipient address, identity key, or peerpay URI')
   }
+}
+
+/**
+ * Same as resolvePaymentAddress, plus BRC-169 `$handle` / paymail-shaped resolve
+ * against BRC-CLOUD.
+ */
+export async function resolvePaymentRecipient(
+  recipient: string,
+  chain: Chain,
+): Promise<string> {
+  const value = recipient.trim()
+  if (!value) throw new Error('Recipient required')
+
+  // Concrete address / key / peerpay first — never send a base58 address through
+  // handle resolve (bare-handle grammar can look similar).
+  try {
+    return resolvePaymentAddress(value, chain)
+  } catch (err) {
+    if (!parseHandleInput(value)) throw err
+  }
+
+  const resolved = await resolveHandle(value)
+  return addressFromIdentityKey(resolved.identityKey, chain)
 }
 
 /**

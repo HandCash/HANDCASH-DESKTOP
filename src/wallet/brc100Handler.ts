@@ -25,7 +25,8 @@ import {
 import { normalizeTokenId } from './bsv21'
 import {
   claimCloudHandlePayload,
-  getClaimedCloudHandlePayload,
+  clearClaimedCloudHandlePayload,
+  getClaimedCloudHandleVerified,
   isHandleClaimMethod,
   isHandleClaimOrigin,
 } from './handleClaim'
@@ -420,7 +421,9 @@ async function dispatchWalletMethod(
           : { handle: '' },
       )
     case 'getClaimedCloudHandle':
-      return getClaimedCloudHandlePayload()
+      return getClaimedCloudHandleVerified()
+    case 'clearClaimedCloudHandle':
+      return clearClaimedCloudHandlePayload()
     case 'getVersion':
       return wallet.getVersion({})
     case 'getNetwork':

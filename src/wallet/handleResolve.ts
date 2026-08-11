@@ -20,7 +20,7 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/** Parse $handle, @handle, $handle@domain, @handle@domain, or handle@domain. */
+/** Parse $handle, @handle, $handle@domain, @handle@domain, handle@domain, or bare handle. */
 export function parseHandleInput(raw: string): { handle: string; domain: string | null } | null {
   const t = raw.trim()
   if (!t) return null
@@ -37,6 +37,11 @@ export function parseHandleInput(raw: string): { handle: string; domain: string 
   // alice@handcash.io (paymail-shaped → handle grammar)
   m = /^([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
+
+  // alice (bare local-part). Must start with a letter so P2PKH (`1…` / `3…`)
+  // and identity keys (`02` / `03`) are never treated as handles.
+  m = /^([a-z][a-z0-9._-]{0,62}[a-z0-9]|[a-z])$/i.exec(t)
+  if (m) return { handle: m[1]!.toLowerCase(), domain: null }
 
   return null
 }
