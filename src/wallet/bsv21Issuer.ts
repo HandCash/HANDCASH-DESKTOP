@@ -5,7 +5,8 @@
  * `customInstructions.issuer` and tag `issuer:<pubkey>` are remittance mirrors only.
  */
 
-import { PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
+import { Beef, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
+import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { Algorithm, Sigma } from 'sigma-protocol'
 import { buildMergedInputBeef } from './beefCache'
 import { normalizeTokenId } from './bsv21'
@@ -565,7 +566,126 @@ export async function enrichCreateActionForBsv21Issuer(
     options: {
       ...(args.options ?? {}),
       randomizeOutputs: false,
+      trustSelf: 'known',
+      signAndProcess: true,
     },
+  }
+}
+
+export type Bsv21SignableTransaction = {
+  tx: number[]
+  reference: string
+}
+
+/**
+ * Auth tips / Sigma fund inputs use `unlockingScriptLength`, so createAction
+ * returns `signableTransaction` without a txid. Complete with root-key P2PKH
+ * (same pattern as soft-latch collectable sends).
+ */
+export async function completeBsv21SignableWithRootP2pkh(
+  active: ActiveWallet,
+  signable: Bsv21SignableTransaction,
+  inputOutpoints: string[],
+): Promise<{ txid: string; tx?: number[] }> {
+  const targets = new Set(
+    inputOutpoints
+      .map((op) => normalizeDotOutpoint(op))
+      .filter(Boolean)
+      .map((op) => {
+        const [txid, vout] = op.split('.')
+        return `${txid}.${Number(vout)}`
+      }),
+  )
+  if (targets.size === 0) {
+    throw new Error('BSV-21 mint signable has no inputs to unlock')
+  }
+
+  const beef = Beef.fromBinary(signable.tx)
+  let unsigned: Transaction | undefined
+  const vins: number[] = []
+  for (const btx of beef.txs) {
+    if (!btx.tx) continue
+    for (let i = 0; i < btx.tx.inputs.length; i++) {
+      const input = btx.tx.inputs[i]
+      const key = `${String(input?.sourceTXID).toLowerCase()}.${input?.sourceOutputIndex}`
+      if (targets.has(key)) {
+        unsigned = btx.tx
+        vins.push(i)
+      }
+    }
+    if (unsigned && vins.length === targets.size) break
+  }
+  if (!unsigned || vins.length === 0) {
+    throw new Error('BSV-21 auth input missing from the signable transaction')
+  }
+
+  const rootKey = PrivateKey.fromHex(active.rootKeyHex)
+  const spends: Record<number, { unlockingScript: string }> = {}
+  for (const vin of vins) {
+    const input = unsigned.inputs[vin]!
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
+    if (typeof satoshis !== 'number') {
+      throw new Error('BSV-21 mint input is missing its source transaction')
+    }
+    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, satoshis)
+  }
+  await unsigned.sign()
+  for (const vin of vins) {
+    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Could not sign the BSV-21 mint input')
+    spends[vin] = { unlockingScript }
+  }
+
+  const signed = await active.wallet.signAction({
+    reference: signable.reference,
+    spends,
+  })
+  const txid =
+    typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
+  if (!txid) throw new Error('BSV-21 mint signAction returned no txid')
+  return {
+    txid,
+    ...(Array.isArray(signed.tx) ? { tx: signed.tx as number[] } : {}),
+  }
+}
+
+/**
+ * If identity-mint createAction returned a signable (auth tip unlock pending),
+ * finish it so the app gets a txid like a normal createAction.
+ */
+export async function finishBsv21IdentityMintCreateAction(
+  active: ActiveWallet,
+  args: unknown,
+  result: unknown,
+): Promise<unknown> {
+  if (!isBsv21IdentityMintArgs('createAction', args)) return result
+  if (!result || typeof result !== 'object' || Array.isArray(result)) return result
+  const row = result as {
+    txid?: unknown
+    signableTransaction?: Bsv21SignableTransaction
+  }
+  if (typeof row.txid === 'string' && row.txid.trim()) return result
+  const signable = row.signableTransaction
+  if (!signable?.reference || !Array.isArray(signable.tx)) return result
+
+  const inputs =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? ((args as CreateActionArgs).inputs ?? [])
+      : []
+  const outpoints = inputs.map((i) => i.outpoint).filter(Boolean)
+  if (outpoints.length === 0) return result
+
+  const completed = await completeBsv21SignableWithRootP2pkh(
+    active,
+    signable,
+    outpoints,
+  )
+  const { signableTransaction: _drop, ...rest } = row
+  return {
+    ...rest,
+    txid: completed.txid,
+    ...(completed.tx ? { tx: completed.tx } : {}),
   }
 }
 

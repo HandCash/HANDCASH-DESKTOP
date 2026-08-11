@@ -18,6 +18,7 @@ import { rememberTokenIcon } from './tokenIconCache'
 import { rememberBeefBinary } from './beefCache'
 import {
   enrichCreateActionForBsv21Issuer,
+  finishBsv21IdentityMintCreateAction,
   isBsv21IdentityMintArgs,
   bsv21IdentityMintHints,
 } from './bsv21Issuer'
@@ -513,7 +514,27 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
               'broadcasting',
               'Signing and sending to the network',
             )
-            return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
+            const created = await dispatchWalletMethod(
+              active.wallet,
+              method,
+              actionArgs,
+              originator,
+            )
+            // Auth / Sigma fund tips use unlockingScriptLength → signable only.
+            // Complete with root P2PKH so the app gets a txid (collectables pattern).
+            if (method === 'createAction') {
+              try {
+                return await finishBsv21IdentityMintCreateAction(
+                  active,
+                  actionArgs,
+                  created,
+                )
+              } catch (err) {
+                console.warn('[bsv21-issuer] finish signable mint failed', err)
+                throw err
+              }
+            }
+            return created
           },
           () => {
             setPaymentProgress('preparing', 'Preparing payment')

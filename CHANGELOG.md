@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.146] - 2026-08-11
+
+### Fixed
+
+- **Mint approved but no txid:** auth tip / Sigma fund inputs use
+  `unlockingScriptLength`, so createAction returned a signable without a txid.
+  Identity mints now complete with root-key P2PKH `signAction` (same pattern as
+  soft-latch collectables) before responding to the app.
+
 ## [1.2.145] - 2026-08-11
 
 ### Fixed
