@@ -2,6 +2,10 @@
  * historyReplica — export/import/upload/download BRC-39 (AES-256-GCM + Argon2id).
  * Replicates toolbox localState (managed change, baskets, remittance metadata).
  * Not chainIngest. See `layers.ts`.
+ *
+ * Crypto secret is derived from the wallet root key (not the unlock password).
+ * Legacy password-encrypted blobs still decrypt; successful legacy pull schedules
+ * a re-upload so the cloud upgrades to root-key encryption.
  */
 import {
   exportBRC38Json,
@@ -11,6 +15,7 @@ import {
 } from '@bsv/wallet-toolbox-client'
 import { appendAppLog } from './appLog'
 import { encryptBrc39Document } from './brc39Encrypt'
+import { historyCryptoSecret } from './historyCryptoSecret'
 import {
   getHistoryBackupPrefs,
   historyBackupObjectUrl,
@@ -33,11 +38,23 @@ import {
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
+export type HistoryCryptoPath = 'root-key' | 'legacy-password'
+
+export type HistoryImportResult = BRC38ImportResult & {
+  crypto: HistoryCryptoPath
+}
+
 function asArrayBufferBytes(bytes: number[] | Uint8Array): Uint8Array<ArrayBuffer> {
   const src = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
   const out = new Uint8Array(src.byteLength)
   out.set(src)
   return out
+}
+
+function requireActiveRootKeyHex(): string {
+  const active = getActiveWallet()
+  if (!active?.rootKeyHex) throw new Error('Unlock the wallet first')
+  return active.rootKeyHex
 }
 
 async function withActiveStorageProvider<T>(
@@ -91,9 +108,59 @@ async function exportLiveBrc38Json(): Promise<string> {
   )
 }
 
+async function encryptLiveDocument(rootKeyHex: string, json: string): Promise<Uint8Array> {
+  const secret = historyCryptoSecret(rootKeyHex)
+  appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting (root-key)`)
+  return asArrayBufferBytes(await encryptBrc39Document(json, secret))
+}
+
+function scheduleRootKeyMigratePush(): void {
+  void import('./deviceSync')
+    .then(({ scheduleHistoryBackupPush }) => {
+      scheduleHistoryBackupPush('history-key-migrate')
+    })
+    .catch(() => {
+      /* optional */
+    })
+}
+
+/**
+ * Decrypt + import: root-key secret first, then unlock password (legacy blobs).
+ */
+async function importBrc39Bytes(
+  storage: StorageProvider,
+  bytes: number[] | Uint8Array,
+  rootKeyHex: string,
+  legacyPassword: string | null | undefined,
+  mode: 'merge' | 'restore',
+): Promise<HistoryImportResult> {
+  const secret = historyCryptoSecret(rootKeyHex)
+  try {
+    const result = await importBRC39(storage, bytes, secret, { mode })
+    return { ...result, crypto: 'root-key' }
+  } catch (rootErr) {
+    const legacy = legacyPassword?.trim()
+    if (!legacy) throw rootErr
+    try {
+      const result = await importBRC39(storage, bytes, legacy, { mode })
+      appendAppLog(
+        'info',
+        '[cloud-backup] decrypted with legacy unlock password — will re-upload as root-key',
+      )
+      scheduleRootKeyMigratePush()
+      return { ...result, crypto: 'legacy-password' }
+    } catch {
+      throw rootErr
+    }
+  }
+}
+
 /**
  * Snapshot toolbox state under historyReplica, then encrypt outside that lock.
  * Argon2id on a ~26MB document must not block createAction / send.
+ *
+ * `password` is only used to prove vault access when not already verified —
+ * the BRC-39 ciphertext is sealed to the root key.
  */
 export async function createBrc39BackupBytes(
   password: string,
@@ -104,9 +171,7 @@ export async function createBrc39BackupBytes(
   if (!active) throw new Error('Unlock the wallet first')
 
   const json = await runHistoryReplica(() => exportLiveBrc38Json())
-  appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
-  const out = asArrayBufferBytes(await encryptBrc39Document(json, password))
-  // Every export is also a write-once on-device snapshot (never overwritten).
+  const out = await encryptLiveDocument(active.rootKeyHex, json)
   await archiveBrc39Locally({
     identityKey: active.identityKey,
     bytes: out,
@@ -117,12 +182,14 @@ export async function createBrc39BackupBytes(
 
 export async function restoreBrc39BackupBytes(
   bytes: number[] | Uint8Array,
-  password: string,
+  password?: string | null,
   mode: 'merge' | 'restore' = 'merge',
-): Promise<BRC38ImportResult> {
-  await revealRootKeyHex(password)
+): Promise<HistoryImportResult> {
+  const active = getActiveWallet()
+  if (!active) throw new Error('Unlock the wallet first')
+  // `password` is only a legacy BRC-39 decrypt fallback — not vault proof.
   return withActiveStorageProvider((storage) =>
-    importBRC39(storage, bytes, password, { mode }),
+    importBrc39Bytes(storage, bytes, active.rootKeyHex, password, mode),
   )
 }
 
@@ -146,8 +213,8 @@ export async function exportBrc39ToFile(password: string): Promise<void> {
 
 export async function importBrc39FromFile(
   file: File,
-  password: string,
-): Promise<BRC38ImportResult> {
+  password?: string | null,
+): Promise<HistoryImportResult> {
   const buf = new Uint8Array(await file.arrayBuffer())
   if (buf.length < 64) throw new Error('File is too small to be a BRC-39 backup')
   return restoreBrc39BackupBytes(buf, password, 'merge')
@@ -172,8 +239,7 @@ export async function uploadBrc39Backup(
   const url = historyBackupObjectUrl(active.identityKey, prefs)
 
   const json = await runHistoryReplica(() => exportLiveBrc38Json())
-  appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting`)
-  const bytes = asArrayBufferBytes(await encryptBrc39Document(json, password))
+  const bytes = asArrayBufferBytes(await encryptLiveDocument(active.rootKeyHex, json))
   await archiveBrc39Locally({
     identityKey: active.identityKey,
     bytes,
@@ -202,7 +268,7 @@ export async function uploadBrc39Backup(
   }
 
   setHistoryBackupPrefs({ lastUploadedAt: exportedAt, lastError: null })
-  appendAppLog('info', '[cloud-backup] upload ok')
+  appendAppLog('info', '[cloud-backup] upload ok (root-key)')
   void refreshCloudBackupHealth()
   return { url, exportedAt }
 }
@@ -243,14 +309,14 @@ export async function fetchRemoteBrc39Meta(): Promise<{
 }
 
 export async function downloadAndRestoreBrc39Backup(
-  password: string,
-): Promise<BRC38ImportResult> {
+  password?: string | null,
+): Promise<HistoryImportResult> {
   return runHistoryReplica(() => downloadAndRestoreBrc39BackupExclusive(password))
 }
 
 async function downloadAndRestoreBrc39BackupExclusive(
-  password: string,
-): Promise<BRC38ImportResult> {
+  password?: string | null,
+): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
@@ -269,7 +335,9 @@ async function downloadAndRestoreBrc39BackupExclusive(
 
   const remoteExportedAt = Number(res.headers.get('X-HandCash-Exported-At') || '')
   const buf = new Uint8Array(await res.arrayBuffer())
-  const result = await restoreBrc39BackupBytes(buf, password, 'merge')
+  const result = await withActiveStorageProvider((storage) =>
+    importBrc39Bytes(storage, buf, active.rootKeyHex, password, 'merge'),
+  )
   setHistoryBackupPrefs({
     lastError: null,
     lastUploadedAt:
@@ -279,7 +347,7 @@ async function downloadAndRestoreBrc39BackupExclusive(
   })
   appendAppLog(
     'info',
-    `[cloud-backup] restored ${buf.byteLength} bytes (merge inserts=${result.inserts} updates=${result.updates})`,
+    `[cloud-backup] restored ${buf.byteLength} bytes via ${result.crypto} (inserts=${result.inserts} updates=${result.updates})`,
   )
   void refreshCloudBackupHealth()
   return result
@@ -303,12 +371,12 @@ function deleteIdbDatabase(name: string): Promise<void> {
  * remote BRC-39 into a clean localState. Avoids LWW merge against soft-latch
  * dust that raced a prior pull (under-restored spendable balance).
  *
- * Keeps the sealed vault (keys). Call only from the history recovery gate or
- * an explicit Settings "Replace from cloud" action — not from soft poll.
+ * Keeps the sealed vault (keys). History decrypt uses the root key (optional
+ * unlock password only for legacy blobs).
  */
 export async function replaceLocalHistoryFromCloud(
-  password: string,
-): Promise<BRC38ImportResult> {
+  password?: string | null,
+): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
   const { rootKeyHex, handle, chain, identityKey } = active
@@ -341,7 +409,7 @@ export async function replaceLocalHistoryFromCloud(
     const managed = await fetchBalanceSats(next.wallet)
     appendAppLog(
       'info',
-      `[cloud-backup] after replace: managed=${managed} defaultOuts=${state.defaultOutputCount} actions=${state.actionCount} oneSat=${state.oneSatOutputCount}`,
+      `[cloud-backup] after replace: managed=${managed} defaultOuts=${state.defaultOutputCount} actions=${state.actionCount} oneSat=${state.oneSatOutputCount} crypto=${result.crypto}`,
     )
   } catch {
     /* diagnostic only */
@@ -351,9 +419,9 @@ export async function replaceLocalHistoryFromCloud(
 
 /** Merge a write-once on-device UTXO snapshot back into localState. */
 export async function restoreLocalBrc39Archive(
-  password: string,
+  password: string | null | undefined,
   snapshotId: string,
-): Promise<BRC38ImportResult> {
+): Promise<HistoryImportResult> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
   const buf = await readLocalBrc39Archive({
@@ -362,8 +430,11 @@ export async function restoreLocalBrc39Archive(
   })
   if (buf.length < 64) throw new Error('Local UTXO archive is too small')
   const result = await restoreBrc39BackupBytes(buf, password, 'merge')
-  appendAppLog('info', `[utxo-archive] restored local snapshot ${snapshotId}`)
+  appendAppLog(
+    'info',
+    `[utxo-archive] restored local snapshot ${snapshotId} via ${result.crypto}`,
+  )
   return result
 }
 
-export { listLocalBrc39Archive }
+export { listLocalBrc39Archive, requireActiveRootKeyHex }

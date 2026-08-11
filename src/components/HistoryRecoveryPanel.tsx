@@ -5,14 +5,12 @@ import {
   replaceLocalHistoryFromCloud,
 } from '../wallet/historyBackup'
 import { ensureSuggestedHistoryBackupUrl } from '../wallet/historyBackupPrefs'
+import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { recomposeWallet } from '../wallet/recompose'
 import { playWalletSound } from '../wallet/soundService'
-import { PasswordField } from './PasswordField'
 
 type Props = {
-  /** Vault password just set on this device — history blob may use the same. */
-  initialPassword: string
-  onDone: (historyPassword: string) => void
+  onDone: () => void
   onSkip: () => void
 }
 
@@ -24,15 +22,10 @@ type RemoteProbe =
 
 /**
  * Post-restore gate: keys are sealed; replace local toolbox state from BRC-39
- * (wipe IDB then pull) so balance, activity, friends, and apps return before
- * entering the wallet — avoids merge races with chain soft-latch dust.
+ * using the root key (no history password). Legacy password-encrypted blobs
+ * still decrypt when the session unlock password matches the old cipher.
  */
-export function HistoryRecoveryPanel({
-  initialPassword,
-  onDone,
-  onSkip,
-}: Props) {
-  const [password, setPassword] = useState(initialPassword)
+export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [probe, setProbe] = useState<RemoteProbe>({ status: 'checking' })
@@ -64,28 +57,26 @@ export function HistoryRecoveryPanel({
 
   const restore = async () => {
     setError(null)
-    if (!password.trim()) {
-      setError('Enter the password that encrypted your history backup')
-      return
-    }
     setBusy(true)
     try {
       ensureSuggestedHistoryBackupUrl()
       clearBackupBackoff()
-      await replaceLocalHistoryFromCloud(password)
+      // Root-key decrypt; session unlock password only for legacy blobs.
+      const legacy = getSessionBackupPassword()
+      await replaceLocalHistoryFromCloud(legacy)
       await recomposeWallet({
-        password,
+        password: legacy,
         history: 'skip',
         reason: 'restore-url',
       })
       playWalletSound('success')
-      onDone(password)
+      onDone()
     } catch (err) {
       playWalletSound('error')
       const msg = err instanceof Error ? err.message : String(err)
       if (/decrypt|password|passphrase|auth|mac|argon|gcm|cipher|invalid/i.test(msg)) {
         setError(
-          'That password could not decrypt the history backup. Use the unlock password from the device that uploaded it.',
+          'Could not decrypt the history backup. If this blob was made before root-key history, unlock once on a device that still has the old password so it can re-upload — then try again.',
         )
       } else {
         setError(msg)
@@ -99,7 +90,7 @@ export function HistoryRecoveryPanel({
     probe.status === 'checking'
       ? 'Looking for your history backup…'
       : probe.status === 'found'
-        ? 'History backup found on BRC-CLOUD — restore it to recover balance, activity, friends, and apps.'
+        ? 'History backup found — restore it to recover balance, activity, friends, and apps.'
         : probe.status === 'missing'
           ? 'No history backup at the default URL yet. You can skip and rely on chain scan, or check Settings → History later.'
           : `Could not reach history host: ${probe.message}`
@@ -109,25 +100,11 @@ export function HistoryRecoveryPanel({
       <h2>Restore your history</h2>
       <p className="auth-lede">
         Keys are on this device. Activity, UTXOs, friends, and connected apps live in
-        your encrypted history backup — restore them before opening the wallet.
+        your encrypted history backup — sealed to this wallet’s key, not your unlock
+        password.
       </p>
       <p className="auth-lede" role="status">
         {remoteNote}
-      </p>
-
-      <PasswordField
-        id="history-recovery-password"
-        label="History backup password"
-        placeholder="Usually your previous unlock password"
-        value={password}
-        onChange={(e) => setPassword(e.target.value)}
-        autoComplete="current-password"
-        autoFocus
-        disabled={busy}
-      />
-      <p className="password-hint">
-        Same password as the device that uploaded the backup (often your old unlock
-        password).
       </p>
 
       {error ? (

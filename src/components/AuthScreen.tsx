@@ -482,12 +482,11 @@ export function AuthScreen({
         data-aeon-state="history-recovery"
       >
         <HistoryRecoveryPanel
-          initialPassword={pendingHistoryRecovery.password}
-          onDone={(historyPassword) => {
+          onDone={() => {
             const pending = pendingHistoryRecovery
             if (!pending) return
             setPendingHistoryRecovery(null)
-            setSessionBackupPassword(historyPassword)
+            setSessionBackupPassword(pending.password)
             onCreated(pending.profile, pending.balanceSats)
           }}
           onSkip={() => {
@@ -798,9 +797,7 @@ export function AuthScreen({
         {needsNewPassword ? (
           <>
             <p className="password-hint">
-              {isRestoreMethod(formMode)
-                ? 'Use the same unlock password as your other device so history and balance can restore from backup.'
-                : 'This password is used to access your wallet. Don’t forget it.'}
+              This password unlocks the wallet on this device. Don’t forget it.
             </p>
             <PasswordField
               id="password-confirm"
@@ -851,8 +848,8 @@ export function AuthScreen({
 
         {isRestoreMethod(formMode) ? (
           <p className="auth-lede auth-restore-note">
-            Next step restores your history backup (balance, activity, friends, apps).
-            Use the same password as the device that uploaded it.
+            Next you’ll restore history (balance, activity, friends, apps) — sealed to
+            this wallet’s key, not your unlock password.
           </p>
         ) : null}
       </form>

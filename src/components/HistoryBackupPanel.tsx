@@ -256,7 +256,7 @@ export function HistoryBackupPanel() {
         <ConfirmPasswordGate
           id="history-backup-password"
           title="Confirm it’s you"
-          lede="Export and restore use the same unlock password that encrypts your history backup."
+          lede="Confirm your unlock password to export or replace history on this device. History backups are sealed to your wallet key."
           actionLabel="Unlock history actions"
           onVerified={(pw) => setPassword(pw)}
         />

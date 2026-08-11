@@ -37,7 +37,7 @@ export function DeviceHandoffPanel() {
           On one device show the link QR; on the other tap <strong>Scan to link</strong> (or use
           Dashboard Scan).
         </li>
-        <li>Tap Sync via backup URL (same unlock password) so history + friends merge.</li>
+        <li>Tap Sync via backup URL so history + friends merge (same wallet keys).</li>
         <li>Spends reconcile against the chain automatically. Offline payments are not supported.</li>
       </ol>
 

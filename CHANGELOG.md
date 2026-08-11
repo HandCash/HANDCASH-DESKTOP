@@ -1,10 +1,20 @@
 # Changelog
 
-## [1.2.170] - 2026-08-11
+## [1.2.171] - 2026-08-11
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **History backups (BRC-39):** sealed to the wallet root key, not the unlock
+  password. Restore history needs no second password. Legacy password blobs
+  still decrypt once, then re-upload as root-key.
+
+## [1.2.170] - 2026-08-11
+
+### Fixed
+
+- **History replace:** recovery / Settings “Replace from cloud” wipes this
+  wallet’s toolbox IndexedDB then pulls BRC-39 into a clean localState — fixes
+  under-restored UTXOs when soft-latch dust raced a merge pull.
 
 ## [1.2.169] - 2026-08-11
 

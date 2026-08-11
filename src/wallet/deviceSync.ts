@@ -181,7 +181,8 @@ export function shouldPullRemoteHistory(
 
 /**
  * Explicit multi-device sync: pull only if remote is newer, then push local.
- * Requires the vault password (same password on both devices for BRC-39).
+ * Requires the vault unlock password on this device (operator confirm). BRC-39
+ * itself is sealed to the root key; password is also a legacy-decrypt fallback.
  */
 export async function syncDevicesViaBackupUrl(password: string): Promise<{
   brc39: { inserts: number; updates: number } | null
@@ -421,7 +422,7 @@ export async function autoPushHistoryBackupIfConfigured(
           ) {
             appendAppLog(
               'warn',
-              '[cloud-backup] history blob needs the password that encrypted it (same unlock password as the device that uploaded)',
+              '[cloud-backup] history blob could not be decrypted with root key or unlock password',
             )
           }
         }

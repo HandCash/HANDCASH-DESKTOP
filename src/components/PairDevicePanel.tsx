@@ -123,7 +123,7 @@ export function PairDevicePanel() {
       setScanning(false)
       toastSuccess(
         opts?.fromScan ? 'Scanned & linked' : 'Device linked',
-        'Enter the same unlock password below and tap Sync.',
+        'Enter your unlock password below and tap Sync.',
       )
       playWalletSound('success')
       return true
@@ -154,7 +154,7 @@ export function PairDevicePanel() {
 
   const runSync = async () => {
     if (password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
-      toastError('Password required', 'Same unlock password encrypts the BRC-39 blob on both devices.')
+      toastError('Password required', 'Confirm your unlock password on this device to sync.')
       return
     }
     setBusy(true)
@@ -192,7 +192,7 @@ export function PairDevicePanel() {
     if (!backupUrl) {
       return 'Set the same History backup URL on every device. Linking will not work without it.'
     }
-    return 'Show this QR on one device. On the other, tap Scan to link — then Sync with the same unlock password.'
+    return 'Show this QR on one device. On the other, tap Scan to link — then Sync (same wallet keys; history is sealed to the key).'
   }, [backupUrl])
 
   if (scanning) {
@@ -329,7 +329,7 @@ export function PairDevicePanel() {
           </div>
 
           <div className="field" data-aeon-part="field" style={{ marginTop: 16 }}>
-            <label htmlFor="device-sync-password">Password (sync history)</label>
+            <label htmlFor="device-sync-password">Unlock password (this device)</label>
             <input
               id="device-sync-password"
               type="password"
