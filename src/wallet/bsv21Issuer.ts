@@ -546,6 +546,16 @@ export async function enrichCreateActionForBsv21Issuer(
     )
   }
 
+  // Same as collectables: declare tip/fund txids as known so fee UTXOs + tip
+  // spends resolve sourceTransaction without waiting on the indexer.
+  const knownTxids = [
+    ...new Set(
+      inputs
+        .map((i) => normalizeDotOutpoint(i.outpoint).split('.')[0]?.toLowerCase())
+        .filter((t): t is string => !!t),
+    ),
+  ]
+
   return {
     ...args,
     outputs: nextOutputs,
@@ -555,7 +565,9 @@ export async function enrichCreateActionForBsv21Issuer(
       ...(args.options ?? {}),
       randomizeOutputs: false,
       trustSelf: 'known',
+      ...(knownTxids.length > 0 ? { knownTxids } : {}),
       signAndProcess: true,
+      acceptDelayedBroadcast: false,
     },
   }
 }

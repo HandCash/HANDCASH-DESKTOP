@@ -26,6 +26,7 @@ import {
 import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
+  hasPendingPermissionPrompt,
   resolvePermission,
   revokeOrigin,
   subscribeConnectedApps,
@@ -234,6 +235,8 @@ export function Dashboard({
     const sync = async (opts?: { forceReview?: boolean }) => {
       // Skip overlapping poll ticks — prior soft-pull + chain sync must finish.
       if (tickInFlight) return
+      // Don't fight the permission UI / createAction bridge reply.
+      if (hasPendingPermissionPrompt()) return
       tickInFlight = true
       try {
         // Parity devices merge strictly-newer cloud history before reading the chain,

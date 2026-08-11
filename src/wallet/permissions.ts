@@ -348,6 +348,11 @@ export function revokeAllOrigins(): void {
   clearPermissionSession()
 }
 
+/** True when a connect/pay/sign prompt is showing or queued — heavy sync must yield. */
+export function hasPendingPermissionPrompt(): boolean {
+  return current != null || queue.length > 0
+}
+
 export function subscribePermissionRequests(cb: PromptListener): () => void {
   promptListeners.add(cb)
   cb(current?.request ?? null)

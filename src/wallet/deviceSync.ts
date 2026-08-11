@@ -47,7 +47,13 @@ const PUSH_DEBOUNCE_MS = 2_500
 /** After spends — wait for sequential mint / pay chains before encrypting. */
 const POST_SPEND_PUSH_DEBOUNCE_MS = 12_000
 
+/** Unlock must not encrypt a ~26MB BRC-38 on the UI thread before first paint. */
+const UNLOCK_PUSH_DEBOUNCE_MS = 60_000
+
 function pushDebounceMs(reason: string): number {
+  if (reason === 'unlock' || reason === 'create') {
+    return UNLOCK_PUSH_DEBOUNCE_MS
+  }
   if (
     reason === 'createAction' ||
     reason === 'signAction' ||
@@ -58,6 +64,21 @@ function pushDebounceMs(reason: string): number {
     return POST_SPEND_PUSH_DEBOUNCE_MS
   }
   return PUSH_DEBOUNCE_MS
+}
+
+async function permissionPromptBlocksBackup(reason: string): Promise<boolean> {
+  try {
+    const { hasPendingPermissionPrompt } = await import('./permissions')
+    if (!hasPendingPermissionPrompt()) return false
+    const { appendAppLog } = await import('./appLog')
+    appendAppLog(
+      'info',
+      `[cloud-backup] defer (${reason}) — permission prompt pending`,
+    )
+    return true
+  } catch {
+    return false
+  }
 }
 
 function normalizeBase(url: string): string {
@@ -250,6 +271,10 @@ export function scheduleHistoryBackupPush(reason = 'dirty'): void {
       } catch {
         /* coordinator optional during early boot */
       }
+      if (await permissionPromptBlocksBackup(reason)) {
+        scheduleHistoryBackupPush(reason)
+        return
+      }
       await flushHistoryBackupPush(reason)
     })()
   }, pushDebounceMs(reason))
@@ -380,6 +405,18 @@ export async function autoPushHistoryBackupIfConfigured(
           return
         }
 
+        // Unlock/create: never encrypt+upload on the hot path — Argon2 on a
+        // ~26MB BRC-38 freezes the renderer so permission prompts never answer
+        // (WALLET_BRIDGE_TIMEOUT). Mark dirty and push after the UI is free.
+        if (reason === 'unlock' || reason === 'create') {
+          appendAppLog(
+            'info',
+            `[cloud-backup] defer push after ${reason} — keep UI free for permissions`,
+          )
+          scheduleHistoryBackupPush(reason)
+          return
+        }
+
         // Marked durably before the export: if the app dies inside Argon2id,
         // the next launch sees an unclosed attempt and backs off instead of
         // repeating the crash.
@@ -444,6 +481,14 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
   // Don't merge remote while a local spend/import is waiting to push.
   if (historyDirty || pushInFlight) {
     return { pulled: false, reason: 'local history dirty' }
+  }
+  try {
+    const { hasPendingPermissionPrompt } = await import('./permissions')
+    if (hasPendingPermissionPrompt()) {
+      return { pulled: false, reason: 'permission prompt pending' }
+    }
+  } catch {
+    /* ignore */
   }
 
   try {

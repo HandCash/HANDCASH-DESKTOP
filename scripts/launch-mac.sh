@@ -51,8 +51,10 @@ osascript -e 'tell application "HandCash" to quit' 2>/dev/null || true
 pkill -f 'HandCash.app/Contents/MacOS/HandCash' 2>/dev/null || true
 sleep 1
 
-# Free BRC-100 bridge ports if a previous instance left them open
-for port in 2121 3321; do
+# Free BRC-100 bridge ports and the localhost UI port if a previous instance
+# (or /Applications/HandCash.app) left them open — otherwise Chromium can load
+# a stale UI on ::1:5173 while this build thinks it owns the origin.
+for port in 2121 3321 5173; do
   if command -v lsof >/dev/null 2>&1; then
     pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
     if [[ -n "$pids" ]]; then
@@ -61,7 +63,13 @@ for port in 2121 3321; do
     fi
   fi
 done
+sleep 1
 
-echo "==> Launching $APP"
+VERSION="$(node -p "require('./package.json').version")"
+echo "==> Launching $APP (v${VERSION})"
+# Prefer this build over a stale Dock /Applications copy on the same ports.
+if [[ -d /Applications/HandCash.app ]]; then
+  echo "    Note: quit /Applications/HandCash.app if the Dock still opens the old install."
+fi
 open -n "$APP" --args "$@"
-echo "Launched."
+echo "Launched v${VERSION}. Confirm Settings shows this version before minting."

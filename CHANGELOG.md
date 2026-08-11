@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.149] - 2026-08-11
+
+### Fixed
+
+- **Stale UI on mint (`sourceTransaction` / 400):** reclaim `:5173` and bind
+  `::1` so Chromium cannot keep loading an old Vite / `/Applications` HandCash
+  while a newer build is running (logs showed renderer v1.2.144 vs main 1.2.148).
+- **Unlock freezes permission prompts:** unlock/create no longer encrypt+upload
+  the ~26MB BRC-39 on the hot path; push is deferred ~60s and skipped while a
+  permission prompt is pending.
+- **Auth mint known tips:** identity-mint `createAction` now passes `knownTxids`
+  (collectables pattern) with `trustSelf: 'known'`.
+
 ## [1.2.148] - 2026-08-11
 
 ### Fixed
