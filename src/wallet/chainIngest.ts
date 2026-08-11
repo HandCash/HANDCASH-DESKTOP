@@ -228,6 +228,22 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
+  try {
+    const { healGhostSentItems } = await import('./sentItemGuard')
+    const { txExistsOnChain } = await import('./legacyScan')
+    const { forgetOneSatImported } = await import('./oneSatImportGuard')
+    const healed = await healGhostSentItems(active.chain, txExistsOnChain)
+    if (healed.length > 0) {
+      forgetOneSatImported(healed)
+      console.info(
+        `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
+        healed,
+      )
+    }
+  } catch (err) {
+    console.warn('[chain-ingest] ghost-sent heal skipped', err)
+  }
+
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
       heldCount: 0,

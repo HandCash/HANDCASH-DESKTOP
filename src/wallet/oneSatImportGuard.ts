@@ -133,6 +133,27 @@ export function markOneSatImportFailed(outpoints: string[]): void {
   writeFailures(failures)
 }
 
+/**
+ * Drop durable "already imported" marks so a tip that was relinquished after a
+ * ghost send can be internalized again from the address scan.
+ */
+export function forgetOneSatImported(outpoints: string[]): void {
+  if (outpoints.length === 0) return
+  const known = readImported()
+  const failures = readFailures()
+  let knownChanged = false
+  let failuresChanged = false
+  for (const raw of outpoints) {
+    const op = norm(raw)
+    if (!op) continue
+    inFlight.delete(op)
+    if (known.delete(op)) knownChanged = true
+    if (failures.delete(op)) failuresChanged = true
+  }
+  if (knownChanged) writeImported(known)
+  if (failuresChanged) writeFailures(failures)
+}
+
 /** Test hook. */
 export function resetOneSatImportGuardForTests(): void {
   inFlight.clear()

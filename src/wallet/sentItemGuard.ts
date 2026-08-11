@@ -114,6 +114,40 @@ export function forgetItemsSent(outpoints: string[]): void {
   if (changed) writeSent(records)
 }
 
+/**
+ * Drop hide marks whose recorded spend txid is proven absent from the chain
+ * (ghost delayed-broadcast / failed post). Returns the outpoints restored.
+ *
+ * Abandon markers (`abandon:…`) are left alone — those are intentional hides.
+ */
+export async function healGhostSentItems(
+  chain: import('./vault').Chain,
+  existsOnChain: (
+    txid: string,
+    chain: import('./vault').Chain,
+  ) => Promise<boolean | null>,
+): Promise<string[]> {
+  const records = readSent()
+  const byTx = new Map<string, string[]>()
+  for (const [op, rec] of records) {
+    const tx = rec.txid?.trim().toLowerCase() ?? ''
+    if (!tx || tx.startsWith('abandon:')) continue
+    if (!/^[0-9a-f]{64}$/.test(tx)) continue
+    const list = byTx.get(tx) ?? []
+    list.push(op)
+    byTx.set(tx, list)
+  }
+  if (byTx.size === 0) return []
+
+  const healed: string[] = []
+  for (const [txid, ops] of byTx) {
+    if ((await existsOnChain(txid, chain)) !== false) continue
+    forgetItemsSent(ops)
+    healed.push(...ops)
+  }
+  return healed
+}
+
 /** Test-only */
 export function resetSentItemsForTests(): void {
   durableSetItem(STORAGE_KEY, '{}')

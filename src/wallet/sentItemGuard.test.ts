@@ -69,4 +69,33 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent(`${txid}.0`)).toBe(true)
     expect(guard.isItemSent(`${txid}.1`)).toBe(true)
   })
+
+  it('heals hides whose spend txid is missing from the chain', async () => {
+    const guard = await import('./sentItemGuard')
+    const ghost = 'a'.repeat(64)
+    const real = 'b'.repeat(64)
+    guard.markItemsSent([
+      { outpoint: 'tip.0', txid: ghost },
+      { outpoint: 'latch.1', txid: ghost },
+      { outpoint: 'kept.0', txid: real },
+      { outpoint: 'abandon.0', txid: 'abandon:tip.0' },
+    ])
+    const healed = await guard.healGhostSentItems('main', async (txid) =>
+      txid === ghost ? false : true,
+    )
+    expect(healed.sort()).toEqual(['latch.1', 'tip.0'])
+    expect(guard.isItemSent('tip.0')).toBe(false)
+    expect(guard.isItemSent('latch.1')).toBe(false)
+    expect(guard.isItemSent('kept.0')).toBe(true)
+    expect(guard.isItemSent('abandon.0')).toBe(true)
+  })
+
+  it('keeps hides when the chain lookup is inconclusive', async () => {
+    const guard = await import('./sentItemGuard')
+    const ghost = 'c'.repeat(64)
+    guard.markItemsSent([{ outpoint: 'tip.0', txid: ghost }])
+    const healed = await guard.healGhostSentItems('main', async () => null)
+    expect(healed).toEqual([])
+    expect(guard.isItemSent('tip.0')).toBe(true)
+  })
 })

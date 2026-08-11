@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.179] - 2026-08-11
+
+### Fixed
+- **Ghost send hid collectables.** Delayed-broadcast 404 txids marked tips “sent” and blocked re-import for 24h. Refresh now heals hide + import marks when the spend txid is proven absent on-chain, so missing NFTs that never left the address come back.
+
 ## [1.2.178] - 2026-08-11
 
 ### Added
