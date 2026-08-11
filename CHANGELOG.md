@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.148] - 2026-08-11
+
+### Fixed
+
+- **Mint `sourceTransaction` again:** identity-mint enrich no longer swallows
+  inputBEEF failures (which left tip spends unproven). Caller deploy BEEF is
+  merged with cache/indexer/raw-tx fallbacks, and finished signables always
+  cache the new tip for the follow-up mint.
+
 ## [1.2.147] - 2026-08-11
 
 ### Fixed

@@ -7,8 +7,9 @@
 
 import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
-import { buildMergedInputBeef } from './beefCache'
+import { buildMergedInputBeef, rememberBeef, rememberBeefBinary } from './beefCache'
 import { normalizeTokenId } from './bsv21'
+import { fetchRawTxHex } from './oneSatImport'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import type { ActiveWallet } from './session'
 
@@ -525,29 +526,17 @@ export async function enrichCreateActionForBsv21Issuer(
 
   // Auth remint / any explicit tip spend must carry source txs in inputBEEF —
   // otherwise the toolbox fails with "Every signableTransaction input must have
-  // a sourceTransaction".
+  // a sourceTransaction". Prefer caller BEEF (fresh deploy AtomicBEEF), then
+  // session cache / indexer, then raw-tx wrap — never drop a good caller BEEF.
   if (inputs.length > 0) {
     const beefOps = [
       ...new Set(inputs.map((i) => normalizeDotOutpoint(i.outpoint)).filter(Boolean)),
     ]
-    try {
-      inputBEEF = await Promise.race([
-        buildMergedInputBeef(active, beefOps, normalizeDotOutpoint),
-        new Promise<never>((_, reject) =>
-          setTimeout(
-            () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
-            8_000,
-          ),
-        ),
-      ])
-    } catch (err) {
-      console.warn('[bsv21-issuer] inputBEEF for tip spends failed', err)
-      // Keep caller-supplied BEEF if any; without it createAction will fail loudly.
-      if (!inputBEEF && fundOutpoint) {
-        inputs = inputs.filter(
-          (i) => normalizeDotOutpoint(i.outpoint) !== fundOutpoint,
-        )
-      }
+    inputBEEF = await ensureBsv21InputBeef(active, beefOps, args.inputBEEF)
+    if (!inputBEEF && fundOutpoint) {
+      inputs = inputs.filter(
+        (i) => normalizeDotOutpoint(i.outpoint) !== fundOutpoint,
+      )
     }
   }
 
@@ -569,6 +558,90 @@ export async function enrichCreateActionForBsv21Issuer(
       signAndProcess: true,
     },
   }
+}
+
+function beefHasTx(beef: Beef, txid: string): boolean {
+  return beef.findTxid(txid.trim().toLowerCase())?.tx != null
+}
+
+/**
+ * Build inputBEEF covering every spend outpoint. Merges caller-supplied BEEF
+ * first so a just-broadcast deploy tip is available before the indexer.
+ */
+async function ensureBsv21InputBeef(
+  active: ActiveWallet,
+  outpoints: string[],
+  prefer?: number[],
+): Promise<number[] | undefined> {
+  const txids = [
+    ...new Set(
+      outpoints
+        .map((op) => normalizeDotOutpoint(op).split('.')[0]?.toLowerCase())
+        .filter((t): t is string => !!t),
+    ),
+  ]
+  if (txids.length === 0) return prefer
+
+  const merged = new Beef()
+  if (prefer?.length) {
+    try {
+      merged.mergeBeef(prefer)
+    } catch (err) {
+      console.warn('[bsv21-issuer] caller inputBEEF merge failed', err)
+    }
+  }
+
+  const missing = () => txids.filter((txid) => !beefHasTx(merged, txid))
+  let need = missing()
+  if (need.length === 0) return merged.toBinary()
+
+  try {
+    const built = await Promise.race([
+      buildMergedInputBeef(
+        active,
+        need.map((txid) => `${txid}.0`),
+        normalizeDotOutpoint,
+      ),
+      new Promise<never>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('inputBEEF timed out (indexer unreachable)')),
+          8_000,
+        ),
+      ),
+    ])
+    merged.mergeBeef(built)
+  } catch (err) {
+    console.warn('[bsv21-issuer] inputBEEF for tip spends failed', err)
+  }
+
+  need = missing()
+  if (need.length > 0) {
+    await Promise.all(
+      need.map(async (txid) => {
+        try {
+          const hex = await fetchRawTxHex(txid, active.chain)
+          if (!hex) return
+          const wrap = new Beef()
+          wrap.mergeTransaction(Transaction.fromHex(hex))
+          if (!wrap.findTxid(txid)?.tx) return
+          rememberBeef(txid, wrap)
+          merged.mergeBeef(wrap.toBinary())
+        } catch (err) {
+          console.warn('[bsv21-issuer] raw-tx inputBEEF fallback failed', txid, err)
+        }
+      }),
+    )
+  }
+
+  need = missing()
+  if (need.length === 0) return merged.toBinary()
+  // Partial coverage or caller BEEF that still lacks a tip → fail closed.
+  if (prefer?.length || txids.some((txid) => beefHasTx(merged, txid))) {
+    throw new Error(
+      `Could not load source transaction(s) for mint input(s): ${need.join(', ')}`,
+    )
+  }
+  return undefined
 }
 
 export type Bsv21SignableTransaction = {
@@ -655,9 +728,27 @@ export async function completeBsv21SignableWithRootP2pkh(
   const txid =
     typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
   if (!txid) throw new Error('BSV-21 mint signAction returned no txid')
+
+  let txBinary: number[] | undefined = Array.isArray(signed.tx)
+    ? (signed.tx as number[])
+    : undefined
+  if (!txBinary) {
+    try {
+      // Cache parents + newly signed subject so the follow-up mint can prove
+      // the auth tip before the indexer has the deploy.
+      const wrap = new Beef()
+      wrap.mergeBeef(signable.tx)
+      wrap.mergeTransaction(unsigned)
+      txBinary = wrap.toBinary()
+    } catch (err) {
+      console.warn('[bsv21-issuer] could not wrap signed mint tx for BEEF cache', err)
+    }
+  }
+  if (txBinary?.length) rememberBeefBinary(txid, txBinary)
+
   return {
     txid,
-    ...(Array.isArray(signed.tx) ? { tx: signed.tx as number[] } : {}),
+    ...(txBinary ? { tx: txBinary } : {}),
   }
 }
 

@@ -508,6 +508,9 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
                 )
               } catch (err) {
                 console.warn('[bsv21-issuer] enrich createAction failed', err)
+                // Identity mints with tip spends need inputBEEF — do not fall
+                // through to createAction or the toolbox error is opaque.
+                if (isBsv21IdentityMintArgs('createAction', args)) throw err
               }
             }
             setPaymentProgress(
