@@ -170,17 +170,25 @@ const collectablesListeners = new Set<CollectablesListener>()
  */
 const LIVE_ONE_SAT_TTL_MS = 20_000
 let cachedLiveOneSats: { at: number; keys: Set<string> } | null = null
+/** All address UTXOs (includes 2-sat soft latches) — same TTL as one-sats. */
+let cachedLiveAllOutpoints: { at: number; keys: Set<string> } | null = null
 
 /** Feed a fresh address scan into the ownership filter (chain ingest). */
 export function rememberLiveOneSatOutpoints(
   utxos: Array<{ outpoint: string; satoshis: number }>,
 ): void {
-  cachedLiveOneSats = { at: Date.now(), keys: liveOneSatKeys(utxos) }
+  const at = Date.now()
+  cachedLiveOneSats = { at, keys: liveOneSatKeys(utxos) }
+  cachedLiveAllOutpoints = {
+    at,
+    keys: new Set(utxos.map((u) => outpointKey(u.outpoint))),
+  }
 }
 
 /** Drop a cached address scan so the next list re-checks the chain. */
 export function invalidateLiveOneSatOutpoints(): void {
   cachedLiveOneSats = null
+  cachedLiveAllOutpoints = null
 }
 
 function isCollectableShape(value: unknown): value is Collectable {
@@ -305,6 +313,7 @@ export function clearCollectablesCache(): void {
   cachedCollectables = []
   collectablesHydrated = false
   cachedLiveOneSats = null
+  cachedLiveAllOutpoints = null
   firstSeenAt.clear()
   durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
@@ -525,6 +534,30 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
     .finally(() => {
       liveScan = null
     })
+}
+
+/** Await a fresh address UTXO set (send path — missing-inputs is worse than waiting). */
+async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
+  oneSats: Set<string>
+  all: Set<string>
+} | null> {
+  if (
+    cachedLiveOneSats != null &&
+    cachedLiveAllOutpoints != null &&
+    Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
+  ) {
+    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+  }
+  try {
+    const scan = await scanLegacyAddress(wallet)
+    rememberLiveOneSatOutpoints(scan.utxos)
+    if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
+    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+  } catch (err) {
+    console.warn('[collectables] live UTXO await failed', err)
+    if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
+    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+  }
 }
 
 /**
@@ -1578,7 +1611,8 @@ async function signOrdinalTransfer(args: {
   }
 
   // Belt: delayed signAction may return before the network accepts. Confirm via
-  // postBeef — "Already in mempool" counts as success.
+  // postBeef — already-known / mempool counts as success; missing-inputs means
+  // the tip was already spent (stale inventory), not "all broadcasters down".
   try {
     let beefBin: number[] | undefined = Array.isArray(signed.tx)
       ? (signed.tx as number[])
@@ -1594,14 +1628,34 @@ async function signOrdinalTransfer(args: {
       Beef.fromBinary(beefBin),
       [txid],
     )
-    const ok = results.some((r) => r.status === 'success')
-    if (!ok) {
-      const detail = results.map((r) => `${r.name}:${r.status}`).join(', ')
-      throw new Error(
-        `Broadcast failed — not accepted by the network (${detail || 'no services'})`,
-      )
+    const { summarizePostBeef, formatPostBeefFailure } = await import('./postBeefResult')
+    const summary = summarizePostBeef(results)
+    console.info('[collectables] postBeef', summary)
+    if (!summary.accepted) {
+      if (summary.missingInputs || summary.doubleSpend) {
+        const { releaseStaleSpendableOutputs } = await import('./staleOutputRelease')
+        await releaseStaleSpendableOutputs()
+        const { markItemsSent } = await import('./sentItemGuard')
+        markItemsSent(
+          args.outpoints.map((op) => ({ outpoint: op, txid: `spent:${txid}` })),
+        )
+        void listCollectables(args.wallet).catch((refreshErr) => {
+          console.warn('[collectables] post-spend refresh failed', refreshErr)
+        })
+      } else {
+        await recoverFromReviewActions({
+          err: new Error(formatPostBeefFailure(summary)),
+          reference: null,
+          tipOutpoints: [...args.outpoints],
+          active: args.wallet,
+        })
+      }
+      throw new Error(formatPostBeefFailure(summary))
     }
   } catch (err) {
+    if (err instanceof Error && /already spent|Broadcast failed|Broadcast services/i.test(err.message)) {
+      throw err
+    }
     try {
       await args.wallet.wallet.abortAction({ reference: args.signable.reference })
     } catch (abortErr) {
@@ -1613,7 +1667,6 @@ async function signOrdinalTransfer(args: {
       tipOutpoints: [...args.outpoints],
       active: args.wallet,
     })
-    if (err instanceof Error && /Broadcast failed/.test(err.message)) throw err
     console.warn('[collectables] postBeef confirm failed', err)
     throw err instanceof Error
       ? err
@@ -1894,11 +1947,28 @@ export async function sendCollectable(args: {
   // Latch discovery and tip BEEF are independent — run them together so the
   // slower of the two dominates instead of their sum.
   const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
-  const [priorLatch, tipBeefBin] = await Promise.all([
+  const [foundLatch, tipBeefBin, live] = await Promise.all([
     isLatchedSendEnabled() ? findLatchForTip(wallet, outpoint, origin) : Promise.resolve(null),
     tipBeefPromise,
+    awaitLiveOutpoints(wallet),
   ])
 
+  if (live && !live.oneSats.has(outpointKey(outpoint))) {
+    markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
+    void listCollectables(wallet).catch(() => {})
+    throw new Error(
+      'This collectable is no longer unspent on your address (already sent). Inventory refreshed.',
+    )
+  }
+
+  let priorLatch = foundLatch
+  if (priorLatch && live && !live.all.has(outpointKey(priorLatch.outpoint))) {
+    console.warn(
+      `[collectables] dropping spent latch ${priorLatch.outpoint} — tip-only soft-latch`,
+    )
+    markItemsSent([{ outpoint: priorLatch.outpoint, txid: `spent-on-chain:${outpoint}` }])
+    priorLatch = null
+  }
   // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
   // Classify from the tip BEEF we already need for soft-latch.
   const tipLockingScript = resolveTipLockingScriptHex({

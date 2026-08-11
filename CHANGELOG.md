@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.181] - 2026-08-11
+
+### Fixed
+- **Broadcast “all services error” on already-spent tips.** Bitails missing-inputs was reported as every broadcaster failing. Send now detects spent tips/latches before broadcast, drops them from inventory, and shows that the item was already spent.
+
 ## [1.2.180] - 2026-08-11
 
 ### Fixed
