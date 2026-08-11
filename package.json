@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.2.136",
+  "version": "1.2.137",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -50,6 +50,7 @@
     "qrcode": "^1.5.4",
     "react": "^19.1.0",
     "react-dom": "^19.1.0",
+    "sigma-protocol": "^0.1.9",
     "xstate": "^5.19.2"
   },
   "devDependencies": {

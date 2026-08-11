@@ -8,6 +8,7 @@ import {
   subscribeFungibles,
   type FungibleToken,
 } from '../wallet/fungibles'
+import { shortIssuerLabel } from '../wallet/bsv21'
 import { clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectablesIcon, CopyIcon } from './icons'
@@ -101,16 +102,21 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <h2>{token.sym}</h2>
         <p className="collectable-details-sub">{amount}</p>
         <p className="field-static-hint">
-          {token.utxoCount === 1
-            ? '1 token output'
-            : `${token.utxoCount} token outputs`}
-          {' · '}
-          Collect item — not spendable as BSV
-          {token.spendKind === 'cosigned'
-            ? ' · Cosigner required to send'
-            : token.spendKind === 'mixed'
-              ? ' · Mixed plain / cosigned tips'
-              : ''}
+          {[
+            token.issuerHandle ||
+              (token.issuer ? shortIssuerLabel(token.issuer) : ''),
+            token.utxoCount === 1
+              ? '1 token output'
+              : `${token.utxoCount} token outputs`,
+            'Collect item — not spendable as BSV',
+            token.spendKind === 'cosigned'
+              ? 'Cosigner required to send'
+              : token.spendKind === 'mixed'
+                ? 'Mixed plain / cosigned tips'
+                : '',
+          ]
+            .filter(Boolean)
+            .join(' · ')}
         </p>
       </div>
 
@@ -131,6 +137,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             void copyText(amount)
           }}
         />
+        {token.issuer ? (
+          <MetaRow
+            label="Issuer"
+            value={
+              token.issuerHandle
+                ? `${token.issuerHandle} (${token.issuer})`
+                : token.issuer
+            }
+            onCopy={() => {
+              playWalletSound('soft')
+              void copyText(token.issuer!)
+            }}
+          />
+        ) : null}
         {token.cosign?.pubkey ? (
           <MetaRow
             label="Cosigner"

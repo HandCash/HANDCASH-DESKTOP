@@ -17,6 +17,8 @@ import {
   detectCosignFromLockingScript,
   formatFungibleAmount,
   isBalanceBearingOp,
+  issuerFromRemittance,
+  issuerFromSigmaLockingScript,
   normalizeTokenId,
   parseBsv21CustomInstructions,
   parseBsv21Json,
@@ -28,6 +30,7 @@ import {
   type Bsv21Utxo,
   type FungibleToken,
 } from './bsv21'
+import { formatHandCashHandle } from './handleFormat'
 import { contentUrlForOrigin } from './oneSatImport'
 import { yieldToUi } from './yieldToUi'
 
@@ -71,12 +74,16 @@ function tagValue(tags: string[] | undefined, prefix: string): string | undefine
   return undefined
 }
 
-function parseListedOutput(raw: {
-  outpoint?: string
-  satoshis?: number
-  tags?: string[]
-  customInstructions?: string
-}): Bsv21Utxo | null {
+function parseListedOutput(
+  raw: {
+    outpoint?: string
+    satoshis?: number
+    tags?: string[]
+    customInstructions?: string
+    lockingScript?: string
+  },
+  selfIdentityKey?: string,
+): Bsv21Utxo | null {
   const outpoint = (raw.outpoint ?? '').trim().toLowerCase()
   if (!outpoint) return null
   const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
@@ -98,6 +105,22 @@ function parseListedOutput(raw: {
     customInstructions: raw.customInstructions,
     tags: raw.tags,
   })
+  let issuer = issuerFromRemittance({
+    customInstructions: raw.customInstructions,
+    tags: raw.tags,
+  })
+  let issuerAttested = false
+  if (raw.lockingScript) {
+    const candidates = [issuer, selfIdentityKey].filter(Boolean) as string[]
+    const sigma = issuerFromSigmaLockingScript(raw.lockingScript, candidates)
+    if (sigma.issuer) {
+      issuer = sigma.issuer
+      issuerAttested = true
+    } else if (issuer && sigma.address) {
+      // Remittance issuer present; Sigma address seen on script.
+      issuerAttested = true
+    }
+  }
   return {
     outpoint,
     tokenId,
@@ -108,6 +131,8 @@ function parseListedOutput(raw: {
     dec,
     satoshis: raw.satoshis === 1 ? 1 : (raw.satoshis ?? 1),
     ...(cosign ? { cosign } : {}),
+    ...(issuer ? { issuer } : {}),
+    ...(issuerAttested ? { issuerAttested: true } : {}),
   }
 }
 
@@ -131,26 +156,39 @@ export async function listFungibles(
       basket: BSV21_BASKET,
       limit: 1000,
       includeCustomInstructions: true,
+      includeTags: true,
+      include: 'locking scripts',
     })
     await yieldToUi()
+    const selfKey = wallet.identityKey.toLowerCase()
     const utxos: Bsv21Utxo[] = []
     for (const row of listed.outputs ?? []) {
-      const parsed = parseListedOutput(row as {
-        outpoint?: string
-        satoshis?: number
-        tags?: string[]
-        customInstructions?: string
-      })
+      const parsed = parseListedOutput(
+        row as {
+          outpoint?: string
+          satoshis?: number
+          tags?: string[]
+          customInstructions?: string
+          lockingScript?: string
+        },
+        selfKey,
+      )
       if (parsed) utxos.push(parsed)
     }
+    const selfHandle = wallet.handle
+      ? formatHandCashHandle(wallet.handle.replace(/^[$@]/, ''), null)
+      : ''
     const tokens = aggregateFungibles(utxos).map((t) => {
       const iconOrigin = utxos.find((u) => u.tokenId === t.tokenId)?.icon
+      const issuerHandle =
+        t.issuer && t.issuer === selfKey && selfHandle ? selfHandle : undefined
       return {
         ...t,
         sym: t.sym || shortTokenLabel(t.tokenId),
         ...(iconOrigin
           ? { iconUrl: contentUrlForOrigin(iconOrigin, wallet.chain) }
           : {}),
+        ...(issuerHandle ? { issuerHandle } : {}),
       }
     })
     cached = tokens
@@ -185,6 +223,7 @@ export function fungibleFromImport(
     outpoint: item.outpoint,
     spendKind: item.cosign ? 'cosigned' : 'plain',
     ...(item.cosign ? { cosign: item.cosign } : {}),
+    ...(item.issuer ? { issuer: item.issuer } : {}),
     ...(item.icon
       ? { iconUrl: contentUrlForOrigin(item.icon, chain) }
       : {}),
@@ -267,6 +306,8 @@ export async function importBsv21Tokens(
               amt: item.amt,
               sym: item.sym,
               cosign,
+              // Only mirror a known issuer — never invent one on import.
+              issuer: item.issuer,
             }),
             customInstructions: buildBsv21CustomInstructions({
               tokenId: item.tokenId,
@@ -276,6 +317,7 @@ export async function importBsv21Tokens(
               icon: item.icon,
               dec: item.dec,
               cosign,
+              issuer: item.issuer,
             }),
           },
         }

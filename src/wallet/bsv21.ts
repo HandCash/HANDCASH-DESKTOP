@@ -16,9 +16,16 @@ import {
   parseBsv21Cosign,
   type Bsv21Cosign,
 } from './bsv21TipKind'
+import { normalizeIssuerPubKey } from './bsv21Issuer'
 
 export type { Bsv21Cosign }
 export { classifyBsv21TipKind, chooseBsv21SendPath, detectCosignFromLockingScript } from './bsv21TipKind'
+export {
+  issuerFromRemittance,
+  issuerFromSigmaLockingScript,
+  normalizeIssuerPubKey,
+  shortIssuerLabel,
+} from './bsv21Issuer'
 
 export const BSV21_BASKET = 'bsv21' as const
 export const BSV21_MIME = 'application/bsv-20' as const
@@ -46,8 +53,10 @@ export type Bsv21Payload = {
   icon?: string
   /** Decimal places from deploy (0–18). */
   dec?: number
-  /** Optional cosigner gate (BRC-163). */
+  /** Optional cosigner gate (out of band for plain BRC-163 sends). */
   cosign?: Bsv21Cosign
+  /** Issuer identity pubkey (CI mirror; prove via Sigma on deploy). */
+  issuer?: string
 }
 
 /** One spendable BSV-21 UTXO tip held by this wallet. */
@@ -61,6 +70,9 @@ export type Bsv21Utxo = {
   dec: number
   satoshis: number
   cosign?: Bsv21Cosign
+  issuer?: string
+  /** True when Sigma address matched issuer (full vin verify optional). */
+  issuerAttested?: boolean
 }
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
@@ -75,6 +87,7 @@ export type Bsv21ImportItem = {
   icon?: string
   dec?: number
   cosign?: Bsv21Cosign
+  issuer?: string
 }
 
 /** Aggregated balance for one token id (Collect list row). */
@@ -93,6 +106,12 @@ export type FungibleToken = {
    */
   spendKind: 'plain' | 'cosigned' | 'mixed'
   cosign?: Bsv21Cosign
+  /** Issuer identity pubkey when known (from remittance / Sigma). */
+  issuer?: string
+  /** Display handle when resolved (e.g. this wallet's @$handle). */
+  issuerHandle?: string
+  /** Issuer claimed and Sigma address matched (not full vin proof). */
+  issuerAttested?: boolean
 }
 
 export function normalizeTokenId(raw: string): string | null {
@@ -165,9 +184,21 @@ export function parseBsv21Json(raw: unknown): Bsv21Payload | null {
   }
   const cosign = parseBsv21Cosign(o.cosign) ?? undefined
 
+  const issuer =
+    typeof o.issuer === 'string' ? normalizeIssuerPubKey(o.issuer) ?? undefined : undefined
+
   if (op === 'deploy+mint') {
     if (!amt) return null
-    return { p: BSV21_PROTOCOL, op, amt, sym, icon, dec, ...(cosign ? { cosign } : {}) }
+    return {
+      p: BSV21_PROTOCOL,
+      op,
+      amt,
+      sym,
+      icon,
+      dec,
+      ...(cosign ? { cosign } : {}),
+      ...(issuer ? { issuer } : {}),
+    }
   }
   if (op === 'mint' || op === 'transfer' || op === 'burn') {
     if (!id || !amt) return null
@@ -180,6 +211,7 @@ export function parseBsv21Json(raw: unknown): Bsv21Payload | null {
       icon,
       dec,
       ...(cosign ? { cosign } : {}),
+      ...(issuer ? { issuer } : {}),
     }
   }
   return null
@@ -240,6 +272,7 @@ export function buildBsv21CustomInstructions(args: {
   icon?: string
   dec?: number
   cosign?: Bsv21Cosign
+  issuer?: string
 }): string {
   const body: Record<string, unknown> = {
     p: BSV21_PROTOCOL,
@@ -250,6 +283,8 @@ export function buildBsv21CustomInstructions(args: {
   if (args.sym) body.sym = args.sym
   if (args.icon) body.icon = args.icon
   if (args.dec != null && args.dec > 0) body.dec = String(args.dec)
+  const issuer = normalizeIssuerPubKey(args.issuer)
+  if (issuer) body.issuer = issuer
   if (args.cosign?.pubkey) {
     const pubkey = normalizeCosignPubKey(args.cosign.pubkey)
     if (pubkey) {
@@ -310,6 +345,8 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         outpoint: u.outpoint,
         spendKind: tipCosigned ? 'cosigned' : 'plain',
         ...(u.cosign ? { cosign: u.cosign } : {}),
+        ...(u.issuer ? { issuer: u.issuer } : {}),
+        ...(u.issuerAttested ? { issuerAttested: true } : {}),
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
@@ -320,6 +357,8 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     existing.utxoCount += 1
     if (!existing.sym && u.sym) existing.sym = u.sym
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
+    if (!existing.issuer && u.issuer) existing.issuer = u.issuer
+    if (u.issuerAttested) existing.issuerAttested = true
     if (tipCosigned) {
       existing._cosigned = true
       if (!existing.cosign && u.cosign) existing.cosign = u.cosign
@@ -334,7 +373,12 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
       spendKind:
         _plain && _cosigned ? ('mixed' as const) : _cosigned ? ('cosigned' as const) : ('plain' as const),
     }))
-    .sort((a, b) => a.sym.localeCompare(b.sym) || a.tokenId.localeCompare(b.tokenId))
+    .sort(
+      (a, b) =>
+        (a.issuer ?? '').localeCompare(b.issuer ?? '') ||
+        a.sym.localeCompare(b.sym) ||
+        a.tokenId.localeCompare(b.tokenId),
+    )
 }
 
 export function shortTokenLabel(tokenId: string): string {
@@ -351,14 +395,17 @@ export function bsv21Tags(args: {
   amt: string
   sym?: string
   cosign?: Bsv21Cosign
+  issuer?: string
 }): string[] {
   const pubkey = args.cosign ? normalizeCosignPubKey(args.cosign.pubkey) : null
+  const issuer = normalizeIssuerPubKey(args.issuer)
   const tokenId = normalizeTokenId(args.tokenId) ?? args.tokenId
   return [
     'bsv21',
     `bsv21:${tokenId}`,
     `amt:${args.amt}`,
-    ...(args.sym ? [`sym:${args.sym.slice(0, 32)}`] : []),
+    ...(args.sym ? [`sym:${args.sym.slice(0, 32).toLowerCase()}`] : []),
+    ...(issuer ? [`issuer:${issuer}`] : []),
     ...(pubkey ? [`cosign:${pubkey}`] : []),
   ]
 }

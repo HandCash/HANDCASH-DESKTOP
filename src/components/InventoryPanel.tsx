@@ -200,6 +200,12 @@ function CollectableListItem({
 
 function FungibleListItem({ token }: { token: FungibleToken }) {
   const amount = formatFungibleAmount(token.amt, token.dec)
+  const issuerLabel =
+    token.issuerHandle ||
+    (token.issuer
+      ? `${token.issuer.slice(0, 8)}…${token.issuer.slice(-6)}`
+      : null)
+  const idShort = `${token.tokenId.slice(0, 6)}…${token.tokenId.slice(-4)}`
   return (
     <li className="connected-app-row collectable-row fungible-row">
       <button
@@ -231,7 +237,12 @@ function FungibleListItem({ token }: { token: FungibleToken }) {
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{token.sym}</strong>
-          <span className="connected-app-host">{amount}</span>
+          <span className="connected-app-host">
+            {amount}
+            {issuerLabel ? ` · ${issuerLabel}` : ''}
+            {' · '}
+            {idShort}
+          </span>
         </div>
       </button>
     </li>

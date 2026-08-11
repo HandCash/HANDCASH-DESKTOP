@@ -156,6 +156,29 @@ describe('bsv21 parse', () => {
     expect(tokenIdFromBsv21Tags(tags)).toBe(MNEE)
     expect(tokenIdFromBsv21Tags([`id:${MNEE}`])).toBe(MNEE) // legacy read
   })
+
+  it('tags and CI carry issuer mirror', () => {
+    const issuer = '02' + 'ab'.repeat(32)
+    const tags = bsv21Tags({
+      tokenId: MNEE,
+      amt: '1',
+      sym: 'Gold',
+      issuer,
+    })
+    expect(tags).toContain(`issuer:${issuer}`)
+    expect(tags).toContain('sym:gold') // tags lowercased
+    const ci = JSON.parse(
+      buildBsv21CustomInstructions({
+        tokenId: MNEE,
+        amt: '1',
+        op: 'deploy+mint',
+        sym: 'Gold',
+        issuer,
+      }),
+    )
+    expect(ci.issuer).toBe(issuer)
+    expect(ci.sym).toBe('Gold')
+  })
 })
 
 describe('extractBsv21FromGp', () => {

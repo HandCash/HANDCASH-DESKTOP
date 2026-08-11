@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.137] - 2026-08-10
+
+### Added
+
+- **BSV-21 issuer binding.** Deploy+mint via BRC-100 is Sigma-signed with the
+  wallet identity key (1Sat-compatible). CI/tag `issuer:` mirror the pubkey.
+  Collect → Tokens shows issuer + token id (not symbol alone).
+
 ## [1.2.136] - 2026-08-10
 
 ### Changed

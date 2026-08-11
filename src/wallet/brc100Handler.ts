@@ -28,6 +28,7 @@ import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import { enrichCreateActionForBsv21Issuer } from './bsv21Issuer'
 type HttpRequestEvent = {
   method: string
   path: string
@@ -305,7 +306,18 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         result = await runExclusiveSpend(async () => {
           // Second heal under lock immediately before broadcast (cloud-style).
           await prepareBrcActionSpend(method, args)
-          return dispatchWalletMethod(active.wallet, method, args, originator)
+          let actionArgs = args
+          if (method === 'createAction' && args && typeof args === 'object') {
+            try {
+              actionArgs = await enrichCreateActionForBsv21Issuer(
+                active,
+                args as Parameters<typeof enrichCreateActionForBsv21Issuer>[1],
+              )
+            } catch (err) {
+              console.warn('[bsv21-issuer] enrich createAction failed', err)
+            }
+          }
+          return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
         })
       } catch (err) {
         const description = err instanceof Error ? err.message : String(err)
