@@ -16,6 +16,7 @@ import {
   activityEntryKey,
   activityEntryTitle,
   activityTokenAmountDisplay,
+  getActivityWriteGeneration,
   isEventActivity,
   isItemActivity,
   isMintTokenActivity,
@@ -94,6 +95,7 @@ function useChunkedCount(total: number): number {
 }
 
 type ActivityFeedSnapshot = {
+  generation: number
   entries: ActivityEntry[]
   origins: PaymentOriginOption[]
 }
@@ -101,9 +103,11 @@ type ActivityFeedSnapshot = {
 const feedCache = new Map<number, ActivityFeedSnapshot>()
 
 function readActivityFeed(limit: number): ActivityFeedSnapshot {
+  const generation = getActivityWriteGeneration()
   const hit = feedCache.get(limit)
-  if (hit) return hit
+  if (hit && hit.generation === generation) return hit
   const snapshot = {
+    generation,
     entries: listRecentActivity(limit),
     origins: listPaymentOriginOptions(limit),
   }

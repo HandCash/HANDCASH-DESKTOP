@@ -31,6 +31,10 @@ import {
   sendSatsToAddress,
 } from '../wallet/sendPayment'
 import {
+  requestSpendPriority,
+  releaseSpendPriority,
+} from '../wallet/walletCoordinator'
+import {
   getPaymentProgress,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
@@ -132,17 +136,31 @@ export function SendPanel({
             : 'Invalid amount',
         )
       }
-      const available = await assertSendableBalance(satoshis)
-      onSent(available)
-      send({ type: 'REVIEW' })
+      // Trust the painted balance when it already covers the amount — avoid a
+      // toolbox listOutputs stall while sync holds IndexedDB. Confirm re-checks.
+      if (satoshis <= balanceSats) {
+        send({ type: 'REVIEW' })
+        return
+      }
+      requestSpendPriority()
+      try {
+        const available = await assertSendableBalance(satoshis)
+        onSent(available)
+        send({ type: 'REVIEW' })
+      } finally {
+        releaseSpendPriority()
+      }
     } catch (err) {
       playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
       try {
+        requestSpendPriority()
         const available = await refreshSpendableBalance()
         onSent(available)
       } catch {
         // ignore secondary refresh failure
+      } finally {
+        releaseSpendPriority()
       }
     } finally {
       setReviewBusy(false)

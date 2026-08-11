@@ -272,12 +272,13 @@ export async function refreshFromChainExclusive(
     }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
+    // Do not await on the coordinator critical path — sends must not wait on
+    // listOutputs(1sat) (up to 20s). Paint/toast continues in the background.
     if (!fundingOnly) {
       try {
         const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
         rememberLiveOneSatOutpoints(ingest.scan.utxos)
-        // Await so a just-imported tip paints (and toasts) before ingest returns.
-        await listCollectables(active).catch((err) => {
+        void listCollectables(active).catch((err) => {
           console.warn('[chain-ingest] collectables refresh failed', err)
         })
       } catch (err) {

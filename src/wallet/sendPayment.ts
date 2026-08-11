@@ -42,7 +42,8 @@ export async function sendSatsToAddress(opts: {
   description?: string
 }): Promise<SendSatsResult> {
   setPaymentProgress('preparing', 'Waiting to send')
-  return runExclusiveSpend(async () => {
+  return runExclusiveSpend(
+    async () => {
     const chart = createActor(bsvSendMachine).start()
     try {
       assertOnlineForPayment()
@@ -54,7 +55,6 @@ export async function sendSatsToAddress(opts: {
       if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
       chart.send({ type: 'START', to, satoshis })
-      setPaymentProgress('preparing', 'Preparing payment')
       await prepareSpendHeal(satoshis)
       chart.send({ type: 'READY' })
 
@@ -133,5 +133,7 @@ export async function sendSatsToAddress(opts: {
       chart.stop()
       clearPaymentProgress()
     }
-  })
+  },
+    () => setPaymentProgress('preparing', 'Preparing payment'),
+  )
 }

@@ -16,7 +16,12 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
-import { fetchBalanceSats, getActiveWallet, type ActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from './session'
+import {
+  hasActivityTxid,
+  recordAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+} from './appActivity'
 import {
   contentUrlForOrigin,
   resolveInscriptionAtOrigin,
@@ -1627,6 +1632,8 @@ export async function sendCollectable(args: {
   toAddress: string
   /** Optional recipient identity (friends / peerpay); soft-latch does not require it. */
   recipientIdentityKey?: string | null
+  /** Optional friend label for the activity row. */
+  friendLabel?: string | null
   name?: string
   origin?: string
   app?: string
@@ -1644,10 +1651,9 @@ export async function sendCollectable(args: {
     assertOnlineForPayment()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
-    // Tip is already in the 1sat basket. A full address rescan (7s WoC timeout
-    // when the indexer is down) is what made this pill feel stuck. Fee UTXOs
-    // are already in managed change — createAction fails closed if they aren't.
-    await fetchBalanceSats(wallet.wallet)
+    // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
+    // createAction fails closed if they aren't. Do not await balance() here
+    // (that contended with sync and made "Waiting to send" feel stuck).
 
   setPaymentProgress(
     'building',
@@ -1826,6 +1832,26 @@ export async function sendCollectable(args: {
       { outpoint, txid },
       ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
     ])
+    // Record activity as soon as the txid exists — before relinquish / list /
+    // progress clear — so the feed updates while Working is still showing.
+    const noteTo = args.friendLabel ? `${args.friendLabel} (${to})` : to
+    if (!hasActivityTxid(txid, 'spent')) {
+      recordAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: 'spent',
+        sats: 1,
+        method: 'send-collectable',
+        note: `Sent ${name} to ${noteTo}`,
+        txid,
+        item: {
+          name,
+          origin,
+          outpoint,
+          ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
+          ...(app ? { app } : {}),
+        },
+      })
+    }
     const tx = txid.trim().toLowerCase()
     const newTip = `${tx}.0`
     const newLatch = isLatchedSendEnabled() ? `${tx}.1` : null

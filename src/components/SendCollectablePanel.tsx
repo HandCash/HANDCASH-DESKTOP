@@ -19,11 +19,6 @@ import {
   clearNavChild,
   openCollectableDetails,
 } from '../wallet/navStore'
-import {
-  hasActivityTxid,
-  recordAppActivity,
-  WALLET_ACTIVITY_ORIGIN,
-} from '../wallet/appActivity'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
@@ -165,29 +160,13 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
         outpoint: item.outpoint,
         toAddress: to,
         recipientIdentityKey,
+        friendLabel,
         name: item.name,
         origin: item.origin,
         app: item.app,
       })
       setTxid(result.txid)
-      const noteTo = friendLabel ? `${friendLabel} (${to})` : to
-      if (!hasActivityTxid(result.txid, 'spent')) {
-        recordAppActivity({
-          origin: WALLET_ACTIVITY_ORIGIN,
-          kind: 'spent',
-          sats: 1,
-          method: 'send-collectable',
-          note: `Sent ${item.name} to ${noteTo}`,
-          txid: result.txid,
-          item: {
-            name: item.name,
-            origin: item.origin,
-            outpoint: item.outpoint,
-            imageUrl: item.imageUrl,
-            ...(item.app ? { app: item.app } : {}),
-          },
-        })
-      }
+      // Activity is recorded inside finishSend as soon as the txid exists.
 
       setStage('success')
       void listCollectables().catch(() => {})

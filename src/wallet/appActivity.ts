@@ -95,9 +95,18 @@ function readAll(): ActivityEntry[] {
   }
 }
 
+/** Bumps on every write — activity feed caches must not serve a pre-write snapshot. */
+let writeGeneration = 0
+
+/** Monotonic generation for feed cache invalidation (remount-safe). */
+export function getActivityWriteGeneration(): number {
+  return writeGeneration
+}
+
 function writeAll(entries: ActivityEntry[]): void {
   // Cap history so storage stays small.
   const trimmed = entries.slice(-2000)
+  writeGeneration += 1
   durableSetItem(STORAGE_KEY, JSON.stringify(trimmed))
   for (const cb of listeners) cb()
 }
