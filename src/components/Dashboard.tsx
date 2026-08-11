@@ -238,8 +238,12 @@ export function Dashboard({
       if (tickInFlight) return
       // Don't fight the permission UI / createAction bridge reply.
       if (hasPendingPermissionPrompt()) return
-      // A send is queued or running — leave the FIFO free.
-      if (shouldYieldChainIngestToSpend()) return
+      // A send is queued or running — leave the FIFO free, but retry soon so
+      // Syncing cannot starve after the spend finishes.
+      if (shouldYieldChainIngestToSpend()) {
+        scheduleNext(750)
+        return
+      }
       tickInFlight = true
       try {
         // Parity devices merge strictly-newer cloud history before reading the chain,
@@ -252,7 +256,10 @@ export function Dashboard({
           lastHistoryPull = Date.now()
           await softPullHistoryIfRemoteNewer()
           if (cancelled) return
-          if (shouldYieldChainIngestToSpend()) return
+          if (shouldYieldChainIngestToSpend()) {
+            scheduleNext(750)
+            return
+          }
         }
         // Background polls never audit: reviewSpendableOutputs is report-only and
         // was colliding with nav taps right after unlock. Manual Refresh / online
@@ -447,39 +454,27 @@ export function Dashboard({
               actions="inline"
             />
           </section>
+        ) : sideBusy ? (
+          <section
+            className="panel permission-side-panel permission-side-panel--processing"
+            aria-label="Processing payment"
+            aria-busy="true"
+          >
+            <p className="permission-eyebrow">Working</p>
+            <h2 className="permission-request-title">
+              {paymentProgress.label || 'Sending…'}
+            </h2>
+            <p className="lede permission-lede-compact">
+              {paymentProgress.detail ||
+                (lastApproved
+                  ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
+                  : 'Broadcasting the approved payment.')}
+            </p>
+          </section>
         ) : (
           <>
-            {/* Keep the feed mounted during payment so cache + subscribers stay live. */}
-            {!sideBusy ? <WhatIsBsvPanel /> : null}
-            <div
-              className={
-                sideBusy
-                  ? 'dashboard-side-feed is-payment-obscured'
-                  : 'dashboard-side-feed'
-              }
-              hidden={sideBusy}
-              aria-hidden={sideBusy}
-            >
-              <RecentActivityPanel chain={profile.chain} />
-            </div>
-            {sideBusy ? (
-              <section
-                className="panel permission-side-panel permission-side-panel--processing"
-                aria-label="Processing payment"
-                aria-busy="true"
-              >
-                <p className="permission-eyebrow">Working</p>
-                <h2 className="permission-request-title">
-                  {paymentProgress.label || 'Sending…'}
-                </h2>
-                <p className="lede permission-lede-compact">
-                  {paymentProgress.detail ||
-                    (lastApproved
-                      ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
-                      : 'Broadcasting the approved payment.')}
-                </p>
-              </section>
-            ) : null}
+            <WhatIsBsvPanel />
+            <RecentActivityPanel chain={profile.chain} />
           </>
         )}
       </aside>

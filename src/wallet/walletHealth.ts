@@ -32,6 +32,9 @@ let syncHealth: SyncHealth = {
 
 let unlockNeeded = false
 let unlockClearTimer: ReturnType<typeof setTimeout> | null = null
+/** Force-clear a hung syncing pill so the UI cannot sit on Syncing forever. */
+let syncingWatchdog: ReturnType<typeof setTimeout> | null = null
+const SYNCING_WATCHDOG_MS = 45_000
 
 function emitSync() {
   for (const l of syncListeners) l(syncHealth)
@@ -39,6 +42,30 @@ function emitSync() {
 
 function emitUnlock() {
   for (const l of unlockListeners) l(unlockNeeded)
+}
+
+function clearSyncingWatchdog(): void {
+  if (syncingWatchdog) {
+    clearTimeout(syncingWatchdog)
+    syncingWatchdog = null
+  }
+}
+
+function armSyncingWatchdog(): void {
+  clearSyncingWatchdog()
+  syncingWatchdog = setTimeout(() => {
+    syncingWatchdog = null
+    if (syncHealth.phase !== 'syncing') return
+    console.warn(
+      '[sync-health] syncing watchdog fired — clearing stuck Syncing pill',
+      syncHealth.message,
+    )
+    setSyncHealth({
+      phase: 'error',
+      message:
+        'Refresh took too long and was stopped. Your coins are safe — tap Sync to retry.',
+    })
+  }, SYNCING_WATCHDOG_MS)
 }
 
 export function getSyncHealth(): SyncHealth {
@@ -51,6 +78,8 @@ export function setSyncHealth(patch: Partial<SyncHealth>): void {
     ...patch,
     updatedAt: Date.now(),
   }
+  if (syncHealth.phase === 'syncing') armSyncingWatchdog()
+  else clearSyncingWatchdog()
   emitSync()
 }
 

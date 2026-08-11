@@ -15,6 +15,7 @@ import {
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
+import { describeWalletCoordinator } from '../wallet/walletCoordinator'
 
 export type WalletSession =
   | 'boot'
@@ -104,7 +105,9 @@ function resolveStatus(
     return {
       label: 'Syncing',
       tone: 'busy',
-      detail: health.message ?? 'Refreshing funds against the network',
+      detail: `${health.message ?? 'Refreshing funds against the network'} · ${
+        describeWalletCoordinator().summary
+      }`,
     }
   }
   if (session === 'locked') {

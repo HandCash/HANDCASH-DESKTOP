@@ -79,7 +79,7 @@ export const WALLET_LAYER_MODULES = {
     'recompose.ts',
   ],
   balanceView: ['session.ts#fetchBalanceSats', 'layers.ts#inspectLocalToolboxState'],
-  health: ['walletHealth.ts', 'cloudBackupHealth.ts', 'backupStatus.ts'],
+  health: ['walletHealth.ts', 'cloudBackupHealth.ts', 'backupStatus.ts', 'walletRuntimeStatus.ts'],
   coordinator: [
     'walletCoordinatorMachine.ts',
     'walletCoordinator.ts',

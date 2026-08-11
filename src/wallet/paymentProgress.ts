@@ -73,6 +73,31 @@ function emit(): void {
   for (const listener of listeners) listener(progress)
 }
 
+let stuckWatchdog: ReturnType<typeof setTimeout> | null = null
+const STUCK_PAYMENT_MS = 90_000
+
+function clearStuckWatchdog(): void {
+  if (stuckWatchdog) {
+    clearTimeout(stuckWatchdog)
+    stuckWatchdog = null
+  }
+}
+
+function armStuckWatchdog(): void {
+  clearStuckWatchdog()
+  if (progress.phase === 'idle') return
+  stuckWatchdog = setTimeout(() => {
+    stuckWatchdog = null
+    if (progress.phase === 'idle') return
+    console.warn(
+      '[payment-progress] stuck watchdog fired — clearing',
+      progress.phase,
+      progress.detail,
+    )
+    clearPaymentProgress()
+  }, STUCK_PAYMENT_MS)
+}
+
 export function getPaymentProgress(): PaymentProgress {
   return progress
 }
@@ -98,6 +123,7 @@ export function setPaymentProgress(
 ): void {
   if (phase === 'idle') {
     progress = { phase: 'idle', label: null, detail: null, outpoint: null }
+    clearStuckWatchdog()
     emit()
     return
   }
@@ -114,6 +140,7 @@ export function setPaymentProgress(
     detail: detail?.trim() || copy.detail,
     outpoint: nextOutpoint,
   }
+  armStuckWatchdog()
   emit()
 }
 

@@ -6462,6 +6462,72 @@ a.app-details-host:hover {
   height: 100%;
 }
 
+.statecharts-live {
+  flex: 0 0 auto;
+  padding: 10px 12px;
+  border-radius: var(--hc-radius);
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, transparent);
+  background: rgba(0, 0, 0, 0.28);
+  display: grid;
+  gap: 8px;
+}
+
+.statecharts-live-title {
+  margin: 0;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+.statecharts-live-summary {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: #ffffff;
+  overflow-wrap: anywhere;
+}
+
+.statecharts-live-grid {
+  margin: 0;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+}
+
+.statecharts-live-grid > div {
+  min-width: 0;
+  display: grid;
+  gap: 2px;
+}
+
+.statecharts-live-grid dt {
+  margin: 0;
+  font-size: 0.62rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+.statecharts-live-grid dd {
+  margin: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: #ffffff;
+}
+
+.statecharts-live-grid dd[data-state='active'] {
+  color: var(--hc-accent);
+}
+
+.statecharts-live-note {
+  margin: 0;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--hc-muted);
+}
+
 .statecharts-toolbar {
   flex-shrink: 0;
   display: flex;

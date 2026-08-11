@@ -47,6 +47,37 @@ export function shouldYieldChainIngestToSpend(): boolean {
   return spendPriorityDepth > 0
 }
 
+/** How many callers currently want the FIFO freed for a spend. */
+export function getSpendPriorityDepth(): number {
+  return spendPriorityDepth
+}
+
+export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
+  spendWaiting: number
+  /** Human one-liner for Settings / pill tooltips. */
+  summary: string
+}
+
+/** Live coordinator view — use this instead of guessing which layer is stuck. */
+export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
+  const snap = getWalletCoordinatorSnapshot()
+  const spendWaiting = spendPriorityDepth
+  const active = (
+    Object.entries(snap) as Array<[keyof WalletCoordinatorSnapshot, 'idle' | 'active']>
+  )
+    .filter(([, v]) => v === 'active')
+    .map(([k]) => k)
+  const parts: string[] = []
+  if (active.length === 0) parts.push('layers idle')
+  else parts.push(`active: ${active.join(', ')}`)
+  if (spendWaiting > 0) parts.push(`spend waiting×${spendWaiting}`)
+  return {
+    ...snap,
+    spendWaiting,
+    summary: parts.join(' · '),
+  }
+}
+
 function context(): WalletCoordinatorContext {
   return actor.getSnapshot().context
 }
