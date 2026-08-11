@@ -1990,18 +1990,14 @@ export async function sendCollectable(args: {
     {
       outpoint,
       inputDescription: '1sat collectable',
-      // Plain soft P2PKH: omit unlockingScriptLength so createAction can
-      // signAndProcess in one shot. Declaring a length forces the signable →
-      // signAction round trip (~30s on phones in lab logs).
-      ...(tipKind.kind === 'softP2pkh' ? {} : { unlockingScriptLength: 108 }),
+      unlockingScriptLength: 108,
     },
     ...(priorLatch
       ? [
           {
             outpoint: priorLatch.outpoint,
             inputDescription: '1sat latch',
-            // Latch dust is plain P2PKH — same auto-sign win.
-            ...(tipKind.kind === 'softP2pkh' ? {} : { unlockingScriptLength: 108 }),
+            unlockingScriptLength: 108,
           },
         ]
       : []),

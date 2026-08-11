@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.176] - 2026-08-11
+
+### Fixed
+- **Collectable send “unlockingScriptLength must be at least one valid value”.** Soft-latch inputs always need `unlockingScriptLength` for the toolbox; the 1.2.175 omit-for-speed experiment is reverted. Other send speedups (no lineage hydrate, Bitails-first postBeef, deferred Argon2) stay.
+
 ## [1.2.175] - 2026-08-11
 
 ### Fixed
