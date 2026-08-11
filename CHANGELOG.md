@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.151] - 2026-08-11
+
+### Fixed
+
+- **Mint `sourceTransaction`:** stop omitting tip `inputBEEF` when parents are
+  missing. Tip-only / AtomicBEEF wraps are kept (raw tip bodies are required for
+  signable inputs) and missing parents are patched as `txidOnly` so
+  `trustSelf:'known'` still verifies — fixes "Every signableTransaction input
+  must have a sourceTransaction" from the 1.2.150 omit path.
+- **Permission vs sync:** while a connect/pay prompt is open, raise spend
+  priority so BRC-39 history upload yields the wallet FIFO instead of gating
+  Approve behind encrypt.
+
 ## [1.2.150] - 2026-08-11
 
 ### Fixed
