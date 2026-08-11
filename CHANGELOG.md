@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.142] - 2026-08-10
+
+### Changed
+
+- **Spends trust local wallet state:** no chain/address heal before send or
+  BRC `createAction`. Refresh stays a Dashboard concern.
+- **Identity mint permission:** BSV-21 deploy+mint prompts as **Mint token** /
+  Identity mint (Sigma-backed), never Auto-pay or generic payment.
+
 ## [1.2.141] - 2026-08-10
 
 ### Changed

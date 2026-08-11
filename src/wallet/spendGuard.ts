@@ -1,18 +1,18 @@
 /**
- * Parity-oriented spend guard (cloud-inspired, local):
+ * Spend guard:
  * - serialize spends on this device (wallet coordinator spend region)
  * - advisory lease on shared backup URL across devices
- * - force chain heal before pay (nested chain ingest during spend)
+ * - assert against **local** spendable balance (toolbox / history backup)
+ *
+ * Local wallet state is the authority for pays. Do not force chainIngest /
+ * legacy address scans before send — Refresh remains a Dashboard / background
+ * concern. A stale local tip fails at broadcast and is released then.
  */
 import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceSats, getActiveWallet } from './session'
-import { refreshFromChain, refreshFromChainDuringSpend } from './chainIngest'
 import { acquireSpendLease } from './spendLease'
-import {
-  getWalletCoordinatorSnapshot,
-  runExclusiveSpend as runExclusiveSpendCoordinated,
-} from './walletCoordinator'
+import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(
@@ -23,66 +23,34 @@ export function runExclusiveSpend<T>(
 }
 
 /**
- * Force chain refresh; return spendable sats.
- *
- * Pre-prompt heals (auto-pay silent path) run *outside* a spend session, so they
- * use the top-level chain ingest path. Heals under `runExclusiveSpend` nest via
- * `refreshFromChainDuringSpend`.
- *
- * A heal completed within FUNDING_HEAL_FRESH_MS is reused so auto-pay's pre-prompt
- * heal + post-approve heal do not double-scan the address.
+ * @deprecated No-op. Spends no longer cache a pre-pay chain heal.
+ * Kept so older call sites compile until cleaned up.
  */
-const FUNDING_HEAL_FRESH_MS = 5_000
-let lastFundingHealAt = 0
-let lastFundingHealSats: number | null = null
+export function invalidateFundingHealCache(): void {}
 
-/** Call after a successful spend so the next heal cannot reuse pre-spend outs. */
-export function invalidateFundingHealCache(): void {
-  lastFundingHealAt = 0
-  lastFundingHealSats = null
-}
-
+/** Local toolbox spendable sats — no network refresh. */
 export async function refreshSpendableBalance(): Promise<number> {
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
-
-  const now = Date.now()
-  if (
-    lastFundingHealSats != null &&
-    now - lastFundingHealAt < FUNDING_HEAL_FRESH_MS
-  ) {
-    return lastFundingHealSats
-  }
-
-  // No audit: it only reports, and paying a request per output here is what made
-  // sending feel frozen. fundingOnly for the same reason — a payment cannot spend
-  // an ordinal, so identifying one mid-send is pure latency.
-  const opts = { announceReceive: false, audit: false, fundingOnly: true } as const
-  const synced =
-    getWalletCoordinatorSnapshot().spend === 'active'
-      ? await refreshFromChainDuringSpend(opts)
-      : await refreshFromChain(opts)
-  const sats = synced != null ? synced : await fetchBalanceSats(active.wallet)
-  lastFundingHealAt = Date.now()
-  lastFundingHealSats = sats
-  return sats
+  return fetchBalanceSats(active.wallet)
 }
 
-/** Refresh from chain and ensure `satoshis` still fits. */
+/** Ensure local spendable covers `satoshis`. */
 export async function assertSendableBalance(satoshis: number): Promise<number> {
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
   const available = await refreshSpendableBalance()
   if (satoshis > available) {
     throw new Error(
-      `Insufficient balance after refresh (${available} sats available, need ${satoshis}).`,
+      `Insufficient balance (${available} sats available, need ${satoshis}).`,
     )
   }
   return available
 }
 
 /**
- * Online + force heal. If `satoshis` provided, ensure funds still cover it.
+ * Pre-spend gate: online + local balance (optional amount check).
+ * Name kept for call-site stability; does not heal from chain.
  */
 export async function prepareSpendHeal(satoshis?: number): Promise<number> {
   if (typeof satoshis === 'number' && satoshis > 0) {
@@ -91,7 +59,7 @@ export async function prepareSpendHeal(satoshis?: number): Promise<number> {
   return refreshSpendableBalance()
 }
 
-/** Heal (+ optional amount check) for BRC-100 createAction / signAction. */
+/** Local balance (+ optional amount check) for BRC-100 createAction / signAction. */
 export async function prepareBrcActionSpend(
   method: string,
   args: unknown,

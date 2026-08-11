@@ -90,7 +90,7 @@ export const WALLET_LAYER_MODULES = {
 
 /**
  * Composed recovery entry — prefer over calling history + chain separately.
- * Isolated from Refresh: do not call from Dashboard / spend heal.
+ * Isolated from Refresh: do not call from Dashboard / spend paths.
  */
 export const RECOMPOSE_MODULE = 'recompose.ts' as const
 

@@ -6,6 +6,8 @@ import {
   shortIssuerLabel,
   sigmaSignDeployLockingScript,
   issuerFromSigmaLockingScript,
+  isBsv21IdentityMintArgs,
+  bsv21IdentityMintHints,
 } from './bsv21Issuer'
 
 describe('bsv21Issuer', () => {
@@ -73,5 +75,32 @@ describe('bsv21Issuer', () => {
     tx.addInput({ sourceTXID: fundTxid, sourceOutputIndex: 1 })
     tx.addOutput({ satoshis: 1, lockingScript: Script.fromHex(signedHex) })
     expect(tx.outputs[0]?.lockingScript.toHex().toLowerCase()).toContain('5349474d41')
+  })
+
+  it('detects identity-backed deploy+mint createAction args', () => {
+    const args = {
+      description: 'Mint DEMO',
+      outputs: [
+        {
+          satoshis: 1,
+          basket: 'bsv21',
+          tags: ['bsv21', 'op:deploy+mint', 'sym:DEMO', 'amt:1000'],
+          customInstructions: JSON.stringify({
+            p: 'bsv-20',
+            op: 'deploy+mint',
+            sym: 'DEMO',
+            amt: '1000',
+          }),
+        },
+      ],
+    }
+    expect(isBsv21IdentityMintArgs('createAction', args)).toBe(true)
+    expect(isBsv21IdentityMintArgs('signAction', args)).toBe(false)
+    expect(bsv21IdentityMintHints(args)).toEqual({ sym: 'DEMO', amt: '1000' })
+    expect(
+      isBsv21IdentityMintArgs('createAction', {
+        outputs: [{ satoshis: 1000, basket: 'default' }],
+      }),
+    ).toBe(false)
   })
 })

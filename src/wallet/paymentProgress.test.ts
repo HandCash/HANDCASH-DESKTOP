@@ -10,7 +10,7 @@ describe('paymentProgress', () => {
   it('exposes Sending label for preparing / broadcasting / finishing', () => {
     setPaymentProgress('preparing')
     expect(getPaymentProgress().label).toBe('Sending…')
-    expect(getPaymentProgress().detail).toMatch(/spendable/i)
+    expect(getPaymentProgress().detail).toMatch(/Preparing payment/i)
 
     setPaymentProgress('broadcasting', 'Signing and broadcasting your payment')
     expect(getPaymentProgress().phase).toBe('broadcasting')

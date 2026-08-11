@@ -59,8 +59,7 @@ export type LegacyAddressIngestOptions = {
   active?: ActiveWallet | null
   /**
    * Sweep funding only — no ordinal identification, no item internalization.
-   * Used by the pre-send heal, which needs a trustworthy spendable balance and
-   * nothing else.
+   * Used when Refresh yields to an in-flight spend (fundingOnly / yield path).
    */
   fundingOnly?: boolean
 }

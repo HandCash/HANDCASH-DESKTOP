@@ -30,8 +30,8 @@ import {
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { prepareBrcActionSpend, runExclusiveSpend, invalidateFundingHealCache } from './spendGuard'
-import { enrichCreateActionForBsv21Issuer } from './bsv21Issuer'
+import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import { enrichCreateActionForBsv21Issuer, isBsv21IdentityMintArgs } from './bsv21Issuer'
 import { canAutoProcessPayment } from './autoPay'
 import {
   clearPaymentProgress,
@@ -278,13 +278,12 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()
-        // Interactive approvals: show the sheet immediately. A full chain heal
-        // before the prompt made sequential mint/pays feel stalled (idle column
-        // for tens of seconds). Auto-pay still heals first so silent allows are
-        // based on live outs; post-approve heal under lock remains for everyone.
+        // Local toolbox / history backup is authoritative — no chain heal before
+        // pay. Still refuse auto-pay when local balance cannot cover the ask.
         const amountSats = extractSatsFromArgs(method, args)
         const silentAutoPay =
           !isItemSpendArgs(method, args) &&
+          !isBsv21IdentityMintArgs(method, args) &&
           canAutoProcessPayment(normalizeOrigin(originator), method, amountSats)
         if (silentAutoPay) {
           await prepareBrcActionSpend(method, args)
@@ -339,10 +338,9 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     let result: unknown
     if (method === 'createAction' || method === 'signAction') {
       try {
-        setPaymentProgress('preparing', 'Checking spendable funds')
+        setPaymentProgress('preparing', 'Preparing payment')
         result = await runExclusiveSpend(async () => {
-          // Second heal under lock immediately before broadcast (cloud-style).
-          setPaymentProgress('preparing', 'Checking spendable funds')
+          // Local balance check only — never block on address scan / chain ingest.
           await prepareBrcActionSpend(method, args)
           let actionArgs = args
           if (method === 'createAction' && args && typeof args === 'object') {
@@ -362,10 +360,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           return dispatchWalletMethod(active.wallet, method, actionArgs, originator)
         })
         setPaymentProgress('finishing', 'Updating your balance')
-        invalidateFundingHealCache()
       } catch (err) {
         clearPaymentProgress()
-        invalidateFundingHealCache()
         const description = err instanceof Error ? err.message : String(err)
         const offline = /offline/i.test(description)
         return {

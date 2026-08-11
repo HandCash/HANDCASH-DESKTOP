@@ -16,6 +16,10 @@ import {
   type ItemAccess,
   type ItemViewRequest,
 } from './itemAccess'
+import {
+  bsv21IdentityMintHints,
+  isBsv21IdentityMintArgs,
+} from './bsv21Issuer'
 import { formatBsvSignificant } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 
@@ -464,6 +468,34 @@ export function summarizeAction(method: string, args: unknown): {
   const body = asRecord(args)
   const details: string[] = []
 
+  if (method === 'createAction' && isBsv21IdentityMintArgs(method, args)) {
+    const hints = bsv21IdentityMintHints(args)
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Mint a BSV-21 token'
+    details.push('Backed by your HandCash identity (Sigma issuer)')
+    if (hints.sym) details.push(`Token: ${hints.sym}`)
+    if (hints.amt) details.push(`Supply: ${hints.amt}`)
+    details.push('Not covered by Pay or Auto-pay')
+    const outputs = Array.isArray(body.outputs) ? body.outputs : []
+    let total = 0
+    for (const raw of outputs) {
+      if (!raw || typeof raw !== 'object') continue
+      const sats = typeof (raw as { satoshis?: unknown }).satoshis === 'number'
+        ? ((raw as { satoshis: number }).satoshis)
+        : 0
+      total += sats
+    }
+    return {
+      title: 'Mint token',
+      summary: description,
+      amountSats: total > 0 ? total : undefined,
+      amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
+      details,
+    }
+  }
+
   if (method === 'createAction' && isItemSpendArgs(method, args)) {
     const description =
       typeof body.description === 'string' && body.description.trim()
@@ -616,10 +648,11 @@ export function requestActionApproval(
   const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
   const itemSpend = isItemSpendArgs(method, args)
   const itemReceive = isItemReceiveArgs(method, args)
+  const identityMint = isBsv21IdentityMintArgs(method, args)
 
-  // Item send / receive are never covered by Pay or Auto-pay.
-  // Send always prompts (each transfer). Receive may reuse a prior grant.
-  if (itemSpend) {
+  // Item send / receive and identity-backed token mints are never covered by
+  // Pay or Auto-pay. Send / mint always prompt; receive may reuse a prior grant.
+  if (itemSpend || identityMint) {
     // fall through to prompt
   } else if (itemReceive) {
     const access = getItemAccess(key)

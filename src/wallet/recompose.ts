@@ -1,5 +1,5 @@
 /**
- * Device recompose tool — **isolated** from Dashboard Refresh / spend heal.
+ * Device recompose tool — **isolated** from Dashboard Refresh / spend paths.
  *
  * Only call from unlock/create, History restore/import, and Pair Sync.
  * Never import this from `chainIngest` / spend paths.

@@ -147,12 +147,65 @@ type CreateActionArgs = {
   options?: Record<string, unknown>
 }
 
-function isDeployMintOutput(out: CreateActionOutput): boolean {
+/** True when an output is a BSV-21 deploy+mint tip (basket + op). */
+export function isBsv21DeployMintOutput(out: CreateActionOutput): boolean {
   const basket = (out.basket ?? '').trim().toLowerCase()
   if (basket !== 'bsv21') return false
   const ci = (out.customInstructions ?? '').toLowerCase()
   if (ci.includes('deploy+mint')) return true
   return (out.tags ?? []).some((t) => t.toLowerCase() === 'op:deploy+mint')
+}
+
+/**
+ * True when createAction will mint a BSV-21 token that HandCash backs with the
+ * user's identity (CI/tag issuer + Sigma on approve).
+ */
+export function isBsv21IdentityMintArgs(method: string, args: unknown): boolean {
+  if (method !== 'createAction') return false
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return false
+  const outputs = (args as CreateActionArgs).outputs
+  if (!Array.isArray(outputs) || outputs.length === 0) return false
+  return outputs.some((o) => isBsv21DeployMintOutput(o))
+}
+
+/** Best-effort symbol / amount from deploy+mint tags or customInstructions. */
+export function bsv21IdentityMintHints(args: unknown): {
+  sym: string | null
+  amt: string | null
+} {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return { sym: null, amt: null }
+  }
+  const outputs = (args as CreateActionArgs).outputs ?? []
+  for (const out of outputs) {
+    if (!isBsv21DeployMintOutput(out)) continue
+    let sym: string | null = null
+    let amt: string | null = null
+    for (const tag of out.tags ?? []) {
+      const t = tag.trim()
+      const lower = t.toLowerCase()
+      if (lower.startsWith('sym:') && !sym) sym = t.slice(4).trim() || null
+      if (lower.startsWith('amt:') && !amt) amt = t.slice(4).trim() || null
+    }
+    if (out.customInstructions) {
+      try {
+        const ci = JSON.parse(out.customInstructions) as {
+          sym?: unknown
+          amt?: unknown
+        }
+        if (!sym && typeof ci.sym === 'string' && ci.sym.trim()) {
+          sym = ci.sym.trim()
+        }
+        if (!amt && typeof ci.amt === 'string' && ci.amt.trim()) {
+          amt = ci.amt.trim()
+        }
+      } catch {
+        // ignore
+      }
+    }
+    return { sym, amt }
+  }
+  return { sym: null, amt: null }
 }
 
 function mergeIssuerIntoCi(ci: string | undefined, issuer: string): string {
@@ -192,7 +245,7 @@ export async function enrichCreateActionForBsv21Issuer(
   const outputs = args.outputs
   if (!outputs?.length) return args
   const deployIdxs = outputs
-    .map((o, i) => (isDeployMintOutput(o) ? i : -1))
+    .map((o, i) => (isBsv21DeployMintOutput(o) ? i : -1))
     .filter((i) => i >= 0)
   if (deployIdxs.length === 0) return args
 

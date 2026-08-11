@@ -54,9 +54,9 @@ export async function sendSatsToAddress(opts: {
       if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
       chart.send({ type: 'START', to, satoshis })
-      setPaymentProgress('preparing')
+      setPaymentProgress('preparing', 'Preparing payment')
       await prepareSpendHeal(satoshis)
-      chart.send({ type: 'HEALED' })
+      chart.send({ type: 'READY' })
 
       const pending = beginPendingSend({
         to,

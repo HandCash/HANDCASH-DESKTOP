@@ -2,8 +2,9 @@
  * Live payment / transfer progress for the status pill and send screens.
  *
  * `createAction({ signAndProcess: true })` signs and broadcasts in one call, so
- * those two steps share a phase rather than inventing a fake boundary. Healing,
- * building (collectables), and finishing are real edges around that call.
+ * those two steps share a phase rather than inventing a fake boundary. Local
+ * balance check, building (collectables), and finishing are real edges around
+ * that call — chain ingest is not required before pay.
  */
 
 export type PaymentPhase =
@@ -44,7 +45,7 @@ const COPY: Record<
 > = {
   preparing: {
     label: 'Sending…',
-    detail: 'Checking spendable funds',
+    detail: 'Preparing payment',
   },
   building: {
     label: 'Sending…',

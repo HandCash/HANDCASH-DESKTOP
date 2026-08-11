@@ -51,9 +51,8 @@ export type ChainIngestOptions = {
   /** Cloud migrate may pass ordinal tips the indexer has not classified yet. */
   knownItems?: MigrationItem[]
   /**
-   * Sweep funding and skip all ordinal work. The pre-send heal needs a current
-   * spendable balance; naming tips costs indexer round trips it cannot use, and
-   * that is what made "checking balance" feel like a hang before a payment.
+   * Sweep funding and skip all ordinal work. Used when a spend is waiting so
+   * Refresh yields ordinal naming; pays themselves do not call chain ingest.
    */
   fundingOnly?: boolean
 }
@@ -77,7 +76,7 @@ export type SpendableReviewResult = {
   error?: string
 }
 
-/** Serialize all chain-ingest work (Refresh, migrate refresh, spend heal). */
+/** Serialize all chain-ingest work (Refresh, migrate refresh, nested yield). */
 export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
   return runChainIngest(async () => (await refreshFromChainExclusive(opts)).balanceSats)
 }

@@ -30,11 +30,12 @@ type Props = {
 
 function isBsvPaymentAction(pending: PendingAction): boolean {
   if (pending.method !== 'createAction' && pending.method !== 'signAction') return false
-  // Item send is a separate permission — never offer Auto-pay.
+  // Item send / identity mint are separate permissions — never offer Auto-pay.
   if (
     pending.title === 'Send item' ||
     pending.title === 'Confirm item send' ||
-    pending.title === 'Release item'
+    pending.title === 'Release item' ||
+    pending.title === 'Mint token'
   ) {
     return false
   }
@@ -169,7 +170,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     <dt>What for</dt>
                     <dd>{pending.summary}</dd>
                   </div>
-                  {pending.details.slice(0, 2).map((line) => (
+                  {pending.details.slice(0, pending.title === 'Mint token' ? 4 : 2).map((line) => (
                     <div key={line}>
                       <dt>Detail</dt>
                       <dd>{line}</dd>

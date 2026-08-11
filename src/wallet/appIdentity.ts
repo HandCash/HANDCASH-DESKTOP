@@ -153,6 +153,12 @@ export function humanActionCopy(
   if (title === 'Send item' || title === 'Confirm item send' || title === 'Release item') {
     return { eyebrow: 'Item transfer', verb: 'wants to send or release a collectable' }
   }
+  if (title === 'Mint token') {
+    return {
+      eyebrow: 'Identity mint',
+      verb: 'wants to mint a token backed by your identity',
+    }
+  }
   if (title === 'Receive item') {
     return { eyebrow: 'Receive item', verb: 'wants to add a collectable to your inventory' }
   }

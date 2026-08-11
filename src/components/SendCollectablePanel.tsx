@@ -191,7 +191,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
       setStage('success')
       void listCollectables().catch(() => {})
-      // Pre-send heal already ran; Dashboard poll + settle grace reconcile the rest.
+      // Local state is authoritative for the spend; Dashboard poll reconciles after.
       void fetchBalanceSats(getActiveWallet()?.wallet)
         .then((balance) => {
           onSent?.(balance)

@@ -262,7 +262,7 @@ const BSV_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> preparing : START
-  preparing --> broadcasting : HEALED
+  preparing --> broadcasting : READY
   broadcasting --> done : BROADCASTED
   preparing --> failed : FAIL
   broadcasting --> failed : FAIL
@@ -529,7 +529,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'bsvSend',
     label: 'BSV send',
-    caption: 'bsvSendMachine — heal → broadcast (chain path)',
+    caption: 'bsvSendMachine — local balance → broadcast',
     source: BSV_SEND,
   },
   {

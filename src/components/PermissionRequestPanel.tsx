@@ -44,7 +44,8 @@ function isBsvPaymentAction(pending: PendingPrompt): boolean {
   if (
     pending.title === 'Send item' ||
     pending.title === 'Confirm item send' ||
-    pending.title === 'Release item'
+    pending.title === 'Release item' ||
+    pending.title === 'Mint token'
   ) {
     return false
   }
@@ -262,7 +263,7 @@ export function PermissionRequestPanel({
           <dt>What for</dt>
           <dd>{pending.summary}</dd>
         </div>
-        {pending.details.slice(0, 2).map((line) => (
+        {pending.details.slice(0, pending.title === 'Mint token' ? 4 : 2).map((line) => (
           <div key={line}>
             <dt>Detail</dt>
             <dd>{line}</dd>
