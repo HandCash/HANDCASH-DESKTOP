@@ -160,12 +160,11 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
       countActions(),
     ])
 
+  // 1sat / bsv21 from address scan alone are not historyReplica. After restore,
+  // chain ingest can land soft-latch dust before BRC-39 pull — those outs must
+  // not block empty-local recovery of spendable balance + TX history.
   const looksEmpty =
-    spendableSats <= 0 &&
-    defaultOutputCount <= 0 &&
-    oneSatOutputCount <= 0 &&
-    bsv21OutputCount <= 0 &&
-    actionCount <= 0
+    spendableSats <= 0 && defaultOutputCount <= 0 && actionCount <= 0
 
   return {
     spendableSats,

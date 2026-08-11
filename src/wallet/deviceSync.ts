@@ -342,16 +342,41 @@ export type AutoPushOpts = {
   allowEmptyPull?: boolean
 }
 
+export type AutoSyncResult = {
+  /** Empty-local pull restored remote BRC-39 into this device. */
+  pulled: boolean
+  /** Decrypt/import failed while trying to recover empty local. */
+  pullError: string | null
+  /**
+   * Early exit before push work (no URL, watchdog backoff, etc.).
+   * Empty-local pull may still have run — see `pulled` / `pullError`.
+   */
+  skipReason: string | null
+}
+
 /**
- * Best-effort historyReplica sync after create/unlock (and debounced post-spend push).
- * Empty-local × remote edge case is isolated in `historyEmptyGuard.ts` — auto paths
- * never PUT an empty localState over a protected remote blob.
+ * Best-effort historyReplica sync after create/unlock/restore (and debounced
+ * post-spend push). Empty-local × remote edge case is isolated in
+ * `historyEmptyGuard.ts` — auto paths never PUT an empty localState over a
+ * protected remote blob.
+ *
+ * Push may be deferred or watchdog-blocked; empty-local **pull** is not —
+ * restore/unlock must recover balance + TX history even when a prior backup
+ * attempt is still marked open.
  */
 export async function autoPushHistoryBackupIfConfigured(
   password: string,
   opts: AutoPushOpts = {},
-): Promise<void> {
-  if (!password) return
+): Promise<AutoSyncResult> {
+  const result: AutoSyncResult = {
+    pulled: false,
+    pullError: null,
+    skipReason: null,
+  }
+  if (!password) {
+    result.skipReason = 'no password'
+    return result
+  }
   const reason = opts.reason ?? 'unlock'
   const allowEmptyPull =
     opts.allowEmptyPull ?? allowEmptyLocalHistoryPull(reason)
@@ -361,13 +386,57 @@ export async function autoPushHistoryBackupIfConfigured(
   } catch {
     /* ignore */
   }
-  if (!hasDeviceLinkBackupUrl()) return
+  if (!hasDeviceLinkBackupUrl()) {
+    result.skipReason = 'no backup url'
+    return result
+  }
 
   const { appendAppLog } = await import('./appLog')
+
+  // Recovery pull first — never gated by the push crash-loop watchdog.
+  let remoteExists = false
+  let remoteBytes: number | null = null
+  if (allowEmptyPull) {
+    try {
+      const remote = await fetchRemoteBrc39Meta()
+      remoteExists = Boolean(remote?.exists)
+      remoteBytes = remote?.bytes ?? null
+      const emptyLocal = await localToolboxStateLooksEmpty()
+      if (remoteExists && emptyLocal) {
+        appendAppLog(
+          'info',
+          '[cloud-backup] empty localState + remote BRC-39 — pulling historyReplica',
+        )
+        try {
+          await downloadAndRestoreBrc39Backup(password)
+          result.pulled = true
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          result.pullError = msg
+          appendAppLog('warn', `[cloud-backup] empty-local pull failed: ${msg}`)
+          if (
+            /decrypt|password|passphrase|auth|mac|argon|gcm|cipher|invalid/i.test(
+              msg,
+            )
+          ) {
+            appendAppLog(
+              'warn',
+              '[cloud-backup] history blob needs the password that encrypted it (same unlock password as the device that uploaded)',
+            )
+          }
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      appendAppLog('warn', `[cloud-backup] empty-local pull probe failed: ${msg}`)
+    }
+  }
+
   const blocked = backupBlockedReason()
   if (blocked) {
-    appendAppLog('info', `[cloud-backup] skip auto-sync (${reason}) — ${blocked}`)
-    return
+    appendAppLog('info', `[cloud-backup] skip push (${reason}) — ${blocked}`)
+    result.skipReason = blocked
+    return result
   }
 
   let attemptOpen = false
@@ -375,22 +444,10 @@ export async function autoPushHistoryBackupIfConfigured(
     appendAppLog('info', `[cloud-backup] auto-sync starting (${reason})`)
     await Promise.race([
       (async () => {
-        const remote = await fetchRemoteBrc39Meta()
-        const emptyLocal = await localToolboxStateLooksEmpty()
-        const remoteExists = Boolean(remote?.exists)
-        const remoteBytes = remote?.bytes ?? null
-
-        if (allowEmptyPull && remoteExists && emptyLocal) {
-          appendAppLog(
-            'info',
-            '[cloud-backup] empty localState + remote BRC-39 — pulling historyReplica',
-          )
-          try {
-            await downloadAndRestoreBrc39Backup(password)
-          } catch (err) {
-            const msg = err instanceof Error ? err.message : String(err)
-            appendAppLog('warn', `[cloud-backup] empty-local pull failed: ${msg}`)
-          }
+        if (!allowEmptyPull || remoteBytes == null) {
+          const remote = await fetchRemoteBrc39Meta()
+          remoteExists = Boolean(remote?.exists)
+          remoteBytes = remote?.bytes ?? null
         }
 
         const stillEmpty = await localToolboxStateLooksEmpty()
@@ -405,10 +462,14 @@ export async function autoPushHistoryBackupIfConfigured(
           return
         }
 
-        // Unlock/create: never encrypt+upload on the hot path — Argon2 on a
-        // ~26MB BRC-38 freezes the renderer so permission prompts never answer
-        // (WALLET_BRIDGE_TIMEOUT). Mark dirty and push after the UI is free.
-        if (reason === 'unlock' || reason === 'create') {
+        // Unlock/create/restore: never encrypt+upload on the hot path — Argon2
+        // on a ~26MB BRC-38 freezes the renderer so permission prompts never
+        // answer (WALLET_BRIDGE_TIMEOUT). Mark dirty and push after the UI is free.
+        if (
+          reason === 'unlock' ||
+          reason === 'create' ||
+          reason === 'restore'
+        ) {
           appendAppLog(
             'info',
             `[cloud-backup] defer push after ${reason} — keep UI free for permissions`,
@@ -444,14 +505,16 @@ export async function autoPushHistoryBackupIfConfigured(
       historyDirty = true
       appendAppLog('info', `[cloud-backup] deferred (${reason}) — spend waiting`)
       scheduleHistoryBackupPush(reason)
-      return
+      return result
     }
     try {
       appendAppLog('warn', `[cloud-backup] auto-sync failed (${reason}): ${msg}`)
     } catch {
       /* ignore */
     }
+    if (!result.pullError) result.pullError = msg
   }
+  return result
 }
 
 export function deviceLinkObjectHint(identityKey: string): string | null {

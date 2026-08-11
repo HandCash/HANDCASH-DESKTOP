@@ -57,6 +57,7 @@ describe('decideEmptyHistoryOverwrite (isolated edge case)', () => {
 describe('allowEmptyLocalHistoryPull', () => {
   it('allows recovery paths only', () => {
     expect(allowEmptyLocalHistoryPull('unlock')).toBe(true)
+    expect(allowEmptyLocalHistoryPull('restore')).toBe(true)
     expect(allowEmptyLocalHistoryPull('recompose')).toBe(true)
     expect(allowEmptyLocalHistoryPull('createAction')).toBe(false)
     expect(allowEmptyLocalHistoryPull('send')).toBe(false)

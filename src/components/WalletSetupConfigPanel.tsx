@@ -2,20 +2,18 @@ import { useState } from 'react'
 import {
   BACKUP_SERVICES_LIVE,
   DEFAULT_HISTORY_BACKUP_SETUP_URL,
-  HANDCASH_BACKUP_SERVICE_URL,
-  HASTE_BACKUP_SERVICE_URL,
   listWalletConfigOptions,
-  setWalletConfigPrefs,
   type WalletConfigMode,
 } from '../wallet/walletConfig'
-import { setHistoryBackupPrefs } from '../wallet/historyBackupPrefs'
+import { applyWalletSetupSelection } from '../wallet/walletSetupApply'
 
 type Props = {
   onDone: () => void
 }
 
 /**
- * Post-create / post-restore: choose Recommended (grayed) / history-only / none.
+ * Post-create only: choose Recommended / history-only / none.
+ * Restore applies defaults in AuthScreen and skips this panel.
  */
 export function WalletSetupConfigPanel({ onDone }: Props) {
   const options = listWalletConfigOptions()
@@ -28,43 +26,9 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
 
   const apply = async () => {
     setError(null)
-    if (selected === 'recommended' && !BACKUP_SERVICES_LIVE) {
-      setError('Recommended backup is not available yet.')
-      return
-    }
     setBusy(true)
     try {
-      if (selected === 'recommended') {
-        const urls = [HANDCASH_BACKUP_SERVICE_URL, HASTE_BACKUP_SERVICE_URL]
-        setWalletConfigPrefs({
-          mode: 'recommended',
-          historyBaseUrl: historyUrl.trim(),
-          backupServiceUrls: urls,
-          configuredAt: Date.now(),
-        })
-        if (historyUrl.trim()) {
-          setHistoryBackupPrefs({ baseUrl: historyUrl.trim(), lastError: null })
-        }
-        // Deposit HandCash + Haste shares from Settings → Cloud key backup.
-      } else if (selected === 'history') {
-        const url = historyUrl.trim()
-        if (!url) throw new Error('Enter a history backup URL')
-        setHistoryBackupPrefs({ baseUrl: url, lastError: null })
-        setWalletConfigPrefs({
-          mode: 'history',
-          historyBaseUrl: url,
-          backupServiceUrls: [],
-          configuredAt: Date.now(),
-        })
-      } else {
-        setHistoryBackupPrefs({ baseUrl: '', lastError: null })
-        setWalletConfigPrefs({
-          mode: 'none',
-          historyBaseUrl: '',
-          backupServiceUrls: [],
-          configuredAt: Date.now(),
-        })
-      }
+      applyWalletSetupSelection(selected, historyUrl)
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))

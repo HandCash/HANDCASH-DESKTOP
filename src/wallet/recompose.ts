@@ -90,10 +90,18 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   if (historyMode !== 'skip' && password && hasDeviceLinkBackupUrl()) {
     try {
       // allowEmptyPull derived inside autoPush from reason via historyEmptyGuard.
-      await autoPushHistoryBackupIfConfigured(password, {
+      const sync = await autoPushHistoryBackupIfConfigured(password, {
         reason: historyMode === 'forceCloud' ? 'recompose' : reason,
       })
-      history = 'synced'
+      if (sync.pulled || !sync.skipReason) {
+        history = 'synced'
+      } else if (sync.pullError) {
+        history = 'failed'
+        historyError = sync.pullError
+      } else {
+        history = 'skipped'
+        historyError = sync.skipReason
+      }
     } catch (err) {
       history = 'failed'
       historyError = err instanceof Error ? err.message : String(err)

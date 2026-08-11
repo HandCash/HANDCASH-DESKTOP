@@ -55,6 +55,7 @@ export function allowEmptyLocalHistoryPull(reason: string): boolean {
   return (
     reason === 'unlock' ||
     reason === 'create' ||
+    reason === 'restore' ||
     reason === 'recompose' ||
     reason === 'restore-url' ||
     reason === 'import-file' ||

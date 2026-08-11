@@ -21,6 +21,7 @@ import {
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 import { getWalletConfigPrefs } from '../wallet/walletConfig'
+import { applyDefaultRestoreWalletSetup } from '../wallet/walletSetupApply'
 import { recomposeWallet } from '../wallet/recompose'
 import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import {
@@ -213,7 +214,11 @@ export function AuthScreen({
     (mode === 'locked' && offerRestoreOnLock) ||
     recoveryOnly
 
-  const finishCreated = async (unlocked: UnlockedVault, password: string) => {
+  const finishCreated = async (
+    unlocked: UnlockedVault,
+    password: string,
+    kind: 'create' | 'restore',
+  ) => {
     setPreparing({
       title: 'Almost ready',
       lede: 'Opening your wallet on this device.',
@@ -242,16 +247,26 @@ export function AuthScreen({
       address: unlocked.record.address,
       chain: unlocked.record.chain,
     }
-    if (!getWalletConfigPrefs().mode) {
+    // Create only: ask for backup preferences. Restore already recovered keys —
+    // apply recommended history URL and recompose so BRC-39 + chain refill
+    // balance / TX history without a second "recommended setup" prompt.
+    if (kind === 'create' && !getWalletConfigPrefs().mode) {
       setPendingCreated({ profile, balanceSats, password })
       setPreparing(null)
       setSessionBackupPassword(password)
       return
     }
+    if (kind === 'restore' && !getWalletConfigPrefs().mode) {
+      try {
+        applyDefaultRestoreWalletSetup()
+      } catch (err) {
+        console.warn('[auth] restore setup defaults failed', err)
+      }
+    }
     setPreparing(null)
     onCreated(profile, balanceSats)
     setSessionBackupPassword(password)
-    void recomposeWallet({ password, reason: 'create' })
+    void recomposeWallet({ password, reason: kind })
   }
 
   const needsNewPassword = formMode === 'create' || isRestoreMethod(formMode)
@@ -299,7 +314,7 @@ export function AuthScreen({
           chain,
           ...(passphrase.trim() ? { passphrase: passphrase.trim() } : {}),
         })
-        await finishCreated(unlocked, password)
+        await finishCreated(unlocked, password, 'restore')
         return
       }
 
@@ -310,7 +325,7 @@ export function AuthScreen({
           password,
           chain,
         })
-        await finishCreated(unlocked, password)
+        await finishCreated(unlocked, password, 'restore')
         return
       }
 
@@ -329,7 +344,7 @@ export function AuthScreen({
           password,
           chain,
         })
-        await finishCreated(unlocked, password)
+        await finishCreated(unlocked, password, 'restore')
         return
       }
 
@@ -339,13 +354,13 @@ export function AuthScreen({
           password,
           chain,
         })
-        await finishCreated(unlocked, password)
+        await finishCreated(unlocked, password, 'restore')
         return
       }
 
       if (formMode === 'create') {
         const unlocked = await createVault({ password, chain })
-        await finishCreated(unlocked, password)
+        await finishCreated(unlocked, password, 'create')
         return
       }
 
@@ -742,7 +757,9 @@ export function AuthScreen({
         {needsNewPassword ? (
           <>
             <p className="password-hint">
-              This password is used to access your wallet. Don’t forget it.
+              {isRestoreMethod(formMode)
+                ? 'Use the same unlock password as your other device so history and balance can restore from backup.'
+                : 'This password is used to access your wallet. Don’t forget it.'}
             </p>
             <PasswordField
               id="password-confirm"
@@ -793,7 +810,8 @@ export function AuthScreen({
 
         {isRestoreMethod(formMode) ? (
           <p className="auth-lede auth-restore-note">
-            History backups restore after unlock in Settings → History.
+            After restore we pull your history backup automatically (same password as
+            before). Collectables can also appear from the chain while that runs.
           </p>
         ) : null}
       </form>
