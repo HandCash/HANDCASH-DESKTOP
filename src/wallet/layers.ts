@@ -20,9 +20,15 @@
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
- * - **Items (1sat / recursive)** → basket `1sat`; remittance + BRC-39 same as funds history.
- *   Recursive inscription *content* does not get a separate basket — tip→origin remittance does
- *   (BRC-150 in `oneSatProvenance.ts`; BRC-156 latched v3 in `oneSatLatch.ts`; oversized packages omitted).
+ * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
+ *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
+ *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
+ *   - **BRC-156 latch state** (`oneSatLatch.ts`) — OP_RETURN on soft-latch settle;
+ *     **this** is peer-visible item identity (origin/name). Soft-latch receive must
+ *     not use an ordinal indexer for naming.
+ *   - Oversized remittance packages are omitted (fail unproven), never truncated.
+ * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
+ *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */

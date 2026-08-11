@@ -673,6 +673,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           senderIdentityKey: identityKey,
           body: encodeMessageBody(sent),
           peerId: msg.peerId,
+          messagebox: recipient.messagebox,
         })
         if (delivered.delivered !== 'cloud') {
           setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
@@ -811,6 +812,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         senderIdentityKey: identityKey,
         body: text,
         peerId,
+        messagebox: friend.messagebox,
       })
     }
     playWalletSound('soft')
@@ -833,6 +835,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         file,
         recipientIdentityKey: activeFriend.identityKey,
         senderIdentityKey: identityKey,
+        messagebox: activeFriend.messagebox,
       })
       const outbound = {
         kind: 'file',
@@ -844,6 +847,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         senderIdentityKey: identityKey,
         body: encodeMessageBody(outbound),
         peerId: activeFriend.id,
+        messagebox: activeFriend.messagebox,
       })
       if (delivered.delivered !== 'cloud') {
         throw new Error('File uploaded, but the message could not be delivered')
@@ -913,6 +917,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           senderIdentityKey: identityKey,
           body: encodeMessageBody(request),
           peerId: activeFriend.id,
+          messagebox: activeFriend.messagebox,
         })
       }
       playWalletSound('soft')

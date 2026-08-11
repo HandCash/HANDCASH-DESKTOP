@@ -1,10 +1,14 @@
 # Changelog
 
+## [Unreleased]
+
+### Added
+- **Federated messagebox addressing (Phase 1).** Handle resolve persists the peer `messagebox` URL on friends; chat send/file upload posts to that box (BRC-CLOUD remains the default fallback). Architecture SSoT: `docs/wallet-p2p-messagebox.md`. Settings statecharts gain Wallet I/O / Coordinator / Sign / Chain ingest / Messagebox maps.
+
 ## [1.2.182] - 2026-08-11
 
-### Changed
-
-- Patch release (every push must ship a new version).
+### Fixed
+- **Slow Collect after soft-latch P2P receives.** Latch-proven tips no longer hit GorillaPool / ancestry during address classify; tip + latch internalize in one BEEF (parallel across txs) so a burst of inbound NFTs paints without serial indexer waits.
 
 ## [1.2.181] - 2026-08-11
 

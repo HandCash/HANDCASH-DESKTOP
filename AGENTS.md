@@ -27,9 +27,10 @@
 - Prefer `refreshFromChain` from `chainIngest.ts` — single entry for network → localState.
 - Wallet-layer overlaps (chain ingest × spend × history × recompose) go through `walletCoordinator.ts` + `walletCoordinatorMachine.ts`.
 - Items (including recursive inscription content) stay basket `1sat` — same remittance + BRC-39 path.
-- BRC-150: `oneSatProvenance.ts` fully verifies/rebuilds v2 ancestry, every exact parent spend, one-sat continuity, AtomicBEEF subject, and the origin `ord` envelope; oversized/incomplete proofs are omitted.
+- BRC-150: `oneSatProvenance.ts` fully verifies/rebuilds v2 ancestry, every exact parent spend, one-sat continuity, AtomicBEEF subject, and the origin `ord` envelope; oversized/incomplete proofs are omitted. **Remittance is local basket metadata** — it does not ride a P2PKH lock to peers.
 - Authenticity order is fixed in `oneSatAuthenticity.ts`: complete BRC-150 → indexer identity marked `unproven`. Legacy `brc156` cache pins display as BRC-150. Never promote indexer data or marker-only scripts to proven.
-- BRC-156 soft-latch: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0156.md` — tip (1 sat) + discovery latch (**exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …`). Soft-latch send via `softLatchSendMachine`; covenant-locked tips refuse and may be abandoned.
+- BRC-156 soft-latch: `oneSatLatch.ts` + `docs/bsva/brcs/tokens/0156.md` — tip (1 sat) + discovery latch (**exactly 2** sats P2PKH) plus on-chain state (`OP_FALSE OP_RETURN "BRC156" …`). Soft-latch send via `softLatchSendMachine`; covenant-locked tips refuse and may be abandoned. **Latch state is the P2P item-identity channel** (not BRC-150 remittance).
+- Messagebox: BRC-33 store-and-forward by identity key — optional chat/notify, never custody. Prefer resolved peer `messagebox` URL; BRC-CLOUD is the convenience fallback. Plan: `docs/wallet-p2p-messagebox.md`.
 ## Read first
 
 | Topic | Path |
@@ -37,6 +38,7 @@
 | Aeon consumer rules | `.cursor/rules/aeon-ui.mdc` |
 | BRC / migrate rules | `.cursor/rules/brc100-bsva.mdc` |
 | Wallet layer SSoT | `src/wallet/layers.ts` |
+| P2P / remittance / messagebox | `docs/wallet-p2p-messagebox.md` |
 | Aeon engine (upstream) | `~/AeonUI/AGENTS.md` |
 | App overview | `README.md` |
 | Versioning / releases | `VERSIONING.md` |

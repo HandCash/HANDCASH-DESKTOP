@@ -1,7 +1,18 @@
 /**
- * Message transport — local-first with optional BRC-CLOUD messagebox (BRC-33 / BRC-169 §7).
+ * Message transport — local-first with optional messagebox (BRC-33 semantics).
+ *
+ * Default host is BRC-CLOUD `/v1/messagebox` (HandCash convenience). That host is
+ * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
+ * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
+ *
+ * BRC-33 deltas still open (Phase 2): no BRC-31 auth; list/ack pass `recipient`
+ * in the body; `/files` is a HandCash extension; bodies are mostly plaintext /
+ * `handcash-message:` cards rather than encrypted envelopes.
  */
-import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
+import {
+  DEFAULT_BRC_CLOUD_BASE_URL,
+  DEFAULT_METANET_HANDLES_BASE_URL,
+} from './walletConfig'
 import {
   appendMessage,
   type ChatAttachment,
@@ -16,12 +27,49 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
+/** HandCash convenience box — fallback when a peer has no resolved URL. */
+export function defaultMessageboxBase(): string {
+  return `${normalizeBase(DEFAULT_METANET_HANDLES_BASE_URL)}/v1/messagebox`
+}
+
+/**
+ * Normalize a BRC-169 `messagebox` URL (or bare cloud origin) to the PeerServ
+ * base used for sendMessage / listMessages / files.
+ */
+export function normalizeMessageboxBase(raw?: string | null): string {
+  const fallback = defaultMessageboxBase()
+  if (raw == null || !String(raw).trim()) return fallback
+  let u = normalizeBase(String(raw))
+  const cloud = normalizeBase(DEFAULT_BRC_CLOUD_BASE_URL)
+  const handles = normalizeBase(DEFAULT_METANET_HANDLES_BASE_URL)
+  if (u === cloud || u === handles) {
+    return `${u}/v1/messagebox`
+  }
+  return u
+}
+
+/**
+ * True when `url` is an https messagebox file pointer (any host).
+ * Rejects non-https and non-messagebox paths (open-redirect / XSS vectors).
+ */
+export function isMessageboxFileUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url)
+    if (parsed.protocol !== 'https:') return false
+    return /\/(?:v1\/)?messagebox\/files\//i.test(parsed.pathname)
+  } catch {
+    return false
+  }
+}
+
 export type OutboundEnvelope = {
   recipientIdentityKey: string
   senderIdentityKey: string
   senderHandle?: string
   body: string
   peerId: string
+  /** Recipient's messagebox base; defaults to HandCash BRC-CLOUD. */
+  messagebox?: string | null
 }
 
 export type ListedMessage = {
@@ -44,10 +92,6 @@ type WireMessage = {
     boundMessageId?: string
     attachment?: ChatAttachment
   }
-}
-
-function messageboxUrl(baseUrl = DEFAULT_METANET_HANDLES_BASE_URL): string {
-  return `${normalizeBase(baseUrl)}/v1/messagebox`
 }
 
 function wireKind(kind: MessageKind): WireMessage['kind'] {
@@ -75,10 +119,6 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
-}
-
-function isMessageboxFileUrl(url: string): boolean {
-  return url.startsWith(`${messageboxUrl()}/files/`)
 }
 
 function validAttachment(value: unknown): value is ChatAttachment {
@@ -146,17 +186,20 @@ export function decodeMessageBody(body: string): {
   }
 }
 
-/** Upload an attachment to the messagebox's private, expiring R2 namespace. */
+/** Upload an attachment to the (recipient) messagebox file store. */
 export async function uploadChatFile(args: {
   file: File
   recipientIdentityKey: string
   senderIdentityKey: string
+  /** Recipient messagebox base; defaults to HandCash BRC-CLOUD. */
+  messagebox?: string | null
 }): Promise<ChatAttachment> {
   if (!(args.file.size > 0)) throw new Error('Choose a non-empty file')
   if (args.file.size > MAX_CHAT_FILE_BYTES) {
     throw new Error('Files are limited to 8 MB')
   }
-  const res = await fetch(`${messageboxUrl()}/files`, {
+  const box = normalizeMessageboxBase(args.messagebox)
+  const res = await fetch(`${box}/files`, {
     method: 'POST',
     headers: {
       'Content-Type': args.file.type || 'application/octet-stream',
@@ -175,9 +218,12 @@ export async function uploadChatFile(args: {
   return data.file
 }
 
-/** Deliver outbound text to cloud messagebox when available; always returns local-ok. */
-export async function deliverOutbound(env: OutboundEnvelope): Promise<{ delivered: 'local' | 'cloud' }> {
-  const url = `${messageboxUrl()}/sendMessage`
+/** Deliver outbound text to the recipient's messagebox; always returns local-ok. */
+export async function deliverOutbound(
+  env: OutboundEnvelope,
+): Promise<{ delivered: 'local' | 'cloud'; messagebox: string }> {
+  const box = normalizeMessageboxBase(env.messagebox)
+  const url = `${box}/sendMessage`
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -192,19 +238,22 @@ export async function deliverOutbound(env: OutboundEnvelope): Promise<{ delivere
         },
       }),
     })
-    if (res.ok) return { delivered: 'cloud' }
+    if (res.ok) return { delivered: 'cloud', messagebox: box }
   } catch {
     /* local-only */
   }
-  return { delivered: 'local' }
+  return { delivered: 'local', messagebox: box }
 }
 
-/** Poll messagebox for inbound; append as inbound text when peer mapped. */
+/** Poll own messagebox for inbound; append when the sender maps to a friend. */
 export async function pollInbound(args: {
   identityKey: string
   peerIdForSender: (senderIdentityKey: string) => string | null
+  /** Own messagebox base; defaults to HandCash BRC-CLOUD. */
+  messagebox?: string | null
 }): Promise<number> {
-  const url = `${messageboxUrl()}/listMessages`
+  const box = normalizeMessageboxBase(args.messagebox)
+  const url = `${box}/listMessages`
   try {
     const res = await fetch(url, {
       method: 'POST',
@@ -231,6 +280,7 @@ export async function pollInbound(args: {
           ...decoded.meta,
           identityKey: m.senderIdentityKey,
           origin: 'messagebox',
+          messagebox: box,
           // Wire tip/pay cards are claims until chain verification exists.
           status:
             decoded.kind === 'tip' || decoded.kind === 'pay-sent'
@@ -239,7 +289,7 @@ export async function pollInbound(args: {
         },
       })
       n += 1
-      void acknowledgeMessage(m.messageId, args.identityKey)
+      void acknowledgeMessage(m.messageId, args.identityKey, box)
     }
     return n
   } catch {
@@ -247,9 +297,14 @@ export async function pollInbound(args: {
   }
 }
 
-async function acknowledgeMessage(messageId: string, identityKey: string): Promise<void> {
+async function acknowledgeMessage(
+  messageId: string,
+  identityKey: string,
+  messagebox?: string | null,
+): Promise<void> {
+  const box = normalizeMessageboxBase(messagebox)
   try {
-    await fetch(`${messageboxUrl()}/acknowledgeMessage`, {
+    await fetch(`${box}/acknowledgeMessage`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ messageId, recipient: identityKey }),

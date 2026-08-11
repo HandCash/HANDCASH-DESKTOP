@@ -25,6 +25,11 @@ const MASTER = `stateDiagram-v2
   appSession --> appUpdate : always (background)
   appSession --> connectPermission : BRC-100 connect
   appSession --> actionPermission : BRC-100 pay / sign
+  appSession --> walletIo : always (I/O map)
+  appSession --> coordinator : always (UTXO mutex)
+  appSession --> spendSign : spend paths
+  appSession --> chainIngestChart : Refresh
+  appSession --> messageboxChart : chat relay
 
   walletNav --> friendsFlow : Friends
   walletNav --> collectablesFlow : Collectables
@@ -63,6 +68,11 @@ const MASTER = `stateDiagram-v2
   wipeWallet : Wipe wallet
   qrReveal : QR dialog
   appUpdate : App update
+  walletIo : Wallet I/O
+  coordinator : Coordinator
+  spendSign : Sign / broadcast
+  chainIngestChart : Chain ingest
+  messageboxChart : Messagebox
 `
 
 const APP_SESSION = `stateDiagram-v2
@@ -458,12 +468,201 @@ const BRIDGE = `stateDiagram-v2
   prompt : Prompt
 `
 
+/** Process + external world — where keys live vs who we call. */
+const WALLET_IO = `flowchart TB
+  subgraph Main["Electron main"]
+    BRIDGE_N["BRC-100 :2121 / :3321"]
+    DPEER["Device peer :3340"]
+    VAULT["Durable vault / safeStorage"]
+    UPDATER["Auto-updater"]
+  end
+
+  subgraph Renderer["Renderer — custody after unlock"]
+    KEYS["rootKeyHex + toolbox wallet"]
+    COORD["walletCoordinator\\n4 exclusive regions"]
+    SPEND["Spend machines\\nBSV / soft-latch / BRC-100"]
+    INGEST["chainIngest\\nscan → classify → import"]
+    HIST["historyReplica\\nBRC-39"]
+    HANDLER["brc100Handler\\ndevicePeerHandler"]
+  end
+
+  subgraph Chain["Chain / SPV peers"]
+    BITAILS["Bitails\\nrawtx · UTXO · postBeef"]
+    WOC["WhatsOnChain\\nfallback"]
+    JB["JungleBus"]
+    GP["GorillaPool ordinals"]
+    CT["Chaintracks\\nheaders"]
+    ARC["ARC stack\\nBitails · Arcade · GP · TAAL · WoC"]
+  end
+
+  subgraph Cloud["BRC-CLOUD"]
+    H39["wallet.brc39 + friends"]
+    HANDLES["$handle resolve / claim"]
+    MSG["messagebox"]
+    LOGS["support logs"]
+    LEASE["spend-lease"]
+  end
+
+  subgraph Apps["Local apps / peers"]
+    DAPP["Browser dapps"]
+    PHONE["Paired phone / device"]
+  end
+
+  BRIDGE_N -->|IPC 120s| HANDLER
+  DPEER -->|IPC 30s| HANDLER
+  VAULT -->|unlock IPC| KEYS
+  HANDLER --> SPEND
+  COORD --> SPEND
+  COORD --> INGEST
+  COORD --> HIST
+  SPEND -->|delayed + postBeef| ARC
+  SPEND --> BITAILS
+  INGEST --> BITAILS
+  INGEST --> WOC
+  INGEST --> GP
+  INGEST --> JB
+  KEYS --> CT
+  HIST --> H39
+  HANDLER --> HANDLES
+  HANDLER --> MSG
+  KEYS --> LOGS
+  SPEND --> LEASE
+  DAPP --> BRIDGE_N
+  PHONE --> DPEER
+  PHONE --> H39
+`
+
+/** Coordinator regions — legal overlaps (depth counters + per-region FIFO). */
+const COORDINATOR = `stateDiagram-v2
+  direction TB
+  [*] --> idle
+
+  state idle {
+    [*] --> allQuiet
+    allQuiet : all depths = 0
+  }
+
+  idle --> chainIngest : CHAIN_INGEST_BEGIN\\nno spend / history / recompose
+  idle --> spend : SPEND_BEGIN\\nall quiet
+  idle --> historyReplica : HISTORY_BEGIN\\nall quiet
+  idle --> recompose : RECOMPOSE_BEGIN\\nall quiet
+
+  chainIngest --> idle : CHAIN_INGEST_END
+  spend --> idle : SPEND_END
+  historyReplica --> idle : HISTORY_END
+  recompose --> idle : RECOMPOSE_END
+
+  spend --> nestedIngest : nested heal\\nCHAIN_INGEST_BEGIN nested
+  nestedIngest --> spend : CHAIN_INGEST_END
+`
+
+/** Signing + broadcast — delayed create/sign, network gate. */
+const SPEND_SIGN = `stateDiagram-v2
+  direction LR
+  [*] --> prepare
+
+  prepare --> createAction : local balance / lease ok
+  prepare --> refuse : TipKind refuse / thin funds
+
+  createAction --> localTxid : acceptDelayedBroadcast=true\\nsignAndProcess
+  localTxid --> postBeef : soft-latch / gated sends
+  localTxid --> sendWithOk : BSV clean sendWith
+  postBeef --> done : accepted
+  sendWithOk --> done : no failure
+  postBeef --> failed : missing-inputs / reject
+  sendWithOk --> failed : sendWith failure
+  createAction --> review : WERR_REVIEW_ACTIONS
+  review --> recover : listFailedActions unfail
+  recover --> createAction : retry
+  refuse --> failed
+  failed --> [*]
+  done --> [*] : activity + history push
+`
+
+/** Receive / Refresh pipeline. */
+const CHAIN_INGEST_CHART = `flowchart TB
+  START([refreshFromChain]) --> RECON[reconcile pending sends\\nheal ghost · unfail]
+  RECON --> SCAN[legacy address UTXO scan\\nBitails → WoC]
+  SCAN --> CLASS[classifyLegacyUtxos]
+  CLASS --> FUND[funding → importLegacyUtxos]
+  CLASS --> BUNDLE[soft-latch tip+latch\\none BEEF · concurrency 3]
+  CLASS --> TIPS[solo 1sat tips]
+  CLASS --> FT[bsv21 tokens]
+  CLASS --> HOLD[held unrecognized 1-sat\\nnever sweep]
+  BUNDLE --> PAINT[listCollectables paint]
+  TIPS --> PAINT
+  PAINT --> AUTH[authenticity / genesis\\nbudgeted background]
+  FUND --> AUDIT[spendable audit report-only]
+  BUNDLE --> AUDIT
+  TIPS --> AUDIT
+  FT --> AUDIT
+  AUDIT --> BAL[balance refresh + toast]
+  BAL --> END([ok])
+`
+
+/**
+ * Messagebox — BRC-33 store-and-forward vs HandCash convenience host.
+ * Custody never depends on this chart.
+ */
+const MESSAGEBOX_CHART = `flowchart TB
+  subgraph Ideal["BRC-169 / BRC-33 target"]
+    RESOLVE["resolve handle"] --> BOXURL["messagebox URL"]
+    BOXURL --> SEND["POST sendMessage"]
+    SEND --> BOX["recipient PeerServ"]
+    BOX --> LIST["POST listMessages"]
+    LIST --> LOCAL["local messageStore"]
+    LOCAL --> ACK["acknowledgeMessage"]
+  end
+
+  subgraph Today["HandCash today"]
+    HARD["hardcoded BRC-CLOUD\\n/v1/messagebox"] --> SEND2["sendMessage\\nplaintext / handcash-message cards"]
+    SEND2 --> FILES["optional POST /files → R2"]
+    HARD --> POLL["listMessages by recipient key\\nno BRC-31 auth yet"]
+    POLL --> LOCAL2["messageStore"]
+  end
+
+  subgraph NotBox["Not messagebox"]
+    CHAIN["BSV + soft-latch settle\\nlatch state OP_RETURN"]
+    REM["BRC-150 remittance\\nsender localState only"]
+  end
+`
+
 export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'master',
     label: 'Master',
     caption: 'HandCash Desktop software map — session host and child charts',
     source: MASTER,
+  },
+  {
+    id: 'walletIo',
+    label: 'Wallet I/O',
+    caption: 'Process topology + external peers (chain, cloud, bridge, device)',
+    source: WALLET_IO,
+  },
+  {
+    id: 'coordinator',
+    label: 'Coordinator',
+    caption: 'walletCoordinatorMachine — exclusive regions + nested heal',
+    source: COORDINATOR,
+  },
+  {
+    id: 'spendSign',
+    label: 'Sign / broadcast',
+    caption: 'Delayed createAction → postBeef / sendWith gate → done',
+    source: SPEND_SIGN,
+  },
+  {
+    id: 'chainIngestChart',
+    label: 'Chain ingest',
+    caption: 'Refresh pipeline — scan → classify → import → paint',
+    source: CHAIN_INGEST_CHART,
+  },
+  {
+    id: 'messageboxChart',
+    label: 'Messagebox',
+    caption: 'BRC-33 ideal vs BRC-CLOUD convenience — not custody',
+    source: MESSAGEBOX_CHART,
   },
   {
     id: 'appSession',

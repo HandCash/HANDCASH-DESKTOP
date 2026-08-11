@@ -12,6 +12,11 @@ export type Friend = {
   label: string
   identityKey: string
   createdAt: number
+  /**
+   * BRC-169 messagebox base URL for this peer (from handle resolve).
+   * When absent, chat falls back to the HandCash BRC-CLOUD convenience box.
+   */
+  messagebox?: string | null
 }
 
 type FriendsListener = (friends: Friend[]) => void
@@ -34,7 +39,15 @@ function readRaw(): Friend[] {
         typeof f.id === 'string' &&
         typeof f.label === 'string' &&
         typeof f.identityKey === 'string',
-    )
+    ).map((f) => ({
+      ...f,
+      messagebox:
+        typeof f.messagebox === 'string' && f.messagebox.trim()
+          ? f.messagebox.trim().replace(/\/+$/, '')
+          : f.messagebox === null
+            ? null
+            : undefined,
+    }))
   } catch {
     return []
   }
@@ -56,7 +69,13 @@ export function mergeFriends(incoming: Friend[]): number {
   let added = 0
   for (const friend of incoming) {
     if (!friend?.identityKey || !friend.label) continue
-    if (byIk.has(friend.identityKey)) continue
+    const existing = byIk.get(friend.identityKey)
+    if (existing) {
+      if (!existing.messagebox && friend.messagebox) {
+        byIk.set(friend.identityKey, { ...existing, messagebox: friend.messagebox })
+      }
+      continue
+    }
     byIk.set(friend.identityKey, friend)
     added += 1
   }
@@ -161,7 +180,11 @@ export function validateIdentityKey(identityKey: string): string | null {
   }
 }
 
-export function addFriend(args: { label: string; identityKey: string }): Friend {
+export function addFriend(args: {
+  label: string
+  identityKey: string
+  messagebox?: string | null
+}): Friend {
   const label = args.label.trim()
   const identityKey = normalizeIdentityKey(args.identityKey)
   if (!label) throw new Error('Label is required')
@@ -173,11 +196,19 @@ export function addFriend(args: { label: string; identityKey: string }): Friend 
     throw new Error('Friend already added')
   }
 
+  const messagebox =
+    typeof args.messagebox === 'string' && args.messagebox.trim()
+      ? args.messagebox.trim().replace(/\/+$/, '')
+      : args.messagebox === null
+        ? null
+        : undefined
+
   const friend: Friend = {
     id: `${Date.now().toString(16)}-${Math.random().toString(16).slice(2, 8)}`,
     label,
     identityKey,
     createdAt: Date.now(),
+    ...(messagebox !== undefined ? { messagebox } : {}),
   }
   writeAll([...friends, friend])
   void import('./appActivity').then(({ recordWalletEvent, WALLET_ACTIVITY_ORIGIN }) => {
@@ -204,6 +235,7 @@ export async function addFriendFromRecipient(args: {
 
   let identityKey: string
   let suggestedLabel = ''
+  let messagebox: string | null | undefined
 
   const peer = tryParsePeerPayUri(value)
   if (peer) {
@@ -212,6 +244,7 @@ export async function addFriendFromRecipient(args: {
     const resolved = await resolveHandle(value)
     identityKey = normalizeIdentityKey(resolved.identityKey)
     suggestedLabel = formatHandCashHandle(resolved.handle, resolved.domain)
+    messagebox = resolved.messagebox
   } else {
     identityKey = normalizeIdentityKey(value)
     const invalid = validateIdentityKey(identityKey)
@@ -220,7 +253,7 @@ export async function addFriendFromRecipient(args: {
 
   const label = args.label?.trim() || suggestedLabel
   if (!label) throw new Error('Label is required')
-  return addFriend({ label, identityKey })
+  return addFriend({ label, identityKey, messagebox })
 }
 
 export function getFriendById(id: string): Friend | null {
@@ -229,7 +262,7 @@ export function getFriendById(id: string): Friend | null {
 
 export function updateFriend(
   id: string,
-  patch: { label?: string; identityKey?: string },
+  patch: { label?: string; identityKey?: string; messagebox?: string | null },
 ): Friend {
   const friends = readRaw()
   const index = friends.findIndex((f) => f.id === id)
@@ -252,7 +285,19 @@ export function updateFriend(
     throw new Error('Friend already added')
   }
 
-  const updated: Friend = { ...current, label, identityKey }
+  const messagebox =
+    patch.messagebox !== undefined
+      ? typeof patch.messagebox === 'string' && patch.messagebox.trim()
+        ? patch.messagebox.trim().replace(/\/+$/, '')
+        : patch.messagebox
+      : current.messagebox
+
+  const updated: Friend = {
+    ...current,
+    label,
+    identityKey,
+    ...(messagebox !== undefined ? { messagebox } : {}),
+  }
   const next = friends.slice()
   next[index] = updated
   writeAll(next)

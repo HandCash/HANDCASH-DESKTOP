@@ -14,6 +14,8 @@ export type ResolvedHandle = {
   identityKey: string
   certificate: unknown
   display: string
+  /** BRC-169 messagebox URL when the resolve host returns one. */
+  messagebox: string | null
 }
 
 function normalizeBase(url: string): string {
@@ -73,16 +75,22 @@ export async function resolveHandle(
     domain?: string
     identityKey?: string
     certificate?: unknown
+    messagebox?: string | null
   }
   if (!data.handle || !data.identityKey || !data.domain) {
     throw new Error('Invalid resolve response')
   }
+  const messagebox =
+    typeof data.messagebox === 'string' && data.messagebox.trim()
+      ? data.messagebox.trim().replace(/\/+$/, '')
+      : null
   return {
     handle: data.handle,
     domain: data.domain,
     identityKey: data.identityKey.toLowerCase(),
     certificate: data.certificate,
     display: formatHandCashHandle(data.handle, data.domain, { fullyQualified: true }),
+    messagebox,
   }
 }
 
