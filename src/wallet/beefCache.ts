@@ -80,55 +80,106 @@ export async function getBeefForTxidCached(
 }
 
 /**
- * Shape a BEEF so createAction with `trustSelf:'known'` accepts it AND so
- * signable user inputs can resolve `sourceTransaction` from raw tip bodies.
+ * Txids that are only stubs or missing as parents — not broadcast-safe.
  *
- * Tip-only / AtomicBEEF wraps often fail `verifyValid(true)` because parents
- * are missing. Patch those parents as txidOnly — the toolbox vouchers them via
- * storage when trustSelf is on. Never strip the tip raw txs: omitting inputBEEF
- * surfaces as "Every signableTransaction input must have a sourceTransaction".
+ * processAction verifies the merged BEEF **without** allowTxidOnly. A txidOnly
+ * stub also blocks mergeInputsIntoBeef hydration (`findTxid != null` → skip),
+ * which surfaces as "merged Beef failed validation."
  */
-export function asTrustSelfInputBeef(beef: Beef): number[] | undefined {
+export function incompleteProofTxids(beef: Beef): string[] {
+  const need = new Set<string>()
+  for (const btx of beef.txs) {
+    const id = keyOf(btx.txid)
+    if (btx.isTxidOnly || !btx.tx) {
+      need.add(id)
+      continue
+    }
+    for (const parent of btx.inputTxids ?? []) {
+      const pid = keyOf(parent)
+      if (!pid) continue
+      const found = beef.findTxid(pid)
+      if (!found || found.isTxidOnly || !found.tx) need.add(pid)
+    }
+  }
+  const sorted = beef.sortTxs()
+  for (const parent of sorted.missingInputs ?? []) {
+    need.add(keyOf(String(parent)))
+  }
+  return [...need].filter(Boolean)
+}
+
+function roundTripBroadcastSafe(bin: number[]): number[] | undefined {
+  try {
+    const check = Beef.fromBinary(bin)
+    check.atomicTxid = undefined
+    // No allowTxidOnly — must match processAction's verify(chainTracker).
+    return check.verifyValid(false).valid ? bin : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Ensure inputBEEF has raw tip bodies **and** full parent proofs (no txidOnly).
+ * Safe for createAction trustSelf verify and for processAction broadcast verify.
+ */
+export async function hydrateInputBeef(
+  wallet: ActiveWallet,
+  beef: Beef,
+): Promise<number[] | undefined> {
   try {
     let work = beef.clone()
     work.atomicTxid = undefined
 
     for (let pass = 0; pass < 12; pass++) {
-      if (work.verifyValid(true).valid) {
-        const bin = work.toBinary()
-        const check = Beef.fromBinary(bin)
-        check.atomicTxid = undefined
-        if (check.verifyValid(true).valid) return bin
-        work = check
-        continue
-      }
+      const ok = roundTripBroadcastSafe(work.toBinary())
+      if (ok) return ok
+
+      const need = incompleteProofTxids(work)
+      if (need.length === 0) break
 
       let added = false
-      for (const btx of [...work.txs]) {
-        if (btx.isTxidOnly || !btx.tx) continue
-        for (const parent of btx.inputTxids ?? []) {
-          const id = parent.trim().toLowerCase()
-          if (!id || work.findTxid(id)) continue
-          work.mergeTxidOnly(id)
-          added = true
+      for (const txid of need) {
+        try {
+          const proved = await getBeefForTxidCached(wallet, txid)
+          // mergeBeef upgrades an existing txidOnly entry when raw+proof arrives.
+          work.mergeBeef(proved.toBinary())
+          work.atomicTxid = undefined
+          if (work.findTxid(txid)?.tx && !work.findTxid(txid)?.isTxidOnly) {
+            added = true
+          }
+        } catch (err) {
+          console.warn('[beef] hydrate proof failed', txid, err)
         }
-      }
-      const sorted = work.sortTxs()
-      for (const parent of sorted.missingInputs ?? []) {
-        const id = String(parent).trim().toLowerCase()
-        if (!id || work.findTxid(id)) continue
-        work.mergeTxidOnly(id)
-        added = true
       }
       if (!added) break
     }
 
     work.atomicTxid = undefined
-    if (!work.verifyValid(true).valid) return undefined
-    const bin = work.toBinary()
-    const check = Beef.fromBinary(bin)
-    check.atomicTxid = undefined
-    return check.verifyValid(true).valid ? bin : undefined
+    return roundTripBroadcastSafe(work.toBinary())
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * @deprecated Prefer hydrateInputBeef — txidOnly stubs break processAction verify.
+ * Kept for sync call sites that only need structural trustSelf checks in tests.
+ */
+export function asTrustSelfInputBeef(beef: Beef): number[] | undefined {
+  try {
+    const work = beef.clone()
+    work.atomicTxid = undefined
+    // Do not invent txidOnly parents — that caused "merged Beef failed validation".
+    return roundTripBroadcastSafe(work.toBinary())
+      ?? (work.verifyValid(true).valid
+        ? (() => {
+            const bin = work.toBinary()
+            const check = Beef.fromBinary(bin)
+            check.atomicTxid = undefined
+            return check.verifyValid(true).valid ? bin : undefined
+          })()
+        : undefined)
   } catch {
     return undefined
   }
@@ -174,7 +225,9 @@ export async function buildMergedInputBeef(
     )
   }
 
-  return asTrustSelfInputBeef(merged) ?? merged.toBinary()
+  const hydrated = await hydrateInputBeef(wallet, merged)
+  if (hydrated) return hydrated
+  return merged.toBinary()
 }
 
 export function resetBeefCacheForTests(): void {

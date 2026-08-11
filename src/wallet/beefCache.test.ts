@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { Beef, LockingScript, PrivateKey, P2PKH, Transaction } from '@bsv/sdk'
+import { Beef, LockingScript, MerklePath, PrivateKey, P2PKH, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 
 describe('beefCache', () => {
@@ -67,16 +67,23 @@ describe('beefCache', () => {
     expect(getBeefForTxid).toHaveBeenCalledTimes(1)
   })
 
-  it('patches missing parents as txidOnly so tip-only wraps verify under trustSelf', async () => {
-    const { asTrustSelfInputBeef, resetBeefCacheForTests } = await import('./beefCache')
+  it('hydrates missing parents with proofs — never leaves txidOnly stubs', async () => {
+    const { hydrateInputBeef, incompleteProofTxids, resetBeefCacheForTests } =
+      await import('./beefCache')
     resetBeefCacheForTests()
 
     const parent = new Transaction()
     parent.addOutput({
-      satoshis: 1,
+      satoshis: 10_000,
       lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
     })
     const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_001, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
 
     const tip = new Transaction()
     tip.addInput({
@@ -85,20 +92,34 @@ describe('beefCache', () => {
       unlockingScript: LockingScript.fromHex('51'),
     })
     tip.addOutput({
-      satoshis: 1,
+      satoshis: 9_900,
       lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
     })
     const tipId = tip.id('hex')
 
     const wrap = new Beef()
     wrap.mergeTransaction(tip)
-    expect(wrap.verifyValid(true).valid).toBe(false)
+    expect(wrap.verifyValid(false).valid).toBe(false)
+    expect(incompleteProofTxids(wrap)).toContain(parentId)
 
-    const shaped = asTrustSelfInputBeef(wrap)
+    const getBeefForTxid = vi.fn(async () => {
+      const proved = new Beef()
+      proved.mergeRawTx(parent.toBinary())
+      proved.mergeBump(parentProof)
+      return proved
+    })
+    const wallet = {
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const shaped = await hydrateInputBeef(wallet, wrap)
     expect(shaped).toBeTruthy()
+    expect(getBeefForTxid).toHaveBeenCalledWith(parentId)
     const beef = Beef.fromBinary(shaped!)
     expect(beef.findTxid(tipId)?.tx).toBeTruthy()
-    expect(beef.findTxid(parentId)?.isTxidOnly).toBe(true)
-    expect(beef.verifyValid(true).valid).toBe(true)
+    expect(beef.findTxid(parentId)?.tx).toBeTruthy()
+    expect(beef.findTxid(parentId)?.isTxidOnly).toBeFalsy()
+    expect(incompleteProofTxids(beef)).toEqual([])
+    expect(beef.verifyValid(false).valid).toBe(true)
   })
 })

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.152] - 2026-08-11
+
+### Fixed
+
+- **Mint `merged Beef failed validation`:** stop patching missing parents as
+  `txidOnly`. Those stubs block toolbox broadcast hydration and fail
+  `processAction` verify (no `allowTxidOnly`). Hydrate parents with full proof
+  BEEF instead so tip raw bodies remain for `sourceTransaction` and broadcast
+  verify passes.
+
 ## [1.2.151] - 2026-08-11
 
 ### Fixed

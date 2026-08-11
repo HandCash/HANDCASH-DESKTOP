@@ -15,7 +15,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberTokenIcon } from './tokenIconCache'
-import { rememberBeefBinary, asTrustSelfInputBeef } from './beefCache'
+import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
 import {
   enrichCreateActionForBsv21Issuer,
   finishBsv21IdentityMintCreateAction,
@@ -98,7 +98,11 @@ function cacheImageIconsFromCreateAction(txid: string, args: unknown): void {
 }
 
 /** Keep AtomicBEEF / tx bytes from createAction so a follow-up spend can prove inputs. */
-function cacheCreateActionBeef(txid: string, result: unknown): void {
+async function cacheCreateActionBeef(
+  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  txid: string,
+  result: unknown,
+): Promise<void> {
   if (!result || typeof result !== 'object') return
   const raw = (result as { tx?: unknown }).tx
   let binary: number[] | null = null
@@ -119,7 +123,7 @@ function cacheCreateActionBeef(txid: string, result: unknown): void {
   try {
     const asBeef = Beef.fromBinary(binary)
     asBeef.atomicTxid = undefined
-    const shaped = asTrustSelfInputBeef(asBeef)
+    const shaped = await hydrateInputBeef(active, asBeef)
     if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
       rememberBeefBinary(id, shaped)
       return
@@ -131,7 +135,7 @@ function cacheCreateActionBeef(txid: string, result: unknown): void {
     const wrapped = new Beef()
     wrapped.mergeTransaction(Transaction.fromBinary(binary))
     wrapped.atomicTxid = undefined
-    const shaped = asTrustSelfInputBeef(wrapped)
+    const shaped = await hydrateInputBeef(active, wrapped)
     if (shaped && Beef.fromBinary(shaped).findTxid(id)?.tx) {
       rememberBeefBinary(id, shaped)
     }
@@ -592,7 +596,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       const txid = extractTxid(result)
       if (txid) {
         cacheImageIconsFromCreateAction(txid, args)
-        cacheCreateActionBeef(txid, result)
+        void cacheCreateActionBeef(active, txid, result)
       }
       if (isBsv21IdentityMintArgs(method, args) && txid) {
         recordIdentityMintActivity(txid, args, originator)

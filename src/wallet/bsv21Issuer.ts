@@ -7,7 +7,7 @@
 
 import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
-import { buildMergedInputBeef, rememberBeefBinary, asTrustSelfInputBeef } from './beefCache'
+import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from './beefCache'
 import { normalizeTokenId } from './bsv21'
 import { fetchRawTxHex } from './oneSatImport'
 import { parseOrdEnvelope } from './ordinalOwnership'
@@ -527,8 +527,8 @@ export async function enrichCreateActionForBsv21Issuer(
   // Auth remint / any explicit tip spend must carry source txs in inputBEEF —
   // otherwise the toolbox fails with "Every signableTransaction input must have
   // a sourceTransaction". Prefer caller BEEF (fresh deploy AtomicBEEF), then
-  // session cache / indexer, then raw-tx wrap. Parents missing from a tip-only
-  // wrap are patched as txidOnly so trustSelf:'known' can vouch for them.
+  // session cache / indexer, then raw-tx. Hydrate missing parents with full
+  // proofs — never leave txidOnly stubs (processAction verify rejects them).
   if (inputs.length > 0) {
     const beefOps = [
       ...new Set(inputs.map((i) => normalizeDotOutpoint(i.outpoint)).filter(Boolean)),
@@ -573,8 +573,8 @@ function beefHasTx(beef: Beef, txid: string): boolean {
 
 /**
  * Build inputBEEF covering every spend outpoint with raw tip bodies (required
- * for signable `sourceTransaction`). Caller BEEF first, then cache/indexer,
- * then raw-tx. Shape with txidOnly parents so `trustSelf:'known'` verify passes.
+ * for signable `sourceTransaction`) and full parent merkle proofs (required
+ * for processAction broadcast — no txidOnly stubs).
  */
 async function ensureBsv21InputBeef(
   active: ActiveWallet,
@@ -635,8 +635,6 @@ async function ensureBsv21InputBeef(
           const wrap = new Beef()
           wrap.mergeTransaction(Transaction.fromHex(hex))
           if (!wrap.findTxid(txid)?.tx) return
-          // Keep tip body even when parents are absent — asTrustSelfInputBeef
-          // will patch parents as txidOnly for trustSelf verify.
           merged.mergeBeef(wrap.toBinary())
           merged.atomicTxid = undefined
         } catch (err) {
@@ -655,14 +653,14 @@ async function ensureBsv21InputBeef(
     return undefined
   }
 
-  const shaped = asTrustSelfInputBeef(merged)
+  const shaped = await hydrateInputBeef(active, merged)
   if (shaped) {
     for (const txid of txids) rememberBeefBinary(txid, shaped)
     return shaped
   }
 
   console.warn(
-    '[bsv21-issuer] inputBEEF could not be shaped for trustSelf',
+    '[bsv21-issuer] inputBEEF could not be hydrated for broadcast',
     merged.toLogString?.() ?? '',
   )
   return undefined
@@ -764,14 +762,15 @@ export async function completeBsv21SignableWithRootP2pkh(
       wrap.mergeBeef(signable.tx)
       wrap.mergeTransaction(unsigned)
       wrap.atomicTxid = undefined
-      txBinary = asTrustSelfInputBeef(wrap)
+      txBinary = await hydrateInputBeef(active, wrap)
     } catch (err) {
       console.warn('[bsv21-issuer] could not wrap signed mint tx for BEEF cache', err)
     }
   }
   if (txBinary?.length) {
     try {
-      const stored = asTrustSelfInputBeef(Beef.fromBinary(txBinary)) ?? txBinary
+      const stored =
+        (await hydrateInputBeef(active, Beef.fromBinary(txBinary))) ?? txBinary
       rememberBeefBinary(txid, stored)
       txBinary = stored
     } catch {
