@@ -484,6 +484,40 @@ body {
   background: rgba(0, 0, 0, 0.35);
 }
 
+.auth-mode-switch[aria-label='Restore method'] {
+  grid-template-columns: repeat(4, 1fr);
+}
+
+.auth-cloud-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+
+.auth-cloud-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 12px;
+  border-radius: var(--radius);
+  border: 1px solid hsl(var(--border));
+  background: rgba(0, 0, 0, 0.28);
+}
+
+.auth-cloud-row strong {
+  display: block;
+  font-size: 0.9rem;
+}
+
+.auth-cloud-row span {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.75rem;
+  color: var(--hc-muted);
+}
+
 .auth-mode-tab {
   appearance: none;
   border: 0;

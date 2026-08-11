@@ -22,13 +22,16 @@ export function DeviceHandoffPanel() {
       data-aeon-scope="device-handoff"
     >
       <p className="settings-hint">
-        Restore the same recovery phrase or key slices for the same identity and BSV pot. To keep
-        history and friends aligned across devices, set the <strong>same History backup URL</strong>{' '}
-        on each install (History settings — suggested cloud host is shown by default).
+        On the new device choose <strong>Restore → Cloud</strong> and pull slices from HandCash /
+        Haste (same deposit email), or paste your offline slice — any two restore the same identity
+        and BSV pot. Phrase and pasted Shares still work. To keep history and friends aligned, set
+        the <strong>same History backup URL</strong> on each install.
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
-        <li>Restore the same phrase/shares on the other device.</li>
+        <li>
+          On the new device: Restore → Cloud (trustholders) or Phrase / Shares.
+        </li>
         <li>Confirm the identical History backup URL on both.</li>
         <li>
           On one device show the link QR; on the other tap <strong>Scan to link</strong> (or use
@@ -69,8 +72,8 @@ export function DeviceHandoffPanel() {
       <PairDevicePanel />
 
       <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-39']}>
-        Phrase and key slices recover identity. Shared history backup URL keeps device state
-        aligned after you sync.
+        Phrase, Cloud key backup (trustholders), and key slices recover identity. Shared history
+        backup URL keeps device state aligned after you sync.
       </SettingsFeatureAbout>
     </div>
   )

@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.167] - 2026-08-11
+
+### Added
+
+- **Restore → Cloud:** new-device setup can retrieve HandCash / Haste trustholder
+  slices (in-app OTP) plus optional offline slice — any two restore the wallet.
+
+### Changed
+
+- **Use on another device:** points new installs at Restore → Cloud for trustholder
+  recovery.
+
 ## [1.2.166] - 2026-08-11
 
 ### Changed

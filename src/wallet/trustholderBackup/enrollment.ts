@@ -15,6 +15,7 @@ import {
   completeAuth,
   depositShare,
   fetchTrustholderInfo,
+  retrieveShare,
   startDevTokenAuth,
   startEmailOtpAuth,
 } from './client'
@@ -71,7 +72,7 @@ export function getProvider(operator: TrustholderOperator): TrustholderProvider 
 export type DepositProgress = {
   operator: TrustholderOperator
   label: string
-  phase: 'info' | 'auth' | 'otp' | 'deposit' | 'done' | 'error'
+  phase: 'info' | 'auth' | 'otp' | 'deposit' | 'retrieve' | 'done' | 'error'
   message?: string
   /** When email-otp returns a local-only code (Worker without Resend). */
   devCode?: string
@@ -250,6 +251,114 @@ export async function depositShareToTrustholder(args: {
     totalShares: plan.totalShares,
     enrolledRecommended,
     recommendedTotal: recommended.length,
+  }
+}
+
+/**
+ * Retrieve one BRC-140 share from a trustholder (new-device restore).
+ * No local vault required — email OTP signs in to the same account used at deposit.
+ */
+export async function retrieveShareFromTrustholder(args: {
+  operator: TrustholderOperator
+  email: string
+  preferEmailOtp?: boolean
+  onProgress?: (p: DepositProgress) => void
+  onOtpNeeded: (req: DepositOtpRequest) => Promise<string>
+}): Promise<{
+  share: string
+  operator: TrustholderOperator
+  label: string
+  shareIndex: number
+  emailHint?: string
+}> {
+  const preferEmail = args.preferEmailOtp !== false
+  const email = args.email.trim()
+  if (preferEmail && !email.includes('@')) {
+    throw new Error('Enter the email used when you deposited to this provider')
+  }
+
+  const provider = getProvider(args.operator)
+
+  args.onProgress?.({
+    operator: provider.operator,
+    label: provider.label,
+    phase: 'info',
+    message: `Checking ${provider.label}…`,
+  })
+  const info = await fetchTrustholderInfo(provider.baseUrl)
+  if (info.lifecycle?.status && info.lifecycle.status !== 'active') {
+    throw new Error(
+      `${provider.label} is ${info.lifecycle.status}${info.lifecycle.message ? `: ${info.lifecycle.message}` : ''}`,
+    )
+  }
+
+  const supportsEmailOtp = info.authMethods.includes('email-otp')
+
+  args.onProgress?.({
+    operator: provider.operator,
+    label: provider.label,
+    phase: 'auth',
+    message: `Signing in to ${provider.label}…`,
+  })
+
+  let requestId: string
+  let otpCode: string | undefined
+  let emailHint: string | undefined
+
+  if (preferEmail && supportsEmailOtp) {
+    const start = await startEmailOtpAuth(provider.baseUrl, email)
+    requestId = start.requestId
+    emailHint = start.action.hint
+    if (start.action.enroll) {
+      throw new Error(
+        `${provider.label} has no backup for this email yet — deposit from an unlocked wallet first, or use a different email.`,
+      )
+    }
+    args.onProgress?.({
+      operator: provider.operator,
+      label: provider.label,
+      phase: 'otp',
+      message: `Enter the code sent for ${provider.label}`,
+      devCode: start.action.devCode,
+    })
+    otpCode = await args.onOtpNeeded({
+      operator: provider.operator,
+      label: provider.label,
+      hint: start.action.hint,
+      devCode: start.action.devCode,
+      enroll: false,
+    })
+  } else {
+    const start = await startDevTokenAuth(provider.baseUrl)
+    requestId = start.requestId
+  }
+
+  const { token } = await completeAuth(provider.baseUrl, requestId, otpCode)
+
+  args.onProgress?.({
+    operator: provider.operator,
+    label: provider.label,
+    phase: 'retrieve',
+    message: `Retrieving share from ${provider.label}…`,
+  })
+  const { share } = await retrieveShare(provider.baseUrl, token)
+  if (!share?.trim()) {
+    throw new Error(`${provider.label} returned an empty share`)
+  }
+
+  args.onProgress?.({
+    operator: provider.operator,
+    label: provider.label,
+    phase: 'done',
+    message: `${provider.label} share ready`,
+  })
+
+  return {
+    share: share.trim(),
+    operator: provider.operator,
+    label: provider.label,
+    shareIndex: provider.shareIndex,
+    emailHint,
   }
 }
 

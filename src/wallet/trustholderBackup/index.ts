@@ -30,6 +30,7 @@ export {
   getLocalOfflineShare,
   depositShareToTrustholder,
   depositSharesToTrustholders,
+  retrieveShareFromTrustholder,
   LOCAL_SHARE_INDEX,
   type DepositOtpRequest,
   type DepositProgress,
