@@ -12,12 +12,15 @@
  * - After createAction / send / internalize: mark dirty and debounce-push so
  *   remittance packages in IndexedDB are not only on one machine.
  * - Never auto-overwrite a non-empty remote with an empty local export.
+ * - Never auto-overwrite a richer remote / spendable high-water with a thinner
+ *   local unless actionCount proves UTXOs were spent (dispensed).
  * - Auto and explicit Sync may pull only when remote is **strictly newer** than local.
  */
 import { listFriends, mergeFriends, type Friend } from './friends'
 import {
   downloadAndRestoreBrc39Backup,
   fetchRemoteBrc39Meta,
+  HistoryThinOverwriteError,
   uploadBrc39Backup,
 } from './historyBackup'
 import {
@@ -224,7 +227,22 @@ export async function syncDevicesViaBackupUrl(password: string): Promise<{
   }
 
   const friendsMerged = await downloadAndMergeFriendsBackup()
-  await uploadBrc39Backup(password)
+  try {
+    await uploadBrc39Backup(password)
+  } catch (err) {
+    if (err instanceof HistoryThinOverwriteError) {
+      return {
+        brc39,
+        friendsMerged,
+        uploaded: false,
+        pulled,
+        skippedPullReason:
+          skippedPullReason ??
+          `push refused — ${err.message}`,
+      }
+    }
+    throw err
+  }
   await uploadFriendsBackup()
   setHistoryBackupPrefs({ lastError: null })
 
@@ -506,6 +524,14 @@ export async function autoPushHistoryBackupIfConfigured(
       historyDirty = true
       appendAppLog('info', `[cloud-backup] deferred (${reason}) — spend waiting`)
       scheduleHistoryBackupPush(reason)
+      return result
+    }
+    if (
+      err instanceof HistoryThinOverwriteError ||
+      (err instanceof Error && err.name === 'HistoryThinOverwriteError')
+    ) {
+      appendAppLog('info', `[cloud-backup] auto-sync skipped (${reason}): ${msg}`)
+      result.skipReason = msg
       return result
     }
     try {

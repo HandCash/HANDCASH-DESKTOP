@@ -144,7 +144,7 @@ export function HistoryBackupPanel() {
       ensureSuggestedHistoryBackupUrl()
       // The operator asked for this one — never make them wait out a backoff.
       clearBackupBackoff()
-      const result = await uploadBrc39Backup(password)
+      const result = await uploadBrc39Backup(password, { force: true })
       setPrefs(getHistoryBackupPrefs())
       playWalletSound('success')
       toastSuccess('Uploaded', formatWhen(result.exportedAt))
@@ -286,6 +286,7 @@ export function HistoryBackupPanel() {
               type="button"
               className="btn btn-ghost"
               disabled={busy !== null || !effectiveUrl}
+              title="Operator force — may overwrite a richer cloud copy. Auto-sync never does that without a spend."
               onClick={() => void runUpload()}
             >
               {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}

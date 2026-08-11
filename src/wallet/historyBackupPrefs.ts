@@ -26,12 +26,23 @@ export type HistoryBackupPrefs = {
   baseUrl: string
   lastUploadedAt: number | null
   lastError: string | null
+  /**
+   * Highest managed spendable (sats) seen on this install for the linked
+   * identity. Auto-push may not drop below this without a higher actionCount
+   * (proof UTXOs were spent). Survives IDB wipe; cleared only by force upload
+   * that deliberately ratchets down, or when a richer snapshot is restored.
+   */
+  highWaterSpendableSats: number | null
+  /** Action count paired with {@link highWaterSpendableSats}. */
+  highWaterActionCount: number | null
 }
 
 const DEFAULTS: HistoryBackupPrefs = {
   baseUrl: DEFAULT_HISTORY_BACKUP_BASE_URL,
   lastUploadedAt: null,
   lastError: null,
+  highWaterSpendableSats: null,
+  highWaterActionCount: null,
 }
 
 function normalizeBaseUrl(raw: string): string {
@@ -57,6 +68,16 @@ export function getHistoryBackupPrefs(): HistoryBackupPrefs {
       lastUploadedAt:
         typeof parsed.lastUploadedAt === 'number' ? parsed.lastUploadedAt : null,
       lastError: typeof parsed.lastError === 'string' ? parsed.lastError : null,
+      highWaterSpendableSats:
+        typeof parsed.highWaterSpendableSats === 'number' &&
+        Number.isFinite(parsed.highWaterSpendableSats)
+          ? Math.max(0, Math.trunc(parsed.highWaterSpendableSats))
+          : null,
+      highWaterActionCount:
+        typeof parsed.highWaterActionCount === 'number' &&
+        Number.isFinite(parsed.highWaterActionCount)
+          ? Math.max(0, Math.trunc(parsed.highWaterActionCount))
+          : null,
     }
   } catch {
     return { ...DEFAULTS }
@@ -73,6 +94,36 @@ export function setHistoryBackupPrefs(patch: Partial<HistoryBackupPrefs>): Histo
   }
   durableSetItem(KEY, JSON.stringify(next))
   return next
+}
+
+/**
+ * Ratchet local spendable high-water up. Never lowers — thin restores must not
+ * erase the floor that blocks clobbering a richer cloud blob.
+ */
+export function noteSpendableHighWater(spendableSats: number, actionCount: number): void {
+  const sats = Math.max(0, Math.trunc(spendableSats))
+  const actions = Math.max(0, Math.trunc(actionCount))
+  const prefs = getHistoryBackupPrefs()
+  const prior = prefs.highWaterSpendableSats
+  if (prior != null && sats <= prior) return
+  setHistoryBackupPrefs({
+    highWaterSpendableSats: sats,
+    highWaterActionCount: actions,
+  })
+}
+
+/**
+ * After a guarded push (or forced operator upload), align high-water to what
+ * we actually published so future spend-downs compare against the new baseline.
+ */
+export function setSpendableHighWaterFromPush(
+  spendableSats: number,
+  actionCount: number,
+): void {
+  setHistoryBackupPrefs({
+    highWaterSpendableSats: Math.max(0, Math.trunc(spendableSats)),
+    highWaterActionCount: Math.max(0, Math.trunc(actionCount)),
+  })
 }
 
 export function resolveHistoryBackupBaseUrl(prefs = getHistoryBackupPrefs()): string {

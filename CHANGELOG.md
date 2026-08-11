@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.173] - 2026-08-11
+
+### Fixed
+- **History push fail-closed on thin overwrite** — auto BRC-39 upload refuses when local managed spendable is below the remote header / durable high-water unless `actionCount` proves UTXOs were spent. Cloud stores `X-HandCash-Spendable-Sats` + `X-HandCash-Action-Count`. Manual Settings upload remains an explicit force.
+
 ## [1.2.172] - 2026-08-11
 
 ### Fixed

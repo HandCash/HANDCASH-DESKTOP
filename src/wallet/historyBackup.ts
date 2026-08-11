@@ -19,7 +19,9 @@ import { historyCryptoSecret } from './historyCryptoSecret'
 import {
   getHistoryBackupPrefs,
   historyBackupObjectUrl,
+  noteSpendableHighWater,
   setHistoryBackupPrefs,
+  setSpendableHighWaterFromPush,
 } from './historyBackupPrefs'
 import { getActiveWallet, clearActiveWallet, bootWallet } from './session'
 import { revealRootKeyHex } from './vault'
@@ -35,6 +37,8 @@ import {
   repairProvenTxReqHistoryNulls,
   type ProvenTxReqHistoryStore,
 } from './brc38HistoryRepair'
+import { decideThinHistoryOverwrite } from './historyEmptyGuard'
+import { inspectLocalToolboxState } from './layers'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
 
@@ -99,6 +103,27 @@ export type CreateBrc39Opts = {
    * for no extra safety on automatic paths.
    */
   passwordAlreadyVerified?: boolean
+  /**
+   * Settings → History Upload: operator confirms overwriting a richer remote /
+   * high-water. Auto paths never set this.
+   */
+  force?: boolean
+}
+
+export class HistoryThinOverwriteError extends Error {
+  readonly code = 'history-thin-overwrite' as const
+  constructor(message: string) {
+    super(message)
+    this.name = 'HistoryThinOverwriteError'
+  }
+}
+
+function parseOptionalIntHeader(res: Response, name: string): number | null {
+  const raw = res.headers.get(name)
+  if (raw == null || raw === '') return null
+  const n = Number(raw)
+  if (!Number.isFinite(n) || n < 0) return null
+  return Math.trunc(n)
 }
 
 /** Live BRC-38 JSON under the caller's historyReplica session (or none). */
@@ -223,6 +248,10 @@ export async function importBrc39FromFile(
 /**
  * Export under historyReplica only; encrypt + PUT run unlocked so a sequential
  * mint / pay is not stuck on "Preparing payment" behind Argon2 + upload.
+ *
+ * Fail-closed: will not PUT a thinner managed balance over a richer remote /
+ * high-water unless {@link CreateBrc39Opts.force} or local actionCount proves
+ * UTXOs were spent.
  */
 export async function uploadBrc39Backup(
   password: string,
@@ -230,6 +259,8 @@ export async function uploadBrc39Backup(
 ): Promise<{
   url: string
   exportedAt: number
+  spendableSats: number
+  actionCount: number
 }> {
   if (!opts.passwordAlreadyVerified) await revealRootKeyHex(password)
   const active = getActiveWallet()
@@ -237,6 +268,27 @@ export async function uploadBrc39Backup(
 
   const prefs = getHistoryBackupPrefs()
   const url = historyBackupObjectUrl(active.identityKey, prefs)
+
+  const local = await inspectLocalToolboxState()
+  noteSpendableHighWater(local.spendableSats, local.actionCount)
+  const prefsNow = getHistoryBackupPrefs()
+
+  const remote = await fetchRemoteBrc39Meta()
+  const gate = decideThinHistoryOverwrite({
+    localSpendableSats: local.spendableSats,
+    localActionCount: local.actionCount,
+    remoteSpendableSats: remote?.spendableSats ?? null,
+    remoteActionCount: remote?.actionCount ?? null,
+    highWaterSpendableSats: prefsNow.highWaterSpendableSats,
+    highWaterActionCount: prefsNow.highWaterActionCount,
+    force: opts.force === true,
+  })
+  if (gate.refusePush) {
+    const msg = gate.reason ?? 'refuse thin history overwrite'
+    appendAppLog('info', `[cloud-backup] skip upload — ${msg}`)
+    setHistoryBackupPrefs({ lastError: msg })
+    throw new HistoryThinOverwriteError(msg)
+  }
 
   const json = await runHistoryReplica(() => exportLiveBrc38Json())
   const bytes = asArrayBufferBytes(await encryptLiveDocument(active.rootKeyHex, json))
@@ -247,7 +299,10 @@ export async function uploadBrc39Backup(
   })
 
   const exportedAt = Date.now()
-  appendAppLog('info', `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url}`)
+  appendAppLog(
+    'info',
+    `[cloud-backup] uploading ${bytes.byteLength} bytes → ${url} (spendable=${local.spendableSats} actions=${local.actionCount})`,
+  )
 
   const res = await fetch(url, {
     method: 'PUT',
@@ -255,6 +310,8 @@ export async function uploadBrc39Backup(
       'Content-Type': BRC39_MEDIA,
       Accept: 'application/json, application/octet-stream, */*',
       'X-HandCash-Exported-At': String(exportedAt),
+      'X-HandCash-Spendable-Sats': String(local.spendableSats),
+      'X-HandCash-Action-Count': String(local.actionCount),
     },
     body: new Blob([bytes], { type: BRC39_MEDIA }),
   })
@@ -268,16 +325,24 @@ export async function uploadBrc39Backup(
   }
 
   setHistoryBackupPrefs({ lastUploadedAt: exportedAt, lastError: null })
+  setSpendableHighWaterFromPush(local.spendableSats, local.actionCount)
   appendAppLog('info', '[cloud-backup] upload ok (root-key)')
   void refreshCloudBackupHealth()
-  return { url, exportedAt }
+  return {
+    url,
+    exportedAt,
+    spendableSats: local.spendableSats,
+    actionCount: local.actionCount,
+  }
 }
 
-/** Probe remote blob age without downloading/merging. */
+/** Probe remote blob age / richness without downloading/merging. */
 export async function fetchRemoteBrc39Meta(): Promise<{
   exists: boolean
   exportedAt: number | null
   bytes: number | null
+  spendableSats: number | null
+  actionCount: number | null
 } | null> {
   const active = getActiveWallet()
   if (!active) return null
@@ -293,7 +358,15 @@ export async function fetchRemoteBrc39Meta(): Promise<{
       method: 'HEAD',
       headers: { Accept: `${BRC39_MEDIA}, application/octet-stream, */*` },
     })
-    if (res.status === 404) return { exists: false, exportedAt: null, bytes: null }
+    if (res.status === 404) {
+      return {
+        exists: false,
+        exportedAt: null,
+        bytes: null,
+        spendableSats: null,
+        actionCount: null,
+      }
+    }
     if (!res.ok) return null
     const exportedRaw = res.headers.get('X-HandCash-Exported-At')
     const exportedAt = exportedRaw ? Number(exportedRaw) : null
@@ -302,6 +375,8 @@ export async function fetchRemoteBrc39Meta(): Promise<{
       exists: true,
       exportedAt: Number.isFinite(exportedAt) && exportedAt! > 0 ? exportedAt : null,
       bytes: len ? Number(len) : null,
+      spendableSats: parseOptionalIntHeader(res, 'X-HandCash-Spendable-Sats'),
+      actionCount: parseOptionalIntHeader(res, 'X-HandCash-Action-Count'),
     }
   } catch {
     return null
@@ -349,6 +424,17 @@ async function downloadAndRestoreBrc39BackupExclusive(
     'info',
     `[cloud-backup] restored ${buf.byteLength} bytes via ${result.crypto} (inserts=${result.inserts} updates=${result.updates})`,
   )
+  try {
+    const state = await inspectLocalToolboxState()
+    noteSpendableHighWater(state.spendableSats, state.actionCount)
+    const remoteSats = parseOptionalIntHeader(res, 'X-HandCash-Spendable-Sats')
+    const remoteActions = parseOptionalIntHeader(res, 'X-HandCash-Action-Count')
+    if (remoteSats != null) {
+      noteSpendableHighWater(remoteSats, remoteActions ?? state.actionCount)
+    }
+  } catch {
+    /* high-water best-effort */
+  }
   void refreshCloudBackupHealth()
   return result
 }

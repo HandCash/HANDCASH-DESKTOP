@@ -151,5 +151,16 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
     /* ignore */
   }
 
+  if (spendableSats != null && spendableSats > 0) {
+    try {
+      const { inspectLocalToolboxState } = await import('./layers')
+      const { noteSpendableHighWater } = await import('./historyBackupPrefs')
+      const state = await inspectLocalToolboxState()
+      noteSpendableHighWater(spendableSats, state.actionCount)
+    } catch {
+      /* high-water best-effort */
+    }
+  }
+
   return { history, historyError, spendableSats, chainError }
 }
