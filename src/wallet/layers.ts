@@ -46,6 +46,10 @@
  *   succeeds. Same-identity still notifies our box so other devices ingest.
  *   `/files` is not the payment path (Android WebView). Plain address P2PKH
  *   remains for external/pasted addresses (`sendPayment.ts` + `bsvSendMachine`).
+ * - **Dual-layer confirmation** → `txLifecycle` / `utxoLockManager` /
+ *   `dualLayerSend` / `txReconcile`. Optimistic soft-locks + ARC status sit
+ *   beside settle-path machines; hard finality is MINED only after SPV-verified
+ *   BUMP. Never treat HTTP 200 / postBeef accept as mined.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */
@@ -90,6 +94,15 @@ export const WALLET_LAYER_MODULES = {
     'ingestPaymentByTxid.ts',
     'inscriptionCache.ts',
     'provenCache.ts',
+    'txLifecycle.ts',
+    'txLifecycleMachine.ts',
+    'txStore.ts',
+    'utxoLifecycle.ts',
+    'utxoLockManager.ts',
+    'protocolValidate.ts',
+    'arcStatusMap.ts',
+    'spvFinality.ts',
+    'dualLayerSend.ts',
   ],
   chainIngest: [
     'chainIngest.ts',
@@ -99,6 +112,7 @@ export const WALLET_LAYER_MODULES = {
     'legacyImportGuard.ts',
     'oneSatImportGuard.ts',
     'staleOutputRelease.ts',
+    'txReconcile.ts',
   ],
   historyReplica: [
     'historyBackup.ts',

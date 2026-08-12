@@ -623,9 +623,43 @@ const SPEND_SIGN = `stateDiagram-v2
   done --> [*] : activity + history push
 `
 
+/**
+ * Dual-layer confirmation — sits beside settle-path machines.
+ * Optimistic soft-lock / ARC status vs SPV-verified MINED.
+ */
+const TX_UTXO_LIFECYCLE = `stateDiagram-v2
+  direction LR
+  [*] --> DRAFT
+  DRAFT --> VALIDATING : protocolValidate
+  VALIDATING --> BROADCASTING : soft-lock + dispatch
+  VALIDATING --> FAILED_REJECTED : dust / funds / refuse
+  BROADCASTING --> SEEN_IN_MEMPOOL : ARC SEEN_ON_NETWORK\\npostBeef accept
+  BROADCASTING --> FAILED_REJECTED : ARC REJECTED / DOUBLE_SPEND
+  SEEN_IN_MEMPOOL --> MINED : BUMP verified vs headers
+  SEEN_IN_MEMPOOL --> FAILED_REJECTED : eviction / reject
+  MINED --> REORG_ORPHANED : reorg
+  REORG_ORPHANED --> SEEN_IN_MEMPOOL : re-announced
+  REORG_ORPHANED --> FAILED_REJECTED : gone
+  FAILED_REJECTED --> [*] : rollback soft-locks
+  MINED --> [*] : SPENT_CONFIRMED
+
+  note right of DRAFT
+    UTXO: UNSPENT
+    no mutation until VALIDATING ok
+  end note
+  note right of BROADCASTING
+    UTXO: SOFT_LOCKED_PENDING
+    optimistic balance deduct
+  end note
+  note right of MINED
+    ARC MINED alone is not enough
+    hard finality = BUMP + headers
+  end note
+`
+
 /** Receive / Refresh pipeline. */
 const CHAIN_INGEST_CHART = `flowchart TB
-  START([refreshFromChain]) --> RECON[reconcile pending sends\\nheal ghost · abort batches]
+  START([refreshFromChain]) --> RECON[reconcile pending sends\\ndual-layer Tx/UTXO]
   RECON --> SCAN[legacy address UTXO scan\\nBitails → WoC]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
@@ -695,6 +729,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Sign / broadcast',
     caption: 'noSend sign → ItemSettlePath (peer first) → optional sender postBeef',
     source: SPEND_SIGN,
+  },
+  {
+    id: 'txUtxoLifecycle',
+    label: 'Tx / UTXO lifecycle',
+    caption: 'Dual-layer confirmation — ARC status + soft-locks; MINED only after SPV BUMP',
+    source: TX_UTXO_LIFECYCLE,
   },
   {
     id: 'chainIngestChart',

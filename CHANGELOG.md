@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.215] - 2026-08-12
+
+### Added
+- **Dual-layer Tx/UTXO confirmation.** Optimistic soft-locks + ARC status mapping sit beside settle-path machines; hard finality is `MINED` only after SPV-verified BUMP. Chain ingest reconciles pending / reject / reorg; Settings → Statecharts shows the new lifecycle chart.
+
 ## [1.2.214] - 2026-08-12
 
 ### Fixed

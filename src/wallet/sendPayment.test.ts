@@ -13,6 +13,15 @@ const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
 ])
 
+const durable = new Map<string, string>()
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => durable.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    durable.set(key, value)
+    return true
+  },
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
@@ -38,6 +47,9 @@ vi.mock('./appActivity', () => ({
   upsertAppActivity: () => {},
   noteInboundReceivePending: () => {},
   noteInboundReceiveComplete: () => {},
+  noteOutboundSendPending: () => {},
+  noteOutboundSendComplete: () => {},
+  clearOutboundSendPending: () => {},
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))
@@ -50,11 +62,26 @@ vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   releaseStaleSpendableOutputs: async () => {},
 }))
+vi.mock('./friends', () => ({
+  resolvePaymentRecipient: async (to: string) => to,
+}))
+vi.mock('./actionReview', () => ({
+  releaseStuckNosends: async () => {},
+  sendWithHasFailure: () => false,
+  isReviewActionsError: () => false,
+  isIteratorCrashError: () => false,
+  formatReviewActionsError: () => 'review',
+  recoverFromReviewActions: async () => {},
+}))
+vi.mock('./spvFinality', () => ({
+  verifyBumpFinality: async () => ({ ok: false, reason: 'unknown' }),
+}))
 
 const ADDRESS = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
 
 describe('sendSatsToAddress', () => {
   beforeEach(() => {
+    durable.clear()
     createAction.mockClear()
     postBeef.mockClear()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())

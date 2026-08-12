@@ -6,6 +6,7 @@
  *
  * Pipeline:
  * 1. reconcile interrupted pending sends
+ * 1b. dual-layer Tx/UTXO reconcile (ARC mempool → SPV-mined / rollback)
  * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
  * 3. audit spendable outputs — report only, never write off (`auditSpendableOutputs`)
  * 4. refresh spendable balance
@@ -226,6 +227,16 @@ export async function refreshFromChainExclusive(
     reconcilePendingSends()
   } catch (err) {
     console.warn('[chain-ingest] pending send reconcile skipped', err)
+  }
+
+  try {
+    const { reconcileDualLayerState } = await import('./txReconcile')
+    const dual = await reconcileDualLayerState()
+    if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
+      console.info('[chain-ingest] dual-layer reconcile', dual)
+    }
+  } catch (err) {
+    console.warn('[chain-ingest] dual-layer reconcile skipped', err)
   }
 
   try {

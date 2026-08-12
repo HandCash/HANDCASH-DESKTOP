@@ -29,6 +29,14 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { bsvSendMachine } from './bsvSendMachine'
+import {
+  beginDualLayerSend,
+  failDualLayerSend,
+  noteDualLayerPostBeef,
+  noteDualLayerTxid,
+  tryFinalizeDualLayerTx,
+} from './dualLayerSend'
+import { transitionTx } from './txStore'
 
 export type SendSatsResult = {
   txid: string
@@ -82,6 +90,21 @@ export async function sendSatsToAddress(opts: {
           const { releaseStuckNosends } = await import('./actionReview')
           await releaseStuckNosends(active)
           await prepareSpendHeal(satoshis)
+
+          const availableSats = await fetchBalanceSats(active.wallet).catch(() => 0)
+          const dual = beginDualLayerSend({
+            satoshis,
+            availableSats: availableSats || 0,
+            to,
+            // Toolbox createAction owns input selection + reservation.
+            skipSoftLock: true,
+          })
+          if (!dual.ok) {
+            chart.send({ type: 'FAIL', error: dual.detail })
+            throw new Error(dual.detail)
+          }
+          const dualId = dual.record.id
+
           chart.send({ type: 'READY' })
 
           try {
@@ -110,6 +133,7 @@ export async function sendSatsToAddress(opts: {
 
             const realTxid = (result as { txid?: string })?.txid
             const txid = realTxid ?? `local-${Date.now().toString(16)}`
+            if (realTxid) noteDualLayerTxid(dualId, realTxid)
             const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
               .sendWithResults
             const { sendWithHasFailure } = await import('./actionReview')
@@ -125,6 +149,7 @@ export async function sendSatsToAddress(opts: {
                 },
                 active,
               })
+              failDualLayerSend(dualId, 'ARC_REJECTED', 'sendWith failure')
               throw new Error(
                 formatReviewActionsError({
                   sendWithResults: sendWith,
@@ -155,20 +180,33 @@ export async function sendSatsToAddress(opts: {
                 const msg = err instanceof Error ? err.message : String(err)
                 console.warn('[send] postBeef confirm failed', realTxid, msg)
                 if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
+                  failDualLayerSend(dualId, 'SCRIPT_INVALID', msg)
                   throw new Error(
                     'Payment was signed but the transaction body is invalid — try Send again.',
                   )
                 }
+                failDualLayerSend(dualId, 'UNKNOWN', msg)
                 throw new Error(
                   'Could not confirm the payment on the network. Check connection and try again.',
                 )
               }
+              noteDualLayerPostBeef(dualId, summary)
               if (!summary.accepted) {
                 if (summary.doubleSpend || summary.missingInputs) {
                   await releaseStaleSpendableOutputs()
                 }
                 throw new Error(formatPostBeefFailure(summary))
               }
+              // Best-effort SPV finality — mempool accept is enough for UI done.
+              void tryFinalizeDualLayerTx(dualId).catch((err) => {
+                console.warn('[send] SPV finality deferred', realTxid, err)
+              })
+            } else if (realTxid) {
+              // createAction broadcast without confirm postBeef — still mark mempool-seen.
+              transitionTx(dualId, 'SEEN_IN_MEMPOOL')
+              void tryFinalizeDualLayerTx(dualId).catch((err) => {
+                console.warn('[send] SPV finality deferred', realTxid, err)
+              })
             }
             chart.send({ type: 'BROADCASTED', txid })
             completePendingSend(pending.id, txid)
@@ -204,6 +242,11 @@ export async function sendSatsToAddress(opts: {
           } catch (err) {
             clearPendingSend(pending.id)
             clearOutboundSendPending(pending.id)
+            failDualLayerSend(
+              dualId,
+              'UNKNOWN',
+              err instanceof Error ? err.message : String(err),
+            )
             if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
             const {
               isReviewActionsError,
