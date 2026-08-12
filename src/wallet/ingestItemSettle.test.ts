@@ -10,12 +10,12 @@ describe('internalizePeerItemSettle', () => {
     })
   })
 
-  it('refuses when Atomic BEEF is missing', async () => {
+  it('refuses when the wallet is locked', async () => {
     const txid = 'a'.repeat(64)
-    expect(await internalizePeerItemSettle({ txid })).toEqual({
+    expect(await internalizePeerItemSettle({ txid, tx: [1, 2, 3] })).toEqual({
       accepted: false,
       outpoints: [],
-      reason: 'missing-beef',
+      reason: 'locked',
     })
   })
 })

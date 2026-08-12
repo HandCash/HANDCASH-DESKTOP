@@ -1,8 +1,9 @@
 /**
  * Payee ingest of a P2P soft-latch item settle (Atomic BEEF from messagebox).
  *
- * Internalize tip + latch, then the **payee** broadcasts. Chain custody still
- * works if the box is down — address scan remains the fallback.
+ * Internalize tip + latch, then the **payee** broadcasts. If the box has no
+ * Atomic BEEF, SPV-fetch by txid (sender-broadcast fallback). Address scan
+ * remains the last-resort custody path.
  */
 import { Beef } from '@bsv/sdk'
 import { getActiveWallet } from './session'
@@ -61,15 +62,20 @@ export async function internalizePeerItemSettle(opts: {
   if (!/^[0-9a-f]{64}$/.test(id)) {
     return { accepted: false, outpoints: [], reason: 'invalid-txid' }
   }
-  if (!opts.tx?.length && !opts.beefUrl?.trim()) {
-    return { accepted: false, outpoints: [], reason: 'missing-beef' }
-  }
   const active = getActiveWallet()
   if (!active) return { accepted: false, outpoints: [], reason: 'locked' }
 
   let atomic = opts.tx
   if ((!atomic || !atomic.length) && opts.beefUrl) {
     atomic = await fetchAtomicBeefFromUrl(opts.beefUrl)
+  }
+  if (!atomic?.length) {
+    try {
+      const { getBeefForTxidCached } = await import('./beefCache')
+      atomic = (await getBeefForTxidCached(active, id)).toBinaryAtomic(id)
+    } catch {
+      /* fall through */
+    }
   }
   if (!atomic?.length) {
     return { accepted: false, outpoints: [], reason: 'missing-beef' }

@@ -7,6 +7,8 @@ import {
   encodeMessageBody,
   isMessageboxFileUrl,
   normalizeMessageboxBase,
+  notifyPeerItemIncoming,
+  uploadMessageboxBytes,
 } from './messageTransport'
 
 describe('message transport envelopes', () => {
@@ -191,6 +193,78 @@ describe('messagebox base URL', () => {
       body: 'hello federation',
     })
     expect(JSON.parse(calls[0]!.body).message.sender).toBeUndefined()
+  })
+
+  it('uploads BEEF as raw bytes with Content-Length (not a File body)', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    const recipient = '02' + 'ab'.repeat(32)
+    const bytes = new Uint8Array([1, 2, 3, 4])
+    let body: unknown
+    let headers: Headers | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        body = init?.body
+        headers = new Headers(init?.headers)
+        return new Response(
+          JSON.stringify({
+            status: 'success',
+            file: {
+              id: 'a'.repeat(48),
+              name: 'item.beef',
+              contentType: 'application/octet-stream',
+              size: 4,
+              url: 'https://brc-cloud.bcryderman.workers.dev/v1/messagebox/files/02ab/deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef',
+              expiresAt: Date.now() + 1000,
+            },
+          }),
+          { status: 200 },
+        )
+      }),
+    )
+
+    const file = await uploadMessageboxBytes({
+      bytes,
+      filename: 'item.beef',
+      recipientIdentityKey: recipient,
+      senderIdentityKey: root.toPublicKey().toString(),
+      rootKeyHex: root.toHex(),
+      messagebox: 'https://mb.peer.example/v1/messagebox',
+    })
+
+    expect(file.name).toBe('item.beef')
+    expect(body).toBeInstanceOf(Blob)
+    expect(body).not.toBeInstanceOf(File)
+    expect(headers?.get('Content-Type')).toBe('application/octet-stream')
+    expect(await (body as Blob).arrayBuffer().then((b) => [...new Uint8Array(b)])).toEqual([
+      1, 2, 3, 4,
+    ])
+  })
+
+  it('does not count cloud delivery when Atomic BEEF upload fails', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('/files')) {
+          throw new TypeError('Failed to fetch')
+        }
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'a'.repeat(64),
+      itemName: 'Test',
+      atomicBeef: [1, 2, 3],
+    })
+
+    expect(result).toEqual({ delivered: 'cloud', beefUploaded: false })
   })
 })
 

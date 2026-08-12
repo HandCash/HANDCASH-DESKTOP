@@ -29,7 +29,10 @@ const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
 const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
 ])
-const notifyPeerBrc29Payment = vi.fn(async () => ({ delivered: 'cloud' as const }))
+const notifyPeerBrc29Payment = vi.fn(async () => ({
+  delivered: 'cloud' as const,
+  beefUploaded: true,
+}))
 
 const walletState = {
   identityKey: '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -148,6 +151,20 @@ describe('sendBrc29ToIdentityKey', () => {
     )
     expect(result.selfReceived).toBe(false)
     expect(result.peerDelivered).toBe(true)
+  })
+
+  it('sender-broadcasts when BEEF was not uploaded', async () => {
+    notifyPeerBrc29Payment.mockResolvedValueOnce({
+      delivered: 'cloud',
+      beefUploaded: false,
+    })
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: PAYEE,
+      satoshis: 1_000,
+    })
+    expect(result.peerDelivered).toBe(false)
+    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
   })
 
   it('internalizes immediately when paying this wallet', async () => {

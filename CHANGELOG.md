@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.195] - 2026-08-12
+
+### Fixed
+- **Mobile BEEF upload / peer delivery.** Android `fetch(File)` fails (`Failed to fetch`), so item and BRC-29 sends posted a tip card without Atomic BEEF and skipped sender broadcast — Desktop never received them. Uploads now send a `Blob` (not `File`); a box ack without BEEF is not delivery (sender broadcasts). Payee ingest can SPV-fetch BEEF by txid after that broadcast.
+
 ## [1.2.194] - 2026-08-12
 
 ### Changed

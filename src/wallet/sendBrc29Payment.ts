@@ -294,7 +294,8 @@ export async function sendBrc29ToIdentityKey(opts: {
                 atomicBeef,
                 amountLabel: opts.friendLabel ?? undefined,
               })
-              peerDelivered = delivered.delivered === 'cloud'
+              peerDelivered =
+                delivered.delivered === 'cloud' && delivered.beefUploaded === true
             } catch (err) {
               console.warn(
                 '[brc29] peer delivery failed',

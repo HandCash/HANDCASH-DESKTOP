@@ -2523,7 +2523,10 @@ export async function sendCollectable(args: {
         itemName: name,
         atomicBeef,
       })
-      if (delivered.delivered === 'cloud') {
+      console.info(
+        `[collectables] peerDeliver box=${delivered.delivered} beefUploaded=${delivered.beefUploaded}`,
+      )
+      if (delivered.delivered === 'cloud' && delivered.beefUploaded) {
         softChart.send({ type: 'DELIVERED' })
       } else {
         softChart.send({ type: 'DELIVER_FAILED' })

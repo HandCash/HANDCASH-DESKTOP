@@ -35,5 +35,7 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
 - Decorative `chart.send` that the imperative code can ignore
 - `postBeef` / delayed broadcast before peer delivery on a `peerDeliver` settle
   (`maySenderBroadcast` is false until `DELIVER_FAILED`)
+- Counting a messagebox ack as `DELIVERED` / `peerDelivered` when Atomic BEEF
+  `/files` failed (`beefUploaded` must be true)
 
 Effect.ts is deferred until we need interruptible fibers beyond `fromPromise`.

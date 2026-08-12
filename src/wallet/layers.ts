@@ -33,14 +33,16 @@
  *     signs `noSend` and classifies once — `peerDeliver` (Atomic BEEF to peer;
  *     **payee** broadcasts), `selfReceive`, or `externalBroadcast` (pasted
  *     address). There is no broadcast-then-notify path; `peerDeliver` has no
- *     sender-broadcast edge until `DELIVER_FAILED`.
+ *     sender-broadcast edge until `DELIVER_FAILED`. A messagebox ack without
+ *     Atomic BEEF is `DELIVER_FAILED` (sender broadcasts).
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
  * - **Peer BSV pay (BRC-29)** → HandCash↔HandCash tip/pay/Send-to-friend: sender
  *   signs (`noSend`) and delivers Atomic BEEF + remittance to the payee; the
  *   **payee** internalizes and broadcasts. Sender broadcasts only if delivery
- *   fails. Self-pay internalizes + broadcasts locally. Plain address P2PKH
+ *   fails (including `/files` BEEF upload failure). Self-pay internalizes +
+ *   broadcasts locally. Plain address P2PKH
  *   remains for external/pasted addresses (`sendPayment.ts` + scan).
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).

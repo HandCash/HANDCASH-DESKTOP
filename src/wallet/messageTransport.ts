@@ -246,17 +246,29 @@ export function decodeMessageBody(body: string): {
   }
 }
 
-/** Upload an attachment to the (recipient) messagebox file store. */
-export async function uploadChatFile(args: {
-  file: File
+export type PeerBeefNotifyResult = {
+  delivered: 'local' | 'cloud'
+  /** False when Atomic BEEF was required but `/files` did not accept it. */
+  beefUploaded: boolean
+}
+
+/**
+ * Upload bytes to the recipient messagebox file store.
+ *
+ * Android WebView `fetch(new File(...))` throws `Failed to fetch`. Send a
+ * `Blob` (not `File`) so Capacitor can POST the Atomic BEEF.
+ */
+export async function uploadMessageboxBytes(args: {
+  bytes: Uint8Array
+  filename: string
+  contentType?: string
   recipientIdentityKey: string
   senderIdentityKey: string
   rootKeyHex: string
-  /** Recipient messagebox base; defaults to HandCash BRC-CLOUD. */
   messagebox?: string | null
 }): Promise<ChatAttachment> {
-  if (!(args.file.size > 0)) throw new Error('Choose a non-empty file')
-  if (args.file.size > MAX_CHAT_FILE_BYTES) {
+  if (!(args.bytes.byteLength > 0)) throw new Error('Choose a non-empty file')
+  if (args.bytes.byteLength > MAX_CHAT_FILE_BYTES) {
     throw new Error('Files are limited to 8 MB')
   }
   const box = normalizeMessageboxBase(args.messagebox)
@@ -265,15 +277,20 @@ export async function uploadChatFile(args: {
     method: 'files',
     messageBox: 'inbox',
   })
+  const filename = args.filename.trim() || 'attachment'
+  const contentType = args.contentType || 'application/octet-stream'
+  const payload = new Uint8Array(args.bytes.byteLength)
+  payload.set(args.bytes)
   const res = await fetch(`${box}/files`, {
     method: 'POST',
     headers: {
-      'Content-Type': args.file.type || 'application/octet-stream',
+      'Content-Type': contentType,
       'X-HandCash-Recipient': args.recipientIdentityKey,
-      'X-HandCash-Filename': encodeURIComponent(args.file.name),
+      'X-HandCash-Filename': encodeURIComponent(filename),
       ...messageboxAuthHeaders(auth),
     },
-    body: args.file,
+    // Blob, not File — Android WebView rejects `File` as a fetch body.
+    body: new Blob([payload.buffer], { type: contentType }),
   })
   const data = (await res.json().catch(() => null)) as
     | { file?: ChatAttachment; error?: string; status?: string }
@@ -282,6 +299,27 @@ export async function uploadChatFile(args: {
     throw new Error(data?.error || `File upload failed (${res.status})`)
   }
   return data.file
+}
+
+/** Upload an attachment to the (recipient) messagebox file store. */
+export async function uploadChatFile(args: {
+  file: Blob & { name?: string }
+  recipientIdentityKey: string
+  senderIdentityKey: string
+  rootKeyHex: string
+  /** Recipient messagebox base; defaults to HandCash BRC-CLOUD. */
+  messagebox?: string | null
+}): Promise<ChatAttachment> {
+  const bytes = new Uint8Array(await args.file.arrayBuffer())
+  return uploadMessageboxBytes({
+    bytes,
+    filename: args.file.name?.trim() || 'attachment',
+    contentType: args.file.type || 'application/octet-stream',
+    recipientIdentityKey: args.recipientIdentityKey,
+    senderIdentityKey: args.senderIdentityKey,
+    rootKeyHex: args.rootKeyHex,
+    messagebox: args.messagebox,
+  })
 }
 
 /** Deliver outbound text to the recipient's messagebox; always returns local-ok. */
@@ -460,21 +498,21 @@ export async function notifyPeerItemIncoming(args: {
   txid: string
   itemName: string
   atomicBeef?: number[]
-}): Promise<{ delivered: 'local' | 'cloud' }> {
+}): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    return { delivered: 'local', beefUploaded: false }
+  }
   const name = args.itemName.trim() || 'item'
+  const needsBeef = Boolean(args.atomicBeef && args.atomicBeef.length > 0)
 
   let attachment: ChatAttachment | undefined
-  if (args.atomicBeef && args.atomicBeef.length > 0) {
+  if (needsBeef) {
     try {
-      const file = new File(
-        [new Uint8Array(args.atomicBeef)],
-        `item-${txid.slice(0, 12)}.beef`,
-        { type: 'application/octet-stream' },
-      )
-      attachment = await uploadChatFile({
-        file,
+      attachment = await uploadMessageboxBytes({
+        bytes: Uint8Array.from(args.atomicBeef!),
+        filename: `item-${txid.slice(0, 12)}.beef`,
+        contentType: 'application/octet-stream',
         recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
         senderIdentityKey: args.senderIdentityKey,
         rootKeyHex: args.rootKeyHex,
@@ -487,6 +525,7 @@ export async function notifyPeerItemIncoming(args: {
       )
     }
   }
+  const beefUploaded = !needsBeef || Boolean(attachment)
 
   const body = encodeMessageBody({
     kind: 'tip',
@@ -512,10 +551,12 @@ export async function notifyPeerItemIncoming(args: {
       body,
       peerId: recipient,
     })
-    if (delivered.delivered === 'cloud') return delivered
+    if (delivered.delivered === 'cloud') {
+      return { delivered: 'cloud', beefUploaded }
+    }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local' }
+  return { delivered: 'local', beefUploaded }
 }
 
 /**
@@ -537,30 +578,30 @@ export async function notifyPeerBrc29Payment(args: {
   }
   amountLabel?: string
   atomicBeef?: number[]
-}): Promise<{ delivered: 'local' | 'cloud' }> {
+}): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    return { delivered: 'local', beefUploaded: false }
+  }
   if (
     !args.remittance.derivationPrefix?.trim() ||
     !args.remittance.derivationSuffix?.trim()
   ) {
-    return { delivered: 'local' }
+    return { delivered: 'local', beefUploaded: false }
   }
   const sats =
     Number.isFinite(args.satoshis) && args.satoshis > 0
       ? Math.floor(args.satoshis)
       : 0
+  const needsBeef = Boolean(args.atomicBeef && args.atomicBeef.length > 0)
 
   let attachment: ChatAttachment | undefined
-  if (args.atomicBeef && args.atomicBeef.length > 0) {
+  if (needsBeef) {
     try {
-      const file = new File(
-        [new Uint8Array(args.atomicBeef)],
-        `brc29-${txid.slice(0, 12)}.beef`,
-        { type: 'application/octet-stream' },
-      )
-      attachment = await uploadChatFile({
-        file,
+      attachment = await uploadMessageboxBytes({
+        bytes: Uint8Array.from(args.atomicBeef!),
+        filename: `brc29-${txid.slice(0, 12)}.beef`,
+        contentType: 'application/octet-stream',
         recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
         senderIdentityKey: args.senderIdentityKey,
         rootKeyHex: args.rootKeyHex,
@@ -573,6 +614,7 @@ export async function notifyPeerBrc29Payment(args: {
       )
     }
   }
+  const beefUploaded = !needsBeef || Boolean(attachment)
 
   const body = encodeMessageBody({
     kind: 'pay-sent',
@@ -602,10 +644,12 @@ export async function notifyPeerBrc29Payment(args: {
       body,
       peerId: recipient,
     })
-    if (delivered.delivered === 'cloud') return delivered
+    if (delivered.delivered === 'cloud') {
+      return { delivered: 'cloud', beefUploaded }
+    }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local' }
+  return { delivered: 'local', beefUploaded }
 }
 
 async function acknowledgeMessages(
