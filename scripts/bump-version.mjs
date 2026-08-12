@@ -72,6 +72,15 @@ function syncMarket(version) {
   return true
 }
 
+function syncWalletUiPackage(version) {
+  const uiPkgPath = path.join(root, 'packages/wallet-ui/package.json')
+  if (!fs.existsSync(uiPkgPath)) return
+  const uiPkg = JSON.parse(fs.readFileSync(uiPkgPath, 'utf8'))
+  uiPkg.version = version
+  fs.writeFileSync(uiPkgPath, `${JSON.stringify(uiPkg, null, 2)}\n`)
+  console.log(`Synced @handcash/wallet-ui → ${version}`)
+}
+
 function syncVersionTs(version) {
   if (!fs.existsSync(versionTsPath)) return
   const src = fs.readFileSync(versionTsPath, 'utf8')
@@ -119,6 +128,7 @@ const next = bumpSemver(prev, bump)
 pkg.version = next
 fs.writeFileSync(pkgPath, `${JSON.stringify(pkg, null, 2)}\n`)
 syncVersionTs(next)
+syncWalletUiPackage(next)
 prependChangelog(
   next,
   bump === 'patch'
@@ -130,7 +140,10 @@ console.log(`version ${prev} → ${next}`)
 if (doSyncMarket) syncMarket(next)
 
 if (!noCommit) {
-  execSync(`git add package.json CHANGELOG.md src/version.ts`, { cwd: root, stdio: 'inherit' })
+  execSync(`git add package.json CHANGELOG.md src/version.ts packages/wallet-ui/package.json`, {
+    cwd: root,
+    stdio: 'inherit',
+  })
   execSync(`git commit -m "Release v${next}"`, { cwd: root, stdio: 'inherit' })
   try {
     execSync(`git tag v${next}`, { cwd: root, stdio: 'inherit' })

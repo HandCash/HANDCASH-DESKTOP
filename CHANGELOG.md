@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.210] - 2026-08-12
+
+### Changed
+- **Three-part architecture.** Named `@handcash/wallet-ui` package is the shared UI core (`src/`). Desktop Electron and Mobile Capacitor are thin shells. Bump script keeps the core version locked to Desktop.
+
 ## [1.2.209] - 2026-08-12
 
 ### Fixed
