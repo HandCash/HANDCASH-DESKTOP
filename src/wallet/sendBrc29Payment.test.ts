@@ -29,10 +29,12 @@ const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
 const postBeef = vi.fn(async () => [
   { status: 'success', txidResults: [{ status: 'success' }] },
 ])
-const notifyPeerBrc29Payment = vi.fn(async () => ({
-  delivered: 'cloud' as const,
-  beefUploaded: true,
-}))
+const notifyPeerBrc29Payment = vi.fn(
+  async (): Promise<{ delivered: 'local' | 'cloud'; beefInBox: boolean }> => ({
+    delivered: 'cloud',
+    beefInBox: true,
+  }),
+)
 
 const walletState = {
   identityKey: '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
@@ -141,7 +143,6 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(instructions.derivationSuffix).toBe(result.remittance.derivationSuffix)
     expect(instructions.payee).toBe(PAYEE)
     expect(internalizeAction).not.toHaveBeenCalled()
-    expect(postBeef).not.toHaveBeenCalled()
     expect(notifyPeerBrc29Payment).toHaveBeenCalledWith(
       expect.objectContaining({
         recipientIdentityKey: PAYEE,
@@ -153,10 +154,26 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(result.peerDelivered).toBe(true)
   })
 
-  it('sender-broadcasts when BEEF was not uploaded', async () => {
+  it('sender-broadcasts when remittance is in the box without inline BEEF', async () => {
     notifyPeerBrc29Payment.mockResolvedValueOnce({
       delivered: 'cloud',
-      beefUploaded: false,
+      beefInBox: false,
+    })
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: PAYEE,
+      satoshis: 1_000,
+    })
+    expect(result.peerDelivered).toBe(true)
+    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
+  })
+
+  it('returns a brc29 claim receipt when the inbox is unreachable', async () => {
+    walletState.identityKey =
+      '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
+    notifyPeerBrc29Payment.mockResolvedValueOnce({
+      delivered: 'local' as const,
+      beefInBox: false,
     })
     const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
     const result = await sendBrc29ToIdentityKey({
@@ -164,7 +181,9 @@ describe('sendBrc29ToIdentityKey', () => {
       satoshis: 1_000,
     })
     expect(result.peerDelivered).toBe(false)
-    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
+    expect(result.settlementUri).toMatch(/^brc29:/i)
+    expect(result.settlementUri).toContain(PAYEE)
+    expect(result.settlementUri).toContain('txid=' + 'b'.repeat(64))
   })
 
   it('internalizes immediately when paying this wallet', async () => {
@@ -176,7 +195,7 @@ describe('sendBrc29ToIdentityKey', () => {
     })
 
     expect(result.selfReceived).toBe(true)
-    expect(notifyPeerBrc29Payment).not.toHaveBeenCalled()
+    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
     expect(internalizeAction).toHaveBeenCalledWith(
       expect.objectContaining({
         tx: [1, 2, 3],

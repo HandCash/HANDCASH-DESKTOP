@@ -1,9 +1,10 @@
 /**
  * BRC-29 peer payments (HandCash ↔ HandCash).
  *
- * Sender signs (`createAction` noSend) and delivers Atomic BEEF + remittance
- * to the payee. The **payee** internalizes and broadcasts. Sender only
- * broadcasts if peer delivery fails (so noSend funds are not stuck).
+ * `brc29SendMachine` + `Brc29SettlePath` own the path. Sender signs `noSend`
+ * and posts remittance (± inline Atomic BEEF) to the payee inbox. Sender then
+ * silently `postBeef` so the tx is on-chain even if the payee never broadcasts.
+ * Same-identity still notifies our inbox so other devices can ingest.
  *
  * Plain identity-address P2PKH stays in sendPayment.ts for external addresses.
  */
@@ -32,8 +33,14 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
-import { bsvSendMachine } from './bsvSendMachine'
 import { validateIdentityKey, normalizeIdentityKey } from './friends'
+import { chooseBrc29SettlePath } from './brc29SettlePath'
+import {
+  brc29SendMachine,
+  isBrc29SilentBroadcast,
+  mayBrc29SenderBroadcast,
+  mustBrc29DeliverToPeer,
+} from './brc29SendMachine'
 import {
   listMessages,
   listThreads,
@@ -43,6 +50,7 @@ import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
 import { getDisplayCurrency } from './displayCurrency'
+import { buildBrc29SettlementUri } from './brc29Uri'
 
 /** BRC-29 protocol id — see BRCs/payments/0029.md */
 export const BRC29_PROTOCOL_ID: [2, '3241645161d8'] = [2, '3241645161d8']
@@ -63,6 +71,11 @@ export type SendBrc29Result = {
   atomicBeef?: number[]
   /** Messagebox accepted the payment envelope (`cloud`), else local-only. */
   peerDelivered?: boolean
+  /**
+   * Offline claim receipt (`brc29:…`) when the inbox could not take the copy.
+   * Payee scans / pastes this — not shown when online delivery succeeded.
+   */
+  settlementUri?: string | null
 }
 
 async function fetchAtomicBeefFromUrl(url: string): Promise<number[] | undefined> {
@@ -150,7 +163,7 @@ export async function sendBrc29ToIdentityKey(opts: {
   setPaymentProgress('preparing', 'Waiting to send')
   return runExclusiveSpend(
     async () => {
-      const chart = createActor(bsvSendMachine).start()
+      const chart = createActor(brc29SendMachine).start()
       try {
         assertOnlineForPayment()
         const active = getActiveWallet()
@@ -163,7 +176,16 @@ export async function sendBrc29ToIdentityKey(opts: {
         const satoshis = opts.satoshis
         if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
-        chart.send({ type: 'START', to: payee, satoshis })
+        const settlePath = chooseBrc29SettlePath({
+          payeeIdentityKey: payee,
+          ourIdentityKey: active.identityKey,
+        })
+        chart.send({
+          type: 'START',
+          payee,
+          satoshis,
+          settlePath,
+        })
         await prepareSpendHeal(satoshis)
         chart.send({ type: 'READY' })
 
@@ -228,7 +250,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             throw new Error('Wallet did not return a signed payment to deliver')
           }
           const txid = realTxid
-          chart.send({ type: 'BROADCASTED', txid })
+          chart.send({ type: 'SIGNED', txid })
           completePendingSend(pending.id, txid)
 
           const recipientNote = opts.friendLabel
@@ -251,17 +273,48 @@ export async function sendBrc29ToIdentityKey(opts: {
 
           let selfReceived = false
           let peerDelivered = false
+          let settlementUri: string | null = null
           let balanceSats = Math.max(
             0,
             (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
           )
 
-          const payingSelf =
-            Boolean(active.identityKey) &&
-            normalizeIdentityKey(active.identityKey) === payee
+          const notifyPayee = async (recipientIdentityKey: string) => {
+            const { listFriends } = await import('./friends')
+            const { notifyPeerBrc29Payment } = await import('./messageTransport')
+            const friend =
+              listFriends().find(
+                (f) =>
+                  f.identityKey.toLowerCase() ===
+                  recipientIdentityKey.toLowerCase(),
+              ) ?? null
+            return notifyPeerBrc29Payment({
+              recipientIdentityKey,
+              rootKeyHex: active.rootKeyHex,
+              senderIdentityKey: active.identityKey,
+              messagebox: friend?.messagebox,
+              txid,
+              satoshis,
+              remittance,
+              atomicBeef,
+              amountLabel: opts.friendLabel ?? undefined,
+            })
+          }
 
-          if (payingSelf) {
+          if (settlePath.settle === 'selfReceive') {
+            if (!mayBrc29SenderBroadcast(chart.getSnapshot())) {
+              chart.send({ type: 'FAIL', error: 'selfReceive refused broadcast' })
+              throw new Error('brc29SendMachine refused selfReceive broadcast')
+            }
             setPaymentProgress('finishing', 'Crediting payment back to this wallet')
+            try {
+              await notifyPayee(payee)
+            } catch (err) {
+              console.warn(
+                '[brc29] self inbox notify failed',
+                err instanceof Error ? err.message : String(err),
+              )
+            }
             await broadcastAtomicBeef(txid, atomicBeef)
             const claimed = await internalizeBrc29Payment({
               txid,
@@ -274,37 +327,61 @@ export async function sendBrc29ToIdentityKey(opts: {
             if (claimed.balanceSats != null) balanceSats = claimed.balanceSats
             selfReceived = claimed.accepted
             peerDelivered = selfReceived
+            chart.send({ type: 'SETTLED' })
           } else {
+            if (!mustBrc29DeliverToPeer(chart.getSnapshot())) {
+              chart.send({ type: 'FAIL', error: 'peerDeliver expected' })
+              throw new Error('brc29SendMachine peerDeliver without settle path')
+            }
             setPaymentProgress('finishing', 'Delivering payment to recipient')
             try {
-              const { listFriends } = await import('./friends')
-              const { notifyPeerBrc29Payment } = await import('./messageTransport')
-              const friend =
-                listFriends().find(
-                  (f) => f.identityKey.toLowerCase() === payee.toLowerCase(),
-                ) ?? null
-              const delivered = await notifyPeerBrc29Payment({
-                recipientIdentityKey: payee,
-                rootKeyHex: active.rootKeyHex,
-                senderIdentityKey: active.identityKey,
-                messagebox: friend?.messagebox,
-                txid,
-                satoshis,
-                remittance,
-                atomicBeef,
-                amountLabel: opts.friendLabel ?? undefined,
-              })
-              peerDelivered =
-                delivered.delivered === 'cloud' && delivered.beefUploaded === true
+              const delivered = await notifyPayee(settlePath.recipientIdentityKey)
+              peerDelivered = delivered.delivered === 'cloud'
+              if (delivered.delivered === 'cloud' && delivered.beefInBox) {
+                chart.send({ type: 'BEEF_IN_BOX' })
+              } else if (delivered.delivered === 'cloud') {
+                chart.send({ type: 'REMIT_IN_BOX' })
+              } else {
+                chart.send({ type: 'BOX_UNREACHABLE' })
+              }
             } catch (err) {
               console.warn(
                 '[brc29] peer delivery failed',
                 err instanceof Error ? err.message : String(err),
               )
+              peerDelivered = false
+              chart.send({ type: 'BOX_UNREACHABLE' })
+            }
+            if (mayBrc29SenderBroadcast(chart.getSnapshot())) {
+              const silent = isBrc29SilentBroadcast(chart.getSnapshot())
+              if (!silent) {
+                setPaymentProgress(
+                  'finishing',
+                  'Inbox unreachable — submitting on chain',
+                )
+              }
+              const ok = await broadcastAtomicBeef(txid, atomicBeef)
+              if (silent) {
+                chart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
+              } else {
+                chart.send({ type: 'BROADCASTED' })
+              }
             }
             if (!peerDelivered) {
-              setPaymentProgress('finishing', 'Submitting payment (recipient offline)')
-              await broadcastAtomicBeef(txid, atomicBeef)
+              try {
+                settlementUri = buildBrc29SettlementUri({
+                  payeeIdentityKey: settlePath.recipientIdentityKey,
+                  senderIdentityKey: active.identityKey,
+                  txid,
+                  remittance,
+                  sats: satoshis,
+                })
+              } catch (err) {
+                console.warn(
+                  '[brc29] settlement URI fallback failed',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
             }
           }
 
@@ -315,6 +392,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             selfReceived,
             atomicBeef,
             peerDelivered,
+            settlementUri,
           }
         } catch (err) {
           clearPendingSend(pending.id)
@@ -517,6 +595,7 @@ export async function claimBrc29SettlementUri(
 
 export type PaymentTipHint = {
   txid: string
+  messageId?: string
   senderIdentityKey?: string
   satoshis?: number
   brc29?: Brc29Remittance
@@ -527,12 +606,34 @@ export type PaymentTipHint = {
   item?: boolean
 }
 
+/** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
+export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
+  const hints: PaymentTipHint[] = []
+  for (const thread of listThreads()) {
+    for (const msg of listMessages(thread.peerId)) {
+      if (msg.direction !== 'in') continue
+      if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
+      const txid = (msg.meta?.txid || '').trim().toLowerCase()
+      if (!/^[0-9a-f]{64}$/.test(txid)) continue
+      if (hasActivityTxid(txid, 'earned')) continue
+      hints.push({
+        txid,
+        senderIdentityKey: msg.meta?.identityKey,
+        satoshis: msg.meta?.sats,
+        brc29: msg.meta?.brc29,
+        item: msg.meta?.item === true || undefined,
+      })
+    }
+  }
+  return hints
+}
+
 /**
  * Chase tip/pay hints: BRC-29 remittance first, legacy address-P2PKH SPV second.
  */
 export async function ingestPaymentsFromTipHints(
   hints: Array<string | PaymentTipHint>,
-): Promise<{ imported: number; balanceSats: number | null }> {
+): Promise<{ imported: number; importedTxids: string[]; balanceSats: number | null }> {
   const normalized: PaymentTipHint[] = []
   for (const h of hints) {
     if (typeof h === 'string') {
@@ -544,6 +645,7 @@ export async function ingestPaymentsFromTipHints(
     if (!/^[0-9a-f]{64}$/.test(txid)) continue
     normalized.push({
       txid,
+      messageId: h.messageId,
       senderIdentityKey: h.senderIdentityKey,
       satoshis: h.satoshis,
       brc29: h.brc29,
@@ -568,7 +670,10 @@ export async function ingestPaymentsFromTipHints(
   }
 
   let imported = 0
+  const importedTxids: string[] = []
   let balanceSats: number | null = null
+  const ingestAttempts = 15
+  const ingestDelayMs = 2_000
 
   for (const hint of unique.values()) {
     if (hint.item) {
@@ -577,7 +682,7 @@ export async function ingestPaymentsFromTipHints(
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
       }
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const result = await internalizePeerItemSettle({
           txid: hint.txid,
           tx: attempt === 0 ? atomic : undefined,
@@ -585,9 +690,12 @@ export async function ingestPaymentsFromTipHints(
         })
         if (result.accepted) {
           imported += 1
+          importedTxids.push(hint.txid)
           break
         }
-        if (attempt < 5) await new Promise((r) => setTimeout(r, 1_000))
+        if (attempt < ingestAttempts - 1) {
+          await new Promise((r) => setTimeout(r, ingestDelayMs))
+        }
       }
       continue
     }
@@ -601,7 +709,7 @@ export async function ingestPaymentsFromTipHints(
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
       }
-      for (let attempt = 0; attempt < 6; attempt++) {
+      for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const result = await internalizeBrc29Payment({
           txid: hint.txid,
           remittance: {
@@ -616,16 +724,19 @@ export async function ingestPaymentsFromTipHints(
         if (result.balanceSats != null) balanceSats = result.balanceSats
         if (result.accepted) {
           imported += 1
+          importedTxids.push(hint.txid)
           break
         }
-        if (attempt < 5) await new Promise((r) => setTimeout(r, 1_000))
+        if (attempt < ingestAttempts - 1) {
+          await new Promise((r) => setTimeout(r, ingestDelayMs))
+        }
       }
       continue
     }
 
     // Legacy: tip without remittance — identity-address SPV sweep.
     const { ingestPaymentByTxid } = await import('./ingestPaymentByTxid')
-    for (let attempt = 0; attempt < 6; attempt++) {
+    for (let attempt = 0; attempt < ingestAttempts; attempt++) {
       const result = await ingestPaymentByTxid(hint.txid)
       if (result.balanceSats != null) balanceSats = result.balanceSats
       if (result.imported > 0 || result.reason === 'already-imported') {
@@ -633,11 +744,14 @@ export async function ingestPaymentsFromTipHints(
           result.imported,
           result.reason === 'already-imported' ? 1 : 0,
         )
+        importedTxids.push(hint.txid)
         break
       }
-      if (attempt < 5) await new Promise((r) => setTimeout(r, 1_000))
+      if (attempt < ingestAttempts - 1) {
+        await new Promise((r) => setTimeout(r, ingestDelayMs))
+      }
     }
   }
 
-  return { imported, balanceSats }
+  return { imported, importedTxids, balanceSats }
 }

@@ -28,6 +28,8 @@ import {
 
 const WIRE_PREFIX = 'handcash-message:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
+/** BRC-CLOUD sendMessage cap is 16_384 — stay under it for remittance ± inline BEEF. */
+export const MESSAGEBOX_BODY_MAX = 16_000
 
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
@@ -116,8 +118,54 @@ type WireMessage = {
     attachment?: ChatAttachment
     /** BRC-29 remittance — peer tip/pay-sent only. */
     brc29?: WireBrc29
-    /** Soft-latch item settle (Atomic BEEF on attachment). */
+    /** Soft-latch item settle (Atomic BEEF on attachment or beefB64). */
     item?: boolean
+    /** Atomic BEEF as standard base64 when it fits in the 16KB sendMessage cap. */
+    beefB64?: string
+  }
+}
+
+export function bytesToBase64(bytes: Uint8Array): string {
+  const CHUNK = 0x8000
+  let binary = ''
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+export function decodeBeefB64(raw?: string | null): number[] | undefined {
+  if (!raw?.trim()) return undefined
+  try {
+    const bin = Uint8Array.from(atob(raw.trim()), (c) => c.charCodeAt(0))
+    return bin.length > 0 ? Array.from(bin) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Attach inline Atomic BEEF when the JSON body still fits the box cap. */
+export function withOptionalBeefB64(
+  body: string,
+  atomicBeef?: number[],
+): { body: string; beefInBox: boolean } {
+  if (!atomicBeef?.length || !body.startsWith(WIRE_PREFIX)) {
+    return { body, beefInBox: false }
+  }
+  try {
+    const parsed = JSON.parse(body.slice(WIRE_PREFIX.length)) as WireMessage
+    const next: WireMessage = {
+      ...parsed,
+      meta: {
+        ...parsed.meta,
+        beefB64: bytesToBase64(Uint8Array.from(atomicBeef)),
+      },
+    }
+    const encoded = `${WIRE_PREFIX}${JSON.stringify(next)}`
+    if (encoded.length > MESSAGEBOX_BODY_MAX) return { body, beefInBox: false }
+    return { body: encoded, beefInBox: true }
+  } catch {
+    return { body, beefInBox: false }
   }
 }
 
@@ -239,6 +287,10 @@ export function decodeMessageBody(body: string): {
             }
           : undefined,
         item: parsed.meta?.item === true ? true : undefined,
+        beefB64:
+          typeof parsed.meta?.beefB64 === 'string' && parsed.meta.beefB64.trim()
+            ? parsed.meta.beefB64.trim()
+            : undefined,
       },
     }
   } catch {
@@ -248,8 +300,8 @@ export function decodeMessageBody(body: string): {
 
 export type PeerBeefNotifyResult = {
   delivered: 'local' | 'cloud'
-  /** False when Atomic BEEF was required but `/files` did not accept it. */
-  beefUploaded: boolean
+  /** True when Atomic BEEF rode along in sendMessage (payee can broadcast). */
+  beefInBox: boolean
 }
 
 /**
@@ -383,10 +435,13 @@ export async function pollInbound(args: {
  */
 export type InboundPaymentHint = {
   txid: string
+  messageId?: string
   senderIdentityKey: string
   satoshis?: number
   brc29?: WireBrc29
   beefUrl?: string
+  /** Inline Atomic BEEF from sendMessage `beefB64`. */
+  tx?: number[]
   item?: boolean
 }
 
@@ -431,14 +486,19 @@ export async function pollInboundTipHints(args: {
       const senderKey = listedSender(m)
       const peerId = args.peerIdForSender?.(senderKey) ?? null
       const decoded = decodeMessageBody(m.body)
+      const isPaymentHint =
+        (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
+        typeof decoded.meta?.txid === 'string' &&
+        /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
       if (peerId) {
+        const { beefB64: _omitBeef, ...chatMeta } = decoded.meta ?? {}
         appendMessage(peerId, {
           direction: 'in',
           kind: decoded.kind,
           text: decoded.text,
           createdAt: m.createdAt || Date.now(),
           meta: {
-            ...decoded.meta,
+            ...chatMeta,
             identityKey: senderKey,
             origin: 'messagebox',
             messagebox: box,
@@ -450,24 +510,25 @@ export async function pollInboundTipHints(args: {
         })
         messages += 1
       }
-      if (
-        (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
-        typeof decoded.meta?.txid === 'string' &&
-        /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
-      ) {
+      if (isPaymentHint) {
         tipHints += 1
-        const txid = decoded.meta.txid.trim().toLowerCase()
+        const txid = decoded.meta!.txid!.trim().toLowerCase()
         paymentTxids.push(txid)
         paymentHints.push({
           txid,
+          messageId: m.messageId ? String(m.messageId) : undefined,
           senderIdentityKey: senderKey,
-          satoshis: decoded.meta.sats,
-          brc29: decoded.meta.brc29,
+          satoshis: decoded.meta?.sats,
+          brc29: decoded.meta?.brc29,
           beefUrl: decoded.meta?.attachment?.url,
+          tx: decodeBeefB64(decoded.meta?.beefB64),
           item: decoded.meta?.item === true || undefined,
         })
+        // Do not ACK until ingest succeeds — otherwise remittance is deleted
+        // before Desktop can internalize.
+      } else if (m.messageId) {
+        ackIds.push(String(m.messageId))
       }
-      if (m.messageId) ackIds.push(String(m.messageId))
     }
     if (ackIds.length > 0) {
       void acknowledgeMessages(ackIds, args.rootKeyHex, box)
@@ -486,8 +547,9 @@ export async function pollInboundTipHints(args: {
 }
 
 /**
- * Deliver a signed soft-latch item to the peer (Atomic BEEF file + tip card).
- * The payee internalizes and broadcasts. Retries until the messagebox accepts.
+ * Deliver a signed soft-latch item to the peer (tip card ± inline Atomic BEEF).
+ * `/files` is not used — Android WebView cannot POST binary reliably.
+ * If BEEF does not fit in sendMessage, payee SPV-fetches after sender broadcast.
  */
 export async function notifyPeerItemIncoming(args: {
   recipientIdentityKey: string
@@ -501,44 +563,23 @@ export async function notifyPeerItemIncoming(args: {
 }): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) {
-    return { delivered: 'local', beefUploaded: false }
+    return { delivered: 'local', beefInBox: false }
   }
   const name = args.itemName.trim() || 'item'
-  const needsBeef = Boolean(args.atomicBeef && args.atomicBeef.length > 0)
-
-  let attachment: ChatAttachment | undefined
-  if (needsBeef) {
-    try {
-      attachment = await uploadMessageboxBytes({
-        bytes: Uint8Array.from(args.atomicBeef!),
-        filename: `item-${txid.slice(0, 12)}.beef`,
-        contentType: 'application/octet-stream',
-        recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
-        senderIdentityKey: args.senderIdentityKey,
-        rootKeyHex: args.rootKeyHex,
-        messagebox: args.messagebox,
-      })
-    } catch (err) {
-      console.warn(
-        '[collectables] item BEEF upload failed',
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-  }
-  const beefUploaded = !needsBeef || Boolean(attachment)
-
-  const body = encodeMessageBody({
-    kind: 'tip',
-    text: `Sent you ${name}`,
-    meta: {
-      txid,
-      sats: 1,
-      status: 'Incoming',
-      memo: name,
-      item: true,
-      attachment,
-    },
-  })
+  const packed = withOptionalBeefB64(
+    encodeMessageBody({
+      kind: 'tip',
+      text: `Sent you ${name}`,
+      meta: {
+        txid,
+        sats: 1,
+        status: 'Incoming',
+        memo: name,
+        item: true,
+      },
+    }),
+    args.atomicBeef,
+  )
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -548,20 +589,20 @@ export async function notifyPeerItemIncoming(args: {
       senderIdentityKey: args.senderIdentityKey,
       senderHandle: args.senderHandle ?? undefined,
       messagebox: args.messagebox,
-      body,
+      body: packed.body,
       peerId: recipient,
     })
     if (delivered.delivered === 'cloud') {
-      return { delivered: 'cloud', beefUploaded }
+      return { delivered: 'cloud', beefInBox: packed.beefInBox }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local', beefUploaded }
+  return { delivered: 'local', beefInBox: false }
 }
 
 /**
- * Deliver a signed BRC-29 payment to the payee (BEEF file + remittance card).
- * The payee broadcasts. Retries until the messagebox accepts.
+ * Deliver a signed BRC-29 payment to the payee (remittance ± inline Atomic BEEF).
+ * sendMessage is the delivery path — `/files` is not required.
  */
 export async function notifyPeerBrc29Payment(args: {
   recipientIdentityKey: string
@@ -581,57 +622,36 @@ export async function notifyPeerBrc29Payment(args: {
 }): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) {
-    return { delivered: 'local', beefUploaded: false }
+    return { delivered: 'local', beefInBox: false }
   }
   if (
     !args.remittance.derivationPrefix?.trim() ||
     !args.remittance.derivationSuffix?.trim()
   ) {
-    return { delivered: 'local', beefUploaded: false }
+    return { delivered: 'local', beefInBox: false }
   }
   const sats =
     Number.isFinite(args.satoshis) && args.satoshis > 0
       ? Math.floor(args.satoshis)
       : 0
-  const needsBeef = Boolean(args.atomicBeef && args.atomicBeef.length > 0)
-
-  let attachment: ChatAttachment | undefined
-  if (needsBeef) {
-    try {
-      attachment = await uploadMessageboxBytes({
-        bytes: Uint8Array.from(args.atomicBeef!),
-        filename: `brc29-${txid.slice(0, 12)}.beef`,
-        contentType: 'application/octet-stream',
-        recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
-        senderIdentityKey: args.senderIdentityKey,
-        rootKeyHex: args.rootKeyHex,
-        messagebox: args.messagebox,
-      })
-    } catch (err) {
-      console.warn(
-        '[brc29] BEEF upload failed',
-        err instanceof Error ? err.message : String(err),
-      )
-    }
-  }
-  const beefUploaded = !needsBeef || Boolean(attachment)
-
-  const body = encodeMessageBody({
-    kind: 'pay-sent',
-    text: args.amountLabel || (sats > 0 ? `Pay ${sats} sats` : 'Payment'),
-    meta: {
-      txid,
-      sats: sats > 0 ? sats : undefined,
-      amountLabel: args.amountLabel,
-      status: 'Incoming',
-      brc29: {
-        derivationPrefix: args.remittance.derivationPrefix,
-        derivationSuffix: args.remittance.derivationSuffix,
-        outputIndex: args.remittance.outputIndex ?? 0,
+  const packed = withOptionalBeefB64(
+    encodeMessageBody({
+      kind: 'pay-sent',
+      text: args.amountLabel || (sats > 0 ? `Pay ${sats} sats` : 'Payment'),
+      meta: {
+        txid,
+        sats: sats > 0 ? sats : undefined,
+        amountLabel: args.amountLabel,
+        status: 'Incoming',
+        brc29: {
+          derivationPrefix: args.remittance.derivationPrefix,
+          derivationSuffix: args.remittance.derivationSuffix,
+          outputIndex: args.remittance.outputIndex ?? 0,
+        },
       },
-      attachment,
-    },
-  })
+    }),
+    args.atomicBeef,
+  )
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()
   for (let attempt = 0; attempt < 5; attempt++) {
@@ -641,15 +661,23 @@ export async function notifyPeerBrc29Payment(args: {
       senderIdentityKey: args.senderIdentityKey,
       senderHandle: args.senderHandle ?? undefined,
       messagebox: args.messagebox,
-      body,
+      body: packed.body,
       peerId: recipient,
     })
     if (delivered.delivered === 'cloud') {
-      return { delivered: 'cloud', beefUploaded }
+      return { delivered: 'cloud', beefInBox: packed.beefInBox }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
-  return { delivered: 'local', beefUploaded }
+  return { delivered: 'local', beefInBox: false }
+}
+
+export async function acknowledgeMessageIds(
+  messageIds: string[],
+  rootKeyHex: string,
+  messagebox?: string | null,
+): Promise<void> {
+  return acknowledgeMessages(messageIds, rootKeyHex, messagebox)
 }
 
 async function acknowledgeMessages(

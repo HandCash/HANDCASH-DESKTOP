@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.196] - 2026-08-12
+
+### Fixed
+- **BRC-29 is a real P2P settle path.** `brc29SendMachine` + `Brc29SettlePath` — no fake “recipient offline”, no `/files` on Android. Remittance (± inline Atomic BEEF) goes on `sendMessage`. After inbox delivery, sender silently `postBeef` so the tx is on-chain even if the payee never broadcasts. If the inbox is unreachable, sender broadcasts and shows a `brc29:` claim receipt (QR / copy) so the payee can still claim. Desktop does not ACK the inbox until ingest succeeds, and same-identity sends still notify our box so the other device can claim.
+
 ## [1.2.195] - 2026-08-12
 
 ### Fixed

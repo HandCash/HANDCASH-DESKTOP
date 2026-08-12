@@ -166,7 +166,7 @@ export function identityKeyFromRecipient(recipient: string): string | null {
 }
 
 export function normalizeIdentityKey(identityKey: string): string {
-  return identityKey.trim()
+  return identityKey.trim().toLowerCase()
 }
 
 export function validateIdentityKey(identityKey: string): string | null {

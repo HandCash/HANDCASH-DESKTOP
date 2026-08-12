@@ -7,8 +7,10 @@ import {
   encodeMessageBody,
   isMessageboxFileUrl,
   normalizeMessageboxBase,
+  notifyPeerBrc29Payment,
   notifyPeerItemIncoming,
   uploadMessageboxBytes,
+  withOptionalBeefB64,
 } from './messageTransport'
 
 describe('message transport envelopes', () => {
@@ -242,15 +244,14 @@ describe('messagebox base URL', () => {
     ])
   })
 
-  it('does not count cloud delivery when Atomic BEEF upload fails', async () => {
+  it('inlines small Atomic BEEF in sendMessage (no /files)', async () => {
     const { PrivateKey } = await import('@bsv/sdk')
     const root = PrivateKey.fromRandom()
+    const urls: string[] = []
     vi.stubGlobal(
       'fetch',
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input).includes('/files')) {
-          throw new TypeError('Failed to fetch')
-        }
+        urls.push(String(input))
         return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
       }),
     )
@@ -264,7 +265,47 @@ describe('messagebox base URL', () => {
       atomicBeef: [1, 2, 3],
     })
 
-    expect(result).toEqual({ delivered: 'cloud', beefUploaded: false })
+    expect(result).toEqual({ delivered: 'cloud', beefInBox: true })
+    expect(urls.some((u) => u.includes('/files'))).toBe(false)
+    expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
+  })
+
+  it('omits inline BEEF when it would exceed the sendMessage cap', async () => {
+    const base = encodeMessageBody({
+      kind: 'pay-sent',
+      text: 'Pay',
+      meta: {
+        txid: 'a'.repeat(64),
+        brc29: { derivationPrefix: 'pre', derivationSuffix: 'suf', outputIndex: 0 },
+      },
+    })
+    const huge = Array.from({ length: 20_000 }, (_, i) => i % 256)
+    expect(withOptionalBeefB64(base, huge)).toEqual({ body: base, beefInBox: false })
+    expect(withOptionalBeefB64(base, [1, 2, 3]).beefInBox).toBe(true)
+  })
+
+  it('still delivers remittance when inline BEEF does not fit', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => new Response(JSON.stringify({ status: 'success' }), { status: 200 })),
+    )
+    const huge = Array.from({ length: 20_000 }, (_, i) => i % 256)
+    const result = await notifyPeerBrc29Payment({
+      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'a'.repeat(64),
+      satoshis: 1000,
+      remittance: {
+        derivationPrefix: 'pre',
+        derivationSuffix: 'suf',
+        outputIndex: 0,
+      },
+      atomicBeef: huge,
+    })
+    expect(result).toEqual({ delivered: 'cloud', beefInBox: false })
   })
 })
 

@@ -100,6 +100,7 @@ import {
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
 import {
+  isSilentSenderBroadcast,
   maySenderBroadcast,
   mustDeliverToPeer,
   softLatchSendMachine,
@@ -2524,30 +2525,36 @@ export async function sendCollectable(args: {
         atomicBeef,
       })
       console.info(
-        `[collectables] peerDeliver box=${delivered.delivered} beefUploaded=${delivered.beefUploaded}`,
+        `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
       )
-      if (delivered.delivered === 'cloud' && delivered.beefUploaded) {
+      if (delivered.delivered === 'cloud') {
         softChart.send({ type: 'DELIVERED' })
       } else {
         softChart.send({ type: 'DELIVER_FAILED' })
-        if (!maySenderBroadcast(softChart.getSnapshot())) {
-          softChart.stop()
-          return failSend(
-            new Error('softLatchSendMachine refused sender broadcast'),
-          )
-        }
+      }
+      if (!maySenderBroadcast(softChart.getSnapshot())) {
+        softChart.stop()
+        return failSend(
+          new Error('softLatchSendMachine refused sender broadcast'),
+        )
+      }
+      const silent = isSilentSenderBroadcast(softChart.getSnapshot())
+      if (!silent) {
         setPaymentProgress(
           'broadcasting',
-          'Submitting item (recipient offline)',
+          'Inbox unreachable — submitting on chain',
           outpoint,
         )
-        const ok = await broadcastAtomicBeef(txid, atomicBeef)
-        if (!ok) {
-          softChart.stop()
-          return failSend(
-            new Error('Broadcast failed — could not confirm with the network'),
-          )
-        }
+      }
+      const ok = await broadcastAtomicBeef(txid, atomicBeef)
+      if (silent) {
+        softChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
+      } else if (!ok) {
+        softChart.stop()
+        return failSend(
+          new Error('Broadcast failed — could not confirm with the network'),
+        )
+      } else {
         softChart.send({ type: 'BROADCASTED' })
       }
     } else if (maySenderBroadcast(settleSnap)) {

@@ -266,14 +266,15 @@ const SOFT_LATCH_SEND = `stateDiagram-v2
   chooseSettle --> peerDeliver : peerDeliver
   chooseSettle --> selfReceive : selfReceive
   chooseSettle --> externalBroadcast : externalBroadcast
-  peerDeliver --> done : DELIVERED
+  peerDeliver --> confirmBroadcast : DELIVERED
   peerDeliver --> senderFallback : DELIVER_FAILED
+  confirmBroadcast --> done : BROADCASTED / SKIPPED
   senderFallback --> done : BROADCASTED
   selfReceive --> done : BROADCASTED
   externalBroadcast --> done : BROADCASTED
   note right of peerDeliver
     No BROADCASTED edge.
-    Sender must not postBeef here.
+    Silent sender postBeef after inbox.
   end note
   createAction --> failed : FAIL
   signing --> failed : FAIL
@@ -288,6 +289,33 @@ const BSV_SEND = `stateDiagram-v2
   broadcasting --> done : BROADCASTED
   preparing --> failed : FAIL
   broadcasting --> failed : FAIL
+  note right of broadcasting
+    External / pasted P2PKH only.
+    HandCash peers use brc29Send.
+  end note
+`
+
+const BRC29_SEND = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> preparing : START with Brc29SettlePath
+  preparing --> signing : READY
+  signing --> chooseSettle : SIGNED noSend
+  chooseSettle --> peerDeliver : peerDeliver
+  chooseSettle --> selfReceive : selfReceive
+  peerDeliver --> confirmBroadcast : BEEF_IN_BOX
+  peerDeliver --> confirmBroadcast : REMIT_IN_BOX
+  peerDeliver --> senderBroadcast : BOX_UNREACHABLE
+  confirmBroadcast --> done : BROADCASTED / SKIPPED
+  senderBroadcast --> done : BROADCASTED\\n+ brc29 claim URI
+  selfReceive --> done : SETTLED
+  note right of peerDeliver
+    No BROADCASTED edge.
+    Silent sender postBeef after inbox.
+    Inbox fail → claim receipt.
+  end note
+  preparing --> failed : FAIL
+  signing --> failed : FAIL
 `
 
 const CONNECTED_APPS = `stateDiagram-v2
@@ -580,7 +608,8 @@ const SPEND_SIGN = `stateDiagram-v2
   signedNoSend --> peerDeliver : ItemSettlePath peerDeliver
   signedNoSend --> selfReceive : selfReceive
   signedNoSend --> externalBroadcast : pasted address
-  peerDeliver --> done : messagebox accepted\\npayee broadcasts
+  peerDeliver --> confirmBroadcast : messagebox accepted
+  confirmBroadcast --> postBeef : silent sender postBeef
   peerDeliver --> senderFallback : DELIVER_FAILED
   senderFallback --> postBeef : sender fallback
   selfReceive --> postBeef
@@ -752,8 +781,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'bsvSend',
     label: 'BSV send',
-    caption: 'bsvSendMachine — local balance → broadcast',
+    caption: 'bsvSendMachine — pasted / external P2PKH',
     source: BSV_SEND,
+  },
+  {
+    id: 'brc29Send',
+    label: 'BRC-29 send',
+    caption: 'brc29SendMachine — noSend → peerDeliver | selfReceive',
+    source: BRC29_SEND,
   },
   {
     id: 'connectedApps',

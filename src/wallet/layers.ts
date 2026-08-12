@@ -33,17 +33,21 @@
  *     signs `noSend` and classifies once — `peerDeliver` (Atomic BEEF to peer;
  *     **payee** broadcasts), `selfReceive`, or `externalBroadcast` (pasted
  *     address). There is no broadcast-then-notify path; `peerDeliver` has no
- *     sender-broadcast edge until `DELIVER_FAILED`. A messagebox ack without
- *     Atomic BEEF is `DELIVER_FAILED` (sender broadcasts).
+ *     sender-broadcast edge. After inbox delivery, sender silently `postBeef`
+ *     (`confirmBroadcast`) so the tx is on-chain even if the payee never
+ *     broadcasts. Remittance ± inline BEEF on `sendMessage`.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
- * - **Peer BSV pay (BRC-29)** → HandCash↔HandCash tip/pay/Send-to-friend: sender
- *   signs (`noSend`) and delivers Atomic BEEF + remittance to the payee; the
- *   **payee** internalizes and broadcasts. Sender broadcasts only if delivery
- *   fails (including `/files` BEEF upload failure). Self-pay internalizes +
- *   broadcasts locally. Plain address P2PKH
- *   remains for external/pasted addresses (`sendPayment.ts` + scan).
+ * - **Peer BSV pay (BRC-29)** → `brc29SettlePath` + `brc29SendMachine`. Sender
+ *   signs (`noSend`) and posts remittance (± inline Atomic BEEF) via
+ *   `sendMessage`. After inbox delivery, sender silently `postBeef` so the tx
+ *   is on-chain even if the payee never broadcasts. If the inbox is unreachable,
+ *   sender broadcasts and returns a `brc29:` claim receipt (QR / copy). Inbox is
+ *   not ACKed until ingest succeeds. Same-identity still notifies our box so
+ *   other devices ingest.
+ *   `/files` is not the payment path (Android WebView). Plain address P2PKH
+ *   remains for external/pasted addresses (`sendPayment.ts` + `bsvSendMachine`).
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */
@@ -77,6 +81,8 @@ export const WALLET_LAYER_MODULES = {
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
     'bsvSendMachine.ts',
+    'brc29SettlePath.ts',
+    'brc29SendMachine.ts',
     'collectableTipKind.ts',
     'collectableOwnershipFate.ts',
     'sentItemGuard.ts',

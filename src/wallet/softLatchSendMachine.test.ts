@@ -56,10 +56,13 @@ describe('softLatchSendMachine', () => {
     expect(actor.getSnapshot().matches('done')).toBe(false)
   })
 
-  it('peerDeliver → done on DELIVERED without sender broadcast', () => {
+  it('DELIVERED → silent confirmBroadcast (does not fail the send)', () => {
     const actor = start(peerSettle)
     actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })
     actor.send({ type: 'DELIVERED' })
+    expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
+    expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
+    actor.send({ type: 'SKIPPED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 

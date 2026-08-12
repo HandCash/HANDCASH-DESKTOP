@@ -282,21 +282,34 @@ export function Dashboard({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
         })
-        if (cancelled || hints.tipHints <= 0) return
+        const { ingestPaymentsFromTipHints, pendingBrc29HintsFromChat } =
+          await import('../wallet/sendBrc29Payment')
+        const fromChat = pendingBrc29HintsFromChat()
+        const combined =
+          hints.paymentHints.length > 0 || fromChat.length > 0
+            ? [...hints.paymentHints, ...fromChat]
+            : hints.paymentTxids
+        if (cancelled || (hints.tipHints <= 0 && fromChat.length === 0)) return
         // SPV-first: tip/pay card hands us the txid → BEEF → sweep our outs.
         // Address scan is only the fallback / secondary verify.
         void (async () => {
           try {
-            const { ingestPaymentsFromTipHints } = await import(
-              '../wallet/sendBrc29Payment'
-            )
-            const spv = await ingestPaymentsFromTipHints(
-              hints.paymentHints.length > 0
-                ? hints.paymentHints
-                : hints.paymentTxids,
-            )
+            const spv = await ingestPaymentsFromTipHints(combined)
             if (cancelled) return
             if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
+            if (spv.importedTxids.length > 0) {
+              const ids = hints.paymentHints
+                .filter(
+                  (h) => h.messageId && spv.importedTxids.includes(h.txid),
+                )
+                .map((h) => h.messageId!)
+              if (ids.length > 0) {
+                const { acknowledgeMessageIds } = await import(
+                  '../wallet/messageTransport'
+                )
+                await acknowledgeMessageIds(ids, active.rootKeyHex)
+              }
+            }
             if (spv.imported > 0) {
               scheduleNext()
               return
@@ -450,6 +463,7 @@ export function Dashboard({
         txids?: string[]
         hints?: Array<{
           txid: string
+          messageId?: string
           senderIdentityKey?: string
           satoshis?: number
           brc29?: {
@@ -474,6 +488,20 @@ export function Dashboard({
           )
           if (cancelled) return
           if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
+          if (spv.importedTxids.length > 0) {
+            const ids = hints
+              .filter((h) => h.messageId && spv.importedTxids.includes(h.txid))
+              .map((h) => h.messageId!)
+            if (ids.length > 0) {
+              const active = getActiveWallet()
+              if (active?.rootKeyHex) {
+                const { acknowledgeMessageIds } = await import(
+                  '../wallet/messageTransport'
+                )
+                await acknowledgeMessageIds(ids, active.rootKeyHex)
+              }
+            }
+          }
           if (spv.imported > 0) {
             scheduleNext()
             return

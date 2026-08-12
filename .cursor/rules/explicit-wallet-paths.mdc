@@ -8,7 +8,7 @@ alwaysApply: true
 Collectables set the pattern. **All UTXO mutation / payment routing** follows it:
 
 1. **Tagged unions** for the decision (`TipKind`, `SendPath`, `ItemSettlePath`,
-   future `BsvSendPath`, `BrcActionPhase`, import path). Booleans like
+   `Brc29SettlePath`, future `BrcActionPhase`, import path). Booleans like
    `tipIsCovenant` / `broadcastFirst` are not enough.
 2. **XState machine** owns legal transitions. Imperative SDK calls may run *inside*
    a phase, but must not invent a new path (no `try covenant catch soft-latch`).
@@ -23,7 +23,8 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
 | Item settle (who broadcasts) | `itemSettlePath.ts` |
 | Collectable parent chart | `collectableSendMachine.ts` |
 | Soft-latch child chart | `softLatchSendMachine.ts` |
-| BSV payment chart | `bsvSendMachine.ts` |
+| BSV (external P2PKH) chart | `bsvSendMachine.ts` |
+| BRC-29 settle / chart | `brc29SettlePath.ts` / `brc29SendMachine.ts` |
 | Ownership vs address scan | `collectableOwnershipFate.ts` |
 | Layer concurrency | `walletCoordinatorMachine.ts` |
 
@@ -34,8 +35,10 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
   (use `abandonCollectable` instead)
 - Decorative `chart.send` that the imperative code can ignore
 - `postBeef` / delayed broadcast before peer delivery on a `peerDeliver` settle
-  (`maySenderBroadcast` is false until `DELIVER_FAILED`)
-- Counting a messagebox ack as `DELIVERED` / `peerDelivered` when Atomic BEEF
-  `/files` failed (`beefUploaded` must be true)
+  (`maySenderBroadcast` / `mayBrc29SenderBroadcast` is false until remittance
+  left `peerDeliver`; silent `confirmBroadcast` after inbox is required)
+- ACKing a payment/item inbox message before ingest succeeds
+- Using messagebox `/files` as the BRC-29 / item delivery path (Android
+  `Failed to fetch`) — remittance ± inline `beefB64` on `sendMessage`
 
 Effect.ts is deferred until we need interruptible fibers beyond `fromPromise`.

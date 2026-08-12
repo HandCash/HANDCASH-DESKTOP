@@ -3,7 +3,9 @@
  *
  * Parent: `collectableSendMachine` (softLatch state). createAction is always
  * `noSend` — the settle chart (`ItemSettlePath`) owns who may broadcast.
- * `peerDeliver` has no `BROADCASTED` edge until `DELIVER_FAILED`.
+ * `peerDeliver` has no `BROADCASTED` edge. After inbox delivery, sender
+ * silently `postBeef` (`confirmBroadcast`) so the tx is on-chain even if the
+ * payee never broadcasts. Required sender broadcast is `senderFallback`.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { ItemSettlePath } from './itemSettlePath'
@@ -17,6 +19,7 @@ export type SoftLatchSendPhase =
   | 'peerDeliver'
   | 'selfReceive'
   | 'externalBroadcast'
+  | 'confirmBroadcast'
   | 'senderFallback'
   | 'done'
   | 'failed'
@@ -36,6 +39,7 @@ export type SoftLatchSendEvent =
   | { type: 'DELIVERED' }
   | { type: 'DELIVER_FAILED' }
   | { type: 'BROADCASTED' }
+  | { type: 'SKIPPED' }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
@@ -130,11 +134,19 @@ export const softLatchSendMachine = setup({
         },
       ],
     },
-    /** Atomic BEEF to peer — sender must not broadcast from this state. */
+    /** Atomic BEEF / remittance to peer — sender must not broadcast from this state. */
     peerDeliver: {
       on: {
-        DELIVERED: 'done',
+        DELIVERED: 'confirmBroadcast',
         DELIVER_FAILED: 'senderFallback',
+        FAIL: { target: 'failed', actions: 'setError' },
+      },
+    },
+    /** Silent sender postBeef after inbox delivery — failure does not fail the send. */
+    confirmBroadcast: {
+      on: {
+        BROADCASTED: 'done',
+        SKIPPED: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
@@ -172,8 +184,13 @@ export function maySenderBroadcast(snapshot: SoftLatchSendSnapshot): boolean {
   return (
     snapshot.matches('selfReceive') ||
     snapshot.matches('externalBroadcast') ||
+    snapshot.matches('confirmBroadcast') ||
     snapshot.matches('senderFallback')
   )
+}
+
+export function isSilentSenderBroadcast(snapshot: SoftLatchSendSnapshot): boolean {
+  return snapshot.matches('confirmBroadcast')
 }
 
 export function mustDeliverToPeer(snapshot: SoftLatchSendSnapshot): boolean {

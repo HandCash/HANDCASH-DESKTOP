@@ -4,7 +4,7 @@
  * Spend classification (`SendPath`) decides *whether* we can soft-latch.
  * This union decides *who broadcasts* after `createAction({ noSend: true })`.
  * Broadcast-before-P2P is not a variant — peerDeliver has no sender-broadcast
- * edge until the chart records `DELIVER_FAILED`.
+ * edge. After inbox delivery the sender silently `postBeef` (`confirmBroadcast`).
  */
 import { validateIdentityKey } from './friends'
 
