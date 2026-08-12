@@ -219,11 +219,16 @@ export function formatReviewActionsError(err: unknown): string {
   ].map((s) => String(s).toLowerCase())
   const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
 
+  // Not a double-spend: a change output reached createAction with no locking
+  // script (`asString(undefined)`). Reporting it as a conflict hid the real
+  // cause for several releases — name it.
+  if (msg.includes('is not iterable')) {
+    return 'A saved coin was missing its locking script. Rebuilt what we could — try Send again.'
+  }
   if (
     statuses.some((s) => s.includes('doublespend')) ||
     msg.includes('doublespend') ||
-    msg.includes('double spend') ||
-    msg.includes('is not iterable')
+    msg.includes('double spend')
   ) {
     return 'A previous failed send is blocking this payment. Cleared local conflicts — try Send again.'
   }

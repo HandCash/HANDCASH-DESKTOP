@@ -99,10 +99,20 @@ describe('actionReview', () => {
     expect(sendWithHasFailure([])).toBe(false)
   })
 
-  it('maps toolbox iterator crashes to the same retry hint', () => {
+  it('names a missing locking script instead of blaming a previous send', () => {
+    const message = formatReviewActionsError(
+      new Error('undefined is not iterable (cannot read property Symbol(Symbol.iterator))'),
+    )
+    expect(message).toMatch(/locking script/i)
+    expect(message).not.toMatch(/previous failed send/i)
+  })
+
+  it('still reports a real double-spend as a blocking previous send', () => {
     expect(
       formatReviewActionsError(
-        new Error('undefined is not iterable (cannot read property Symbol(Symbol.iterator))'),
+        Object.assign(new Error('review required'), {
+          reviewActionResults: [{ status: 'doubleSpend' }],
+        }),
       ),
     ).toMatch(/previous failed send/i)
   })

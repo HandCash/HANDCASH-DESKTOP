@@ -21,10 +21,28 @@ index 463e3a2..07b10d4 100644
      }
      async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
 diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
-index cd5d6d7..5eb6b85 100644
+index cd5d6d7..d50806a 100644
 --- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
 +++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
-@@ -1102,8 +1102,19 @@ class StorageIdb extends StorageProvider_1.StorageProvider {
+@@ -207,6 +207,17 @@ class StorageIdb extends StorageProvider_1.StorageProvider {
+                 // StorageKnex.allocateChangeInput: required when the script was offloaded into
+                 // rawTx storage due to exceeding maxOutputScript.
+                 await this.validateOutputScript(output, dbTrx);
++                if (output.lockingScript == null) {
++                    // The candidate scan above runs with `noScript: true`, which clears
++                    // lockingScript on *every* row. validateOutputScript only restores it
++                    // when scriptOffset/scriptLength are set (script offloaded into rawTx);
++                    // rows that store the script inline return unchanged, so createAction
++                    // reached asString(undefined) -> Array.from(undefined) and no send
++                    // could ever succeed. Re-read the single chosen row with scripts.
++                    const stored = await this.findOutputById(output.outputId, dbTrx);
++                    if (stored?.lockingScript != null)
++                        output.lockingScript = stored.lockingScript;
++                }
+             }
+             return output;
+         }
+@@ -1102,8 +1113,19 @@ class StorageIdb extends StorageProvider_1.StorageProvider {
              return r;
          }
          catch (err) {

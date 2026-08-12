@@ -2,9 +2,9 @@
 
 ## [1.2.221] - 2026-08-12
 
-### Changed
-
-- Patch release (every push must ship a new version).
+### Fixed
+- **Every send failed with “A previous failed send is blocking this payment.”** It was never a double-spend, and the wallet state was never corrupt. `StorageIdb.allocateChangeInput` scans change candidates with `noScript: true`, which clears `lockingScript` on every row, then re-hydrates the chosen output only through `validateOutputScript` — and that returns *unchanged* unless `scriptOffset`/`scriptLength` are set. Our change rows store the script inline, so the winning coin reached `createAction` with no script and threw `undefined is not iterable` (`asString(undefined)` → `Array.from(undefined)`). Patched the toolbox to re-read the chosen change output with its script. This is why a fresh BSVA wallet worked and ours could not send at all.
+- Iterator crashes now say a coin was missing its locking script instead of blaming a previous send — that wrong message hid this root cause across 1.2.217–1.2.220.
 
 ## [1.2.220] - 2026-08-12
 
