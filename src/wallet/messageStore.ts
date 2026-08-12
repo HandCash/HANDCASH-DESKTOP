@@ -71,6 +71,8 @@ export type ChatMessage = {
       derivationSuffix: string
       outputIndex?: number
     }
+    /** Soft-latch item settle — Atomic BEEF on the attachment; payee broadcasts. */
+    item?: boolean
   }
 }
 

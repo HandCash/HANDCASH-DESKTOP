@@ -1,11 +1,23 @@
 import { describe, expect, it } from 'vitest'
 import {
   formatReviewActionsError,
+  isReservedActionBatchError,
   isReviewActionsError,
   sendWithHasFailure,
 } from './actionReview'
 
 describe('actionReview', () => {
+  it('detects leftover action-batch reservations', () => {
+    expect(
+      isReservedActionBatchError(
+        new Error(
+          'The inputs parameter must be outputs not reserved by an active action batch',
+        ),
+      ),
+    ).toBe(true)
+    expect(isReservedActionBatchError(new Error('network down'))).toBe(false)
+  })
+
   it('detects WERR_REVIEW_ACTIONS by name and shape', () => {
     expect(
       isReviewActionsError({

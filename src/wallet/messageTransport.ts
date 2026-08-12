@@ -116,6 +116,8 @@ type WireMessage = {
     attachment?: ChatAttachment
     /** BRC-29 remittance — peer tip/pay-sent only. */
     brc29?: WireBrc29
+    /** Soft-latch item settle (Atomic BEEF on attachment). */
+    item?: boolean
   }
 }
 
@@ -162,6 +164,7 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       boundMessageId: message.meta?.boundMessageId,
       attachment: message.meta?.attachment,
       brc29: validBrc29(message.meta?.brc29) ? message.meta.brc29 : undefined,
+      item: message.meta?.item === true ? true : undefined,
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
@@ -235,6 +238,7 @@ export function decodeMessageBody(body: string): {
                   : undefined,
             }
           : undefined,
+        item: parsed.meta?.item === true ? true : undefined,
       },
     }
   } catch {
@@ -345,6 +349,7 @@ export type InboundPaymentHint = {
   satoshis?: number
   brc29?: WireBrc29
   beefUrl?: string
+  item?: boolean
 }
 
 export async function pollInboundTipHints(args: {
@@ -421,6 +426,7 @@ export async function pollInboundTipHints(args: {
           satoshis: decoded.meta.sats,
           brc29: decoded.meta.brc29,
           beefUrl: decoded.meta?.attachment?.url,
+          item: decoded.meta?.item === true || undefined,
         })
       }
       if (m.messageId) ackIds.push(String(m.messageId))
@@ -442,8 +448,8 @@ export async function pollInboundTipHints(args: {
 }
 
 /**
- * Best-effort peer notify after a soft-latch item send — accelerates the
- * recipient's next ingest. Failures are ignored; chain custody still works.
+ * Deliver a signed soft-latch item to the peer (Atomic BEEF file + tip card).
+ * The payee internalizes and broadcasts. Retries until the messagebox accepts.
  */
 export async function notifyPeerItemIncoming(args: {
   recipientIdentityKey: string
@@ -453,24 +459,63 @@ export async function notifyPeerItemIncoming(args: {
   messagebox?: string | null
   txid: string
   itemName: string
+  atomicBeef?: number[]
 }): Promise<{ delivered: 'local' | 'cloud' }> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
   const name = args.itemName.trim() || 'item'
+
+  let attachment: ChatAttachment | undefined
+  if (args.atomicBeef && args.atomicBeef.length > 0) {
+    try {
+      const file = new File(
+        [new Uint8Array(args.atomicBeef)],
+        `item-${txid.slice(0, 12)}.beef`,
+        { type: 'application/octet-stream' },
+      )
+      attachment = await uploadChatFile({
+        file,
+        recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
+        senderIdentityKey: args.senderIdentityKey,
+        rootKeyHex: args.rootKeyHex,
+        messagebox: args.messagebox,
+      })
+    } catch (err) {
+      console.warn(
+        '[collectables] item BEEF upload failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
   const body = encodeMessageBody({
     kind: 'tip',
     text: `Sent you ${name}`,
-    meta: { txid, sats: 1, status: 'Incoming', memo: name },
+    meta: {
+      txid,
+      sats: 1,
+      status: 'Incoming',
+      memo: name,
+      item: true,
+      attachment,
+    },
   })
-  return deliverOutbound({
-    recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
-    rootKeyHex: args.rootKeyHex,
-    senderIdentityKey: args.senderIdentityKey,
-    senderHandle: args.senderHandle ?? undefined,
-    messagebox: args.messagebox,
-    body,
-    peerId: args.recipientIdentityKey.trim().toLowerCase(),
-  })
+
+  const recipient = args.recipientIdentityKey.trim().toLowerCase()
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const delivered = await deliverOutbound({
+      recipientIdentityKey: recipient,
+      rootKeyHex: args.rootKeyHex,
+      senderIdentityKey: args.senderIdentityKey,
+      senderHandle: args.senderHandle ?? undefined,
+      messagebox: args.messagebox,
+      body,
+      peerId: recipient,
+    })
+    if (delivered.delivered === 'cloud') return delivered
+    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
+  }
+  return { delivered: 'local' }
 }
 
 /**

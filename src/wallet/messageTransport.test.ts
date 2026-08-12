@@ -30,6 +30,17 @@ describe('message transport envelopes', () => {
     })
   })
 
+  it('round-trips a soft-latch item settle flag', () => {
+    const decoded = decodeMessageBody(
+      encodeMessageBody({
+        kind: 'tip',
+        text: 'Sent you Fox',
+        meta: { sats: 1, txid: 'e'.repeat(64), item: true },
+      }),
+    )
+    expect(decoded.meta?.item).toBe(true)
+  })
+
   it('round-trips BRC-29 remittance on tip cards', () => {
     const brc29 = {
       derivationPrefix: 'pre==',

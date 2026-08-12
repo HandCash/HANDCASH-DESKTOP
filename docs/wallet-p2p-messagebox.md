@@ -48,6 +48,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | Chat delivery | Hardcoded BRC-CLOUD box; plaintext + `handcash-message:` cards; no BRC-31 auth; custom `/files` | Resolve recipient **messagebox URL**; BRC-33-shaped client; BRC-CLOUD remains default fallback host |
 | Chat encryption | Plain body | Move toward BRC-169 encrypted envelope content |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | Sender signs (`noSend`) and delivers Atomic BEEF + remittance via messagebox; **payee broadcasts**. Sender broadcasts only if delivery fails. |
+| Soft-latch item send | Sender `postBeef` then tip-hint txid | Same P2P settle as BRC-29: `ItemSettlePath` + `noSend` Atomic BEEF to peer; payee internalizes + broadcasts. Sender broadcast only after `DELIVER_FAILED` or for self/external address. |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |
 

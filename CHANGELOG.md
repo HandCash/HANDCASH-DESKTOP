@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+## [1.2.194] - 2026-08-12
+
+### Changed
+- **Item send is P2P-first.** Soft-latch classify once into `ItemSettlePath`
+  (`peerDeliver` / `selfReceive` / `externalBroadcast`). Sender signs `noSend`;
+  HandCash peers get Atomic BEEF and broadcast. Sender `postBeef` only after
+  `DELIVER_FAILED` or for self/external. Stuck action-batch reservations are
+  aborted before the next createAction.
+
 ## [1.2.193] - 2026-08-12
 
 ### Fixed

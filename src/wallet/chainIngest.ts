@@ -250,6 +250,13 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] failed-action unfail skipped', err)
   }
 
+  try {
+    const { abortReservedActionBatches } = await import('./actionReview')
+    await abortReservedActionBatches(active)
+  } catch (err) {
+    console.warn('[chain-ingest] action-batch abort skipped', err)
+  }
+
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
       heldCount: 0,

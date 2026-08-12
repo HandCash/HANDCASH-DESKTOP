@@ -18,6 +18,60 @@ export type SendWithRow = {
   status?: string
 }
 
+export function isReservedActionBatchError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    msg.includes('not reserved by an active action batch') ||
+    msg.includes('reserved by an active action batch')
+  )
+}
+
+/**
+ * Release leftover action-batch output reservations (in-memory workspace +
+ * persisted IDB rows). Does **not** abort signed noSend txs — those may already
+ * be delivered to a peer. Failed unsigned batches are what block the next spend.
+ */
+export async function abortReservedActionBatches(
+  active?: ActiveWallet | null,
+): Promise<number> {
+  const wallet = (active ?? getActiveWallet())?.wallet
+  if (!wallet) return 0
+  let aborted = 0
+
+  try {
+    if (await wallet.actionBatch.abort()) aborted += 1
+  } catch (err) {
+    console.warn('[action-review] actionBatch.abort skipped', err)
+  }
+
+  try {
+    const storage = wallet.storage
+    const listed = await storage.runAsStorageProvider(async (sp) => {
+      const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
+      return sp.findExpiredActionBatches(future)
+    })
+    for (const batch of listed ?? []) {
+      const batchId = String(
+        (batch as { batchId?: string }).batchId ?? '',
+      ).trim()
+      if (!batchId) continue
+      try {
+        const result = await storage.abortActionBatch(batchId)
+        if (result?.aborted !== false) aborted += 1
+      } catch (err) {
+        console.warn('[action-review] abortActionBatch skipped', batchId, err)
+      }
+    }
+  } catch (err) {
+    console.warn('[action-review] persisted action-batch abort skipped', err)
+  }
+
+  if (aborted > 0) {
+    console.info(`[action-review] aborted ${aborted} reserved action batch(es)`)
+  }
+  return aborted
+}
+
 export function isReviewActionsError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as {
@@ -93,6 +147,8 @@ export async function recoverFromReviewActions(args: {
       console.warn('[action-review] abortAction skipped', abortErr)
     }
   }
+
+  await abortReservedActionBatches(active)
 
   try {
     await active.wallet.listFailedActions({ labels: [], limit: 100 }, true)

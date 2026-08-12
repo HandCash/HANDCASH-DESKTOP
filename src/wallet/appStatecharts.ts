@@ -258,11 +258,23 @@ const AUTHENTICITY = `stateDiagram-v2
 const SOFT_LATCH_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
-  idle --> building : START
+  idle --> building : START with ItemSettlePath
   building --> createAction : BUILT
-  createAction --> done : CREATED with txid
+  createAction --> chooseSettle : CREATED with txid\\nnoSend
   createAction --> signing : CREATED needs sign
-  signing --> done : SIGNED
+  signing --> chooseSettle : SIGNED noSend
+  chooseSettle --> peerDeliver : peerDeliver
+  chooseSettle --> selfReceive : selfReceive
+  chooseSettle --> externalBroadcast : externalBroadcast
+  peerDeliver --> done : DELIVERED
+  peerDeliver --> senderFallback : DELIVER_FAILED
+  senderFallback --> done : BROADCASTED
+  selfReceive --> done : BROADCASTED
+  externalBroadcast --> done : BROADCASTED
+  note right of peerDeliver
+    No BROADCASTED edge.
+    Sender must not postBeef here.
+  end note
   createAction --> failed : FAIL
   signing --> failed : FAIL
   building --> failed : FAIL
@@ -556,7 +568,7 @@ const COORDINATOR = `stateDiagram-v2
   nestedIngest --> spend : CHAIN_INGEST_END
 `
 
-/** Signing + broadcast — delayed create/sign, network gate. */
+/** Signing + settle — noSend create/sign; ItemSettlePath owns who broadcasts. */
 const SPEND_SIGN = `stateDiagram-v2
   direction LR
   [*] --> prepare
@@ -564,15 +576,22 @@ const SPEND_SIGN = `stateDiagram-v2
   prepare --> createAction : local balance / lease ok
   prepare --> refuse : TipKind refuse / thin funds
 
-  createAction --> localTxid : acceptDelayedBroadcast=true\\nsignAndProcess
-  localTxid --> postBeef : soft-latch / gated sends
-  localTxid --> sendWithOk : BSV clean sendWith
+  createAction --> signedNoSend : noSend + signAndProcess
+  signedNoSend --> peerDeliver : ItemSettlePath peerDeliver
+  signedNoSend --> selfReceive : selfReceive
+  signedNoSend --> externalBroadcast : pasted address
+  peerDeliver --> done : messagebox accepted\\npayee broadcasts
+  peerDeliver --> senderFallback : DELIVER_FAILED
+  senderFallback --> postBeef : sender fallback
+  selfReceive --> postBeef
+  externalBroadcast --> postBeef
   postBeef --> done : accepted
+  signedNoSend --> sendWithOk : BSV BRC-29 same pattern
   sendWithOk --> done : no failure
   postBeef --> failed : missing-inputs / reject
   sendWithOk --> failed : sendWith failure
-  createAction --> review : WERR_REVIEW_ACTIONS
-  review --> recover : listFailedActions unfail
+  createAction --> review : WERR_REVIEW_ACTIONS / reserved batch
+  review --> recover : abort batches + unfail
   recover --> createAction : retry
   refuse --> failed
   failed --> [*]
@@ -649,7 +668,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'spendSign',
     label: 'Sign / broadcast',
-    caption: 'Delayed createAction → postBeef / sendWith gate → done',
+    caption: 'noSend sign → ItemSettlePath (peer first) → optional sender postBeef',
     source: SPEND_SIGN,
   },
   {
@@ -727,7 +746,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'softLatchSend',
     label: 'Soft-latch send',
-    caption: 'softLatchSendMachine — createAction → optional sign',
+    caption: 'softLatchSendMachine — noSend sign → peerDeliver | self | external',
     source: SOFT_LATCH_SEND,
   },
   {

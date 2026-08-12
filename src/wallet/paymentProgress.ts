@@ -1,10 +1,10 @@
 /**
  * Live payment / transfer progress for the status pill and send screens.
  *
- * `createAction({ signAndProcess: true })` signs and broadcasts in one call, so
- * those two steps share a phase rather than inventing a fake boundary. Local
- * balance check, building (collectables), and finishing are real edges around
- * that call — chain ingest is not required before pay.
+ * Collectable / BRC-29 peer sends sign with `noSend` then settle (deliver or
+ * fallback broadcast). External P2PKH still uses delayed `signAndProcess`.
+ * Local balance check, building (collectables), and finishing are real edges
+ * around that call — chain ingest is not required before pay.
  */
 
 export type PaymentPhase =

@@ -29,6 +29,11 @@
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
  *     spend does not wait on an indexer; a stuck latch falls back to tip-only.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
+ *   - **Item P2P settle** (`itemSettlePath.ts` + `softLatchSendMachine`): sender
+ *     signs `noSend` and classifies once — `peerDeliver` (Atomic BEEF to peer;
+ *     **payee** broadcasts), `selfReceive`, or `externalBroadcast` (pasted
+ *     address). There is no broadcast-then-notify path; `peerDeliver` has no
+ *     sender-broadcast edge until `DELIVER_FAILED`.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
@@ -67,6 +72,8 @@ export const WALLET_LAYER_MODULES = {
     'authenticityMachine.ts',
     'collectableSendMachine.ts',
     'softLatchSendMachine.ts',
+    'itemSettlePath.ts',
+    'ingestItemSettle.ts',
     'bsvSendMachine.ts',
     'collectableTipKind.ts',
     'collectableOwnershipFate.ts',

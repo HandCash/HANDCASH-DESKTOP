@@ -459,6 +459,7 @@ export function Dashboard({
           }
           beefUrl?: string
           tx?: number[]
+          item?: boolean
         }>
       }>).detail
       const hints = detail?.hints ?? []

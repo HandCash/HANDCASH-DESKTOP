@@ -522,6 +522,8 @@ export type PaymentTipHint = {
   /** Messagebox file URL for the signed Atomic BEEF (payee broadcasts). */
   beefUrl?: string
   tx?: number[]
+  /** Soft-latch item settle — not a BSV payment. */
+  item?: boolean
 }
 
 /**
@@ -546,6 +548,7 @@ export async function ingestPaymentsFromTipHints(
       brc29: h.brc29,
       beefUrl: h.beefUrl,
       tx: h.tx,
+      item: h.item === true || undefined,
     })
   }
 
@@ -555,6 +558,7 @@ export async function ingestPaymentsFromTipHints(
     if (
       !prev ||
       (h.brc29 && !prev.brc29) ||
+      (h.item && !prev.item) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
     ) {
@@ -566,6 +570,27 @@ export async function ingestPaymentsFromTipHints(
   let balanceSats: number | null = null
 
   for (const hint of unique.values()) {
+    if (hint.item) {
+      const { internalizePeerItemSettle } = await import('./ingestItemSettle')
+      let atomic = hint.tx
+      if ((!atomic || !atomic.length) && hint.beefUrl) {
+        atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
+      }
+      for (let attempt = 0; attempt < 6; attempt++) {
+        const result = await internalizePeerItemSettle({
+          txid: hint.txid,
+          tx: attempt === 0 ? atomic : undefined,
+          beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+        })
+        if (result.accepted) {
+          imported += 1
+          break
+        }
+        if (attempt < 5) await new Promise((r) => setTimeout(r, 1_000))
+      }
+      continue
+    }
+
     if (
       hint.brc29?.derivationPrefix &&
       hint.brc29?.derivationSuffix &&

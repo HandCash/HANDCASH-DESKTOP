@@ -99,8 +99,14 @@ import {
   resolveTipLockingScriptHex,
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
-import { softLatchSendMachine } from './softLatchSendMachine'
+import {
+  maySenderBroadcast,
+  mustDeliverToPeer,
+  softLatchSendMachine,
+} from './softLatchSendMachine'
+import { chooseItemSettlePath } from './itemSettlePath'
 import { createActor } from 'xstate'
+import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { scanLegacyAddress } from './legacyScan'
 import { isItemSent, markItemsSent, forgetItemsSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
@@ -1501,6 +1507,14 @@ function formatSendError(err: unknown): Error {
       )
     }
     if (
+      /not reserved by an active action batch/i.test(msg) ||
+      /reserved by an active action batch/i.test(msg)
+    ) {
+      return new Error(
+        'A previous send is still holding this item. Cleared it — tap Send again.',
+      )
+    }
+    if (
       /missing its source transaction/i.test(msg) ||
       /could not load the transaction that holds/i.test(msg) ||
       /must have a sourcetransaction/i.test(msg)
@@ -1560,19 +1574,33 @@ async function buildInputBeefForSpends(
  *
  * Covenant-locked tips MUST NOT use the P2PKH unlock template.
  */
+function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const raw = (result as { tx?: unknown }).tx
+  if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+    return raw as number[]
+  }
+  if (raw instanceof Uint8Array) return Array.from(raw)
+  return undefined
+}
+
 async function signOrdinalTransfer(args: {
   wallet: ActiveWallet
   signable: SignableTransaction
   /** Tip + optional latch outpoints we must unlock. */
   outpoints: string[]
-}): Promise<string> {
+}): Promise<{ txid: string; atomicBeef: number[] }> {
   const targets = new Map<string, number>()
   for (const op of args.outpoints) {
     const [txidIn, voutRaw] = normalizeOutpoint(op).split('.')
     targets.set(`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw))
   }
 
-  rememberBeefTree(args.signable.tx)
+  rememberBeefTree(
+    Array.isArray(args.signable.tx)
+      ? args.signable.tx
+      : Array.from(args.signable.tx),
+  )
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined
   const vins: number[] = []
@@ -1633,16 +1661,15 @@ async function signOrdinalTransfer(args: {
     spends[vin] = { unlockingScript }
   }
 
-  // Delayed broadcast returns a local txid without throwing WERR_REVIEW_ACTIONS
-  // on doubleSpend (undelayed mode does). We still require a network post before
-  // treating the send as success — postBeef below is the gate that killed ghosts.
+  // noSend: toolbox must not TaskSendWaiting-broadcast. Settle chart owns who
+  // posts — peerDeliver has no sender broadcast edge until DELIVER_FAILED.
   let signed
   try {
     signed = await args.wallet.wallet.signAction({
       reference: args.signable.reference,
       spends,
       options: {
-        acceptDelayedBroadcast: true,
+        noSend: true,
       },
     })
   } catch (err) {
@@ -1663,10 +1690,23 @@ async function signOrdinalTransfer(args: {
   const txid =
     typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
   if (!txid) throw new Error('Collectable transfer returned no txid')
-  rememberBeefTree(
-    Array.isArray(signed.tx) ? (signed.tx as number[]) : undefined,
-    txid,
-  )
+
+  let atomicBeef = atomicBeefFromWalletResult(signed)
+  if (!atomicBeef?.length) {
+    const wrap = new Beef()
+    wrap.mergeBeef(args.signable.tx)
+    wrap.mergeTransaction(unsigned)
+    wrap.atomicTxid = undefined
+    try {
+      atomicBeef = wrap.toBinaryAtomic(txid)
+    } catch {
+      atomicBeef = wrap.toBinary()
+    }
+  }
+  if (!atomicBeef?.length) {
+    throw new Error('Collectable transfer returned no signed BEEF')
+  }
+  rememberBeefTree(atomicBeef, txid)
 
   const {
     sendWithHasFailure,
@@ -1695,71 +1735,7 @@ async function signOrdinalTransfer(args: {
     )
   }
 
-  // Belt: delayed signAction may return before the network accepts. Confirm via
-  // postBeef — already-known / mempool counts as success; missing-inputs means
-  // the tip was already spent (stale inventory), not "all broadcasters down".
-  try {
-    let beefBin: number[] | undefined = Array.isArray(signed.tx)
-      ? (signed.tx as number[])
-      : undefined
-    if (!beefBin?.length) {
-      const wrap = new Beef()
-      wrap.mergeBeef(args.signable.tx)
-      wrap.mergeTransaction(unsigned)
-      wrap.atomicTxid = undefined
-      beefBin = wrap.toBinary()
-    }
-    rememberBeefTree(beefBin, txid)
-    const results = await args.wallet.services.postBeef(
-      Beef.fromBinary(beefBin),
-      [txid],
-    )
-    const { summarizePostBeef, formatPostBeefFailure } = await import('./postBeefResult')
-    const summary = summarizePostBeef(results)
-    console.info('[collectables] postBeef', summary)
-    if (!summary.accepted) {
-      if (summary.missingInputs || summary.doubleSpend) {
-        const { releaseStaleSpendableOutputs } = await import('./staleOutputRelease')
-        await releaseStaleSpendableOutputs()
-        const { markItemsSent } = await import('./sentItemGuard')
-        markItemsSent(
-          args.outpoints.map((op) => ({ outpoint: op, txid: `spent:${txid}` })),
-        )
-        void listCollectables(args.wallet).catch((refreshErr) => {
-          console.warn('[collectables] post-spend refresh failed', refreshErr)
-        })
-      } else {
-        await recoverFromReviewActions({
-          err: new Error(formatPostBeefFailure(summary)),
-          reference: null,
-          tipOutpoints: [...args.outpoints],
-          active: args.wallet,
-        })
-      }
-      throw new Error(formatPostBeefFailure(summary))
-    }
-  } catch (err) {
-    if (err instanceof Error && /already spent|Broadcast failed|Broadcast services/i.test(err.message)) {
-      throw err
-    }
-    try {
-      await args.wallet.wallet.abortAction({ reference: args.signable.reference })
-    } catch (abortErr) {
-      console.warn('[collectables] abort after broadcast fail skipped', abortErr)
-    }
-    await recoverFromReviewActions({
-      err,
-      reference: null,
-      tipOutpoints: [...args.outpoints],
-      active: args.wallet,
-    })
-    console.warn('[collectables] postBeef confirm failed', err)
-    throw err instanceof Error
-      ? err
-      : new Error('Broadcast failed — could not confirm with the network')
-  }
-
-  return txid
+  return { txid, atomicBeef }
 }
 
 /** Find the soft-latch UTXO paired with this tip (same origin, tip: tag match). */
@@ -1829,6 +1805,8 @@ async function relinquishSpentOutputs(
         output: normalizeOutpoint(spend.outpoint),
       })
     } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err)
+      if (/must exist and be unique/i.test(msg)) continue
       // Already marked spent by createAction — nothing left to release.
       console.warn('[collectables] relinquish after send skipped', spend.outpoint, err)
     }
@@ -1929,6 +1907,10 @@ export async function sendCollectable(args: {
     assertOnlineForPayment()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
+    {
+      const { abortReservedActionBatches } = await import('./actionReview')
+      await abortReservedActionBatches(wallet)
+    }
     // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
     // createAction fails closed if they aren't. Do not await balance() here
     // (that contended with sync and made "Waiting to send" feel stuck).
@@ -2113,9 +2095,10 @@ export async function sendCollectable(args: {
     ),
   ]
 
-  // Soft-latch only — identity key is unused for path choice but still accepted
-  // so callers (friends / peerpay) keep the same signature.
-  void args.recipientIdentityKey
+  const settlePath = chooseItemSettlePath({
+    paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
+    recipientIdentityKey: args.recipientIdentityKey,
+  })
   const tipKind = classifyTipKind(tipLockingScript)
   const provenTier = getProvenVerdict(outpoint)?.tier ?? null
   const sendPath = chooseSendPath({
@@ -2129,7 +2112,7 @@ export async function sendCollectable(args: {
   console.info(
     `[collectables] send path=${sendPath.path}${
       sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
-    } tipKind=${tipKind.kind} proven=${provenTier ?? 'none'} scriptChars=${tipLockingScript.length}`,
+    } settle=${settlePath.settle} tipKind=${tipKind.kind} proven=${provenTier ?? 'none'} scriptChars=${tipLockingScript.length}`,
   )
 
   const finishSend = async (
@@ -2225,31 +2208,6 @@ export async function sendCollectable(args: {
         // Node tests / no DOM
       }
     }
-    // Grade B accelerator: tip the peer's messagebox so their next poll
-    // triggers chain ingest instead of waiting on the quiet address scan.
-    const peerIk = args.recipientIdentityKey?.trim()
-    if (peerIk && !selfReceive) {
-      void (async () => {
-        const { notifyPeerItemIncoming } = await import('./messageTransport')
-        const { listFriends } = await import('./friends')
-        const friend = listFriends().find(
-          (f) => f.identityKey.toLowerCase() === peerIk.toLowerCase(),
-        )
-        await notifyPeerItemIncoming({
-          recipientIdentityKey: peerIk,
-          rootKeyHex: wallet.rootKeyHex,
-          senderIdentityKey: wallet.identityKey,
-          messagebox: friend?.messagebox,
-          txid,
-          itemName: name,
-        })
-      })().catch((err) => {
-        console.info(
-          '[collectables] peer tip hint skipped',
-          err instanceof Error ? err.message : String(err),
-        )
-      })
-    }
     chart.send({ type: 'SUCCESS', txid })
     chart.stop()
     return { txid }
@@ -2283,7 +2241,7 @@ export async function sendCollectable(args: {
   }
 
   const softChart = createActor(softLatchSendMachine).start()
-  softChart.send({ type: 'START', outpoint })
+  softChart.send({ type: 'START', outpoint, settlePath })
 
   setPaymentProgress(
     'building',
@@ -2335,15 +2293,11 @@ export async function sendCollectable(args: {
       : []),
   ]
 
-  let result:
-    | {
-        txid?: string
-        tx?: number[]
-        signableTransaction?: SignableTransaction
-      }
-    | undefined
+  let result: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>> | undefined
   let txid = ''
+  let atomicBeef: number[] | undefined
   let attemptedTipOnly = false
+  let attemptedBatchAbort = false
   for (;;) {
     spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
     knownTxids = [
@@ -2371,8 +2325,8 @@ export async function sendCollectable(args: {
     }
     try {
       setPaymentProgress(
-        'broadcasting',
-        'Signing and broadcasting the collectable',
+        'signing',
+        'Signing the collectable for the recipient',
         outpoint,
       )
       console.info('[collectables] createAction softLatch start')
@@ -2435,14 +2389,15 @@ export async function sendCollectable(args: {
           trustSelf: 'known',
           ...(knownTxids.length > 0 ? { knownTxids } : {}),
           randomizeOutputs: false,
-          // Delayed + postBeef confirm in signOrdinalTransfer — undelayed throws
-          // WERR_REVIEW_ACTIONS ("require review") on prior ghost doubleSpends.
-          acceptDelayedBroadcast: true,
           signAndProcess: true,
+          noSend: true,
         },
       })
       rememberBeefTree(
-        result.tx ?? result.signableTransaction?.tx,
+        atomicBeefFromWalletResult(result) ??
+          (result.signableTransaction?.tx
+            ? Array.from(result.signableTransaction.tx)
+            : undefined),
         typeof result.txid === 'string' ? result.txid : undefined,
       )
       softChart.send({ type: 'CREATED', txid: result.txid })
@@ -2450,6 +2405,13 @@ export async function sendCollectable(args: {
         `[collectables] createAction softLatch done txid=${result.txid ?? 'signable'}`,
       )
     } catch (err) {
+      const { isReservedActionBatchError, abortReservedActionBatches } =
+        await import('./actionReview')
+      if (!attemptedBatchAbort && isReservedActionBatchError(err)) {
+        attemptedBatchAbort = true
+        await abortReservedActionBatches(wallet)
+        continue
+      }
       const formatted = await recoverSendFailure(err)
       if (priorLatch && !attemptedTipOnly && isNoLongerSpendableError(err)) {
         console.warn(
@@ -2469,8 +2431,15 @@ export async function sendCollectable(args: {
       return failSend(formatted)
     }
 
+    if (!result) {
+      softChart.stop()
+      return failSend(new Error('Send completed without createAction result'))
+    }
     txid = result.txid ?? ''
-    if (txid) break
+    if (txid) {
+      atomicBeef = atomicBeefFromWalletResult(result)
+      break
+    }
     if (!result.signableTransaction) {
       softChart.send({ type: 'FAIL', error: 'Send completed without txid' })
       softChart.stop()
@@ -2482,11 +2451,13 @@ export async function sendCollectable(args: {
     }
     try {
       setPaymentProgress('signing', 'Signing the collectable transfer')
-      txid = await signOrdinalTransfer({
+      const signed = await signOrdinalTransfer({
         wallet,
         signable: result.signableTransaction,
         outpoints: spendOutpoints,
       })
+      txid = signed.txid
+      atomicBeef = signed.atomicBeef
       softChart.send({ type: 'SIGNED', txid })
       break
     } catch (err) {
@@ -2517,7 +2488,100 @@ export async function sendCollectable(args: {
     softChart.stop()
     return failSend(new Error('Send completed without txid'))
   }
+  if (!atomicBeef?.length) {
+    softChart.stop()
+    return failSend(new Error('Send completed without signed BEEF'))
+  }
+  rememberBeefTree(atomicBeef, txid)
+  try {
+    await wallet.wallet.actionBatch.abort()
+  } catch {
+    /* unused funding reservations only */
+  }
 
+  const settleSnap = softChart.getSnapshot()
+  try {
+    if (mustDeliverToPeer(settleSnap)) {
+      if (settlePath.settle !== 'peerDeliver') {
+        softChart.stop()
+        return failSend(new Error('softLatchSendMachine peerDeliver without settle path'))
+      }
+      setPaymentProgress('finishing', 'Delivering item to recipient', outpoint)
+      const { notifyPeerItemIncoming } = await import('./messageTransport')
+      const { listFriends } = await import('./friends')
+      const friend = listFriends().find(
+        (f) =>
+          f.identityKey.toLowerCase() ===
+          settlePath.recipientIdentityKey.toLowerCase(),
+      )
+      const delivered = await notifyPeerItemIncoming({
+        recipientIdentityKey: settlePath.recipientIdentityKey,
+        rootKeyHex: wallet.rootKeyHex,
+        senderIdentityKey: wallet.identityKey,
+        messagebox: friend?.messagebox,
+        txid,
+        itemName: name,
+        atomicBeef,
+      })
+      if (delivered.delivered === 'cloud') {
+        softChart.send({ type: 'DELIVERED' })
+      } else {
+        softChart.send({ type: 'DELIVER_FAILED' })
+        if (!maySenderBroadcast(softChart.getSnapshot())) {
+          softChart.stop()
+          return failSend(
+            new Error('softLatchSendMachine refused sender broadcast'),
+          )
+        }
+        setPaymentProgress(
+          'broadcasting',
+          'Submitting item (recipient offline)',
+          outpoint,
+        )
+        const ok = await broadcastAtomicBeef(txid, atomicBeef)
+        if (!ok) {
+          softChart.stop()
+          return failSend(
+            new Error('Broadcast failed — could not confirm with the network'),
+          )
+        }
+        softChart.send({ type: 'BROADCASTED' })
+      }
+    } else if (maySenderBroadcast(settleSnap)) {
+      setPaymentProgress(
+        'broadcasting',
+        settleSnap.matches('selfReceive')
+          ? 'Broadcasting item back to this wallet'
+          : 'Broadcasting the collectable',
+        outpoint,
+      )
+      const ok = await broadcastAtomicBeef(txid, atomicBeef)
+      if (!ok) {
+        softChart.stop()
+        return failSend(
+          new Error('Broadcast failed — could not confirm with the network'),
+        )
+      }
+      softChart.send({ type: 'BROADCASTED' })
+    } else {
+      softChart.stop()
+      return failSend(
+        new Error('softLatchSendMachine has no legal settle phase'),
+      )
+    }
+  } catch (err) {
+    softChart.send({
+      type: 'FAIL',
+      error: err instanceof Error ? err.message : String(err),
+    })
+    softChart.stop()
+    return failSend(err)
+  }
+
+  if (!softChart.getSnapshot().matches('done')) {
+    softChart.stop()
+    return failSend(new Error('softLatchSendMachine did not reach done'))
+  }
   softChart.stop()
   // Soft-latch remittance on the wire names the spent tip. Extend once the
   // settle txid is known so the next send reuses tip-named proof (no hydrate).
