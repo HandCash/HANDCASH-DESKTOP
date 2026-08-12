@@ -1,4 +1,4 @@
-import { P2PKH } from '@bsv/sdk'
+import { Beef, P2PKH } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,
@@ -113,6 +113,44 @@ export async function sendSatsToAddress(opts: {
               reviewActionResults: [],
             }),
           )
+        }
+        const rawTx = (result as { tx?: unknown }).tx
+        const atomic =
+          Array.isArray(rawTx) && rawTx.every((n) => typeof n === 'number')
+            ? (rawTx as number[])
+            : rawTx instanceof Uint8Array
+              ? Array.from(rawTx)
+              : undefined
+        if (atomic?.length && active.services?.postBeef) {
+          setPaymentProgress('broadcasting', 'Confirming payment on the network')
+          const { summarizePostBeef, formatPostBeefFailure } = await import(
+            './postBeefResult'
+          )
+          let summary
+          try {
+            const results = await active.services.postBeef(
+              Beef.fromBinary(atomic),
+              [realTxid],
+            )
+            summary = summarizePostBeef(results as never)
+          } catch (err) {
+            const msg = err instanceof Error ? err.message : String(err)
+            console.warn('[send] postBeef confirm failed', realTxid, msg)
+            if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
+              throw new Error(
+                'Payment was signed but the transaction body is invalid — try Send again.',
+              )
+            }
+            throw new Error(
+              'Could not confirm the payment on the network. Check connection and try again.',
+            )
+          }
+          if (!summary.accepted) {
+            if (summary.doubleSpend || summary.missingInputs) {
+              await releaseStaleSpendableOutputs()
+            }
+            throw new Error(formatPostBeefFailure(summary))
+          }
         }
         chart.send({ type: 'BROADCASTED', txid })
         completePendingSend(pending.id, txid)

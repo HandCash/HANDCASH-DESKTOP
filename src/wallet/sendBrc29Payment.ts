@@ -108,6 +108,51 @@ export async function broadcastAtomicBeef(
   }
 }
 
+/**
+ * Delayed createAction can return a txid before the network accepts it.
+ * Confirm with postBeef before Activity / remittance — otherwise mobile shows
+ * "sent" for a doubleSpend that never exists on chain (payee never receives).
+ */
+async function ensurePaymentBroadcasted(
+  txid: string,
+  atomic: number[] | undefined,
+): Promise<void> {
+  const id = txid.trim().toLowerCase()
+  if (!atomic?.length) {
+    throw new Error(
+      'Payment was signed but no transaction body was returned — try Send again.',
+    )
+  }
+  const active = getActiveWallet()
+  if (!active?.services?.postBeef) {
+    throw new Error('Cannot confirm broadcast offline. Check connection and try again.')
+  }
+  const { summarizePostBeef, formatPostBeefFailure } = await import('./postBeefResult')
+  let summary
+  try {
+    const beef = Beef.fromBinary(atomic)
+    const results = await active.services.postBeef(beef, [id])
+    summary = summarizePostBeef(results as never)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn('[brc29] postBeef confirm failed', id, msg)
+    if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
+      throw new Error(
+        'Payment was signed but the transaction body is invalid — try Send again.',
+      )
+    }
+    throw new Error(
+      'Could not confirm the payment on the network. Check connection and try again.',
+    )
+  }
+  if (summary.accepted) return
+  console.warn('[brc29] broadcast not accepted', id, summary.detail)
+  if (summary.doubleSpend || summary.missingInputs) {
+    await releaseStaleSpendableOutputs()
+  }
+  throw new Error(formatPostBeefFailure(summary))
+}
+
 function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
   if (!result || typeof result !== 'object') return undefined
   const raw = (result as { tx?: unknown }).tx
@@ -269,6 +314,8 @@ export async function sendBrc29ToIdentityKey(opts: {
             )
           }
           const txid = realTxid
+          setPaymentProgress('broadcasting', 'Confirming payment on the network')
+          await ensurePaymentBroadcasted(txid, atomicBeef)
           chart.send({ type: 'BROADCASTED', txid })
 
           const recipientNote = opts.friendLabel

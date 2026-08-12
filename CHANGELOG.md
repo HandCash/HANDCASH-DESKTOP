@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.204] - 2026-08-12
+
+### Fixed
+- **Mobile→Desktop payment never arrived.** Delayed `createAction` could return a txid that later failed as `doubleSpend` (never on chain) while Activity still showed Sent and remittance never helped the payee. Sender now confirms with `postBeef` before Activity / inbox notify. Leftover failed-action unfail in recover paths stays off.
+
 ## [1.2.203] - 2026-08-12
 
 ### Fixed

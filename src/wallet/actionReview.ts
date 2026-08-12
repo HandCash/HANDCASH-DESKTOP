@@ -182,12 +182,9 @@ export async function recoverFromReviewActions(args: {
 
   await abortReservedActionBatches(active)
 
-  try {
-    await active.wallet.listFailedActions({ labels: [], limit: 100 }, true)
-    console.info('[action-review] queued failed actions for unfail recovery')
-  } catch (listErr) {
-    console.warn('[action-review] listFailedActions(unfail) skipped', listErr)
-  }
+  // Do not listFailedActions(unfail): leftover doubleSpends re-enter
+  // TaskSendWaiting, poison the next real payment, and can surface as
+  // "undefined is not iterable". Abort batches + heal ghosts is enough.
 
   try {
     const healed = await healGhostSentItems(active.chain, txExistsOnChain)

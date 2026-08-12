@@ -1,4 +1,5 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { Beef } from '@bsv/sdk'
 
 type CreateActionArgs = {
   options?: {
@@ -121,6 +122,7 @@ describe('sendBrc29ToIdentityKey', () => {
     createHmac.mockClear()
     postBeef.mockClear()
     notifyPeerBrc29Payment.mockClear()
+    vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
     walletState.identityKey =
       '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   })
@@ -169,8 +171,26 @@ describe('sendBrc29ToIdentityKey', () => {
         txid: 'b'.repeat(64),
       }),
     )
+    expect(postBeef).toHaveBeenCalled()
     expect(result.selfReceived).toBe(false)
     expect(result.peerDelivered).toBe(true)
+  })
+
+  it('refuses success when the network rejects the delayed broadcast', async () => {
+    postBeef.mockResolvedValueOnce([
+      {
+        status: 'error',
+        txidResults: [{ status: 'error', doubleSpend: true }],
+      },
+    ] as never)
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    await expect(
+      sendBrc29ToIdentityKey({
+        payeeIdentityKey: PAYEE,
+        satoshis: 1_000,
+      }),
+    ).rejects.toThrow(/already spent|blocking|network/i)
+    expect(notifyPeerBrc29Payment).not.toHaveBeenCalled()
   })
 
   it('still succeeds when remittance is in the box without inline BEEF', async () => {

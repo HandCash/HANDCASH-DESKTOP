@@ -1,16 +1,22 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { Beef } from '@bsv/sdk'
 
 type CreateActionArgs = { options?: { acceptDelayedBroadcast?: boolean } }
 
 const createAction = vi.fn(async (_args: CreateActionArgs) => ({
   txid: 'a'.repeat(64),
+  tx: [1, 2, 3],
   sendWithResults: [{ txid: 'a'.repeat(64), status: 'unproven' }],
 }))
 const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
+const postBeef = vi.fn(async () => [
+  { status: 'success', txidResults: [{ status: 'success' }] },
+])
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
+    services: { postBeef },
     wallet: { createAction: (args: CreateActionArgs) => createAction(args) },
   }),
   fetchBalanceSats: async () => 90_000,
@@ -50,16 +56,20 @@ const ADDRESS = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
 describe('sendSatsToAddress', () => {
   beforeEach(() => {
     createAction.mockClear()
+    postBeef.mockClear()
+    vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
   })
 
-  it('uses delayed createAction and rejects failed sendWith results', async () => {
+  it('uses delayed createAction and confirms with postBeef before success', async () => {
     // Undelayed mode throws WERR_REVIEW_ACTIONS on prior ghost doubleSpends
-    // ("require review"). Delayed returns; we refuse success unless sendWith is clean.
+    // ("require review"). Delayed returns; we refuse success unless sendWith is clean
+    // and postBeef accepts the signed tx.
     const { sendSatsToAddress } = await import('./sendPayment')
     await sendSatsToAddress({ to: ADDRESS, satoshis: 1_000 })
 
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0]
     expect(args?.options?.acceptDelayedBroadcast).toBe(true)
+    expect(postBeef).toHaveBeenCalled()
   })
 })

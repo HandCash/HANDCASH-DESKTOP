@@ -616,7 +616,7 @@ const SPEND_SIGN = `stateDiagram-v2
   postBeef --> failed : missing-inputs / reject
   sendWithOk --> failed : sendWith failure
   createAction --> review : WERR_REVIEW_ACTIONS / reserved batch
-  review --> recover : abort batches + unfail
+  review --> recover : abort batches · no unfail
   recover --> createAction : retry
   refuse --> failed
   failed --> [*]
@@ -625,7 +625,7 @@ const SPEND_SIGN = `stateDiagram-v2
 
 /** Receive / Refresh pipeline. */
 const CHAIN_INGEST_CHART = `flowchart TB
-  START([refreshFromChain]) --> RECON[reconcile pending sends\\nheal ghost · unfail]
+  START([refreshFromChain]) --> RECON[reconcile pending sends\\nheal ghost · abort batches]
   RECON --> SCAN[legacy address UTXO scan\\nBitails → WoC]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
