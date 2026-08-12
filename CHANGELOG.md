@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.206] - 2026-08-12
+
+### Fixed
+- **Restore money send layout.** Reverted the sticky-footer/keyboard-inset experiment. Item send mirrors money again (same Review/Cancel placement; To is not autofocused, matching money).
+
+
 ## [1.2.205] - 2026-08-12
 
 ### Fixed

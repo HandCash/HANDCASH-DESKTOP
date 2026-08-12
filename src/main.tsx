@@ -9,7 +9,6 @@ import { App } from './App'
 import { appendAppLog, installAppLogCapture } from './wallet/appLog'
 import { shipPreviousSessionLogs, startAutoLogShip } from './wallet/logShip'
 import { reconcileBackupWatchdog } from './wallet/backupWatchdog'
-import { installKeyboardInset } from './wallet/keyboardInset'
 
 // Map HandCash brand tokens onto Aeon CSS vars (no parallel token sheet for Aeon).
 applyBrandPalette(
@@ -50,8 +49,6 @@ if (platform === 'darwin') {
 } else if (platform) {
   document.documentElement.dataset.aeonPlatform = platform
 }
-
-installKeyboardInset()
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>

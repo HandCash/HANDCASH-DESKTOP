@@ -5535,31 +5535,6 @@ a.app-details-host:hover {
   background: none;
 }
 
-/* Pin Review/Cancel above the keyboard / tab bar (item send used to autofocus To). */
-.send-stage-edit .send-actions-footer {
-  flex: 0 0 auto;
-  display: flex;
-  gap: 10px;
-  width: 100%;
-  margin-top: auto;
-  padding: 10px 4px calc(10px + env(safe-area-inset-bottom, 0px));
-  background: color-mix(in srgb, var(--hc-bg, #000) 92%, transparent);
-  border-top: 1px solid hsl(var(--border) / 0.55);
-  z-index: 4;
-}
-
-html.platform-mobile .send-stage-edit .send-actions-footer {
-  position: sticky;
-  bottom: 0;
-  padding-bottom: calc(
-    10px + env(safe-area-inset-bottom, 0px) + var(--keyboard-inset, 0px)
-  );
-}
-
-html.platform-mobile .wallet-nav-bar {
-  padding-bottom: calc(8px + var(--keyboard-inset, 0px));
-}
-
 .send-stage-success,
 .send-stage-failure,
 .send-stage-status {
