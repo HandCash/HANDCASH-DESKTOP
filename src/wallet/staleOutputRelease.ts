@@ -13,6 +13,7 @@
  * release here.
  */
 import { getActiveWallet } from './session'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 /** Cap restore work so a huge dead set cannot stall unlock/refresh. */
 const RESTORE_MAX = 200
@@ -103,6 +104,12 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
 
     let restored = 0
     for (const output of dead.slice(0, RESTORE_MAX)) {
+      if (shouldYieldChainIngestToSpend()) {
+        console.info(
+          `[stale-output] restore yielded to spend after ${restored} restore(s)`,
+        )
+        break
+      }
       const outputId = Number((output as { outputId?: number }).outputId)
       if (!Number.isFinite(outputId) || outputId <= 0) continue
       try {

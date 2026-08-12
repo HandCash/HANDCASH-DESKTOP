@@ -5,8 +5,9 @@
  * and **not** Desktop↔Mobile sync. See `layers.ts`.
  *
  * Pipeline:
- * 1. reconcile interrupted pending sends
- * 1b. dual-layer Tx/UTXO reconcile (ARC mempool → SPV-mined / rollback)
+ * 1. reconcile interrupted pending sends + abort reserved batches
+ * 1b. yield to a waiting spend before dual-layer / restore / ordinal work
+ * 1c. dual-layer Tx/UTXO reconcile + prune Activity txs missing on-chain
  * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
  * 3. audit spendable outputs — report only, never write off (`auditSpendableOutputs`)
  * 4. refresh spendable balance
@@ -230,6 +231,25 @@ export async function refreshFromChainExclusive(
   }
 
   try {
+    // Free reserved batches before a waiting spend retries createAction.
+    const { abortReservedActionBatches } = await import('./actionReview')
+    await abortReservedActionBatches(active)
+  } catch (err) {
+    console.warn('[chain-ingest] action-batch abort skipped', err)
+  }
+
+  // Pay first: dual-layer / restore / ordinal work must not hold the spend region.
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
+  }
+
+  try {
     const { reconcileDualLayerState } = await import('./txReconcile')
     const dual = await reconcileDualLayerState()
     if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
@@ -237,6 +257,16 @@ export async function refreshFromChainExclusive(
     }
   } catch (err) {
     console.warn('[chain-ingest] dual-layer reconcile skipped', err)
+  }
+
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
   }
 
   try {
@@ -256,13 +286,14 @@ export async function refreshFromChainExclusive(
   }
 
   try {
-    // Do not unfail every leftover failed action on refresh. Ancient
-    // doubleSpends (noSend-era leftovers) re-enter TaskSendWaiting, conflict
-    // with the next real payment, and surface as "undefined is not iterable".
-    const { abortReservedActionBatches } = await import('./actionReview')
-    await abortReservedActionBatches(active)
+    const { pruneMissingOnChainActivity } = await import('./appActivity')
+    const { txExistsOnChain } = await import('./legacyScan')
+    const pruned = await pruneMissingOnChainActivity(active.chain, txExistsOnChain)
+    if (pruned > 0) {
+      console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
+    }
   } catch (err) {
-    console.warn('[chain-ingest] action-batch abort skipped', err)
+    console.warn('[chain-ingest] activity ghost prune skipped', err)
   }
 
   try {

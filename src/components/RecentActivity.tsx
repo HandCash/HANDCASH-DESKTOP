@@ -17,6 +17,7 @@ import {
   activityEntryTitle,
   activityTokenAmountDisplay,
   expireStaleInboundPending,
+  expireStaleOutboundPending,
   getActivityWriteGeneration,
   isEventActivity,
   isItemActivity,
@@ -398,6 +399,7 @@ function useActivityFeed(limit: number) {
   useEffect(() => {
     const refresh = () => {
       expireStaleInboundPending()
+      expireStaleOutboundPending()
       invalidateActivityFeed(limit)
       const snapshot = readActivityFeed(limit)
       setEntries(snapshot.entries)

@@ -95,6 +95,15 @@ function armStuckWatchdog(): void {
       progress.detail,
     )
     clearPaymentProgress()
+    // Activity "Sending…" is durable and was not cleared by the pill alone.
+    void import('./appActivity')
+      .then(({ expireStaleOutboundPending }) => {
+        const n = expireStaleOutboundPending(STUCK_PAYMENT_MS)
+        if (n > 0) {
+          console.warn(`[payment-progress] expired ${n} stuck Sending… Activity row(s)`)
+        }
+      })
+      .catch(() => {})
   }, STUCK_PAYMENT_MS)
 }
 

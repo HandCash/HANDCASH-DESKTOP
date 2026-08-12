@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.216] - 2026-08-12
+
+### Fixed
+- **Payments stuck on Sending… forever.** Chain ingest yields to a waiting spend before dual-layer reconcile / UTXO restore; restore loop yields mid-pass. Stuck payment watchdog also expires durable Activity Sending… rows.
+- **Activity NFT thumbs skeleton forever.** DeferredImage times out hanging content hosts and shows the collectable fallback icon.
+- **Ghost Activity txs that 404 on-chain.** Refresh prunes settled rows whose txid is confirmed missing.
+- **Mobile keyboard shrinks Activity.** Capacitor Keyboard resize set to `none` (adjustPan pans; layout height stays).
+
 ## [1.2.215] - 2026-08-12
 
 ### Added

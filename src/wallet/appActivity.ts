@@ -544,6 +544,71 @@ export function expireStaleInboundPending(maxAgeMs = 120_000, now = Date.now()):
 }
 
 /**
+ * Drop Sending… rows older than `maxAgeMs` that never reached a txid / complete.
+ * Matches the payment-progress stuck watchdog so Activity cannot spin forever
+ * while chain-ingest still holds the spend region.
+ */
+export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()): number {
+  const prev = readAll()
+  const entries = prev.filter((e) => {
+    if (e.status !== 'pending' || e.kind !== 'spent') return true
+    return now - e.at < maxAgeMs
+  })
+  const removed = prev.length - entries.length
+  if (removed > 0) writeAll(entries)
+  return removed
+}
+
+/**
+ * Remove settled Activity rows whose txid is confirmed missing on-chain (404).
+ * Only ages past `minAgeMs` so in-flight mempool txs are not pruned.
+ */
+export async function pruneMissingOnChainActivity(
+  chain: import('./vault').Chain,
+  exists: (txid: string, chain: import('./vault').Chain) => Promise<boolean | null>,
+  opts?: { minAgeMs?: number; limit?: number },
+): Promise<number> {
+  const minAgeMs = opts?.minAgeMs ?? 10 * 60_000
+  const limit = opts?.limit ?? 40
+  const now = Date.now()
+  const prev = readAll()
+  const candidates = prev
+    .filter((e) => {
+      if (e.status === 'pending') return false
+      if (!e.txid || !/^[0-9a-f]{64}$/i.test(e.txid)) return false
+      if (now - e.at < minAgeMs) return false
+      return e.kind === 'spent' || e.kind === 'earned'
+    })
+    .slice(0, limit)
+
+  if (candidates.length === 0) return 0
+
+  const missing = new Set<string>()
+  for (const row of candidates) {
+    const txid = row.txid!.toLowerCase()
+    if (missing.has(txid)) continue
+    try {
+      const onChain = await exists(txid, chain)
+      if (onChain === false) missing.add(txid)
+    } catch {
+      // inconclusive — keep
+    }
+  }
+  if (missing.size === 0) return 0
+
+  const next = prev.filter((e) => {
+    const txid = e.txid?.toLowerCase()
+    if (!txid || !missing.has(txid)) return true
+    // Keep item rows that still have local inventory identity? Prefer prune —
+    // a 404 tx means the transfer never landed; tips are healed separately.
+    return false
+  })
+  const removed = prev.length - next.length
+  if (removed > 0) writeAll(next)
+  return removed
+}
+
+/**
  * Activity "Verifying…" must match inventory. When a tip is already held
  * (and especially when authenticity has settled), clear stale pending rows
  * so UI is not a second conflicting state.

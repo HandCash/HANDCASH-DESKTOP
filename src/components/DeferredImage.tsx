@@ -63,6 +63,8 @@ function frameIsNear(frame: HTMLElement, margin = LOAD_MARGIN_PX): boolean {
 const LIVE_IMAGE_WARN = 16
 /** How long one image may occupy a decode slot before the queue moves on. */
 const SLOT_STUCK_MS = 10_000
+/** Hang ≠ error: GorillaPool can spin forever; fail to fallback after this. */
+const LOAD_TIMEOUT_MS = 5_000
 let liveImages = 0
 let warnedLive = false
 
@@ -262,6 +264,21 @@ export function DeferredImage({
   useEffect(() => {
     if (status === 'ready' || status === 'error') releaseSlotIfHeld()
   }, [status, releaseSlotIfHeld])
+
+  // Hanging content hosts never fire onError — force fallback so Activity
+  // thumbs do not skeleton forever.
+  useEffect(() => {
+    if (status !== 'loading') return
+    if (!src) return
+    const attached = retained.current || (near && loadSlot)
+    if (!attached) return
+    const timer = window.setTimeout(() => {
+      if (typeof src === 'string') decodedOnce.delete(src)
+      retained.current = false
+      setStatus('error')
+    }, LOAD_TIMEOUT_MS)
+    return () => window.clearTimeout(timer)
+  }, [status, src, near, loadSlot])
 
   useEffect(() => {
     if (near && loadSlot) return

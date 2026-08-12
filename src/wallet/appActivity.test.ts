@@ -25,6 +25,8 @@ import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
   expireStaleInboundPending,
+  expireStaleOutboundPending,
+  pruneMissingOnChainActivity,
   reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
 } from './appActivity'
@@ -274,5 +276,33 @@ describe('inbound receive activity', () => {
     expect(rows).toHaveLength(2)
     expect(rows.some((e) => e.status === 'pending' && e.pendingId === 'new-send')).toBe(true)
     expect(rows.some((e) => e.status !== 'pending' && e.txid)).toBe(true)
+  })
+
+  it('expires stale Sending… rows that never completed', () => {
+    noteOutboundSendPending({
+      pendingId: 'stuck',
+      sats: 1000,
+      to: '1abc',
+    })
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
+    expect(listRecentActivity(10)).toHaveLength(0)
+  })
+
+  it('prunes settled Activity rows whose txid 404s on-chain', async () => {
+    noteOutboundSendComplete({
+      pendingId: 'ghost',
+      txid: 'bb'.repeat(32),
+      sats: 500,
+      to: '1abc',
+    })
+    expect(listRecentActivity(10)).toHaveLength(1)
+    const pruned = await pruneMissingOnChainActivity(
+      'main',
+      async () => false,
+      { minAgeMs: 0 },
+    )
+    expect(pruned).toBe(1)
+    expect(listRecentActivity(10)).toHaveLength(0)
   })
 })

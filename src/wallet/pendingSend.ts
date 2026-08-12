@@ -94,6 +94,9 @@ function activityAlreadyHas(pending: PendingSend): boolean {
  * committed. A pending without one never got that far, so it is dropped rather
  * than written into history: a row for money that never moved is worse than no
  * row at all, because the user cannot tell it apart from a real payment.
+ *
+ * Rows with a txid are recorded as Settled; chain ingest later prunes any that
+ * 404 on-chain (`pruneMissingOnChainActivity`).
  */
 export function reconcilePendingSends(): number {
   const pending = readPending()
