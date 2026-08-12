@@ -5,9 +5,9 @@
  * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
  * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
  *
- * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is dual:
- * BRC-103 identity headers + interim ECDSA (`messageboxAuth.ts`). Full Authrite
- * Peer sessions still deferred.
+ * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is interim
+ * `X-BRC33-*` ECDSA (`messageboxAuth.ts`). Full Authrite / BRC-103 headers are
+ * signed locally but not sent on fetch (Android CORS preflight).
  * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
  * encrypted envelopes deferred). `/files` is a HandCash extension.
  */

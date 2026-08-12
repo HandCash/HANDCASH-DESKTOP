@@ -9,10 +9,14 @@
  * Preimage (UTF-8):
  *   BRC-33-lite\n{method}\n{messageBox}\n{timestampMs}
  *
- * Headers (both sent; server accepts either):
- *   X-BRC33-Identity / Timestamp / Signature  — interim ECDSA
- *   X-BRC103-Identity / Timestamp / Nonce / Signature — BRC-103 identity proof
- *     (full Authrite Peer session + certificates still deferred)
+ * Wire headers (fetch):
+ *   X-BRC33-Identity / Timestamp / Signature  — interim ECDSA (always)
+ *
+ * BRC-103 identity proof is still signed locally but **not** attached to fetch
+ * by default. Extra `X-BRC103-*` headers trip CORS preflight on Android WebView
+ * when the box Allow-Headers list only has X-BRC33-* (and browsers cache that
+ * miss for Access-Control-Max-Age). BRC-CLOUD accepts either; full Authrite
+ * Peer sessions + certificates still deferred.
  */
 import { BigNumber, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 
@@ -89,19 +93,22 @@ export function signMessageboxAuth(args: {
   return { identityKey, timestamp, signature, messageBox, nonce, authriteSignature }
 }
 
-export function messageboxAuthHeaders(auth: {
-  identityKey: string
-  timestamp: number
-  signature: string
-  nonce?: string
-  authriteSignature?: string
-}): Record<string, string> {
+export function messageboxAuthHeaders(
+  auth: {
+    identityKey: string
+    timestamp: number
+    signature: string
+    nonce?: string
+    authriteSignature?: string
+  },
+  opts?: { includeAuthrite?: boolean },
+): Record<string, string> {
   const headers: Record<string, string> = {
     'X-BRC33-Identity': auth.identityKey,
     'X-BRC33-Timestamp': String(auth.timestamp),
     'X-BRC33-Signature': auth.signature,
   }
-  if (auth.nonce && auth.authriteSignature) {
+  if (opts?.includeAuthrite && auth.nonce && auth.authriteSignature) {
     headers['X-BRC103-Identity'] = auth.identityKey
     headers['X-BRC103-Timestamp'] = String(auth.timestamp)
     headers['X-BRC103-Nonce'] = auth.nonce

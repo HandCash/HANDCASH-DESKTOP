@@ -79,7 +79,10 @@ describe('messageboxAuth', () => {
     expect(signed.authriteSignature).toMatch(/^[0-9a-f]{128}$/i)
     const headers = messageboxAuthHeaders(signed)
     expect(headers['X-BRC33-Signature']).toBeTruthy()
-    expect(headers['X-BRC103-Signature']).toBe(signed.authriteSignature)
+    expect(headers['X-BRC103-Signature']).toBeUndefined()
+    expect(messageboxAuthHeaders(signed, { includeAuthrite: true })['X-BRC103-Signature']).toBe(
+      signed.authriteSignature,
+    )
     expect(
       verifyMessageboxAuthrite({
         identityKey: signed.identityKey,

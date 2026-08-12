@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.199] - 2026-08-12
+
+### Fixed
+- **Android remittance `Failed to fetch`.** `sendMessage` was sending `X-BRC103-*` headers that BRC-CLOUD CORS did not allow, so WebView blocked the request before it left the phone. Wire auth is `X-BRC33-*` only; BRC-103 stays signed locally. Pending outbox retries after install.
+
 ## [1.2.198] - 2026-08-12
 
 ### Fixed
