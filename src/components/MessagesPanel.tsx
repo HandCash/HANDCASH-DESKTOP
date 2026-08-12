@@ -664,28 +664,42 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         : payeeKey
           ? `HandCash messages BRC-29 pay`
           : `HandCash messages pay to ${to}`
-      const result = payeeKey
-        ? await sendBrc29ToIdentityKey({
-            payeeIdentityKey: payeeKey,
-            satoshis: sats,
-            friendLabel: msg.meta?.friendLabel,
-            description,
-          })
-        : await sendSatsToAddress({
-            to: to!,
-            satoshis: sats,
-            friendLabel: msg.meta?.friendLabel,
-            description,
-          })
-      const { txid, balanceSats } = result
-      const brc29 =
-        'remittance' in result
-          ? {
-              derivationPrefix: result.remittance.derivationPrefix,
-              derivationSuffix: result.remittance.derivationSuffix,
-              outputIndex: result.remittance.outputIndex,
-            }
-          : undefined
+
+      let txid: string
+      let balanceSats: number
+      let brc29:
+        | {
+            derivationPrefix: string
+            derivationSuffix: string
+            outputIndex: number
+          }
+        | undefined
+
+      if (payeeKey) {
+        const sent = await sendBrc29ToIdentityKey({
+          payeeIdentityKey: payeeKey,
+          satoshis: sats,
+          friendLabel: msg.meta?.friendLabel,
+          description,
+        })
+        txid = sent.txid
+        balanceSats = sent.balanceSats
+        brc29 = {
+          derivationPrefix: sent.remittance.derivationPrefix,
+          derivationSuffix: sent.remittance.derivationSuffix,
+          outputIndex: sent.remittance.outputIndex ?? 0,
+        }
+      } else {
+        const sent = await sendSatsToAddress({
+          to: to!,
+          satoshis: sats,
+          friendLabel: msg.meta?.friendLabel,
+          description,
+        })
+        txid = sent.txid
+        balanceSats = sent.balanceSats
+      }
+
       const sent = updateMessage(messageId, {
         meta: {
           payStatus: 'sent',

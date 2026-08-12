@@ -14,11 +14,11 @@ const createAction = vi.fn(async (_args: CreateActionArgs) => ({
   txid: 'b'.repeat(64),
   sendWithResults: [{ txid: 'b'.repeat(64), status: 'unproven' }],
 }))
-const getPublicKey = vi.fn(async () => ({
+const getPublicKey = vi.fn(async (..._args: unknown[]) => ({
   publicKey:
     '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
 }))
-const createHmac = vi.fn(async () => ({
+const createHmac = vi.fn(async (..._args: unknown[]) => ({
   hmac: Array.from({ length: 32 }, (_, i) => i),
 }))
 const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
@@ -93,7 +93,7 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(result.remittance.outputIndex).toBe(0)
 
     expect(getPublicKey).toHaveBeenCalled()
-    const pkArgs = getPublicKey.mock.calls[0]?.[0] as {
+    const pkArgs = getPublicKey.mock.calls[0]?.[0] as unknown as {
       protocolID: unknown
       keyID: string
       counterparty: string
@@ -103,7 +103,7 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(pkArgs.keyID).toContain(' ')
 
     expect(createAction).toHaveBeenCalledTimes(1)
-    const args = createAction.mock.calls[0]?.[0]
+    const args = createAction.mock.calls[0]?.[0] as CreateActionArgs | undefined
     expect(args?.options?.acceptDelayedBroadcast).toBe(true)
     expect(args?.options?.randomizeOutputs).toBe(false)
     expect(args?.labels).toEqual(expect.arrayContaining(['brc29', 'handcash-send']))

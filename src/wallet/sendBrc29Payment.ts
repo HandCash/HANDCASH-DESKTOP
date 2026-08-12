@@ -51,7 +51,7 @@ export const BRC29_PROTOCOL_ID: [2, '3241645161d8'] = [2, '3241645161d8']
 export type Brc29Remittance = {
   derivationPrefix: string
   derivationSuffix: string
-  outputIndex: number
+  outputIndex?: number
 }
 
 export type SendBrc29Result = {
@@ -305,9 +305,12 @@ export async function internalizeBrc29Payment(opts: {
     }
   }
 
+  const outputIndexRaw = opts.remittance.outputIndex
   const outputIndex =
-    Number.isInteger(opts.remittance.outputIndex) && opts.remittance.outputIndex >= 0
-      ? opts.remittance.outputIndex
+    typeof outputIndexRaw === 'number' &&
+    Number.isInteger(outputIndexRaw) &&
+    outputIndexRaw >= 0
+      ? outputIndexRaw
       : 0
 
   const active = getActiveWallet()

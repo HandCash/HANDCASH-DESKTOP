@@ -264,21 +264,34 @@ export function SendPanel({
 
       const to = sendSnap.context.to.trim()
       const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
-      const next =
-        payeeKey != null
-          ? await sendBrc29ToIdentityKey({
-              payeeIdentityKey: payeeKey,
-              satoshis,
-              friendLabel: sendSnap.context.friendLabel,
-            })
-          : await sendSatsToAddress({
-              to,
-              satoshis,
-              friendLabel: sendSnap.context.friendLabel,
-            })
-      const { txid, balanceSats: nextBalance } = next
+      let txid: string
+      let nextBalance: number
+      let brc29Remittance: {
+        derivationPrefix: string
+        derivationSuffix: string
+        outputIndex?: number
+      } | null = null
 
-      if (payeeKey != null && 'remittance' in next) {
+      if (payeeKey != null) {
+        const next = await sendBrc29ToIdentityKey({
+          payeeIdentityKey: payeeKey,
+          satoshis,
+          friendLabel: sendSnap.context.friendLabel,
+        })
+        txid = next.txid
+        nextBalance = next.balanceSats
+        brc29Remittance = next.remittance
+      } else {
+        const next = await sendSatsToAddress({
+          to,
+          satoshis,
+          friendLabel: sendSnap.context.friendLabel,
+        })
+        txid = next.txid
+        nextBalance = next.balanceSats
+      }
+
+      if (payeeKey != null && brc29Remittance) {
         try {
           const { getActiveWallet } = await import('../wallet/session')
           const { listFriends } = await import('../wallet/friends')
@@ -299,7 +312,7 @@ export function SendPanel({
               messagebox: friend?.messagebox,
               txid,
               satoshis,
-              remittance: next.remittance,
+              remittance: brc29Remittance,
               amountLabel: formatTypedAmount(sendSnap.context.amount, currency),
             })
             if (delivered.delivered !== 'cloud') {
