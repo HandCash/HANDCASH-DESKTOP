@@ -35,13 +35,13 @@ Collectables set the pattern. **All UTXO mutation / payment routing** follows it
   (use `abandonCollectable` instead)
 - Decorative `chart.send` that the imperative code can ignore
 - `postBeef` / delayed broadcast before peer delivery on a `peerDeliver` settle
-  (`maySenderBroadcast` / `mayBrc29SenderBroadcast` is false until remittance
-  is in the box; silent `confirmBroadcast` after inbox. `identityFallback`
-  must not postBeef the aborted BRC-29)
+  for **items** (`maySenderBroadcast` is false until remittance left
+  `peerDeliver`; silent `confirmBroadcast` after inbox)
+- BRC-29 `noSend` + abort + a second payment tx (double-spend). BRC-29 BSV
+  `createAction` broadcasts immediately; inbox miss → remittance outbox retry
 - ACKing a payment/item inbox message before ingest succeeds
 - Using messagebox `/files` as the BRC-29 / item delivery path (Android
   `Failed to fetch`) — remittance ± inline `beefB64` on `sendMessage`
-- QR / physical-scan `brc29:` claim receipt as the inbox-fail fallback —
-  abort noSend BRC-29 and broadcast identity-address P2PKH instead
+- QR / physical-scan `brc29:` claim receipt as the inbox-fail fallback
 
 Effect.ts is deferred until we need interruptible fibers beyond `fromPromise`.

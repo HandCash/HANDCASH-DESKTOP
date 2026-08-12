@@ -2,9 +2,8 @@ import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
 import {
   brc29SendMachine,
-  mayBrc29SenderBroadcast,
   mustBrc29DeliverToPeer,
-  mustBrc29IdentityFallback,
+  mustBrc29SelfReceive,
 } from './brc29SendMachine'
 
 const PEER =
@@ -12,7 +11,7 @@ const PEER =
 const TXID = 'a'.repeat(64)
 
 describe('brc29SendMachine', () => {
-  it('peerDeliver ignores BROADCASTED — inbox first', () => {
+  it('broadcasts before inbox notify', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -21,15 +20,14 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'SIGNED', txid: TXID })
-    expect(actor.getSnapshot().matches('peerDeliver')).toBe(true)
+    expect(actor.getSnapshot().matches('broadcasting')).toBe(true)
+    expect(mustBrc29DeliverToPeer(actor.getSnapshot())).toBe(false)
+    actor.send({ type: 'BROADCASTED', txid: TXID })
+    expect(actor.getSnapshot().matches('peerNotify')).toBe(true)
     expect(mustBrc29DeliverToPeer(actor.getSnapshot())).toBe(true)
-    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(false)
-    actor.send({ type: 'BROADCASTED' })
-    expect(actor.getSnapshot().matches('peerDeliver')).toBe(true)
   })
 
-  it('BEEF_IN_BOX → silent confirmBroadcast (does not fail the send)', () => {
+  it('inbox success or miss both finish the send (no second tx)', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -38,32 +36,26 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'SIGNED', txid: TXID })
+    actor.send({ type: 'BROADCASTED', txid: TXID })
+    actor.send({ type: 'BOX_UNREACHABLE' })
+    expect(actor.getSnapshot().matches('done')).toBe(true)
+  })
+
+  it('BEEF_IN_BOX after broadcast → done', () => {
+    const actor = createActor(brc29SendMachine).start()
+    actor.send({
+      type: 'START',
+      payee: PEER,
+      satoshis: 1000,
+      settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
+    })
+    actor.send({ type: 'READY' })
+    actor.send({ type: 'BROADCASTED', txid: TXID })
     actor.send({ type: 'BEEF_IN_BOX' })
-    expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
-    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(true)
-    actor.send({ type: 'SKIPPED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
-  it('sender postBeef only after remittance is in the box', () => {
-    const actor = createActor(brc29SendMachine).start()
-    actor.send({
-      type: 'START',
-      payee: PEER,
-      satoshis: 1000,
-      settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
-    })
-    actor.send({ type: 'READY' })
-    actor.send({ type: 'SIGNED', txid: TXID })
-    actor.send({ type: 'REMIT_IN_BOX' })
-    expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
-    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(true)
-    actor.send({ type: 'BROADCASTED' })
-    expect(actor.getSnapshot().matches('done')).toBe(true)
-  })
-
-  it('selfReceive settles locally (broadcast + internalize)', () => {
+  it('selfReceive settles locally after broadcast', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -72,28 +64,10 @@ describe('brc29SendMachine', () => {
       settlePath: { settle: 'selfReceive' },
     })
     actor.send({ type: 'READY' })
-    actor.send({ type: 'SIGNED', txid: TXID })
+    actor.send({ type: 'BROADCASTED', txid: TXID })
     expect(actor.getSnapshot().matches('selfReceive')).toBe(true)
-    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(true)
+    expect(mustBrc29SelfReceive(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SETTLED' })
-    expect(actor.getSnapshot().matches('done')).toBe(true)
-  })
-
-  it('BOX_UNREACHABLE → identityFallback (not BRC-29 sender broadcast)', () => {
-    const actor = createActor(brc29SendMachine).start()
-    actor.send({
-      type: 'START',
-      payee: PEER,
-      satoshis: 1000,
-      settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
-    })
-    actor.send({ type: 'READY' })
-    actor.send({ type: 'SIGNED', txid: TXID })
-    actor.send({ type: 'BOX_UNREACHABLE' })
-    expect(actor.getSnapshot().matches('identityFallback')).toBe(true)
-    expect(mustBrc29IdentityFallback(actor.getSnapshot())).toBe(true)
-    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(false)
-    actor.send({ type: 'BROADCASTED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 })

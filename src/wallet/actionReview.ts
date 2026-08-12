@@ -27,6 +27,27 @@ export function isReservedActionBatchError(err: unknown): boolean {
 }
 
 /**
+ * Abort leftover `noSend` actions (from older HandCash settle paths) and
+ * reserved batches so the next createAction is not a double-spend.
+ */
+export async function releaseStuckNosends(
+  active?: ActiveWallet | null,
+): Promise<void> {
+  const wallet = (active ?? getActiveWallet())?.wallet
+  if (!wallet) return
+  try {
+    await wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+  } catch (err) {
+    console.warn('[action-review] listNoSendActions abort skipped', err)
+  }
+  try {
+    await wallet.actionBatch.abort()
+  } catch {
+    /* unused funding reservations only */
+  }
+}
+
+/**
  * Release leftover action-batch output reservations (in-memory workspace +
  * persisted IDB rows). Does **not** abort signed noSend txs — those may already
  * be delivered to a peer. Failed unsigned batches are what block the next spend.

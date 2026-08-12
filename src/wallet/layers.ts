@@ -40,12 +40,10 @@
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
  * - **Peer BSV pay (BRC-29)** → `brc29SettlePath` + `brc29SendMachine`. Sender
- *   signs (`noSend`) and posts remittance (± inline Atomic BEEF) via
- *   `sendMessage`. After inbox delivery, sender silently `postBeef` so the tx
- *   is on-chain even if the payee never broadcasts. If the inbox is unreachable,
- *   abort the noSend BRC-29 and broadcast identity-address P2PKH (address scan;
- *   no QR / physical scan). Inbox is not ACKed until ingest succeeds.
- *   Same-identity still notifies our box so other devices ingest.
+ *   `createAction` broadcasts immediately (Babbage / toolbox). Remittance
+ *   (± inline Atomic BEEF) then goes on `sendMessage`. Inbox miss → local
+ *   outbox retry, never a second payment. Inbox is not ACKed until ingest
+ *   succeeds. Same-identity still notifies our box so other devices ingest.
  *   `/files` is not the payment path (Android WebView). Plain address P2PKH
  *   remains for external/pasted addresses (`sendPayment.ts` + `bsvSendMachine`).
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.

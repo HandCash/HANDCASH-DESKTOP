@@ -299,23 +299,19 @@ const BRC29_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> preparing : START with Brc29SettlePath
-  preparing --> signing : READY
-  signing --> chooseSettle : SIGNED noSend
-  chooseSettle --> peerDeliver : peerDeliver
+  preparing --> broadcasting : READY
+  broadcasting --> chooseSettle : BROADCASTED createAction
+  chooseSettle --> peerNotify : peerDeliver
   chooseSettle --> selfReceive : selfReceive
-  peerDeliver --> confirmBroadcast : BEEF_IN_BOX
-  peerDeliver --> confirmBroadcast : REMIT_IN_BOX
-  peerDeliver --> identityFallback : BOX_UNREACHABLE
-  confirmBroadcast --> done : BROADCASTED / SKIPPED
-  identityFallback --> done : BROADCASTED\\nidentity-address P2PKH
+  peerNotify --> done : BEEF_IN_BOX / REMIT_IN_BOX / BOX_UNREACHABLE
   selfReceive --> done : SETTLED
-  note right of peerDeliver
-    No BROADCASTED edge.
-    Silent sender postBeef after inbox.
-    Inbox fail → abort BRC-29,\\nidentity-address P2PKH (no QR).
+  note right of broadcasting
+    Toolbox createAction broadcasts now.
+    Inbox is notify + outbox retry.
+    No noSend / no second tx.
   end note
   preparing --> failed : FAIL
-  signing --> failed : FAIL
+  broadcasting --> failed : FAIL
 `
 
 const CONNECTED_APPS = `stateDiagram-v2

@@ -1,12 +1,10 @@
 /**
- * BRC-29 peer payments (HandCash ↔ HandCash).
+ * BRC-29 peer payments (HandCash ↔ HandCash) — Babbage / wallet-toolbox shape.
  *
- * `brc29SendMachine` + `Brc29SettlePath` own the path. Sender signs `noSend`
- * and posts remittance (± inline Atomic BEEF) to the payee inbox. Sender then
- * silently `postBeef` so the tx is on-chain even if the payee never broadcasts.
- * Same-identity still notifies our inbox so other devices can ingest.
- * Inbox unreachable → abort the noSend BRC-29 and broadcast identity-address
- * P2PKH (address scan, no QR / physical scan).
+ * One `createAction` broadcasts immediately. Remittance (± inline Atomic BEEF)
+ * then goes to the payee inbox. Same-identity internalizes locally and still
+ * notifies our box so other devices can ingest. Inbox miss → local outbox retry,
+ * never a second payment tx.
  *
  * Plain identity-address P2PKH stays in sendPayment.ts for external addresses.
  */
@@ -35,18 +33,14 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
-import {
-  addressFromIdentityKey,
-  validateIdentityKey,
-  normalizeIdentityKey,
-} from './friends'
+import { validateIdentityKey, normalizeIdentityKey } from './friends'
 import { chooseBrc29SettlePath } from './brc29SettlePath'
 import {
   brc29SendMachine,
-  mayBrc29SenderBroadcast,
   mustBrc29DeliverToPeer,
-  mustBrc29IdentityFallback,
+  mustBrc29SelfReceive,
 } from './brc29SendMachine'
+import { enqueuePendingBrc29Remit } from './pendingBrc29Outbox'
 import {
   listMessages,
   listThreads,
@@ -76,8 +70,6 @@ export type SendBrc29Result = {
   atomicBeef?: number[]
   /** Messagebox accepted the payment envelope (`cloud`), else local-only. */
   peerDelivered?: boolean
-  /** Inbox unreachable — aborted BRC-29, sent identity-address P2PKH instead. */
-  fallback?: 'identityP2pkh'
 }
 
 async function fetchAtomicBeefFromUrl(url: string): Promise<number[] | undefined> {
@@ -152,25 +144,8 @@ function alreadyInternalizedError(err: unknown): boolean {
   return /already (?:spent|imported|internalized|in (?:the )?wallet|ours)/i.test(msg)
 }
 
-async function abortNosendByTxid(
-  wallet: { abortAction: (args: { reference: string }) => Promise<unknown> },
-  txid: string,
-): Promise<void> {
-  try {
-    await wallet.abortAction({ reference: txid })
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn('[brc29] abort noSend failed', txid, msg)
-    throw new Error(
-      `Inbox unreachable and the BRC-29 payment could not be released (${msg})`,
-    )
-  }
-}
-
 /**
- * Sign a BRC-29 payment and deliver it to the payee (they broadcast).
- * If messagebox delivery fails, abort the noSend BRC-29 and send identity-address
- * P2PKH so the payee can claim via address scan (no QR).
+ * Broadcast a BRC-29 payment (toolbox createAction), then deliver remittance.
  */
 export async function sendBrc29ToIdentityKey(opts: {
   payeeIdentityKey: string
@@ -204,6 +179,10 @@ export async function sendBrc29ToIdentityKey(opts: {
           satoshis,
           settlePath,
         })
+        const { releaseStuckNosends, sendWithHasFailure } = await import(
+          './actionReview'
+        )
+        await releaseStuckNosends(active)
         await prepareSpendHeal(satoshis)
         chart.send({ type: 'READY' })
 
@@ -236,7 +215,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             outputIndex: 0,
           }
 
-          setPaymentProgress('broadcasting', 'Signing payment for the recipient')
+          setPaymentProgress('broadcasting', 'Signing and broadcasting your payment')
           const result = await active.wallet.createAction({
             description:
               opts.description ??
@@ -257,45 +236,57 @@ export async function sendBrc29ToIdentityKey(opts: {
             options: {
               randomizeOutputs: false,
               signAndProcess: true,
-              noSend: true,
+              acceptDelayedBroadcast: true,
               trustSelf: 'known',
             },
           })
 
           const realTxid = (result as { txid?: string })?.txid
           const atomicBeef = atomicBeefFromCreateAction(result)
-          if (!realTxid || !atomicBeef?.length) {
-            throw new Error('Wallet did not return a signed payment to deliver')
+          const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
+            .sendWithResults
+          if (sendWithHasFailure(sendWith) || !realTxid) {
+            const { formatReviewActionsError, recoverFromReviewActions } =
+              await import('./actionReview')
+            await recoverFromReviewActions({
+              err: {
+                name: 'WERR_REVIEW_ACTIONS',
+                sendWithResults: sendWith,
+                txid: realTxid,
+              },
+              active,
+            })
+            throw new Error(
+              formatReviewActionsError({
+                sendWithResults: sendWith,
+                reviewActionResults: [],
+              }),
+            )
           }
-          const signedTxid = realTxid
-          chart.send({ type: 'SIGNED', txid: signedTxid })
+          const txid = realTxid
+          chart.send({ type: 'BROADCASTED', txid })
 
           const recipientNote = opts.friendLabel
             ? `${opts.friendLabel} (${payee.slice(0, 10)}…)`
             : payee.slice(0, 18)
-          const recordSpent = (txid: string, note: string) => {
-            completePendingSend(pending.id, txid)
-            if (!hasActivityTxid(txid, 'spent')) {
-              recordAppActivity({
-                origin: WALLET_ACTIVITY_ORIGIN,
-                kind: 'spent',
-                sats: satoshis,
-                method: 'send',
-                note,
-                txid,
-              })
-            }
-            clearPendingSend(pending.id)
+          completePendingSend(pending.id, txid)
+          if (!hasActivityTxid(txid, 'spent')) {
+            recordAppActivity({
+              origin: WALLET_ACTIVITY_ORIGIN,
+              kind: 'spent',
+              sats: satoshis,
+              method: 'send',
+              note: `Sent to ${recipientNote}`,
+              txid,
+            })
           }
+          clearPendingSend(pending.id)
 
           setPaymentProgress('finishing')
           scheduleHistoryBackupPush('send')
 
-          let settledTxid = signedTxid
           let selfReceived = false
           let peerDelivered = false
-          let fallback: SendBrc29Result['fallback']
-          let settledAtomic: number[] | undefined = atomicBeef
           let balanceSats = Math.max(
             0,
             (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
@@ -315,7 +306,7 @@ export async function sendBrc29ToIdentityKey(opts: {
               rootKeyHex: active.rootKeyHex,
               senderIdentityKey: active.identityKey,
               messagebox: friend?.messagebox,
-              txid: signedTxid,
+              txid,
               satoshis,
               remittance,
               atomicBeef,
@@ -324,9 +315,9 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
 
           if (settlePath.settle === 'selfReceive') {
-            if (!mayBrc29SenderBroadcast(chart.getSnapshot())) {
-              chart.send({ type: 'FAIL', error: 'selfReceive refused broadcast' })
-              throw new Error('brc29SendMachine refused selfReceive broadcast')
+            if (!mustBrc29SelfReceive(chart.getSnapshot())) {
+              chart.send({ type: 'FAIL', error: 'selfReceive expected' })
+              throw new Error('brc29SendMachine selfReceive without settle path')
             }
             setPaymentProgress('finishing', 'Crediting payment back to this wallet')
             try {
@@ -337,9 +328,8 @@ export async function sendBrc29ToIdentityKey(opts: {
                 err instanceof Error ? err.message : String(err),
               )
             }
-            await broadcastAtomicBeef(signedTxid, atomicBeef)
             const claimed = await internalizeBrc29Payment({
-              txid: signedTxid,
+              txid,
               remittance,
               senderIdentityKey: payee,
               tx: atomicBeef,
@@ -350,13 +340,19 @@ export async function sendBrc29ToIdentityKey(opts: {
             selfReceived = claimed.accepted
             peerDelivered = selfReceived
             chart.send({ type: 'SETTLED' })
-            recordSpent(signedTxid, `Sent to ${recipientNote}`)
           } else {
             if (!mustBrc29DeliverToPeer(chart.getSnapshot())) {
-              chart.send({ type: 'FAIL', error: 'peerDeliver expected' })
-              throw new Error('brc29SendMachine peerDeliver without settle path')
+              chart.send({ type: 'FAIL', error: 'peerNotify expected' })
+              throw new Error('brc29SendMachine peerNotify without settle path')
             }
-            setPaymentProgress('finishing', 'Delivering payment to recipient')
+            setPaymentProgress('finishing', 'Notifying recipient')
+            const { listFriends } = await import('./friends')
+            const friend =
+              listFriends().find(
+                (f) =>
+                  f.identityKey.toLowerCase() ===
+                  settlePath.recipientIdentityKey.toLowerCase(),
+              ) ?? null
             try {
               const delivered = await notifyPayee(settlePath.recipientIdentityKey)
               peerDelivered = delivered.delivered === 'cloud'
@@ -366,105 +362,42 @@ export async function sendBrc29ToIdentityKey(opts: {
                 chart.send({ type: 'REMIT_IN_BOX' })
               } else {
                 chart.send({ type: 'BOX_UNREACHABLE' })
+                enqueuePendingBrc29Remit({
+                  payeeIdentityKey: settlePath.recipientIdentityKey,
+                  senderIdentityKey: active.identityKey,
+                  txid,
+                  satoshis,
+                  remittance,
+                  messagebox: friend?.messagebox,
+                  amountLabel: opts.friendLabel ?? undefined,
+                })
               }
             } catch (err) {
               console.warn(
-                '[brc29] peer delivery failed',
+                '[brc29] peer notify failed',
                 err instanceof Error ? err.message : String(err),
               )
               peerDelivered = false
               chart.send({ type: 'BOX_UNREACHABLE' })
-            }
-            if (mustBrc29IdentityFallback(chart.getSnapshot())) {
-              setPaymentProgress(
-                'finishing',
-                'Inbox unreachable — sending to their address',
-              )
-              await abortNosendByTxid(active.wallet, signedTxid)
-              try {
-                await active.wallet.actionBatch.abort()
-              } catch {
-                /* unused funding reservations only */
-              }
-              await prepareSpendHeal(satoshis)
-              const to = addressFromIdentityKey(
-                settlePath.recipientIdentityKey,
-                active.chain,
-              )
-              const locking = new P2PKH().lock(to).toHex()
-              const fallbackResult = await active.wallet.createAction({
-                description:
-                  opts.description ??
-                  `HandCash send${opts.friendLabel ? ` to ${opts.friendLabel}` : ''}`,
-                labels: ['handcash-send', 'identity-p2pkh'],
-                outputs: [
-                  {
-                    lockingScript: locking,
-                    satoshis,
-                    outputDescription: 'Payment',
-                  },
-                ],
-                options: {
-                  acceptDelayedBroadcast: true,
-                  signAndProcess: true,
-                },
+              enqueuePendingBrc29Remit({
+                payeeIdentityKey: settlePath.recipientIdentityKey,
+                senderIdentityKey: active.identityKey,
+                txid,
+                satoshis,
+                remittance,
+                messagebox: friend?.messagebox,
+                amountLabel: opts.friendLabel ?? undefined,
               })
-              const fallbackTxid = (fallbackResult as { txid?: string })?.txid
-              const sendWith = (
-                fallbackResult as { sendWithResults?: Array<{ status?: string }> }
-              ).sendWithResults
-              const { sendWithHasFailure } = await import('./actionReview')
-              if (sendWithHasFailure(sendWith) || !fallbackTxid) {
-                const { formatReviewActionsError, recoverFromReviewActions } =
-                  await import('./actionReview')
-                await recoverFromReviewActions({
-                  err: {
-                    name: 'WERR_REVIEW_ACTIONS',
-                    sendWithResults: sendWith,
-                    txid: fallbackTxid,
-                  },
-                  active,
-                })
-                chart.send({
-                  type: 'FAIL',
-                  error: 'Identity-address fallback did not confirm',
-                })
-                throw new Error(
-                  formatReviewActionsError({
-                    sendWithResults: sendWith,
-                    reviewActionResults: [],
-                  }),
-                )
-              }
-              settledTxid = fallbackTxid
-              settledAtomic = atomicBeefFromCreateAction(fallbackResult)
-              fallback = 'identityP2pkh'
-              peerDelivered = false
-              chart.send({ type: 'BROADCASTED' })
-              recordSpent(
-                settledTxid,
-                `Sent to ${opts.friendLabel ? `${opts.friendLabel} (${to})` : to}`,
-              )
-            } else if (mayBrc29SenderBroadcast(chart.getSnapshot())) {
-              const ok = await broadcastAtomicBeef(signedTxid, atomicBeef)
-              chart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
-              recordSpent(signedTxid, `Sent to ${recipientNote}`)
-            } else {
-              chart.send({ type: 'FAIL', error: 'BRC-29 settle phase missing' })
-              throw new Error(
-                'brc29SendMachine left peerDeliver without a settle phase',
-              )
             }
           }
 
           return {
-            txid: settledTxid,
+            txid,
             balanceSats,
             remittance,
             selfReceived,
-            atomicBeef: settledAtomic,
+            atomicBeef,
             peerDelivered,
-            fallback,
           }
         } catch (err) {
           clearPendingSend(pending.id)

@@ -47,7 +47,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B) — not required for soft-latch identity |
 | Chat delivery | Hardcoded BRC-CLOUD box; plaintext + `handcash-message:` cards; no BRC-31 auth; custom `/files` | Resolve recipient **messagebox URL**; BRC-33-shaped client; BRC-CLOUD remains default fallback host |
 | Chat encryption | Plain body | Move toward BRC-169 encrypted envelope content |
-| Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: remittance ± inline `beefB64` on `sendMessage` (not `/files`). After inbox delivery, sender silently `postBeef`. Inbox unreachable → abort noSend BRC-29, identity-address P2PKH (no QR). Inbox not ACKed until ingest. |
+| Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
 | Soft-latch item send | Sender `postBeef` then tip-hint txid | Same P2P settle as BRC-29: `ItemSettlePath` + `noSend` to peer, then silent sender `postBeef`. Required sender broadcast only if inbox unreachable (`DELIVER_FAILED`) or self/external. |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |

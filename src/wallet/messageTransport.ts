@@ -404,8 +404,19 @@ export async function deliverOutbound(
       }),
     })
     if (res.ok) return { delivered: 'cloud', messagebox: box }
-  } catch {
-    /* local-only */
+    const detail = await res.text().catch(() => '')
+    console.warn(
+      '[messagebox] sendMessage failed',
+      res.status,
+      box,
+      detail.slice(0, 240),
+    )
+  } catch (err) {
+    console.warn(
+      '[messagebox] sendMessage error',
+      box,
+      err instanceof Error ? err.message : String(err),
+    )
   }
   return { delivered: 'local', messagebox: box }
 }

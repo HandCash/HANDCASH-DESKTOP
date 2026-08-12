@@ -1,9 +1,8 @@
 /**
  * Exhaustive settle path for a signed BRC-29 payment.
  *
- * Broadcast-before-inbox is not a variant. `peerDeliver` has no sender-broadcast
- * edge until remittance is in the box. Unreachable box → abort noSend and
- * identity-address P2PKH (`identityFallback`), not a scan receipt.
+ * Sender always broadcasts via createAction first (Babbage / toolbox). Inbox
+ * remittance is notify-only; miss → outbox retry, not a second payment.
  */
 import { validateIdentityKey } from './friends'
 
@@ -18,8 +17,8 @@ export type ChooseBrc29SettlePathArgs = {
 
 /**
  * Classify once. Same identity → this device internalizes and still posts the
- * envelope to our inbox so other devices can ingest. HandCash peers get the
- * remittance (± Atomic BEEF) in their box; they broadcast when BEEF is inline.
+ * envelope to our inbox so other devices can ingest. HandCash peers get
+ * remittance (± Atomic BEEF) in their box after the tx is already on-chain.
  */
 export function chooseBrc29SettlePath(
   args: ChooseBrc29SettlePathArgs,

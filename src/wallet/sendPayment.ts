@@ -55,6 +55,8 @@ export async function sendSatsToAddress(opts: {
       if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
       chart.send({ type: 'START', to, satoshis })
+      const { releaseStuckNosends } = await import('./actionReview')
+      await releaseStuckNosends(active)
       await prepareSpendHeal(satoshis)
       chart.send({ type: 'READY' })
 

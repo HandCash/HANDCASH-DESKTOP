@@ -278,6 +278,10 @@ export function Dashboard({
         const map = new Map(
           listFriends().map((f) => [f.identityKey.toLowerCase(), f.id]),
         )
+        const { flushPendingBrc29Outbox } = await import(
+          '../wallet/pendingBrc29Outbox'
+        )
+        await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex })
         const hints = await pollInboundTipHints({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,

@@ -1,11 +1,9 @@
 /**
- * BRC-29 peer-pay phases.
+ * BRC-29 peer-pay phases — Babbage / wallet-toolbox shape.
  *
- * createAction is always `noSend`. Deliver remittance first (`peerDeliver`).
- * After the box accepts, sender silently `postBeef` so the tx is on-chain even
- * if the payee never broadcasts. If the box is unreachable, abort the noSend
- * BRC-29 and broadcast identity-address P2PKH (`identityFallback`) — claimable
- * via address scan, no QR / physical scan.
+ * `createAction` broadcasts immediately (no `noSend`). Remittance then goes to
+ * the payee inbox. Inbox failure does not create a second tx; remittance retries
+ * from the local outbox.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { Brc29SettlePath } from './brc29SettlePath'
@@ -21,12 +19,10 @@ export type Brc29SendContext = {
 export type Brc29SendEvent =
   | { type: 'START'; payee: string; satoshis: number; settlePath: Brc29SettlePath }
   | { type: 'READY' }
-  | { type: 'SIGNED'; txid: string }
+  | { type: 'BROADCASTED'; txid: string }
   | { type: 'BEEF_IN_BOX' }
   | { type: 'REMIT_IN_BOX' }
   | { type: 'BOX_UNREACHABLE' }
-  | { type: 'BROADCASTED' }
-  | { type: 'SKIPPED' }
   | { type: 'SETTLED' }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
@@ -49,7 +45,7 @@ export const brc29SendMachine = setup({
         : {},
     ),
     setTxid: assign(({ event }) =>
-      event.type === 'SIGNED' ? { txid: event.txid, error: null } : {},
+      event.type === 'BROADCASTED' ? { txid: event.txid, error: null } : {},
     ),
     setError: assign(({ event }) =>
       event.type === 'FAIL' ? { error: event.error } : {},
@@ -82,19 +78,19 @@ export const brc29SendMachine = setup({
     },
     preparing: {
       on: {
-        READY: 'signing',
+        READY: 'broadcasting',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
-    signing: {
+    broadcasting: {
       on: {
-        SIGNED: { target: 'chooseSettle', actions: 'setTxid' },
+        BROADCASTED: { target: 'chooseSettle', actions: 'setTxid' },
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
     chooseSettle: {
       always: [
-        { guard: 'chosePeerDeliver', target: 'peerDeliver' },
+        { guard: 'chosePeerDeliver', target: 'peerNotify' },
         { guard: 'choseSelfReceive', target: 'selfReceive' },
         {
           target: 'failed',
@@ -102,33 +98,18 @@ export const brc29SendMachine = setup({
         },
       ],
     },
-    /** Remittance (± inline Atomic BEEF) to peer — no sender broadcast here. */
-    peerDeliver: {
+    /** Remittance to peer inbox — send already broadcast. */
+    peerNotify: {
       on: {
-        BEEF_IN_BOX: 'confirmBroadcast',
-        REMIT_IN_BOX: 'confirmBroadcast',
-        BOX_UNREACHABLE: 'identityFallback',
+        BEEF_IN_BOX: 'done',
+        REMIT_IN_BOX: 'done',
+        BOX_UNREACHABLE: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
     selfReceive: {
       on: {
         SETTLED: 'done',
-        FAIL: { target: 'failed', actions: 'setError' },
-      },
-    },
-    /** Silent sender postBeef after inbox delivery — failure does not fail the send. */
-    confirmBroadcast: {
-      on: {
-        BROADCASTED: 'done',
-        SKIPPED: 'done',
-        FAIL: { target: 'failed', actions: 'setError' },
-      },
-    },
-    /** Abort noSend BRC-29, broadcast identity-address P2PKH (no scan receipt). */
-    identityFallback: {
-      on: {
-        BROADCASTED: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
@@ -143,19 +124,10 @@ export const brc29SendMachine = setup({
 
 export type Brc29SendSnapshot = SnapshotFrom<typeof brc29SendMachine>
 
-/** Sender postBeef is legal only after remittance left peerDeliver. */
-export function mayBrc29SenderBroadcast(snapshot: Brc29SendSnapshot): boolean {
-  return snapshot.matches('confirmBroadcast') || snapshot.matches('selfReceive')
-}
-
-export function isBrc29SilentBroadcast(snapshot: Brc29SendSnapshot): boolean {
-  return snapshot.matches('confirmBroadcast')
-}
-
 export function mustBrc29DeliverToPeer(snapshot: Brc29SendSnapshot): boolean {
-  return snapshot.matches('peerDeliver')
+  return snapshot.matches('peerNotify')
 }
 
-export function mustBrc29IdentityFallback(snapshot: Brc29SendSnapshot): boolean {
-  return snapshot.matches('identityFallback')
+export function mustBrc29SelfReceive(snapshot: Brc29SendSnapshot): boolean {
+  return snapshot.matches('selfReceive')
 }

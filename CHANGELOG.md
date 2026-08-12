@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.198] - 2026-08-12
+
+### Fixed
+- **BSV send matches toolbox/Babbage.** One `createAction` broadcasts immediately. Remittance still goes on `sendMessage`; if the box misses, retry from a local outbox — no `noSend`, no abort, no second payment (that was the double-spend). Stuck leftover noSend actions are released before the next spend. `sendMessage` failures are logged.
+
 ## [1.2.197] - 2026-08-12
 
 ### Fixed
