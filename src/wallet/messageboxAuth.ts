@@ -9,10 +9,10 @@
  * Preimage (UTF-8):
  *   BRC-33-lite\n{method}\n{messageBox}\n{timestampMs}
  *
- * Headers:
- *   X-BRC33-Identity: <compressed pubkey hex>
- *   X-BRC33-Timestamp: <unix ms>
- *   X-BRC33-Signature: <64-byte compact r||s hex>
+ * Headers (both sent; server accepts either):
+ *   X-BRC33-Identity / Timestamp / Signature  — interim ECDSA
+ *   X-BRC103-Identity / Timestamp / Nonce / Signature — BRC-103 identity proof
+ *     (full Authrite Peer session + certificates still deferred)
  */
 import { BigNumber, PrivateKey, PublicKey, Signature, Utils } from '@bsv/sdk'
 
@@ -32,6 +32,15 @@ export function messageboxAuthPreimage(args: {
   return `BRC-33-lite\n${args.method}\n${args.messageBox}\n${args.timestamp}`
 }
 
+export function messageboxAuthritePreimage(args: {
+  method: MessageboxMethod
+  messageBox: string
+  timestamp: number
+  nonce: string
+}): string {
+  return `BRC-103-identity\n${args.method}\n${args.messageBox}\n${args.timestamp}\n${args.nonce}`
+}
+
 function compactHexFromSig(sig: Signature): string {
   const r = sig.r.toArray('be', 32)
   const s = sig.s.toArray('be', 32)
@@ -43,14 +52,20 @@ export function signMessageboxAuth(args: {
   method: MessageboxMethod
   messageBox?: string
   timestamp?: number
+  nonce?: string
 }): {
   identityKey: string
   timestamp: number
   signature: string
   messageBox: string
+  nonce: string
+  authriteSignature: string
 } {
   const messageBox = (args.messageBox || 'inbox').trim() || 'inbox'
   const timestamp = args.timestamp ?? Date.now()
+  const nonce =
+    args.nonce?.trim() ||
+    Utils.toHex(Array.from({ length: 16 }, () => Math.floor(Math.random() * 256)))
   const root = PrivateKey.fromHex(args.rootKeyHex.trim())
   const identityKey = root.toPublicKey().toString().toLowerCase()
   const preimage = messageboxAuthPreimage({
@@ -58,23 +73,41 @@ export function signMessageboxAuth(args: {
     messageBox,
     timestamp,
   })
+  const authritePreimage = messageboxAuthritePreimage({
+    method: args.method,
+    messageBox,
+    timestamp,
+    nonce,
+  })
   // PrivateKey.sign SHA-256-hashes the message (same as noble verify default).
   const signature = compactHexFromSig(
     root.sign(Utils.toArray(preimage, 'utf8')),
   )
-  return { identityKey, timestamp, signature, messageBox }
+  const authriteSignature = compactHexFromSig(
+    root.sign(Utils.toArray(authritePreimage, 'utf8')),
+  )
+  return { identityKey, timestamp, signature, messageBox, nonce, authriteSignature }
 }
 
 export function messageboxAuthHeaders(auth: {
   identityKey: string
   timestamp: number
   signature: string
+  nonce?: string
+  authriteSignature?: string
 }): Record<string, string> {
-  return {
+  const headers: Record<string, string> = {
     'X-BRC33-Identity': auth.identityKey,
     'X-BRC33-Timestamp': String(auth.timestamp),
     'X-BRC33-Signature': auth.signature,
   }
+  if (auth.nonce && auth.authriteSignature) {
+    headers['X-BRC103-Identity'] = auth.identityKey
+    headers['X-BRC103-Timestamp'] = String(auth.timestamp)
+    headers['X-BRC103-Nonce'] = auth.nonce
+    headers['X-BRC103-Signature'] = auth.authriteSignature
+  }
+  return headers
 }
 
 /** Local verify (tests). Server uses @noble/secp256k1. */
@@ -101,6 +134,42 @@ export function verifyMessageboxAuth(args: {
       method: args.method,
       messageBox: args.messageBox,
       timestamp: args.timestamp,
+    })
+    return PublicKey.fromString(args.identityKey).verify(
+      Utils.toArray(preimage, 'utf8'),
+      sig,
+    )
+  } catch {
+    return false
+  }
+}
+
+export function verifyMessageboxAuthrite(args: {
+  identityKey: string
+  method: MessageboxMethod
+  messageBox: string
+  timestamp: number
+  nonce: string
+  signature: string
+  now?: number
+}): boolean {
+  const now = args.now ?? Date.now()
+  if (!/^[0-9a-f]{66}$/i.test(args.identityKey)) return false
+  if (!args.nonce?.trim()) return false
+  if (!Number.isFinite(args.timestamp)) return false
+  if (Math.abs(now - args.timestamp) > MESSAGEBOX_AUTH_MAX_SKEW_MS) return false
+  try {
+    const compact = Utils.toArray(args.signature, 'hex')
+    if (compact.length !== 64) return false
+    const sig = new Signature(
+      new BigNumber(Utils.toHex(compact.slice(0, 32)), 16),
+      new BigNumber(Utils.toHex(compact.slice(32, 64)), 16),
+    )
+    const preimage = messageboxAuthritePreimage({
+      method: args.method,
+      messageBox: args.messageBox,
+      timestamp: args.timestamp,
+      nonce: args.nonce,
     })
     return PublicKey.fromString(args.identityKey).verify(
       Utils.toArray(preimage, 'utf8'),

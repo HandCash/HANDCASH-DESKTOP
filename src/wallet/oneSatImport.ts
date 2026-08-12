@@ -683,8 +683,9 @@ export async function resolveBsv21Holding(
 }
 
 /**
- * Resolve inscription origin for a 1-sat outpoint.
- * Falls back to walking prior inputs when GorillaPool has not indexed the new location yet.
+ * Resolve inscription *display* origin for a 1-sat outpoint (grade C CDN / indexer
+ * metadata). Ownership and latch naming must not depend on this — soft-latch OP_RETURN
+ * + SPV BEEF remain grade A. GorillaPool `/content` is pictures after origin is known.
  * BSV-21 fungibles are intentionally excluded — use {@link resolveBsv21Holding}.
  */
 export async function resolveOneSatInscription(

@@ -5,8 +5,9 @@
  * not the protocol: BRC-169 resolve returns a `messagebox` URL; federation posts
  * to the recipient's box. See `docs/wallet-p2p-messagebox.md`.
  *
- * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is interim
- * ECDSA identity headers (`messageboxAuth.ts`) until BRC-103/104 Authrite.
+ * BRC-33 wire: send/list/ack shapes + `status: success`. Auth is dual:
+ * BRC-103 identity headers + interim ECDSA (`messageboxAuth.ts`). Full Authrite
+ * Peer sessions still deferred.
  * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
  * encrypted envelopes deferred). `/files` is a HandCash extension.
  */
@@ -399,7 +400,7 @@ export async function pollInboundTipHints(args: {
             messagebox: box,
             status:
               decoded.kind === 'tip' || decoded.kind === 'pay-sent'
-                ? 'Receiving…'
+                ? 'Receiving (SPV)'
                 : decoded.meta?.status,
           },
         })

@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+## [1.2.191] - 2026-08-11
+
+### Added
+- **Offline BRC-29 remittance QR/URI** (`brc29:`) beside messagebox — scan or paste to claim without the box. Send success shows copy + QR.
+- **BRC-103 identity headers** on messagebox alongside interim ECDSA (server accepts either). Full Authrite Peer sessions still deferred.
+
+### Changed
+- SPV receive copy is **Receiving (SPV)**; extra rawtx + merkle provider failover; GorillaPool remains CDN/display only.
+
+## [1.2.190] - 2026-08-11
+
+### Fixed
+- **Typecheck for BRC-29 peer pay.** Tighten remittance / tip-hint types so Desktop CI `tsc` stays green after 1.2.189.
+
 ## [1.2.189] - 2026-08-11
 
 ### Changed

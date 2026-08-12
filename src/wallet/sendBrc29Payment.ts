@@ -318,7 +318,7 @@ export async function internalizeBrc29Payment(opts: {
     return { accepted: false, satoshis: 0, balanceSats: null, reason: 'locked' }
   }
 
-  markInboundPaymentStatus(id, 'Receiving…')
+    markInboundPaymentStatus(id, 'Receiving (SPV)')
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing BRC-29 payment (SPV)',
@@ -394,6 +394,28 @@ export async function internalizeBrc29Payment(opts: {
     setSyncHealth({ phase: 'ok', message: null })
     return { accepted: false, satoshis: 0, balanceSats: null, reason: msg }
   }
+}
+
+/** Claim a `brc29:` settlement QR / paste (messagebox not required). */
+export async function claimBrc29SettlementUri(
+  raw: string,
+): Promise<InternalizeBrc29Result> {
+  const { tryParseBrc29SettlementUri } = await import('./brc29Uri')
+  const parsed = tryParseBrc29SettlementUri(raw)
+  if (!parsed) {
+    return {
+      accepted: false,
+      satoshis: 0,
+      balanceSats: null,
+      reason: 'invalid-settlement-uri',
+    }
+  }
+  return internalizeBrc29Payment({
+    txid: parsed.txid,
+    remittance: parsed.remittance,
+    senderIdentityKey: parsed.senderIdentityKey,
+    satoshis: parsed.sats ?? undefined,
+  })
 }
 
 export type PaymentTipHint = {

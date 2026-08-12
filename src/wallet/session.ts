@@ -126,7 +126,13 @@ function installMerklePreferBitails(services: Services): void {
         getMerklePathServices?: { services?: Array<{ name: string }>; reset?: () => void }
       }
     ).getMerklePathServices
-    preferServiceOrder(collection, ['Arcade', 'Bitails', 'WhatsOnChain'])
+    preferServiceOrder(collection, [
+      'Arcade',
+      'Bitails',
+      'Taal',
+      'GorillaPool',
+      'WhatsOnChain',
+    ])
   } catch (err) {
     console.warn('[merkle] could not prefer Bitails', err)
   }

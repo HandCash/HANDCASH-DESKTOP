@@ -2,6 +2,8 @@ import { useState } from 'react'
 import { clearNavChild, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
 import { setPendingPairScan } from '../wallet/pendingPairScan'
+import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
+import { claimBrc29SettlementUri } from '../wallet/sendBrc29Payment'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { identityKeyFromScan, QrScanner } from './QrScanner'
@@ -95,7 +97,7 @@ export function ScanPanel() {
   return (
     <div className="nav-child-panel scan-panel" data-aeon-scope="scan">
       <QrScanner
-        hint="Point at a device-link, PeerPay, identity, or address QR"
+        hint="Point at a device-link, PeerPay, remittance, identity, or address QR"
         onCancel={() => {
           playWalletSound('soft')
           clearNavChild()
@@ -113,6 +115,32 @@ export function ScanPanel() {
             playWalletSound('soft')
             toastSuccess('Device link QR', 'Confirming on Use on another device…')
             openSetting('device-handoff')
+            return
+          }
+
+          if (tryParseBrc29SettlementUri(trimmed)) {
+            void (async () => {
+              try {
+                const result = await claimBrc29SettlementUri(trimmed)
+                if (result.accepted) {
+                  playWalletSound('soft')
+                  toastSuccess('Payment claimed', 'BRC-29 remittance internalized (SPV)')
+                  clearNavChild()
+                  return
+                }
+                playWalletSound('error')
+                toastError(
+                  'Claim failed',
+                  result.reason || 'Could not internalize that remittance QR',
+                )
+              } catch (err) {
+                playWalletSound('error')
+                toastError(
+                  'Claim failed',
+                  err instanceof Error ? err.message : String(err),
+                )
+              }
+            })()
             return
           }
 

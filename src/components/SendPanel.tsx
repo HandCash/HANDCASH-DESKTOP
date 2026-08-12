@@ -30,7 +30,12 @@ import {
   refreshSpendableBalance,
   sendSatsToAddress,
 } from '../wallet/sendPayment'
-import { sendBrc29ToIdentityKey } from '../wallet/sendBrc29Payment'
+import {
+  claimBrc29SettlementUri,
+  sendBrc29ToIdentityKey,
+} from '../wallet/sendBrc29Payment'
+import { buildBrc29SettlementUri, tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
+import { copyText } from '../wallet/clipboard'
 import {
   requestSpendPriority,
   releaseSpendPriority,
@@ -40,6 +45,7 @@ import {
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
+import QRCode from 'qrcode'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
@@ -190,6 +196,22 @@ export function SendPanel({
   const applyRecipientInput = (value: string) => {
     setRecipientQuery(value)
     setShowFriendMatches(true)
+    if (tryParseBrc29SettlementUri(value)) {
+      void (async () => {
+        try {
+          const result = await claimBrc29SettlementUri(value)
+          if (result.accepted) {
+            if (result.balanceSats != null) onSent(result.balanceSats)
+            send({ type: 'SUCCESS', txid: tryParseBrc29SettlementUri(value)!.txid })
+            return
+          }
+          onFail(result.reason || 'Could not claim BRC-29 payment')
+        } catch (err) {
+          onFail(err instanceof Error ? err.message : String(err))
+        }
+      })()
+      return
+    }
     const peer = tryParsePeerPayUri(value)
     if (peer) {
       try {
@@ -329,7 +351,26 @@ export function SendPanel({
         }
       }
 
-      send({ type: 'SUCCESS', txid })
+      let settlementUri: string | null = null
+      if (payeeKey != null && brc29Remittance) {
+        try {
+          const { getActiveWallet } = await import('../wallet/session')
+          const senderKey = getActiveWallet()?.identityKey
+          if (senderKey) {
+            settlementUri = buildBrc29SettlementUri({
+              payeeIdentityKey: payeeKey,
+              senderIdentityKey: senderKey,
+              txid,
+              remittance: brc29Remittance,
+              sats: satoshis,
+            })
+          }
+        } catch {
+          /* QR is additive */
+        }
+      }
+
+      send({ type: 'SUCCESS', txid, settlementUri })
       onSent(nextBalance)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -489,37 +530,17 @@ export function SendPanel({
       )}
 
       {sendSnap.matches('success') && (
-        <div className="send-stage send-stage-success">
-          <div className="send-stage-body send-stage-body-center">
-            <div className="send-success-mark" aria-hidden>
-              <CheckCircleIcon size={80} />
-            </div>
-            <p className="send-status-title">Sent</p>
-            <p className="send-confirm-amount send-success-amount">{amountLabel}</p>
-            {amountSecondary ? (
-              <p className="send-amount-secondary">≈ {amountSecondary}</p>
-            ) : null}
-            <p className="send-confirm-to">
-              to <strong>{recipientLabel}</strong>
-            </p>
-            {sendSnap.context.txid ? (
-              <p className="mono send-txid" title={sendSnap.context.txid}>
-                {shortenAddress(sendSnap.context.txid)}
-              </p>
-            ) : null}
-          </div>
-          <div className="actions send-actions">
-            <button
-              className="btn btn-primary"
-              onClick={() => {
-                send({ type: 'RESET' })
-                onClose()
-              }}
-            >
-              Done
-            </button>
-          </div>
-        </div>
+        <SendSuccess
+          amountLabel={amountLabel}
+          amountSecondary={amountSecondary}
+          recipientLabel={recipientLabel}
+          txid={sendSnap.context.txid}
+          settlementUri={sendSnap.context.settlementUri}
+          onDone={() => {
+            send({ type: 'RESET' })
+            onClose()
+          }}
+        />
       )}
 
       {sendSnap.matches('failure') && (
@@ -538,6 +559,94 @@ export function SendPanel({
           </div>
         </div>
       )}
+    </div>
+  )
+}
+
+function SendSuccess(props: {
+  amountLabel: string
+  amountSecondary: string | null
+  recipientLabel: string
+  txid: string | null
+  settlementUri: string | null
+  onDone: () => void
+}) {
+  const [qr, setQr] = useState<string | null>(null)
+  useEffect(() => {
+    const uri = props.settlementUri
+    if (!uri) {
+      setQr(null)
+      return
+    }
+    let cancelled = false
+    void QRCode.toDataURL(uri, {
+      width: 180,
+      margin: 2,
+      color: { dark: '#000000', light: '#FFFFFF' },
+      errorCorrectionLevel: 'M',
+    })
+      .then((url) => {
+        if (!cancelled) setQr(url)
+      })
+      .catch(() => {
+        if (!cancelled) setQr(null)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [props.settlementUri])
+
+  return (
+    <div className="send-stage send-stage-success">
+      <div className="send-stage-body send-stage-body-center">
+        <div className="send-success-mark" aria-hidden>
+          <CheckCircleIcon size={80} />
+        </div>
+        <p className="send-status-title">Sent</p>
+        <p className="send-confirm-amount send-success-amount">{props.amountLabel}</p>
+        {props.amountSecondary ? (
+          <p className="send-amount-secondary">≈ {props.amountSecondary}</p>
+        ) : null}
+        <p className="send-confirm-to">
+          to <strong>{props.recipientLabel}</strong>
+        </p>
+        {props.txid ? (
+          <p className="mono send-txid" title={props.txid}>
+            {shortenAddress(props.txid)}
+          </p>
+        ) : null}
+        {props.settlementUri ? (
+          <>
+            {qr ? (
+              <img
+                src={qr}
+                alt="BRC-29 remittance QR"
+                width={180}
+                height={180}
+                style={{ margin: '12px auto 0', display: 'block' }}
+              />
+            ) : null}
+            <p className="send-status-sub">
+              Remittance QR — peer can claim without messagebox
+            </p>
+          </>
+        ) : null}
+      </div>
+      <div className="actions send-actions">
+        {props.settlementUri ? (
+          <button
+            className="btn btn-ghost"
+            onClick={() =>
+              void copyText(props.settlementUri!, { label: 'BRC-29 remittance link' })
+            }
+          >
+            Copy remittance
+          </button>
+        ) : null}
+        <button className="btn btn-primary" onClick={props.onDone}>
+          Done
+        </button>
+      </div>
     </div>
   )
 }

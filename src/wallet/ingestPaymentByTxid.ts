@@ -62,7 +62,7 @@ export async function ingestPaymentByTxid(
     return { imported: 0, satoshis: 0, balanceSats: null, reason: 'locked' }
   }
 
-  markInboundPaymentStatus(id, 'Receiving…')
+  markInboundPaymentStatus(id, 'Receiving (SPV)')
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing payment (SPV)',

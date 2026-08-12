@@ -179,8 +179,8 @@ function payStatusLabel(msg: ChatMessage, payment: PaymentProgress): string {
     return msg.meta?.status
       ? msg.meta.status
       : msg.meta?.txid
-        ? `Receiving · ${shortenTxid(msg.meta.txid)}`
-        : 'Receiving…'
+        ? `Receiving (SPV) · ${shortenTxid(msg.meta.txid)}`
+        : 'Receiving (SPV)'
   }
   return msg.meta?.status ?? ''
 }

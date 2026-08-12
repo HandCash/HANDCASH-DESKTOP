@@ -73,6 +73,11 @@ function sourcesFor(chain: Chain): RawTxSource[] {
         fetch: (txid) =>
           fetchJungleBusTx(`https://junglebus.gorillapool.io/v1/transaction/get/${txid}`),
       },
+      {
+        name: 'WhatsOnChainRawTxHex',
+        fetch: (txid) =>
+          fetchHexTx(`https://api.whatsonchain.com/v1/bsv/main/tx/${txid}/hex`),
+      },
     ]
   }
   if (chain === 'test') {
