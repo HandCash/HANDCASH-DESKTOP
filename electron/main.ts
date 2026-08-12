@@ -3,7 +3,12 @@ import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import log from 'electron-log'
-import { startHttpServer, type BridgeServerHandle } from './httpServer.js'
+import {
+  failPendingBridgeRequests,
+  startHttpServer,
+  type BridgeServerHandle,
+} from './httpServer.js'
+import { createBridgeWindowSource } from './bridgeWindow.js'
 import {
   listLanIpv4Addresses,
   startDevicePeerServer,
@@ -50,6 +55,26 @@ let bridge: BridgeServerHandle | null = null
 let bridgeError: string | null = null
 let devicePeer: Awaited<ReturnType<typeof startDevicePeerServer>> | null = null
 let packagedUiOrigin: string | null = null
+let quitting = false
+
+/**
+ * The bridge resolves the live window per request. Closing the window on macOS
+ * leaves the app running, so a captured reference would stay destroyed forever
+ * and every BRC-100 connect would answer 503.
+ */
+const bridgeWindows = createBridgeWindowSource({
+  getWindow: () => mainWindow,
+  isQuitting: () => quitting,
+  reviveWindow: () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow()
+      return
+    }
+    if (mainWindow.isMinimized()) mainWindow.restore()
+    mainWindow.show()
+  },
+  onLog: (message) => log.info(message),
+})
 
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('--disable-gpu-sandbox')
@@ -306,18 +331,34 @@ function createWindow(): void {
   mainWindow.webContents.on('will-navigate', handleNavigation)
   mainWindow.webContents.on('will-redirect', handleNavigation)
 
+  const contentsId = mainWindow.webContents.id
+  mainWindow.webContents.on('render-process-gone', (_e, details) => {
+    bridgeWindows.markRendererGone(contentsId)
+    failPendingBridgeRequests(`renderer process gone (${details.reason})`)
+  })
+  mainWindow.webContents.on('did-start-loading', () => {
+    bridgeWindows.markRendererGone(contentsId)
+    failPendingBridgeRequests('renderer reloading')
+  })
+  mainWindow.webContents.on('destroyed', () => {
+    bridgeWindows.markRendererGone(contentsId)
+    failPendingBridgeRequests('webContents destroyed')
+  })
+
   mainWindow.on('closed', () => {
+    bridgeWindows.markRendererGone(contentsId)
+    failPendingBridgeRequests('window closed')
     mainWindow = null
   })
 }
 
 async function ensureBridge(): Promise<void> {
-  if (bridge) return
-  if (!mainWindow) throw new Error('No window for BRC-100 bridge')
   try {
-    bridge = await startHttpServer(mainWindow)
+    if (!bridge) {
+      bridge = await startHttpServer(bridgeWindows)
+      log.info('BRC-100 bridge online', bridge.httpsUrl, bridge.httpUrl)
+    }
     bridgeError = null
-    log.info('BRC-100 bridge online', bridge.httpsUrl, bridge.httpUrl)
   } catch (err) {
     bridge = null
     bridgeError = err instanceof Error ? err.message : String(err)
@@ -325,7 +366,7 @@ async function ensureBridge(): Promise<void> {
   }
   try {
     if (!devicePeer) {
-      devicePeer = await startDevicePeerServer(mainWindow)
+      devicePeer = await startDevicePeerServer(bridgeWindows)
       log.info('Device peer online', devicePeer.lanUrls)
     }
   } catch (err) {
@@ -370,6 +411,7 @@ app.on('window-all-closed', () => {
 })
 
 app.on('before-quit', () => {
+  quitting = true
   void bridge?.stop()
   bridge = null
   void devicePeer?.stop()
@@ -499,6 +541,16 @@ ipcMain.handle('updater:install', () => {
 })
 
 ipcMain.handle('bridge:get-status', () => bridgeStatus())
+
+/**
+ * The renderer registers its `http-request` listener on mount. Without this the
+ * bridge could send to a window whose listener does not exist yet and the call
+ * would be dropped until the 120s timeout.
+ */
+ipcMain.on('bridge:renderer-ready', (event) => {
+  bridgeWindows.markRendererReady(event.sender.id)
+  notifyBridgeStatus()
+})
 
 ipcMain.handle('bridge:restart', async () => {
   if (bridge) {

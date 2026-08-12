@@ -3583,6 +3583,22 @@ a.history-row-link:hover .history-tx-hint {
   background: #c9852a;
 }
 
+.history-action-badge.is-failed {
+  background: #c44747;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.history-row.is-failed .history-title,
+.history-row.is-failed .history-amount {
+  color: #c44747;
+}
+
+.history-row.is-failed .history-when {
+  color: hsl(var(--muted-foreground));
+}
+
 /* Opposite corner from the send/receive badge. */
 .history-icon-wrap .collectable-verify-mark {
   top: -2px;

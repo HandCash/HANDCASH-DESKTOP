@@ -91,6 +91,7 @@ vi.mock('./appActivity', () => ({
   noteOutboundSendPending: () => {},
   noteOutboundSendComplete: () => {},
   clearOutboundSendPending: () => {},
+  failOutboundSendPending: () => {},
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))

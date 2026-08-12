@@ -9,6 +9,8 @@ import {
   activityTokenAmountDisplay,
   getActivityById,
   isEventActivity,
+  isFailedActivity,
+  activityFailureReason,
   isItemActivity,
   isMintTokenActivity,
   isPendingActivity,
@@ -150,6 +152,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
   const pending = isPendingActivity(entry)
+  const failed = isFailedActivity(entry)
+  const failureReason = failed ? activityFailureReason(entry) : null
   const inventoryProven = Boolean(
     entry.item?.outpoint &&
       getCachedCollectables().some(
@@ -271,10 +275,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             <p className="history-when">
               {showPending
                 ? pendingLabel
-                : new Date(entry.at).toLocaleString(undefined, {
-                    dateStyle: 'medium',
-                    timeStyle: 'short',
-                  })}
+                : failed && failureReason
+                  ? failureReason
+                  : new Date(entry.at).toLocaleString(undefined, {
+                      dateStyle: 'medium',
+                      timeStyle: 'short',
+                    })}
             </p>
           </div>
         ) : (

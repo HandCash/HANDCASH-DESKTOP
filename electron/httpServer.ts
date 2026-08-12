@@ -1,9 +1,10 @@
 import express, { type Request, type Response } from 'express'
 import cors from 'cors'
-import { ipcMain, type BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import https, { type Server } from 'node:https'
 import log from 'electron-log'
 import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
+import { type BridgeWindowSource } from './bridgeWindow.js'
 
 type HttpRequestEvent = {
   method: string
@@ -30,6 +31,14 @@ const REQUEST_TIMEOUT_MS = 120_000
 let requestIdCounter = 1
 const pendingRequests = new Map<number, PendingRequest>()
 
+/**
+ * Reject in-flight bridge calls when the renderer they were sent to goes away.
+ * Called per window by main.ts — the bridge itself no longer owns a window.
+ */
+export function failPendingBridgeRequests(reason: string): void {
+  failAllPendingRequests(`WALLET_BRIDGE_UNAVAILABLE: ${reason}`)
+}
+
 function failAllPendingRequests(reason: string): void {
   if (pendingRequests.size === 0) return
   const error = new Error(reason)
@@ -52,7 +61,13 @@ function canWriteResponse(res: Response): boolean {
   return !res.writableEnded && !res.destroyed && res.writable
 }
 
-export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
+const REFUSAL_DESCRIPTION: Record<string, string> = {
+  'app-quitting': 'wallet is quitting',
+  'window-unavailable': 'wallet window could not be opened',
+  'renderer-not-ready': 'wallet window is still loading',
+}
+
+export async function startHttpServer(windows: BridgeWindowSource): Promise<{
   httpsUrl: string
   httpUrl: string
   stop: () => Promise<void>
@@ -143,23 +158,6 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
   }
   ipcMain.on('http-response', onHttpResponse)
 
-  const onRendererUnavailable = (reason: string) => {
-    failAllPendingRequests(`WALLET_BRIDGE_UNAVAILABLE: ${reason}`)
-  }
-
-  mainWindow.webContents.on('render-process-gone', (_e, details) => {
-    onRendererUnavailable(`renderer process gone (${details.reason})`)
-  })
-  mainWindow.webContents.on('did-start-loading', () => {
-    onRendererUnavailable('renderer reloading')
-  })
-  mainWindow.webContents.on('destroyed', () => {
-    onRendererUnavailable('webContents destroyed')
-  })
-  mainWindow.on('closed', () => {
-    onRendererUnavailable('window closed')
-  })
-
   app.all('*', async (req: Request, res: Response) => {
     const request_id = requestIdCounter++
     try {
@@ -175,9 +173,13 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
         body = JSON.stringify(req.body)
       }
 
-      if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-        throw new Error('WALLET_BRIDGE_UNAVAILABLE: window is not available')
+      const acquired = await windows.acquire()
+      if (acquired.kind === 'refuse') {
+        throw new Error(
+          `WALLET_BRIDGE_UNAVAILABLE: ${REFUSAL_DESCRIPTION[acquired.reason] ?? acquired.reason} (${acquired.reason})`,
+        )
       }
+      const target = acquired.window
 
       const requestEvent: HttpRequestEvent = {
         method: req.method,
@@ -209,12 +211,10 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
           pendingRequests.delete(request_id)
           reject(new Error('CLIENT_DISCONNECTED: HTTP client closed the connection'))
           try {
-            if (!mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-              mainWindow.webContents.send('http-request-cancelled', {
-                request_id,
-                reason: 'CLIENT_DISCONNECTED',
-              })
-            }
+            windows.peek()?.webContents.send('http-request-cancelled', {
+              request_id,
+              reason: 'CLIENT_DISCONNECTED',
+            })
           } catch {
             // ignore
           }
@@ -226,7 +226,7 @@ export async function startHttpServer(mainWindow: BrowserWindow): Promise<{
       })
 
       log.info(`[HTTP] → renderer request_id=${request_id} ${req.method} ${req.path}`)
-      mainWindow.webContents.send('http-request', requestEvent)
+      target.webContents.send('http-request', requestEvent)
       const httpResponse = await responsePromise
       log.info(`[HTTP] ← renderer request_id=${request_id} status=${httpResponse.status}`)
 

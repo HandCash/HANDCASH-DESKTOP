@@ -20,7 +20,7 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
-  clearOutboundSendPending,
+  failOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
 } from './appActivity'
 import {
@@ -2317,7 +2317,11 @@ export async function sendCollectable(args: {
 
   const failSend = (err: unknown): never => {
     clearPendingSend(outboundPending.id)
-    clearOutboundSendPending(outboundPending.id)
+    const formatted = formatSendError(err)
+    failOutboundSendPending({
+      pendingId: outboundPending.id,
+      reason: formatted.message,
+    })
     protectTipsFromGhostDrop([outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])])
     forgetItemsSent([outpoint])
     if (priorLatch && isNoLongerSpendableError(err)) {
@@ -2325,7 +2329,6 @@ export async function sendCollectable(args: {
         { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
       ])
     }
-    const formatted = formatSendError(err)
     console.error('[collectables] send failed', formatted.message, err)
     chart.send({ type: 'FAIL', error: formatted.message })
     chart.stop()
@@ -2721,7 +2724,10 @@ export async function sendCollectable(args: {
   )
   } catch (err) {
     clearPendingSend(outboundPending.id)
-    clearOutboundSendPending(outboundPending.id)
+    failOutboundSendPending({
+      pendingId: outboundPending.id,
+      reason: err instanceof Error ? err.message : String(err),
+    })
     throw err
   }
 }

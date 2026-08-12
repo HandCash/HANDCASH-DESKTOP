@@ -66,6 +66,9 @@ const handcash = {
       handler(payload)
     }
     ipcRenderer.on('http-request', listener)
+    // Registering the listener *is* the readiness signal — the bridge holds
+    // requests until it knows someone is listening.
+    ipcRenderer.send('bridge:renderer-ready')
     return () => ipcRenderer.removeListener('http-request', listener)
   },
   onDevicePeerHttpRequest: (handler: (event: HttpRequestEvent) => void) => {

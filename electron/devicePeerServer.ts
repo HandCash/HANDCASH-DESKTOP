@@ -4,9 +4,10 @@
  */
 import express, { type Request, type Response } from 'express'
 import cors from 'cors'
-import { ipcMain, type BrowserWindow } from 'electron'
+import { ipcMain } from 'electron'
 import os from 'node:os'
 import log from 'electron-log'
+import { type BridgeWindowSource } from './bridgeWindow.js'
 
 /** Keep in sync with src/wallet/deviceWallets.ts DEVICE_PEER_PORT */
 const DEVICE_PEER_PORT = 3340
@@ -53,7 +54,7 @@ export function listLanIpv4Addresses(): string[] {
   return out
 }
 
-export async function startDevicePeerServer(mainWindow: BrowserWindow): Promise<{
+export async function startDevicePeerServer(windows: BridgeWindowSource): Promise<{
   port: number
   lanUrls: string[]
   stop: () => Promise<void>
@@ -79,9 +80,12 @@ export async function startDevicePeerServer(mainWindow: BrowserWindow): Promise<
   app.all('/handcash-device/v1/*', async (req: Request, res: Response) => {
     const request_id = requestIdCounter++
     try {
-      if (mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
-        throw new Error('WALLET_BRIDGE_UNAVAILABLE')
+      // Device peer is same-identity background sync — never open a window for it.
+      const acquired = await windows.acquire('existing')
+      if (acquired.kind === 'refuse') {
+        throw new Error(`WALLET_BRIDGE_UNAVAILABLE: ${acquired.reason}`)
       }
+      const target = acquired.window
       const headers: Record<string, string> = {}
       for (const [key, value] of Object.entries(req.headers)) {
         if (typeof value === 'string') headers[key] = value
@@ -105,7 +109,7 @@ export async function startDevicePeerServer(mainWindow: BrowserWindow): Promise<
           reject(new Error('DEVICE_PEER_TIMEOUT'))
         }, REQUEST_TIMEOUT_MS)
         pendingRequests.set(request_id, { resolve, reject, timer })
-        mainWindow.webContents.send('device-peer-http-request', requestEvent)
+        target.webContents.send('device-peer-http-request', requestEvent)
       })
 
       const httpResponse = await responsePromise

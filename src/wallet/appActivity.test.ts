@@ -24,6 +24,9 @@ import {
   noteInboundReceivePending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
+  failOutboundSendPending,
+  isFailedActivity,
+  activityFailureReason,
   expireStaleInboundPending,
   expireStaleOutboundPending,
   pruneMissingOnChainActivity,
@@ -285,7 +288,7 @@ describe('inbound receive activity', () => {
     expect(rows.some((e) => e.status !== 'pending' && e.txid)).toBe(true)
   })
 
-  it('expires stale Sending… rows that never completed', () => {
+  it('marks stale Sending… rows as failed with a reason', () => {
     noteOutboundSendPending({
       pendingId: 'stuck',
       sats: 1000,
@@ -293,7 +296,38 @@ describe('inbound receive activity', () => {
     })
     expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
     expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
-    expect(listRecentActivity(10)).toHaveLength(0)
+    const row = listRecentActivity(10)[0]!
+    expect(isFailedActivity(row)).toBe(true)
+    expect(activityFailureReason(row)).toMatch(/never confirmed/i)
+    expect(activityEntryTitle(row)).toBe('Send failed')
+  })
+
+  it('keeps a failed send in Activity with the why', () => {
+    noteOutboundSendPending({
+      pendingId: 'poison',
+      sats: 500,
+      to: '1abc',
+    })
+    expect(
+      failOutboundSendPending({
+        pendingId: 'poison',
+        reason: 'undefined is not iterable',
+      }),
+    ).toBe(true)
+    const row = listRecentActivity(10)[0]!
+    expect(isFailedActivity(row)).toBe(true)
+    expect(activityFailureReason(row)).toBe('undefined is not iterable')
+    expect(row.sats).toBe(500)
+    // A second fail on an already-failed row is a no-op.
+    expect(
+      failOutboundSendPending({
+        pendingId: 'poison',
+        reason: 'should not replace',
+      }),
+    ).toBe(false)
+    expect(activityFailureReason(listRecentActivity(10)[0]!)).toBe(
+      'undefined is not iterable',
+    )
   })
 
   it('prunes settled Activity rows whose txid 404s on-chain', async () => {

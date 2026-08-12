@@ -24,6 +24,8 @@ import {
   isMintTokenActivity,
   isTokenActivity,
   isPendingActivity,
+  isFailedActivity,
+  activityFailureReason,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -173,6 +175,8 @@ function HistoryRow({
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
   const pending = isPendingActivity(entry)
+  const failed = isFailedActivity(entry)
+  const failureReason = failed ? activityFailureReason(entry) : null
   const inventoryProven = Boolean(
     entry.item?.outpoint &&
       getCachedCollectables().some(
@@ -207,30 +211,33 @@ function HistoryRow({
           : spent
             ? `−${amountLabel}`
             : `+${amountLabel}`
-  const subtitle = event
-    ? entry.origin !== WALLET_ACTIVITY_ORIGIN
-      ? entry.origin
-      : null
-    : item && shown?.app
-      ? shown.app
-      : null
+  const subtitle = failed && failureReason
+    ? failureReason
+    : event
+      ? entry.origin !== WALLET_ACTIVITY_ORIGIN
+        ? entry.origin
+        : null
+      : item && shown?.app
+        ? shown.app
+        : null
 
   const entryKey = activityEntryKey(entry)
   const showVerify = Boolean(
     !spent && !event && !inventoryProven && (showPending || (item && verifying)),
   )
-  const badgeKind = minted ? 'mint' : spent ? 'send' : 'receive'
-  const badgeLabel = minted ? 'Mint' : spent ? 'Send' : 'Receive'
+  const badgeKind = failed ? 'failed' : minted ? 'mint' : spent ? 'send' : 'receive'
+  const badgeLabel = failed ? 'Failed' : minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
   return (
     <li
       data-activity-key={entryKey}
       data-activity-newest={newest ? '' : undefined}
       data-activity-pending={showPending ? '' : undefined}
+      data-activity-failed={failed ? '' : undefined}
     >
       <button
         type="button"
-        className="history-row history-row-btn"
+        className={`history-row history-row-btn${failed ? ' is-failed' : ''}`}
         onClick={() => {
           if (entry.id === LIVE_OUTBOUND_ID) return
           playWalletSound('soft')
@@ -279,7 +286,9 @@ function HistoryRow({
               aria-label={badgeLabel}
               title={badgeLabel}
             >
-              {minted ? (
+              {failed ? (
+                <span aria-hidden>!</span>
+              ) : minted ? (
                 <MintIcon size={8} />
               ) : spent ? (
                 <SendIcon size={6.75} />
@@ -296,13 +305,13 @@ function HistoryRow({
         <div className="history-amount-block">
           <span
             className={
-              event || item
+              event || item || failed
                 ? 'history-amount history-amount-item'
                 : 'history-amount'
             }
             title={amountLabel}
           >
-            {signed}
+            {failed ? 'Failed' : signed}
           </span>
           {showWhen ? (
             <span className="history-when">

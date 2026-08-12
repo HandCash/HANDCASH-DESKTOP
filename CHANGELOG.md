@@ -2,8 +2,11 @@
 
 ## [1.2.220] - 2026-08-12
 
-### Changed
+### Fixed
+- **Metanet / Pixel War / foxplorer connect dead after closing the wallet window.** The BRC-100 bridge closed over the first BrowserWindow; on macOS the app stays alive with a destroyed window, so every `/waitForAuthentication` answered `WALLET_BRIDGE_UNAVAILABLE: window is not available`. The bridge now resolves the live window per request, waits until the renderer registers its listener, and revives the window when a connect arrives.
+- **Failed sends vanished from Activity.** Sending… rows were deleted on error. They now stay as failed rows with the reason (also when the 90s stuck watchdog fires).
 
+### Changed
 - Patch release (every push must ship a new version).
 
 ## [1.2.219] - 2026-08-12

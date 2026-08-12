@@ -7,8 +7,11 @@ const STORAGE_KEY = 'handcash.brc100.appActivity'
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
 export type ActivityKind = 'spent' | 'earned' | 'event'
 
-/** In-flight ingest / authenticity. Absent = settled (legacy rows). */
-export type ActivityStatus = 'pending' | 'complete'
+/**
+ * In-flight ingest / authenticity. Absent = settled (legacy rows).
+ * `failed` is terminal: the send never reached a txid and the row keeps the reason.
+ */
+export type ActivityStatus = 'pending' | 'complete' | 'failed'
 
 /** Collectable / NFT / fungible remittance attached to an activity row. */
 export type ActivityItem = {
@@ -43,6 +46,20 @@ export type ActivityEntry = {
   status?: ActivityStatus
   /** Links an in-flight outbound send until a txid lands. */
   pendingId?: string
+  /** Why a `failed` row failed — shown in Activity so a dead send is never silent. */
+  failureReason?: string
+}
+
+/** Keeps stored reasons short enough that one row cannot bloat history. */
+const MAX_FAILURE_REASON = 240
+
+export function normalizeFailureReason(reason: unknown): string | undefined {
+  if (typeof reason !== 'string') return undefined
+  const trimmed = reason.replace(/\s+/g, ' ').trim()
+  if (!trimmed) return undefined
+  return trimmed.length > MAX_FAILURE_REASON
+    ? `${trimmed.slice(0, MAX_FAILURE_REASON - 1)}…`
+    : trimmed
 }
 
 const ACTIVITY_KINDS = new Set<ActivityKind>(['spent', 'earned', 'event'])
@@ -95,16 +112,19 @@ function readAll(): ActivityEntry[] {
         const row = e as ActivityEntry
         const item = normalizeActivityItem(row.item)
         const status: ActivityStatus | undefined =
-          row.status === 'pending' ? 'pending' : undefined
+          row.status === 'pending' ? 'pending' : row.status === 'failed' ? 'failed' : undefined
         const pendingId =
           typeof row.pendingId === 'string' && row.pendingId.trim()
             ? row.pendingId.trim()
             : undefined
+        const failureReason =
+          status === 'failed' ? normalizeFailureReason(row.failureReason) : undefined
         return {
           ...row,
           item: item ?? undefined,
           status,
           ...(pendingId ? { pendingId } : {}),
+          ...(failureReason ? { failureReason } : { failureReason: undefined }),
         }
       })
     parsedRaw = raw
@@ -160,7 +180,7 @@ export function hasSettledActivityTxid(
   return readAll().some((e) => {
     if (e.txid?.toLowerCase() !== key) return false
     if (kind != null && e.kind !== kind) return false
-    if (e.status === 'pending') return false
+    if (e.status === 'pending' || e.status === 'failed') return false
     if (opts?.item != null && activityRowIsItem(e) !== opts.item) return false
     return true
   })
@@ -168,6 +188,16 @@ export function hasSettledActivityTxid(
 
 export function isPendingActivity(entry: ActivityEntry): boolean {
   return entry.status === 'pending'
+}
+
+export function isFailedActivity(entry: ActivityEntry): boolean {
+  return entry.status === 'failed'
+}
+
+/** Reason to show on a failed row — never blank once a row is failed. */
+export function activityFailureReason(entry: ActivityEntry): string | null {
+  if (entry.status !== 'failed') return null
+  return entry.failureReason?.trim() || 'Send failed'
 }
 
 /** True if we already logged a collectable receive/send for this tip outpoint. */
@@ -274,16 +304,19 @@ export function upsertAppActivity(args: {
   item?: ActivityItem
   status?: ActivityStatus
   pendingId?: string
+  failureReason?: string
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
   const isEvent = args.kind === 'event'
   const pending = args.status === 'pending'
+  const failed = args.status === 'failed'
   // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
   // because the money amount is dust. Events (connect, friend, …) may be zero-sats.
   // Pending BSV receives may not know sats yet — still show Verifying… in Activity.
   // Pending outbound sends (sats > 0 or item) must show before a txid exists.
-  if (sats <= 0 && !item && !isEvent && !pending) return
+  // A failed send must survive even with no amount — it is the only trace left.
+  if (sats <= 0 && !item && !isEvent && !pending && !failed) return
   if (isEvent && !(args.note?.trim() || args.method.trim())) return
   const origin = normalizeAppHost(args.origin)
   const txid = args.txid?.trim() || undefined
@@ -311,8 +344,13 @@ export function upsertAppActivity(args: {
         : item
       : prev.item
     const nextPendingId =
-      nextStatus === 'pending'
+      nextStatus === 'pending' || nextStatus === 'failed'
         ? pendingId || prev.pendingId
+        : undefined
+    // A confirmed txid clears an earlier failure; otherwise keep the reason.
+    const nextFailureReason =
+      nextStatus === 'failed'
+        ? normalizeFailureReason(args.failureReason) ?? prev.failureReason
         : undefined
     entries[idx] = {
       ...prev,
@@ -322,8 +360,11 @@ export function upsertAppActivity(args: {
       note: args.note ?? prev.note,
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
-      ...(nextStatus === 'pending' ? { status: 'pending' as const } : { status: undefined }),
+      ...(nextStatus === 'pending' || nextStatus === 'failed'
+        ? { status: nextStatus }
+        : { status: undefined }),
       ...(nextPendingId ? { pendingId: nextPendingId } : { pendingId: undefined }),
+      ...(nextFailureReason ? { failureReason: nextFailureReason } : { failureReason: undefined }),
     }
     writeAll(entries)
     return
@@ -341,7 +382,9 @@ export function upsertAppActivity(args: {
       txid,
       ...(item ? { item } : {}),
       ...(pending ? { status: 'pending' as const } : {}),
-      ...(pending && pendingId ? { pendingId } : {}),
+      ...(failed ? { status: 'failed' as const } : {}),
+      ...(failed ? { failureReason: normalizeFailureReason(args.failureReason) } : {}),
+      ...((pending || failed) && pendingId ? { pendingId } : {}),
     },
   ])
 }
@@ -504,7 +547,11 @@ export function noteOutboundSendComplete(args: {
   })
 }
 
-/** Drop a Sending… row when the send fails before a confirmed txid. */
+/**
+ * Drop a Sending… row when the send is abandoned with nothing to report
+ * (user cancel / superseded). A send that *failed* must use
+ * {@link failOutboundSendPending} so Activity keeps the reason.
+ */
 export function clearOutboundSendPending(pendingId: string): void {
   const id = pendingId.trim()
   if (!id) return
@@ -513,6 +560,34 @@ export function clearOutboundSendPending(pendingId: string): void {
     (e) => !(e.pendingId === id && e.status === 'pending' && e.kind === 'spent'),
   )
   if (entries.length !== prev.length) writeAll(entries)
+}
+
+/**
+ * Turn a Sending… row into a terminal failed row carrying why it failed.
+ * Keeps the amount, recipient and item so Activity can explain the dead send
+ * instead of silently dropping it.
+ */
+export function failOutboundSendPending(args: { pendingId: string; reason: string }): boolean {
+  const id = args.pendingId.trim()
+  if (!id) return false
+  const reason = normalizeFailureReason(args.reason) ?? 'Send failed'
+  const prev = readAll()
+  let changed = false
+  const entries = prev.map((e) => {
+    if (e.pendingId !== id || e.kind !== 'spent') return e
+    // A row that already reached a txid settled — never rewrite it as failed.
+    if (e.status !== 'pending') return e
+    changed = true
+    const name = e.item?.name?.trim()
+    return {
+      ...e,
+      status: 'failed' as const,
+      failureReason: reason,
+      note: name ? `${name} was not sent` : 'Payment was not sent',
+    }
+  })
+  if (changed) writeAll(entries)
+  return changed
 }
 
 function normalizeActivityOutpoint(outpoint: string): string {
@@ -546,19 +621,27 @@ export function expireStaleInboundPending(maxAgeMs = 120_000, now = Date.now()):
 }
 
 /**
- * Drop Sending… rows older than `maxAgeMs` that never reached a txid / complete.
- * Matches the payment-progress stuck watchdog so Activity cannot spin forever
- * while chain-ingest still holds the spend region.
+ * Mark Sending… rows older than `maxAgeMs` as failed when they never reached a
+ * txid / complete. Matches the payment-progress stuck watchdog so Activity
+ * cannot spin forever — and, unlike the old prune, says what happened.
  */
 export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()): number {
   const prev = readAll()
-  const entries = prev.filter((e) => {
-    if (e.status !== 'pending' || e.kind !== 'spent') return true
-    return now - e.at < maxAgeMs
+  let expired = 0
+  const entries = prev.map((e) => {
+    if (e.status !== 'pending' || e.kind !== 'spent') return e
+    if (now - e.at < maxAgeMs) return e
+    expired += 1
+    const name = e.item?.name?.trim()
+    return {
+      ...e,
+      status: 'failed' as const,
+      failureReason: 'Send never confirmed — the wallet stopped hearing back. Refresh, then try again.',
+      note: name ? `${name} was not sent` : 'Payment was not sent',
+    }
   })
-  const removed = prev.length - entries.length
-  if (removed > 0) writeAll(entries)
-  return removed
+  if (expired > 0) writeAll(entries)
+  return expired
 }
 
 /** Drop every Activity row for these txids (ghost send / 404 prune). */
@@ -923,6 +1006,10 @@ export function activityEntryKey(entry: ActivityEntry): string {
 
 /** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
+  if (entry.status === 'failed') {
+    if (entry.item?.name) return `${entry.item.name} not sent`
+    return 'Send failed'
+  }
   if (entry.status === 'pending' && entry.kind === 'spent') {
     if (entry.item?.name) return `Sending ${entry.item.name}…`
     return 'Sending…'

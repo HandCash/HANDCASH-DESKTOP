@@ -4,7 +4,7 @@ import {
   hasActivityTxid,
   noteOutboundSendComplete,
   noteOutboundSendPending,
-  clearOutboundSendPending,
+  failOutboundSendPending,
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
@@ -257,7 +257,6 @@ export async function sendSatsToAddress(opts: {
             return { txid, balanceSats }
           } catch (err) {
             clearPendingSend(pending.id)
-            clearOutboundSendPending(pending.id)
             failDualLayerSend(
               dualId,
               'UNKNOWN',
@@ -305,7 +304,10 @@ export async function sendSatsToAddress(opts: {
     )
   } catch (err) {
     clearPendingSend(pending.id)
-    clearOutboundSendPending(pending.id)
+    failOutboundSendPending({
+      pendingId: pending.id,
+      reason: err instanceof Error ? err.message : String(err),
+    })
     throw err
   }
 }

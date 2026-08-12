@@ -17,7 +17,7 @@ import {
   noteInboundReceivePending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
-  clearOutboundSendPending,
+  failOutboundSendPending,
   clearInboundReceivePending,
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
@@ -481,7 +481,6 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
         } catch (err) {
           clearPendingSend(pending.id)
-          clearOutboundSendPending(pending.id)
           if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
           const {
             isReviewActionsError,
@@ -533,7 +532,10 @@ export async function sendBrc29ToIdentityKey(opts: {
     )
   } catch (err) {
     clearPendingSend(pending.id)
-    clearOutboundSendPending(pending.id)
+    failOutboundSendPending({
+      pendingId: pending.id,
+      reason: err instanceof Error ? err.message : String(err),
+    })
     throw err
   }
 }
