@@ -159,7 +159,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
       ),
   )
-  const showPending = pending && !inventoryProven
+  const showPending = pending && (spent || !inventoryProven)
+  const pendingLabel = spent ? 'Sending…' : 'Verifying…'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
@@ -269,7 +270,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             </div>
             <p className="history-when">
               {showPending
-                ? 'Verifying…'
+                ? pendingLabel
                 : new Date(entry.at).toLocaleString(undefined, {
                     dateStyle: 'medium',
                     timeStyle: 'short',

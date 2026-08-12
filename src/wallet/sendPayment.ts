@@ -2,6 +2,9 @@ import { Beef, P2PKH } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,
+  noteOutboundSendComplete,
+  noteOutboundSendPending,
+  clearOutboundSendPending,
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
@@ -63,6 +66,12 @@ export async function sendSatsToAddress(opts: {
       const pending = beginPendingSend({
         to,
         sats: satoshis,
+        friendLabel: opts.friendLabel ?? null,
+      })
+      noteOutboundSendPending({
+        pendingId: pending.id,
+        sats: satoshis,
+        to,
         friendLabel: opts.friendLabel ?? null,
       })
 
@@ -156,6 +165,13 @@ export async function sendSatsToAddress(opts: {
         completePendingSend(pending.id, txid)
 
         const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
+        noteOutboundSendComplete({
+          pendingId: pending.id,
+          txid,
+          sats: satoshis,
+          to,
+          friendLabel: opts.friendLabel ?? null,
+        })
         if (!hasActivityTxid(txid, 'spent')) {
           recordAppActivity({
             origin: WALLET_ACTIVITY_ORIGIN,
@@ -178,6 +194,7 @@ export async function sendSatsToAddress(opts: {
         return { txid, balanceSats }
       } catch (err) {
         clearPendingSend(pending.id)
+        clearOutboundSendPending(pending.id)
         if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
         const {
           isReviewActionsError,

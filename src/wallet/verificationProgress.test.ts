@@ -63,4 +63,28 @@ describe('verificationProgress', () => {
     vp.setVerificationProgress('verifying', 'ee.4', 'walk')
     expect(vp.isOutpointVerifying('ee.4')).toBe(true)
   })
+
+  it('expires awaiting after the max window so Verifying cannot stick forever', async () => {
+    const vp = await import('./verificationProgress')
+    vp.resetVerificationProgressForTests()
+    vp.noteAwaitingVerification('ff.5')
+    expect(vp.isOutpointVerifying('ff.5', undefined, Date.now())).toBe(true)
+    expect(
+      vp.isOutpointVerifying(
+        'ff.5',
+        undefined,
+        Date.now() + vp.AWAITING_VERIFY_MAX_MS + 1,
+      ),
+    ).toBe(false)
+  })
+
+  it('settleStaleAwaitingVerification clears tips not still queued', async () => {
+    const vp = await import('./verificationProgress')
+    vp.resetVerificationProgressForTests()
+    vp.noteAwaitingVerification('gg.6')
+    vp.noteAwaitingVerification('hh.7')
+    vp.settleStaleAwaitingVerification((op) => op === 'gg.6')
+    expect(vp.isOutpointVerifying('gg.6')).toBe(true)
+    expect(vp.isOutpointVerifying('hh.7')).toBe(false)
+  })
 })

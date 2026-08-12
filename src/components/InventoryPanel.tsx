@@ -104,6 +104,11 @@ function CollectableGridItem({
             skeletonRadius={8}
             skeletonClassName="skeleton-qr"
             decoding="async"
+            fallback={
+              <span className="collectable-media-fallback" aria-hidden>
+                <CollectablesIcon size={36} />
+              </span>
+            }
           />
           <CollectableSendingMark sending={sending} />
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
@@ -169,6 +174,11 @@ function CollectableListItem({
             skeletonRadius={6}
             skeletonClassName="skeleton-qr"
             decoding="async"
+            fallback={
+              <span className="collectable-media-fallback" aria-hidden>
+                <CollectablesIcon size={22} />
+              </span>
+            }
           />
           <CollectableSendingMark sending={sending} />
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />

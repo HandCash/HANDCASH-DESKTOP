@@ -270,6 +270,11 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             skeletonRadius={10}
             skeletonClassName="skeleton-qr"
             decoding="async"
+            fallback={
+              <span className="collectable-media-fallback" aria-hidden>
+                <CollectablesIcon size={40} />
+              </span>
+            }
           />
           <CollectableSendingMark sending={sending} />
         </div>

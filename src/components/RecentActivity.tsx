@@ -175,7 +175,8 @@ function HistoryRow({
             entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
       ),
   )
-  const showPending = pending && !inventoryProven
+  const showPending = pending && (spent || !inventoryProven)
+  const pendingLabel = spent ? 'Sending…' : 'Verifying…'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -246,6 +247,11 @@ function HistoryRow({
                 skeletonRadius={6}
                 retainDecoded
                 decoding="async"
+                fallback={
+                  <span className="history-item-thumb-icon">
+                    <CollectablesIcon size={18} />
+                  </span>
+                }
               />
             ) : item ? (
               <span className="history-item-thumb-icon">
@@ -292,7 +298,7 @@ function HistoryRow({
           </span>
           {showWhen ? (
             <span className="history-when">
-              {showPending ? 'Verifying…' : formatWhen(entry.at)}
+              {showPending ? pendingLabel : formatWhen(entry.at)}
             </span>
           ) : null}
         </div>

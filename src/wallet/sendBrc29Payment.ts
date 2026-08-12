@@ -15,8 +15,9 @@ import {
   hasSettledActivityTxid,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
-  recordAppActivity,
-  WALLET_ACTIVITY_ORIGIN,
+  noteOutboundSendComplete,
+  noteOutboundSendPending,
+  clearOutboundSendPending,
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
 import {
@@ -241,6 +242,12 @@ export async function sendBrc29ToIdentityKey(opts: {
           sats: satoshis,
           friendLabel: opts.friendLabel ?? null,
         })
+        noteOutboundSendPending({
+          pendingId: pending.id,
+          sats: satoshis,
+          to: payee,
+          friendLabel: opts.friendLabel ?? null,
+        })
 
         try {
           const derivationPrefix = await createNonce(active.wallet, 'self')
@@ -318,20 +325,14 @@ export async function sendBrc29ToIdentityKey(opts: {
           await ensurePaymentBroadcasted(txid, atomicBeef)
           chart.send({ type: 'BROADCASTED', txid })
 
-          const recipientNote = opts.friendLabel
-            ? `${opts.friendLabel} (${payee.slice(0, 10)}…)`
-            : payee.slice(0, 18)
           completePendingSend(pending.id, txid)
-          if (!hasActivityTxid(txid, 'spent')) {
-            recordAppActivity({
-              origin: WALLET_ACTIVITY_ORIGIN,
-              kind: 'spent',
-              sats: satoshis,
-              method: 'send',
-              note: `Sent to ${recipientNote}`,
-              txid,
-            })
-          }
+          noteOutboundSendComplete({
+            pendingId: pending.id,
+            txid,
+            sats: satoshis,
+            to: payee,
+            friendLabel: opts.friendLabel ?? null,
+          })
           clearPendingSend(pending.id)
 
           setPaymentProgress('finishing')
@@ -453,6 +454,7 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
         } catch (err) {
           clearPendingSend(pending.id)
+          clearOutboundSendPending(pending.id)
           if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
           const {
             isReviewActionsError,

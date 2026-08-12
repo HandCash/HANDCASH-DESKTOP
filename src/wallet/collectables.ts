@@ -18,11 +18,16 @@ import {
 import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
-  hasActivityTxid,
-  recordAppActivity,
+  noteOutboundSendComplete,
+  noteOutboundSendPending,
+  clearOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
-  WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
+import {
+  beginPendingSend,
+  clearPendingSend,
+  completePendingSend,
+} from './pendingSend'
 import {
   contentUrlForOrigin,
   resolveInscriptionAtOrigin,
@@ -45,6 +50,7 @@ import {
   peekPreferredCollectableVerification,
   preferCollectableVerification,
   setVerificationProgress,
+  settleStaleAwaitingVerification,
   takePreferredCollectableVerification,
 } from './verificationProgress'
 import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
@@ -805,7 +811,16 @@ async function proveHeldGenesis(
   wallet: ActiveWallet,
   ownRead: Promise<Collectable[]> | null,
 ): Promise<void> {
-  if (provingGenesis || genesisWalksThisSession >= GENESIS_SESSION_BUDGET) return
+  const settleAwaitingOutsideQueue = (queued: Set<string>) => {
+    settleStaleAwaitingVerification((outpoint) => queued.has(outpoint))
+  }
+
+  if (provingGenesis) return
+  if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) {
+    // Session budget spent — drop spinners so cards show Unverified, not forever Verifying.
+    settleAwaitingOutsideQueue(new Set())
+    return
+  }
   // A walk is never worth competing with a payment for the network.
   if (getWalletCoordinatorSnapshot().spend === 'active') return
 
@@ -833,9 +848,14 @@ async function proveHeldGenesis(
     candidates.splice(candidates.indexOf(preferred), 1)
     candidates.unshift(preferred)
   }
-  if (candidates.length === 0) return
+  if (candidates.length === 0) {
+    // Cooldown / already attempted — stop spinning on Unverified cards.
+    settleAwaitingOutsideQueue(new Set())
+    return
+  }
 
   provingGenesis = true
+  const queued = new Set(candidates)
   try {
     for (const outpoint of candidates) {
       if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) break
@@ -892,12 +912,14 @@ async function proveHeldGenesis(
           // Conclusive miss — drop the receive spinner so we are not stuck on
           // "Verifying…" forever with no chance to look unverified + retry later.
           clearAwaitingVerification(outpoint)
+          queued.delete(outpoint)
           genesisWalksThisSession++
         }
         continue
       }
       genesisWalksThisSession++
       rememberGenesisAttempt(outpoint)
+      queued.delete(outpoint)
 
       console.info(
         `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
@@ -925,6 +947,11 @@ async function proveHeldGenesis(
   } finally {
     provingGenesis = false
     clearVerificationProgress()
+    // Tips left in the queue were aborted / budget-cut — keep their spinner only
+    // if we still plan to retry (shouldAttemptGenesis). Everything else → Unverified.
+    settleStaleAwaitingVerification(
+      (outpoint) => queued.has(outpoint) && shouldAttemptGenesis(outpoint),
+    )
   }
 }
 
@@ -951,13 +978,43 @@ export function requestCollectableVerification(outpoint: string): void {
     'Proving tip-to-origin lineage (BRC-150)',
   )
   if (cached?.origin) {
-    void verifyItemAuthenticity(target, cached.origin).catch(() => undefined)
+    void verifyItemAuthenticity(target, cached.origin)
+      .then((result) => {
+        applyAuthenticityResult(target, result)
+        if (result.proven) return
+        // Remittance / listOutputs miss must not leave Verifying forever — fall
+        // through to a tip-to-origin walk when the session still has budget.
+        if (!shouldAttemptGenesis(target) || provingGenesis) {
+          clearAwaitingVerification(target)
+          clearVerificationProgress(target)
+          return
+        }
+        const wallet = getActiveWallet()
+        if (!wallet) {
+          clearAwaitingVerification(target)
+          clearVerificationProgress(target)
+          return
+        }
+        void proveHeldGenesis(wallet, listInFlight)
+      })
+      .catch(() => {
+        clearAwaitingVerification(target)
+        clearVerificationProgress(target)
+      })
     return
   }
-  if (!shouldAttemptGenesis(target)) return
+  if (!shouldAttemptGenesis(target)) {
+    clearAwaitingVerification(target)
+    clearVerificationProgress(target)
+    return
+  }
   if (provingGenesis) return
   const wallet = getActiveWallet()
-  if (!wallet) return
+  if (!wallet) {
+    clearAwaitingVerification(target)
+    clearVerificationProgress(target)
+    return
+  }
   void proveHeldGenesis(wallet, listInFlight)
 }
 
@@ -1479,8 +1536,13 @@ export async function getCollectable(
   // when the tip locking script / remittance says covenant.
   if (!proven || proven.tier === 'brc150') {
     void verifyItemAuthenticity(target, item.origin, wallet)
-      .then((result) => applyAuthenticityResult(target, result))
-      .catch(() => {})
+      .then((result) => {
+        applyAuthenticityResult(target, result)
+        if (!result.proven) clearAwaitingVerification(target)
+      })
+      .catch(() => {
+        clearAwaitingVerification(target)
+      })
   } else {
     clearAwaitingVerification(target)
   }
@@ -2115,6 +2177,26 @@ export async function sendCollectable(args: {
     provenTier,
   })
 
+  const activityItem = {
+    name,
+    origin,
+    outpoint,
+    ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
+    ...(app ? { app } : {}),
+  }
+  const outboundPending = beginPendingSend({
+    to,
+    sats: 1,
+    friendLabel: args.friendLabel ?? null,
+  })
+  noteOutboundSendPending({
+    pendingId: outboundPending.id,
+    sats: 1,
+    to,
+    friendLabel: args.friendLabel ?? null,
+    item: activityItem,
+  })
+
   const chart = createActor(collectableSendMachine).start()
   chart.send({ type: 'START', outpoint, sendPath })
   console.info(
@@ -2129,24 +2211,16 @@ export async function sendCollectable(args: {
   ): Promise<{ txid: string }> => {
     // Record activity as soon as the txid exists — before relinquish / list /
     // progress clear — so the feed updates while Working is still showing.
-    const noteTo = args.friendLabel ? `${args.friendLabel} (${to})` : to
-    if (!hasActivityTxid(txid, 'spent')) {
-      recordAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'spent',
-        sats: 1,
-        method: 'send-collectable',
-        note: `Sent ${name} to ${noteTo}`,
-        txid,
-        item: {
-          name,
-          origin,
-          outpoint,
-          ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
-          ...(app ? { app } : {}),
-        },
-      })
-    }
+    completePendingSend(outboundPending.id, txid)
+    noteOutboundSendComplete({
+      pendingId: outboundPending.id,
+      txid,
+      sats: 1,
+      to,
+      friendLabel: args.friendLabel ?? null,
+      item: activityItem,
+    })
+    clearPendingSend(outboundPending.id)
     const tx = txid.trim().toLowerCase()
     const newTip = `${tx}.0`
     const newLatch = isLatchedSendEnabled() ? `${tx}.1` : null
@@ -2222,6 +2296,8 @@ export async function sendCollectable(args: {
   }
 
   const failSend = (err: unknown): never => {
+    clearPendingSend(outboundPending.id)
+    clearOutboundSendPending(outboundPending.id)
     protectTipsFromGhostDrop([outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])])
     forgetItemsSent([outpoint])
     if (priorLatch && isNoLongerSpendableError(err)) {

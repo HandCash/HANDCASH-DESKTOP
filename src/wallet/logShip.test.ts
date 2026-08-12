@@ -137,4 +137,34 @@ describe('logShip', () => {
       'send-failure',
     )
   })
+
+  it('includes renderer wallet lines even when Electron main logs exist', async () => {
+    store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-desktop')
+    store.set(
+      CURRENT_KEY,
+      JSON.stringify([{ at: 2, level: 'info', message: '[collectables] listOutputs done' }]),
+    )
+    stubBrowserGlobals()
+    vi.stubGlobal('window', {
+      addEventListener: () => {},
+      handcash: {
+        readLogs: async () => ({
+          ok: true,
+          text: '[main] BRC-100 bridge online',
+        }),
+      },
+    })
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    await import('./appLog').then((m) => m.installAppLogCapture())
+    const ship = await import('./logShip')
+
+    const result = await ship.shipAppLogs()
+    expect(result.ok).toBe(true)
+    const [, init] = fetchSpy.mock.calls[0] as unknown as [string, RequestInit]
+    const body = String(init.body)
+    expect(body).toContain('[collectables] listOutputs done')
+    expect(body).toContain('electron main')
+    expect(body).toContain('BRC-100 bridge online')
+  })
 })

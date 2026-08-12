@@ -28,14 +28,24 @@ function platformTag(): string {
   return /android/i.test(navigator.userAgent) ? 'android' : 'web'
 }
 
+/**
+ * Prefer the renderer ring (wallet / collectables / BRC paths). Electron main
+ * logs alone drown those lines in bridge HTTP noise and made Desktop support
+ * uploads useless for NFT verify bugs.
+ */
 async function platformTail(): Promise<string> {
+  const renderer = formatAppLogs().trim()
+  let main = ''
   try {
-    const result = await window.handcash?.readLogs?.({ maxBytes: 256_000 })
-    if (result?.ok && result.text.trim()) return result.text
+    const result = await window.handcash?.readLogs?.({ maxBytes: 96_000 })
+    if (result?.ok && result.text.trim()) main = result.text.trim()
   } catch {
-    // Fall back to the in-memory ring below.
+    // Renderer-only is fine on Mobile / when IPC is unavailable.
   }
-  return formatAppLogs()
+  if (renderer && main) {
+    return `${renderer}\n\n—— electron main (tail) ——\n${main}`
+  }
+  return renderer || main
 }
 
 function previousBlock(previous: AppLogEntry[]): string {

@@ -25,7 +25,14 @@ type Listener = (progress: VerificationProgress) => void
 const listeners = new Set<Listener>()
 
 /** Tips received but not yet authenticity-proven — spinner stays until cleared. */
-const awaitingVerify = new Set<string>()
+const awaitingVerify = new Map<string, number>()
+
+/**
+ * How long a receive may keep the corner spinner without a conclusive prove.
+ * After this we drop to Unverified so a budget miss / aborted walk cannot leave
+ * "Verifying…" forever while the card already shows name and traits.
+ */
+export const AWAITING_VERIFY_MAX_MS = 90_000
 
 let progress: VerificationProgress = {
   outpoint: null,
@@ -92,7 +99,7 @@ export function noteAwaitingVerification(outpoint: string): void {
   const key = normalize(outpoint)
   if (!key || awaitingVerify.has(key)) return
   if (isItemProven(key)) return
-  awaitingVerify.add(key)
+  awaitingVerify.set(key, Date.now())
   // New object so React subscribers re-render and pick up isOutpointVerifying.
   progress = { ...progress }
   emit()
@@ -111,6 +118,34 @@ export function clearAwaitingVerification(outpoint: string): void {
     progress = { ...progress }
   }
   emit()
+}
+
+/**
+ * Drop awaiting tips that will not be proven this pass (budget / cooldown /
+ * no candidates). Call after proveHeldGenesis early-returns or finishes so
+ * Collect cannot spin forever on Unverified items that already have metadata.
+ */
+export function settleStaleAwaitingVerification(
+  stillPending: (outpoint: string) => boolean = () => false,
+): void {
+  let changed = false
+  for (const key of [...awaitingVerify.keys()]) {
+    if (isItemProven(key) || !stillPending(key)) {
+      awaitingVerify.delete(key)
+      changed = true
+      if (progress.outpoint === key) {
+        progress = { outpoint: null, phase: 'idle', label: null, detail: null }
+      }
+    }
+  }
+  if (changed) {
+    progress = { ...progress }
+    emit()
+  }
+}
+
+export function listAwaitingVerification(): string[] {
+  return [...awaitingVerify.keys()]
 }
 
 export function subscribeVerificationProgress(listener: Listener): () => void {
@@ -144,6 +179,7 @@ export function peekPreferredCollectableVerification(): string | null {
 export function isOutpointVerifying(
   outpoint: string | null | undefined,
   current: VerificationProgress = progress,
+  now = Date.now(),
 ): boolean {
   if (!outpoint) return false
   const key = normalize(outpoint)
@@ -154,7 +190,14 @@ export function isOutpointVerifying(
     }
     return false
   }
-  if (awaitingVerify.has(key)) return true
+  const since = awaitingVerify.get(key)
+  if (since != null) {
+    if (now - since > AWAITING_VERIFY_MAX_MS) {
+      clearAwaitingVerification(key)
+      return current.phase === 'verifying' && current.outpoint === key
+    }
+    return true
+  }
   if (current.phase !== 'verifying' || !current.outpoint) return false
   return key === current.outpoint
 }

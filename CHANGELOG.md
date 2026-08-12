@@ -2,6 +2,14 @@
 
 ## [Unreleased]
 
+## [1.2.209] - 2026-08-12
+
+### Fixed
+- **Incoming NFTs stuck on Verifying forever.** Await authenticity clears when a lineage walk cannot run (budget / cooldown / conclusive miss) and times out after 90s; failed remittance verify falls through instead of spinning.
+- **NFT thumbnails blank while metadata showed.** Broken GorillaPool content URLs no longer leave an eternal skeleton — Collect / details / Activity fall back to the collectable icon.
+- **Desktop support logs missing wallet lines.** Uploads now prefer the renderer ring (collectables / BRC) and only append a short Electron main tail.
+- **Outbound Activity “Sending…”.** Money, BRC-29, and collectable sends pin a pending Activity row until broadcast settles or fails.
+
 ## [1.2.208] - 2026-08-12
 
 ### Fixed

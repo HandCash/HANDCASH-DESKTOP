@@ -40,6 +40,8 @@ export type ActivityEntry = {
   item?: ActivityItem
   /** Receiving / verifying — Activity shows the row before internalize finishes. */
   status?: ActivityStatus
+  /** Links an in-flight outbound send until a txid lands. */
+  pendingId?: string
 }
 
 const ACTIVITY_KINDS = new Set<ActivityKind>(['spent', 'earned', 'event'])
@@ -93,10 +95,15 @@ function readAll(): ActivityEntry[] {
         const item = normalizeActivityItem(row.item)
         const status: ActivityStatus | undefined =
           row.status === 'pending' ? 'pending' : undefined
+        const pendingId =
+          typeof row.pendingId === 'string' && row.pendingId.trim()
+            ? row.pendingId.trim()
+            : undefined
         return {
           ...row,
           item: item ?? undefined,
           status,
+          ...(pendingId ? { pendingId } : {}),
         }
       })
     parsedRaw = raw
@@ -198,8 +205,16 @@ function findActivityMatchIndex(
     txid?: string
     item?: ActivityItem
     method: string
+    pendingId?: string
   },
 ): number {
+  const pendingId = args.pendingId?.trim()
+  if (pendingId) {
+    const byPending = entries.findIndex(
+      (e) => e.pendingId === pendingId && e.kind === args.kind,
+    )
+    if (byPending >= 0) return byPending
+  }
   const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
   if (outpoint) {
     const byOp = entries.findIndex((e) => {
@@ -244,6 +259,7 @@ export function upsertAppActivity(args: {
   txid?: string
   item?: ActivityItem
   status?: ActivityStatus
+  pendingId?: string
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
@@ -252,16 +268,19 @@ export function upsertAppActivity(args: {
   // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
   // because the money amount is dust. Events (connect, friend, …) may be zero-sats.
   // Pending BSV receives may not know sats yet — still show Verifying… in Activity.
+  // Pending outbound sends (sats > 0 or item) must show before a txid exists.
   if (sats <= 0 && !item && !isEvent && !pending) return
   if (isEvent && !(args.note?.trim() || args.method.trim())) return
   const origin = normalizeAppHost(args.origin)
   const txid = args.txid?.trim() || undefined
+  const pendingId = args.pendingId?.trim() || undefined
   const entries = [...readAll()]
   const idx = findActivityMatchIndex(entries, {
     kind: args.kind,
     txid,
     item: item ?? args.item,
     method: args.method,
+    pendingId,
   })
   if (idx >= 0) {
     const prev = entries[idx]!
@@ -277,6 +296,10 @@ export function upsertAppActivity(args: {
         ? { ...prev.item, ...item }
         : item
       : prev.item
+    const nextPendingId =
+      nextStatus === 'pending'
+        ? pendingId || prev.pendingId
+        : undefined
     entries[idx] = {
       ...prev,
       origin: origin || prev.origin,
@@ -286,6 +309,7 @@ export function upsertAppActivity(args: {
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
       ...(nextStatus === 'pending' ? { status: 'pending' as const } : { status: undefined }),
+      ...(nextPendingId ? { pendingId: nextPendingId } : { pendingId: undefined }),
     }
     writeAll(entries)
     return
@@ -303,6 +327,7 @@ export function upsertAppActivity(args: {
       txid,
       ...(item ? { item } : {}),
       ...(pending ? { status: 'pending' as const } : {}),
+      ...(pending && pendingId ? { pendingId } : {}),
     },
   ])
 }
@@ -381,6 +406,98 @@ export function noteInboundReceiveComplete(args: {
     txid,
     status: 'complete',
   })
+}
+
+/** Activity row the moment an outbound send starts — survives Back / navigate away. */
+export function noteOutboundSendPending(args: {
+  pendingId: string
+  sats: number
+  to: string
+  friendLabel?: string | null
+  item?: ActivityItem
+}): void {
+  const pendingId = args.pendingId.trim()
+  if (!pendingId) return
+  const recipient = args.friendLabel?.trim()
+    ? `${args.friendLabel.trim()} (${args.to.trim()})`
+    : args.to.trim()
+  if (args.item) {
+    const name = args.item.name?.trim() || 'Collectable'
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: Math.max(1, Math.trunc(args.sats) || 1),
+      method: 'send-collectable',
+      note: `Sending ${name} to ${recipient}`,
+      status: 'pending',
+      pendingId,
+      item: args.item,
+    })
+    return
+  }
+  upsertAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'spent',
+    sats: Math.max(0, Math.trunc(args.sats)),
+    method: 'send',
+    note: `Sending to ${recipient}`,
+    status: 'pending',
+    pendingId,
+  })
+}
+
+/** Promote a Sending… row to Settled after broadcast accepts. */
+export function noteOutboundSendComplete(args: {
+  pendingId: string
+  txid: string
+  sats: number
+  to: string
+  friendLabel?: string | null
+  item?: ActivityItem
+}): void {
+  const pendingId = args.pendingId.trim()
+  const txid = args.txid.trim().toLowerCase()
+  if (!pendingId) return
+  if (!/^[0-9a-f]{64}$/.test(txid) && !txid.startsWith('local-')) return
+  const recipient = args.friendLabel?.trim()
+    ? `${args.friendLabel.trim()} (${args.to.trim()})`
+    : args.to.trim()
+  if (args.item) {
+    const name = args.item.name?.trim() || 'Collectable'
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: Math.max(1, Math.trunc(args.sats) || 1),
+      method: 'send-collectable',
+      note: `Sent ${name} to ${recipient}`,
+      txid,
+      status: 'complete',
+      pendingId,
+      item: args.item,
+    })
+    return
+  }
+  upsertAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'spent',
+    sats: Math.max(0, Math.trunc(args.sats)),
+    method: 'send',
+    note: `Sent to ${recipient}`,
+    txid,
+    status: 'complete',
+    pendingId,
+  })
+}
+
+/** Drop a Sending… row when the send fails before a confirmed txid. */
+export function clearOutboundSendPending(pendingId: string): void {
+  const id = pendingId.trim()
+  if (!id) return
+  const prev = readAll()
+  const entries = prev.filter(
+    (e) => !(e.pendingId === id && e.status === 'pending' && e.kind === 'spent'),
+  )
+  if (entries.length !== prev.length) writeAll(entries)
 }
 
 function normalizeActivityOutpoint(outpoint: string): string {
@@ -666,6 +783,14 @@ export function activityEntryKey(entry: ActivityEntry): string {
 
 /** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
+  if (entry.status === 'pending' && entry.kind === 'spent') {
+    if (entry.item?.name) return `Sending ${entry.item.name}…`
+    return 'Sending…'
+  }
+  if (entry.status === 'pending' && entry.kind === 'earned') {
+    if (entry.item?.name) return `Receiving ${entry.item.name}…`
+    return 'Receiving…'
+  }
   if (entry.kind === 'event') {
     return entry.note?.trim() || entry.method || 'Activity'
   }
