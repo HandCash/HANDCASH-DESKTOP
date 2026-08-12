@@ -118,6 +118,10 @@ export function forgetItemsSent(outpoints: string[]): void {
  * Drop hide marks whose recorded spend txid is proven absent from the chain
  * (ghost delayed-broadcast / failed post). Returns the outpoints restored.
  *
+ * Also strips Activity "Sent" / Verifying rows for those txids and suppresses
+ * tip-hint re-pins — otherwise the feed keeps a Sent link that 404s on WoC
+ * while a later successful transfer (different txid) already moved the tip.
+ *
  * Abandon markers (`abandon:…`) are left alone — those are intentional hides.
  */
 export async function healGhostSentItems(
@@ -140,10 +144,22 @@ export async function healGhostSentItems(
   if (byTx.size === 0) return []
 
   const healed: string[] = []
+  const ghostTxids: string[] = []
   for (const [txid, ops] of byTx) {
     if ((await existsOnChain(txid, chain)) !== false) continue
     forgetItemsSent(ops)
     healed.push(...ops)
+    ghostTxids.push(txid)
+  }
+  if (ghostTxids.length > 0) {
+    try {
+      const { rememberGhostTx } = await import('./ghostTxSuppress')
+      const { removeActivityForTxids } = await import('./appActivity')
+      for (const txid of ghostTxids) rememberGhostTx(txid)
+      removeActivityForTxids(ghostTxids)
+    } catch (err) {
+      console.warn('[sent-item-guard] activity ghost cleanup skipped', err)
+    }
   }
   return healed
 }

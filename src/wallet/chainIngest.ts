@@ -286,8 +286,13 @@ export async function refreshFromChainExclusive(
   }
 
   try {
-    const { pruneMissingOnChainActivity } = await import('./appActivity')
+    const { pruneMissingOnChainActivity, expireStaleInboundPending } =
+      await import('./appActivity')
     const { txExistsOnChain } = await import('./legacyScan')
+    const expired = expireStaleInboundPending()
+    if (expired > 0) {
+      console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
+    }
     const pruned = await pruneMissingOnChainActivity(active.chain, txExistsOnChain)
     if (pruned > 0) {
       console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)

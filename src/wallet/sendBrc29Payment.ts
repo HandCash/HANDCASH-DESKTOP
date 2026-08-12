@@ -18,8 +18,10 @@ import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
   clearOutboundSendPending,
+  clearInboundReceivePending,
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
+import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import {
   beginPendingSend,
   clearPendingSend,
@@ -762,10 +764,16 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
 
 /**
  * Chase tip/pay hints: BRC-29 remittance first, legacy address-P2PKH SPV second.
+ * Ghost txids (confirmed 404 with no BEEF left) are returned so the inbox can ACK.
  */
 export async function ingestPaymentsFromTipHints(
   hints: Array<string | PaymentTipHint>,
-): Promise<{ imported: number; importedTxids: string[]; balanceSats: number | null }> {
+): Promise<{
+  imported: number
+  importedTxids: string[]
+  ghostTxids: string[]
+  balanceSats: number | null
+}> {
   const normalized: PaymentTipHint[] = []
   for (const h of hints) {
     if (typeof h === 'string') {
@@ -790,6 +798,7 @@ export async function ingestPaymentsFromTipHints(
 
   const unique = new Map<string, PaymentTipHint>()
   for (const h of normalized) {
+    if (isGhostTxSuppressed(h.txid)) continue
     const prev = unique.get(h.txid)
     if (
       !prev ||
@@ -814,10 +823,36 @@ export async function ingestPaymentsFromTipHints(
 
   let imported = 0
   const importedTxids: string[] = []
+  const ghostTxids: string[] = []
   let balanceSats: number | null = null
   // Soft-latch AtomicBEEF is expensive; do not hammer indexer 15×2s per tip poll.
   const ingestAttempts = 2
   const ingestDelayMs = 4_000
+
+  const markGhostIfMissing = async (
+    txid: string,
+    hadLocalBeef: boolean,
+  ): Promise<void> => {
+    // peerDeliver soft-latch may be off-chain until payee broadcasts — only
+    // ghost when there is nothing left to internalize.
+    if (hadLocalBeef) return
+    try {
+      const { txExistsOnChain } = await import('./legacyScan')
+      const { getActiveWallet } = await import('./session')
+      const active = getActiveWallet()
+      if (!active) return
+      const onChain = await txExistsOnChain(txid, active.chain)
+      if (onChain !== false) return
+      rememberGhostTx(txid)
+      clearInboundReceivePending(txid)
+      if (!ghostTxids.includes(txid)) ghostTxids.push(txid)
+      console.info(
+        `[tip-ingest] ghost tip ${txid.slice(0, 12)}… — 404 on-chain, no BEEF`,
+      )
+    } catch {
+      // inconclusive
+    }
+  }
 
   for (const hint of unique.values()) {
     if (hint.item) {
@@ -828,6 +863,8 @@ export async function ingestPaymentsFromTipHints(
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
       }
+      const hadLocalBeef = !!(atomic && atomic.length > 0)
+      let accepted = false
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         if (attempt > 0 && isAtomicBeefInBackoff(hint.txid)) break
         const result = await internalizePeerItemSettle({
@@ -839,12 +876,14 @@ export async function ingestPaymentsFromTipHints(
         if (result.accepted) {
           imported += 1
           importedTxids.push(hint.txid)
+          accepted = true
           break
         }
         if (attempt < ingestAttempts - 1) {
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
+      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
       continue
     }
 
@@ -857,6 +896,8 @@ export async function ingestPaymentsFromTipHints(
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
       }
+      const hadLocalBeef = !!(atomic && atomic.length > 0)
+      let accepted = false
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         const result = await internalizeBrc29Payment({
           txid: hint.txid,
@@ -873,17 +914,20 @@ export async function ingestPaymentsFromTipHints(
         if (result.accepted) {
           imported += 1
           importedTxids.push(hint.txid)
+          accepted = true
           break
         }
         if (attempt < ingestAttempts - 1) {
           await new Promise((r) => setTimeout(r, ingestDelayMs))
         }
       }
+      if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
       continue
     }
 
     // Legacy: tip without remittance — identity-address SPV sweep.
     const { ingestPaymentByTxid } = await import('./ingestPaymentByTxid')
+    let accepted = false
     for (let attempt = 0; attempt < ingestAttempts; attempt++) {
       const result = await ingestPaymentByTxid(hint.txid)
       if (result.balanceSats != null) balanceSats = result.balanceSats
@@ -893,13 +937,15 @@ export async function ingestPaymentsFromTipHints(
           result.reason === 'already-imported' ? 1 : 0,
         )
         importedTxids.push(hint.txid)
+        accepted = true
         break
       }
       if (attempt < ingestAttempts - 1) {
         await new Promise((r) => setTimeout(r, ingestDelayMs))
       }
     }
+    if (!accepted) await markGhostIfMissing(hint.txid, false)
   }
 
-  return { imported, importedTxids, balanceSats }
+  return { imported, importedTxids, ghostTxids, balanceSats }
 }

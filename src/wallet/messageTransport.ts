@@ -27,6 +27,7 @@ import {
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
 import { noteInboundReceivePending } from './appActivity'
+import { isGhostTxSuppressed } from './ghostTxSuppress'
 
 const WIRE_PREFIX = 'handcash-message:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
@@ -529,8 +530,14 @@ export async function pollInboundTipHints(args: {
         messages += 1
       }
       if (isPaymentHint) {
-        tipHints += 1
         const txid = decoded.meta!.txid!.trim().toLowerCase()
+        // Confirmed missing on-chain (no BEEF path left) — drop the inbox
+        // message so tip polls stop re-pinning eternal Verifying…
+        if (isGhostTxSuppressed(txid)) {
+          if (m.messageId) ackIds.push(String(m.messageId))
+          continue
+        }
+        tipHints += 1
         const item = decoded.meta?.item === true || undefined
         const itemName = decoded.meta?.memo?.trim() || undefined
         noteInboundReceivePending({

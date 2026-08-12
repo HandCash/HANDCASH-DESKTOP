@@ -1,5 +1,6 @@
 import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
@@ -356,6 +357,7 @@ export function noteInboundReceivePending(args: {
 }): void {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
+  if (isGhostTxSuppressed(txid)) return
   if (args.item) {
     const name = args.itemName?.trim() || 'Collectable'
     const origin = args.itemOrigin?.trim() || `${txid}_0`
@@ -559,24 +561,53 @@ export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()):
   return removed
 }
 
+/** Drop every Activity row for these txids (ghost send / 404 prune). */
+export function removeActivityForTxids(txids: string[]): number {
+  const missing = new Set(
+    txids.map((t) => t.trim().toLowerCase()).filter((t) => /^[0-9a-f]{64}$/.test(t)),
+  )
+  if (missing.size === 0) return 0
+  const prev = readAll()
+  const next = prev.filter((e) => {
+    const txid = e.txid?.toLowerCase()
+    return !txid || !missing.has(txid)
+  })
+  const removed = prev.length - next.length
+  if (removed > 0) writeAll(next)
+  return removed
+}
+
 /**
- * Remove settled Activity rows whose txid is confirmed missing on-chain (404).
- * Only ages past `minAgeMs` so in-flight mempool txs are not pruned.
+ * Remove Activity rows whose txid is confirmed missing on-chain (404).
+ * Pending BSV Verifying…/Sending… are included — tip-hint polls otherwise
+ * re-pin them forever when the inbox message is never ACKed.
+ * Pending collectables are excluded: soft-latch peerDeliver may be off-chain
+ * until the payee internalizes and broadcasts.
+ * Settled rows need a longer grace so mempool txs are not pruned early.
  */
 export async function pruneMissingOnChainActivity(
   chain: import('./vault').Chain,
   exists: (txid: string, chain: import('./vault').Chain) => Promise<boolean | null>,
-  opts?: { minAgeMs?: number; limit?: number },
+  opts?: { minAgeMs?: number; pendingMinAgeMs?: number; limit?: number },
 ): Promise<number> {
-  const minAgeMs = opts?.minAgeMs ?? 10 * 60_000
+  const settledMinAgeMs = opts?.minAgeMs ?? 10 * 60_000
+  const pendingMinAgeMs = opts?.pendingMinAgeMs ?? 60_000
   const limit = opts?.limit ?? 40
   const now = Date.now()
   const prev = readAll()
   const candidates = prev
     .filter((e) => {
-      if (e.status === 'pending') return false
       if (!e.txid || !/^[0-9a-f]{64}$/i.test(e.txid)) return false
-      if (now - e.at < minAgeMs) return false
+      const age = now - e.at
+      if (e.status === 'pending') {
+        if (age < pendingMinAgeMs) return false
+        // peerDeliver soft-latch: tip may 404 until payee broadcasts.
+        if (e.item || e.method === 'receive-collectable' || e.method === 'send-collectable') {
+          return false
+        }
+        return true
+      }
+      if (age < settledMinAgeMs) return false
       return e.kind === 'spent' || e.kind === 'earned'
     })
     .slice(0, limit)
@@ -587,9 +618,16 @@ export async function pruneMissingOnChainActivity(
   for (const row of candidates) {
     const txid = row.txid!.toLowerCase()
     if (missing.has(txid)) continue
+    if (isGhostTxSuppressed(txid)) {
+      missing.add(txid)
+      continue
+    }
     try {
       const onChain = await exists(txid, chain)
-      if (onChain === false) missing.add(txid)
+      if (onChain === false) {
+        rememberGhostTx(txid)
+        missing.add(txid)
+      }
     } catch {
       // inconclusive — keep
     }
@@ -599,8 +637,6 @@ export async function pruneMissingOnChainActivity(
   const next = prev.filter((e) => {
     const txid = e.txid?.toLowerCase()
     if (!txid || !missing.has(txid)) return true
-    // Keep item rows that still have local inventory identity? Prefer prune —
-    // a 404 tx means the transfer never landed; tips are healed separately.
     return false
   })
   const removed = prev.length - next.length

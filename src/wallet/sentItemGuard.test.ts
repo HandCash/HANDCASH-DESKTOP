@@ -72,6 +72,7 @@ describe('sentItemGuard', () => {
 
   it('heals hides whose spend txid is missing from the chain', async () => {
     const guard = await import('./sentItemGuard')
+    const activity = await import('./appActivity')
     const ghost = 'a'.repeat(64)
     const real = 'b'.repeat(64)
     guard.markItemsSent([
@@ -80,6 +81,13 @@ describe('sentItemGuard', () => {
       { outpoint: 'kept.0', txid: real },
       { outpoint: 'abandon.0', txid: 'abandon:tip.0' },
     ])
+    activity.noteOutboundSendComplete({
+      pendingId: 'ghost-send',
+      txid: ghost,
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: 'tip_0', outpoint: 'tip.0' },
+    })
     const healed = await guard.healGhostSentItems('main', async (txid) =>
       txid === ghost ? false : true,
     )
@@ -88,6 +96,9 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent('latch.1')).toBe(false)
     expect(guard.isItemSent('kept.0')).toBe(true)
     expect(guard.isItemSent('abandon.0')).toBe(true)
+    expect(activity.listRecentActivity(10).some((e) => e.txid === ghost)).toBe(
+      false,
+    )
   })
 
   it('keeps hides when the chain lookup is inconclusive', async () => {

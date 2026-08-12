@@ -304,11 +304,10 @@ export function Dashboard({
             const spv = await ingestPaymentsFromTipHints(combined)
             if (cancelled) return
             if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
-            if (spv.importedTxids.length > 0) {
+            if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
+              const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
               const ids = hints.paymentHints
-                .filter(
-                  (h) => h.messageId && spv.importedTxids.includes(h.txid),
-                )
+                .filter((h) => h.messageId && ackable.has(h.txid))
                 .map((h) => h.messageId!)
               if (ids.length > 0) {
                 const { acknowledgeMessageIds } = await import(
@@ -500,9 +499,10 @@ export function Dashboard({
           )
           if (cancelled) return
           if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
-          if (spv.importedTxids.length > 0) {
+          if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
+            const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
             const ids = hints
-              .filter((h) => h.messageId && spv.importedTxids.includes(h.txid))
+              .filter((h) => h.messageId && ackable.has(h.txid))
               .map((h) => h.messageId!)
             if (ids.length > 0) {
               const active = getActiveWallet()

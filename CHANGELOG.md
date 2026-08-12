@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.218] - 2026-08-12
+
+### Fixed
+- **Eternal Verifying… / ghost Sent for 404 txs.** Tip-hint polls re-pinned Activity for inbox tips whose tx never landed (e.g. abandoned soft-latch attempts). Ghost txids are remembered, pruned from Activity, and ACKed so they stop resurfacing. Heal of ghost sent-hides also strips the matching Sent rows.
+- Pending BSV Verifying… rows are pruned on confirmed 404; pending collectables stay until BEEF/ingest (peerDeliver may be off-chain).
+
 ## [1.2.217] - 2026-08-12
 
 ### Fixed

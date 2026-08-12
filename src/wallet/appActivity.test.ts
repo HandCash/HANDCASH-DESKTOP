@@ -27,9 +27,15 @@ import {
   expireStaleInboundPending,
   expireStaleOutboundPending,
   pruneMissingOnChainActivity,
+  removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
 } from './appActivity'
+import {
+  __resetGhostTxSuppressForTests,
+  isGhostTxSuppressed,
+  rememberGhostTx,
+} from './ghostTxSuppress'
 
 function entry(partial: Partial<ActivityEntry>): ActivityEntry {
   return {
@@ -160,6 +166,7 @@ describe('inbound receive activity', () => {
   beforeEach(() => {
     store.clear()
     clearAppActivity()
+    __resetGhostTxSuppressForTests()
   })
 
   it('shows a verifying payment in Activity before internalize finishes', () => {
@@ -303,6 +310,49 @@ describe('inbound receive activity', () => {
       { minAgeMs: 0 },
     )
     expect(pruned).toBe(1)
+    expect(listRecentActivity(10)).toHaveLength(0)
+  })
+
+  it('prunes aged pending BSV Verifying… on 404 but keeps pending collectables', async () => {
+    noteInboundReceivePending({ txid: 'cc'.repeat(32), sats: 100 })
+    noteInboundReceivePending({
+      txid: 'dd'.repeat(32),
+      item: true,
+      itemName: 'Fox',
+    })
+    const aged = listRecentActivity(10).map((e) => ({
+      ...e,
+      at: Date.now() - 120_000,
+    }))
+    store.set('handcash.brc100.appActivity', JSON.stringify(aged))
+
+    const pruned = await pruneMissingOnChainActivity(
+      'main',
+      async () => false,
+      { minAgeMs: 0, pendingMinAgeMs: 60_000 },
+    )
+    expect(pruned).toBe(1)
+    const left = listRecentActivity(10)
+    expect(left).toHaveLength(1)
+    expect(left[0]?.item?.name).toBe('Fox')
+    expect(isGhostTxSuppressed('cc'.repeat(32))).toBe(true)
+  })
+
+  it('refuses to re-pin Verifying… for a suppressed ghost txid', () => {
+    rememberGhostTx(TX)
+    noteInboundReceivePending({ txid: TX, sats: 99, item: true, itemName: 'Fox' })
+    expect(listRecentActivity(10)).toHaveLength(0)
+  })
+
+  it('removeActivityForTxids drops Sent rows for ghost attempts', () => {
+    noteOutboundSendComplete({
+      pendingId: 'a',
+      txid: TX,
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    expect(removeActivityForTxids([TX])).toBe(1)
     expect(listRecentActivity(10)).toHaveLength(0)
   })
 })
