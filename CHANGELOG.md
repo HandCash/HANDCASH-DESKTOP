@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.200] - 2026-08-12
+
+### Fixed
+- **Desktop ingest of mobile BRC-29.** Remittance arrived without Atomic BEEF and indexer `getBeefForTxid` timed out at 8s, so payments never internalized. Ingest now wraps Bitails/WoC raw tx as BEEF. Outbox retries reattach local BEEF. Duplicate ingest polls no longer stampede.
+
 ## [1.2.199] - 2026-08-12
 
 ### Fixed

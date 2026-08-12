@@ -25,6 +25,7 @@ import {
   type ChatMessage,
   type MessageKind,
 } from './messageStore'
+import { rememberBeefBinary } from './beefCache'
 
 const WIRE_PREFIX = 'handcash-message:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
@@ -501,6 +502,10 @@ export async function pollInboundTipHints(args: {
         (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
         typeof decoded.meta?.txid === 'string' &&
         /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
+      const inlineBeef = decodeBeefB64(decoded.meta?.beefB64)
+      if (inlineBeef && typeof decoded.meta?.txid === 'string') {
+        rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
+      }
       if (peerId) {
         const { beefB64: _omitBeef, ...chatMeta } = decoded.meta ?? {}
         appendMessage(peerId, {

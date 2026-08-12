@@ -263,6 +263,7 @@ export function Dashboard({
       }, delay)
     }
 
+    let ingestInFlight = false
     const pollTipHints = async () => {
       if (cancelled) return
       if (hasPendingPermissionPrompt()) return
@@ -294,6 +295,8 @@ export function Dashboard({
             ? [...hints.paymentHints, ...fromChat]
             : hints.paymentTxids
         if (cancelled || (hints.tipHints <= 0 && fromChat.length === 0)) return
+        if (ingestInFlight) return
+        ingestInFlight = true
         // SPV-first: tip/pay card hands us the txid → BEEF → sweep our outs.
         // Address scan is only the fallback / secondary verify.
         void (async () => {
@@ -318,14 +321,18 @@ export function Dashboard({
               scheduleNext()
               return
             }
+            await chasePaymentIngest(hints.paymentTxids)
+            scheduleNext()
           } catch (err) {
             console.warn(
               '[dashboard] SPV payment ingest failed',
               err instanceof Error ? err.message : String(err),
             )
+            await chasePaymentIngest(hints.paymentTxids)
+            scheduleNext()
+          } finally {
+            ingestInFlight = false
           }
-          await chasePaymentIngest(hints.paymentTxids)
-          scheduleNext()
         })()
       } catch {
         /* optional accelerator */

@@ -16,6 +16,14 @@ import { Beef, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
+export type GetBeefOpts = {
+  /**
+   * Already-broadcast payment ingest: wrap `getRawTx` (Bitails) as BEEF.
+   * Indexer `getBeefForTxid` often exceeds 8s; remittance does not need merkle.
+   */
+  allowUnprovenRawTx?: boolean
+}
+
 const TTL_MS = 10 * 60_000
 const MAX = 200
 /** Per-txid fetch — indexer / WoC must not wedge mint or send forever. */
@@ -181,9 +189,61 @@ async function getBeefFromLocalStorage(
   }
 }
 
+async function fetchBitailsRawTx(txid: string): Promise<number[] | null> {
+  try {
+    const res = await withTimeout(
+      fetch(`https://api.bitails.io/download/tx/${txid}/hex`, {
+        headers: { Accept: 'text/plain' },
+      }),
+      12_000,
+      `bitails hex ${txid.slice(0, 8)}`,
+    )
+    if (!res.ok) return null
+    const hex = (await res.text()).trim()
+    if (!/^[0-9a-f]+$/i.test(hex) || hex.length % 2 !== 0) return null
+    return Utils.toArray(hex, 'hex')
+  } catch {
+    return null
+  }
+}
+
+async function getBeefFromRawTx(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<Beef | null> {
+  const key = keyOf(txid)
+  let raw: number[] | undefined
+  try {
+    const getRawTx = wallet.services?.getRawTx
+    if (typeof getRawTx === 'function') {
+      const result = await withTimeout(
+        getRawTx(key),
+        12_000,
+        `rawTx ${key.slice(0, 8)}`,
+      )
+      if (result?.rawTx?.length) raw = Array.from(result.rawTx)
+    }
+  } catch {
+    /* try Bitails next */
+  }
+  if (!raw?.length) {
+    const hex = await fetchBitailsRawTx(key)
+    if (hex?.length) raw = hex
+  }
+  if (!raw?.length) return null
+  try {
+    const beef = new Beef()
+    beef.mergeRawTx(raw)
+    return beef.findTxid(key)?.tx ? beef : null
+  } catch {
+    return null
+  }
+}
+
 export async function getBeefForTxidCached(
   wallet: ActiveWallet,
   txid: string,
+  opts?: GetBeefOpts,
 ): Promise<Beef> {
   const key = keyOf(txid)
   const cached = read(txid)
@@ -200,6 +260,14 @@ export async function getBeefForTxidCached(
     if (local) {
       write(txid, local)
       return local
+    }
+
+    if (opts?.allowUnprovenRawTx) {
+      const fromRaw = await getBeefFromRawTx(wallet, txid)
+      if (fromRaw) {
+        write(txid, fromRaw)
+        return fromRaw
+      }
     }
 
     if (!wallet.services?.getBeefForTxid) {

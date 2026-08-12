@@ -122,6 +122,8 @@ export type InternalizeBrc29Result = {
   reason?: string
 }
 
+const brc29InternalizeInflight = new Map<string, Promise<InternalizeBrc29Result>>()
+
 function markInboundPaymentStatus(txid: string, status: string): void {
   const id = txid.trim().toLowerCase()
   if (!id) return
@@ -457,6 +459,26 @@ export async function internalizeBrc29Payment(opts: {
   if (!/^[0-9a-f]{64}$/.test(id)) {
     return { accepted: false, satoshis: 0, balanceSats: null, reason: 'invalid-txid' }
   }
+  const inflight = brc29InternalizeInflight.get(id)
+  if (inflight) return inflight
+  const work = internalizeBrc29PaymentOnce(opts)
+  brc29InternalizeInflight.set(id, work)
+  try {
+    return await work
+  } finally {
+    brc29InternalizeInflight.delete(id)
+  }
+}
+
+async function internalizeBrc29PaymentOnce(opts: {
+  txid: string
+  remittance: Brc29Remittance
+  senderIdentityKey: string
+  tx?: number[]
+  satoshis?: number
+  announce?: boolean
+}): Promise<InternalizeBrc29Result> {
+  const id = opts.txid.trim().toLowerCase()
 
   const sender = normalizeIdentityKey(opts.senderIdentityKey)
   if (validateIdentityKey(sender)) {
@@ -501,8 +523,10 @@ export async function internalizeBrc29Payment(opts: {
   try {
     let atomic = opts.tx
     if (!atomic || atomic.length === 0) {
-      const beef = await getBeefForTxidCached(active, id)
-      atomic = beef.toBinaryAtomic(id)
+      const beef = await getBeefForTxidCached(active, id, {
+        allowUnprovenRawTx: true,
+      })
+      atomic = Array.from(beef.toBinaryAtomic(id))
     }
 
     if (atomic.length > 0) {

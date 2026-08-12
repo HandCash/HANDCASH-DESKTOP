@@ -59,8 +59,26 @@ export async function flushPendingBrc29Outbox(args: {
   let delivered = 0
   const keep: PendingBrc29Remit[] = []
   const { notifyPeerBrc29Payment } = await import('./messageTransport')
+  const { getActiveWallet } = await import('./session')
+  const { getBeefForTxidCached } = await import('./beefCache')
+  const active = getActiveWallet()
   for (const row of rows) {
     try {
+      let atomicBeef: number[] | undefined
+      if (active) {
+        try {
+          const beef = await getBeefForTxidCached(active, row.txid, {
+            allowUnprovenRawTx: true,
+          })
+          atomicBeef = Array.from(beef.toBinaryAtomic(row.txid))
+        } catch (err) {
+          console.warn(
+            '[brc29-outbox] no BEEF for retry',
+            row.txid,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
       const result = await notifyPeerBrc29Payment({
         recipientIdentityKey: row.payeeIdentityKey,
         rootKeyHex: args.rootKeyHex,
@@ -69,6 +87,7 @@ export async function flushPendingBrc29Outbox(args: {
         txid: row.txid,
         satoshis: row.satoshis,
         remittance: row.remittance,
+        atomicBeef,
         amountLabel: row.amountLabel,
       })
       if (result.delivered === 'cloud') {

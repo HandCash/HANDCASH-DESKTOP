@@ -78,6 +78,30 @@ describe('beefCache', () => {
     expect(getBeefForTxid).toHaveBeenCalledTimes(1)
   })
 
+  it('wraps getRawTx as BEEF when allowUnprovenRawTx is set', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const getRawTx = vi.fn(async () => ({ rawTx: Array.from(tx.toBinary()) }))
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not run')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getRawTx, getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const beef = await getBeefForTxidCached(wallet, txid, {
+      allowUnprovenRawTx: true,
+    })
+    expect(beef.findTxid(txid)?.tx).toBeTruthy()
+    expect(getRawTx).toHaveBeenCalledTimes(1)
+    expect(getBeefForTxid).not.toHaveBeenCalled()
+  })
+
   it('times out a hung indexer fetch instead of hanging forever', async () => {
     const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()
