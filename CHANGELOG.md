@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.219] - 2026-08-12
+
+### Fixed
+- **“undefined is not iterable” still blocked sends after repair.** 1.2.217 only scanned the first 200 spendable rows, so a change UTXO with no lockingScript further in survived and `allocateChangeInput` handed it back to `createAction`. Every change row now gets an explicit fate: rebuild the script from the raw tx (local storage, then chain on iterator-crash recovery), or fail closed as unspendable.
+- Restored change UTXOs are re-enabled after a successful rebuild, so healed coins return to the balance instead of staying written off.
+- Stale-output restore no longer logs hundreds of `validateOutputScript` warnings per pass — script-less rows are left to the rebuild path.
+
 ## [1.2.218] - 2026-08-12
 
 ### Fixed

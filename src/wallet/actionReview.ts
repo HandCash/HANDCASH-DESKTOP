@@ -6,6 +6,7 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import { txExistsOnChain } from './legacyScan'
 import { healGhostSentItems } from './sentItemGuard'
 import { forgetOneSatImported } from './oneSatImportGuard'
+import { sweepChangeScripts } from './changeScriptFate'
 
 export type ReviewActionRow = {
   txid?: string
@@ -96,22 +97,28 @@ export async function abortReservedActionBatches(
 
 /**
  * Fail abandoned unsigned/unprocessed txs, run toolbox reviewStatus to free
- * inputs stuck on failed spends, and quarantine change outs that still have no
- * lockingScript (those crash createAction as `Array.from(undefined)`).
+ * inputs stuck on failed spends, then rebuild or quarantine change outs that
+ * have no lockingScript (those crash createAction as `Array.from(undefined)` —
+ * see `changeScriptFate`).
  *
  * Does **not** listFailedActions(unfail) — that requeues doubleSpends into
  * TaskSendWaiting and poisons the next pay.
  */
 export async function repairFailedSpendState(
   active?: ActiveWallet | null,
-): Promise<{ failedTxs: number; reviewLog: string; quarantined: number }> {
-  const wallet = (active ?? getActiveWallet())?.wallet
-  const empty = { failedTxs: 0, reviewLog: '', quarantined: 0 }
+): Promise<{
+  failedTxs: number
+  reviewLog: string
+  quarantined: number
+  healed: number
+}> {
+  const resolved = active ?? getActiveWallet()
+  const wallet = resolved?.wallet
+  const empty = { failedTxs: 0, reviewLog: '', quarantined: 0, healed: 0 }
   if (!wallet?.storage) return empty
 
   let failedTxs = 0
   let reviewLog = ''
-  let quarantined = 0
 
   try {
     failedTxs = await wallet.storage.runAsStorageProvider(async (sp) => {
@@ -153,48 +160,14 @@ export async function repairFailedSpendState(
     console.warn('[action-review] reviewStatus skipped', err)
   }
 
-  try {
-    quarantined = await wallet.storage.runAsStorageProvider(async (sp) => {
-      let n = 0
-      const outs = await sp.findOutputs({
-        partial: { spendable: true },
-        paged: { limit: 200, offset: 0 },
-      })
-      for (const o of outs ?? []) {
-        const outputId = Number((o as { outputId?: number }).outputId)
-        if (!Number.isFinite(outputId) || outputId <= 0) continue
-        const change = (o as { change?: boolean }).change === true
-        if (!change) continue
-        try {
-          await sp.validateOutputScript(o)
-        } catch {
-          /* hydrate best-effort */
-        }
-        const script = (o as { lockingScript?: unknown }).lockingScript
-        const hasScript =
-          (typeof script === 'string' && script.length > 0) ||
-          (Array.isArray(script) && script.length > 0) ||
-          (script instanceof Uint8Array && script.length > 0)
-        if (hasScript) continue
-        try {
-          await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
-          n += 1
-        } catch (err) {
-          console.warn('[action-review] quarantine unscripted change skipped', outputId, err)
-        }
-      }
-      return n
-    })
-    if (quarantined > 0) {
-      console.info(
-        `[action-review] quarantined ${quarantined} spendable change output(s) with no lockingScript`,
-      )
-    }
-  } catch (err) {
-    console.warn('[action-review] quarantine unscripted change skipped', err)
-  }
+  const sweep = await sweepChangeScripts({ active: resolved })
 
-  return { failedTxs, reviewLog, quarantined }
+  return {
+    failedTxs,
+    reviewLog,
+    quarantined: sweep.quarantined,
+    healed: sweep.healed,
+  }
 }
 
 export function isIteratorCrashError(err: unknown): boolean {
@@ -290,6 +263,18 @@ export async function recoverFromReviewActions(args: {
   // TaskSendWaiting, poison the next real payment, and can surface as
   // "undefined is not iterable". Fail abandoned txs + reviewStatus instead.
   await repairFailedSpendState(active)
+
+  // `Array.from(undefined)` means a change row reached createAction with no
+  // locking script. The pre-send sweep only rebuilds from local raw tx; here a
+  // coin is already blocking the wallet, so pay for chain lookups and let the
+  // audited restore path re-enable whatever we rebuilt.
+  if (isIteratorCrashError(args.err)) {
+    const rebuilt = await sweepChangeScripts({ active, fromChain: true })
+    if (rebuilt.healed > 0) {
+      const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
+      await restoreLiveSpendableOutputs()
+    }
+  }
 
   try {
     const healed = await healGhostSentItems(active.chain, txExistsOnChain)

@@ -14,6 +14,7 @@
  */
 import { getActiveWallet } from './session'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { hasLockingScript, type ChangeRow } from './changeScriptFate'
 
 /** Cap restore work so a huge dead set cannot stall unlock/refresh. */
 const RESTORE_MAX = 200
@@ -103,6 +104,7 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
     if (!dead?.length) return 0
 
     let restored = 0
+    let unscripted = 0
     for (const output of dead.slice(0, RESTORE_MAX)) {
       if (shouldYieldChainIngestToSpend()) {
         console.info(
@@ -112,6 +114,12 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
       }
       const outputId = Number((output as { outputId?: number }).outputId)
       if (!Number.isFinite(outputId) || outputId <= 0) continue
+      // `services.isUtxo` hashes the locking script, so a row without one can
+      // only ever throw here. `changeScriptFate` owns rebuilding those.
+      if (!hasLockingScript(output as ChangeRow)) {
+        unscripted += 1
+        continue
+      }
       try {
         const stillUtxo = await services.isUtxo(output as never)
         if (stillUtxo !== true) continue
@@ -134,6 +142,11 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
     if (restored > 0) {
       console.info(
         `[stale-output] restored ${restored} live output(s) previously marked unspendable`,
+      )
+    }
+    if (unscripted > 0) {
+      console.info(
+        `[stale-output] skipped ${unscripted} output(s) with no locking script — awaiting rebuild`,
       )
     }
     return restored

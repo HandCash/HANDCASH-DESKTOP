@@ -122,8 +122,8 @@ describe('restoreLiveSpendableOutputs', () => {
 
   it('re-enables outputs that are still UTXOs on-chain', async () => {
     findOutputs.mockResolvedValue([
-      { outputId: 1, spendable: false },
-      { outputId: 2, spendable: false },
+      { outputId: 1, spendable: false, lockingScript: [118, 169] },
+      { outputId: 2, spendable: false, lockingScript: [118, 169] },
     ])
     isUtxo.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
 
@@ -132,6 +132,14 @@ describe('restoreLiveSpendableOutputs', () => {
       spendable: true,
       spentBy: undefined,
     })
+  })
+
+  it('skips rows with no locking script instead of asking isUtxo', async () => {
+    findOutputs.mockResolvedValue([{ outputId: 1, spendable: false }])
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    expect(isUtxo).not.toHaveBeenCalled()
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 
   it('does nothing without an unlocked wallet', async () => {

@@ -38,6 +38,16 @@ vi.mock('./session', () => ({
   }),
 }))
 
+const sweepChangeScripts = vi.fn(async (_args?: unknown) => ({
+  scanned: 2,
+  healed: 0,
+  quarantined: 1,
+  refused: 1,
+}))
+vi.mock('./changeScriptFate', () => ({
+  sweepChangeScripts: (args?: unknown) => sweepChangeScripts(args),
+}))
+
 vi.mock('./legacyScan', () => ({ txExistsOnChain: async () => null }))
 vi.mock('./sentItemGuard', () => ({ healGhostSentItems: async () => [] }))
 vi.mock('./oneSatImportGuard', () => ({ forgetOneSatImported: () => {} }))
@@ -97,15 +107,12 @@ describe('actionReview', () => {
     ).toMatch(/previous failed send/i)
   })
 
-  it('repairFailedSpendState fails abandoned txs, reviews status, quarantines unscripted change', async () => {
+  it('repairFailedSpendState fails abandoned txs, reviews status, sweeps change scripts', async () => {
     const r = await repairFailedSpendState()
     expect(r.failedTxs).toBe(1)
     expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
     expect(reviewStatus).toHaveBeenCalled()
     expect(r.quarantined).toBe(1)
-    expect(updateOutput).toHaveBeenCalledWith(11, {
-      spendable: false,
-      spentBy: undefined,
-    })
+    expect(sweepChangeScripts).toHaveBeenCalled()
   })
 })
