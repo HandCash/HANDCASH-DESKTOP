@@ -1,12 +1,57 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import {
   formatReviewActionsError,
   isReservedActionBatchError,
   isReviewActionsError,
+  repairFailedSpendState,
   sendWithHasFailure,
 } from './actionReview'
 
+const updateTransactionStatus = vi.fn(async () => {})
+const reviewStatus = vi.fn(async () => ({ log: 'ok' }))
+const validateOutputScript = vi.fn(async () => {})
+const updateOutput = vi.fn(async () => {})
+const findTransactions = vi.fn(async () => [
+  { transactionId: 7, status: 'unsigned' },
+])
+const findOutputs = vi.fn(async () => [
+  { outputId: 11, change: true, spendable: true, lockingScript: undefined },
+  { outputId: 12, change: true, spendable: true, lockingScript: '76a914' },
+])
+
+vi.mock('./session', () => ({
+  getActiveWallet: () => ({
+    chain: 'main',
+    wallet: {
+      storage: {
+        runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
+          fn({
+            findTransactions,
+            updateTransactionStatus,
+            reviewStatus,
+            findOutputs,
+            validateOutputScript,
+            updateOutput,
+          }),
+      },
+    },
+  }),
+}))
+
+vi.mock('./legacyScan', () => ({ txExistsOnChain: async () => null }))
+vi.mock('./sentItemGuard', () => ({ healGhostSentItems: async () => [] }))
+vi.mock('./oneSatImportGuard', () => ({ forgetOneSatImported: () => {} }))
+
 describe('actionReview', () => {
+  beforeEach(() => {
+    updateTransactionStatus.mockClear()
+    reviewStatus.mockClear()
+    validateOutputScript.mockClear()
+    updateOutput.mockClear()
+    findTransactions.mockClear()
+    findOutputs.mockClear()
+  })
+
   it('detects leftover action-batch reservations', () => {
     expect(
       isReservedActionBatchError(
@@ -50,5 +95,17 @@ describe('actionReview', () => {
         new Error('undefined is not iterable (cannot read property Symbol(Symbol.iterator))'),
       ),
     ).toMatch(/previous failed send/i)
+  })
+
+  it('repairFailedSpendState fails abandoned txs, reviews status, quarantines unscripted change', async () => {
+    const r = await repairFailedSpendState()
+    expect(r.failedTxs).toBe(1)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
+    expect(reviewStatus).toHaveBeenCalled()
+    expect(r.quarantined).toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(11, {
+      spendable: false,
+      spentBy: undefined,
+    })
   })
 })

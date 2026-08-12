@@ -282,7 +282,7 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
 
           setPaymentProgress('broadcasting', 'Signing and broadcasting your payment')
-          const result = await active.wallet.createAction({
+          const createActionArgs = {
             description:
               opts.description ??
               `HandCash BRC-29 send${opts.friendLabel ? ` to ${opts.friendLabel}` : ''}`,
@@ -303,9 +303,25 @@ export async function sendBrc29ToIdentityKey(opts: {
               randomizeOutputs: false,
               signAndProcess: true,
               acceptDelayedBroadcast: true,
-              trustSelf: 'known',
+              trustSelf: 'known' as const,
             },
-          })
+          }
+          let result: Awaited<ReturnType<typeof active.wallet.createAction>>
+          try {
+            result = await active.wallet.createAction(createActionArgs)
+          } catch (firstErr) {
+            const { isIteratorCrashError, isReviewActionsError, recoverFromReviewActions } =
+              await import('./actionReview')
+            if (!isIteratorCrashError(firstErr) && !isReviewActionsError(firstErr)) {
+              throw firstErr
+            }
+            console.warn(
+              '[brc29] createAction poison — repairing and retrying once',
+              firstErr instanceof Error ? firstErr.message : String(firstErr),
+            )
+            await recoverFromReviewActions({ err: firstErr, active })
+            result = await active.wallet.createAction(createActionArgs)
+          }
 
           const realTxid = (result as { txid?: string })?.txid
           const atomicBeef = atomicBeefFromCreateAction(result)

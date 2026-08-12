@@ -616,8 +616,8 @@ const SPEND_SIGN = `stateDiagram-v2
   postBeef --> failed : missing-inputs / reject
   sendWithOk --> failed : sendWith failure
   createAction --> review : WERR_REVIEW_ACTIONS / reserved batch
-  review --> recover : abort batches · no unfail
-  recover --> createAction : retry
+  review --> recover : abort batches · fail abandoned\\nreviewStatus · quarantine unscripted
+  recover --> createAction : retry once
   refuse --> failed
   failed --> [*]
   done --> [*] : activity + history push

@@ -113,7 +113,7 @@ export async function sendSatsToAddress(opts: {
               'broadcasting',
               'Signing and broadcasting your payment',
             )
-            const result = await active.wallet.createAction({
+            const createActionArgs = {
               description: opts.description ?? `HandCash send to ${to}`,
               labels: ['handcash-send'],
               outputs: [
@@ -129,7 +129,23 @@ export async function sendSatsToAddress(opts: {
                 acceptDelayedBroadcast: true,
                 signAndProcess: true,
               },
-            })
+            }
+            let result: Awaited<ReturnType<typeof active.wallet.createAction>>
+            try {
+              result = await active.wallet.createAction(createActionArgs)
+            } catch (firstErr) {
+              const { isIteratorCrashError, isReviewActionsError, recoverFromReviewActions } =
+                await import('./actionReview')
+              if (!isIteratorCrashError(firstErr) && !isReviewActionsError(firstErr)) {
+                throw firstErr
+              }
+              console.warn(
+                '[send] createAction poison — repairing and retrying once',
+                firstErr instanceof Error ? firstErr.message : String(firstErr),
+              )
+              await recoverFromReviewActions({ err: firstErr, active })
+              result = await active.wallet.createAction(createActionArgs)
+            }
 
             const realTxid = (result as { txid?: string })?.txid
             const txid = realTxid ?? `local-${Date.now().toString(16)}`

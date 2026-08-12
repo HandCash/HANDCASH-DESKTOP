@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.217] - 2026-08-12
+
+### Fixed
+- **BRC-29 / pay stuck on “undefined is not iterable”.** Recovery now fails abandoned unsigned txs, runs toolbox `reviewStatus` to free inputs, quarantines change UTXOs with no lockingScript (offloaded-script allocate poison), and retries `createAction` once after repair — still never `listFailedActions(unfail)`.
+
 ## [1.2.216] - 2026-08-12
 
 ### Fixed

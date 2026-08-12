@@ -88,6 +88,9 @@ vi.mock('./appActivity', () => ({
   upsertAppActivity: () => {},
   noteInboundReceivePending: () => {},
   noteInboundReceiveComplete: () => {},
+  noteOutboundSendPending: () => {},
+  noteOutboundSendComplete: () => {},
+  clearOutboundSendPending: () => {},
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))
@@ -100,6 +103,19 @@ vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   releaseStaleSpendableOutputs: async () => {},
 }))
+vi.mock('./actionReview', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./actionReview')>()
+  return {
+    ...actual,
+    releaseStuckNosends: async () => {},
+    repairFailedSpendState: async () => ({
+      failedTxs: 0,
+      reviewLog: '',
+      quarantined: 0,
+    }),
+    recoverFromReviewActions: async () => {},
+  }
+})
 vi.mock('./messageStore', () => ({
   listThreads: () => [],
   listMessages: () => [],
