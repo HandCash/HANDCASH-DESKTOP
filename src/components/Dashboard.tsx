@@ -485,6 +485,7 @@ export function Dashboard({
           beefUrl?: string
           tx?: number[]
           item?: boolean
+          itemName?: string
         }>
       }>).detail
       const hints = detail?.hints ?? []

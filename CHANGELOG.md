@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.201] - 2026-08-12
+
+### Fixed
+- **Verifying receives show in Activity.** Inbound payments and items write a pending Activity row as soon as the tip card lands, with “Verifying…” until internalize finishes — not only after success. Soft-latch / item / SPV ingest uses raw-tx BEEF so indexer timeouts no longer stall digest.
+
 ## [1.2.200] - 2026-08-12
 
 ### Fixed

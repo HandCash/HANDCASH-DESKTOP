@@ -84,6 +84,11 @@ describe('ingestPaymentByTxid', () => {
     const [utxos] = mockImportLegacyUtxos.mock.calls[0] as [Array<{ outpoint: string; satoshis: number }>]
     expect(utxos.map((u) => u.outpoint)).toEqual([`${txid}.0`])
     expect(utxos.every((u) => u.satoshis > 2)).toBe(true)
+    expect(mockGetBeef).toHaveBeenCalledWith(
+      expect.anything(),
+      txid,
+      expect.objectContaining({ allowUnprovenRawTx: true }),
+    )
     // silence unused LockingScript import lint via side effect
     expect(LockingScript).toBeTruthy()
   })

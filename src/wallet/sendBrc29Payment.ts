@@ -12,6 +12,9 @@ import { Beef, createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,
+  hasSettledActivityTxid,
+  noteInboundReceiveComplete,
+  noteInboundReceivePending,
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
@@ -515,6 +518,10 @@ async function internalizeBrc29PaymentOnce(opts: {
   }
 
     markInboundPaymentStatus(id, 'Receiving')
+  noteInboundReceivePending({
+    txid: id,
+    sats: typeof opts.satoshis === 'number' ? opts.satoshis : undefined,
+  })
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing BRC-29 payment',
@@ -556,15 +563,8 @@ async function internalizeBrc29PaymentOnce(opts: {
         ? Math.floor(opts.satoshis)
         : 0
 
-    if (satoshis > 0 && !hasActivityTxid(id, 'earned')) {
-      recordAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'earned',
-        sats: satoshis,
-        method: 'receive',
-        note: 'Received coins',
-        txid: id,
-      })
+    if (satoshis > 0 || hasActivityTxid(id, 'earned')) {
+      noteInboundReceiveComplete({ txid: id, sats: satoshis })
     }
 
     scheduleHistoryBackupPush('internalizeAction')
@@ -582,6 +582,13 @@ async function internalizeBrc29PaymentOnce(opts: {
     return { accepted: true, satoshis, balanceSats }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
+      const satoshis =
+        typeof opts.satoshis === 'number' && opts.satoshis > 0
+          ? Math.floor(opts.satoshis)
+          : 0
+      if (satoshis > 0 || hasActivityTxid(id, 'earned')) {
+        noteInboundReceiveComplete({ txid: id, sats: satoshis })
+      }
       const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
       markInboundPaymentStatus(id, 'Received')
       setSyncHealth({ phase: 'ok', message: null })
@@ -633,6 +640,8 @@ export type PaymentTipHint = {
   tx?: number[]
   /** Soft-latch item settle — not a BSV payment. */
   item?: boolean
+  /** Collectable name from the tip card memo, when known. */
+  itemName?: string
 }
 
 /** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
@@ -644,13 +653,15 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
       if (msg.kind !== 'tip' && msg.kind !== 'pay-sent') continue
       const txid = (msg.meta?.txid || '').trim().toLowerCase()
       if (!/^[0-9a-f]{64}$/.test(txid)) continue
-      if (hasActivityTxid(txid, 'earned')) continue
+      const isItem = msg.meta?.item === true
+      if (hasSettledActivityTxid(txid, 'earned', { item: isItem })) continue
       hints.push({
         txid,
         senderIdentityKey: msg.meta?.identityKey,
         satoshis: msg.meta?.sats,
         brc29: msg.meta?.brc29,
-        item: msg.meta?.item === true || undefined,
+        item: isItem || undefined,
+        itemName: msg.meta?.memo?.trim() || undefined,
       })
     }
   }
@@ -681,6 +692,7 @@ export async function ingestPaymentsFromTipHints(
       beefUrl: h.beefUrl,
       tx: h.tx,
       item: h.item === true || undefined,
+      itemName: h.itemName?.trim() || undefined,
     })
   }
 
@@ -691,11 +703,21 @@ export async function ingestPaymentsFromTipHints(
       !prev ||
       (h.brc29 && !prev.brc29) ||
       (h.item && !prev.item) ||
+      (h.itemName && !prev.itemName) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
     ) {
       unique.set(h.txid, { ...prev, ...h })
     }
+  }
+
+  for (const hint of unique.values()) {
+    noteInboundReceivePending({
+      txid: hint.txid,
+      sats: hint.satoshis,
+      item: hint.item,
+      itemName: hint.itemName,
+    })
   }
 
   let imported = 0
@@ -716,6 +738,7 @@ export async function ingestPaymentsFromTipHints(
           txid: hint.txid,
           tx: attempt === 0 ? atomic : undefined,
           beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+          name: hint.itemName,
         })
         if (result.accepted) {
           imported += 1

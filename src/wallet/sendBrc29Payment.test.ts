@@ -82,7 +82,11 @@ vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
 vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: () => {} }))
 vi.mock('./appActivity', () => ({
   hasActivityTxid: () => false,
+  hasSettledActivityTxid: () => false,
   recordAppActivity: () => {},
+  upsertAppActivity: () => {},
+  noteInboundReceivePending: () => {},
+  noteInboundReceiveComplete: () => {},
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))

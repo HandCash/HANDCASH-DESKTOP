@@ -21,6 +21,7 @@ import {
   isItemActivity,
   isMintTokenActivity,
   isTokenActivity,
+  isPendingActivity,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -164,6 +165,7 @@ function HistoryRow({
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
+  const pending = isPendingActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -173,7 +175,9 @@ function HistoryRow({
       ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
       : item
         ? shown?.name || 'Collectable'
-        : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+        : pending && entry.sats <= 0
+          ? '…'
+          : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
     ? amountLabel
     : token
@@ -194,7 +198,7 @@ function HistoryRow({
       : null
 
   const entryKey = activityEntryKey(entry)
-  const showVerify = Boolean(item && verifying && !spent)
+  const showVerify = Boolean(!spent && !event && (pending || (item && verifying)))
   const badgeKind = minted ? 'mint' : spent ? 'send' : 'receive'
   const badgeLabel = minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
@@ -202,6 +206,7 @@ function HistoryRow({
     <li
       data-activity-key={entryKey}
       data-activity-newest={newest ? '' : undefined}
+      data-activity-pending={pending ? '' : undefined}
     >
       <button
         type="button"
@@ -273,7 +278,11 @@ function HistoryRow({
           >
             {signed}
           </span>
-          {showWhen ? <span className="history-when">{formatWhen(entry.at)}</span> : null}
+          {showWhen ? (
+            <span className="history-when">
+              {pending ? 'Verifying…' : formatWhen(entry.at)}
+            </span>
+          ) : null}
         </div>
       </button>
     </li>
@@ -504,7 +513,10 @@ export function ActivityFeed({
             usdPerBsv={usdPerBsv}
             showWhen={showWhen}
             newest={index === 0}
-            verifying={isOutpointVerifying(entry.item?.outpoint, verification)}
+            verifying={
+              isPendingActivity(entry) ||
+              isOutpointVerifying(entry.item?.outpoint, verification)
+            }
           />
         ))}
         {viewAllLabel && onViewAll ? (

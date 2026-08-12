@@ -1,10 +1,27 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const store = new Map<string, string>()
+
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => store.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    store.set(key, value)
+    return true
+  },
+}))
+
 import {
   activityDetailLabel,
   activityEntryKey,
   activityEntryTitle,
+  clearAppActivity,
+  hasSettledActivityTxid,
   isEventActivity,
   isItemActivity,
+  isPendingActivity,
+  listRecentActivity,
+  noteInboundReceiveComplete,
+  noteInboundReceivePending,
   type ActivityEntry,
 } from './appActivity'
 
@@ -128,5 +145,69 @@ describe('activityEntryKey', () => {
 
   it('keys a local-only row on its timestamp', () => {
     expect(activityEntryKey(entry({ at: 42, sats: 7 }))).toBe('at:42:spent:7')
+  })
+})
+
+describe('inbound receive activity', () => {
+  const TX = 'a'.repeat(64)
+
+  beforeEach(() => {
+    store.clear()
+    clearAppActivity()
+  })
+
+  it('shows a verifying payment in Activity before internalize finishes', () => {
+    noteInboundReceivePending({ txid: TX, sats: 12_345 })
+    const rows = listRecentActivity(10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      kind: 'earned',
+      method: 'receive',
+      sats: 12345,
+      txid: TX,
+      status: 'pending',
+    })
+    expect(isPendingActivity(rows[0]!)).toBe(true)
+    expect(hasSettledActivityTxid(TX, 'earned', { item: false })).toBe(false)
+  })
+
+  it('promotes the same row when ingest settles (no duplicate)', () => {
+    noteInboundReceivePending({ txid: TX, sats: 100 })
+    noteInboundReceiveComplete({ txid: TX, sats: 100 })
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]?.status).toBeUndefined()
+    expect(rows[0]?.sats).toBe(100)
+    expect(hasSettledActivityTxid(TX, 'earned', { item: false })).toBe(true)
+  })
+
+  it('keeps item and BSV receives on the same txid as separate rows', () => {
+    noteInboundReceivePending({ txid: TX, sats: 5000 })
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+    })
+    noteInboundReceiveComplete({ txid: TX, sats: 5000 })
+    noteInboundReceiveComplete({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+      outpoint: `${TX}.0`,
+    })
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
+    expect(rows).toHaveLength(2)
+    expect(rows.some((e) => e.method === 'receive' && !e.item)).toBe(true)
+    expect(rows.some((e) => e.method === 'receive-collectable' && e.item?.name === 'Fox')).toBe(
+      true,
+    )
+  })
+
+  it('does not take a settled receive back to verifying', () => {
+    noteInboundReceiveComplete({ txid: TX, sats: 9 })
+    noteInboundReceivePending({ txid: TX, sats: 9 })
+    const row = listRecentActivity(10).find((e) => e.txid === TX)
+    expect(row?.status).toBeUndefined()
+    expect(isPendingActivity(row!)).toBe(false)
   })
 })

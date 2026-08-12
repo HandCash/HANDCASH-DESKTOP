@@ -11,7 +11,9 @@ import {
   isEventActivity,
   isItemActivity,
   isMintTokenActivity,
+  isPendingActivity,
   isTokenActivity,
+  subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
   type ActivityItem,
@@ -78,8 +80,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => {
-    setEntry(getActivityById(entryId))
     setIconReady(false)
+    const refresh = () => setEntry(getActivityById(entryId))
+    refresh()
+    return subscribeAppActivity(refresh)
   }, [entryId])
 
   if (!entry) {
@@ -145,6 +149,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
+  const pending = isPendingActivity(entry)
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
@@ -253,10 +258,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               ) : null}
             </div>
             <p className="history-when">
-              {new Date(entry.at).toLocaleString(undefined, {
-                dateStyle: 'medium',
-                timeStyle: 'short',
-              })}
+              {pending
+                ? 'Verifying…'
+                : new Date(entry.at).toLocaleString(undefined, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
             </p>
           </div>
         ) : (

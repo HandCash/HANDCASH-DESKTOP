@@ -1105,7 +1105,9 @@ export async function importOneSatOrdinals(
     }
     try {
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid)
+      const beef = await getBeefForTxidCached(wallet, txid, {
+        allowUnprovenRawTx: true,
+      })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
 
@@ -1264,7 +1266,9 @@ export async function importSoftLatchSettlements(
     const txid = tipsClaimed[0]?.txid ?? latchesClaimed[0]!.txid
     try {
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid)
+      const beef = await getBeefForTxidCached(wallet, txid, {
+        allowUnprovenRawTx: true,
+      })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)
@@ -1435,7 +1439,9 @@ export async function importOneSatLatches(
       // BEEF serialize + AtomicBEEF validate inside internalizeAction are sync
       // CPU on the WebView thread — yield around them so nav taps stay live.
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid)
+      const beef = await getBeefForTxidCached(wallet, txid, {
+        allowUnprovenRawTx: true,
+      })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)

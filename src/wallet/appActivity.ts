@@ -6,6 +6,9 @@ const STORAGE_KEY = 'handcash.brc100.appActivity'
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
 export type ActivityKind = 'spent' | 'earned' | 'event'
 
+/** In-flight ingest / authenticity. Absent = settled (legacy rows). */
+export type ActivityStatus = 'pending' | 'complete'
+
 /** Collectable / NFT / fungible remittance attached to an activity row. */
 export type ActivityItem = {
   name: string
@@ -35,6 +38,8 @@ export type ActivityEntry = {
   txid?: string
   /** Present when this row is an item transfer, not a BSV payment. */
   item?: ActivityItem
+  /** Receiving / verifying — Activity shows the row before internalize finishes. */
+  status?: ActivityStatus
 }
 
 const ACTIVITY_KINDS = new Set<ActivityKind>(['spent', 'earned', 'event'])
@@ -84,8 +89,14 @@ function readAll(): ActivityEntry[] {
         )
       })
       .map((e) => {
-        const item = normalizeActivityItem((e as ActivityEntry).item)
-        return item ? { ...e, item } : { ...e, item: undefined }
+        const row = e as ActivityEntry
+        const item = normalizeActivityItem(row.item)
+        const status = row.status === 'pending' ? 'pending' : undefined
+        return {
+          ...row,
+          item: item ?? undefined,
+          ...(status ? { status } : { status: undefined }),
+        }
       })
     parsedRaw = raw
     parsedEntries = entries
@@ -111,6 +122,12 @@ function writeAll(entries: ActivityEntry[]): void {
   for (const cb of listeners) cb()
 }
 
+function activityRowIsItem(
+  row: { item?: ActivityItem; method: string },
+): boolean {
+  return Boolean(row.item) || /collectable|token|1sat|ordinal/i.test(row.method)
+}
+
 /** True if we already logged this on-chain (or local) txid. */
 export function hasActivityTxid(
   txid: string | undefined | null,
@@ -123,6 +140,27 @@ export function hasActivityTxid(
   )
 }
 
+/** True when a receive/send for this txid has finished ingest (not just verifying). */
+export function hasSettledActivityTxid(
+  txid: string | undefined | null,
+  kind?: ActivityKind,
+  opts?: { item?: boolean },
+): boolean {
+  const key = txid?.trim().toLowerCase()
+  if (!key) return false
+  return readAll().some((e) => {
+    if (e.txid?.toLowerCase() !== key) return false
+    if (kind != null && e.kind !== kind) return false
+    if (e.status === 'pending') return false
+    if (opts?.item != null && activityRowIsItem(e) !== opts.item) return false
+    return true
+  })
+}
+
+export function isPendingActivity(entry: ActivityEntry): boolean {
+  return entry.status === 'pending'
+}
+
 /** True if we already logged a collectable receive/send for this tip outpoint. */
 export function hasActivityItemOutpoint(outpoint: string | undefined | null): boolean {
   const key = outpoint?.trim().toLowerCase().replace('_', '.')
@@ -133,11 +171,50 @@ export function hasActivityItemOutpoint(outpoint: string | undefined | null): bo
   })
 }
 
+/** True when this tip outpoint already has a settled activity row. */
+export function hasSettledActivityItemOutpoint(
+  outpoint: string | undefined | null,
+): boolean {
+  const key = outpoint?.trim().toLowerCase().replace('_', '.')
+  if (!key) return false
+  return readAll().some((e) => {
+    const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+    return op === key && e.status !== 'pending'
+  })
+}
+
 export function subscribeAppActivity(cb: ActivityListener): () => void {
   listeners.add(cb)
   return () => {
     listeners.delete(cb)
   }
+}
+
+function findActivityMatchIndex(
+  entries: ActivityEntry[],
+  args: {
+    kind: ActivityKind
+    txid?: string
+    item?: ActivityItem
+    method: string
+  },
+): number {
+  const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+  if (outpoint) {
+    const byOp = entries.findIndex((e) => {
+      const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+      return op === outpoint && e.kind === args.kind
+    })
+    if (byOp >= 0) return byOp
+  }
+  const txid = args.txid?.trim().toLowerCase()
+  if (!txid) return -1
+  const wantItem = activityRowIsItem(args)
+  return entries.findIndex((e) => {
+    if (e.kind !== args.kind) return false
+    if (e.txid?.toLowerCase() !== txid) return false
+    return activityRowIsItem(e) === wantItem
+  })
 }
 
 export function recordAppActivity(args: {
@@ -148,18 +225,72 @@ export function recordAppActivity(args: {
   note?: string
   txid?: string
   item?: ActivityItem
+  status?: ActivityStatus
+}): void {
+  upsertAppActivity(args)
+}
+
+/**
+ * Insert or update a money/item row. Same txid + kind + (item vs BSV) collapses
+ * so a verifying receive becomes the settled row instead of a duplicate.
+ */
+export function upsertAppActivity(args: {
+  origin: string | undefined
+  kind: ActivityKind
+  sats: number
+  method: string
+  note?: string
+  txid?: string
+  item?: ActivityItem
+  status?: ActivityStatus
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
   const isEvent = args.kind === 'event'
+  const pending = args.status === 'pending'
   // Item transfers are meaningful even when the tip is only 1 satoshi — never drop them
   // because the money amount is dust. Events (connect, friend, …) may be zero-sats.
-  if (sats <= 0 && !item && !isEvent) return
+  // Pending BSV receives may not know sats yet — still show Verifying… in Activity.
+  if (sats <= 0 && !item && !isEvent && !pending) return
   if (isEvent && !(args.note?.trim() || args.method.trim())) return
   const origin = normalizeAppHost(args.origin)
-  // readAll shares its array — append to a copy rather than mutating the cache.
+  const txid = args.txid?.trim() || undefined
+  const entries = [...readAll()]
+  const idx = findActivityMatchIndex(entries, {
+    kind: args.kind,
+    txid,
+    item: item ?? args.item,
+    method: args.method,
+  })
+  if (idx >= 0) {
+    const prev = entries[idx]!
+    // Never take a settled row back to verifying.
+    const nextStatus =
+      prev.status !== 'pending' && pending
+        ? prev.status
+        : args.status === 'complete'
+          ? undefined
+          : args.status ?? prev.status
+    const nextItem = item
+      ? prev.item
+        ? { ...prev.item, ...item }
+        : item
+      : prev.item
+    entries[idx] = {
+      ...prev,
+      origin: origin || prev.origin,
+      sats: isEvent ? 0 : sats > 0 ? sats : prev.sats,
+      method: args.method || prev.method,
+      note: args.note ?? prev.note,
+      txid: txid || prev.txid,
+      ...(nextItem ? { item: nextItem } : {}),
+      ...(nextStatus === 'pending' ? { status: 'pending' as const } : { status: undefined }),
+    }
+    writeAll(entries)
+    return
+  }
   writeAll([
-    ...readAll(),
+    ...entries,
     {
       id: `${Date.now()}-${Math.random().toString(16).slice(2, 8)}`,
       origin,
@@ -168,10 +299,87 @@ export function recordAppActivity(args: {
       at: Date.now(),
       method: args.method,
       note: args.note,
-      txid: args.txid?.trim() || undefined,
+      txid,
       ...(item ? { item } : {}),
+      ...(pending ? { status: 'pending' as const } : {}),
     },
   ])
+}
+
+/** Activity row as soon as a peer tip/pay lands — before internalize finishes. */
+export function noteInboundReceivePending(args: {
+  txid: string
+  sats?: number
+  item?: boolean
+  itemName?: string
+  itemOrigin?: string
+  outpoint?: string
+}): void {
+  const txid = args.txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(txid)) return
+  if (args.item) {
+    const name = args.itemName?.trim() || 'Collectable'
+    const origin = args.itemOrigin?.trim() || `${txid}_0`
+    const outpoint = args.outpoint?.trim() || `${txid}.0`
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: `Received ${name}`,
+      txid,
+      status: 'pending',
+      item: { name, origin, outpoint },
+    })
+    return
+  }
+  upsertAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'earned',
+    sats: Math.max(0, Math.trunc(args.sats ?? 0)),
+    method: 'receive',
+    note: 'Received coins',
+    txid,
+    status: 'pending',
+  })
+}
+
+/** Mark a verifying receive as settled (or create the row if ingest skipped pending). */
+export function noteInboundReceiveComplete(args: {
+  txid: string
+  sats?: number
+  item?: boolean
+  itemName?: string
+  itemOrigin?: string
+  outpoint?: string
+}): void {
+  const txid = args.txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(txid)) return
+  if (args.item) {
+    const name = args.itemName?.trim() || 'Collectable'
+    const origin = args.itemOrigin?.trim() || `${txid}_0`
+    const outpoint = args.outpoint?.trim() || `${txid}.0`
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: `Received ${name}`,
+      txid,
+      status: 'complete',
+      item: { name, origin, outpoint },
+    })
+    return
+  }
+  upsertAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'earned',
+    sats: Math.max(0, Math.trunc(args.sats ?? 0)),
+    method: 'receive',
+    note: 'Received coins',
+    txid,
+    status: 'complete',
+  })
 }
 
 /** Non-tx wallet action (permission decision, friend, disconnect, …). */

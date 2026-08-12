@@ -26,6 +26,7 @@ import {
   type MessageKind,
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
+import { noteInboundReceivePending } from './appActivity'
 
 const WIRE_PREFIX = 'handcash-message:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
@@ -455,6 +456,7 @@ export type InboundPaymentHint = {
   /** Inline Atomic BEEF from sendMessage `beefB64`. */
   tx?: number[]
   item?: boolean
+  itemName?: string
 }
 
 export async function pollInboundTipHints(args: {
@@ -529,6 +531,14 @@ export async function pollInboundTipHints(args: {
       if (isPaymentHint) {
         tipHints += 1
         const txid = decoded.meta!.txid!.trim().toLowerCase()
+        const item = decoded.meta?.item === true || undefined
+        const itemName = decoded.meta?.memo?.trim() || undefined
+        noteInboundReceivePending({
+          txid,
+          sats: decoded.meta?.sats,
+          item,
+          itemName,
+        })
         paymentTxids.push(txid)
         paymentHints.push({
           txid,
@@ -538,7 +548,8 @@ export async function pollInboundTipHints(args: {
           brc29: decoded.meta?.brc29,
           beefUrl: decoded.meta?.attachment?.url,
           tx: decodeBeefB64(decoded.meta?.beefB64),
-          item: decoded.meta?.item === true || undefined,
+          item,
+          itemName,
         })
         // Do not ACK until ingest succeeds — otherwise remittance is deleted
         // before Desktop can internalize.

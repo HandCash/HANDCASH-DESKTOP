@@ -19,8 +19,10 @@ import {
 import type { Chain } from './vault'
 import {
   hasActivityItemOutpoint,
-  hasActivityTxid,
+  hasSettledActivityItemOutpoint,
+  hasSettledActivityTxid,
   recordAppActivity,
+  upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   formatActivityTokenAmt,
 } from './appActivity'
@@ -109,14 +111,15 @@ function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
     byTx.set(txid, (byTx.get(txid) ?? 0) + receipt.satoshis)
   }
   for (const [txid, sats] of byTx) {
-    if (hasActivityTxid(txid, 'earned')) continue
-    recordAppActivity({
+    if (hasSettledActivityTxid(txid, 'earned', { item: false })) continue
+    upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats,
       method: 'receive',
       note: 'Received coins',
       txid,
+      status: 'complete',
     })
   }
 }
@@ -133,18 +136,19 @@ function recordItemReceipts(
   )
   for (const raw of importedOutpoints) {
     const op = raw.trim().toLowerCase()
-    if (!op || hasActivityItemOutpoint(op)) continue
+    if (!op || hasSettledActivityItemOutpoint(op)) continue
     const item = byOp.get(op)
     const receiveTxid = item?.txid?.trim().toLowerCase() || op.split('.')[0]
     const origin = item?.origin?.trim() || op.replace(/\.(\d+)$/, '_$1')
     const name = item?.name?.trim() || 'Collectable'
-    recordAppActivity({
+    upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: 1,
       method: 'receive-collectable',
       note: `Received ${name}`,
       txid: receiveTxid || undefined,
+      status: 'complete',
       item: {
         name,
         origin,

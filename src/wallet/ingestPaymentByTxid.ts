@@ -7,9 +7,8 @@
  */
 import { getBeefForTxidCached } from './beefCache'
 import {
-  hasActivityTxid,
-  recordAppActivity,
-  WALLET_ACTIVITY_ORIGIN,
+  noteInboundReceiveComplete,
+  noteInboundReceivePending,
 } from './appActivity'
 import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
 import { isLatchDustSats } from './oneSatLatch'
@@ -63,13 +62,16 @@ export async function ingestPaymentByTxid(
   }
 
   markInboundPaymentStatus(id, 'Receiving (SPV)')
+  noteInboundReceivePending({ txid: id })
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing payment (SPV)',
   })
 
   try {
-    const beef = await getBeefForTxidCached(active, id)
+    const beef = await getBeefForTxidCached(active, id, {
+      allowUnprovenRawTx: true,
+    })
     const tx = beef.findTxid(id)?.tx
     if (!tx) {
       markInboundPaymentStatus(id, 'Waiting for proof…')
@@ -103,14 +105,9 @@ export async function ingestPaymentByTxid(
     for (const receipt of result.importedReceipts) {
       const receiveTxid = receipt.receiveTxid.trim().toLowerCase()
       if (!receiveTxid || !(receipt.satoshis > 0)) continue
-      if (hasActivityTxid(receiveTxid, 'earned')) continue
-      recordAppActivity({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        kind: 'earned',
-        sats: receipt.satoshis,
-        method: 'receive',
-        note: 'Received coins',
+      noteInboundReceiveComplete({
         txid: receiveTxid,
+        sats: receipt.satoshis,
       })
     }
 
