@@ -33,6 +33,13 @@ const HYDRATE_DEADLINE_MS = 12_000
 
 const cache = new Map<string, { at: number; binary: number[] }>()
 const inflight = new Map<string, Promise<Beef>>()
+/** One AtomicBEEF build per txid — hydrate must not fan out across tip polls. */
+const atomicInflight = new Map<string, Promise<number[]>>()
+/** Failed AtomicBEEF builds: do not re-hammer indexer until this epoch. */
+const atomicFailUntil = new Map<string, number>()
+
+const ATOMIC_FAIL_BACKOFF_MS = 10 * 60_000
+const ATOMIC_NOT_ON_CHAIN_BACKOFF_MS = 60 * 60_000
 
 const DURABLE_PREFIX = 'handcash.createdBeef.'
 const DURABLE_INDEX_KEY = 'handcash.createdBeef.index'
@@ -340,43 +347,91 @@ export async function getBeefForTxidCached(
 /**
  * AtomicBEEF bytes safe for `internalizeAction` (soft-latch tip+latch / peer
  * item settle). Hydrates parents when the indexer returns a thin body.
+ *
+ * Dedupes concurrent callers and backs off after failures so a tip poll cannot
+ * spawn dozens of parallel 8s indexer hydrates (Desktop ingest loop).
  */
 export async function getAtomicBeefBinaryForTxid(
   wallet: ActiveWallet,
   txid: string,
 ): Promise<number[]> {
   const key = keyOf(txid)
-  const beef = await getBeefForTxidCached(wallet, key, {
-    allowUnprovenRawTx: true,
-  })
-  if (beefIsAtomicReady(beef, key)) {
-    return Array.from(beef.toBinaryAtomic(key))
+  const until = atomicFailUntil.get(key)
+  if (until != null && Date.now() < until) {
+    const secs = Math.ceil((until - Date.now()) / 1000)
+    throw new Error(
+      `AtomicBEEF backoff ${key.slice(0, 12)}… (${secs}s) — indexer miss or not on chain`,
+    )
   }
-  const hydratedBin = await hydrateInputBeef(wallet, beef)
-  if (hydratedBin?.length) {
-    const hydrated = Beef.fromBinary(hydratedBin)
-    if (beefIsAtomicReady(hydrated, key)) {
-      write(key, hydrated)
-      return Array.from(hydrated.toBinaryAtomic(key))
-    }
-  }
-  // Last attempt: merge any raw tip + re-hydrate parents from services.
-  const fromRaw = await getBeefFromRawTx(wallet, key)
-  if (fromRaw) {
-    const merged = beef.clone()
-    merged.mergeBeef(fromRaw.toBinary())
-    const again = await hydrateInputBeef(wallet, merged)
-    if (again?.length) {
-      const ready = Beef.fromBinary(again)
-      if (beefIsAtomicReady(ready, key)) {
-        write(key, ready)
-        return Array.from(ready.toBinaryAtomic(key))
+
+  const pending = atomicInflight.get(key)
+  if (pending) return pending
+
+  const request = (async () => {
+    try {
+      const beef = await getBeefForTxidCached(wallet, key, {
+        allowUnprovenRawTx: true,
+      })
+      if (beefIsAtomicReady(beef, key)) {
+        atomicFailUntil.delete(key)
+        return Array.from(beef.toBinaryAtomic(key))
       }
+      const hydratedBin = await hydrateInputBeef(wallet, beef)
+      if (hydratedBin?.length) {
+        const hydrated = Beef.fromBinary(hydratedBin)
+        if (beefIsAtomicReady(hydrated, key)) {
+          write(key, hydrated)
+          atomicFailUntil.delete(key)
+          return Array.from(hydrated.toBinaryAtomic(key))
+        }
+      }
+      const fromRaw = await getBeefFromRawTx(wallet, key)
+      if (fromRaw) {
+        const merged = beef.clone()
+        merged.mergeBeef(fromRaw.toBinary())
+        const again = await hydrateInputBeef(wallet, merged)
+        if (again?.length) {
+          const ready = Beef.fromBinary(again)
+          if (beefIsAtomicReady(ready, key)) {
+            write(key, ready)
+            atomicFailUntil.delete(key)
+            return Array.from(ready.toBinaryAtomic(key))
+          }
+        }
+      }
+      throw new Error(
+        `Could not build AtomicBEEF for ${key.slice(0, 12)}… — wait for the indexer, then refresh.`,
+      )
+    } catch (err) {
+      noteAtomicBeefFailure(key, err)
+      throw err
     }
-  }
-  throw new Error(
-    `Could not build AtomicBEEF for ${key.slice(0, 12)}… — wait for the indexer, then refresh.`,
+  })().finally(() => {
+    atomicInflight.delete(key)
+  })
+
+  atomicInflight.set(key, request)
+  return request
+}
+
+export function noteAtomicBeefFailure(txid: string, err: unknown): void {
+  const key = keyOf(txid)
+  if (!key) return
+  const msg = err instanceof Error ? err.message : String(err)
+  if (/AtomicBEEF backoff/i.test(msg)) return
+  const ms = /valid transaction on chain|not (?:found|on[ -]?chain)|offline/i.test(
+    msg,
   )
+    ? ATOMIC_NOT_ON_CHAIN_BACKOFF_MS
+    : ATOMIC_FAIL_BACKOFF_MS
+  const prev = atomicFailUntil.get(key) ?? 0
+  const next = Date.now() + ms
+  if (next > prev) atomicFailUntil.set(key, next)
+}
+
+export function isAtomicBeefInBackoff(txid: string, now = Date.now()): boolean {
+  const until = atomicFailUntil.get(keyOf(txid))
+  return until != null && now < until
 }
 
 /**
@@ -543,6 +598,8 @@ export async function buildMergedInputBeef(
 export function resetBeefCacheForTests(): void {
   cache.clear()
   inflight.clear()
+  atomicInflight.clear()
+  atomicFailUntil.clear()
 }
 
 /** Drop persisted settle BEEFs (test isolation). */

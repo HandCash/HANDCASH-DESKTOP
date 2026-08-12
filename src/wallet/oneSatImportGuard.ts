@@ -12,7 +12,9 @@ const STORAGE_KEY = 'handcash.brc100.importedOneSatOutpoints.v1'
 const FAIL_KEY = 'handcash.brc100.failedOneSatOutpoints.v1'
 const MAX_ENTRIES = 4000
 /** Do not retry a failed internalization until this elapses. */
-export const FAIL_BACKOFF_MS = 45_000
+export const FAIL_BACKOFF_MS = 10 * 60_000
+/** Ghost / not-on-chain AtomicBEEF failures — skip for an hour. */
+export const HARD_FAIL_BACKOFF_MS = 60 * 60_000
 
 const inFlight = new Set<string>()
 
@@ -54,7 +56,11 @@ function readFailures(): Map<string, number> {
 function writeFailures(map: Map<string, number>): void {
   const now = Date.now()
   const kept = [...map.entries()]
-    .filter(([, at]) => now - at < FAIL_BACKOFF_MS * 4)
+    .filter(([, at]) =>
+      at > now
+        ? at - now < HARD_FAIL_BACKOFF_MS * 2
+        : now - at < FAIL_BACKOFF_MS * 4,
+    )
     .slice(-MAX_ENTRIES)
   durableSetItem(FAIL_KEY, JSON.stringify(Object.fromEntries(kept)))
 }
@@ -66,6 +72,8 @@ function norm(outpoint: string): string {
 function isBackingOff(op: string, failures: Map<string, number>): boolean {
   const at = failures.get(op)
   if (at == null) return false
+  // Future timestamps = hard backoff until that epoch (ghost / not-on-chain).
+  if (at > Date.now()) return true
   return Date.now() - at < FAIL_BACKOFF_MS
 }
 
@@ -120,15 +128,20 @@ export function releaseOneSatImport(outpoints: string[]): void {
 }
 
 /** Record a failed import so the next few polls skip the expensive BEEF path. */
-export function markOneSatImportFailed(outpoints: string[]): void {
+export function markOneSatImportFailed(
+  outpoints: string[],
+  opts?: { hard?: boolean },
+): void {
   if (outpoints.length === 0) return
   const failures = readFailures()
-  const now = Date.now()
+  const stamp = opts?.hard
+    ? Date.now() + HARD_FAIL_BACKOFF_MS
+    : Date.now()
   for (const raw of outpoints) {
     const op = norm(raw)
     if (!op) continue
     inFlight.delete(op)
-    failures.set(op, now)
+    failures.set(op, stamp)
   }
   writeFailures(failures)
 }

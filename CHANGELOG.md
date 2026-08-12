@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.214] - 2026-08-12
+
+### Fixed
+- **Desktop soft-latch ingest loop.** Failed AtomicBEEF builds are deduped and backed off (10m / 1h for not-on-chain ghosts); tip polls no longer fan out dozens of parallel 8s hydrates; item inbox retries cut from 15×2s to 2×4s.
+
 ## [1.2.213] - 2026-08-12
 
 ### Fixed

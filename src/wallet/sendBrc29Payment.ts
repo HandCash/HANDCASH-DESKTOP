@@ -799,17 +799,21 @@ export async function ingestPaymentsFromTipHints(
   let imported = 0
   const importedTxids: string[] = []
   let balanceSats: number | null = null
-  const ingestAttempts = 15
-  const ingestDelayMs = 2_000
+  // Soft-latch AtomicBEEF is expensive; do not hammer indexer 15×2s per tip poll.
+  const ingestAttempts = 2
+  const ingestDelayMs = 4_000
 
   for (const hint of unique.values()) {
     if (hint.item) {
+      const { isAtomicBeefInBackoff } = await import('./beefCache')
+      if (isAtomicBeefInBackoff(hint.txid)) continue
       const { internalizePeerItemSettle } = await import('./ingestItemSettle')
       let atomic = hint.tx
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
       }
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
+        if (attempt > 0 && isAtomicBeefInBackoff(hint.txid)) break
         const result = await internalizePeerItemSettle({
           txid: hint.txid,
           tx: attempt === 0 ? atomic : undefined,

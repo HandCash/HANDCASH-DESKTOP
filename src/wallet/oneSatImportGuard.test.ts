@@ -47,9 +47,21 @@ describe('oneSatImportGuard', () => {
     expect(guard.filterNewOneSatOutpoints(['latch.0', 'other.1'])).toEqual(['other.1'])
     expect(guard.beginOneSatImport(['latch.0'])).toEqual([])
 
-    // Transient BEEF/header misses should clear within a minute, not five.
     vi.advanceTimersByTime(guard.FAIL_BACKOFF_MS + 1)
     expect(guard.filterNewOneSatOutpoints(['latch.0'])).toEqual(['latch.0'])
+    vi.useRealTimers()
+  })
+
+  it('hard-fails ghost tips for an hour', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-08-06T12:00:00Z'))
+    const guard = await import('./oneSatImportGuard')
+    guard.markOneSatImportFailed(['ghost.0'], { hard: true })
+    expect(guard.filterNewOneSatOutpoints(['ghost.0'])).toEqual([])
+    vi.advanceTimersByTime(guard.FAIL_BACKOFF_MS + 1)
+    expect(guard.filterNewOneSatOutpoints(['ghost.0'])).toEqual([])
+    vi.advanceTimersByTime(guard.HARD_FAIL_BACKOFF_MS)
+    expect(guard.filterNewOneSatOutpoints(['ghost.0'])).toEqual(['ghost.0'])
     vi.useRealTimers()
   })
 

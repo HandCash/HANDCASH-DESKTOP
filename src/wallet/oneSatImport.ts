@@ -1260,6 +1260,15 @@ export async function importSoftLatchSettlements(
 
     const txid = tipsClaimed[0]?.txid ?? latchesClaimed[0]!.txid
     try {
+      const { isAtomicBeefInBackoff } = await import('./beefCache')
+      if (isAtomicBeefInBackoff(txid)) {
+        markOneSatImportFailed(allOps, { hard: true })
+        part.failed = tipsClaimed.length + latchesClaimed.length
+        for (const op of allOps) {
+          part.errors.push(`${op}: AtomicBEEF backoff`)
+        }
+        return part
+      }
       await yieldToUi()
       const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
       await yieldToUi()
@@ -1373,9 +1382,13 @@ export async function importSoftLatchSettlements(
         })
       }
     } catch (err) {
-      markOneSatImportFailed(allOps)
       part.failed = tipsClaimed.length + latchesClaimed.length
       const msg = err instanceof Error ? err.message : String(err)
+      const hard =
+        /valid transaction on chain|not (?:found|on[ -]?chain)|AtomicBEEF backoff|Could not build AtomicBEEF/i.test(
+          msg,
+        )
+      markOneSatImportFailed(allOps, hard ? { hard: true } : undefined)
       for (const op of allOps) part.errors.push(`${op}: ${msg}`)
       console.warn('[soft-latch] combined internalize failed', txid, err)
     }

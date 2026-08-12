@@ -78,10 +78,19 @@ export async function internalizePeerItemSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      const { getAtomicBeefBinaryForTxid, isAtomicBeefInBackoff } = await import(
+        './beefCache'
+      )
+      if (isAtomicBeefInBackoff(id)) {
+        clearInboundReceivePending(id)
+        return { accepted: false, outpoints: [], reason: 'beef-backoff' }
+      }
       atomic = await getAtomicBeefBinaryForTxid(active, id)
     } catch (err) {
-      console.warn('[item-settle] AtomicBEEF fetch failed', id.slice(0, 12), err)
+      const msg = err instanceof Error ? err.message : String(err)
+      if (!/AtomicBEEF backoff/i.test(msg)) {
+        console.warn('[item-settle] AtomicBEEF fetch failed', id.slice(0, 12), err)
+      }
     }
   }
   if (!atomic?.length) {
