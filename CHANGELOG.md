@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.208] - 2026-08-12
+
+### Fixed
+- **Keyboard covering UI.** Mobile shell tracks the visual viewport + Capacitor Keyboard so the app height and bottom bars stay above the soft keyboard on every screen (send money, send item, chat, settings).
+
+
 ## [1.2.207] - 2026-08-12
 
 ### Fixed
