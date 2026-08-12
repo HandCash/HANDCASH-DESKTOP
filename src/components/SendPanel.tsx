@@ -30,6 +30,7 @@ import {
   refreshSpendableBalance,
   sendSatsToAddress,
 } from '../wallet/sendPayment'
+import { sendBrc29ToIdentityKey } from '../wallet/sendBrc29Payment'
 import {
   requestSpendPriority,
   releaseSpendPriority,
@@ -175,7 +176,12 @@ export function SendPanel({
       const address = addressFromIdentityKey(friend.identityKey, chain)
       setRecipientQuery(friend.label)
       setShowFriendMatches(false)
-      send({ type: 'EDIT', to: address, friendLabel: friend.label })
+      send({
+        type: 'EDIT',
+        to: address,
+        friendLabel: friend.label,
+        payeeIdentityKey: friend.identityKey,
+      })
     } catch (err) {
       onFail(err instanceof Error ? err.message : String(err))
     }
@@ -188,9 +194,15 @@ export function SendPanel({
     if (peer) {
       try {
         const address = addressFromIdentityKey(peer.identityKey, chain)
-        const patch: { to: string; friendLabel: null; amount?: string } = {
+        const patch: {
+          to: string
+          friendLabel: null
+          payeeIdentityKey: string
+          amount?: string
+        } = {
           to: address,
           friendLabel: null,
+          payeeIdentityKey: peer.identityKey,
         }
         if (peer.sats != null) {
           if (currency === 'usd' && usdPerBsv != null && usdPerBsv > 0) {
@@ -211,14 +223,24 @@ export function SendPanel({
         try {
           const resolved = await resolveHandle(value)
           const address = addressFromIdentityKey(resolved.identityKey, chain)
-          send({ type: 'EDIT', to: address, friendLabel: resolved.display })
+          send({
+            type: 'EDIT',
+            to: address,
+            friendLabel: resolved.display,
+            payeeIdentityKey: resolved.identityKey,
+          })
         } catch (err) {
           onFail(err instanceof Error ? err.message : String(err))
         }
       })()
       return
     }
-    send({ type: 'EDIT', to: value.trim(), friendLabel: null })
+    send({
+      type: 'EDIT',
+      to: value.trim(),
+      friendLabel: null,
+      payeeIdentityKey: null,
+    })
   }
 
   useEffect(() => {
@@ -241,11 +263,58 @@ export function SendPanel({
       }
 
       const to = sendSnap.context.to.trim()
-      const { txid, balanceSats: nextBalance } = await sendSatsToAddress({
-        to,
-        satoshis,
-        friendLabel: sendSnap.context.friendLabel,
-      })
+      const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
+      const next =
+        payeeKey != null
+          ? await sendBrc29ToIdentityKey({
+              payeeIdentityKey: payeeKey,
+              satoshis,
+              friendLabel: sendSnap.context.friendLabel,
+            })
+          : await sendSatsToAddress({
+              to,
+              satoshis,
+              friendLabel: sendSnap.context.friendLabel,
+            })
+      const { txid, balanceSats: nextBalance } = next
+
+      if (payeeKey != null && 'remittance' in next) {
+        try {
+          const { getActiveWallet } = await import('../wallet/session')
+          const { listFriends } = await import('../wallet/friends')
+          const { notifyPeerBrc29Payment } = await import(
+            '../wallet/messageTransport'
+          )
+          const active = getActiveWallet()
+          if (active?.rootKeyHex && active.identityKey) {
+            const friend =
+              listFriends().find(
+                (f) =>
+                  f.identityKey.toLowerCase() === payeeKey.toLowerCase(),
+              ) ?? null
+            const delivered = await notifyPeerBrc29Payment({
+              recipientIdentityKey: payeeKey,
+              rootKeyHex: active.rootKeyHex,
+              senderIdentityKey: active.identityKey,
+              messagebox: friend?.messagebox,
+              txid,
+              satoshis,
+              remittance: next.remittance,
+              amountLabel: formatTypedAmount(sendSnap.context.amount, currency),
+            })
+            if (delivered.delivered !== 'cloud') {
+              console.warn(
+                '[send] BRC-29 remittance chat notify failed — payee may need the tip card',
+              )
+            }
+          }
+        } catch (err) {
+          console.warn(
+            '[send] BRC-29 remittance notify error',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
 
       send({ type: 'SUCCESS', txid })
       onSent(nextBalance)

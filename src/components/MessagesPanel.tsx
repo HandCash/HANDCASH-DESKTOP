@@ -40,6 +40,7 @@ import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurre
 import { playWalletSound } from '../wallet/soundService'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { sendSatsToAddress } from '../wallet/sendPayment'
+import { sendBrc29ToIdentityKey } from '../wallet/sendBrc29Payment'
 import { getActiveWallet } from '../wallet/session'
 import {
   getPaymentProgress,
@@ -601,14 +602,6 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     kind: 'pay-sent' | 'tip' = 'pay-sent',
     bindId?: string | null,
   ) => {
-    let address = ''
-    try {
-      address = addressFromIdentityKey(friend.identityKey, chain)
-    } catch {
-      setHint('Could not resolve payment address.')
-      playWalletSound('error')
-      return
-    }
     const resolved = resolveAmountSats(amount)
     if (!resolved.sats || resolved.sats <= 0) {
       setHint(
@@ -616,6 +609,14 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
           ? 'USD rate unavailable — try 1 sat or BSV'
           : 'Amount too small — try 1 sat or more',
       )
+      playWalletSound('error')
+      return
+    }
+    let address = ''
+    try {
+      address = addressFromIdentityKey(friend.identityKey, chain)
+    } catch {
+      setHint('Could not resolve payment address.')
       playWalletSound('error')
       return
     }
@@ -627,6 +628,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
         amountLabel: resolved.amountLabel ?? amount.label,
         sats: resolved.sats,
         to: address,
+        payeeIdentityKey: friend.identityKey,
         friendLabel: friend.label,
         memo,
         boundMessageId: kind === 'tip' ? bindId || undefined : undefined,
@@ -641,9 +643,10 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
   const confirmPay = async (messageId: string) => {
     const msg = messages.find((m) => m.id === messageId)
     if (!msg || msg.meta?.payStatus !== 'pending') return
+    const payeeKey = msg.meta?.payeeIdentityKey?.trim() || null
     const to = msg.meta?.to
     const sats = msg.meta?.sats
-    if (!to || !sats || sats <= 0) {
+    if ((!payeeKey && !to) || !sats || sats <= 0) {
       updateMessage(messageId, {
         meta: { payStatus: 'failed', status: 'Failed', error: 'Missing payment details' },
       })
@@ -656,19 +659,39 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     })
 
     try {
-      const { txid, balanceSats } = await sendSatsToAddress({
-        to,
-        satoshis: sats,
-        friendLabel: msg.meta?.friendLabel,
-        description: msg.meta?.memo
-          ? `HandCash messages: ${msg.meta.memo}`
-          : `HandCash messages pay to ${to}`,
-      })
+      const description = msg.meta?.memo
+        ? `HandCash messages: ${msg.meta.memo}`
+        : payeeKey
+          ? `HandCash messages BRC-29 pay`
+          : `HandCash messages pay to ${to}`
+      const result = payeeKey
+        ? await sendBrc29ToIdentityKey({
+            payeeIdentityKey: payeeKey,
+            satoshis: sats,
+            friendLabel: msg.meta?.friendLabel,
+            description,
+          })
+        : await sendSatsToAddress({
+            to: to!,
+            satoshis: sats,
+            friendLabel: msg.meta?.friendLabel,
+            description,
+          })
+      const { txid, balanceSats } = result
+      const brc29 =
+        'remittance' in result
+          ? {
+              derivationPrefix: result.remittance.derivationPrefix,
+              derivationSuffix: result.remittance.derivationSuffix,
+              outputIndex: result.remittance.outputIndex,
+            }
+          : undefined
       const sent = updateMessage(messageId, {
         meta: {
           payStatus: 'sent',
           status: 'Sent',
           txid,
+          brc29,
           error: undefined,
         },
       })

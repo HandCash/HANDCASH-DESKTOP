@@ -1,0 +1,163 @@
+import { describe, expect, it, vi, beforeEach } from 'vitest'
+
+type CreateActionArgs = {
+  options?: {
+    acceptDelayedBroadcast?: boolean
+    randomizeOutputs?: boolean
+    signAndProcess?: boolean
+  }
+  labels?: string[]
+  outputs?: Array<{ customInstructions?: string; lockingScript?: string }>
+}
+
+const createAction = vi.fn(async (_args: CreateActionArgs) => ({
+  txid: 'b'.repeat(64),
+  sendWithResults: [{ txid: 'b'.repeat(64), status: 'unproven' }],
+}))
+const getPublicKey = vi.fn(async () => ({
+  publicKey:
+    '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
+}))
+const createHmac = vi.fn(async () => ({
+  hmac: Array.from({ length: 32 }, (_, i) => i),
+}))
+const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
+
+vi.mock('./session', () => ({
+  getActiveWallet: () => ({
+    chain: 'main',
+    wallet: {
+      createAction: (args: CreateActionArgs) => createAction(args),
+      getPublicKey: (...args: unknown[]) => getPublicKey(...args),
+      createHmac: (...args: unknown[]) => createHmac(...args),
+    },
+  }),
+  fetchBalanceSats: async () => 90_000,
+}))
+
+vi.mock('./spendGuard', () => ({
+  runExclusiveSpend: <T>(fn: () => Promise<T>) => fn(),
+  prepareSpendHeal: (sats?: number) => prepareSpendHeal(sats),
+  assertSendableBalance: async () => 100_000,
+  refreshSpendableBalance: async () => 100_000,
+}))
+
+vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
+vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: () => {} }))
+vi.mock('./appActivity', () => ({
+  hasActivityTxid: () => false,
+  recordAppActivity: () => {},
+  WALLET_ACTIVITY_ORIGIN: 'wallet',
+  extractSatsFromArgs: () => 0,
+}))
+vi.mock('./pendingSend', () => ({
+  beginPendingSend: () => ({ id: 'p1' }),
+  completePendingSend: () => {},
+  clearPendingSend: () => {},
+}))
+vi.mock('./staleOutputRelease', () => ({
+  isAlreadySpentInputError: () => false,
+  releaseStaleSpendableOutputs: async () => {},
+}))
+vi.mock('./messageStore', () => ({
+  listThreads: () => [],
+  listMessages: () => [],
+  updateMessage: () => null,
+}))
+vi.mock('./walletHealth', () => ({ setSyncHealth: () => {} }))
+vi.mock('./toast', () => ({ toastSuccess: () => {} }))
+
+const PAYEE =
+  '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
+
+describe('sendBrc29ToIdentityKey', () => {
+  beforeEach(() => {
+    createAction.mockClear()
+    getPublicKey.mockClear()
+    createHmac.mockClear()
+  })
+
+  it('derives BRC-29 lock and createAction with remittance + delayed broadcast', async () => {
+    const { sendBrc29ToIdentityKey, BRC29_PROTOCOL_ID } = await import(
+      './sendBrc29Payment'
+    )
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: PAYEE,
+      satoshis: 1_000,
+      friendLabel: 'Alice',
+    })
+
+    expect(result.txid).toBe('b'.repeat(64))
+    expect(result.remittance.derivationPrefix).toBeTruthy()
+    expect(result.remittance.derivationSuffix).toBeTruthy()
+    expect(result.remittance.outputIndex).toBe(0)
+
+    expect(getPublicKey).toHaveBeenCalled()
+    const pkArgs = getPublicKey.mock.calls[0]?.[0] as {
+      protocolID: unknown
+      keyID: string
+      counterparty: string
+    }
+    expect(pkArgs.protocolID).toEqual(BRC29_PROTOCOL_ID)
+    expect(pkArgs.counterparty).toBe(PAYEE)
+    expect(pkArgs.keyID).toContain(' ')
+
+    expect(createAction).toHaveBeenCalledTimes(1)
+    const args = createAction.mock.calls[0]?.[0]
+    expect(args?.options?.acceptDelayedBroadcast).toBe(true)
+    expect(args?.options?.randomizeOutputs).toBe(false)
+    expect(args?.labels).toEqual(expect.arrayContaining(['brc29', 'handcash-send']))
+    const instructions = JSON.parse(args?.outputs?.[0]?.customInstructions || '{}')
+    expect(instructions.derivationPrefix).toBe(result.remittance.derivationPrefix)
+    expect(instructions.derivationSuffix).toBe(result.remittance.derivationSuffix)
+    expect(instructions.payee).toBe(PAYEE)
+  })
+})
+
+describe('internalizeBrc29Payment', () => {
+  it('calls internalizeAction wallet payment with remittance', async () => {
+    const internalizeAction = vi.fn(async () => ({ accepted: true }))
+    const toBinaryAtomic = vi.fn(() => [1, 2, 3])
+    vi.resetModules()
+    vi.doMock('./session', () => ({
+      getActiveWallet: () => ({
+        chain: 'main',
+        wallet: { internalizeAction },
+      }),
+      fetchBalanceSats: async () => 91_000,
+    }))
+    vi.doMock('./beefCache', () => ({
+      getBeefForTxidCached: async () => ({ toBinaryAtomic }),
+    }))
+
+    const { internalizeBrc29Payment } = await import('./sendBrc29Payment')
+    const result = await internalizeBrc29Payment({
+      txid: 'c'.repeat(64),
+      remittance: {
+        derivationPrefix: 'pre',
+        derivationSuffix: 'suf',
+        outputIndex: 0,
+      },
+      senderIdentityKey: PAYEE,
+      satoshis: 500,
+    })
+
+    expect(result.accepted).toBe(true)
+    expect(internalizeAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        labels: ['brc29'],
+        outputs: [
+          expect.objectContaining({
+            protocol: 'wallet payment',
+            outputIndex: 0,
+            paymentRemittance: {
+              derivationPrefix: 'pre',
+              derivationSuffix: 'suf',
+              senderIdentityKey: PAYEE,
+            },
+          }),
+        ],
+      }),
+    )
+  })
+})

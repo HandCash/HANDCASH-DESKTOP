@@ -95,6 +95,12 @@ function listedSender(m: ListedMessage): string {
     .toLowerCase()
 }
 
+type WireBrc29 = {
+  derivationPrefix: string
+  derivationSuffix: string
+  outputIndex?: number
+}
+
 type WireMessage = {
   version: 1
   kind: 'text' | 'pay-request' | 'pay-sent' | 'tip' | 'file'
@@ -107,7 +113,29 @@ type WireMessage = {
     txid?: string
     boundMessageId?: string
     attachment?: ChatAttachment
+    /** BRC-29 remittance — peer tip/pay-sent only. */
+    brc29?: WireBrc29
   }
+}
+
+function validBrc29(value: unknown): value is WireBrc29 {
+  if (!value || typeof value !== 'object') return false
+  const r = value as Partial<WireBrc29>
+  if (
+    typeof r.derivationPrefix !== 'string' ||
+    !r.derivationPrefix.trim() ||
+    typeof r.derivationSuffix !== 'string' ||
+    !r.derivationSuffix.trim()
+  ) {
+    return false
+  }
+  if (
+    r.outputIndex != null &&
+    (!Number.isInteger(r.outputIndex) || r.outputIndex < 0)
+  ) {
+    return false
+  }
+  return true
 }
 
 function wireKind(kind: MessageKind): WireMessage['kind'] {
@@ -132,6 +160,7 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       txid: message.meta?.txid,
       boundMessageId: message.meta?.boundMessageId,
       attachment: message.meta?.attachment,
+      brc29: validBrc29(message.meta?.brc29) ? message.meta.brc29 : undefined,
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
@@ -194,6 +223,16 @@ export function decodeMessageBody(body: string): {
             : undefined,
         attachment: validAttachment(parsed.meta?.attachment)
           ? parsed.meta.attachment
+          : undefined,
+        brc29: validBrc29(parsed.meta?.brc29)
+          ? {
+              derivationPrefix: parsed.meta.brc29.derivationPrefix.trim(),
+              derivationSuffix: parsed.meta.brc29.derivationSuffix.trim(),
+              outputIndex:
+                typeof parsed.meta.brc29.outputIndex === 'number'
+                  ? parsed.meta.brc29.outputIndex
+                  : undefined,
+            }
           : undefined,
       },
     }
@@ -299,11 +338,23 @@ export async function pollInbound(args: {
  * Tip hints are grade B (messagebox) — custody still comes from the address scan.
  * Unknown senders still accelerate ingest; chat rows require a friend mapping.
  */
+export type InboundPaymentHint = {
+  txid: string
+  senderIdentityKey: string
+  satoshis?: number
+  brc29?: WireBrc29
+}
+
 export async function pollInboundTipHints(args: {
   rootKeyHex: string
   peerIdForSender?: (senderIdentityKey: string) => string | null
   messagebox?: string | null
-}): Promise<{ messages: number; tipHints: number; paymentTxids: string[] }> {
+}): Promise<{
+  messages: number
+  tipHints: number
+  paymentTxids: string[]
+  paymentHints: InboundPaymentHint[]
+}> {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
@@ -321,13 +372,16 @@ export async function pollInboundTipHints(args: {
       },
       body: JSON.stringify({ messageBox: 'inbox' }),
     })
-    if (!res.ok) return { messages: 0, tipHints: 0, paymentTxids: [] }
+    if (!res.ok) {
+      return { messages: 0, tipHints: 0, paymentTxids: [], paymentHints: [] }
+    }
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0
     const paymentTxids: string[] = []
+    const paymentHints: InboundPaymentHint[] = []
     for (const m of list) {
       const senderKey = listedSender(m)
       const peerId = args.peerIdForSender?.(senderKey) ?? null
@@ -357,23 +411,30 @@ export async function pollInboundTipHints(args: {
         /^[0-9a-f]{64}$/i.test(decoded.meta.txid.trim())
       ) {
         tipHints += 1
-        paymentTxids.push(decoded.meta.txid.trim().toLowerCase())
+        const txid = decoded.meta.txid.trim().toLowerCase()
+        paymentTxids.push(txid)
+        paymentHints.push({
+          txid,
+          senderIdentityKey: senderKey,
+          satoshis: decoded.meta.sats,
+          brc29: decoded.meta.brc29,
+        })
       }
       if (m.messageId) ackIds.push(String(m.messageId))
     }
     if (ackIds.length > 0) {
       void acknowledgeMessages(ackIds, args.rootKeyHex, box)
     }
-    if (paymentTxids.length > 0 && typeof document !== 'undefined') {
+    if (paymentHints.length > 0 && typeof document !== 'undefined') {
       document.dispatchEvent(
         new CustomEvent('handcash:payment-hint', {
-          detail: { txids: paymentTxids },
+          detail: { txids: paymentTxids, hints: paymentHints },
         }),
       )
     }
-    return { messages, tipHints, paymentTxids }
+    return { messages, tipHints, paymentTxids, paymentHints }
   } catch {
-    return { messages: 0, tipHints: 0, paymentTxids: [] }
+    return { messages: 0, tipHints: 0, paymentTxids: [], paymentHints: [] }
   }
 }
 
@@ -397,6 +458,64 @@ export async function notifyPeerItemIncoming(args: {
     kind: 'tip',
     text: `Sent you ${name}`,
     meta: { txid, sats: 1, status: 'Incoming', memo: name },
+  })
+  return deliverOutbound({
+    recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
+    rootKeyHex: args.rootKeyHex,
+    senderIdentityKey: args.senderIdentityKey,
+    senderHandle: args.senderHandle ?? undefined,
+    messagebox: args.messagebox,
+    body,
+    peerId: args.recipientIdentityKey.trim().toLowerCase(),
+  })
+}
+
+/**
+ * Best-effort BRC-29 remittance delivery after a peer payment (Send panel).
+ * Chain custody already landed; without this card the payee cannot internalize
+ * the derived lock. Failures are non-fatal.
+ */
+export async function notifyPeerBrc29Payment(args: {
+  recipientIdentityKey: string
+  rootKeyHex: string
+  senderIdentityKey: string
+  senderHandle?: string | null
+  messagebox?: string | null
+  txid: string
+  satoshis: number
+  remittance: {
+    derivationPrefix: string
+    derivationSuffix: string
+    outputIndex?: number
+  }
+  amountLabel?: string
+}): Promise<{ delivered: 'local' | 'cloud' }> {
+  const txid = args.txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
+  if (
+    !args.remittance.derivationPrefix?.trim() ||
+    !args.remittance.derivationSuffix?.trim()
+  ) {
+    return { delivered: 'local' }
+  }
+  const sats =
+    Number.isFinite(args.satoshis) && args.satoshis > 0
+      ? Math.floor(args.satoshis)
+      : 0
+  const body = encodeMessageBody({
+    kind: 'pay-sent',
+    text: args.amountLabel || (sats > 0 ? `Pay ${sats} sats` : 'Payment'),
+    meta: {
+      txid,
+      sats: sats > 0 ? sats : undefined,
+      amountLabel: args.amountLabel,
+      status: 'Incoming',
+      brc29: {
+        derivationPrefix: args.remittance.derivationPrefix,
+        derivationSuffix: args.remittance.derivationSuffix,
+        outputIndex: args.remittance.outputIndex ?? 0,
+      },
+    },
   })
   return deliverOutbound({
     recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),

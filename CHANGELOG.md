@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.189] - 2026-08-11
+
+### Changed
+- **Peer tip/pay is BRC-29.** HandCash↔HandCash DM tip, chat pay, and Send-to-friend lock a BRC-29 derived P2PKH and deliver remittance (prefix/suffix + txid) on the tip/pay-sent card; the payee `internalizeAction`s as a wallet payment (SPV BEEF by txid). Plain identity-address P2PKH remains only for pasted/external addresses; address-index scan is the legacy fallback.
+
 ## [1.2.188] - 2026-08-11
 
 ### Changed

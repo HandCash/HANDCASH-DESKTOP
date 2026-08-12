@@ -153,35 +153,3 @@ export async function ingestPaymentByTxid(
   }
 }
 
-/**
- * Chase SPV ingest for one or more tip/pay txids, then optionally fall through
- * to address-scan verify. Returns the latest balance when known.
- */
-export async function ingestPaymentsFromTipHints(
-  txids: string[],
-): Promise<{ imported: number; balanceSats: number | null }> {
-  const unique = [
-    ...new Set(
-      txids
-        .map((t) => t.trim().toLowerCase())
-        .filter((t) => /^[0-9a-f]{64}$/.test(t)),
-    ),
-  ]
-  let imported = 0
-  let balanceSats: number | null = null
-  for (const txid of unique) {
-    // Retry BEEF fetch a few times — tip card often beats indexer by seconds.
-    for (let attempt = 0; attempt < 6; attempt++) {
-      const result = await ingestPaymentByTxid(txid)
-      if (result.balanceSats != null) balanceSats = result.balanceSats
-      if (result.imported > 0 || result.reason === 'already-imported') {
-        imported += Math.max(result.imported, result.reason === 'already-imported' ? 1 : 0)
-        break
-      }
-      if (attempt < 5) {
-        await new Promise((r) => setTimeout(r, 1_000))
-      }
-    }
-  }
-  return { imported, balanceSats }
-}

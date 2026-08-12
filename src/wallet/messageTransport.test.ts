@@ -30,6 +30,22 @@ describe('message transport envelopes', () => {
     })
   })
 
+  it('round-trips BRC-29 remittance on tip cards', () => {
+    const brc29 = {
+      derivationPrefix: 'pre==',
+      derivationSuffix: 'suf==',
+      outputIndex: 0,
+    }
+    const decoded = decodeMessageBody(
+      encodeMessageBody({
+        kind: 'tip',
+        text: 'Tip',
+        meta: { sats: 100, txid: 'd'.repeat(64), brc29 },
+      }),
+    )
+    expect(decoded.meta?.brc29).toEqual(brc29)
+  })
+
   it('round-trips a validated attachment without private payment metadata', () => {
     const attachment = {
       id: 'file-id',

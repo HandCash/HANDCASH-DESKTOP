@@ -288,9 +288,13 @@ export function Dashboard({
         void (async () => {
           try {
             const { ingestPaymentsFromTipHints } = await import(
-              '../wallet/ingestPaymentByTxid'
+              '../wallet/sendBrc29Payment'
             )
-            const spv = await ingestPaymentsFromTipHints(hints.paymentTxids)
+            const spv = await ingestPaymentsFromTipHints(
+              hints.paymentHints.length > 0
+                ? hints.paymentHints
+                : hints.paymentTxids,
+            )
             if (cancelled) return
             if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
             if (spv.imported > 0) {
@@ -442,13 +446,29 @@ export function Dashboard({
 
     const onPaymentHint = (ev: Event) => {
       if (cancelled) return
-      const txids = (ev as CustomEvent<{ txids?: string[] }>).detail?.txids ?? []
+      const detail = (ev as CustomEvent<{
+        txids?: string[]
+        hints?: Array<{
+          txid: string
+          senderIdentityKey?: string
+          satoshis?: number
+          brc29?: {
+            derivationPrefix: string
+            derivationSuffix: string
+            outputIndex?: number
+          }
+        }>
+      }>).detail
+      const hints = detail?.hints ?? []
+      const txids = detail?.txids ?? hints.map((h) => h.txid)
       void (async () => {
         try {
           const { ingestPaymentsFromTipHints } = await import(
-            '../wallet/ingestPaymentByTxid'
+            '../wallet/sendBrc29Payment'
           )
-          const spv = await ingestPaymentsFromTipHints(txids)
+          const spv = await ingestPaymentsFromTipHints(
+            hints.length > 0 ? hints : txids,
+          )
           if (cancelled) return
           if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
           if (spv.imported > 0) {

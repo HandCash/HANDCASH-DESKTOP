@@ -47,7 +47,8 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B) — not required for soft-latch identity |
 | Chat delivery | Hardcoded BRC-CLOUD box; plaintext + `handcash-message:` cards; no BRC-31 auth; custom `/files` | Resolve recipient **messagebox URL**; BRC-33-shaped client; BRC-CLOUD remains default fallback host |
 | Chat encryption | Plain body | Move toward BRC-169 encrypted envelope content |
-| Pay-into-messagebox (BRC-29 in box) | Not used — P2PKH after resolve | Optional product path later; custody already works without it |
+| Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | Remittance (prefix/suffix + txid) in chat card → `internalizeAction` wallet payment; BEEF via SPV by txid (box 16KB limit) |
+| Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |
 
 ---

@@ -51,6 +51,8 @@ export type ChatMessage = {
     status?: string
     payStatus?: MessagePayStatus
     to?: string
+    /** Payee identity key when this card is a BRC-29 peer payment. */
+    payeeIdentityKey?: string
     friendLabel?: string
     memo?: string
     txid?: string
@@ -63,6 +65,12 @@ export type ChatMessage = {
     escrowAsset?: string
     origin?: string
     attachment?: ChatAttachment
+    /** BRC-29 remittance for peer tip/pay-sent (prefix/suffix + output index). */
+    brc29?: {
+      derivationPrefix: string
+      derivationSuffix: string
+      outputIndex?: number
+    }
   }
 }
 

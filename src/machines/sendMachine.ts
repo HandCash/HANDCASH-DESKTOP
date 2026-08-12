@@ -4,6 +4,8 @@ export type SendContext = {
   to: string
   amount: string
   friendLabel: string | null
+  /** When set, confirm uses BRC-29 to this identity key (not plain address P2PKH). */
+  payeeIdentityKey: string | null
   error: string | null
   txid: string | null
 }
@@ -16,7 +18,13 @@ export const sendMachine = setup({
   types: {
     context: {} as SendContext,
     events: {} as
-      | { type: 'EDIT'; to?: string; amount?: string; friendLabel?: string | null }
+      | {
+          type: 'EDIT'
+          to?: string
+          amount?: string
+          friendLabel?: string | null
+          payeeIdentityKey?: string | null
+        }
       | { type: 'REVIEW' }
       | { type: 'BACK' }
       | { type: 'CONFIRM' }
@@ -27,7 +35,14 @@ export const sendMachine = setup({
 }).createMachine({
   id: 'sendPayment',
   initial: 'editing',
-  context: { to: '', amount: '', friendLabel: null, error: null, txid: null },
+  context: {
+    to: '',
+    amount: '',
+    friendLabel: null,
+    payeeIdentityKey: null,
+    error: null,
+    txid: null,
+  },
   states: {
     editing: {
       on: {
@@ -37,6 +52,10 @@ export const sendMachine = setup({
             amount: ({ context, event }) => event.amount ?? context.amount,
             friendLabel: ({ context, event }) =>
               event.friendLabel !== undefined ? event.friendLabel : context.friendLabel,
+            payeeIdentityKey: ({ context, event }) =>
+              event.payeeIdentityKey !== undefined
+                ? event.payeeIdentityKey
+                : context.payeeIdentityKey,
             error: null,
           }),
         },
@@ -69,7 +88,14 @@ export const sendMachine = setup({
       on: {
         RESET: {
           target: 'editing',
-          actions: assign({ to: '', amount: '', friendLabel: null, txid: null, error: null }),
+          actions: assign({
+            to: '',
+            amount: '',
+            friendLabel: null,
+            payeeIdentityKey: null,
+            txid: null,
+            error: null,
+          }),
         },
       },
     },

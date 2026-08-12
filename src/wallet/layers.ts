@@ -29,6 +29,10 @@
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
+ * - **Peer BSV pay (BRC-29)** → HandCash↔HandCash tip/pay/Send-to-friend derive a
+ *   per-payment P2PKH lock; remittance rides the tip/pay-sent card; payee
+ *   `internalizeAction` (`wallet payment`). Plain address P2PKH remains for
+ *   external/pasted addresses (`sendPayment.ts` + address scan).
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */
@@ -65,6 +69,8 @@ export const WALLET_LAYER_MODULES = {
     'sentItemGuard.ts',
     'pendingSend.ts',
     'sendPayment.ts',
+    'sendBrc29Payment.ts',
+    'ingestPaymentByTxid.ts',
     'inscriptionCache.ts',
     'provenCache.ts',
   ],
