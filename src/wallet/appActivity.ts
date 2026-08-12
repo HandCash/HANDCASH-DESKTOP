@@ -88,14 +88,15 @@ function readAll(): ActivityEntry[] {
           typeof row.method === 'string'
         )
       })
-      .map((e) => {
+      .map((e): ActivityEntry => {
         const row = e as ActivityEntry
         const item = normalizeActivityItem(row.item)
-        const status = row.status === 'pending' ? 'pending' : undefined
+        const status: ActivityStatus | undefined =
+          row.status === 'pending' ? 'pending' : undefined
         return {
           ...row,
           item: item ?? undefined,
-          ...(status ? { status } : { status: undefined }),
+          status,
         }
       })
     parsedRaw = raw

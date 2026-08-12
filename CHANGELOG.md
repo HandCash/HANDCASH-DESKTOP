@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.202] - 2026-08-12
+
+### Fixed
+- **Desktop CI typecheck.** Activity pending-status parse widened `status` to `string`, so `tsc` failed and no installers uploaded for 1.2.201.
+
 ## [1.2.201] - 2026-08-12
 
 ### Fixed
