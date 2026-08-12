@@ -142,7 +142,7 @@ export function listWalletConfigOptions(): WalletConfigOption[] {
       id: 'recommended',
       title: 'Recommended',
       description:
-        'Back up key shares to HandCash and Haste (BRC-232). Best recovery if you lose this device.',
+        'HandCash history plus key shares at HandCash and Haste (BRC-232). Best recovery if you lose this device.',
       disabled: !BACKUP_SERVICES_LIVE,
       disabledReason: BACKUP_SERVICES_LIVE
         ? undefined
@@ -152,7 +152,7 @@ export function listWalletConfigOptions(): WalletConfigOption[] {
       id: 'history',
       title: 'Advanced — history backup only',
       description:
-        'Sync history, friends, and spend locks across devices. Keys stay only on your devices (phrase / slices).',
+        'HandCash history, friends, and spend locks across devices. Keys stay only on your devices (phrase / slices).',
       disabled: false,
     },
     {

@@ -1,11 +1,14 @@
 import { useState } from 'react'
 import {
   BACKUP_SERVICES_LIVE,
-  DEFAULT_HISTORY_BACKUP_SETUP_URL,
   listWalletConfigOptions,
   type WalletConfigMode,
 } from '../wallet/walletConfig'
-import { applyWalletSetupSelection } from '../wallet/walletSetupApply'
+import {
+  applyWalletSetupSelection,
+  HANDCASH_HISTORY_HOST_LABEL,
+  handCashHistoryUrl,
+} from '../wallet/walletSetupApply'
 
 type Props = {
   onDone: () => void
@@ -13,14 +16,16 @@ type Props = {
 
 /**
  * Post-create only: choose Recommended / history-only / none.
- * Restore applies defaults in AuthScreen and skips this panel.
+ * Restore applies HandCash defaults in AuthScreen and skips this panel.
+ * Custom history host is opt-in — otherwise everything is HandCash.
  */
 export function WalletSetupConfigPanel({ onDone }: Props) {
   const options = listWalletConfigOptions()
   const [selected, setSelected] = useState<WalletConfigMode>(
     BACKUP_SERVICES_LIVE ? 'recommended' : 'history',
   )
-  const [historyUrl, setHistoryUrl] = useState(DEFAULT_HISTORY_BACKUP_SETUP_URL)
+  const [customHost, setCustomHost] = useState(false)
+  const [historyUrl, setHistoryUrl] = useState(handCashHistoryUrl())
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -28,7 +33,13 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
     setError(null)
     setBusy(true)
     try {
-      applyWalletSetupSelection(selected, historyUrl)
+      const url =
+        selected === 'none'
+          ? ''
+          : customHost
+            ? historyUrl.trim()
+            : handCashHistoryUrl()
+      applyWalletSetupSelection(selected, url)
       onDone()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -41,8 +52,8 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="wallet-setup-config">
       <h2>Wallet configuration</h2>
       <p className="auth-lede">
-        Choose how this install backs up recovery data. Signing always stays on this
-        device.
+        HandCash cloud is used for history and recovery unless you choose otherwise.
+        Signing always stays on this device.
       </p>
 
       <div className="wallet-setup-options" role="radiogroup" aria-label="Wallet configuration">
@@ -86,23 +97,39 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
         })}
       </div>
 
-      {(selected === 'history' || (selected === 'recommended' && BACKUP_SERVICES_LIVE)) && (
+      {selected !== 'none' && !customHost ? (
+        <p className="hint">
+          History host: <strong>{HANDCASH_HISTORY_HOST_LABEL}</strong>
+        </p>
+      ) : null}
+
+      {selected !== 'none' ? (
+        <label className="wallet-setup-option" style={{ marginTop: 8 }}>
+          <input
+            type="checkbox"
+            checked={customHost}
+            onChange={(e) => setCustomHost(e.target.checked)}
+          />
+          <span className="wallet-setup-option-body">
+            <strong>Use a custom history host</strong>
+            <span>Only if you run your own BRC-39 backup server.</span>
+          </span>
+        </label>
+      ) : null}
+
+      {customHost && selected !== 'none' ? (
         <div className="field">
           <label htmlFor="setup-history-url">History backup URL</label>
           <input
             id="setup-history-url"
             value={historyUrl}
             onChange={(e) => setHistoryUrl(e.target.value)}
-            placeholder="http://127.0.0.1:8787"
+            placeholder={handCashHistoryUrl()}
             autoComplete="off"
             spellCheck={false}
           />
-          <p className="hint">
-            Defaults to live <code>BRC-CLOUD</code> (
-            {DEFAULT_HISTORY_BACKUP_SETUP_URL.replace(/^https?:\/\//, '')}).
-          </p>
         </div>
-      )}
+      ) : null}
 
       {error ? (
         <p className="wallet-sync-note is-error" role="alert">

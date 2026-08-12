@@ -1,14 +1,13 @@
 /**
  * BRC-29 peer payments (HandCash ↔ HandCash).
  *
- * Thin path mirroring `@bsv/sdk` Brc29RemittanceModule — no RemittanceManager
- * invoice/receipt threads. Sender derives a payee key, locks P2PKH, broadcasts
- * via createAction; remittance rides the tip/pay-sent chat card; payee
- * internalizeAction credits default-basket balance (SPV).
+ * Sender signs (`createAction` noSend) and delivers Atomic BEEF + remittance
+ * to the payee. The **payee** internalizes and broadcasts. Sender only
+ * broadcasts if peer delivery fails (so noSend funds are not stuck).
  *
  * Plain identity-address P2PKH stays in sendPayment.ts for external addresses.
  */
-import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
+import { Beef, createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,
@@ -58,6 +57,55 @@ export type SendBrc29Result = {
   txid: string
   balanceSats: number
   remittance: Brc29Remittance
+  /** Payee was this wallet — internalized + broadcast here. */
+  selfReceived?: boolean
+  /** Signed Atomic BEEF delivered (or ready to deliver) to the payee. */
+  atomicBeef?: number[]
+  /** Messagebox accepted the payment envelope (`cloud`), else local-only. */
+  peerDelivered?: boolean
+}
+
+async function fetchAtomicBeefFromUrl(url: string): Promise<number[] | undefined> {
+  try {
+    const res = await fetch(url)
+    if (!res.ok) return undefined
+    const buf = new Uint8Array(await res.arrayBuffer())
+    return buf.length > 0 ? Array.from(buf) : undefined
+  } catch {
+    return undefined
+  }
+}
+
+/** Payee (or sender fallback) submits the signed payment to the network. */
+export async function broadcastAtomicBeef(
+  txid: string,
+  atomic: number[],
+): Promise<boolean> {
+  const id = txid.trim().toLowerCase()
+  const active = getActiveWallet()
+  if (!active || !/^[0-9a-f]{64}$/.test(id) || !atomic.length) return false
+  try {
+    const { summarizePostBeef } = await import('./postBeefResult')
+    const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
+    return summarizePostBeef(results as never).accepted
+  } catch (err) {
+    console.warn(
+      '[brc29] postBeef failed',
+      id,
+      err instanceof Error ? err.message : String(err),
+    )
+    return false
+  }
+}
+
+function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
+  if (!result || typeof result !== 'object') return undefined
+  const raw = (result as { tx?: unknown }).tx
+  if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+    return raw as number[]
+  }
+  if (raw instanceof Uint8Array) return Array.from(raw)
+  return undefined
 }
 
 export type InternalizeBrc29Result = {
@@ -90,9 +138,8 @@ function alreadyInternalizedError(err: unknown): boolean {
 }
 
 /**
- * Send sats to a peer identity key using BRC-29 derived P2PKH.
- * Remittance must be delivered out-of-band (tip/pay-sent card) for the payee
- * to internalize — chain custody does not depend on messagebox success.
+ * Sign a BRC-29 payment and deliver it to the payee (they broadcast).
+ * If messagebox delivery fails, sender broadcasts so noSend inputs are not stuck.
  */
 export async function sendBrc29ToIdentityKey(opts: {
   payeeIdentityKey: string
@@ -149,10 +196,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             outputIndex: 0,
           }
 
-          setPaymentProgress(
-            'broadcasting',
-            'Signing and broadcasting your payment',
-          )
+          setPaymentProgress('broadcasting', 'Signing payment for the recipient')
           const result = await active.wallet.createAction({
             description:
               opts.description ??
@@ -172,35 +216,18 @@ export async function sendBrc29ToIdentityKey(opts: {
             ],
             options: {
               randomizeOutputs: false,
-              acceptDelayedBroadcast: true,
               signAndProcess: true,
+              noSend: true,
+              trustSelf: 'known',
             },
           })
 
           const realTxid = (result as { txid?: string })?.txid
-          const txid = realTxid ?? `local-${Date.now().toString(16)}`
-          const sendWith = (
-            result as { sendWithResults?: Array<{ status?: string }> }
-          ).sendWithResults
-          const { sendWithHasFailure } = await import('./actionReview')
-          if (sendWithHasFailure(sendWith) || !realTxid) {
-            const { formatReviewActionsError, recoverFromReviewActions } =
-              await import('./actionReview')
-            await recoverFromReviewActions({
-              err: {
-                name: 'WERR_REVIEW_ACTIONS',
-                sendWithResults: sendWith,
-                txid: realTxid,
-              },
-              active,
-            })
-            throw new Error(
-              formatReviewActionsError({
-                sendWithResults: sendWith,
-                reviewActionResults: [],
-              }),
-            )
+          const atomicBeef = atomicBeefFromCreateAction(result)
+          if (!realTxid || !atomicBeef?.length) {
+            throw new Error('Wallet did not return a signed payment to deliver')
           }
+          const txid = realTxid
           chart.send({ type: 'BROADCASTED', txid })
           completePendingSend(pending.id, txid)
 
@@ -222,11 +249,72 @@ export async function sendBrc29ToIdentityKey(opts: {
           setPaymentProgress('finishing')
           scheduleHistoryBackupPush('send')
 
-          const balanceSats = Math.max(
+          let selfReceived = false
+          let peerDelivered = false
+          let balanceSats = Math.max(
             0,
             (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
           )
-          return { txid, balanceSats, remittance }
+
+          const payingSelf =
+            Boolean(active.identityKey) &&
+            normalizeIdentityKey(active.identityKey) === payee
+
+          if (payingSelf) {
+            setPaymentProgress('finishing', 'Crediting payment back to this wallet')
+            await broadcastAtomicBeef(txid, atomicBeef)
+            const claimed = await internalizeBrc29Payment({
+              txid,
+              remittance,
+              senderIdentityKey: payee,
+              tx: atomicBeef,
+              satoshis,
+              announce: false,
+            })
+            if (claimed.balanceSats != null) balanceSats = claimed.balanceSats
+            selfReceived = claimed.accepted
+            peerDelivered = selfReceived
+          } else {
+            setPaymentProgress('finishing', 'Delivering payment to recipient')
+            try {
+              const { listFriends } = await import('./friends')
+              const { notifyPeerBrc29Payment } = await import('./messageTransport')
+              const friend =
+                listFriends().find(
+                  (f) => f.identityKey.toLowerCase() === payee.toLowerCase(),
+                ) ?? null
+              const delivered = await notifyPeerBrc29Payment({
+                recipientIdentityKey: payee,
+                rootKeyHex: active.rootKeyHex,
+                senderIdentityKey: active.identityKey,
+                messagebox: friend?.messagebox,
+                txid,
+                satoshis,
+                remittance,
+                atomicBeef,
+                amountLabel: opts.friendLabel ?? undefined,
+              })
+              peerDelivered = delivered.delivered === 'cloud'
+            } catch (err) {
+              console.warn(
+                '[brc29] peer delivery failed',
+                err instanceof Error ? err.message : String(err),
+              )
+            }
+            if (!peerDelivered) {
+              setPaymentProgress('finishing', 'Submitting payment (recipient offline)')
+              await broadcastAtomicBeef(txid, atomicBeef)
+            }
+          }
+
+          return {
+            txid,
+            balanceSats,
+            remittance,
+            selfReceived,
+            atomicBeef,
+            peerDelivered,
+          }
         } catch (err) {
           clearPendingSend(pending.id)
           if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
@@ -278,6 +366,8 @@ export async function internalizeBrc29Payment(opts: {
   /** Optional AtomicBEEF bytes; otherwise fetched via SPV services. */
   tx?: number[]
   satoshis?: number
+  /** Toast “Payment received” (default true). Quiet for same-device self-pay. */
+  announce?: boolean
 }): Promise<InternalizeBrc29Result> {
   const id = opts.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) {
@@ -318,10 +408,10 @@ export async function internalizeBrc29Payment(opts: {
     return { accepted: false, satoshis: 0, balanceSats: null, reason: 'locked' }
   }
 
-    markInboundPaymentStatus(id, 'Receiving (SPV)')
+    markInboundPaymentStatus(id, 'Receiving')
   setSyncHealth({
     phase: 'syncing',
-    message: 'Importing BRC-29 payment (SPV)',
+    message: 'Importing BRC-29 payment',
   })
 
   try {
@@ -329,6 +419,10 @@ export async function internalizeBrc29Payment(opts: {
     if (!atomic || atomic.length === 0) {
       const beef = await getBeefForTxidCached(active, id)
       atomic = beef.toBinaryAtomic(id)
+    }
+
+    if (atomic.length > 0) {
+      await broadcastAtomicBeef(id, atomic)
     }
 
     await active.wallet.internalizeAction({
@@ -369,11 +463,13 @@ export async function internalizeBrc29Payment(opts: {
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
 
     markInboundPaymentStatus(id, 'Received')
-    const amountLabel =
-      satoshis > 0
-        ? formatPrimaryFromSats(satoshis, getDisplayCurrency())
-        : undefined
-    toastSuccess('Payment received', amountLabel)
+    if (opts.announce !== false) {
+      const amountLabel =
+        satoshis > 0
+          ? formatPrimaryFromSats(satoshis, getDisplayCurrency())
+          : undefined
+      toastSuccess('Payment received', amountLabel)
+    }
     setSyncHealth({ phase: 'ok', message: null })
     return { accepted: true, satoshis, balanceSats }
   } catch (err) {
@@ -423,6 +519,9 @@ export type PaymentTipHint = {
   senderIdentityKey?: string
   satoshis?: number
   brc29?: Brc29Remittance
+  /** Messagebox file URL for the signed Atomic BEEF (payee broadcasts). */
+  beefUrl?: string
+  tx?: number[]
 }
 
 /**
@@ -445,13 +544,22 @@ export async function ingestPaymentsFromTipHints(
       senderIdentityKey: h.senderIdentityKey,
       satoshis: h.satoshis,
       brc29: h.brc29,
+      beefUrl: h.beefUrl,
+      tx: h.tx,
     })
   }
 
   const unique = new Map<string, PaymentTipHint>()
   for (const h of normalized) {
     const prev = unique.get(h.txid)
-    if (!prev || (h.brc29 && !prev.brc29)) unique.set(h.txid, h)
+    if (
+      !prev ||
+      (h.brc29 && !prev.brc29) ||
+      (h.beefUrl && !prev.beefUrl) ||
+      (h.tx && !prev.tx)
+    ) {
+      unique.set(h.txid, { ...prev, ...h })
+    }
   }
 
   let imported = 0
@@ -463,6 +571,10 @@ export async function ingestPaymentsFromTipHints(
       hint.brc29?.derivationSuffix &&
       hint.senderIdentityKey
     ) {
+      let atomic = hint.tx
+      if ((!atomic || !atomic.length) && hint.beefUrl) {
+        atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
+      }
       for (let attempt = 0; attempt < 6; attempt++) {
         const result = await internalizeBrc29Payment({
           txid: hint.txid,
@@ -472,6 +584,7 @@ export async function ingestPaymentsFromTipHints(
             outputIndex: hint.brc29.outputIndex ?? 0,
           },
           senderIdentityKey: hint.senderIdentityKey,
+          tx: attempt === 0 ? atomic : undefined,
           satoshis: hint.satoshis,
         })
         if (result.balanceSats != null) balanceSats = result.balanceSats

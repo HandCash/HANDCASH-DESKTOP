@@ -5,6 +5,8 @@ type CreateActionArgs = {
     acceptDelayedBroadcast?: boolean
     randomizeOutputs?: boolean
     signAndProcess?: boolean
+    noSend?: boolean
+    trustSelf?: 'known'
   }
   labels?: string[]
   outputs?: Array<{ customInstructions?: string; lockingScript?: string }>
@@ -12,8 +14,10 @@ type CreateActionArgs = {
 
 const createAction = vi.fn(async (_args: CreateActionArgs) => ({
   txid: 'b'.repeat(64),
+  tx: [1, 2, 3],
   sendWithResults: [{ txid: 'b'.repeat(64), status: 'unproven' }],
 }))
+const internalizeAction = vi.fn(async () => ({ accepted: true }))
 const getPublicKey = vi.fn(async (..._args: unknown[]) => ({
   publicKey:
     '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
@@ -22,17 +26,33 @@ const createHmac = vi.fn(async (..._args: unknown[]) => ({
   hmac: Array.from({ length: 32 }, (_, i) => i),
 }))
 const prepareSpendHeal = vi.fn(async (_sats?: number) => 100_000)
+const postBeef = vi.fn(async () => [
+  { status: 'success', txidResults: [{ status: 'success' }] },
+])
+const notifyPeerBrc29Payment = vi.fn(async () => ({ delivered: 'cloud' as const }))
+
+const walletState = {
+  identityKey: '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+}
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
+    identityKey: walletState.identityKey,
+    rootKeyHex: 'ab'.repeat(32),
+    services: { postBeef },
     wallet: {
       createAction: (args: CreateActionArgs) => createAction(args),
+      internalizeAction,
       getPublicKey: (...args: unknown[]) => getPublicKey(...args),
       createHmac: (...args: unknown[]) => createHmac(...args),
     },
   }),
   fetchBalanceSats: async () => 90_000,
+}))
+
+vi.mock('./messageTransport', () => ({
+  notifyPeerBrc29Payment,
 }))
 
 vi.mock('./spendGuard', () => ({
@@ -73,11 +93,16 @@ const PAYEE =
 describe('sendBrc29ToIdentityKey', () => {
   beforeEach(() => {
     createAction.mockClear()
+    internalizeAction.mockClear()
     getPublicKey.mockClear()
     createHmac.mockClear()
+    postBeef.mockClear()
+    notifyPeerBrc29Payment.mockClear()
+    walletState.identityKey =
+      '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
   })
 
-  it('derives BRC-29 lock and createAction with remittance + delayed broadcast', async () => {
+  it('signs noSend BRC-29 and delivers Atomic BEEF to the payee', async () => {
     const { sendBrc29ToIdentityKey, BRC29_PROTOCOL_ID } = await import(
       './sendBrc29Payment'
     )
@@ -104,13 +129,51 @@ describe('sendBrc29ToIdentityKey', () => {
 
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0] as CreateActionArgs | undefined
-    expect(args?.options?.acceptDelayedBroadcast).toBe(true)
+    expect(args?.options?.noSend).toBe(true)
+    expect(args?.options?.signAndProcess).toBe(true)
     expect(args?.options?.randomizeOutputs).toBe(false)
     expect(args?.labels).toEqual(expect.arrayContaining(['brc29', 'handcash-send']))
     const instructions = JSON.parse(args?.outputs?.[0]?.customInstructions || '{}')
     expect(instructions.derivationPrefix).toBe(result.remittance.derivationPrefix)
     expect(instructions.derivationSuffix).toBe(result.remittance.derivationSuffix)
     expect(instructions.payee).toBe(PAYEE)
+    expect(internalizeAction).not.toHaveBeenCalled()
+    expect(postBeef).not.toHaveBeenCalled()
+    expect(notifyPeerBrc29Payment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientIdentityKey: PAYEE,
+        atomicBeef: [1, 2, 3],
+        txid: 'b'.repeat(64),
+      }),
+    )
+    expect(result.selfReceived).toBe(false)
+    expect(result.peerDelivered).toBe(true)
+  })
+
+  it('internalizes immediately when paying this wallet', async () => {
+    walletState.identityKey = PAYEE
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: PAYEE,
+      satoshis: 1_000,
+    })
+
+    expect(result.selfReceived).toBe(true)
+    expect(notifyPeerBrc29Payment).not.toHaveBeenCalled()
+    expect(internalizeAction).toHaveBeenCalledWith(
+      expect.objectContaining({
+        tx: [1, 2, 3],
+        labels: ['brc29'],
+        outputs: [
+          expect.objectContaining({
+            protocol: 'wallet payment',
+            paymentRemittance: expect.objectContaining({
+              senderIdentityKey: PAYEE,
+            }),
+          }),
+        ],
+      }),
+    )
   })
 })
 
@@ -122,6 +185,11 @@ describe('internalizeBrc29Payment', () => {
     vi.doMock('./session', () => ({
       getActiveWallet: () => ({
         chain: 'main',
+        services: {
+          postBeef: async () => [
+            { status: 'success', txidResults: [{ status: 'success' }] },
+          ],
+        },
         wallet: { internalizeAction },
       }),
       fetchBalanceSats: async () => 91_000,

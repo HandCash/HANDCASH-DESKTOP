@@ -335,7 +335,7 @@ export function SettingsPanel() {
                 Upload URL
               </label>
               <span className="settings-row-desc">
-                POST the current log file to BRC-CLOUD (auto-set on first launch)
+                POST the current log file to HandCash (auto-set on first launch)
               </span>
               <div className="settings-log-upload-row">
                 <input

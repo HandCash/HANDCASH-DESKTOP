@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.192] - 2026-08-12
+
+### Changed
+- **HandCash is the default history host.** Onboarding, unlock, and cloud-health apply HandCash cloud unless you chose no backup or a custom host. Settings no longer require pasting a workers.dev URL.
+- **BRC-29 payee broadcasts.** Sender signs (`noSend`) and delivers Atomic BEEF + remittance to the peer; the recipient internalizes and submits. Sender broadcasts only if delivery fails. Self-pay credits locally. Remittance QR is no longer the send-success UX.
+
 ## [1.2.191] - 2026-08-11
 
 ### Added

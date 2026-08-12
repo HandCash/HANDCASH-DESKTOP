@@ -711,20 +711,25 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
       })
       const recipient = getFriendById(msg.peerId)
       if (sent && recipient && identityKey) {
-        const rootKeyHex = getActiveWallet()?.rootKeyHex
-        if (!rootKeyHex) {
-          setHint('Payment sent on-chain, but chat delivery needs an unlocked wallet.')
-        } else {
-          const delivered = await deliverOutbound({
-            recipientIdentityKey: recipient.identityKey,
-            senderIdentityKey: identityKey,
-            rootKeyHex,
-            body: encodeMessageBody(sent),
-            peerId: msg.peerId,
-            messagebox: recipient.messagebox,
-          })
-          if (delivered.delivered !== 'cloud') {
-            setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
+        const selfPay =
+          recipient.identityKey.toLowerCase() === identityKey.toLowerCase()
+        // BRC-29 already delivered the signed payment to the peer.
+        if (!selfPay && !payeeKey) {
+          const rootKeyHex = getActiveWallet()?.rootKeyHex
+          if (!rootKeyHex) {
+            setHint('Payment sent on-chain, but chat delivery needs an unlocked wallet.')
+          } else {
+            const delivered = await deliverOutbound({
+              recipientIdentityKey: recipient.identityKey,
+              senderIdentityKey: identityKey,
+              rootKeyHex,
+              body: encodeMessageBody(sent),
+              peerId: msg.peerId,
+              messagebox: recipient.messagebox,
+            })
+            if (delivered.delivered !== 'cloud') {
+              setHint('Payment sent on-chain, but the chat card could not be delivered yet.')
+            }
           }
         }
       }

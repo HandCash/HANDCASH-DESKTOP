@@ -13,6 +13,7 @@ import {
 } from './historyBackupPrefs'
 import { getActiveWallet } from './session'
 import { getWalletConfigPrefs } from './walletConfig'
+import { ensureHandCashServiceDefaults } from './walletSetupApply'
 
 export type CloudBackupPhase = 'off' | 'checking' | 'pending' | 'ok' | 'error'
 
@@ -59,6 +60,7 @@ function setHealth(next: Omit<CloudBackupHealth, 'checkedAt'>): CloudBackupHealt
 
 /** Ensure History prefs pick up wallet-config URL if the user never opened History. */
 export function ensureHistoryBackupUrlFromConfig(): string {
+  ensureHandCashServiceDefaults()
   const prefs = getHistoryBackupPrefs()
   if (prefs.baseUrl) return prefs.baseUrl
   const cfg = getWalletConfigPrefs()

@@ -1,17 +1,18 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { DEFAULT_HISTORY_BACKUP_SETUP_URL } from './walletConfig'
+import { DEFAULT_HISTORY_BACKUP_SETUP_URL, getWalletConfigPrefs } from './walletConfig'
 
 const KEY = 'handcash.brc100.historyBackup.v1'
 
 /**
- * Suggested BRC-39 host (BRC-CLOUD). Always shown in Settings even when the
- * saved URL is empty — user can clear it for file-only backups.
+ * HandCash BRC-39 host (BRC-CLOUD). Applied automatically unless the user
+ * chose “no backup” or a custom host.
  */
 export const SUGGESTED_HISTORY_BACKUP_BASE_URL = DEFAULT_HISTORY_BACKUP_SETUP_URL
 
 /**
  * Optional remote base URL for BRC-39 blob storage.
- * Blank until the user configures setup / Settings. Override with
+ * Empty only after explicit "no backup". Otherwise HandCash cloud is applied
+ * by {@link ensureHandCashServiceDefaults} / setup. Override with
  * VITE_HISTORY_BACKUP_BASE_URL when you want a pre-filled default.
  * @deprecated Prefer SUGGESTED_HISTORY_BACKUP_BASE_URL for UI defaults.
  */
@@ -136,10 +137,11 @@ export function displayHistoryBackupBaseUrl(prefs = getHistoryBackupPrefs()): st
   return saved || SUGGESTED_HISTORY_BACKUP_BASE_URL
 }
 
-/** Persist the suggested cloud URL when the user has none yet. */
+/** Persist HandCash cloud when the user has none yet (not if they chose no backup). */
 export function ensureSuggestedHistoryBackupUrl(): HistoryBackupPrefs {
   const prefs = getHistoryBackupPrefs()
   if (prefs.baseUrl.trim()) return prefs
+  if (getWalletConfigPrefs().mode === 'none') return prefs
   return setHistoryBackupPrefs({ baseUrl: SUGGESTED_HISTORY_BACKUP_BASE_URL })
 }
 

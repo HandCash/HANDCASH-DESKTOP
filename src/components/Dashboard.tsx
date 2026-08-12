@@ -457,6 +457,8 @@ export function Dashboard({
             derivationSuffix: string
             outputIndex?: number
           }
+          beefUrl?: string
+          tx?: number[]
         }>
       }>).detail
       const hints = detail?.hints ?? []

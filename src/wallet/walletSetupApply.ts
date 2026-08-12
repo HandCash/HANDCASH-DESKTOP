@@ -1,22 +1,32 @@
 /**
  * Shared post-create / post-restore wallet setup prefs.
  * Keep AuthScreen and WalletSetupConfigPanel on the same apply path.
+ *
+ * HandCash cloud (BRC-CLOUD) is the default for history + trustholders unless
+ * the user explicitly chooses "no backup" or a custom history host.
  */
-import { setHistoryBackupPrefs } from './historyBackupPrefs'
+import { getHistoryBackupPrefs, setHistoryBackupPrefs } from './historyBackupPrefs'
 import {
   BACKUP_SERVICES_LIVE,
   DEFAULT_HISTORY_BACKUP_SETUP_URL,
   HANDCASH_BACKUP_SERVICE_URL,
   HASTE_BACKUP_SERVICE_URL,
+  getWalletConfigPrefs,
   setWalletConfigPrefs,
   type WalletConfigMode,
 } from './walletConfig'
+
+export const HANDCASH_HISTORY_HOST_LABEL = 'HandCash'
+
+export function handCashHistoryUrl(): string {
+  return DEFAULT_HISTORY_BACKUP_SETUP_URL.replace(/\/+$/, '')
+}
 
 export function applyWalletSetupSelection(
   selected: WalletConfigMode,
   historyUrl: string,
 ): void {
-  const url = historyUrl.trim()
+  const url = historyUrl.trim() || (selected === 'none' ? '' : handCashHistoryUrl())
   if (selected === 'recommended') {
     if (!BACKUP_SERVICES_LIVE) {
       throw new Error('Recommended backup is not available yet.')
@@ -50,10 +60,46 @@ export function applyWalletSetupSelection(
   })
 }
 
-/** Fresh restore: pull BRC-39 from the default host without asking again. */
+/** Fresh restore: pull BRC-39 from HandCash without asking again. */
 export function applyDefaultRestoreWalletSetup(): void {
   applyWalletSetupSelection(
     BACKUP_SERVICES_LIVE ? 'recommended' : 'history',
-    DEFAULT_HISTORY_BACKUP_SETUP_URL,
+    handCashHistoryUrl(),
   )
+}
+
+/**
+ * Fill HandCash history / trustholder URLs when the user never opted out.
+ * No-op for explicit "no backup". Heals older installs that left URLs blank.
+ */
+export function ensureHandCashServiceDefaults(): void {
+  const cfg = getWalletConfigPrefs()
+  if (cfg.mode === 'none') return
+
+  if (!cfg.mode) {
+    try {
+      applyDefaultRestoreWalletSetup()
+    } catch (err) {
+      console.warn('[setup] HandCash defaults failed', err)
+    }
+    return
+  }
+
+  const historyUrl = (cfg.historyBaseUrl.trim() || handCashHistoryUrl()).replace(/\/+$/, '')
+  if (!getHistoryBackupPrefs().baseUrl.trim() && historyUrl) {
+    setHistoryBackupPrefs({ baseUrl: historyUrl, lastError: null })
+  }
+
+  if (
+    cfg.mode === 'recommended' &&
+    BACKUP_SERVICES_LIVE &&
+    cfg.backupServiceUrls.length === 0
+  ) {
+    setWalletConfigPrefs({
+      backupServiceUrls: [HANDCASH_BACKUP_SERVICE_URL, HASTE_BACKUP_SERVICE_URL],
+      historyBaseUrl: historyUrl,
+    })
+  } else if (!cfg.historyBaseUrl.trim() && historyUrl) {
+    setWalletConfigPrefs({ historyBaseUrl: historyUrl })
+  }
 }

@@ -10,6 +10,7 @@ import {
   getHistoryBackupPrefs,
   resolveHistoryBackupBaseUrl,
 } from '../../wallet/historyBackupPrefs'
+import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
 import type { SettingId } from '../../wallet/navStore'
 
 export type SettingRowStatus = {
@@ -43,8 +44,9 @@ export function historyStatus(): SettingRowStatus {
     return { text: 'Confirmed · cloud ready', tone: 'ok' }
   }
   if (url) {
+    const handCash = url.replace(/\/+$/, '') === handCashHistoryUrl()
     return {
-      text: `URL set · ${url.replace(/^https?:\/\//, '').slice(0, 28)}`,
+      text: handCash ? 'HandCash · cloud ready' : `Custom host · ${url.replace(/^https?:\/\//, '').slice(0, 22)}`,
       tone: 'muted',
     }
   }
@@ -56,8 +58,12 @@ export function historyStatus(): SettingRowStatus {
 
 export function deviceHandoffStatus(): SettingRowStatus {
   const url = resolveHistoryBackupBaseUrl()
-  if (!url) return { text: 'Needs History URL first', tone: 'warn' }
-  return { text: 'Same identity + History URL', tone: 'muted' }
+  if (!url) return { text: 'Needs HandCash history first', tone: 'warn' }
+  const handCash = url.replace(/\/+$/, '') === handCashHistoryUrl()
+  return {
+    text: handCash ? 'Same identity + HandCash history' : 'Same identity + custom history host',
+    tone: 'muted',
+  }
 }
 
 export function statusForSetting(id: SettingId): SettingRowStatus | null {

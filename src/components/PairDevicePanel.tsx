@@ -22,6 +22,11 @@ import {
   resolveHistoryBackupBaseUrl,
   setHistoryBackupPrefs,
 } from '../wallet/historyBackupPrefs'
+import {
+  HANDCASH_HISTORY_HOST_LABEL,
+  ensureHandCashServiceDefaults,
+  handCashHistoryUrl,
+} from '../wallet/walletSetupApply'
 import { takePendingPairScan } from '../wallet/pendingPairScan'
 import { openSetting } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
@@ -36,9 +41,22 @@ import { SkeletonQr } from './Skeleton'
  * Link devices: same identity + same BRC-39 backup URL (required).
  * Show QR on one device, Scan to link (or paste) on the other, then Sync.
  */
+function initialPairBackupUrl(): string {
+  try {
+    ensureHandCashServiceDefaults()
+  } catch {
+    /* ignore */
+  }
+  return resolveHistoryBackupBaseUrl()
+}
+
 export function PairDevicePanel() {
-  const [backupUrl, setBackupUrl] = useState(() => resolveHistoryBackupBaseUrl())
+  const [backupUrl, setBackupUrl] = useState(initialPairBackupUrl)
   const [urlDraft, setUrlDraft] = useState(backupUrl)
+  const [customHost, setCustomHost] = useState(() => {
+    const url = resolveHistoryBackupBaseUrl()
+    return Boolean(url) && url.replace(/\/+$/, '') !== handCashHistoryUrl()
+  })
   const [password, setPassword] = useState('')
   const [qrUrl, setQrUrl] = useState<string | null>(null)
   const [pairText, setPairText] = useState('')
@@ -191,7 +209,7 @@ export function PairDevicePanel() {
 
   const hint = useMemo(() => {
     if (!backupUrl) {
-      return 'Set the same History backup URL on every device. Linking will not work without it.'
+      return 'HandCash history is required to link devices. Choose a custom host only if both devices use the same one.'
     }
     return 'Show this QR on one device. On the other, tap Scan to link — then Sync (same wallet keys; history is sealed to the key).'
   }, [backupUrl])
@@ -223,21 +241,54 @@ export function PairDevicePanel() {
       </h3>
       <p className="settings-hint">{hint}</p>
 
-      <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
-        <label htmlFor="device-backup-url">History backup URL (required)</label>
+      {!customHost ? (
+        <p className="settings-row-desc" style={{ marginTop: 12 }}>
+          {backupUrl ? (
+            <>
+              History host: <strong>{HANDCASH_HISTORY_HOST_LABEL}</strong>
+            </>
+          ) : (
+            <>No history host yet. HandCash is applied unless you chose no backup at setup.</>
+          )}
+        </p>
+      ) : (
+        <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
+          <label htmlFor="device-backup-url">Custom history host</label>
+          <input
+            id="device-backup-url"
+            type="url"
+            placeholder={handCashHistoryUrl()}
+            value={urlDraft}
+            onChange={(e) => setUrlDraft(e.target.value)}
+            autoComplete="off"
+          />
+        </div>
+      )}
+      <label className="wallet-setup-option" style={{ marginTop: 8 }}>
         <input
-          id="device-backup-url"
-          type="url"
-          placeholder="https://…"
-          value={urlDraft}
-          onChange={(e) => setUrlDraft(e.target.value)}
-          autoComplete="off"
+          type="checkbox"
+          checked={customHost}
+          onChange={(e) => {
+            const on = e.target.checked
+            setCustomHost(on)
+            if (!on) {
+              setUrlDraft(handCashHistoryUrl())
+              const next = setHistoryBackupPrefs({ baseUrl: handCashHistoryUrl() })
+              setBackupUrl(next.baseUrl)
+            }
+          }}
         />
-      </div>
+        <span className="wallet-setup-option-body">
+          <strong>Use a custom history host</strong>
+          <span>Both devices must use the exact same URL.</span>
+        </span>
+      </label>
       <div className="actions" style={{ marginTop: 8 }}>
-        <button type="button" className="btn btn-primary" onClick={saveUrl}>
-          Save URL
-        </button>
+        {customHost ? (
+          <button type="button" className="btn btn-primary" onClick={saveUrl}>
+            Save URL
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost"
@@ -252,7 +303,7 @@ export function PairDevicePanel() {
 
       {!backupUrl ? (
         <p className="settings-row-desc" style={{ marginTop: 12 }}>
-          Save a URL above before pairing. Both devices must use the exact same base URL.
+          Save a history host before pairing. Both devices must use the same one.
         </p>
       ) : (
         <>

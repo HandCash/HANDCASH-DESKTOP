@@ -131,7 +131,7 @@ export function ScanPanel() {
                 playWalletSound('error')
                 toastError(
                   'Claim failed',
-                  result.reason || 'Could not internalize that remittance QR',
+                  result.reason || 'Could not credit that remittance QR',
                 )
               } catch (err) {
                 playWalletSound('error')

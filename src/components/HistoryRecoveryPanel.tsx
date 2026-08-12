@@ -96,7 +96,7 @@ export function HistoryRecoveryPanel({ onDone, onSkip }: Props) {
       : probe.status === 'found'
         ? 'History backup found — restore it to recover balance, activity, friends, and apps.'
         : probe.status === 'missing'
-          ? 'No history backup at the default URL yet. You can skip and rely on chain scan, or check Settings → History later.'
+          ? 'No history backup on HandCash yet. You can skip and rely on chain scan, or check Settings → History later.'
           : `Could not reach history host: ${probe.message}`
 
   return (

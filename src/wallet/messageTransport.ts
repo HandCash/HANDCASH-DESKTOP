@@ -344,6 +344,7 @@ export type InboundPaymentHint = {
   senderIdentityKey: string
   satoshis?: number
   brc29?: WireBrc29
+  beefUrl?: string
 }
 
 export async function pollInboundTipHints(args: {
@@ -419,6 +420,7 @@ export async function pollInboundTipHints(args: {
           senderIdentityKey: senderKey,
           satoshis: decoded.meta.sats,
           brc29: decoded.meta.brc29,
+          beefUrl: decoded.meta?.attachment?.url,
         })
       }
       if (m.messageId) ackIds.push(String(m.messageId))
@@ -472,9 +474,8 @@ export async function notifyPeerItemIncoming(args: {
 }
 
 /**
- * Best-effort BRC-29 remittance delivery after a peer payment (Send panel).
- * Chain custody already landed; without this card the payee cannot internalize
- * the derived lock. Failures are non-fatal.
+ * Deliver a signed BRC-29 payment to the payee (BEEF file + remittance card).
+ * The payee broadcasts. Retries until the messagebox accepts.
  */
 export async function notifyPeerBrc29Payment(args: {
   recipientIdentityKey: string
@@ -490,6 +491,7 @@ export async function notifyPeerBrc29Payment(args: {
     outputIndex?: number
   }
   amountLabel?: string
+  atomicBeef?: number[]
 }): Promise<{ delivered: 'local' | 'cloud' }> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return { delivered: 'local' }
@@ -503,6 +505,30 @@ export async function notifyPeerBrc29Payment(args: {
     Number.isFinite(args.satoshis) && args.satoshis > 0
       ? Math.floor(args.satoshis)
       : 0
+
+  let attachment: ChatAttachment | undefined
+  if (args.atomicBeef && args.atomicBeef.length > 0) {
+    try {
+      const file = new File(
+        [new Uint8Array(args.atomicBeef)],
+        `brc29-${txid.slice(0, 12)}.beef`,
+        { type: 'application/octet-stream' },
+      )
+      attachment = await uploadChatFile({
+        file,
+        recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
+        senderIdentityKey: args.senderIdentityKey,
+        rootKeyHex: args.rootKeyHex,
+        messagebox: args.messagebox,
+      })
+    } catch (err) {
+      console.warn(
+        '[brc29] BEEF upload failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+
   const body = encodeMessageBody({
     kind: 'pay-sent',
     text: args.amountLabel || (sats > 0 ? `Pay ${sats} sats` : 'Payment'),
@@ -516,17 +542,25 @@ export async function notifyPeerBrc29Payment(args: {
         derivationSuffix: args.remittance.derivationSuffix,
         outputIndex: args.remittance.outputIndex ?? 0,
       },
+      attachment,
     },
   })
-  return deliverOutbound({
-    recipientIdentityKey: args.recipientIdentityKey.trim().toLowerCase(),
-    rootKeyHex: args.rootKeyHex,
-    senderIdentityKey: args.senderIdentityKey,
-    senderHandle: args.senderHandle ?? undefined,
-    messagebox: args.messagebox,
-    body,
-    peerId: args.recipientIdentityKey.trim().toLowerCase(),
-  })
+
+  const recipient = args.recipientIdentityKey.trim().toLowerCase()
+  for (let attempt = 0; attempt < 5; attempt++) {
+    const delivered = await deliverOutbound({
+      recipientIdentityKey: recipient,
+      rootKeyHex: args.rootKeyHex,
+      senderIdentityKey: args.senderIdentityKey,
+      senderHandle: args.senderHandle ?? undefined,
+      messagebox: args.messagebox,
+      body,
+      peerId: recipient,
+    })
+    if (delivered.delivered === 'cloud') return delivered
+    await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
+  }
+  return { delivered: 'local' }
 }
 
 async function acknowledgeMessages(

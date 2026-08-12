@@ -219,8 +219,9 @@ export function HistoryBackupPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
-        Shared history backup. The same URL on every device is <strong>required</strong> to link
-        installs (Settings → Use on another device). Every export also writes a{' '}
+        Shared history backup on <strong>HandCash</strong> unless you set a custom host. The same
+        host on every device is <strong>required</strong> to link installs (Settings → Use on
+        another device). Every export also writes a{' '}
         <strong>write-once</strong> UTXO snapshot on this device (never overwritten). Restore
         recomposes from history then checks the chain; chain ingest alone cannot rebuild P2P /
         managed-change state.
@@ -228,7 +229,7 @@ export function HistoryBackupPanel() {
 
       <HistoryBackupUrlField
         id="history-backup-url"
-        label="Backup URL (required to link devices)"
+        label="History backup URL"
         onSaved={(baseUrl) => {
           setPrefs(getHistoryBackupPrefs())
           if (baseUrl) void refreshCloudBackupHealth().then(() => setPrefs(getHistoryBackupPrefs()))

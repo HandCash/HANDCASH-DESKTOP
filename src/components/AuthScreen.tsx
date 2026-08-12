@@ -21,7 +21,10 @@ import {
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
 import { getWalletConfigPrefs } from '../wallet/walletConfig'
-import { applyDefaultRestoreWalletSetup } from '../wallet/walletSetupApply'
+import {
+  applyDefaultRestoreWalletSetup,
+  ensureHandCashServiceDefaults,
+} from '../wallet/walletSetupApply'
 import { recomposeWallet } from '../wallet/recompose'
 import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import {
@@ -400,6 +403,11 @@ export function AuthScreen({
       playWalletSound('unlock')
       clearUnlockNudge()
       setPreparing(null)
+      try {
+        ensureHandCashServiceDefaults()
+      } catch {
+        /* ignore */
+      }
       onUnlocked(
         {
           handle: unlocked.record.handle,
