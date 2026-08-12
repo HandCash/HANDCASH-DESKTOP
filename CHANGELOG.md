@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.211] - 2026-08-12
+
+### Fixed
+- **Mobile keyboard must pan, not shrink.** Stop binding the app shell to visual-viewport height (that crushed Activity). Keyboard tracking only scrolls the focused field; Android uses adjustPan.
+
 ## [1.2.210] - 2026-08-12
 
 ### Changed
