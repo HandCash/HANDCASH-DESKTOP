@@ -58,8 +58,13 @@ import {
   subscribeDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
-import { subscribeConnectedApps } from '../wallet/permissions'
+import {
+  getPaymentProgress,
+  subscribePaymentProgress,
+  type PaymentProgress,
+} from '../wallet/paymentProgress'
 import { openPaymentDetails, setNavSection } from '../wallet/navStore'
+import { subscribeConnectedApps } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
 import { EmptyState } from './EmptyState'
@@ -225,6 +230,7 @@ function HistoryRow({
         type="button"
         className="history-row history-row-btn"
         onClick={() => {
+          if (entry.id === LIVE_OUTBOUND_ID) return
           playWalletSound('soft')
           openPaymentDetails(entry.id)
         }}
@@ -339,14 +345,55 @@ type FeedProps = {
   onViewAll?: () => void
 }
 
+const LIVE_OUTBOUND_ID = 'live-outbound-send'
+
+/** Top-of-feed row while paymentProgress is active and durable pending is late. */
+function liveOutboundActivityEntry(progress: PaymentProgress): ActivityEntry {
+  return {
+    id: LIVE_OUTBOUND_ID,
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'spent',
+    sats: 0,
+    at: Date.now(),
+    method: progress.outpoint ? 'send-collectable' : 'send',
+    note: progress.detail || 'Sending…',
+    status: 'pending',
+    pendingId: LIVE_OUTBOUND_ID,
+    ...(progress.outpoint
+      ? {
+          item: {
+            name: 'Collectable',
+            origin: progress.outpoint.replace(/_/g, '.'),
+            outpoint: progress.outpoint.replace(/_/g, '.'),
+          },
+        }
+      : {}),
+  }
+}
+
+function mergeLiveOutbound(
+  entries: ActivityEntry[],
+  progress: PaymentProgress,
+): ActivityEntry[] {
+  if (progress.phase === 'idle' || progress.phase === 'finishing') {
+    return entries.filter((e) => e.id !== LIVE_OUTBOUND_ID)
+  }
+  if (entries.some((e) => e.status === 'pending' && e.kind === 'spent')) {
+    return entries.filter((e) => e.id !== LIVE_OUTBOUND_ID)
+  }
+  return [liveOutboundActivityEntry(progress), ...entries]
+}
+
 function useActivityFeed(limit: number) {
   const [entries, setEntries] = useState<ActivityEntry[]>(() => readActivityFeed(limit).entries)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [origins, setOrigins] = useState<PaymentOriginOption[]>(() => readActivityFeed(limit).origins)
+  const [payment, setPayment] = useState<PaymentProgress>(() => getPaymentProgress())
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => subscribePaymentProgress(setPayment), [])
   useEffect(() => {
     const refresh = () => {
       invalidateActivityFeed(limit)
@@ -367,7 +414,12 @@ function useActivityFeed(limit: number) {
     }
   }, [limit])
 
-  return { entries, usdPerBsv, currency, origins }
+  const merged = useMemo(
+    () => mergeLiveOutbound(entries, payment),
+    [entries, payment],
+  )
+
+  return { entries: merged, usdPerBsv, currency, origins }
 }
 
 function useScrollReveal(ref: RefObject<HTMLElement | null>) {

@@ -22,6 +22,8 @@ import {
   listRecentActivity,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
+  noteOutboundSendComplete,
+  noteOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
 } from './appActivity'
@@ -225,5 +227,39 @@ describe('inbound receive activity', () => {
     ])
     expect(cleared).toBe(1)
     expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
+  })
+
+  it('adds Sending… for a re-send after a settled spend of the same tip', () => {
+    noteOutboundSendPending({
+      pendingId: 'old-send',
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    noteOutboundSendComplete({
+      pendingId: 'old-send',
+      txid: 'aa'.repeat(32),
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    expect(
+      listRecentActivity(10).filter(
+        (e) => e.item?.outpoint === `${TX}.0` && e.kind === 'spent',
+      ),
+    ).toHaveLength(1)
+
+    noteOutboundSendPending({
+      pendingId: 'new-send',
+      sats: 1,
+      to: '1xyz',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    const rows = listRecentActivity(10).filter(
+      (e) => e.item?.outpoint === `${TX}.0` && e.kind === 'spent',
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows.some((e) => e.status === 'pending' && e.pendingId === 'new-send')).toBe(true)
+    expect(rows.some((e) => e.status !== 'pending' && e.txid)).toBe(true)
   })
 })

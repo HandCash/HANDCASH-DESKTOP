@@ -1964,13 +1964,38 @@ export async function sendCollectable(args: {
   app?: string
 }): Promise<{ txid: string }> {
   const outpoint = normalizeOutpoint(args.outpoint)
+  const cachedEarly = cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
+  const earlyName =
+    (args.name ?? cachedEarly?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
+  const earlyOrigin = parseOrigin(args.origin ?? cachedEarly?.origin, outpoint)
+  const earlyItem = {
+    name: earlyName,
+    origin: earlyOrigin,
+    outpoint,
+    ...(cachedEarly?.imageUrl ? { imageUrl: cachedEarly.imageUrl } : {}),
+    ...((args.app ?? cachedEarly?.app) ? { app: args.app ?? cachedEarly?.app } : {}),
+  }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
   setPaymentProgress(
     'preparing',
     'Waiting to send the collectable',
     outpoint,
   )
-  return runExclusiveSpend(
+  const outboundPending = beginPendingSend({
+    to: args.toAddress,
+    sats: 1,
+    friendLabel: args.friendLabel ?? null,
+  })
+  noteOutboundSendPending({
+    pendingId: outboundPending.id,
+    sats: 1,
+    to: args.toAddress,
+    friendLabel: args.friendLabel ?? null,
+    item: earlyItem,
+  })
+
+  try {
+  return await runExclusiveSpend(
     async () => {
     try {
     pauseCollectableArrivalToasts++
@@ -2184,11 +2209,6 @@ export async function sendCollectable(args: {
     ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
     ...(app ? { app } : {}),
   }
-  const outboundPending = beginPendingSend({
-    to,
-    sats: 1,
-    friendLabel: args.friendLabel ?? null,
-  })
   noteOutboundSendPending({
     pendingId: outboundPending.id,
     sats: 1,
@@ -2699,4 +2719,9 @@ export async function sendCollectable(args: {
   },
     () => setPaymentProgress('preparing', undefined, outpoint),
   )
+  } catch (err) {
+    clearPendingSend(outboundPending.id)
+    clearOutboundSendPending(outboundPending.id)
+    throw err
+  }
 }

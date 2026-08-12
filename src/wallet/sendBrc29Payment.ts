@@ -204,8 +204,25 @@ export async function sendBrc29ToIdentityKey(opts: {
   friendLabel?: string | null
   description?: string
 }): Promise<SendBrc29Result> {
+  const satoshis = opts.satoshis
+  if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
+  const payeeEarly = normalizeIdentityKey(opts.payeeIdentityKey)
+
   setPaymentProgress('preparing', 'Waiting to send')
-  return runExclusiveSpend(
+  const pending = beginPendingSend({
+    to: payeeEarly,
+    sats: satoshis,
+    friendLabel: opts.friendLabel ?? null,
+  })
+  noteOutboundSendPending({
+    pendingId: pending.id,
+    sats: satoshis,
+    to: payeeEarly,
+    friendLabel: opts.friendLabel ?? null,
+  })
+
+  try {
+    return await runExclusiveSpend(
     async () => {
       const chart = createActor(brc29SendMachine).start()
       try {
@@ -216,9 +233,6 @@ export async function sendBrc29ToIdentityKey(opts: {
         const payee = normalizeIdentityKey(opts.payeeIdentityKey)
         const invalid = validateIdentityKey(payee)
         if (invalid) throw new Error(invalid)
-
-        const satoshis = opts.satoshis
-        if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
         const settlePath = chooseBrc29SettlePath({
           payeeIdentityKey: payee,
@@ -237,11 +251,6 @@ export async function sendBrc29ToIdentityKey(opts: {
         await prepareSpendHeal(satoshis)
         chart.send({ type: 'READY' })
 
-        const pending = beginPendingSend({
-          to: payee,
-          sats: satoshis,
-          friendLabel: opts.friendLabel ?? null,
-        })
         noteOutboundSendPending({
           pendingId: pending.id,
           sats: satoshis,
@@ -503,7 +512,12 @@ export async function sendBrc29ToIdentityKey(opts: {
       }
     },
     () => setPaymentProgress('preparing', 'Preparing payment'),
-  )
+    )
+  } catch (err) {
+    clearPendingSend(pending.id)
+    clearOutboundSendPending(pending.id)
+    throw err
+  }
 }
 
 /**

@@ -214,6 +214,19 @@ function findActivityMatchIndex(
       (e) => e.pendingId === pendingId && e.kind === args.kind,
     )
     if (byPending >= 0) return byPending
+    // New pendingId must not collapse onto a prior settled spend of the same tip
+    // (failed broadcast / chain-ingest restore). Only refresh an in-flight pending
+    // row for this outpoint; otherwise insert a fresh Sending… row.
+    const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+    if (outpoint) {
+      const byPendingOp = entries.findIndex((e) => {
+        if (e.kind !== args.kind || e.status !== 'pending') return false
+        const op = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+        return op === outpoint
+      })
+      if (byPendingOp >= 0) return byPendingOp
+    }
+    return -1
   }
   const outpoint = args.item?.outpoint?.trim().toLowerCase().replace('_', '.')
   if (outpoint) {

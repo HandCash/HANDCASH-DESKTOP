@@ -680,26 +680,29 @@ export function Dashboard({
               actions="inline"
             />
           </section>
-        ) : sideBusy ? (
-          <section
-            className="panel permission-side-panel permission-side-panel--processing"
-            aria-label="Processing payment"
-            aria-busy="true"
-          >
-            <p className="permission-eyebrow">Working</p>
-            <h2 className="permission-request-title">
-              {paymentProgress.label || 'Sending…'}
-            </h2>
-            <p className="lede permission-lede-compact">
-              {paymentProgress.detail ||
-                (lastApproved
-                  ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
-                  : 'Broadcasting the approved payment.')}
-            </p>
-          </section>
         ) : (
           <>
-            <WhatIsBsvPanel />
+            {sideBusy ? (
+              <section
+                className="panel permission-side-panel permission-side-panel--processing"
+                aria-label="Processing payment"
+                aria-busy="true"
+              >
+                <p className="permission-eyebrow">Working</p>
+                <h2 className="permission-request-title">
+                  {paymentProgress.label || 'Sending…'}
+                </h2>
+                <p className="lede permission-lede-compact">
+                  {paymentProgress.detail ||
+                    (lastApproved
+                      ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
+                      : 'Broadcasting the approved payment.')}
+                </p>
+              </section>
+            ) : (
+              <WhatIsBsvPanel />
+            )}
+            {/* Keep Activity visible during send so the Sending… row stays on screen. */}
             <RecentActivityPanel chain={profile.chain} />
           </>
         )}

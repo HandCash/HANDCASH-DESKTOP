@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.212] - 2026-08-12
+
+### Fixed
+- **Activity “Sending…” missing while a send is in flight.** Pin the pending row immediately on confirm (before heal / listOutputs); keep Recent Activity visible during Desktop Working; synthesize a live top row from payment progress when durable storage is late; do not collapse a re-send onto a prior settled spend of the same tip (restored after a failed broadcast).
+
 ## [Unreleased]
 
 ## [1.2.211] - 2026-08-12
