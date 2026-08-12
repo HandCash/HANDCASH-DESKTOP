@@ -2,9 +2,9 @@
 
 ## [1.2.213] - 2026-08-12
 
-### Changed
-
-- Patch release (every push must ship a new version).
+### Fixed
+- **Mobile → Desktop collectable receives failing AtomicBEEF.** Soft-latch ingest preferred a raw tip-only BEEF (0 parents / 0 BUMPS), cached it, and `internalizeAction` rejected it forever. Indexer BEEF is preferred first; parents are hydrated into a valid AtomicBEEF; tip-only raw is no longer cached.
+- **Activity NFT rows stuck on Verifying… with blank thumbs.** Failed item ingest clears the pending row; stale Verifying receives expire after 2 minutes; Activity thumbs fall back to the origin content URL when inventory has no `imageUrl`.
 
 ## [1.2.212] - 2026-08-12
 
