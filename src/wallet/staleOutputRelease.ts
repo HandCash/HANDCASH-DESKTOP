@@ -37,6 +37,19 @@ export function isAlreadySpentInputError(err: unknown): boolean {
 }
 
 /**
+ * Wallet storage marked an input unspendable (failed createAction / signAction
+ * that did not roll back). Not proof the UTXO is gone on-chain — do **not**
+ * {@link releaseStaleSpendableOutputs}; abort + unfail instead.
+ */
+export function isNoLongerSpendableError(err: unknown): boolean {
+  const message = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return (
+    message.includes('no longer spendable') ||
+    (message.includes('werr_invalid_operation') && message.includes('spendable'))
+  )
+}
+
+/**
  * Write off outputs the network refuses to spend. Call only after a spend failed
  * with {@link isAlreadySpentInputError}.
  *

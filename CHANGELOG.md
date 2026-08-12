@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.193] - 2026-08-12
+
+### Fixed
+- **Stop burning collectables after a failed self-send.** A stuck latch (`no longer spendable`) no longer ghost-relinquishes the tip from the `1sat` basket. Unknown locking scripts stay in inventory; failed sends protect the tip and retry tip-only. Settle Atomic BEEF is remembered locally so the next send can find the owning transaction.
+
 ## [1.2.192] - 2026-08-12
 
 ### Changed

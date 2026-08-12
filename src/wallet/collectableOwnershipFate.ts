@@ -47,6 +47,9 @@ export function ownershipFate(args: {
   // here orphaned inventory while Activity still showed the receive.
   if (args.paysOurAddress === true) return 'graceHold'
 
-  // softP2pkh / unknown past grace and missing from the address set → drop.
+  // listOutputs often omits lockingScript. Unknown ≠ "not ours" — ghost-dropping
+  // after a failed soft-latch send burned live 1-sats off the basket.
+  if (args.paysOurAddress !== false) return 'graceHold'
+
   return 'ghostDrop'
 }

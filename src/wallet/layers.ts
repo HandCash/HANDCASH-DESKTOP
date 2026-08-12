@@ -26,6 +26,9 @@
  *   - **Soft-latch state** (`oneSatLatch.ts`) — OP_RETURN on soft-latch settle (`BRC156` marker, BRC withdrawn);
  *     **this** is peer-visible item identity (origin/name). Soft-latch receive must
  *     not use an ordinal indexer for naming.
+ *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
+ *     spend does not wait on an indexer; a stuck latch falls back to tip-only.
+ *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.

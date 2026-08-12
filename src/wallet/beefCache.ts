@@ -7,9 +7,14 @@
  * a mined transaction body never changes, so paying for it more than once is
  * pure latency. Hits are held for the life of a sync/send window; misses are not
  * cached, so a transient outage does not pin a wrong answer.
+ *
+ * Wallet-created settles (self-send NFT) also persist Atomic BEEF durably —
+ * delayed broadcast is not yet in the indexer, and toolbox storage may not
+ * expose `getBeefForTransaction` until proven.
  */
-import { Beef } from '@bsv/sdk'
+import { Beef, Utils } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
 const TTL_MS = 10 * 60_000
 const MAX = 200
@@ -21,7 +26,50 @@ const HYDRATE_DEADLINE_MS = 12_000
 const cache = new Map<string, { at: number; binary: number[] }>()
 const inflight = new Map<string, Promise<Beef>>()
 
+const DURABLE_PREFIX = 'handcash.createdBeef.'
+const DURABLE_INDEX_KEY = 'handcash.createdBeef.index'
+const DURABLE_MAX = 16
+
 const keyOf = (txid: string): string => txid.trim().toLowerCase()
+
+function persistDurableBeef(txid: string, binary: number[]): void {
+  try {
+    const key = keyOf(txid)
+    if (!/^[0-9a-f]{64}$/.test(key) || binary.length === 0) return
+    durableSetItem(DURABLE_PREFIX + key, Utils.toBase64(binary))
+    let index: string[] = []
+    try {
+      const raw = durableGetItem(DURABLE_INDEX_KEY)
+      if (raw) index = JSON.parse(raw) as string[]
+    } catch {
+      index = []
+    }
+    if (!Array.isArray(index)) index = []
+    const next = [key, ...index.filter((id) => id !== key)].slice(0, DURABLE_MAX)
+    durableSetItem(DURABLE_INDEX_KEY, JSON.stringify(next))
+    for (const old of index) {
+      if (!next.includes(old)) durableRemoveItem(DURABLE_PREFIX + old)
+    }
+  } catch {
+    // Quota / private mode — session cache still covers this send window.
+  }
+}
+
+function readDurableBeef(txid: string): Beef | null {
+  try {
+    const b64 = durableGetItem(DURABLE_PREFIX + keyOf(txid))
+    if (!b64) return null
+    const beef = Beef.fromBinary(Utils.toArray(b64, 'base64'))
+    if (!beef.findTxid(keyOf(txid))?.tx) return null
+    for (const btx of beef.txs) {
+      const id = String(btx.txid ?? '').toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(id) && btx.tx) write(id, beef)
+    }
+    return beef
+  } catch {
+    return null
+  }
+}
 
 async function withTimeout<T>(work: Promise<T>, ms: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined
@@ -80,12 +128,29 @@ export function rememberBeef(txid: string, beef: Beef): void {
   write(txid, beef)
 }
 
-export function rememberBeefBinary(txid: string, binary: number[]): void {
+/**
+ * Cache every full tx in an Atomic BEEF (tip + latch share a settle tx).
+ * When `persistTxid` is set, also keep that settle body across restarts.
+ */
+export function rememberBeefTree(binary: number[] | undefined | null, persistTxid?: string): void {
+  if (!binary?.length) return
   try {
-    rememberBeef(txid, Beef.fromBinary(binary))
+    const beef = Beef.fromBinary(binary)
+    for (const btx of beef.txs) {
+      const id = String(btx.txid ?? '').toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(id) && btx.tx) write(id, beef)
+    }
+    const persist = persistTxid?.trim().toLowerCase()
+    if (persist && /^[0-9a-f]{64}$/.test(persist) && beef.findTxid(persist)?.tx) {
+      persistDurableBeef(persist, binary)
+    }
   } catch {
     // Ignore malformed binaries — the next fetch will recover.
   }
+}
+
+export function rememberBeefBinary(txid: string, binary: number[]): void {
+  rememberBeefTree(binary, txid)
 }
 
 /**
@@ -123,6 +188,9 @@ export async function getBeefForTxidCached(
   const key = keyOf(txid)
   const cached = read(txid)
   if (cached) return cached
+
+  const durable = readDurableBeef(txid)
+  if (durable) return durable
 
   const pending = inflight.get(key)
   if (pending) return pending
@@ -319,4 +387,18 @@ export async function buildMergedInputBeef(
 export function resetBeefCacheForTests(): void {
   cache.clear()
   inflight.clear()
+}
+
+/** Drop persisted settle BEEFs (test isolation). */
+export function resetDurableBeefForTests(): void {
+  try {
+    const raw = durableGetItem(DURABLE_INDEX_KEY)
+    const index = raw ? (JSON.parse(raw) as string[]) : []
+    if (Array.isArray(index)) {
+      for (const id of index) durableRemoveItem(DURABLE_PREFIX + id)
+    }
+  } catch {
+    /* ignore */
+  }
+  durableRemoveItem(DURABLE_INDEX_KEY)
 }

@@ -3,8 +3,11 @@ import { Beef, LockingScript, MerklePath, PrivateKey, P2PKH, Transaction } from 
 import type { ActiveWallet } from './session'
 
 describe('beefCache', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     vi.resetModules()
+    const { resetBeefCacheForTests, resetDurableBeefForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+    resetDurableBeefForTests()
   })
 
   it('fetches a body once and serves every later send step from cache', async () => {
@@ -196,5 +199,71 @@ describe('beefCache', () => {
     expect(beef.findTxid(parentId)?.isTxidOnly).toBeFalsy()
     expect(incompleteProofTxids(beef)).toEqual([])
     expect(beef.verifyValid(false).valid).toBe(true)
+  })
+
+  it('remembers a just-created settle BEEF so the next send skips the indexer', async () => {
+    const { getBeefForTxidCached, rememberBeefBinary, resetBeefCacheForTests } =
+      await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const tx = new Transaction()
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const txid = tx.id('hex')
+    const beef = new Beef()
+    beef.mergeRawTx(tx.toBinary())
+    rememberBeefBinary(txid, beef.toBinary())
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const got = await getBeefForTxidCached(wallet, txid)
+    expect(got.findTxid(txid)?.tx).toBeTruthy()
+    expect(getBeefForTxid).not.toHaveBeenCalled()
+  })
+
+  it('reloads a persisted settle BEEF after the session cache is cleared', async () => {
+    const {
+      getBeefForTxidCached,
+      rememberBeefBinary,
+      resetBeefCacheForTests,
+      resetDurableBeefForTests,
+    } = await import('./beefCache')
+    resetDurableBeefForTests()
+    resetBeefCacheForTests()
+
+    const tx = new Transaction()
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    tx.addOutput({
+      satoshis: 2,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const txid = tx.id('hex')
+    const beef = new Beef()
+    beef.mergeRawTx(tx.toBinary())
+    rememberBeefBinary(txid, beef.toBinary())
+    resetBeefCacheForTests()
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const got = await getBeefForTxidCached(wallet, txid)
+    expect(got.findTxid(txid)?.tx).toBeTruthy()
+    expect(getBeefForTxid).not.toHaveBeenCalled()
   })
 })

@@ -95,13 +95,25 @@ describe('ownershipFate', () => {
     ).toBe('graceHold')
   })
 
-  it('ghost-drops soft P2PKH past grace when missing from live', () => {
+  it('holds soft P2PKH past grace when the locking script is unknown', () => {
     expect(
       ownershipFate({
         tipKind: classifyTipKind(P2PKH),
         inLiveSet: false,
         unjudged: false,
         provenTier: 'brc150',
+      }),
+    ).toBe('graceHold')
+  })
+
+  it('ghost-drops only when the script pays someone else', () => {
+    expect(
+      ownershipFate({
+        tipKind: classifyTipKind(P2PKH),
+        inLiveSet: false,
+        unjudged: false,
+        provenTier: 'brc150',
+        paysOurAddress: false,
       }),
     ).toBe('ghostDrop')
   })

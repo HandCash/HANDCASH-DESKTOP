@@ -7,9 +7,8 @@ vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
 }))
 
-const { isAlreadySpentInputError, releaseStaleSpendableOutputs } = await import(
-  './staleOutputRelease'
-)
+const { isAlreadySpentInputError, isNoLongerSpendableError, releaseStaleSpendableOutputs } =
+  await import('./staleOutputRelease')
 
 describe('isAlreadySpentInputError', () => {
   it('accepts the rejections that prove an input is spent or gone', () => {
@@ -32,9 +31,24 @@ describe('isAlreadySpentInputError', () => {
       'WALLET_BRIDGE_TIMEOUT',
       'Insufficient funds',
       'status=503',
+      'input 09da14e3.1 is no longer spendable',
     ]) {
       expect(isAlreadySpentInputError(new Error(message))).toBe(false)
     }
+  })
+})
+
+describe('isNoLongerSpendableError', () => {
+  it('matches wallet-storage spendable false, not chain spent', () => {
+    expect(
+      isNoLongerSpendableError(
+        new Error(
+          'WERR_INVALID_OPERATION: input 09da14e3026e0435fcf8357fcef5fc3541ad5568eada24b19cb0be5cee57132f.1 is no longer spendable',
+        ),
+      ),
+    ).toBe(true)
+    expect(isNoLongerSpendableError(new Error('input already spent'))).toBe(false)
+    expect(isNoLongerSpendableError(new Error('Insufficient funds'))).toBe(false)
   })
 })
 

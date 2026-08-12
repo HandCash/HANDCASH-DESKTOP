@@ -49,7 +49,12 @@ import {
 import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
 import { playWalletSound } from './soundService'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { buildMergedInputBeef, getBeefForTxidCached, rememberBeefBinary } from './beefCache'
+import {
+  buildMergedInputBeef,
+  getBeefForTxidCached,
+  rememberBeefBinary,
+  rememberBeefTree,
+} from './beefCache'
 import {
   buildCollectableCustomInstructions,
   extendProvenanceV2,
@@ -122,7 +127,11 @@ import {
   shouldUpgradeResolution,
 } from './inscriptionCache'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
-import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
+import {
+  isAlreadySpentInputError,
+  isNoLongerSpendableError,
+  releaseStaleSpendableOutputs,
+} from './staleOutputRelease'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -273,13 +282,44 @@ function notifyCollectables(items: Collectable[]) {
   for (const listener of collectablesListeners) listener(items)
 }
 
+/** createAction files the new tip before sign/broadcast finishes — suppress. */
+let pauseCollectableArrivalToasts = 0
+const skipArrivalToast = new Set<string>()
+/** Tips a failed send just touched — do not ghost-relinquish them. */
+const ghostDropProtectUntil = new Map<string, number>()
+const GHOST_DROP_PROTECT_MS = 15 * 60_000
+
+function protectTipsFromGhostDrop(outpoints: string[]): void {
+  const until = Date.now() + GHOST_DROP_PROTECT_MS
+  for (const raw of outpoints) {
+    const op = outpointKey(raw)
+    if (op) ghostDropProtectUntil.set(op, until)
+  }
+}
+
+function isProtectedFromGhostDrop(outpoint: string): boolean {
+  const op = outpointKey(outpoint)
+  const until = ghostDropProtectUntil.get(op)
+  if (!until) return false
+  if (Date.now() > until) {
+    ghostDropProtectUntil.delete(op)
+    return false
+  }
+  return true
+}
+
 function setCollectablesCache(items: Collectable[]) {
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint)),
   )
   const arrived = items
     .map((i) => normalizeOutpoint(i.outpoint))
-    .filter((op) => !prev.has(op))
+    .filter((op) => !prev.has(op) && !skipArrivalToast.has(op))
+  for (const op of [...skipArrivalToast]) {
+    if (items.some((i) => normalizeOutpoint(i.outpoint) === op)) {
+      skipArrivalToast.delete(op)
+    }
+  }
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
@@ -288,6 +328,7 @@ function setCollectablesCache(items: Collectable[]) {
   // to announce first; self-send then showed "Item received" on an empty grid.
   // Durable dedupe in announceItemsReceived skips unlock rediscovery.
   if (arrived.length === 0) return
+  if (pauseCollectableArrivalToasts > 0) return
   void yieldToUi().then(() => {
     announceItemsReceived(arrived)
     try {
@@ -1273,7 +1314,7 @@ async function listCollectablesNow(
         provenTier: verdict?.tier ?? null,
         paysOurAddress,
       })
-      if (fate === 'ghostDrop') ghosts.push(o)
+      if (fate === 'ghostDrop' && !isProtectedFromGhostDrop(o.outpoint)) ghosts.push(o)
       else keptMissing.push(o)
     }
     if (ghosts.length > 0) {
@@ -1454,6 +1495,20 @@ function formatSendError(err: unknown): Error {
     if (/invalid.*(address|identity key)/i.test(msg) || /outputs\[\d+]\.lockingScript/i.test(msg)) {
       return new Error('Invalid recipient address or identity key')
     }
+    if (/no longer spendable/i.test(msg)) {
+      return new Error(
+        'A previous send left this item’s latch stuck. Recovered it — tap Send again.',
+      )
+    }
+    if (
+      /missing its source transaction/i.test(msg) ||
+      /could not load the transaction that holds/i.test(msg) ||
+      /must have a sourcetransaction/i.test(msg)
+    ) {
+      return new Error(
+        'Can’t find the transaction that holds this item yet. Wait a moment after receiving it, then Send again.',
+      )
+    }
     return err
   }
   return new Error(String(err))
@@ -1517,6 +1572,7 @@ async function signOrdinalTransfer(args: {
     targets.set(`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw))
   }
 
+  rememberBeefTree(args.signable.tx)
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined
   const vins: number[] = []
@@ -1539,6 +1595,15 @@ async function signOrdinalTransfer(args: {
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    if (!input.sourceTransaction && input.sourceTXID) {
+      try {
+        const extra = await getBeefForTxidCached(args.wallet, String(input.sourceTXID))
+        beef.mergeBeef(extra.toBinary())
+        input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
+      } catch (err) {
+        console.warn('[collectables] source tx hydrate failed', input.sourceTXID, err)
+      }
+    }
     const locking =
       input.sourceTransaction?.outputs[input.sourceOutputIndex]?.lockingScript?.toHex()
     if (isCovenantLockedScript(locking)) {
@@ -1598,6 +1663,10 @@ async function signOrdinalTransfer(args: {
   const txid =
     typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
   if (!txid) throw new Error('Collectable transfer returned no txid')
+  rememberBeefTree(
+    Array.isArray(signed.tx) ? (signed.tx as number[]) : undefined,
+    txid,
+  )
 
   const {
     sendWithHasFailure,
@@ -1640,6 +1709,7 @@ async function signOrdinalTransfer(args: {
       wrap.atomicTxid = undefined
       beefBin = wrap.toBinary()
     }
+    rememberBeefTree(beefBin, txid)
     const results = await args.wallet.services.postBeef(
       Beef.fromBinary(beefBin),
       [txid],
@@ -1718,6 +1788,9 @@ async function findLatchForTip(
       if (!tags.includes(LATCH_TAG)) continue
       // Never pair a new send with a latch an earlier send already spent.
       if (isItemSent(o.outpoint)) continue
+      if ((o as { spendable?: boolean }).spendable === false) continue
+      const sats = o.satoshis ?? LATCH_DUST_SATS
+      if (sats !== LATCH_DUST_SATS) continue
       const tagOrigin = tagValue(tags, 'origin:')
       if (tagOrigin && toUnderscoreOutpoint(tagOrigin) !== originU) continue
       const tipTag = tagValue(tags, 'tip:')
@@ -1852,6 +1925,7 @@ export async function sendCollectable(args: {
   return runExclusiveSpend(
     async () => {
     try {
+    pauseCollectableArrivalToasts++
     assertOnlineForPayment()
     const wallet = getActiveWallet()
     if (!wallet) throw new Error('Wallet locked')
@@ -1985,6 +2059,20 @@ export async function sendCollectable(args: {
     markItemsSent([{ outpoint: priorLatch.outpoint, txid: `spent-on-chain:${outpoint}` }])
     priorLatch = null
   }
+  if (priorLatch) {
+    const latchTxid = normalizeOutpoint(priorLatch.outpoint).split('.')[0]
+    if (latchTxid && !Beef.fromBinary(tipBeefBin).findTxid(latchTxid)?.tx) {
+      try {
+        await getBeefForTxidCached(wallet, latchTxid)
+      } catch (err) {
+        console.warn(
+          `[collectables] latch BEEF missing ${priorLatch.outpoint} — tip-only soft-latch`,
+          err,
+        )
+        priorLatch = null
+      }
+    }
+  }
   // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
   // Classify from the tip BEEF we already need for soft-latch.
   const tipLockingScript = resolveTipLockingScriptHex({
@@ -2007,18 +2095,17 @@ export async function sendCollectable(args: {
 
   rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
 
-  let inputBEEF = tipBeefBin
-  if (priorLatch) {
+  const rebuildInputBeef = async (): Promise<number[]> => {
+    if (!priorLatch) return tipBeefBin
     const latchTxid = normalizeOutpoint(priorLatch.outpoint).split('.')[0]
     if (latchTxid && !Beef.fromBinary(tipBeefBin).findTxid(latchTxid)?.tx) {
-      inputBEEF = await buildInputBeefForSpends(wallet, [
-        outpoint,
-        priorLatch.outpoint,
-      ])
+      return buildInputBeefForSpends(wallet, [outpoint, priorLatch.outpoint])
     }
+    return tipBeefBin
   }
-  const spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
-  const knownTxids = [
+  let inputBEEF = await rebuildInputBeef()
+  let spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
+  let knownTxids = [
     ...new Set(
       spendOutpoints
         .map((op) => normalizeOutpoint(op).split('.')[0])
@@ -2112,12 +2199,32 @@ export async function sendCollectable(args: {
         verifiedAt: Date.now(),
       })
     }
+    if (selfReceive) {
+      skipArrivalToast.add(normalizeOutpoint(newTip))
+      if (newLatch) skipArrivalToast.add(normalizeOutpoint(newLatch))
+    }
     setPaymentProgress('finishing')
     setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
     scheduleHistoryBackupPush('sendCollectable')
-    void listCollectables(wallet).catch((err) => {
+    await listCollectables(wallet).catch((err) => {
       console.warn('[collectables] post-send refresh failed', err)
     })
+    if (selfReceive) {
+      announceItemsReceived([newTip])
+      try {
+        playWalletSound('receive')
+        document.dispatchEvent(
+          new CustomEvent('handcash:receive', {
+            detail: {
+              title: 'Item received',
+              body: 'A collectable landed in your wallet',
+            },
+          }),
+        )
+      } catch {
+        // Node tests / no DOM
+      }
+    }
     // Grade B accelerator: tip the peer's messagebox so their next poll
     // triggers chain ingest instead of waiting on the quiet address scan.
     const peerIk = args.recipientIdentityKey?.trim()
@@ -2149,6 +2256,13 @@ export async function sendCollectable(args: {
   }
 
   const failSend = (err: unknown): never => {
+    protectTipsFromGhostDrop([outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])])
+    forgetItemsSent([outpoint])
+    if (priorLatch && isNoLongerSpendableError(err)) {
+      markItemsSent([
+        { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
+      ])
+    }
     const formatted = formatSendError(err)
     console.error('[collectables] send failed', formatted.message, err)
     chart.send({ type: 'FAIL', error: formatted.message })
@@ -2187,7 +2301,24 @@ export async function sendCollectable(args: {
   })
   softChart.send({ type: 'BUILT' })
 
-  const inputs = [
+  const recoverSendFailure = async (
+    err: unknown,
+    reference?: string | null,
+  ): Promise<Error> => {
+    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
+      await import('./actionReview')
+    if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+    await recoverFromReviewActions({
+      err,
+      reference,
+      tipOutpoints: spendOutpoints,
+      active: wallet,
+    })
+    if (isReviewActionsError(err)) return new Error(formatReviewActionsError(err))
+    return err instanceof Error ? err : new Error(String(err))
+  }
+
+  const latchInputs = () => [
     {
       outpoint,
       inputDescription: '1sat collectable',
@@ -2204,107 +2335,142 @@ export async function sendCollectable(args: {
       : []),
   ]
 
-  let result: { txid?: string; signableTransaction?: SignableTransaction }
-  try {
-    setPaymentProgress(
-      'broadcasting',
-      'Signing and broadcasting the collectable',
-      outpoint,
-    )
-    console.info('[collectables] createAction softLatch start')
-    result = await wallet.wallet.createAction({
-      description: `Send ${name}`.slice(0, 50),
-      labels: [
-        '1sat',
-        ...(isLatchedSendEnabled() ? ['1sat-latch'] : []),
-        'handcash-send-collectable',
-      ],
-      inputBEEF,
-      inputs,
-      outputs: [
-        {
-          lockingScript,
-          satoshis: 1,
-          outputDescription: 'Collectable transfer',
-          basket: '1sat',
-          tags,
-          customInstructions: buildCollectableCustomInstructions({
-            origin,
-            name,
-            app,
-            ...(content ? { content } : {}),
-            provenance,
-          }),
-        },
-        ...(isLatchedSendEnabled()
-          ? [
-              {
-                lockingScript,
-                satoshis: LATCH_DUST_SATS,
-                outputDescription: '1sat proof latch',
-                basket: ONE_SAT_LATCH_BASKET,
-                tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
-                customInstructions: JSON.stringify({
-                  schema: 1,
-                  origin: toUnderscoreOutpoint(origin),
-                  tip: RELATIVE_TIP,
-                  parentLatch,
-                }),
-              },
-              {
-                lockingScript: buildLatchStateScript({
-                  schema: LATCH_SCHEMA_VERSION,
-                  origin,
-                  tip: RELATIVE_TIP,
-                  parentLatch,
-                  name,
-                  app,
-                  mimeType: item?.mimeType,
-                }),
-                satoshis: 0,
-                outputDescription: '1sat latch state',
-              },
-            ]
-          : []),
-      ],
-      options: {
-        trustSelf: 'known',
-        ...(knownTxids.length > 0 ? { knownTxids } : {}),
-        randomizeOutputs: false,
-        // Delayed + postBeef confirm in signOrdinalTransfer — undelayed throws
-        // WERR_REVIEW_ACTIONS ("require review") on prior ghost doubleSpends.
-        acceptDelayedBroadcast: true,
-        signAndProcess: true,
-      },
-    })
-    softChart.send({ type: 'CREATED', txid: result.txid })
-    console.info(
-      `[collectables] createAction softLatch done txid=${result.txid ?? 'signable'}`,
-    )
-  } catch (err) {
-    if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
-      await import('./actionReview')
-    if (isReviewActionsError(err)) {
-      await recoverFromReviewActions({
-        err,
-        tipOutpoints: spendOutpoints,
-        active: wallet,
+  let result:
+    | {
+        txid?: string
+        tx?: number[]
+        signableTransaction?: SignableTransaction
+      }
+    | undefined
+  let txid = ''
+  let attemptedTipOnly = false
+  for (;;) {
+    spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
+    knownTxids = [
+      ...new Set(
+        spendOutpoints
+          .map((op) => normalizeOutpoint(op).split('.')[0])
+          .filter((id): id is string => !!id),
+      ),
+    ]
+    try {
+      inputBEEF = await rebuildInputBeef()
+    } catch (err) {
+      if (priorLatch && !attemptedTipOnly) {
+        console.warn('[collectables] latch inputBEEF failed — tip-only soft-latch', err)
+        priorLatch = null
+        attemptedTipOnly = true
+        continue
+      }
+      softChart.send({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
       })
-      softChart.send({ type: 'FAIL', error: formatReviewActionsError(err) })
       softChart.stop()
-      return failSend(new Error(formatReviewActionsError(err)))
+      return failSend(err)
     }
-    softChart.send({
-      type: 'FAIL',
-      error: err instanceof Error ? err.message : String(err),
-    })
-    softChart.stop()
-    return failSend(err)
-  }
+    try {
+      setPaymentProgress(
+        'broadcasting',
+        'Signing and broadcasting the collectable',
+        outpoint,
+      )
+      console.info('[collectables] createAction softLatch start')
+      result = await wallet.wallet.createAction({
+        description: `Send ${name}`.slice(0, 50),
+        labels: [
+          '1sat',
+          ...(isLatchedSendEnabled() ? ['1sat-latch'] : []),
+          'handcash-send-collectable',
+        ],
+        inputBEEF,
+        inputs: latchInputs(),
+        outputs: [
+          {
+            lockingScript,
+            satoshis: 1,
+            outputDescription: 'Collectable transfer',
+            basket: '1sat',
+            tags,
+            customInstructions: buildCollectableCustomInstructions({
+              origin,
+              name,
+              app,
+              ...(content ? { content } : {}),
+              provenance,
+            }),
+          },
+          ...(isLatchedSendEnabled()
+            ? [
+                {
+                  lockingScript,
+                  satoshis: LATCH_DUST_SATS,
+                  outputDescription: '1sat proof latch',
+                  basket: ONE_SAT_LATCH_BASKET,
+                  tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
+                  customInstructions: JSON.stringify({
+                    schema: 1,
+                    origin: toUnderscoreOutpoint(origin),
+                    tip: RELATIVE_TIP,
+                    parentLatch,
+                  }),
+                },
+                {
+                  lockingScript: buildLatchStateScript({
+                    schema: LATCH_SCHEMA_VERSION,
+                    origin,
+                    tip: RELATIVE_TIP,
+                    parentLatch,
+                    name,
+                    app,
+                    mimeType: item?.mimeType,
+                  }),
+                  satoshis: 0,
+                  outputDescription: '1sat latch state',
+                },
+              ]
+            : []),
+        ],
+        options: {
+          trustSelf: 'known',
+          ...(knownTxids.length > 0 ? { knownTxids } : {}),
+          randomizeOutputs: false,
+          // Delayed + postBeef confirm in signOrdinalTransfer — undelayed throws
+          // WERR_REVIEW_ACTIONS ("require review") on prior ghost doubleSpends.
+          acceptDelayedBroadcast: true,
+          signAndProcess: true,
+        },
+      })
+      rememberBeefTree(
+        result.tx ?? result.signableTransaction?.tx,
+        typeof result.txid === 'string' ? result.txid : undefined,
+      )
+      softChart.send({ type: 'CREATED', txid: result.txid })
+      console.info(
+        `[collectables] createAction softLatch done txid=${result.txid ?? 'signable'}`,
+      )
+    } catch (err) {
+      const formatted = await recoverSendFailure(err)
+      if (priorLatch && !attemptedTipOnly && isNoLongerSpendableError(err)) {
+        console.warn(
+          `[collectables] latch ${priorLatch.outpoint} unspendable — retry tip-only`,
+        )
+        markItemsSent([
+          { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
+        ])
+        protectTipsFromGhostDrop([outpoint])
+        forgetItemsSent([outpoint])
+        priorLatch = null
+        attemptedTipOnly = true
+        continue
+      }
+      softChart.send({ type: 'FAIL', error: formatted.message })
+      softChart.stop()
+      return failSend(formatted)
+    }
 
-  let txid = result.txid
-  if (!txid) {
+    txid = result.txid ?? ''
+    if (txid) break
     if (!result.signableTransaction) {
       softChart.send({ type: 'FAIL', error: 'Send completed without txid' })
       softChart.stop()
@@ -2322,28 +2488,34 @@ export async function sendCollectable(args: {
         outpoints: spendOutpoints,
       })
       softChart.send({ type: 'SIGNED', txid })
+      break
     } catch (err) {
-      if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-      const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
-        await import('./actionReview')
-      if (isReviewActionsError(err)) {
-        await recoverFromReviewActions({
-          err,
-          reference: result.signableTransaction?.reference,
-          tipOutpoints: spendOutpoints,
-          active: wallet,
-        })
-        softChart.send({ type: 'FAIL', error: formatReviewActionsError(err) })
-        softChart.stop()
-        return failSend(new Error(formatReviewActionsError(err)))
+      const formatted = await recoverSendFailure(
+        err,
+        result.signableTransaction?.reference,
+      )
+      if (priorLatch && !attemptedTipOnly && isNoLongerSpendableError(err)) {
+        console.warn(
+          `[collectables] latch ${priorLatch.outpoint} unspendable after sign — retry tip-only`,
+        )
+        markItemsSent([
+          { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
+        ])
+        protectTipsFromGhostDrop([outpoint])
+        forgetItemsSent([outpoint])
+        priorLatch = null
+        attemptedTipOnly = true
+        continue
       }
-      softChart.send({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
+      softChart.send({ type: 'FAIL', error: formatted.message })
       softChart.stop()
-      return failSend(err)
+      return failSend(formatted)
     }
+  }
+
+  if (!txid) {
+    softChart.stop()
+    return failSend(new Error('Send completed without txid'))
   }
 
   softChart.stop()
@@ -2364,6 +2536,7 @@ export async function sendCollectable(args: {
   }
   return await finishSend(txid, { remittanceBuilt: Boolean(provenance) })
 } finally {
+      pauseCollectableArrivalToasts = Math.max(0, pauseCollectableArrivalToasts - 1)
       clearPaymentProgress()
     }
   },

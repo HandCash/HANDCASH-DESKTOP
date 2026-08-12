@@ -4,7 +4,8 @@
  * Basket `1sat` rows outlive a spend — `listOutputs` keeps returning them until
  * something writes `spendable: false`. The address UTXO set cannot lie that way:
  * a spent tip is gone, and a tip we never held is not there. The inventory list
- * is therefore the intersection of basket tips and live 1-sat outpoints.
+ * is basket ∩ live 1-sats, except a lagging scan must not relinquish a tip that
+ * still locks to us (failed send). Unknown locking script → keep, never ghost-drop.
  */
 
 /**
