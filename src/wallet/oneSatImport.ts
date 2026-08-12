@@ -10,7 +10,7 @@
  * bootstrap path for legacy unlatched tips, where nothing on chain says what the
  * sat carries and the only recourse is replaying history.
  */
-import { Transaction } from '@bsv/sdk'
+import { Beef, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
@@ -42,7 +42,7 @@ import {
   isLatchDustSats,
   latchOutputTags,
 } from './oneSatLatch'
-import { getBeefForTxidCached } from './beefCache'
+import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
   isBsv21Mime,
   normalizeTokenId,
@@ -1105,14 +1105,9 @@ export async function importOneSatOrdinals(
     }
     try {
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid, {
-        allowUnprovenRawTx: true,
-      })
+      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
       await yieldToUi()
-      const atomic = beef.toBinaryAtomic(txid)
-
-      // Last line of defence: basket `1sat` is not counted as spendable balance,
-      // so anything worth more than a satoshi must never be filed there.
+      const beef = Beef.fromBinary(atomic)
       const sourceTx = beef.findAtomicTransaction(txid)
       const notOrdinal = group.filter((item) => {
         const sats = sourceTx?.outputs?.[item.vout!]?.satoshis
@@ -1266,11 +1261,9 @@ export async function importSoftLatchSettlements(
     const txid = tipsClaimed[0]?.txid ?? latchesClaimed[0]!.txid
     try {
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid, {
-        allowUnprovenRawTx: true,
-      })
+      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
       await yieldToUi()
-      const atomic = beef.toBinaryAtomic(txid)
+      const beef = Beef.fromBinary(atomic)
       const sourceTx = beef.findAtomicTransaction(txid)
 
       const remittanceOutputs: Array<{
@@ -1439,11 +1432,9 @@ export async function importOneSatLatches(
       // BEEF serialize + AtomicBEEF validate inside internalizeAction are sync
       // CPU on the WebView thread — yield around them so nav taps stay live.
       await yieldToUi()
-      const beef = await getBeefForTxidCached(wallet, txid, {
-        allowUnprovenRawTx: true,
-      })
+      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
       await yieldToUi()
-      const atomic = beef.toBinaryAtomic(txid)
+      const beef = Beef.fromBinary(atomic)
       const sourceTx = beef.findAtomicTransaction(txid)
       const tipOrigin =
         tipOriginsByTxid.get(txid.toLowerCase()) ??

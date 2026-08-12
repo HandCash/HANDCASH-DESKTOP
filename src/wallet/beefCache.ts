@@ -240,6 +240,26 @@ async function getBeefFromRawTx(
   }
 }
 
+function beefHasSubjectTx(beef: Beef, txid: string): boolean {
+  return Boolean(beef.findTxid(keyOf(txid))?.tx)
+}
+
+/** True when AtomicBEEF for this subject is structurally ready for internalize. */
+export function beefIsAtomicReady(beef: Beef, txid: string): boolean {
+  const key = keyOf(txid)
+  if (!beefHasSubjectTx(beef, key)) return false
+  try {
+    const atomic = beef.toBinaryAtomic(key)
+    const check = Beef.fromBinary(atomic)
+    if (!beefHasSubjectTx(check, key)) return false
+    // Soft-latch settles have inputs — raw tip-only (0 parents, 0 bumps) fails
+    // toolbox internalize with "must be valid AtomicBEEF".
+    return check.verifyValid(false).valid
+  } catch {
+    return false
+  }
+}
+
 export async function getBeefForTxidCached(
   wallet: ActiveWallet,
   txid: string,
@@ -247,7 +267,11 @@ export async function getBeefForTxidCached(
 ): Promise<Beef> {
   const key = keyOf(txid)
   const cached = read(txid)
-  if (cached) return cached
+  if (cached) {
+    // Tip-only raw must not stick in cache — soft-latch internalize needs parents.
+    if (incompleteProofTxids(cached).length === 0) return cached
+    cache.delete(key)
+  }
 
   const durable = readDurableBeef(txid)
   if (durable) return durable
@@ -262,33 +286,97 @@ export async function getBeefForTxidCached(
       return local
     }
 
-    if (opts?.allowUnprovenRawTx) {
-      const fromRaw = await getBeefFromRawTx(wallet, txid)
-      if (fromRaw) {
-        write(txid, fromRaw)
-        return fromRaw
+    // Prefer indexer / proven BEEF before raw. Raw tip-only used to run first,
+    // get cached, then soft-latch internalize failed forever (0 BUMPS / missing
+    // parents) — Desktop could not receive mobile→desktop item settles.
+    if (wallet.services?.getBeefForTxid) {
+      try {
+        const beef = await withTimeout(
+          wallet.services.getBeefForTxid(txid),
+          BEEF_FETCH_TIMEOUT_MS,
+          `indexer BEEF ${txid.slice(0, 8)}`,
+        )
+        if (beefHasSubjectTx(beef, key)) {
+          write(txid, beef)
+          return beef
+        }
+      } catch (err) {
+        if (!opts?.allowUnprovenRawTx) throw err
+        console.warn('[beef] indexer fetch failed; trying raw tx', key.slice(0, 8), err)
       }
-    }
-
-    if (!wallet.services?.getBeefForTxid) {
+    } else if (!opts?.allowUnprovenRawTx) {
       throw new Error(
         'Cannot prove the collectable input offline. Try again when connected.',
       )
     }
 
-    const beef = await withTimeout(
-      wallet.services.getBeefForTxid(txid),
-      BEEF_FETCH_TIMEOUT_MS,
-      `indexer BEEF ${txid.slice(0, 8)}`,
+    if (opts?.allowUnprovenRawTx) {
+      const fromRaw = await getBeefFromRawTx(wallet, txid)
+      if (fromRaw) {
+        const hydratedBin = await hydrateInputBeef(wallet, fromRaw)
+        if (hydratedBin?.length) {
+          const hydrated = Beef.fromBinary(hydratedBin)
+          if (beefHasSubjectTx(hydrated, key)) {
+            write(txid, hydrated)
+            return hydrated
+          }
+        }
+        // Do not cache tip-only raw — it poisons later AtomicBEEF internalize.
+        return fromRaw
+      }
+    }
+
+    throw new Error(
+      'Cannot prove the collectable input offline. Try again when connected.',
     )
-    write(txid, beef)
-    return beef
   })().finally(() => {
     inflight.delete(key)
   })
 
   inflight.set(key, request)
   return request
+}
+
+/**
+ * AtomicBEEF bytes safe for `internalizeAction` (soft-latch tip+latch / peer
+ * item settle). Hydrates parents when the indexer returns a thin body.
+ */
+export async function getAtomicBeefBinaryForTxid(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<number[]> {
+  const key = keyOf(txid)
+  const beef = await getBeefForTxidCached(wallet, key, {
+    allowUnprovenRawTx: true,
+  })
+  if (beefIsAtomicReady(beef, key)) {
+    return Array.from(beef.toBinaryAtomic(key))
+  }
+  const hydratedBin = await hydrateInputBeef(wallet, beef)
+  if (hydratedBin?.length) {
+    const hydrated = Beef.fromBinary(hydratedBin)
+    if (beefIsAtomicReady(hydrated, key)) {
+      write(key, hydrated)
+      return Array.from(hydrated.toBinaryAtomic(key))
+    }
+  }
+  // Last attempt: merge any raw tip + re-hydrate parents from services.
+  const fromRaw = await getBeefFromRawTx(wallet, key)
+  if (fromRaw) {
+    const merged = beef.clone()
+    merged.mergeBeef(fromRaw.toBinary())
+    const again = await hydrateInputBeef(wallet, merged)
+    if (again?.length) {
+      const ready = Beef.fromBinary(again)
+      if (beefIsAtomicReady(ready, key)) {
+        write(key, ready)
+        return Array.from(ready.toBinaryAtomic(key))
+      }
+    }
+  }
+  throw new Error(
+    `Could not build AtomicBEEF for ${key.slice(0, 12)}… — wait for the indexer, then refresh.`,
+  )
 }
 
 /**

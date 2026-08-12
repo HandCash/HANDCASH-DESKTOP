@@ -55,11 +55,15 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   // A tip still held has already been through the list's repair pass.
   const held = getCachedCollectables().find((c) => asOutpoint(c.outpoint) === outpoint)
   if (held) {
+    const chain = getActiveWallet()?.chain ?? 'main'
     return {
       ...item,
       name: held.name,
       origin: held.origin,
-      imageUrl: held.imageUrl,
+      imageUrl:
+        held.imageUrl ||
+        contentUrlForOrigin(held.origin, chain) ||
+        item.imageUrl,
       ...(held.app ? { app: held.app } : {}),
     }
   }
@@ -70,13 +74,18 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   // which is the only trace of it left in this wallet.
   const resolved = getResolvedInscription(outpoint)
   const usable = resolved && !isThinResolution(resolved) ? resolved : null
-  const origin = getProvenVerdict(outpoint)?.origin ?? (usable ? asOrigin(usable.origin) : null)
+  const origin =
+    getProvenVerdict(outpoint)?.origin ??
+    (usable ? asOrigin(usable.origin) : null) ??
+    (item.origin ? asOrigin(item.origin) : null)
   if (!origin) return item
   return {
     ...item,
     name: usable?.name?.trim() || item.name,
     origin,
-    imageUrl: contentUrlForOrigin(origin, getActiveWallet()?.chain ?? 'main'),
+    imageUrl:
+      item.imageUrl ||
+      contentUrlForOrigin(origin, getActiveWallet()?.chain ?? 'main'),
     ...(usable?.app ? { app: usable.app } : {}),
   }
 }

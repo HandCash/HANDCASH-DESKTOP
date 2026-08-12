@@ -16,6 +16,7 @@ import {
   activityEntryKey,
   activityEntryTitle,
   activityTokenAmountDisplay,
+  expireStaleInboundPending,
   getActivityWriteGeneration,
   isEventActivity,
   isItemActivity,
@@ -396,11 +397,13 @@ function useActivityFeed(limit: number) {
   useEffect(() => subscribePaymentProgress(setPayment), [])
   useEffect(() => {
     const refresh = () => {
+      expireStaleInboundPending()
       invalidateActivityFeed(limit)
       const snapshot = readActivityFeed(limit)
       setEntries(snapshot.entries)
       setOrigins(snapshot.origins)
     }
+    refresh()
     const unsubActivity = subscribeAppActivity(refresh)
     const unsubApps = subscribeConnectedApps(refresh)
     // A repaired collectable / resolved token icon changes what item rows show.

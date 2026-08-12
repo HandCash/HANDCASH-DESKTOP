@@ -24,6 +24,7 @@ import {
   noteInboundReceivePending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
+  expireStaleInboundPending,
   reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
 } from './appActivity'
@@ -227,6 +228,18 @@ describe('inbound receive activity', () => {
     ])
     expect(cleared).toBe(1)
     expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
+  })
+
+  it('expires stale Verifying receives that never internalized', () => {
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+      outpoint: `${TX}.0`,
+    })
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
+    expect(expireStaleInboundPending(60_000, Date.now() + 61_000)).toBe(1)
+    expect(listRecentActivity(10)).toHaveLength(0)
   })
 
   it('adds Sending… for a re-send after a settled spend of the same tip', () => {

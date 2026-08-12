@@ -78,7 +78,7 @@ describe('beefCache', () => {
     expect(getBeefForTxid).toHaveBeenCalledTimes(1)
   })
 
-  it('wraps getRawTx as BEEF when allowUnprovenRawTx is set', async () => {
+  it('prefers indexer BEEF before raw when allowUnprovenRawTx is set', async () => {
     const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
     resetBeefCacheForTests()
 
@@ -86,8 +86,12 @@ describe('beefCache', () => {
     tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
     const txid = tx.id('hex')
     const getRawTx = vi.fn(async () => ({ rawTx: Array.from(tx.toBinary()) }))
+    const proven = new Beef()
+    proven.mergeRawTx(tx.toBinary())
     const getBeefForTxid = vi.fn(async () => {
-      throw new Error('indexer should not run')
+      const copy = new Beef()
+      copy.mergeRawTx(tx.toBinary())
+      return copy
     })
     const wallet = {
       wallet: { storage: { isActiveStorageProvider: () => false } },
@@ -98,8 +102,32 @@ describe('beefCache', () => {
       allowUnprovenRawTx: true,
     })
     expect(beef.findTxid(txid)?.tx).toBeTruthy()
+    expect(getBeefForTxid).toHaveBeenCalledTimes(1)
+    expect(getRawTx).not.toHaveBeenCalled()
+  })
+
+  it('falls back to raw when the indexer fails and allowUnprovenRawTx is set', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const getRawTx = vi.fn(async () => ({ rawTx: Array.from(tx.toBinary()) }))
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer down')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getRawTx, getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const beef = await getBeefForTxidCached(wallet, txid, {
+      allowUnprovenRawTx: true,
+    })
+    expect(beef.findTxid(txid)?.tx).toBeTruthy()
+    expect(getBeefForTxid).toHaveBeenCalledTimes(1)
     expect(getRawTx).toHaveBeenCalledTimes(1)
-    expect(getBeefForTxid).not.toHaveBeenCalled()
   })
 
   it('times out a hung indexer fetch instead of hanging forever', async () => {

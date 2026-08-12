@@ -23,7 +23,7 @@ import {
 } from './oneSatImportGuard'
 import { rememberResolvedInscription } from './inscriptionCache'
 import { announceItemsReceived } from './itemArrivalToast'
-import { noteInboundReceiveComplete, noteInboundReceivePending } from './appActivity'
+import { noteInboundReceiveComplete, noteInboundReceivePending, clearInboundReceivePending } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 
@@ -78,15 +78,14 @@ export async function internalizePeerItemSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getBeefForTxidCached } = await import('./beefCache')
-      atomic = (
-        await getBeefForTxidCached(active, id, { allowUnprovenRawTx: true })
-      ).toBinaryAtomic(id)
-    } catch {
-      /* fall through */
+      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      atomic = await getAtomicBeefBinaryForTxid(active, id)
+    } catch (err) {
+      console.warn('[item-settle] AtomicBEEF fetch failed', id.slice(0, 12), err)
     }
   }
   if (!atomic?.length) {
+    clearInboundReceivePending(id)
     return { accepted: false, outpoints: [], reason: 'missing-beef' }
   }
 
@@ -99,6 +98,7 @@ export async function internalizePeerItemSettle(opts: {
     const beef = Beef.fromBinary(atomic)
     const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
     if (!tx) {
+      clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'beef-missing-tx' }
     }
     const outputs = tx.outputs ?? []
@@ -113,6 +113,7 @@ export async function internalizePeerItemSettle(opts: {
       }
     }
     if (tipVout < 0) {
+      clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'no-tip-paying-us' }
     }
     const latchState = findLatchStateForTip(
@@ -123,6 +124,7 @@ export async function internalizePeerItemSettle(opts: {
     if (latchState?.name?.trim()) name = latchState.name.trim()
     if (latchState?.app?.trim()) app = latchState.app.trim()
   } catch (err) {
+    clearInboundReceivePending(id)
     return {
       accepted: false,
       outpoints: [],
@@ -232,6 +234,7 @@ export async function internalizePeerItemSettle(opts: {
       return { accepted: true, outpoints: allOps, reason: 'already-imported' }
     }
     markOneSatImportFailed(allOps)
+    clearInboundReceivePending(id)
     return {
       accepted: false,
       outpoints: [],

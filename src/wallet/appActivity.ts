@@ -517,6 +517,32 @@ function normalizeActivityOutpoint(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
 
+/** Drop a Verifying… receive when ingest fails before the tip is held. */
+export function clearInboundReceivePending(txid: string): void {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return
+  const prev = readAll()
+  const entries = prev.filter(
+    (e) => !(e.txid?.toLowerCase() === id && e.status === 'pending' && e.kind === 'earned'),
+  )
+  if (entries.length !== prev.length) writeAll(entries)
+}
+
+/**
+ * Drop Verifying… receives older than `maxAgeMs` that never internalized.
+ * Stops Activity from spinning forever after a failed soft-latch ingest.
+ */
+export function expireStaleInboundPending(maxAgeMs = 120_000, now = Date.now()): number {
+  const prev = readAll()
+  const entries = prev.filter((e) => {
+    if (e.status !== 'pending' || e.kind !== 'earned') return true
+    return now - e.at < maxAgeMs
+  })
+  const removed = prev.length - entries.length
+  if (removed > 0) writeAll(entries)
+  return removed
+}
+
 /**
  * Activity "Verifying…" must match inventory. When a tip is already held
  * (and especially when authenticity has settled), clear stale pending rows
