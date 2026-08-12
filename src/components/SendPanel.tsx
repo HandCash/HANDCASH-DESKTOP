@@ -1,9 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import QRCode from 'qrcode'
-import { copyText } from '../wallet/clipboard'
-import { DeferredImage } from './DeferredImage'
 import { sendMachine } from '../machines/sendMachine'
 import {
   amountToSats,
@@ -291,7 +288,6 @@ export function SendPanel({
       let txid: string
       let nextBalance: number
       let selfReceived = false
-      let settlementUri: string | null = null
 
       if (payeeKey != null) {
         const next = await sendBrc29ToIdentityKey({
@@ -302,7 +298,6 @@ export function SendPanel({
         txid = next.txid
         nextBalance = next.balanceSats
         selfReceived = Boolean(next.selfReceived)
-        settlementUri = next.settlementUri?.trim() || null
       } else {
         const next = await sendSatsToAddress({
           to,
@@ -314,7 +309,7 @@ export function SendPanel({
       }
 
       setCreditedBack(selfReceived)
-      send({ type: 'SUCCESS', txid, settlementUri })
+      send({ type: 'SUCCESS', txid })
       onSent(nextBalance)
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
@@ -480,7 +475,6 @@ export function SendPanel({
           recipientLabel={recipientLabel}
           txid={sendSnap.context.txid}
           creditedBack={creditedBack}
-          settlementUri={sendSnap.context.settlementUri}
           onDone={() => {
             send({ type: 'RESET' })
             setCreditedBack(false)
@@ -515,30 +509,8 @@ function SendSuccess(props: {
   recipientLabel: string
   txid: string | null
   creditedBack?: boolean
-  settlementUri?: string | null
   onDone: () => void
 }) {
-  const claimUri = props.settlementUri?.trim() || null
-  const [qrUrl, setQrUrl] = useState<string | null>(null)
-  useEffect(() => {
-    if (!claimUri) {
-      setQrUrl(null)
-      return
-    }
-    let cancelled = false
-    void QRCode.toDataURL(claimUri, {
-      width: 200,
-      margin: 2,
-      color: { dark: '#000000', light: '#FFFFFF' },
-      errorCorrectionLevel: 'M',
-    }).then((url) => {
-      if (!cancelled) setQrUrl(url)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [claimUri])
-
   return (
     <div className="send-stage send-stage-success">
       <div className="send-stage-body send-stage-body-center">
@@ -560,43 +532,9 @@ function SendSuccess(props: {
         ) : null}
         {props.creditedBack ? (
           <p className="send-status-sub">Credited back to this wallet</p>
-        ) : claimUri ? (
-          <p className="send-status-sub">
-            Inbox unreachable — share this receipt so they can claim
-          </p>
         ) : (
           <p className="send-status-sub">On the way to the recipient</p>
         )}
-        {claimUri ? (
-          <div className="send-claim-fallback">
-            {qrUrl ? (
-              <button
-                type="button"
-                className="qr-frame send-claim-qr"
-                title="Copy claim receipt"
-                onClick={() => void copyText(claimUri, { label: 'claim receipt' })}
-              >
-                <DeferredImage
-                  src={qrUrl}
-                  alt="BRC-29 claim receipt QR"
-                  width={200}
-                  height={200}
-                  skeletonWidth={200}
-                  skeletonHeight={200}
-                  skeletonRadius={4}
-                  skeletonClassName="skeleton-qr"
-                />
-              </button>
-            ) : null}
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => void copyText(claimUri, { label: 'claim receipt' })}
-            >
-              Copy claim receipt
-            </button>
-          </div>
-        ) : null}
       </div>
       <div className="actions send-actions">
         <button className="btn btn-primary" onClick={props.onDone}>

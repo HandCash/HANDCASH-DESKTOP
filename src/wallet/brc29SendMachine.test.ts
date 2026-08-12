@@ -4,6 +4,7 @@ import {
   brc29SendMachine,
   mayBrc29SenderBroadcast,
   mustBrc29DeliverToPeer,
+  mustBrc29IdentityFallback,
 } from './brc29SendMachine'
 
 const PEER =
@@ -45,7 +46,7 @@ describe('brc29SendMachine', () => {
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
-  it('sender broadcast only after remittance is in the box (or box unreachable)', () => {
+  it('sender postBeef only after remittance is in the box', () => {
     const actor = createActor(brc29SendMachine).start()
     actor.send({
       type: 'START',
@@ -75,6 +76,24 @@ describe('brc29SendMachine', () => {
     expect(actor.getSnapshot().matches('selfReceive')).toBe(true)
     expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(true)
     actor.send({ type: 'SETTLED' })
+    expect(actor.getSnapshot().matches('done')).toBe(true)
+  })
+
+  it('BOX_UNREACHABLE → identityFallback (not BRC-29 sender broadcast)', () => {
+    const actor = createActor(brc29SendMachine).start()
+    actor.send({
+      type: 'START',
+      payee: PEER,
+      satoshis: 1000,
+      settlePath: { settle: 'peerDeliver', recipientIdentityKey: PEER },
+    })
+    actor.send({ type: 'READY' })
+    actor.send({ type: 'SIGNED', txid: TXID })
+    actor.send({ type: 'BOX_UNREACHABLE' })
+    expect(actor.getSnapshot().matches('identityFallback')).toBe(true)
+    expect(mustBrc29IdentityFallback(actor.getSnapshot())).toBe(true)
+    expect(mayBrc29SenderBroadcast(actor.getSnapshot())).toBe(false)
+    actor.send({ type: 'BROADCASTED' })
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 })

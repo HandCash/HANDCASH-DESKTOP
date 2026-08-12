@@ -43,9 +43,9 @@
  *   signs (`noSend`) and posts remittance (± inline Atomic BEEF) via
  *   `sendMessage`. After inbox delivery, sender silently `postBeef` so the tx
  *   is on-chain even if the payee never broadcasts. If the inbox is unreachable,
- *   sender broadcasts and returns a `brc29:` claim receipt (QR / copy). Inbox is
- *   not ACKed until ingest succeeds. Same-identity still notifies our box so
- *   other devices ingest.
+ *   abort the noSend BRC-29 and broadcast identity-address P2PKH (address scan;
+ *   no QR / physical scan). Inbox is not ACKed until ingest succeeds.
+ *   Same-identity still notifies our box so other devices ingest.
  *   `/files` is not the payment path (Android WebView). Plain address P2PKH
  *   remains for external/pasted addresses (`sendPayment.ts` + `bsvSendMachine`).
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.

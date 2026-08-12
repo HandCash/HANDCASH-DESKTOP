@@ -12,11 +12,18 @@ type CreateActionArgs = {
   outputs?: Array<{ customInstructions?: string; lockingScript?: string }>
 }
 
-const createAction = vi.fn(async (_args: CreateActionArgs) => ({
-  txid: 'b'.repeat(64),
-  tx: [1, 2, 3],
-  sendWithResults: [{ txid: 'b'.repeat(64), status: 'unproven' }],
-}))
+const abortAction = vi.fn(async () => ({ aborted: true }))
+const actionBatchAbort = vi.fn(async () => true)
+let createActionCalls = 0
+const createAction = vi.fn(async (_args: CreateActionArgs) => {
+  createActionCalls += 1
+  const txid = createActionCalls === 1 ? 'b'.repeat(64) : 'c'.repeat(64)
+  return {
+    txid,
+    tx: createActionCalls === 1 ? [1, 2, 3] : [4, 5, 6],
+    sendWithResults: [{ txid, status: 'unproven' }],
+  }
+})
 const internalizeAction = vi.fn(async () => ({ accepted: true }))
 const getPublicKey = vi.fn(async (..._args: unknown[]) => ({
   publicKey:
@@ -48,6 +55,8 @@ vi.mock('./session', () => ({
     services: { postBeef },
     wallet: {
       createAction: (args: CreateActionArgs) => createAction(args),
+      abortAction,
+      actionBatch: { abort: () => actionBatchAbort() },
       internalizeAction,
       getPublicKey: (...args: unknown[]) => getPublicKey(...args),
       createHmac: (...args: unknown[]) => createHmac(...args),
@@ -97,7 +106,10 @@ const PAYEE =
 
 describe('sendBrc29ToIdentityKey', () => {
   beforeEach(() => {
+    createActionCalls = 0
     createAction.mockClear()
+    abortAction.mockClear()
+    actionBatchAbort.mockClear()
     internalizeAction.mockClear()
     getPublicKey.mockClear()
     createHmac.mockClear()
@@ -168,7 +180,7 @@ describe('sendBrc29ToIdentityKey', () => {
     expect(notifyPeerBrc29Payment).toHaveBeenCalled()
   })
 
-  it('returns a brc29 claim receipt when the inbox is unreachable', async () => {
+  it('aborts BRC-29 and sends identity-address P2PKH when the inbox is unreachable', async () => {
     walletState.identityKey =
       '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
     notifyPeerBrc29Payment.mockResolvedValueOnce({
@@ -176,14 +188,25 @@ describe('sendBrc29ToIdentityKey', () => {
       beefInBox: false,
     })
     const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+    const { addressFromIdentityKey } = await import('./friends')
     const result = await sendBrc29ToIdentityKey({
       payeeIdentityKey: PAYEE,
       satoshis: 1_000,
     })
     expect(result.peerDelivered).toBe(false)
-    expect(result.settlementUri).toMatch(/^brc29:/i)
-    expect(result.settlementUri).toContain(PAYEE)
-    expect(result.settlementUri).toContain('txid=' + 'b'.repeat(64))
+    expect(result.fallback).toBe('identityP2pkh')
+    expect(result.txid).toBe('c'.repeat(64))
+    expect(abortAction).toHaveBeenCalledWith({ reference: 'b'.repeat(64) })
+    expect(createAction).toHaveBeenCalledTimes(2)
+    const fallbackArgs = createAction.mock.calls[1]?.[0] as CreateActionArgs
+    expect(fallbackArgs?.options?.noSend).toBeUndefined()
+    expect(fallbackArgs?.labels).toEqual(
+      expect.arrayContaining(['handcash-send', 'identity-p2pkh']),
+    )
+    const expectedLock = new (await import('@bsv/sdk')).P2PKH()
+      .lock(addressFromIdentityKey(PAYEE, 'main'))
+      .toHex()
+    expect(fallbackArgs?.outputs?.[0]?.lockingScript).toBe(expectedLock)
   })
 
   it('internalizes immediately when paying this wallet', async () => {

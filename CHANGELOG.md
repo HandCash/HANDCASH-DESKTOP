@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+## [1.2.197] - 2026-08-12
+
+### Fixed
+- **Inbox-fail fallback is identity-address P2PKH, not a scan QR.** If the payee messagebox is unreachable, abort the noSend BRC-29 and broadcast to their identity address so Desktop can claim via address scan. No physical scanning / claim-receipt QR.
+
 ## [1.2.196] - 2026-08-12
 
 ### Fixed

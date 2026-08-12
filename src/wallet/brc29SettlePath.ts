@@ -2,7 +2,8 @@
  * Exhaustive settle path for a signed BRC-29 payment.
  *
  * Broadcast-before-inbox is not a variant. `peerDeliver` has no sender-broadcast
- * edge until remittance is in the box (or the box is unreachable).
+ * edge until remittance is in the box. Unreachable box → abort noSend and
+ * identity-address P2PKH (`identityFallback`), not a scan receipt.
  */
 import { validateIdentityKey } from './friends'
 

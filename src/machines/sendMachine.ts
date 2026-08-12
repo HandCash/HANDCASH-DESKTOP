@@ -8,8 +8,6 @@ export type SendContext = {
   payeeIdentityKey: string | null
   error: string | null
   txid: string | null
-  /** Offline `brc29:` remittance receipt (QR / copy) after a peer send. */
-  settlementUri: string | null
 }
 
 /**
@@ -30,7 +28,7 @@ export const sendMachine = setup({
       | { type: 'REVIEW' }
       | { type: 'BACK' }
       | { type: 'CONFIRM' }
-      | { type: 'SUCCESS'; txid: string; settlementUri?: string | null }
+      | { type: 'SUCCESS'; txid: string }
       | { type: 'FAIL'; error: string }
       | { type: 'RESET' },
   },
@@ -44,7 +42,6 @@ export const sendMachine = setup({
     payeeIdentityKey: null,
     error: null,
     txid: null,
-    settlementUri: null,
   },
   states: {
     editing: {
@@ -81,7 +78,6 @@ export const sendMachine = setup({
           target: 'success',
           actions: assign({
             txid: ({ event }) => event.txid,
-            settlementUri: ({ event }) => event.settlementUri ?? null,
             error: null,
           }),
         },
@@ -101,7 +97,6 @@ export const sendMachine = setup({
             friendLabel: null,
             payeeIdentityKey: null,
             txid: null,
-            settlementUri: null,
             error: null,
           }),
         },

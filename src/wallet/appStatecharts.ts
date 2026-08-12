@@ -305,14 +305,14 @@ const BRC29_SEND = `stateDiagram-v2
   chooseSettle --> selfReceive : selfReceive
   peerDeliver --> confirmBroadcast : BEEF_IN_BOX
   peerDeliver --> confirmBroadcast : REMIT_IN_BOX
-  peerDeliver --> senderBroadcast : BOX_UNREACHABLE
+  peerDeliver --> identityFallback : BOX_UNREACHABLE
   confirmBroadcast --> done : BROADCASTED / SKIPPED
-  senderBroadcast --> done : BROADCASTED\\n+ brc29 claim URI
+  identityFallback --> done : BROADCASTED\\nidentity-address P2PKH
   selfReceive --> done : SETTLED
   note right of peerDeliver
     No BROADCASTED edge.
     Silent sender postBeef after inbox.
-    Inbox fail → claim receipt.
+    Inbox fail → abort BRC-29,\\nidentity-address P2PKH (no QR).
   end note
   preparing --> failed : FAIL
   signing --> failed : FAIL

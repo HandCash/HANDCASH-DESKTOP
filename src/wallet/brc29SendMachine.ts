@@ -2,8 +2,10 @@
  * BRC-29 peer-pay phases.
  *
  * createAction is always `noSend`. Deliver remittance first (`peerDeliver`).
- * After the box accepts (or is unreachable), sender silently `postBeef` so the
- * tx is on-chain even if the payee never broadcasts.
+ * After the box accepts, sender silently `postBeef` so the tx is on-chain even
+ * if the payee never broadcasts. If the box is unreachable, abort the noSend
+ * BRC-29 and broadcast identity-address P2PKH (`identityFallback`) — claimable
+ * via address scan, no QR / physical scan.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { Brc29SettlePath } from './brc29SettlePath'
@@ -105,7 +107,7 @@ export const brc29SendMachine = setup({
       on: {
         BEEF_IN_BOX: 'confirmBroadcast',
         REMIT_IN_BOX: 'confirmBroadcast',
-        BOX_UNREACHABLE: 'senderBroadcast',
+        BOX_UNREACHABLE: 'identityFallback',
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
@@ -123,7 +125,8 @@ export const brc29SendMachine = setup({
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
-    senderBroadcast: {
+    /** Abort noSend BRC-29, broadcast identity-address P2PKH (no scan receipt). */
+    identityFallback: {
       on: {
         BROADCASTED: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
@@ -142,11 +145,7 @@ export type Brc29SendSnapshot = SnapshotFrom<typeof brc29SendMachine>
 
 /** Sender postBeef is legal only after remittance left peerDeliver. */
 export function mayBrc29SenderBroadcast(snapshot: Brc29SendSnapshot): boolean {
-  return (
-    snapshot.matches('confirmBroadcast') ||
-    snapshot.matches('senderBroadcast') ||
-    snapshot.matches('selfReceive')
-  )
+  return snapshot.matches('confirmBroadcast') || snapshot.matches('selfReceive')
 }
 
 export function isBrc29SilentBroadcast(snapshot: Brc29SendSnapshot): boolean {
@@ -155,4 +154,8 @@ export function isBrc29SilentBroadcast(snapshot: Brc29SendSnapshot): boolean {
 
 export function mustBrc29DeliverToPeer(snapshot: Brc29SendSnapshot): boolean {
   return snapshot.matches('peerDeliver')
+}
+
+export function mustBrc29IdentityFallback(snapshot: Brc29SendSnapshot): boolean {
+  return snapshot.matches('identityFallback')
 }
