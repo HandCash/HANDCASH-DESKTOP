@@ -3,6 +3,10 @@
 **Audience:** Cursor, Claude Code, Copilot, and other coding agents.  
 **Product:** Official HandCash Desktop wallet (BETA) — self-custodial BRC-100 bridge + Aeon UI.
 
+## Three parts
+
+`src/` is **`@handcash/wallet-ui`** (shared with Mobile). Electron is the Desktop shell only — never fork wallet panels into `HANDCASH-MOBILE`. See workspace `docs/handcash-three-parts.md`.
+
 ## North stars
 
 1. **UI = Aeon** — single source of truth. Machines first, then projection. See `.cursor/rules/aeon-ui.mdc`.
