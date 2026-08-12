@@ -462,7 +462,10 @@ export async function sendBrc29ToIdentityKey(opts: {
           } = await import('./actionReview')
           if (isReviewActionsError(err) || isIteratorCrashError(err)) {
             await recoverFromReviewActions({ err, active })
-            if (isIteratorCrashError(err) || isAlreadySpentInputError(err)) {
+            // Iterator crashes are local toolbox poison — not proof UTXOs are
+            // spent. Never releaseSpendable here (that wrote off ~$0.10 of live
+            // coins on failed Mobile→Desktop retries).
+            if (isAlreadySpentInputError(err)) {
               await releaseStaleSpendableOutputs()
             }
             const message = formatReviewActionsError(err)

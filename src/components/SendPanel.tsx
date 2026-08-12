@@ -406,20 +406,19 @@ export function SendPanel({
                   </ul>
                 )}
               </div>
-
-              <div className="actions send-actions">
-                <button
-                  className="btn btn-primary"
-                  disabled={!canReview}
-                  onClick={() => void goReview()}
-                >
-                  {reviewBusy ? 'Checking balance…' : 'Review'}
-                </button>
-                <button className="btn btn-ghost" onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
             </div>
+          </div>
+          <div className="actions send-actions send-actions-footer">
+            <button
+              className="btn btn-primary"
+              disabled={!canReview}
+              onClick={() => void goReview()}
+            >
+              {reviewBusy ? 'Checking balance…' : 'Review'}
+            </button>
+            <button className="btn btn-ghost" onClick={onClose}>
+              Cancel
+            </button>
           </div>
         </div>
       )}

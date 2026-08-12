@@ -187,7 +187,9 @@ export async function sendSatsToAddress(opts: {
         } = await import('./actionReview')
         if (isReviewActionsError(err) || isIteratorCrashError(err)) {
           await recoverFromReviewActions({ err, active })
-          if (isIteratorCrashError(err) || isAlreadySpentInputError(err)) {
+          // Iterator crashes are local toolbox poison — not proof UTXOs are
+          // spent. Never bulk-release spendable outputs on that path.
+          if (isAlreadySpentInputError(err)) {
             await releaseStaleSpendableOutputs()
           }
           const message = formatReviewActionsError(err)

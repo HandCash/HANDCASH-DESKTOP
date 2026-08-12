@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.205] - 2026-08-12
+
+### Fixed
+- **Failed send wrote off live balance (~$0.10).** Iterator-crash recovery called `releaseStaleSpendableOutputs`, which bulk-marked UTXOs unspendable without on-chain proof. Only real already-spent network errors may release.
+- **Item-send keyboard covered the bottom bar.** Collectable send autofocused the To field (full keyboard) while money focused amount (decimal pad). Pin Review/Cancel as a sticky footer, lift the tab bar with visualViewport inset, and use `adjustResize` on Android.
+
+
 ## [1.2.204] - 2026-08-12
 
 ### Fixed

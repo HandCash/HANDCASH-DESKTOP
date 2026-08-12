@@ -245,7 +245,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                   placeholder="Friend, $handle, address, or identity key"
                   autoComplete="off"
                   spellCheck={false}
-                  autoFocus
                 />
                 <p className="friend-recipient-hint send-recipient-hint">
                   Handles and identity keys resolve to a payment address on this network.
@@ -278,36 +277,35 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                   </ul>
                 )}
               </div>
-
-              <div className="actions send-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!canReview}
-                  onClick={() => {
-                    try {
-                      const address = resolvePaymentAddress(to, chain)
-                      setTo(address)
-                      setError(null)
-                      setStage('confirm')
-                    } catch (err) {
-                      const message = err instanceof Error ? err.message : String(err)
-                      setError(message)
-                      playWalletSound('deny')
-                    }
-                  }}
-                >
-                  Review
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => openCollectableDetails(item.outpoint)}
-                >
-                  Back
-                </button>
-              </div>
             </div>
+          </div>
+          <div className="actions send-actions send-actions-footer">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={!canReview}
+              onClick={() => {
+                try {
+                  const address = resolvePaymentAddress(to, chain)
+                  setTo(address)
+                  setError(null)
+                  setStage('confirm')
+                } catch (err) {
+                  const message = err instanceof Error ? err.message : String(err)
+                  setError(message)
+                  playWalletSound('deny')
+                }
+              }}
+            >
+              Review
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              onClick={() => openCollectableDetails(item.outpoint)}
+            >
+              Back
+            </button>
           </div>
         </div>
       )}
