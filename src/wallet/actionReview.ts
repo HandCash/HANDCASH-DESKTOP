@@ -93,6 +93,11 @@ export async function abortReservedActionBatches(
   return aborted
 }
 
+export function isIteratorCrashError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
+  return msg.includes('is not iterable')
+}
+
 export function isReviewActionsError(err: unknown): boolean {
   if (!err || typeof err !== 'object') return false
   const e = err as {
@@ -135,9 +140,15 @@ export function formatReviewActionsError(err: unknown): string {
     ...reviews.map((r) => r.status).filter(Boolean),
     ...sends.map((r) => r.status).filter(Boolean),
   ].map((s) => String(s).toLowerCase())
+  const msg = (err instanceof Error ? err.message : String(err)).toLowerCase()
 
-  if (statuses.some((s) => s.includes('doublespend'))) {
-    return 'A previous failed send is blocking this item. Cleared local conflicts — try Send again.'
+  if (
+    statuses.some((s) => s.includes('doublespend')) ||
+    msg.includes('doublespend') ||
+    msg.includes('double spend') ||
+    msg.includes('is not iterable')
+  ) {
+    return 'A previous failed send is blocking this payment. Cleared local conflicts — try Send again.'
   }
   if (statuses.some((s) => s.includes('service') || s === 'error')) {
     return 'Broadcast service error — check connection and try again.'

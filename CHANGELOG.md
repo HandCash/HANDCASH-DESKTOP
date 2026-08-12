@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+## [1.2.203] - 2026-08-12
+
+### Fixed
+- **Sent NFT bouncing back into Collect.** A lagging address scan un-hid tips that were already sent, so the same item could be sent twice and then vanish from Collect while Activity still showed the transfers.
+- **Penny send “undefined is not iterable”.** Leftover doubleSpend actions were unfailed on every unlock and poisoned the next payment. Refresh no longer requeues them; that crash maps to a retry hint and local conflicts are cleared.
+
 ## [1.2.202] - 2026-08-12
 
 ### Fixed

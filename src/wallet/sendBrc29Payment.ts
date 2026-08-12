@@ -409,15 +409,25 @@ export async function sendBrc29ToIdentityKey(opts: {
           if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
           const {
             isReviewActionsError,
+            isIteratorCrashError,
             formatReviewActionsError,
             recoverFromReviewActions,
           } = await import('./actionReview')
-          if (isReviewActionsError(err)) {
+          if (isReviewActionsError(err) || isIteratorCrashError(err)) {
             await recoverFromReviewActions({ err, active })
+            if (isIteratorCrashError(err) || isAlreadySpentInputError(err)) {
+              await releaseStaleSpendableOutputs()
+            }
             const message = formatReviewActionsError(err)
+            console.warn('[brc29] send failed', message, err)
             chart.send({ type: 'FAIL', error: message })
             throw new Error(message)
           }
+          console.warn(
+            '[brc29] send failed',
+            err instanceof Error ? err.message : String(err),
+            err,
+          )
           chart.send({
             type: 'FAIL',
             error: err instanceof Error ? err.message : String(err),

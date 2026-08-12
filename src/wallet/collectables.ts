@@ -1283,22 +1283,10 @@ async function listCollectablesNow(
   // Covenant tips never appear on the P2PKH address scan (only their beacon does).
   const live = resolveLiveOneSatKeys(wallet)
   if (live) {
-    // Tip still on our address cannot stay hidden as "sent" — failed soft-latch
-    // broadcasts and restores otherwise leave Activity receive rows with no card.
-    const unhide: string[] = []
-    for (const o of outputs) {
-      const op = outpointKey(o.outpoint)
-      if (!op || (o.satoshis ?? 1) !== 1) continue
-      if (o.tags?.includes(LATCH_TAG)) continue
-      if (live.keys.has(op) && isItemSent(op)) unhide.push(op)
-    }
-    if (unhide.length > 0) {
-      forgetItemsSent(unhide)
-      console.info(
-        `[collectables] un-hiding ${unhide.length} tip(s) still on address`,
-        unhide,
-      )
-    }
+    // Do not un-hide sent tips just because a lagging address scan still lists
+    // them. That put a just-sent NFT back in Collect so the user sent it twice.
+    // Failed sends already call forgetItemsSent; healGhostSentItems restores
+    // hides whose spend txid is proven absent from the chain.
     const { owned, spentOrMissing } = partitionByLiveUtxos(outputs, live.keys)
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
@@ -1524,6 +1512,11 @@ function formatSendError(err: unknown): Error {
         'Can’t find the transaction that holds this item yet. Wait a moment after receiving it, then Send again.',
       )
     }
+    if (/is not iterable/i.test(msg) || /doublespend/i.test(msg)) {
+      return new Error(
+        'A previous failed send is blocking this payment. Cleared local conflicts — try Send again.',
+      )
+    }
     return err
   }
   return new Error(String(err))
@@ -1605,7 +1598,7 @@ async function signOrdinalTransfer(args: {
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined
   const vins: number[] = []
-  for (const btx of beef.txs) {
+  for (const btx of beef.txs ?? []) {
     if (!btx.tx) continue
     for (let i = 0; i < btx.tx.inputs.length; i++) {
       const input = btx.tx.inputs[i]

@@ -245,12 +245,9 @@ export async function refreshFromChainExclusive(
   }
 
   try {
-    await active.wallet.listFailedActions({ labels: [], limit: 100 }, true)
-  } catch (err) {
-    console.warn('[chain-ingest] failed-action unfail skipped', err)
-  }
-
-  try {
+    // Do not unfail every leftover failed action on refresh. Ancient
+    // doubleSpends (noSend-era leftovers) re-enter TaskSendWaiting, conflict
+    // with the next real payment, and surface as "undefined is not iterable".
     const { abortReservedActionBatches } = await import('./actionReview')
     await abortReservedActionBatches(active)
   } catch (err) {

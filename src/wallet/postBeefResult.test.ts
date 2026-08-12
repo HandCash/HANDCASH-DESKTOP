@@ -40,4 +40,10 @@ describe('postBeefResult', () => {
     expect(s.doubleSpend).toBe(true)
     expect(formatPostBeefFailure(s)).toMatch(/already spent/i)
   })
+
+  it('does not throw when postBeef returns nothing', () => {
+    const s = summarizePostBeef(undefined)
+    expect(s.accepted).toBe(false)
+    expect(s.serviceOnlyErrors).toBe(true)
+  })
 })

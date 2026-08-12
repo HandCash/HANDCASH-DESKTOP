@@ -141,11 +141,19 @@ export async function sendSatsToAddress(opts: {
       } catch (err) {
         clearPendingSend(pending.id)
         if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-        const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
-          await import('./actionReview')
-        if (isReviewActionsError(err)) {
+        const {
+          isReviewActionsError,
+          isIteratorCrashError,
+          formatReviewActionsError,
+          recoverFromReviewActions,
+        } = await import('./actionReview')
+        if (isReviewActionsError(err) || isIteratorCrashError(err)) {
           await recoverFromReviewActions({ err, active })
+          if (isIteratorCrashError(err) || isAlreadySpentInputError(err)) {
+            await releaseStaleSpendableOutputs()
+          }
           const message = formatReviewActionsError(err)
+          console.warn('[send] failed', message, err)
           chart.send({ type: 'FAIL', error: message })
           throw new Error(message)
         }

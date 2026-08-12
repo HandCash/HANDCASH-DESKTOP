@@ -43,4 +43,12 @@ describe('actionReview', () => {
     expect(sendWithHasFailure([{ status: 'doubleSpend' }])).toBe(true)
     expect(sendWithHasFailure([])).toBe(false)
   })
+
+  it('maps toolbox iterator crashes to the same retry hint', () => {
+    expect(
+      formatReviewActionsError(
+        new Error('undefined is not iterable (cannot read property Symbol(Symbol.iterator))'),
+      ),
+    ).toMatch(/previous failed send/i)
+  })
 })

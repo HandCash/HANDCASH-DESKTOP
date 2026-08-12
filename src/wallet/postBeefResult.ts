@@ -33,7 +33,19 @@ function noteWhat(notes: Array<{ what?: string }> | undefined): string[] {
   return (notes ?? []).map((n) => String(n.what ?? '')).filter(Boolean)
 }
 
-export function summarizePostBeef(results: PostBeefServiceResult[]): PostBeefSummary {
+export function summarizePostBeef(
+  results: PostBeefServiceResult[] | null | undefined,
+): PostBeefSummary {
+  if (!Array.isArray(results)) {
+    return {
+      accepted: false,
+      doubleSpend: false,
+      missingInputs: false,
+      serviceOnlyErrors: true,
+      detail: 'no services',
+      competingTxs: [],
+    }
+  }
   let accepted = false
   let doubleSpend = false
   let missingInputs = false
