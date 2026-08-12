@@ -150,6 +150,16 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
   const pending = isPendingActivity(entry)
+  const inventoryProven = Boolean(
+    entry.item?.outpoint &&
+      getCachedCollectables().some(
+        (c) =>
+          c.proven === true &&
+          c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
+            entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+      ),
+  )
+  const showPending = pending && !inventoryProven
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
@@ -258,7 +268,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               ) : null}
             </div>
             <p className="history-when">
-              {pending
+              {showPending
                 ? 'Verifying…'
                 : new Date(entry.at).toLocaleString(undefined, {
                     dateStyle: 'medium',

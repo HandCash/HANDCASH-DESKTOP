@@ -22,6 +22,7 @@ import {
   listRecentActivity,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
+  reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
 } from './appActivity'
 
@@ -209,5 +210,20 @@ describe('inbound receive activity', () => {
     const row = listRecentActivity(10).find((e) => e.txid === TX)
     expect(row?.status).toBeUndefined()
     expect(isPendingActivity(row!)).toBe(false)
+  })
+
+  it('clears stale Verifying when the tip is already held in inventory', () => {
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+      outpoint: `${TX}.0`,
+    })
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
+    const cleared = reconcilePendingActivityWithHeldItems([
+      { outpoint: `${TX}.0`, proven: true, name: 'Fox', origin: `${TX}_0` },
+    ])
+    expect(cleared).toBe(1)
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(false)
   })
 })

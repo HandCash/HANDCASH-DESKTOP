@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+## [1.2.207] - 2026-08-12
+
+### Fixed
+- **Balance never recovered after false UTXO write-off.** Refresh restores `spendable: false` outputs that are still on-chain.
+- **Activity stuck on Verifying while Collect already verified.** Pending Activity rows reconcile from inventory; UI defers to proven inventory state.
+
+
 ## [1.2.206] - 2026-08-12
 
 ### Fixed

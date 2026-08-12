@@ -16,6 +16,7 @@ import {
   clearAwaitingVerification,
   noteAwaitingVerification,
 } from './verificationProgress'
+import { noteInboundReceiveComplete } from './appActivity'
 
 const ANNOUNCED_MAX = 500
 const DURABLE_RECEIVE_KEY = 'handcash.items.receiveAnnounced.v1'
@@ -135,6 +136,15 @@ export function announceItemVerified(
   const key = normalize(outpoint)
   if (!key) return
   clearAwaitingVerification(key)
+  // Inventory authenticity is settled — Activity must not stay on Verifying…
+  const txid = key.split('.')[0] ?? ''
+  if (/^[0-9a-f]{64}$/i.test(txid)) {
+    noteInboundReceiveComplete({
+      txid: txid.toLowerCase(),
+      item: true,
+      outpoint: key,
+    })
+  }
   if (!wasItemReceivedAnnounced(outpoint)) {
     // Receive toast still ahead — do not toast verify first.
     note(verifiedThisSession, key)

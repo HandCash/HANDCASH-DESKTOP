@@ -383,6 +383,60 @@ export function noteInboundReceiveComplete(args: {
   })
 }
 
+function normalizeActivityOutpoint(outpoint: string): string {
+  return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+}
+
+/**
+ * Activity "Verifying…" must match inventory. When a tip is already held
+ * (and especially when authenticity has settled), clear stale pending rows
+ * so UI is not a second conflicting state.
+ *
+ * @returns how many rows were settled.
+ */
+export function reconcilePendingActivityWithHeldItems(
+  held: Array<{ outpoint: string; proven?: boolean; name?: string; origin?: string }>,
+): number {
+  if (!held.length) return 0
+  const byOutpoint = new Map(
+    held
+      .map((h) => {
+        const op = normalizeActivityOutpoint(h.outpoint)
+        return op ? ([op, h] as const) : null
+      })
+      .filter((row): row is readonly [string, (typeof held)[number]] => row != null),
+  )
+  if (byOutpoint.size === 0) return 0
+
+  const entries = [...readAll()]
+  let changed = 0
+  for (let i = 0; i < entries.length; i++) {
+    const entry = entries[i]!
+    if (entry.status !== 'pending' || entry.kind !== 'earned') continue
+    const op = entry.item?.outpoint
+      ? normalizeActivityOutpoint(entry.item.outpoint)
+      : ''
+    if (!op) continue
+    const item = byOutpoint.get(op)
+    if (!item) continue
+    // Owned in inventory ⇒ ingest finished. Pending was only for pre-paint.
+    entries[i] = {
+      ...entry,
+      status: undefined,
+      item: {
+        name: item.name?.trim() || entry.item?.name || 'Collectable',
+        origin: item.origin?.trim() || entry.item?.origin || `${op.replace('.', '_')}`,
+        outpoint: op,
+        ...(entry.item?.imageUrl ? { imageUrl: entry.item.imageUrl } : {}),
+        ...(entry.item?.app ? { app: entry.item.app } : {}),
+      },
+    }
+    changed += 1
+  }
+  if (changed > 0) writeAll(entries)
+  return changed
+}
+
 /** Non-tx wallet action (permission decision, friend, disconnect, …). */
 export function recordWalletEvent(args: {
   origin?: string

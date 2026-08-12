@@ -254,6 +254,18 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] action-batch abort skipped', err)
   }
 
+  try {
+    const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
+    const restored = await restoreLiveSpendableOutputs()
+    if (restored > 0) {
+      console.info(
+        `[chain-ingest] restored ${restored} live output(s) that were falsely marked unspendable`,
+      )
+    }
+  } catch (err) {
+    console.warn('[chain-ingest] spendable restore skipped', err)
+  }
+
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
       heldCount: 0,

@@ -14,6 +14,9 @@
  */
 import { getActiveWallet } from './session'
 
+/** Cap restore work so a huge dead set cannot stall unlock/refresh. */
+const RESTORE_MAX = 200
+
 /** The toolbox rejects `undefined` partial filters on some storage backends. */
 export function isUndefinedPartialFilterError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err)
@@ -75,6 +78,60 @@ export async function releaseStaleSpendableOutputs(): Promise<number> {
     return released
   } catch (err) {
     console.warn('[stale-output] release failed', err)
+    return 0
+  }
+}
+
+/**
+ * Re-enable outputs that were written off (`spendable: false`) but are still
+ * unspent on-chain. Used after a bad bulk release (iterator-crash recovery)
+ * so balance matches reality again.
+ *
+ * @returns how many outputs were restored.
+ */
+export async function restoreLiveSpendableOutputs(): Promise<number> {
+  const active = getActiveWallet()
+  if (!active) return 0
+  const storage = active.wallet.storage
+  const services = active.services
+  if (!storage || typeof storage.findOutputs !== 'function') return 0
+  if (!services || typeof services.isUtxo !== 'function') return 0
+
+  try {
+    const dead = await storage.findOutputs({ partial: { spendable: false } })
+    if (!dead?.length) return 0
+
+    let restored = 0
+    for (const output of dead.slice(0, RESTORE_MAX)) {
+      const outputId = Number((output as { outputId?: number }).outputId)
+      if (!Number.isFinite(outputId) || outputId <= 0) continue
+      try {
+        const stillUtxo = await services.isUtxo(output as never)
+        if (stillUtxo !== true) continue
+        await storage.runAsStorageProvider(async (sp) => {
+          await sp.updateOutput(outputId, {
+            spendable: true,
+            spentBy: undefined,
+          })
+        })
+        restored += 1
+      } catch (err) {
+        console.warn(
+          '[stale-output] restore skipped',
+          outputId,
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
+    if (restored > 0) {
+      console.info(
+        `[stale-output] restored ${restored} live output(s) previously marked unspendable`,
+      )
+    }
+    return restored
+  } catch (err) {
+    console.warn('[stale-output] restore failed', err)
     return 0
   }
 }

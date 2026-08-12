@@ -7,7 +7,7 @@ vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
 }))
 
-const { isAlreadySpentInputError, isNoLongerSpendableError, releaseStaleSpendableOutputs } =
+const { isAlreadySpentInputError, isNoLongerSpendableError, releaseStaleSpendableOutputs, restoreLiveSpendableOutputs } =
   await import('./staleOutputRelease')
 
 describe('isAlreadySpentInputError', () => {
@@ -94,5 +94,48 @@ describe('releaseStaleSpendableOutputs', () => {
 
     await expect(releaseStaleSpendableOutputs()).resolves.toBe(0)
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
+  })
+})
+
+describe('restoreLiveSpendableOutputs', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const isUtxo = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    isUtxo.mockReset()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      services: { isUtxo },
+      wallet: {
+        storage: {
+          findOutputs,
+          runAsStorageProvider: async (fn: (sp: { updateOutput: typeof updateOutput }) => Promise<void>) =>
+            fn({ updateOutput }),
+        },
+      },
+    })
+  })
+
+  it('re-enables outputs that are still UTXOs on-chain', async () => {
+    findOutputs.mockResolvedValue([
+      { outputId: 1, spendable: false },
+      { outputId: 2, spendable: false },
+    ])
+    isUtxo.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(1, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
+
+  it('does nothing without an unlocked wallet', async () => {
+    mockGetActiveWallet.mockReturnValue(null)
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
   })
 })

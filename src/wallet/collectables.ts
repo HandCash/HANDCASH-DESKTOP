@@ -20,6 +20,7 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   hasActivityTxid,
   recordAppActivity,
+  reconcilePendingActivityWithHeldItems,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import {
@@ -330,6 +331,19 @@ function setCollectablesCache(items: Collectable[]) {
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
+  // Activity Verifying… must not disagree with Collect. Held tips are ingested;
+  // proven tips must not keep a pending Activity spinner.
+  reconcilePendingActivityWithHeldItems(
+    items.map((i) => ({
+      outpoint: i.outpoint,
+      proven: i.proven,
+      name: i.name,
+      origin: i.origin,
+    })),
+  )
+  for (const item of items) {
+    if (item.proven) clearAwaitingVerification(item.outpoint)
+  }
   notifyCollectables(items)
   // Toast / chime / OS banner only once the card is on the list. Ingest used
   // to announce first; self-send then showed "Item received" on an empty grid.

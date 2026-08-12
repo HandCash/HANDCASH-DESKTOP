@@ -33,7 +33,7 @@ import {
   shouldAnnounceActivity,
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
-import { subscribeCollectables } from '../wallet/collectables'
+import { getCachedCollectables, subscribeCollectables } from '../wallet/collectables'
 import { subscribeFungibles } from '../wallet/fungibles'
 import {
   getVerificationProgress,
@@ -166,6 +166,16 @@ function HistoryRow({
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
   const pending = isPendingActivity(entry)
+  const inventoryProven = Boolean(
+    entry.item?.outpoint &&
+      getCachedCollectables().some(
+        (c) =>
+          c.proven === true &&
+          c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
+            entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+      ),
+  )
+  const showPending = pending && !inventoryProven
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -175,7 +185,7 @@ function HistoryRow({
       ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
       : item
         ? shown?.name || 'Collectable'
-        : pending && entry.sats <= 0
+        : showPending && entry.sats <= 0
           ? '…'
           : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
@@ -198,7 +208,9 @@ function HistoryRow({
       : null
 
   const entryKey = activityEntryKey(entry)
-  const showVerify = Boolean(!spent && !event && (pending || (item && verifying)))
+  const showVerify = Boolean(
+    !spent && !event && !inventoryProven && (showPending || (item && verifying)),
+  )
   const badgeKind = minted ? 'mint' : spent ? 'send' : 'receive'
   const badgeLabel = minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
@@ -206,7 +218,7 @@ function HistoryRow({
     <li
       data-activity-key={entryKey}
       data-activity-newest={newest ? '' : undefined}
-      data-activity-pending={pending ? '' : undefined}
+      data-activity-pending={showPending ? '' : undefined}
     >
       <button
         type="button"
@@ -280,7 +292,7 @@ function HistoryRow({
           </span>
           {showWhen ? (
             <span className="history-when">
-              {pending ? 'Verifying…' : formatWhen(entry.at)}
+              {showPending ? 'Verifying…' : formatWhen(entry.at)}
             </span>
           ) : null}
         </div>
@@ -514,8 +526,17 @@ export function ActivityFeed({
             showWhen={showWhen}
             newest={index === 0}
             verifying={
-              isPendingActivity(entry) ||
-              isOutpointVerifying(entry.item?.outpoint, verification)
+              !(
+                entry.item?.outpoint &&
+                getCachedCollectables().some(
+                  (c) =>
+                    c.proven === true &&
+                    c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
+                      entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+                )
+              ) &&
+              (isPendingActivity(entry) ||
+                isOutpointVerifying(entry.item?.outpoint, verification))
             }
           />
         ))}
