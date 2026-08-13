@@ -14,6 +14,7 @@
 import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { hasOrdEnvelope } from './ordinalOwnership'
+import { getProvenVerdict } from './provenCache'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -336,6 +337,49 @@ export function clearRememberedProvenanceRemittances(): void {
   remittanceByTip.clear()
 }
 
+/** Largest assembled lineage that still fits a remittance, in bytes. */
+export const REMITTANCE_MAX_BEEF_BYTES = Math.floor(
+  (REMITTANCE_MAX_BEEF_B64_CHARS * 3) / 4,
+)
+
+/**
+ * File a lineage a walk just proved as remittance for its tip.
+ *
+ * Walking is the expensive way to learn an item's ancestry; being told is the
+ * cheap way. A wallet that proves a lineage and then throws it away sends the
+ * item with no remittance, and the receiver pays for the same walk again —
+ * which is how a self-send of an already-proven item takes a minute to verify.
+ * Keeping it makes the next send O(1) to build and O(1) for the receiver to
+ * check, and later hops extend this rather than starting over.
+ *
+ * Returns whether it was kept. A lineage too large to travel is declined rather
+ * than stored, since it could never be attached to a send.
+ */
+export function rememberProvenLineage(args: {
+  tipOutpoint: string
+  origin: string
+  path: string[]
+  beef: number[]
+}): boolean {
+  if (args.beef.length === 0) return false
+  try {
+    const remittance: ProvenanceV2 = {
+      v: 2,
+      origin: toUnderscore(args.origin).toLowerCase(),
+      tip: toUnderscore(args.tipOutpoint).toLowerCase(),
+      path: args.path.map((x) => toUnderscore(x).toLowerCase()),
+      beefB64: bytesToBase64(args.beef),
+    }
+    if (!provenanceFitsBudget(remittance)) return false
+    rememberProvenanceRemittance(remittance)
+    return true
+  } catch (err) {
+    // The verdict is pinned either way; reuse is an optimisation, not a proof.
+    console.warn('[brc-150] could not keep proven lineage for send', err)
+    return false
+  }
+}
+
 /**
  * Prepend `heldOutpoint` onto a prior tip→origin remittance and merge the held
  * tip transaction into the BEEF. O(1) package growth vs O(hops) lineage walk.
@@ -608,7 +652,9 @@ export async function verifyProvenanceForHeldTip(args: {
   provenance: unknown
   heldOutpoint: string
   getBeef?: (txid: string) => Promise<Beef>
-}): Promise<ProvenanceVerifyResult & { origin?: string }> {
+}): Promise<
+  ProvenanceVerifyResult & { origin?: string; path?: string[] }
+> {
   const p = parseProvenanceV2(args.provenance)
   if (!p) {
     return { proven: false, reason: 'missing provenance' }
@@ -629,7 +675,7 @@ export async function verifyProvenanceForHeldTip(args: {
 
   const held = toUnderscore(args.heldOutpoint)
   const direct = verifyLineageInBeef({ ...lineage, heldOutpoint: held })
-  if (direct.proven) return { ...direct, origin: p.origin }
+  if (direct.proven) return { ...direct, origin: p.origin, path: p.path }
   if (p.tip === held) return direct
 
   const parentOk = verifyLineageInBeef({
@@ -705,7 +751,11 @@ export async function verifyProvenanceForHeldTip(args: {
       reason: 'held tip does not receive the ordinal sat from remittance tip',
     }
   }
-  return { proven: true, reason: null, origin: p.origin }
+  // The held tip inherits the parent's proof, so it also inherits its path with
+  // one hop prepended. Handing that back lets the caller record how this tip was
+  // proven, not merely that it was — the difference between a later send passing
+  // the proof on and making the next holder rediscover it.
+  return { proven: true, reason: null, origin: p.origin, path: [held, ...p.path] }
 }
 
 /**
@@ -760,6 +810,24 @@ async function hydrateLineageForSend(
 }
 
 /**
+ * The tip→origin path a previous walk in this wallet proved for `tip`.
+ *
+ * A verdict outlives the session that earned it, so this is the record that a
+ * restart would otherwise lose along with the in-memory remittance. Only a
+ * lineage walk writes it, and only for the origin it actually reached, so a
+ * mismatched origin means the record is about a different claim — ignore it.
+ */
+function knownProvenPath(tip: string, origin: string): string[] | null {
+  const verdict = getProvenVerdict(toDot(tip))
+  if (!verdict || verdict.tier !== 'brc150') return null
+  const path = verdict.path?.map((point) => toUnderscore(point).toLowerCase())
+  if (!path || path.length === 0) return null
+  if (path[0] !== tip.toLowerCase()) return null
+  if (path[path.length - 1] !== origin.toLowerCase()) return null
+  return path
+}
+
+/**
  * Build v2 remittance for a known tip outpoint (usually the UTXO being spent).
  * Returns null when beef unavailable or over budget (omit — do not truncate).
  *
@@ -767,7 +835,8 @@ async function hydrateLineageForSend(
  * 1. Session-remembered tip-named remittance
  * 2. Reuse prior remittance when it already names this tip
  * 3. Extend prior parent remittance (prepend tip + merge tip tx) — O(1) growth
- * 4. Derive path from tip BEEF / hydrate lineage — O(hops) fallback
+ * 4. Replay a path this wallet already proved, over a warmed BEEF cache
+ * 5. Derive path from tip BEEF / hydrate lineage — O(hops) fallback
  */
 export async function tryBuildProvenanceV2(args: {
   tipOutpoint: string
@@ -866,17 +935,31 @@ export async function tryBuildProvenanceV2(args: {
         ? args.path.map(toUnderscore)
         : deriveOneSatPathFromBeef(beef, tip, origin)
     if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
-      if (!args.allowLineageHydrate) {
+      // A tip this wallet already proved has its path on record, and replaying a
+      // known path is a warm-cache pass rather than a discovery walk. Refusing
+      // it is what sent proven items out bare and made the receiver repeat the
+      // walk we had already paid for.
+      const known = knownProvenPath(tip, origin)
+      if (!known && !args.allowLineageHydrate) {
         console.info(
           '[brc-150] omit provenance — no tip-local path (skip lineage hydrate on send)',
         )
         return null
       }
-      // Offline / recovery callers may opt in. Abort once assembled BEEF cannot
-      // fit on the wire (Pixel Fox lineages routinely exceed remittance budget).
-      const maxBeefBytes = Math.floor((REMITTANCE_MAX_BEEF_B64_CHARS * 3) / 4)
+      if (known) {
+        const { warmBeefCache } = await import('./beefCache')
+        await warmBeefCache(
+          args.wallet,
+          known.map((point) => point.split('_')[0]!),
+        )
+        console.info(
+          `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
+        )
+      }
+      // Abort once the assembled BEEF cannot fit on the wire — Pixel Fox
+      // lineages routinely exceed the remittance budget.
       const hydrated = await hydrateLineageForSend(args.wallet, tip, {
-        maxBeefBytes,
+        maxBeefBytes: REMITTANCE_MAX_BEEF_BYTES,
       })
       if (!hydrated || hydrated.origin !== origin) {
         console.warn(

@@ -100,27 +100,7 @@ function errText(err: unknown): string {
   return message.slice(0, 140)
 }
 
-/**
- * Walk a held tip back to the inscription that created it and prove the path.
- *
- * `getBeef` must return a BEEF whose subject transaction carries a merkle proof;
- * `verifyProvenanceV2` rejects anything it cannot structurally prove, so an
- * unmined or unprovable hop fails the whole attempt rather than weakening it.
- */
-export async function proveGenesisLineage(args: {
-  tipOutpoint: string
-  getBeef: (txid: string) => Promise<Beef>
-  maxHops?: number
-  shouldStop?: () => boolean
-  maxBeefBytes?: number
-  includeBeef?: boolean
-}): Promise<GenesisProof | null> {
-  const outcome = await walkGenesisLineage(args)
-  return outcome.kind === 'proven' ? outcome.proof : null
-}
-
-/** {@link proveGenesisLineage}, but says why it stopped. */
-export async function walkGenesisLineage(args: {
+export type GenesisWalkArgs = {
   tipOutpoint: string
   getBeef: (txid: string) => Promise<Beef>
   maxHops?: number
@@ -134,7 +114,8 @@ export async function walkGenesisLineage(args: {
    * Abort once merged BEEF inputs exceed this many bytes (upper bound via sum of
    * fetched piece lengths). Used by send remittance so we do not walk a deep
    * lineage only to omit it for being over the wire budget. Implies
-   * {@link includeBeef}, since the final size can only be known by serializing.
+   * {@link GenesisWalkArgs.includeBeef}, since the final size can only be known
+   * by serializing.
    */
   maxBeefBytes?: number
   /**
@@ -143,14 +124,45 @@ export async function walkGenesisLineage(args: {
    * seconds of blocked main thread on bytes nobody reads.
    */
   includeBeef?: boolean
-}): Promise<GenesisWalkOutcome> {
+  /**
+   * Serialize into {@link GenesisProof.beef} only when the lineage is at most
+   * this many bytes — and prove it either way.
+   *
+   * A background verify wants the bytes as a bonus, not a requirement: keeping
+   * them lets the next send attach remittance so the receiver verifies in one
+   * step instead of repeating this walk. But bytes are worthless past the
+   * remittance budget because they can never travel, and a lineage too big to
+   * send must still be provable to its owner. So over the limit we keep the
+   * verdict and skip the serialize that would freeze the thread.
+   */
+  serializeIfUnder?: number
+}
+
+/**
+ * Walk a held tip back to the inscription that created it and prove the path.
+ *
+ * `getBeef` must return a BEEF whose subject transaction carries a merkle proof;
+ * `verifyProvenanceV2` rejects anything it cannot structurally prove, so an
+ * unmined or unprovable hop fails the whole attempt rather than weakening it.
+ */
+export async function proveGenesisLineage(
+  args: GenesisWalkArgs,
+): Promise<GenesisProof | null> {
+  const outcome = await walkGenesisLineage(args)
+  return outcome.kind === 'proven' ? outcome.proof : null
+}
+
+/** {@link proveGenesisLineage}, but says why it stopped. */
+export async function walkGenesisLineage(
+  args: GenesisWalkArgs,
+): Promise<GenesisWalkOutcome> {
   const tip = toPoint(args.tipOutpoint)
   if (!POINT.test(tip)) {
     return { kind: 'invalid', reason: 'tip is not an outpoint', hops: 0 }
   }
   const maxHops = args.maxHops ?? MAX_GENESIS_HOPS
   const maxBeefBytes = args.maxBeefBytes
-  const needBeefBytes = args.includeBeef === true || maxBeefBytes != null
+  const mustSerialize = args.includeBeef === true || maxBeefBytes != null
 
   const merged = new Beef()
   const fetched = new Set<string>()
@@ -314,15 +326,20 @@ export async function walkGenesisLineage(args: {
     }
   }
 
-  // Only a sender putting the lineage on the wire needs the bytes. A background
-  // verify pins a verdict and throws the BEEF away, so it must not pay to
-  // serialize megabytes it will never read.
+  // Only a sender putting the lineage on the wire needs the bytes outright. A
+  // verify takes them when they are small enough to be reusable as remittance,
+  // and otherwise skips a serialize of megabytes it could never send.
+  // `fetchedBytes` sums the pieces before merge, so it is an upper bound — a
+  // cheap gate that never serializes something it would then have to discard.
   //
   // Serialized whole rather than atomically: AtomicBEEF keeps only the subject
   // and its recursive dependencies, and a mined tip carrying its own merkle
   // proof depends on nothing — which strips the very ancestry being proven and
   // is why the older rebuild could never prove a confirmed item.
-  const beef = needBeefBytes ? merged.toBinary() : []
+  const serialize =
+    mustSerialize ||
+    (args.serializeIfUnder != null && fetchedBytes <= args.serializeIfUnder)
+  const beef = serialize ? merged.toBinary() : []
   if (maxBeefBytes != null && beef.length > maxBeefBytes) {
     return { kind: 'overBudget', bytes: beef.length, hops }
   }

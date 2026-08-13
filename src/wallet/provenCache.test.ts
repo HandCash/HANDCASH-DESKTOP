@@ -91,3 +91,92 @@ describe('provenCache', () => {
     ).toThrow(/changed/i)
   })
 })
+
+describe('the path a proof walked', () => {
+  beforeEach(() => {
+    store.clear()
+    vi.resetModules()
+  })
+
+  // A restart used to leave the wallet knowing an item was genuine but unable
+  // to say why, so it sent the item bare and the receiver walked it all again.
+  it('outlives the session that proved it', async () => {
+    const path = ['bb_0', 'aa_0']
+    const first = await import('./provenCache')
+    first.rememberProvenVerdict('bb.0', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      path,
+      verifiedAt: 1,
+    })
+
+    vi.resetModules()
+    const restarted = await import('./provenCache')
+    expect(restarted.getProvenVerdict('bb.0')?.path).toEqual(path)
+  })
+
+  it('is kept when a later write only carries the tier', async () => {
+    const cache = await import('./provenCache')
+    cache.rememberProvenVerdict('bb.0', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      path: ['bb_0', 'aa_0'],
+      verifiedAt: 1,
+    })
+    cache.rememberProvenVerdict('bb.0', 'brc150')
+
+    expect(cache.getProvenVerdict('bb.0')?.path).toEqual(['bb_0', 'aa_0'])
+  })
+})
+
+describe('recovering the path of an already-proven tip', () => {
+  beforeEach(() => {
+    store.clear()
+    vi.resetModules()
+  })
+
+  // Verdicts written before the path was recorded would otherwise never walk
+  // again, so those items would send bare forever.
+  it('allows one walk for a proven tip with no path', async () => {
+    const cache = await import('./provenCache')
+    cache.rememberProvenVerdict('bb.0', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      verifiedAt: 1,
+    })
+
+    expect(cache.shouldAttemptGenesis('bb.0')).toBe(true)
+  })
+
+  it('leaves a proven tip alone once its path is known', async () => {
+    const cache = await import('./provenCache')
+    cache.rememberProvenVerdict('bb.0', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      path: ['bb_0', 'aa_0'],
+      verifiedAt: 1,
+    })
+
+    expect(cache.shouldAttemptGenesis('bb.0')).toBe(false)
+  })
+
+  // Otherwise a tip that cannot be fetched retries on every list and spends the
+  // walk budget that unproven tips need to earn a badge at all.
+  it('paces the retry after a failed recovery', async () => {
+    const cache = await import('./provenCache')
+    const now = Date.now()
+    cache.rememberProvenVerdict('bb.0', {
+      tier: 'brc150',
+      origin: 'aa_0',
+      verifiedAt: 1,
+    })
+    cache.rememberGenesisAttempt('bb.0', now)
+
+    expect(cache.shouldAttemptGenesis('bb.0', now + 60_000)).toBe(false)
+    expect(
+      cache.shouldAttemptGenesis('bb.0', now + cache.GENESIS_PATH_BACKFILL_MS),
+    ).toBe(true)
+    // ...and sooner than an unprovable tip would wait.
+    expect(cache.GENESIS_PATH_BACKFILL_MS).toBeLessThan(cache.GENESIS_RETRY_MS)
+  })
+})

@@ -312,6 +312,23 @@ export function beefIsAtomicReady(beef: Beef, txid: string): boolean {
   }
 }
 
+/**
+ * Fetch several transactions at once so a later sequential reader finds them.
+ *
+ * A lineage walk discovers each hop only after fetching the one before it, so it
+ * can never overlap its own round trips. Once the path is already known there is
+ * nothing to discover, and the same walk replayed over a warm cache costs one
+ * batch instead of one trip per hop. Failures are ignored — this decides only
+ * how long the walk takes, never whether it succeeds.
+ */
+export async function warmBeefCache(
+  wallet: ActiveWallet,
+  txids: string[],
+): Promise<void> {
+  const cold = [...new Set(txids.map(keyOf))].filter((txid) => !read(txid))
+  await Promise.allSettled(cold.map((txid) => getBeefForTxidCached(wallet, txid)))
+}
+
 export async function getBeefForTxidCached(
   wallet: ActiveWallet,
   txid: string,

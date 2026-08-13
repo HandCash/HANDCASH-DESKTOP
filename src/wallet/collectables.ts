@@ -64,6 +64,8 @@ import {
   extendProvenanceV2,
   parseProvenanceV2,
   rememberProvenanceRemittance,
+  rememberProvenLineage,
+  REMITTANCE_MAX_BEEF_BYTES,
   tryBuildProvenanceForSend,
   verifyProvenanceForHeldTip,
 } from './oneSatProvenance'
@@ -962,6 +964,9 @@ async function proveHeldGenesis(
       try {
         outcome = await walkGenesisLineage({
           tipOutpoint: outpoint,
+          // Take the assembled BEEF when it could actually travel, so the next
+          // send has remittance to attach instead of omitting it.
+          serializeIfUnder: REMITTANCE_MAX_BEEF_BYTES,
           // Yield per hop for the same reason: each one is a round trip, and the
           // UI shares this thread.
           getBeef: async (txid) => {
@@ -1023,7 +1028,17 @@ async function proveHeldGenesis(
           // Chain data says this item cannot be proven. Re-walking it every
           // session spends the whole budget on a known answer and starves the
           // tips that could still earn a badge.
-          if (outcome.kind === 'invalid') rememberGenesisAttempt(outpoint)
+          //
+          // A tip that already holds its badge is here only to recover the path
+          // a send would pass on. It loses nothing by waiting out the backfill
+          // window, and letting it retry on every list would starve the same
+          // tips for the same reason.
+          if (
+            outcome.kind === 'invalid' ||
+            getProvenVerdict(outpoint)?.tier === 'brc150'
+          ) {
+            rememberGenesisAttempt(outpoint)
+          }
         }
         continue
       }
@@ -1039,8 +1054,23 @@ async function proveHeldGenesis(
       rememberProvenVerdict(outpoint, {
         tier: 'brc150',
         origin: proof.origin,
+        path: proof.path,
         verifiedAt: Date.now(),
       })
+      // Keep the lineage this walk just paid for. Without it a send finds no
+      // tip-local path, omits remittance, and the receiver repeats the whole
+      // walk — which is why a self-send took a minute to verify something this
+      // wallet had already proven. With it, the send is O(1) and so is theirs.
+      if (
+        rememberProvenLineage({
+          tipOutpoint: outpoint,
+          origin: proof.origin,
+          path: proof.path,
+          beef: proof.beef,
+        })
+      ) {
+        console.info(`[brc-150] remittance kept for ${outpoint} — sends reuse it`)
+      }
       // Spinner stays via awaitingVerify until announceItemVerified clears it.
       setVerificationProgress(
         'verifying',
@@ -1307,6 +1337,9 @@ export async function verifyItemAuthenticity(
       reason: 'No valid BRC-150 authenticity proof',
     }
     let provenOrigin: string | undefined
+    // How this tip was proven, not merely that it was. Recorded with the verdict
+    // so a later send can pass the proof on instead of omitting it.
+    let provenPath: string[] | undefined
 
     if (provenance != null) {
       const remittance = await verifyProvenanceForHeldTip({
@@ -1316,6 +1349,7 @@ export async function verifyItemAuthenticity(
       })
       if (remittance.proven) {
         authenticity = { tier: 'brc150', proven: true, reason: null }
+        provenPath = remittance.path
         provenOrigin =
           remittance.origin ??
           (typeof provenance === 'object' &&
@@ -1343,6 +1377,7 @@ export async function verifyItemAuthenticity(
       })
       if (proof) {
         provenOrigin = proof.origin
+        provenPath = proof.path
         authenticity = { tier: 'brc150', proven: true, reason: null }
         console.info(
           `[brc-150] lineage proved ${target.slice(0, 14)}… in ${
@@ -1359,6 +1394,7 @@ export async function verifyItemAuthenticity(
     rememberProvenVerdict(target, {
       ...authenticityResultToVerdict(authenticity),
       ...(provenOrigin ? { origin: originKey(provenOrigin) } : {}),
+      ...(provenPath ? { path: provenPath } : {}),
     })
     if (provenOrigin) {
       await adoptProvenOrigin(target, provenOrigin, wallet.chain)
@@ -2746,7 +2782,18 @@ export async function sendCollectable(args: {
                 heldOutpoint: `${txid.trim().toLowerCase()}_0`,
                 tipBeef,
               })
-              if (extended) rememberProvenanceRemittance(extended)
+              if (extended) {
+                rememberProvenanceRemittance(extended)
+                // The extended path is the durable half of that reuse: the
+                // remittance above dies with the session, and a restart would
+                // otherwise leave this tip proven but unable to say how.
+                rememberProvenVerdict(extended.tip, {
+                  tier: 'brc150',
+                  origin: extended.origin,
+                  path: extended.path,
+                  verifiedAt: Date.now(),
+                })
+              }
             } catch (err) {
               console.warn('[brc-150] post-send remittance extend failed', err)
             }

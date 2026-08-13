@@ -329,6 +329,38 @@ describe('serializing the assembled lineage', () => {
     expect(outcome.proof.beef.length).toBeGreaterThan(0)
   })
 
+  // A verify that keeps a sendable lineage saves the receiver the same walk.
+  it('keeps the bytes for a verify when the lineage is small enough to travel', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+      serializeIfUnder: 1_000_000,
+    })
+
+    if (outcome.kind !== 'proven') throw new Error('expected a proof')
+    expect(outcome.proof.beef.length).toBeGreaterThan(0)
+  })
+
+  // Past the wire budget the bytes could never be attached to a send, so paying
+  // to produce them buys nothing and costs the thread. The verdict still stands.
+  it('proves without the bytes when the lineage is too big to travel', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+      serializeIfUnder: 1,
+    })
+
+    expect(outcome.kind).toBe('proven')
+    if (outcome.kind !== 'proven') throw new Error('expected a proof')
+    expect(outcome.proof.beef).toEqual([])
+  })
+
   it('still measures the wire budget, which implies serializing', async () => {
     const origin = inscription()
     const tip = transfer(origin)

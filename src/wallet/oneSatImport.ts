@@ -765,6 +765,7 @@ async function rebuildBrc150Identity(
     rememberProvenVerdict(held, {
       tier: 'brc150',
       origin: proof.origin,
+      path: proof.path,
       verifiedAt: Date.now(),
     })
     try {

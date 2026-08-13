@@ -5,14 +5,18 @@ import {
   Transaction,
   UnlockingScript,
 } from '@bsv/sdk'
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it } from 'vitest'
 import {
   parseProvenanceV2,
+  clearRememberedProvenanceRemittances,
   deriveOneSatPathFromBeef,
   findOrdinalParentVin,
+  getRememberedProvenanceRemittance,
   rebuildProvenanceV2FromBeef,
   provenanceFitsBudget,
+  rememberProvenLineage,
   REMITTANCE_MAX_BEEF_B64_CHARS,
+  REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
   extendProvenanceV2,
   type ProvenanceV2,
@@ -354,5 +358,72 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
       origin: originOutpoint,
       path: [tipOutpoint, originOutpoint],
     })
+  })
+})
+
+describe('keeping a proven lineage for the next send', () => {
+  beforeEach(() => {
+    clearRememberedProvenanceRemittances()
+  })
+
+  function bytesOf(b64: string): number[] {
+    return Array.from(atob(b64), (c) => c.charCodeAt(0))
+  }
+
+  // Walking is how a wallet learns ancestry the hard way; remittance is how it
+  // tells the next holder. Dropping the walk's result on the floor is what made
+  // a send of an already-proven item arrive unproven.
+  it('files it under the tip so the next send attaches it instead of walking', () => {
+    const { provenance, held } = buildV2Fixture()
+
+    const kept = rememberProvenLineage({
+      tipOutpoint: provenance.tip,
+      origin: provenance.origin,
+      path: provenance.path,
+      beef: bytesOf(provenance.beefB64),
+    })
+
+    expect(kept).toBe(true)
+    const found = getRememberedProvenanceRemittance(provenance.tip)
+    expect(found).not.toBeNull()
+    expect(verifyProvenanceV2(found, held).proven).toBe(true)
+  })
+
+  it('finds it whichever way the caller spells the outpoint', () => {
+    const { provenance, held } = buildV2Fixture()
+    rememberProvenLineage({
+      tipOutpoint: held,
+      origin: provenance.origin,
+      path: provenance.path,
+      beef: bytesOf(provenance.beefB64),
+    })
+
+    expect(getRememberedProvenanceRemittance(provenance.tip)).not.toBeNull()
+  })
+
+  it('declines a walk that kept no bytes', () => {
+    expect(
+      rememberProvenLineage({
+        tipOutpoint: 'aa_0',
+        origin: 'aa_0',
+        path: ['aa_0'],
+        beef: [],
+      }),
+    ).toBe(false)
+  })
+
+  // Storing one would only produce a remittance that every send has to reject.
+  it('declines a lineage too large to travel', () => {
+    const { provenance } = buildV2Fixture()
+
+    expect(
+      rememberProvenLineage({
+        tipOutpoint: provenance.tip,
+        origin: provenance.origin,
+        path: provenance.path,
+        beef: new Array(REMITTANCE_MAX_BEEF_BYTES + 1).fill(0),
+      }),
+    ).toBe(false)
+    expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
   })
 })

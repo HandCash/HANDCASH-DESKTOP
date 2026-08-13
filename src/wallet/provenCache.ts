@@ -32,6 +32,19 @@ export type ProvenVerdict = {
    * backed by transactions the wallet checked itself.
    */
   origin?: string
+  /**
+   * The tip→origin outpoints this proof walked, newest first.
+   *
+   * Stored because discovery is the costly half of a walk: each hop's parent is
+   * unknown until its transaction is fetched, so finding the path is N serial
+   * round trips. Re-proving a known path is N parallel fetches that mostly hit
+   * the BEEF cache. Keeping it lets a later send rebuild remittance instead of
+   * shipping the item bare and making the receiver repeat the discovery.
+   *
+   * Outpoints only — the BEEF itself runs to ~400k characters per item, and
+   * this store is synchronous IPC mirrored into localStorage.
+   */
+  path?: string[]
   verifiedAt: number
 }
 
@@ -78,6 +91,11 @@ function load(): Map<string, ProvenVerdict> {
               ? candidate.originScriptHash
               : undefined,
           origin: typeof candidate.origin === 'string' ? candidate.origin : undefined,
+          path:
+            Array.isArray(candidate.path) &&
+            candidate.path.every((x) => typeof x === 'string')
+              ? (candidate.path as string[])
+              : undefined,
           verifiedAt:
             typeof candidate.verifiedAt === 'number' ? candidate.verifiedAt : 0,
         })
@@ -192,6 +210,7 @@ export function rememberProvenVerdict(
     ...normalized,
     origin: normalized.origin ?? existing?.origin,
     originScriptHash: normalized.originScriptHash ?? existing?.originScriptHash,
+    path: normalized.path ?? existing?.path,
     verifiedAt: normalized.verifiedAt || Date.now(),
   }
   map.delete(k)
@@ -257,16 +276,37 @@ function loadGenesisAttempts(): Map<string, number> {
   return genesisAttempts
 }
 
-/** True when a tip with no proof may be walked back to its inscription now. */
+/**
+ * How long a proven-but-pathless tip waits between attempts to recover its path.
+ *
+ * Shorter than {@link GENESIS_RETRY_MS} because this walk is expected to succeed
+ * the first time — the tip is already known genuine, so only a network miss can
+ * stop it, and one miss should not cost a day of sending items bare. Success
+ * writes the path and retires the tip from this queue for good.
+ */
+export const GENESIS_PATH_BACKFILL_MS = 60 * 60_000
+
+/**
+ * True when a tip may be walked back to its inscription now — either to earn a
+ * proof it lacks, or to recover the path of a proof recorded without one.
+ */
 export function shouldAttemptGenesis(
   outpoint: string,
   now = Date.now(),
   retryMs = GENESIS_RETRY_MS,
 ): boolean {
   const k = key(outpoint)
-  if (load().get(k)?.tier === 'brc150') return false
+  const verdict = load().get(k)
+  // Proven and knows how: nothing left to learn.
+  if (verdict?.tier === 'brc150' && verdict.path?.length) return false
+  // Proven but pathless — a send would have to omit remittance and make the
+  // receiver walk the lineage over again. One quiet walk buys that back.
+  const wait =
+    verdict?.tier === 'brc150'
+      ? Math.min(retryMs, GENESIS_PATH_BACKFILL_MS)
+      : retryMs
   const attempted = loadGenesisAttempts().get(k)
-  return attempted == null || now - attempted >= retryMs
+  return attempted == null || now - attempted >= wait
 }
 
 export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void {
