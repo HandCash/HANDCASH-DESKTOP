@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.226] - 2026-08-13
+
+### Fixed
+- **A self-send of an already-proven item arrived unproven and took a minute to verify.** Proving a tip recorded the verdict and threw the lineage away, so the send found no tip-local path, logged `omit provenance — no tip-local path`, and left the receiver to repeat the entire discovery walk. A walk now keeps what it cost: the tip→origin path is stored on the durable verdict, and the assembled BEEF is kept as reusable remittance whenever it fits the wire budget (over it, the verdict still stands — those bytes could never travel). A send over a known path replays it against a warmed BEEF cache instead of rediscovering hop by hop, and the receiver verifies one attached package. Verifying an incoming remittance also records the path it proved, so the next hop passes it on. Verdicts written before any of this get one paced walk (`GENESIS_PATH_BACKFILL_MS`) to recover their path, so existing inventory heals rather than sending bare forever.
+
 ## [1.2.225] - 2026-08-13
 
 ### Fixed
