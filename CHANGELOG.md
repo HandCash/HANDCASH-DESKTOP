@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.222] - 2026-08-13
+
+### Changed
+- **BRC-156 soft-latch removed.** Item tips are plain P2PKH; authenticity is BRC-150 tip→origin remittance only. Latch dust, `BRC156` OP_RETURN, and soft-latch send/ingest paths are gone.
+- **`collection:` tags on import/send** so `p 1sat collection:<id>` permission scopes match (foxplorer / Pixel Foxes).
+- Instant-ingest unknown 1-sat tips from transfer shape (spend a 1-sat input or mint envelope), then verify provenance after paint.
+- Settled item Activity rows are no longer pruned when the txid still 404s on-chain (`peerDeliver` is payee-broadcast).
+
 ## [1.2.221] - 2026-08-12
 
 ### Fixed
