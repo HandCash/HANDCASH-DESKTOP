@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.225] - 2026-08-13
+
+### Fixed
+- **33s freeze while proving an item's lineage** (one `longtask`, a whole heartbeat gap, app killed). The hop loop yielded, but the tail serialized the assembled BEEF, base64'd it, then decoded and re-parsed it purely to call a wire-format verifier — on a batch-mint origin carrying hundreds of inscriptions that is megabytes each way. Verification now runs against the in-memory `Beef` (`verifyLineageInBeef`); serializing is opt-in (`includeBeef`) for the send path that actually puts the lineage on the wire; the tail honours `shouldStop`. Receive-side verify parses a remittance BEEF once instead of up to four times.
+
+### Changed
+- **Confirming a send returns you to Activity or the collectables grid** instead of holding you on a status screen. The sidebar mirrors live progress and Activity carries the result, so the in-panel "Preparing payment" and "Sent" screens were hiding the surfaces that outlive them. Success and failure now surface as a toast plus the Activity row. `sendMachine` drops `broadcasting`/`success` for a terminal `handoff`.
+- **Clearing a failed send is no longer offered while the recipient can still broadcast it.** A `peerDeliver` transfer is the payee's to settle, and that row is the sender's only record of an item that has already left; retry would race a live transaction. Both are refused for the same window `ghostHealFate` waits on, with a "Free up reserved funds" action instead — repair only fails *unsigned* transactions, so a stuck balance still clears. Bulk "Clear failed" skips protected rows and reports what it kept.
+
 ## [1.2.224] - 2026-08-13
 
 ### Fixed
