@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.224] - 2026-08-13
+
+### Fixed
+- **Items stuck on “unverified” even with a healthy lineage.** GorillaPool 404s the BEEF for ordinal transfer txs and the toolbox `getBeefForTxid` hung past its 8s budget, so every BRC-150 hop failed (`indexer BEEF … timed out after 8000ms`). WhatsOnChain `/beef` returns the subject tx *with* its merkle bump in ~400ms — now used as a proof-carrying fallback on the proof path, not just raw ingest.
+- **Purged BRC-156 tips showed no name, app, or traits.** Their identity lived in the removed `BRC156` OP_RETURN and their tip 404s on the indexer, while the origin has been indexed for months. Identity resolve now treats the item's own origin claim as a known origin, recovering name and traits in one request.
+
 ## [1.2.223] - 2026-08-13
 
 ### Fixed
