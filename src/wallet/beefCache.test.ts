@@ -117,17 +117,86 @@ describe('beefCache', () => {
     const getBeefForTxid = vi.fn(async () => {
       throw new Error('indexer down')
     })
-    const wallet = {
-      wallet: { storage: { isActiveStorageProvider: () => false } },
-      services: { getRawTx, getBeefForTxid },
-    } as unknown as ActiveWallet
+    // WoC proof fallback misses this regtest txid — exercise the raw path.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('nope', { status: 404 }))
+    try {
+      const wallet = {
+        wallet: { storage: { isActiveStorageProvider: () => false } },
+        services: { getRawTx, getBeefForTxid },
+      } as unknown as ActiveWallet
 
-    const beef = await getBeefForTxidCached(wallet, txid, {
-      allowUnprovenRawTx: true,
+      const beef = await getBeefForTxidCached(wallet, txid, {
+        allowUnprovenRawTx: true,
+      })
+      expect(beef.findTxid(txid)?.tx).toBeTruthy()
+      expect(getBeefForTxid).toHaveBeenCalledTimes(1)
+      expect(getRawTx).toHaveBeenCalledTimes(1)
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
+
+  it('falls back to a proof-carrying WhatsOnChain BEEF when the indexer 404s (no raw flag)', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+
+    // A proven tip: parent with a merkle proof, spent by the subject.
+    const parent = new Transaction()
+    parent.addOutput({
+      satoshis: 10_000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
     })
-    expect(beef.findTxid(txid)?.tx).toBeTruthy()
-    expect(getBeefForTxid).toHaveBeenCalledTimes(1)
-    expect(getRawTx).toHaveBeenCalledTimes(1)
+    const parentId = parent.id('hex')
+    const parentProof = new MerklePath(800_001, [
+      [
+        { offset: 0, hash: parentId, txid: true },
+        { offset: 1, duplicate: true },
+      ],
+    ])
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTXID: parentId,
+      sourceOutputIndex: 0,
+      unlockingScript: LockingScript.fromHex('51'),
+    })
+    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const txid = tx.id('hex')
+    const wocBeef = new Beef()
+    wocBeef.mergeRawTx(parent.toBinary())
+    wocBeef.mergeBump(parentProof)
+    wocBeef.mergeTransaction(tx)
+    const wocHex = Buffer.from(wocBeef.toBinary()).toString('hex')
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer 404')
+    })
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockImplementation(async (url: string | URL | Request) => {
+        const href = String(url)
+        if (href.includes('/tx/') && href.endsWith('/beef')) {
+          return new Response(wocHex, { status: 200 })
+        }
+        return new Response('nope', { status: 404 })
+      })
+
+    try {
+      const wallet = {
+        chain: 'main',
+        wallet: { storage: { isActiveStorageProvider: () => false } },
+        services: { getBeefForTxid },
+      } as unknown as ActiveWallet
+
+      // No allowUnprovenRawTx — this is the BRC-150 proof path.
+      const beef = await getBeefForTxidCached(wallet, txid)
+      expect(beef.findTxid(txid)?.tx).toBeTruthy()
+      expect(beef.findTxid(parentId)?.isTxidOnly).toBeFalsy()
+      expect(fetchSpy).toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
   })
 
   it('times out a hung indexer fetch instead of hanging forever', async () => {
@@ -140,14 +209,22 @@ describe('beefCache', () => {
           /* never resolves */
         }),
     )
-    const wallet = {
-      wallet: { storage: { isActiveStorageProvider: () => false } },
-      services: { getBeefForTxid },
-    } as unknown as ActiveWallet
+    // The proof fallback must not turn a hung indexer into a hung test.
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('nope', { status: 404 }))
+    try {
+      const wallet = {
+        wallet: { storage: { isActiveStorageProvider: () => false } },
+        services: { getBeefForTxid },
+      } as unknown as ActiveWallet
 
-    await expect(getBeefForTxidCached(wallet, 'a'.repeat(64))).rejects.toThrow(
-      /timed out/i,
-    )
+      await expect(getBeefForTxidCached(wallet, 'a'.repeat(64))).rejects.toThrow(
+        /timed out/i,
+      )
+    } finally {
+      fetchSpy.mockRestore()
+    }
   }, 15_000)
 
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {

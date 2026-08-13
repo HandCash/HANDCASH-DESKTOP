@@ -1205,9 +1205,23 @@ async function adoptProvenOrigin(
 async function walkInscription(
   outpoint: string,
 ): Promise<ResolvedInscription | null> {
+  // The item's own origin claim (remittance `customInstructions` / `origin:`
+  // tag) is a known origin too. Old BRC-156 tips 404 on the indexer and sit too
+  // deep for the tip-graph walk to reach, but their origin — carried in the
+  // purged latch and re-recorded on the held output — is indexed and answers in
+  // one request. Only trust a claim that is not just the tip fallback.
+  const key = normalizeOutpoint(outpoint)
+  const cachedOrigin = getCachedCollectables().find(
+    (c) => normalizeOutpoint(c.outpoint) === key,
+  )?.origin
+  const claimedOrigin =
+    cachedOrigin && normalizeOutpoint(cachedOrigin) !== key
+      ? cachedOrigin
+      : undefined
   const knownOrigin =
     getProvenVerdict(outpoint)?.origin ??
-    getResolvedInscription(outpoint)?.origin
+    getResolvedInscription(outpoint)?.origin ??
+    claimedOrigin
   try {
     return await resolveInscriptionPreferringOrigin(
       outpoint,

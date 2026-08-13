@@ -214,6 +214,51 @@ async function fetchBitailsRawTx(txid: string): Promise<number[] | null> {
   }
 }
 
+/**
+ * Proof-carrying BEEF straight from WhatsOnChain.
+ *
+ * The toolbox `getBeefForTxid` composes rawtx + merkle path across providers and
+ * routinely exceeds 8s on deep ordinal lineages (Pixel Foxes transfers), while
+ * GorillaPool 404s the BEEF for those same transfer txids. WhatsOnChain's `/beef`
+ * returns the whole thing — subject tx plus its BUMP — in a few hundred ms, so a
+ * lineage walk that would otherwise time out every hop can actually complete.
+ *
+ * Unlike {@link getBeefFromRawTx} this is a *proven* source (it carries the
+ * merkle proof), so it is safe for the BRC-150 proof path, not just raw ingest.
+ */
+async function fetchWocProvenBeef(
+  txid: string,
+  chain: ActiveWallet['chain'],
+): Promise<Beef | null> {
+  const key = keyOf(txid)
+  if (!/^[0-9a-f]{64}$/.test(key)) return null
+  const base =
+    chain === 'test'
+      ? 'https://api.whatsonchain.com/v1/bsv/test'
+      : 'https://api.whatsonchain.com/v1/bsv/main'
+  try {
+    const res = await withTimeout(
+      fetch(`${base}/tx/${key}/beef`, { headers: { Accept: 'text/plain' } }),
+      BEEF_FETCH_TIMEOUT_MS,
+      `woc beef ${key.slice(0, 8)}`,
+    )
+    if (!res.ok) return null
+    const body = (await res.text()).trim()
+    const bytes = /^[0-9a-f]+$/i.test(body)
+      ? Utils.toArray(body, 'hex')
+      : Utils.toArray(body, 'base64')
+    if (!bytes.length) return null
+    const beef = Beef.fromBinary(bytes)
+    // Must carry the subject tx *and* its proof — a bare rawtx here would defeat
+    // the point of preferring this over the raw fallback.
+    const entry = beef.findTxid(key)
+    if (!entry?.tx || entry.isTxidOnly) return null
+    return beef
+  } catch {
+    return null
+  }
+}
+
 async function getBeefFromRawTx(
   wallet: ActiveWallet,
   txid: string,
@@ -296,6 +341,7 @@ export async function getBeefForTxidCached(
     // Prefer indexer / proven BEEF before raw. Raw tip-only used to run first,
     // get cached, then soft-latch internalize failed forever (0 BUMPS / missing
     // parents) — Desktop could not receive mobile→desktop item settles.
+    let indexerErr: unknown = null
     if (wallet.services?.getBeefForTxid) {
       try {
         const beef = await withTimeout(
@@ -308,14 +354,24 @@ export async function getBeefForTxidCached(
           return beef
         }
       } catch (err) {
-        if (!opts?.allowUnprovenRawTx) throw err
-        console.warn('[beef] indexer fetch failed; trying raw tx', key.slice(0, 8), err)
+        indexerErr = err
+        console.warn('[beef] indexer fetch failed; trying WhatsOnChain', key.slice(0, 8), err)
       }
     } else if (!opts?.allowUnprovenRawTx) {
       throw new Error(
         'Cannot prove the collectable input offline. Try again when connected.',
       )
     }
+
+    // Proof-carrying fallback. Runs even without `allowUnprovenRawTx` because it
+    // returns a real merkle proof — this is what lets a BRC-150 lineage walk
+    // finish when the toolbox service times out or GorillaPool 404s the BEEF.
+    const wocProven = await fetchWocProvenBeef(key, wallet.chain)
+    if (wocProven) {
+      write(txid, wocProven)
+      return wocProven
+    }
+    if (indexerErr && !opts?.allowUnprovenRawTx) throw indexerErr
 
     if (opts?.allowUnprovenRawTx) {
       const fromRaw = await getBeefFromRawTx(wallet, txid)
