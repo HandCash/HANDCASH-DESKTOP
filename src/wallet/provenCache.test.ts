@@ -48,13 +48,13 @@ describe('provenCache', () => {
   it('records the exact proof tier and hardened origin commitment', async () => {
     const cache = await import('./provenCache')
     cache.rememberProvenVerdict('cc.2', {
-      tier: 'brc156',
+      tier: 'brc150',
       originScriptHash: 'dd'.repeat(32),
       verifiedAt: 123,
     })
 
     expect(cache.getProvenVerdict('CC_2')).toEqual({
-      tier: 'brc156',
+      tier: 'brc150',
       originScriptHash: 'dd'.repeat(32),
       verifiedAt: 123,
     })

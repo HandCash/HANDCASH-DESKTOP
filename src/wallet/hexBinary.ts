@@ -1,7 +1,7 @@
 /**
- * Tiny hex helpers that must not touch Node `Buffer` — hardened send loads in
- * the Vite renderer / Capacitor WebView, where `Buffer is not defined` used to
- * abort the covenant path and fall through to soft-latch.
+ * Tiny hex helpers that must not touch Node `Buffer` — item send loads in the
+ * Vite renderer / Capacitor WebView, where `Buffer is not defined` used to abort
+ * script encoding.
  */
 
 const HEX = '0123456789abcdef'

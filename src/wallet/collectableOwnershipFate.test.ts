@@ -72,17 +72,6 @@ describe('ownershipFate', () => {
     ).toBe('keepCovenant')
   })
 
-  it('keeps brc156-proven tips even when tipKind is softP2pkh', () => {
-    expect(
-      ownershipFate({
-        tipKind: classifyTipKind(P2PKH),
-        inLiveSet: false,
-        unjudged: false,
-        provenTier: 'brc156',
-      }),
-    ).toBe('keepCovenant')
-  })
-
   it('holds our soft tips past grace when the locking script still pays us', () => {
     expect(
       ownershipFate({

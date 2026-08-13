@@ -10,7 +10,6 @@ import {
 } from './oneSatImport'
 import { shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
-import { buildLatchStateScript } from './oneSatLatch'
 
 function utxo(outpoint: string, satoshis: number): LegacyUtxo {
   const [txid, vout] = outpoint.split('.')
@@ -30,97 +29,10 @@ vi.mock('./itemArrivalToast', () => ({
   announceItemVerified: vi.fn(),
 }))
 
-const ORD_ENVELOPE =
-  '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
-
 const TXID_A = 'a'.repeat(64)
 const TXID_B = 'b'.repeat(64)
 
 describe('classifyLegacyUtxos', () => {
-  it('does not synthesize covenant tips from schema-2 beacons', async () => {
-    const tx = new Transaction()
-    tx.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    tx.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
-    tx.addOutput({
-      satoshis: 0,
-      lockingScript: LockingScript.fromHex(
-        buildLatchStateScript({
-          schema: 2,
-          mode: 'hardened',
-          origin: `${TXID_A}_0`,
-          tip: 'OUTPUT:0',
-          latch: 'OUTPUT:2',
-          beacon: 'OUTPUT:1',
-          parentLatch: `${TXID_B}_2`,
-          proofOutpoint: `${TXID_B}_1`,
-          originScriptHash: '12'.repeat(32),
-          ownerKeyHash: '34'.repeat(20),
-          commitTxid: '56'.repeat(32),
-          settleTxid: 'SELF',
-          name: 'Hardened item',
-        }),
-      ),
-    })
-    const txid = tx.id('hex')
-    const fetchMock = vi.fn(async (url: string) =>
-      url.includes(`/tx/${txid}/hex`)
-        ? new Response(tx.toHex(), { status: 200 })
-        : new Response('null', { status: 404 }),
-    )
-    vi.stubGlobal('fetch', fetchMock)
-
-    const result = await classifyLegacyUtxos([utxo(`${txid}.1`, 2)], 'main')
-
-    expect(result.oneSats).toEqual([])
-    expect(result.latches.map((u) => u.outpoint)).toEqual([`${txid}.1`])
-    vi.unstubAllGlobals()
-  })
-
-  it('treats a lone 2-sat beacon as latch dust without inventing a tip', async () => {
-    const settle = new Transaction()
-    settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    const settleTxid = settle.id('hex')
-
-    const beacon = new Transaction()
-    beacon.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
-    beacon.addOutput({
-      satoshis: 0,
-      lockingScript: LockingScript.fromHex(
-        buildLatchStateScript({
-          schema: 2,
-          mode: 'hardened',
-          origin: `${TXID_A}_0`,
-          tip: `${settleTxid}_0`,
-          beacon: 'OUTPUT:0',
-          parentLatch: `${TXID_B}_1`,
-          proofOutpoint: `${TXID_B}_1`,
-          originScriptHash: '12'.repeat(32),
-          ownerKeyHash: '34'.repeat(20),
-          commitTxid: '56'.repeat(32),
-          settleTxid,
-        }),
-      ),
-    })
-    const beaconTxid = beacon.id('hex')
-    const fetchMock = vi.fn(async (url: string) => {
-      if (url.includes(`/tx/${beaconTxid}/hex`)) {
-        return new Response(beacon.toHex(), { status: 200 })
-      }
-      if (url.includes(`/tx/${settleTxid}/hex`)) {
-        return new Response(settle.toHex(), { status: 200 })
-      }
-      return new Response('null', { status: 404 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const result = await classifyLegacyUtxos([utxo(`${beaconTxid}.0`, 2)], 'main')
-
-    expect(result.oneSats).toEqual([])
-    expect(result.latches.map((u) => u.outpoint)).toEqual([`${beaconTxid}.0`])
-    vi.unstubAllGlobals()
-  })
-
   it('sweeps a cloud-named outpoint that actually holds funds', async () => {
     // Basket `1sat` is excluded from spendable balance, so a mis-reported item
     // would silently remove real money from the wallet.
@@ -155,132 +67,30 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('imports a latch-proven tip immediately — authenticity walks after paint', async () => {
-    // Latch at OUTPUT:1 is local proof the item landed. Waiting on indexer /
-    // lineage before import hid the NFT behind "Item arriving". Quick ingest
-    // uses a provisional tip origin; proveHeldGenesis + corner spinner settle
-    // authenticity after the card is on the list.
+  it('holds a 404 tip then backs off on the next poll', async () => {
     const TXID_D = 'd'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
 
-    const scan = [utxo(`${TXID_D}.0`, 1), utxo(`${TXID_D}.1`, 2)]
+    const scan = [utxo(`${TXID_D}.0`, 1)]
     const first = await classifyLegacyUtxos(scan, 'main')
 
-    expect(first.latches.map((u) => u.outpoint)).toEqual([`${TXID_D}.1`])
     expect(first.pendingTips).toEqual([])
-    expect(first.oneSats).toEqual([
-      expect.objectContaining({
-        outpoint: `${TXID_D}.0`,
-        origin: `${TXID_D}_0`,
-      }),
-    ])
-    // Soft-latch may peek rawtx for latch state — never the ordinal indexer.
-    const apiCalls = (fetchMock.mock.calls as unknown[][]).filter((call) =>
-      String(call[0] ?? '').includes('/api/'),
-    )
-    expect(apiCalls).toEqual([])
+    expect(first.oneSats).toEqual([])
+    expect(first.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
 
     // Backoff: do not re-hammer the network on the next poll for the same tip.
     fetchMock.mockClear()
     const second = await classifyLegacyUtxos(scan, 'main')
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(second.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_D}.0`])
+    expect(second.oneSats).toEqual([])
+    expect(second.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_D}.0`])
     expect(second.pendingTips).toEqual([])
 
     vi.unstubAllGlobals()
   })
 
-  it('names a soft-latch tip from latch state without GorillaPool', async () => {
-    const origin = `${TXID_A}_0`
-    const settle = new Transaction()
-    settle.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    settle.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
-    settle.addOutput({
-      satoshis: 0,
-      lockingScript: LockingScript.fromHex(
-        buildLatchStateScript({
-          schema: 1,
-          origin,
-          tip: 'OUTPUT:0',
-          parentLatch: `${TXID_B}_1`,
-          name: 'P2P Fox',
-          app: 'HandCash',
-        }),
-      ),
-    })
-    const settleTxid = settle.id('hex')
-    const fetchMock = vi.fn(async (url: string) => {
-      if (String(url).includes(`/tx/${settleTxid}/hex`)) {
-        return new Response(settle.toHex(), { status: 200 })
-      }
-      // Any indexer hit would make a burst of receives crawl.
-      return new Response('null', { status: 404 })
-    })
-    vi.stubGlobal('fetch', fetchMock)
-
-    const result = await classifyLegacyUtxos(
-      [utxo(`${settleTxid}.0`, 1), utxo(`${settleTxid}.1`, 2)],
-      'main',
-    )
-
-    expect(result.oneSats).toEqual([
-      expect.objectContaining({
-        outpoint: `${settleTxid}.0`,
-        origin,
-        name: 'P2P Fox',
-        app: 'HandCash',
-      }),
-    ])
-    expect(
-      fetchMock.mock.calls.every(([url]) => !String(url).includes('/api/')),
-    ).toBe(true)
-
-    vi.unstubAllGlobals()
-  })
-
-  it('does not block latch ingest on a chain lineage walk', async () => {
-    // Indexer 404s; BEEF is available. Classify must still return the tip for
-    // immediate import — full BRC-150 is proveHeldGenesis's job after paint.
-    const genesis = new Transaction()
-    genesis.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex(ORD_ENVELOPE) })
-    const tip = new Transaction()
-    tip.addInput({
-      sourceTransaction: genesis,
-      sourceOutputIndex: 0,
-      unlockingScript: new UnlockingScript(),
-    })
-    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-    tip.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
-    const tipId = tip.id('hex')
-
-    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
-    vi.stubGlobal('fetch', fetchMock)
-    const getBeefForTxid = vi.fn(async () => {
-      throw new Error('classify must not walk lineage')
-    })
-    activeWallet = {
-      services: { getBeefForTxid },
-    }
-
-    const result = await classifyLegacyUtxos(
-      [utxo(`${tipId}.0`, 1), utxo(`${tipId}.1`, 2)],
-      'main',
-    )
-
-    expect(getBeefForTxid).not.toHaveBeenCalled()
-    expect(result.pendingTips).toEqual([])
-    expect(result.oneSats).toEqual([
-      expect.objectContaining({
-        outpoint: `${tipId}.0`,
-        origin: `${tipId}_0`,
-      }),
-    ])
-    activeWallet = null
-    vi.unstubAllGlobals()
-  })
-
-  it('fundingOnly classifies funds without any indexer call', async () => {
+  it('fundingOnly sweeps 2-sat outs as funds without any indexer call', async () => {
     // The pre-send heal runs this. A payment cannot spend a tip, so naming one
     // is pure latency on the path where the user is waiting to send.
     const TXID_F = 'f'.repeat(64)
@@ -295,21 +105,134 @@ describe('classifyLegacyUtxos', () => {
     )
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_F}.2`])
-    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID_F}.1`])
+    expect(result.funding.map((u) => u.outpoint)).toEqual([
+      `${TXID_F}.1`,
+      `${TXID_F}.2`,
+    ])
     expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_F}.0`])
     expect(result.oneSats).toEqual([])
     vi.unstubAllGlobals()
   })
 
-  it('never treats the latch itself as a tip or as funds', async () => {
+  it('sweeps a 2-sat out as funding (no latch reservation)', async () => {
     const TXID_E = 'e'.repeat(64)
     const result = await classifyLegacyUtxos([utxo(`${TXID_E}.1`, 2)], 'main')
 
-    expect(result.funding).toEqual([])
     expect(result.oneSats).toEqual([])
     expect(result.pendingTips).toEqual([])
-    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID_E}.1`])
+    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_E}.1`])
+  })
+
+  const P2PKH_HEX = '76a914' + '11'.repeat(20) + '88ac'
+  /** `OP_FALSE OP_IF "ord" OP_1 <text/plain> OP_0 <hi> OP_ENDIF` */
+  const ORD_ENVELOPE =
+    '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
+
+  function buildTx(
+    outputs: { scriptHex: string; satoshis: number }[],
+    inputs: { txid: string; vout: number }[] = [],
+  ): Transaction {
+    const tx = new Transaction()
+    for (const i of inputs) {
+      tx.addInput({
+        sourceTXID: i.txid,
+        sourceOutputIndex: i.vout,
+        unlockingScript: new UnlockingScript([]),
+        sequence: 0xffffffff,
+      })
+    }
+    for (const o of outputs) {
+      tx.addOutput({
+        lockingScript: LockingScript.fromHex(o.scriptHex),
+        satoshis: o.satoshis,
+      })
+    }
+    return tx
+  }
+
+  /** Serve raw tx bodies through the toolbox provider path, like a live wallet. */
+  function serveRawTxs(...txs: Transaction[]): void {
+    const byTxid = new Map(txs.map((tx) => [tx.id('hex'), tx.toBinary()]))
+    activeWallet = {
+      chain: 'main',
+      services: {
+        getRawTx: async (txid: string) => ({ rawTx: byTxid.get(txid) ?? null }),
+      },
+    }
+  }
+
+  it('paints a bare tip instantly when its tx spends a 1-sat input — no indexer', async () => {
+    // Instant ingest, deferred verify: this is the BRC-150 replacement for the
+    // latch fast path. Discovery is the transfer shape (spends an existing
+    // 1-sat tip); the real origin/name settle after paint.
+    const parent = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 1 }])
+    const transfer = buildTx(
+      [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
+      [{ txid: parent.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(parent, transfer)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${transfer.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats.map((i) => i.outpoint)).toEqual([tipOutpoint])
+    expect(result.oneSats[0]!.origin).toBe(`${transfer.id('hex')}_0`)
+    expect(result.heldOneSats).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('paints an inscribed mint instantly from its own envelope — no indexer', async () => {
+    const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
+    const mint = buildTx(
+      [{ scriptHex: ORD_ENVELOPE + P2PKH_HEX, satoshis: 1 }],
+      [{ txid: funding.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(funding, mint)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${mint.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    // Tip-as-origin is literally correct for a mint.
+    expect(result.oneSats.map((i) => i.origin)).toEqual([`${mint.id('hex')}_0`])
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('never blind-paints a BSV-21 envelope tip as an NFT', async () => {
+    // A fungible misfiled into basket `1sat` corrupts token accounting, so a
+    // bsv-20 mime must fall through to the indexer instead of the fast path.
+    const mimeHex = Array.from(new TextEncoder().encode('application/bsv-20'))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const bsv21Envelope = '0063036f726451' + '12' + mimeHex + '0002' + '7b7d' + '68'
+    const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
+    const mint = buildTx(
+      [{ scriptHex: bsv21Envelope + P2PKH_HEX, satoshis: 1 }],
+      [{ txid: funding.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(funding, mint)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${mint.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
+    // It asked the indexer (and missed) rather than painting blind.
+    expect(fetchMock).toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
   })
 
   it('keeps a cloud-named outpoint that really is one satoshi', async () => {
@@ -345,7 +268,7 @@ describe('classifyLegacyUtxos', () => {
     expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_B}.1`])
   })
 
-  it('never sweeps soft-latch dust as funding', async () => {
+  it('sweeps a 2-sat out while keeping a cloud-named 1-sat as an item', async () => {
     const TXID = 'c'.repeat(64)
     const result = await classifyLegacyUtxos(
       [
@@ -357,8 +280,7 @@ describe('classifyLegacyUtxos', () => {
     )
 
     expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID}.0`])
-    expect(result.latches.map((u) => u.outpoint)).toEqual([`${TXID}.1`])
-    expect(result.funding).toEqual([])
+    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID}.1`])
   })
 
   it('never sweeps unresolvable one-sat outputs', async () => {

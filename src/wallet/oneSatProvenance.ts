@@ -4,7 +4,7 @@
  * Oversized remittance edge case: never truncate path/beef — omit provenance
  * and leave identity unproven.
  *
- * Soft-latch sends embed remittance for the *spent* tip (new outpoint unknown
+ * Sends embed remittance for the *spent* tip (new outpoint unknown
  * pre-broadcast). Receivers MUST use `verifyProvenanceForHeldTip`, which accepts
  * either a direct tip match or a parent remittance when the held tip spends it.
  *
@@ -13,15 +13,15 @@
  */
 import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
-import {
-  parseProvenanceV3,
-  type ProvenanceV3,
-  type ProvenanceVerifyResult,
-} from './oneSatLatch'
 import { hasOrdEnvelope } from './ordinalOwnership'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
+
+export type ProvenanceVerifyResult = {
+  proven: boolean
+  reason: string | null
+}
 
 export type ProvenanceV2 = {
   v: 2
@@ -32,10 +32,7 @@ export type ProvenanceV2 = {
   contentType?: string
 }
 
-export type { ProvenanceVerifyResult, ProvenanceV3 } from './oneSatLatch'
-export { parseProvenanceV3, verifyProvenanceV3 } from './oneSatLatch'
-
-export type ProvenanceRemittance = ProvenanceV2 | ProvenanceV3
+export type ProvenanceRemittance = ProvenanceV2
 
 /**
  * Satoshis locked by `tx.inputs[vin]`, read from its source output in `beef`
@@ -135,10 +132,10 @@ export function mergePrecedingInputSources(
 /**
  * Recover the actual one-sat spend path already present in a BEEF.
  *
- * This is the deliberately O(N) BRC-150 fallback. It runs on the sender when
- * hardened BRC-156 is unavailable; receivers then verify the explicit path.
- * Returning `[tip, origin]` for a deep transfer is not a shortcut — it is an
- * invalid proof because the tip transaction does not directly spend genesis.
+ * This is the deliberately O(N) BRC-150 path derivation on the sender; receivers
+ * then verify the explicit path. Returning `[tip, origin]` for a deep transfer is
+ * not a shortcut — it is an invalid proof because the tip transaction does not
+ * directly spend genesis.
  */
 export function deriveOneSatPathFromBeef(
   beef: Beef,
@@ -314,7 +311,7 @@ export function provenanceFitsBudget(p: ProvenanceV2): boolean {
 
 /**
  * Session cache of tip-named remittances built by extending a parent proof
- * after soft-latch broadcast (or imported). Avoids re-hydrate on the next send.
+ * after item settle (or imported). Avoids re-hydrate on the next send.
  */
 const remittanceByTip = new Map<string, ProvenanceV2>()
 
@@ -548,7 +545,7 @@ export function verifyProvenanceV2(
 /**
  * Verify BRC-150 remittance for the tip the wallet actually holds.
  *
- * Soft-latch embeds proof of the *spent* tip. When `provenance.tip` is that
+ * Remittance embeds proof of the *spent* tip. When `provenance.tip` is that
  * parent and `heldOutpoint` spends it (1 sat), the held tip inherits the proof
  * — no O(N) lineage walk. Falls back to strict tip match otherwise.
  */
@@ -559,13 +556,6 @@ export async function verifyProvenanceForHeldTip(args: {
 }): Promise<ProvenanceVerifyResult & { origin?: string }> {
   const p = parseProvenanceV2(args.provenance)
   if (!p) {
-    if (parseProvenanceV3(args.provenance)) {
-      return {
-        proven: false,
-        reason:
-          'v3 soft-latch remittance is not authenticity proof — need BRC-150 v2 BEEF',
-      }
-    }
     return { proven: false, reason: 'missing provenance' }
   }
 
@@ -655,8 +645,6 @@ export async function verifyProvenanceForHeldTip(args: {
 
 /**
  * Authenticity verify for collectables — BRC-150 v2 only.
- *
- * Soft-latch v3 remittance is structural only and is NOT tip→origin proof.
  */
 export function verifyProvenance(
   provenance: unknown,
@@ -664,13 +652,6 @@ export function verifyProvenance(
 ): ProvenanceVerifyResult {
   if (parseProvenanceV2(provenance)) {
     return verifyProvenanceV2(provenance, heldOutpoint)
-  }
-  if (parseProvenanceV3(provenance)) {
-    return {
-      proven: false,
-      reason:
-        'v3 soft-latch remittance is not authenticity proof — need BRC-150 v2 BEEF',
-    }
   }
   return { proven: false, reason: 'missing provenance' }
 }
@@ -730,7 +711,7 @@ export async function tryBuildProvenanceV2(args: {
   path?: string[]
   /**
    * Tip BEEF already fetched for this send. Reusing it avoids a second
-   * `getBeefForTxid` round trip that otherwise dominates soft-latch signing.
+   * `getBeefForTxid` round trip that otherwise dominates item-send signing.
    */
   inputBeef?: number[]
   /**
@@ -741,7 +722,7 @@ export async function tryBuildProvenanceV2(args: {
   /**
    * Walk tip→origin from chain when the tip BEEF has no path. Default false —
    * Pixel Fox hydrates take tens of seconds on phones and usually omit under
-   * remittance budget. Soft-latch send must stay interactive.
+   * remittance budget. Item send must stay interactive.
    */
   allowLineageHydrate?: boolean
 }): Promise<ProvenanceV2 | null> {
@@ -873,9 +854,8 @@ export async function tryBuildProvenanceV2(args: {
 /**
  * Remittance for a collectable send.
  *
- * Soft-latch still creates the companion 2-sat latch UTXO, but authenticity is
- * BRC-150 v2 (full tip→origin BEEF). Shipping structural v3 alone was a fake
- * "proven" flag — do not do that.
+ * Authenticity is BRC-150 v2 (full tip→origin BEEF). Shipping a structural-only
+ * remittance as a "proven" flag was a fake — do not do that.
  */
 export async function tryBuildProvenanceForSend(args: {
   tipOutpoint: string
@@ -883,11 +863,9 @@ export async function tryBuildProvenanceForSend(args: {
   wallet: ActiveWallet
   contentType?: string
   path?: string[]
-  parentLatch?: string | null
   inputBeef?: number[]
   priorProvenance?: unknown
 }): Promise<ProvenanceRemittance | null> {
-  void args.parentLatch
   return tryBuildProvenanceV2(args)
 }
 
@@ -896,6 +874,11 @@ export function buildCollectableCustomInstructions(args: {
   origin: string
   name: string
   app?: string
+  /**
+   * Collection binding (BRC-99 `p 1sat collection:<id>` scope). Persisted so a
+   * scoped `listOutputs` grant can match without re-hitting an indexer.
+   */
+  collectionId?: string
   /**
    * Shared media outpoint for derivative / reference tips (Kit Kat pattern).
    * Display claim — BRC-150 still proves tip→`origin` (the child token).
@@ -908,6 +891,7 @@ export function buildCollectableCustomInstructions(args: {
     name: args.name,
   }
   if (args.app) body.app = args.app
+  if (args.collectionId) body.collectionId = args.collectionId
   if (args.content) {
     const content = toUnderscore(args.content)
     if (/^[0-9a-f]{64}_\d+$/i.test(content)) body.content = content
@@ -936,24 +920,29 @@ export function buildInternalizeCustomInstructions(args: {
   origin: string
   name: string
   app?: string
+  collectionId?: string
   content?: string
 }): string {
   const full = buildCollectableCustomInstructions(args)
   if (full.length <= INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX) return full
 
-  // Keep origin + content (load-bearing for derivatives); trim free text.
+  // Keep origin + content + collection (load-bearing for derivatives and
+  // scoped grants); trim only free text.
   const origin = toUnderscore(args.origin)
   const content =
     args.content && /^[0-9a-f]{64}_\d+$/i.test(toUnderscore(args.content))
       ? toUnderscore(args.content)
       : undefined
+  const collectionId = args.collectionId || undefined
   const base: Record<string, unknown> = { origin, name: '' }
+  if (collectionId) base.collectionId = collectionId
   if (content) base.content = content
   const fixed = JSON.stringify(base).length
   const budget = Math.max(0, INTERNALIZE_CUSTOM_INSTRUCTIONS_MAX - fixed - 16)
   return JSON.stringify({
     origin,
     name: args.name.slice(0, budget),
+    ...(collectionId ? { collectionId } : {}),
     ...(content ? { content } : {}),
   })
 }

@@ -4,11 +4,11 @@
  * HARD RULE: never pass satoshis === 1 through fundWalletFromP2PKHOutpoints.
  * Unrecognized 1-sat outs stay on the address until classified (cloud items or GorillaPool).
  *
- * A BRC-156 latched transfer names itself: the settle transaction carries latch
- * state on chain, so `resolveLatchedTip` identifies the item in one fetch with no
- * indexer involved. The GorillaPool/WhatsOnChain ancestry walk below it is the
- * bootstrap path for legacy unlatched tips, where nothing on chain says what the
- * sat carries and the only recourse is replaying history.
+ * Nothing on chain says what a 1-sat carries, so *discovery* comes from the
+ * transfer-shape probe (a couple of cached rawtx fetches — see
+ * {@link probeOrdinalTransfer}), which paints a provisional card instantly.
+ * *Identity* then settles after paint: BRC-150 remittance rebuild, or the
+ * GorillaPool/WhatsOnChain ancestry walk for a legacy tip.
  */
 import { Beef, Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
@@ -33,15 +33,8 @@ import {
   rememberResolvedInscription,
   rememberUnresolved,
   shouldResolveInscription,
-  PENDING_RETRY_MS,
   RESOLVE_RETRY_MS,
 } from './inscriptionCache'
-import {
-  ONE_SAT_LATCH_BASKET,
-  findLatchStateForTip,
-  isLatchDustSats,
-  latchOutputTags,
-} from './oneSatLatch'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
   isBsv21Mime,
@@ -52,6 +45,7 @@ import {
   type Bsv21Op,
 } from './bsv21'
 import { parseContentReference } from './derivativeContent'
+import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -63,6 +57,8 @@ export type MigrationItem = {
   /** Display hints from indexer (optional) */
   name?: string
   app?: string
+  /** Collection binding (BRC-99 `p 1sat collection:<id>` scope). */
+  collectionId?: string
 }
 
 export type OneSatImportResult = {
@@ -73,20 +69,18 @@ export type OneSatImportResult = {
 }
 
 export type ClassifiedLegacyUtxos = {
-  /** satoshis > 1 and not latch dust — safe to fund-sweep */
+  /** satoshis > 1 — safe to fund-sweep */
   funding: LegacyUtxo[]
   /** Confirmed ordinals — internalize to basket `1sat` */
   oneSats: MigrationItem[]
   /** Confirmed BSV-21 tips — internalize to basket `bsv21` (Collect fungibles) */
   bsv21: Bsv21ImportItem[]
-  /** Soft-latch dust (exactly LATCH_DUST_SATS) — internalize to `1sat-latch` */
-  latches: LegacyUtxo[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
   /**
-   * Subset of {@link heldOneSats} a co-created latch proves is an ordinal tip.
-   * Known to be an item, still waiting on an origin — worth telling the user
-   * about, because to them the transfer has simply gone missing.
+   * Subset of {@link heldOneSats} known to be an ordinal tip still waiting on an
+   * origin — worth telling the user about, because to them the transfer has
+   * simply gone missing.
    */
   pendingTips: LegacyUtxo[]
 }
@@ -386,10 +380,8 @@ const VIN_PROBE_LIMIT = 4
 
 /** Unknown one-satoshi outputs identified per classify pass. */
 export const MAX_UNKNOWN_RESOLVES_PER_PASS = 6
-/** Concurrent soft-latch / tip internalizations — BEEF + AtomicBEEF are heavy. */
+/** Concurrent tip internalizations — BEEF + AtomicBEEF are heavy. */
 export const IMPORT_TX_CONCURRENCY = 3
-/** Parallel latch-state rawtx peeks while classifying a burst of P2P receives. */
-export const LATCH_TIP_WARM_CONCURRENCY = 4
 
 async function mapPool<T, R>(
   items: readonly T[],
@@ -414,10 +406,9 @@ async function mapPool<T, R>(
 
 /**
  * A mined transaction body never changes, so fetching one twice is pure latency.
- * Soft-latch resolve and provenance walks often ask for the same tip / latch /
- * origin bodies in one sync pass. Successes are held long enough to cover a
- * whole pass; misses are held briefly so a transient outage does not pin a wrong
- * answer.
+ * Item resolve and provenance walks often ask for the same tip / origin bodies
+ * in one sync pass. Successes are held long enough to cover a whole pass; misses
+ * are held briefly so a transient outage does not pin a wrong answer.
  */
 const RAW_TX_CACHE_TTL_MS = 10 * 60_000
 const RAW_TX_MISS_TTL_MS = 10_000
@@ -540,44 +531,6 @@ async function fetchRawTxHexUncached(txid: string, chain: Chain): Promise<string
 }
 
 /**
- * Resolve a latched tip's identity from the transaction that delivered it.
- *
- * This is the BRC-156 fast path and the whole point of latching: the settle
- * transaction carries its own latch state, so identity costs one fetch of chain
- * data the receiver needs anyway — no ancestry replay, no ordinal indexer, and
- * no dependence on anyone having indexed the transfer yet.
- */
-export async function resolveLatchedTip(
-  txid: string,
-  vout: number,
-  chain: Chain,
-): Promise<ResolvedInscription | null> {
-  const hex = await fetchRawTxHex(txid, chain)
-  if (!hex) return null
-
-  let outputs: Array<{ lockingScript?: string | null }>
-  try {
-    outputs = Transaction.fromHex(hex).outputs.map((o) => ({
-      lockingScript: o.lockingScript?.toHex(),
-    }))
-  } catch {
-    return null
-  }
-
-  const state = findLatchStateForTip(outputs, vout)
-  if (!state) return null
-
-  return {
-    origin: state.origin,
-    name: state.name,
-    app: state.app,
-    mimeType: state.mimeType,
-    traits: [],
-    extras: [],
-  }
-}
-
-/**
  * Resolve metadata when the tip's origin is already known.
  *
  * Fresh tips often 404 on the indexer for hours after a transfer, while the
@@ -684,8 +637,9 @@ export async function resolveBsv21Holding(
 
 /**
  * Resolve inscription *display* origin for a 1-sat outpoint (grade C CDN / indexer
- * metadata). Ownership and latch naming must not depend on this — soft-latch OP_RETURN
- * + SPV BEEF remain grade A. GorillaPool `/content` is pictures after origin is known.
+ * metadata). Ownership and identity must not depend on this — the BRC-150
+ * tip→origin proof + SPV BEEF remain grade A. GorillaPool `/content` is pictures
+ * after origin is known.
  * BSV-21 fungibles are intentionally excluded — use {@link resolveBsv21Holding}.
  */
 export async function resolveOneSatInscription(
@@ -835,12 +789,72 @@ async function rebuildBrc150Identity(
   }
 }
 
+/** Per-pass ceiling on transfer-shape probes (a couple of cached rawtx fetches each). */
+export const MAX_TRANSFER_PROBES_PER_PASS = 12
+
+type OrdinalTransferProbe = 'item' | 'bsv21' | 'unknown'
+
+/**
+ * Instant-ingest evidence for an unknown 1-sat, without an indexer.
+ *
+ * By 1Sat rules an NFT transfer moves an existing 1-sat tip, so its settle
+ * transaction spends a 1-sat input and pays bare P2PKH; a mint carries the ord
+ * envelope in the output itself; a valid BSV-21 fungible always re-inscribes
+ * its token JSON, so a bare 1-sat can never be a BSV-21 holding. A couple of
+ * cached rawtx fetches therefore decide "ordinal transfer or stray dust" — the
+ * same evidence grade the removed latch dust provided (discovery, not
+ * authentication). Authentication stays with the BRC-150 tip→origin proof,
+ * which runs after the card paints.
+ */
+async function probeOrdinalTransfer(
+  txid: string,
+  vout: number,
+  chain: Chain,
+): Promise<OrdinalTransferProbe> {
+  const hex = await fetchRawTxHex(txid, chain)
+  if (!hex) return 'unknown'
+  let tx: Transaction
+  try {
+    tx = Transaction.fromHex(hex)
+  } catch {
+    return 'unknown'
+  }
+  const out = tx.outputs[vout]
+  if (!out || out.satoshis !== 1) return 'unknown'
+
+  const scriptHex = out.lockingScript?.toHex()
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (envelope) {
+    // Inscribed at this outpoint — a mint, so tip-as-origin is literally
+    // correct. BSV-21 fungibles belong in basket `bsv21` via the indexer.
+    return isBsv21Mime(envelope.contentType) ? 'bsv21' : 'item'
+  }
+  // Envelope structure we cannot parse a mime out of: let the indexer decide.
+  if (hasOrdEnvelope(scriptHex)) return 'unknown'
+
+  // Bare P2PKH: an NFT transfer if the tx spends an existing 1-sat tip.
+  for (const input of tx.inputs.slice(0, VIN_PROBE_LIMIT)) {
+    const sourceTxid = input.sourceTXID
+    const sourceVout = input.sourceOutputIndex
+    if (!sourceTxid || !Number.isInteger(sourceVout)) continue
+    const parentHex = await fetchRawTxHex(sourceTxid, chain)
+    if (!parentHex) continue
+    try {
+      if (Transaction.fromHex(parentHex).outputs[sourceVout]?.satoshis === 1) {
+        return 'item'
+      }
+    } catch {
+      // Keep probing the remaining inputs.
+    }
+  }
+  return 'unknown'
+}
+
 /**
  * Split scanned UTXOs.
- * - funding: satoshis > 1 and not latch dust — safe to fund-sweep
+ * - funding: satoshis > 1 — safe to fund-sweep
  * - oneSats: cloud-known or GorillaPool-confirmed NFT inscriptions (exactly 1 sat)
  * - bsv21: confirmed BSV-21 fungible tips — basket `bsv21` under Collect
- * - latches: soft-latch dust (exactly LATCH_DUST_SATS) — never funds, never tips
  * - heldOneSats: every other 1-sat — MUST NOT be swept
  */
 export async function classifyLegacyUtxos(
@@ -849,9 +863,9 @@ export async function classifyLegacyUtxos(
   knownItems: MigrationItem[] = [],
   opts: {
     /**
-     * Skip every indexer round trip used to name a tip. Funding and latch dust
-     * are decided from the satoshi value alone, so a send can still tell what it
-     * may spend without waiting on ordinal lookups it will never use.
+     * Skip every indexer round trip used to name a tip. Funding is decided from
+     * the satoshi value alone, so a send can still tell what it may spend
+     * without waiting on ordinal lookups it will never use.
      */
     fundingOnly?: boolean
   } = {},
@@ -891,57 +905,18 @@ export async function classifyLegacyUtxos(
   }
 
   const funding: LegacyUtxo[] = []
-  const latches: LegacyUtxo[] = []
   const heldOneSats: LegacyUtxo[] = []
   const pendingTips: LegacyUtxo[] = []
 
   // Identifying one unknown dust output costs a backwards walk — a request per
   // input per hop — and the loop below is serial, so a wallet holding a pile of
   // stray dust could spend minutes in a single pass before the UI saw anything.
-  // Unbudgeted outputs are simply held and picked up by a later pass; a tip a
-  // latch already proved landed is never budgeted, because the user is watching
-  // that one arrive.
+  // Unbudgeted outputs are simply held and picked up by a later pass.
   let resolveBudget = MAX_UNKNOWN_RESOLVES_PER_PASS
-
-  // BRC-156 co-creates tip (OUTPUT:0) and latch (OUTPUT:1) in one transfer, and
-  // the latch is plain P2PKH so a receiver sees it on a normal address scan. A
-  // latch paying us is therefore discovery evidence for a same-transaction tip.
-  const latchTxids = new Set<string>()
-  for (const u of candidates) {
-    if (isLatchDustSats(u.satoshis)) latchTxids.add(u.txid.trim().toLowerCase())
-  }
-
-  // Soft-latch burst: warm latch-state rawtxs in parallel so five P2P receives
-  // do not serialize five indexer + ancestry walks before the first card paints.
-  if (!opts.fundingOnly && latchTxids.size > 0) {
-    const toWarm = candidates.filter((u) => {
-      if (u.satoshis !== 1 || u.vout !== 0) return false
-      if (!latchTxids.has(u.txid.trim().toLowerCase())) return false
-      if (claimed.has(outpointKey(u.outpoint))) return false
-      const cacheKey = `${u.txid}.${u.vout}`
-      if (getResolvedInscription(cacheKey)) return false
-      return shouldResolveInscription(cacheKey, Date.now(), PENDING_RETRY_MS)
-    })
-    if (toWarm.length > 0) {
-      await mapPool(toWarm, LATCH_TIP_WARM_CONCURRENCY, async (u) => {
-        const cacheKey = `${u.txid}.${u.vout}`
-        const fetched = await resolveLatchedTip(u.txid, u.vout, chain)
-        if (fetched && !isBsv21Mime(fetched.mimeType)) {
-          rememberResolvedInscription(cacheKey, fetched)
-        }
-      })
-    }
-  }
+  let probeBudget = MAX_TRANSFER_PROBES_PER_PASS
 
   for (const u of candidates) {
     if (claimed.has(outpointKey(u.outpoint))) continue
-
-    // Soft-latch dust: never a tip, never spendable funds.
-    if (isLatchDustSats(u.satoshis)) {
-      latches.push(u)
-      claimed.add(outpointKey(u.outpoint))
-      continue
-    }
 
     // HARD RULE: never fund-sweep 1-sat outs.
     // GorillaPool only when we have no local claim (knownItems / cloud migrate).
@@ -955,7 +930,9 @@ export async function classifyLegacyUtxos(
         continue
       }
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
-      let resolved: { origin: string; name?: string; app?: string } | null = null
+      let resolved:
+        | { origin: string; name?: string; app?: string; collectionId?: string }
+        | null = null
       if (known?.origin != null) {
         resolved = {
           origin: known.origin.includes('.')
@@ -963,51 +940,33 @@ export async function classifyLegacyUtxos(
             : known.origin,
           name: known.name,
           app: known.app,
+          collectionId: known.collectionId,
         }
       } else if (known) {
         resolved = {
           origin: txidVoutUnderscore(u.txid, u.vout),
           name: known.name,
           app: known.app,
+          collectionId: known.collectionId,
         }
       } else {
         const cacheKey = `${u.txid}.${u.vout}`
         resolved = getResolvedInscription(cacheKey)
-        // The 10-minute miss backoff exists to stop us hammering the indexer
-        // over stray dust. A latch-proven tip is not stray dust — it is an item
-        // we know landed — so it gets the much shorter pending window instead.
-        // It still needs *a* window: the poll drops to 8s while a tip is
-        // pending, and one walk costs a request per input per hop, so retrying
-        // every poll is how the wallet gets itself throttled by the indexer it
-        // is waiting on.
-        const latchProven = u.vout === 0 && latchTxids.has(u.txid.trim().toLowerCase())
-        const retryMs = latchProven ? PENDING_RETRY_MS : RESOLVE_RETRY_MS
-        if (latchProven) {
-          // Soft-latch receive: latch state (one rawtx) names the tip. Never
-          // call GorillaPool / ancestry here — five inbound P2P tips were
-          // waiting on five indexer walks before any basket insert.
-          if (
-            !resolved &&
-            shouldResolveInscription(cacheKey, Date.now(), retryMs)
-          ) {
-            const fetched = await resolveLatchedTip(u.txid, u.vout, chain)
-            if (fetched && !isBsv21Mime(fetched.mimeType)) {
-              rememberResolvedInscription(cacheKey, fetched)
-              resolved = fetched
-            }
+        const mayResolve =
+          !resolved && shouldResolveInscription(cacheKey, Date.now(), RESOLVE_RETRY_MS)
+
+        // Instant ingest, deferred verify. The transfer-shape probe replaces
+        // the removed latch fast path: tip-as-origin paints a card now, and
+        // the post-paint authenticity walk (BRC-150) proves the real origin
+        // and fills name/traits. No indexer, no ancestry walk here.
+        if (mayResolve && probeBudget > 0) {
+          probeBudget--
+          if ((await probeOrdinalTransfer(u.txid, u.vout, chain)) === 'item') {
+            resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
           }
-          // Tip-as-origin is enough to paint a card; authenticity + traits
-          // settle behind the loading circle after listCollectables paints.
-          if (!resolved) {
-            resolved = {
-              origin: txidVoutUnderscore(u.txid, u.vout),
-            }
-          }
-        } else if (
-          !resolved &&
-          shouldResolveInscription(cacheKey, Date.now(), retryMs) &&
-          resolveBudget > 0
-        ) {
+        }
+
+        if (!resolved && mayResolve && resolveBudget > 0) {
           resolveBudget--
           // Fungibles first — same indexer hit, divert before NFT identity.
           const ft = await resolveBsv21Holding(u.txid, u.vout, chain)
@@ -1046,6 +1005,7 @@ export async function classifyLegacyUtxos(
           origin: resolved?.origin ?? known?.origin ?? txidVoutUnderscore(u.txid, u.vout),
           name: resolved?.name ?? known?.name,
           app: resolved?.app ?? known?.app,
+          collectionId: resolved?.collectionId ?? known?.collectionId,
         })
         claimed.add(outpointKey(u.outpoint))
       } else {
@@ -1060,7 +1020,7 @@ export async function classifyLegacyUtxos(
     // satoshis === 0 or weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats, bsv21, latches, heldOneSats, pendingTips }
+  return { funding, oneSats, bsv21, heldOneSats, pendingTips }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */
@@ -1138,11 +1098,15 @@ export async function importOneSatOrdinals(
               `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
               ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
               ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
+              ...(item.collectionId
+                ? [`collection:${item.collectionId.slice(0, 80)}`]
+                : []),
             ],
             customInstructions: buildInternalizeCustomInstructions({
               origin,
               name: item.name ?? 'Collectable',
               app: item.app,
+              collectionId: item.collectionId,
             }),
           },
         })
@@ -1183,334 +1147,6 @@ export async function importOneSatOrdinals(
         part.errors.push(`${item.outpoint}: ${msg}`)
       }
       console.warn('[1sat] internalize failed', txid, err)
-    }
-    return part
-  })
-
-  return {
-    imported: parts.reduce((n, p) => n + p.imported, 0),
-    failed: parts.reduce((n, p) => n + p.failed, 0),
-    errors: parts.flatMap((p) => p.errors),
-    outpoints: parts.flatMap((p) => p.outpoints),
-  }
-}
-
-/**
- * Internalize a soft-latch settle in one BEEF: tip → `1sat` and latch →
- * `1sat-latch`. Same-tx tip+latch used to fetch BEEF twice and serialize.
- */
-export async function importSoftLatchSettlements(
-  tips: MigrationItem[],
-  latches: LegacyUtxo[],
-  active?: ActiveWallet | null,
-): Promise<OneSatImportResult> {
-  const wallet = active ?? getActiveWallet()
-  if (!wallet) throw new Error('Wallet locked')
-
-  const normalizedTips = tips
-    .map(normalizeMigrationItem)
-    .filter((x): x is MigrationItem => x != null)
-  if (normalizedTips.length === 0 || latches.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const tipsByTxid = new Map<string, MigrationItem[]>()
-  for (const tip of normalizedTips) {
-    const key = tip.txid!.toLowerCase()
-    const list = tipsByTxid.get(key) ?? []
-    list.push(tip)
-    tipsByTxid.set(key, list)
-  }
-  const latchesByTxid = new Map<string, LegacyUtxo[]>()
-  for (const latch of latches) {
-    const key = latch.txid.trim().toLowerCase()
-    const list = latchesByTxid.get(key) ?? []
-    list.push(latch)
-    latchesByTxid.set(key, list)
-  }
-
-  const txids = [...tipsByTxid.keys()].filter((id) => latchesByTxid.has(id))
-  if (txids.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const parts = await mapPool(txids, IMPORT_TX_CONCURRENCY, async (txidKey) => {
-    const tipGroup = tipsByTxid.get(txidKey) ?? []
-    const latchGroup = latchesByTxid.get(txidKey) ?? []
-    const allOps = [
-      ...tipGroup.map((t) => t.outpoint),
-      ...latchGroup.map((l) => l.outpoint),
-    ]
-    const part: OneSatImportResult = {
-      imported: 0,
-      failed: 0,
-      errors: [],
-      outpoints: [],
-    }
-    const claimed = beginOneSatImport(allOps)
-    if (claimed.length === 0) return part
-    const claimedSet = new Set(claimed)
-    const tipsClaimed = tipGroup.filter((t) =>
-      claimedSet.has(t.outpoint.trim().toLowerCase()),
-    )
-    const latchesClaimed = latchGroup.filter((l) =>
-      claimedSet.has(l.outpoint.trim().toLowerCase()),
-    )
-    if (tipsClaimed.length === 0 && latchesClaimed.length === 0) return part
-
-    const txid = tipsClaimed[0]?.txid ?? latchesClaimed[0]!.txid
-    try {
-      const { isAtomicBeefInBackoff } = await import('./beefCache')
-      if (isAtomicBeefInBackoff(txid)) {
-        markOneSatImportFailed(allOps, { hard: true })
-        part.failed = tipsClaimed.length + latchesClaimed.length
-        for (const op of allOps) {
-          part.errors.push(`${op}: AtomicBEEF backoff`)
-        }
-        return part
-      }
-      await yieldToUi()
-      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
-      await yieldToUi()
-      const beef = Beef.fromBinary(atomic)
-      const sourceTx = beef.findAtomicTransaction(txid)
-
-      const remittanceOutputs: Array<{
-        outputIndex: number
-        protocol: 'basket insertion'
-        insertionRemittance: {
-          basket: string
-          tags: string[]
-          customInstructions: string
-        }
-      }> = []
-
-      for (const item of tipsClaimed) {
-        const sats = sourceTx?.outputs?.[item.vout!]?.satoshis
-        if (typeof sats === 'number' && sats !== 1) {
-          console.warn(
-            `[1sat] refusing to internalize ${item.outpoint} — output is not 1 satoshi`,
-          )
-          releaseOneSatImport([item.outpoint])
-          continue
-        }
-        const origin = item.origin ?? item.outpoint.replace(/\.(\d+)$/, '_$1')
-        remittanceOutputs.push({
-          outputIndex: item.vout!,
-          protocol: 'basket insertion',
-          insertionRemittance: {
-            basket: '1sat',
-            tags: [
-              'ordinal',
-              `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
-              ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
-              ...(item.app ? [`app:${item.app.slice(0, 40)}`] : []),
-            ],
-            customInstructions: buildInternalizeCustomInstructions({
-              origin,
-              name: item.name ?? 'Collectable',
-              app: item.app,
-            }),
-          },
-        })
-      }
-
-      const tipOrigin =
-        tipsClaimed[0]?.origin ??
-        (tipsClaimed[0]
-          ? txidVoutUnderscore(tipsClaimed[0].txid!, tipsClaimed[0].vout!)
-          : `${txid}_0`)
-
-      for (const latch of latchesClaimed) {
-        const sats = sourceTx?.outputs?.[latch.vout]?.satoshis
-        if (typeof sats === 'number' && !isLatchDustSats(sats)) {
-          console.warn(
-            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch dust (${sats})`,
-          )
-          releaseOneSatImport([latch.outpoint])
-          continue
-        }
-        const originU = tipOrigin.includes('.')
-          ? tipOrigin.replace(/\.(\d+)$/, '_$1')
-          : tipOrigin.includes('_')
-            ? tipOrigin
-            : `${txid}_0`
-        remittanceOutputs.push({
-          outputIndex: latch.vout,
-          protocol: 'basket insertion',
-          insertionRemittance: {
-            basket: ONE_SAT_LATCH_BASKET,
-            tags: latchOutputTags({ origin: originU, tip: 'OUTPUT:0' }),
-            customInstructions: JSON.stringify({
-              schema: 1,
-              origin: originU.toLowerCase(),
-              tip: 'OUTPUT:0',
-            }),
-          },
-        })
-      }
-
-      if (remittanceOutputs.length === 0) return part
-
-      await yieldToUi()
-      await wallet.wallet.internalizeAction({
-        tx: atomic,
-        description: 'Import soft-latch tip + latch',
-        labels: ['1sat', '1sat-latch', 'migration'],
-        outputs: remittanceOutputs,
-        seekPermission: false,
-      })
-      await yieldToUi()
-
-      const importedOps = remittanceOutputs.map(
-        (o) => `${txid}.${o.outputIndex}`,
-      )
-      part.imported = remittanceOutputs.length
-      part.outpoints = importedOps
-      markOneSatImported(importedOps)
-
-      for (const item of tipsClaimed) {
-        if (!item.name) continue
-        const op = item.outpoint.trim().toLowerCase()
-        if (getResolvedInscription(op)) continue
-        rememberResolvedInscription(op, {
-          origin: item.origin ?? op.replace(/\.(\d+)$/, '_$1'),
-          name: item.name,
-          ...(item.app ? { app: item.app } : {}),
-          traits: [],
-          extras: [],
-        })
-      }
-    } catch (err) {
-      part.failed = tipsClaimed.length + latchesClaimed.length
-      const msg = err instanceof Error ? err.message : String(err)
-      const hard =
-        /valid transaction on chain|not (?:found|on[ -]?chain)|AtomicBEEF backoff|Could not build AtomicBEEF/i.test(
-          msg,
-        )
-      markOneSatImportFailed(allOps, hard ? { hard: true } : undefined)
-      for (const op of allOps) part.errors.push(`${op}: ${msg}`)
-      console.warn('[soft-latch] combined internalize failed', txid, err)
-    }
-    return part
-  })
-
-  return {
-    imported: parts.reduce((n, p) => n + p.imported, 0),
-    failed: parts.reduce((n, p) => n + p.failed, 0),
-    errors: parts.flatMap((p) => p.errors),
-    outpoints: parts.flatMap((p) => p.outpoints),
-  }
-}
-
-/**
- * Internalize soft-latch dust into basket `1sat-latch`.
- * Pairs each latch with a tip from the same tx when one is known.
- */
-export async function importOneSatLatches(
-  latches: LegacyUtxo[],
-  tipOriginsByTxid: Map<string, string>,
-  active?: ActiveWallet | null,
-): Promise<OneSatImportResult> {
-  const wallet = active ?? getActiveWallet()
-  if (!wallet) throw new Error('Wallet locked')
-  if (latches.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const claimed = beginOneSatImport(latches.map((l) => l.outpoint))
-  const claimedSet = new Set(claimed)
-  const toImport = latches.filter((l) => claimedSet.has(l.outpoint.trim().toLowerCase()))
-  if (toImport.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const byTxid = new Map<string, LegacyUtxo[]>()
-  for (const latch of toImport) {
-    const list = byTxid.get(latch.txid) ?? []
-    list.push(latch)
-    byTxid.set(latch.txid, list)
-  }
-
-  const groups = [...byTxid.entries()]
-  const parts = await mapPool(groups, IMPORT_TX_CONCURRENCY, async ([txid, group]) => {
-    const groupOps = group.map((g) => g.outpoint)
-    const part: OneSatImportResult = {
-      imported: 0,
-      failed: 0,
-      errors: [],
-      outpoints: [],
-    }
-    try {
-      // BEEF serialize + AtomicBEEF validate inside internalizeAction are sync
-      // CPU on the WebView thread — yield around them so nav taps stay live.
-      await yieldToUi()
-      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
-      await yieldToUi()
-      const beef = Beef.fromBinary(atomic)
-      const sourceTx = beef.findAtomicTransaction(txid)
-      const tipOrigin =
-        tipOriginsByTxid.get(txid.toLowerCase()) ??
-        tipOriginsByTxid.get(txid) ??
-        `${txid}_0`
-
-      const remittanceOutputs = []
-      for (const latch of group) {
-        const sats = sourceTx?.outputs?.[latch.vout]?.satoshis
-        // Soft-latch dust is exactly 2 sats.
-        if (typeof sats === 'number' && !isLatchDustSats(sats)) {
-          console.warn(
-            `[1sat-latch] refusing to internalize ${latch.outpoint} — not latch dust (${sats})`,
-          )
-          releaseOneSatImport([latch.outpoint])
-          continue
-        }
-        const tipRef = `OUTPUT:0`
-        const originU = tipOrigin.includes('.')
-          ? tipOrigin.replace(/\.(\d+)$/, '_$1')
-          : tipOrigin.includes('_')
-            ? tipOrigin
-            : `${txid}_0`
-        remittanceOutputs.push({
-          outputIndex: latch.vout,
-          protocol: 'basket insertion' as const,
-          insertionRemittance: {
-            basket: ONE_SAT_LATCH_BASKET,
-            tags: latchOutputTags({ origin: originU, tip: tipRef }),
-            customInstructions: JSON.stringify({
-              schema: 1,
-              origin: originU.toLowerCase(),
-              tip: tipRef,
-            }),
-          },
-        })
-      }
-      if (remittanceOutputs.length === 0) return part
-
-      await yieldToUi()
-      await wallet.wallet.internalizeAction({
-        tx: atomic,
-        description: 'Import 1Sat latch',
-        labels: ['1sat-latch', 'migration'],
-        outputs: remittanceOutputs,
-        seekPermission: false,
-      })
-      await yieldToUi()
-
-      const importedOps = remittanceOutputs.map(
-        (o) => `${txid}.${o.outputIndex}`,
-      )
-      part.imported = remittanceOutputs.length
-      part.outpoints = importedOps
-      markOneSatImported(importedOps)
-    } catch (err) {
-      markOneSatImportFailed(groupOps)
-      part.failed = group.length
-      const msg = err instanceof Error ? err.message : String(err)
-      for (const latch of group) {
-        part.errors.push(`${latch.outpoint}: ${msg}`)
-      }
-      console.warn('[1sat-latch] internalize failed', txid, err)
     }
     return part
   })

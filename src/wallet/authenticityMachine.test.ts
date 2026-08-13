@@ -40,7 +40,7 @@ describe('authenticityMachine', () => {
   it('canAcceptVerdict encodes monotonic policy', () => {
     expect(isProvenTier('brc150')).toBe(true)
     expect(canAcceptVerdict('brc150', 'unproven')).toBe(false)
-    expect(canAcceptVerdict('brc156', 'brc150')).toBe(false)
+    expect(canAcceptVerdict('brc150', 'brc150')).toBe(true)
     expect(canAcceptVerdict('unproven', 'brc150')).toBe(true)
   })
 })

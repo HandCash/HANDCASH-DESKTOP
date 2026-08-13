@@ -4,8 +4,8 @@ import { chooseItemSettlePath } from './itemSettlePath'
 import {
   maySenderBroadcast,
   mustDeliverToPeer,
-  softLatchSendMachine,
-} from './softLatchSendMachine'
+  itemSendMachine,
+} from './itemSendMachine'
 
 const TX = 'a'.repeat(64)
 const IDENTITY =
@@ -25,13 +25,13 @@ const externalSettle = chooseItemSettlePath({
 })
 
 function start(settlePath = peerSettle) {
-  const actor = createActor(softLatchSendMachine).start()
+  const actor = createActor(itemSendMachine).start()
   actor.send({ type: 'START', outpoint: `${TX}.0`, settlePath })
   actor.send({ type: 'BUILT' })
   return actor
 }
 
-describe('softLatchSendMachine', () => {
+describe('itemSendMachine', () => {
   it('createAction with txid goes to peerDeliver (not broadcast)', () => {
     const actor = start(peerSettle)
     actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })

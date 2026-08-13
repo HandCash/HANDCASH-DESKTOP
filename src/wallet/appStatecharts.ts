@@ -213,11 +213,11 @@ const SEND_COLLECTABLE = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> classifying : START with SendPath
-  classifying --> softLatch : softLatch
+  classifying --> p2pkhSend : p2pkhSend
   classifying --> refusing : refuse
   refusing --> failed
-  softLatch --> done : SUCCESS
-  softLatch --> failed : FAIL
+  p2pkhSend --> done : SUCCESS
+  p2pkhSend --> failed : FAIL
   done --> idle : RESET
   failed --> idle : RESET
 `
@@ -226,11 +226,11 @@ const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   direction TB
   [*] --> tipKind
   tipKind --> covenantLocked : long non-P2PKH
-  tipKind --> softP2pkh : P2PKH
+  tipKind --> p2pkh : P2PKH
   tipKind --> unknown : empty / other
   covenantLocked --> refuse : abandon only
-  softP2pkh --> softLatch
-  unknown --> softLatch : BRC-150 proven
+  p2pkh --> p2pkhSend
+  unknown --> p2pkhSend : BRC-150 proven
   unknown --> refuse : unproven
 `
 
@@ -251,11 +251,11 @@ const AUTHENTICITY = `stateDiagram-v2
   note right of proven
     Never downgrade to unproven.
     Durable projection: provenCache.v2
-    Legacy brc156 paints as BRC-150
+    Legacy brc156 read forward as BRC-150
   end note
 `
 
-const SOFT_LATCH_SEND = `stateDiagram-v2
+const ITEM_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> building : START with ItemSettlePath
@@ -516,7 +516,7 @@ const WALLET_IO = `flowchart TB
   subgraph Renderer["Renderer — custody after unlock"]
     KEYS["rootKeyHex + toolbox wallet"]
     COORD["walletCoordinator\\n4 exclusive regions"]
-    SPEND["Spend machines\\nBSV / soft-latch / BRC-100"]
+    SPEND["Spend machines\\nBSV / item / BRC-100"]
     INGEST["chainIngest\\nscan → classify → import"]
     HIST["historyReplica\\nBRC-39"]
     HANDLER["brc100Handler\\ndevicePeerHandler"]
@@ -663,15 +663,12 @@ const CHAIN_INGEST_CHART = `flowchart TB
   RECON --> SCAN[legacy address UTXO scan\\nBitails → WoC]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
-  CLASS --> BUNDLE[soft-latch tip+latch\\none BEEF · concurrency 3]
-  CLASS --> TIPS[solo 1sat tips]
+  CLASS --> TIPS[1sat tips → importOneSatOrdinals]
   CLASS --> FT[bsv21 tokens]
   CLASS --> HOLD[held unrecognized 1-sat\\nnever sweep]
-  BUNDLE --> PAINT[listCollectables paint]
-  TIPS --> PAINT
+  TIPS --> PAINT[listCollectables paint]
   PAINT --> AUTH[authenticity / genesis\\nbudgeted background]
   FUND --> AUDIT[spendable audit report-only]
-  BUNDLE --> AUDIT
   TIPS --> AUDIT
   FT --> AUDIT
   AUDIT --> BAL[balance refresh + toast]
@@ -700,7 +697,7 @@ const MESSAGEBOX_CHART = `flowchart TB
   end
 
   subgraph NotBox["Not messagebox"]
-    CHAIN["BSV + soft-latch settle\\nlatch state OP_RETURN"]
+    CHAIN["BSV + item settle\\nP2PKH tip on chain"]
     REM["BRC-150 remittance\\nsender localState only"]
   end
 `
@@ -793,26 +790,26 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendCollectable',
     label: 'Send item',
-    caption: 'collectableSendMachine — classify → softLatch | refuse',
+    caption: 'collectableSendMachine — classify → p2pkhSend | refuse',
     source: SEND_COLLECTABLE,
   },
   {
     id: 'sendPath',
     label: 'Send path',
-    caption: 'chooseSendPath — TipKind → softLatch | refuse (150-proven unknown ok)',
+    caption: 'chooseSendPath — TipKind → p2pkhSend | refuse (150-proven unknown ok)',
     source: COLLECTABLE_SEND_PATH,
   },
   {
     id: 'authenticity',
     label: 'Authenticity',
-    caption: 'authenticityMachine — BRC-150 ladder (legacy brc156 → 150)',
+    caption: 'authenticityMachine — BRC-150 ladder (legacy brc156 read as 150)',
     source: AUTHENTICITY,
   },
   {
-    id: 'softLatchSend',
-    label: 'Soft-latch send',
-    caption: 'softLatchSendMachine — noSend sign → peerDeliver | self | external',
-    source: SOFT_LATCH_SEND,
+    id: 'itemSend',
+    label: 'Item send',
+    caption: 'itemSendMachine — noSend sign → peerDeliver | self | external',
+    source: ITEM_SEND,
   },
   {
     id: 'bsvSend',

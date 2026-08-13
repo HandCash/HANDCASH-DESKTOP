@@ -664,9 +664,13 @@ export function removeActivityForTxids(txids: string[]): number {
  * Remove Activity rows whose txid is confirmed missing on-chain (404).
  * Pending BSV Verifying…/Sending… are included — tip-hint polls otherwise
  * re-pin them forever when the inbox message is never ACKed.
- * Pending collectables are excluded: soft-latch peerDeliver may be off-chain
- * until the payee internalizes and broadcasts.
  * Settled rows need a longer grace so mempool txs are not pruned early.
+ *
+ * Item rows are excluded at every status. A `peerDeliver` settle is broadcast by
+ * the **payee**, so a 404 means they have not broadcast yet — not that the
+ * transfer never happened. The tip has already left the basket by then, so
+ * deleting the row destroys the only record of the send and the details panel
+ * falls back to "Transaction not found".
  */
 export async function pruneMissingOnChainActivity(
   chain: import('./vault').Chain,
@@ -681,15 +685,9 @@ export async function pruneMissingOnChainActivity(
   const candidates = prev
     .filter((e) => {
       if (!e.txid || !/^[0-9a-f]{64}$/i.test(e.txid)) return false
+      if (activityRowIsItem(e)) return false
       const age = now - e.at
-      if (e.status === 'pending') {
-        if (age < pendingMinAgeMs) return false
-        // peerDeliver soft-latch: tip may 404 until payee broadcasts.
-        if (e.item || e.method === 'receive-collectable' || e.method === 'send-collectable') {
-          return false
-        }
-        return true
-      }
+      if (e.status === 'pending') return age >= pendingMinAgeMs
       if (age < settledMinAgeMs) return false
       return e.kind === 'spent' || e.kind === 'earned'
     })

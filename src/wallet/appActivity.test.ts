@@ -347,6 +347,29 @@ describe('inbound receive activity', () => {
     expect(listRecentActivity(10)).toHaveLength(0)
   })
 
+  it('keeps a settled item send whose txid 404s (payee has not broadcast)', async () => {
+    // peerDeliver: the payee broadcasts, so a 404 is expected for a while. The
+    // tip already left the basket — pruning the row leaves the details panel
+    // showing "Transaction not found" for a transfer that really happened.
+    noteOutboundSendComplete({
+      pendingId: 'item-send',
+      txid: 'ee'.repeat(32),
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Pixel Fox', origin: 'aa_0', outpoint: 'aa.0' },
+    })
+    expect(listRecentActivity(10)).toHaveLength(1)
+
+    const pruned = await pruneMissingOnChainActivity(
+      'main',
+      async () => false,
+      { minAgeMs: 0 },
+    )
+
+    expect(pruned).toBe(0)
+    expect(listRecentActivity(10)[0]?.item?.name).toBe('Pixel Fox')
+  })
+
   it('prunes aged pending BSV Verifying… on 404 but keeps pending collectables', async () => {
     noteInboundReceivePending({ txid: 'cc'.repeat(32), sats: 100 })
     noteInboundReceivePending({

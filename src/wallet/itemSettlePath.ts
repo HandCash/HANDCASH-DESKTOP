@@ -1,7 +1,7 @@
 /**
  * Exhaustive settle path for a signed collectable transfer.
  *
- * Spend classification (`SendPath`) decides *whether* we can soft-latch.
+ * Spend classification (`SendPath`) decides *whether* the tip can be spent.
  * This union decides *who broadcasts* after `createAction({ noSend: true })`.
  * Broadcast-before-P2P is not a variant — peerDeliver has no sender-broadcast
  * edge. After inbox delivery the sender silently `postBeef` (`confirmBroadcast`).

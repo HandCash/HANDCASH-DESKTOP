@@ -18,11 +18,11 @@ const LEGACY_KEY = 'handcash.collectables.proven.v1'
 const ORIGIN_KEY = 'handcash.collectables.originCommitments.v1'
 const MAX_ENTRIES = 2_000
 
-export type AuthenticityTier = 'brc156' | 'brc150' | 'unproven'
+export type AuthenticityTier = 'brc150' | 'unproven'
 
 export type ProvenVerdict = {
   tier: AuthenticityTier
-  /** Immutable origin commitment used by hardened BRC-156. */
+  /** Immutable origin script commitment (BRC-150 origin pin). */
   originScriptHash?: string
   /**
    * Origin established by verified BEEF, not by a sender's claim.
@@ -36,7 +36,7 @@ export type ProvenVerdict = {
 }
 
 export function isProvenTier(tier: AuthenticityTier): boolean {
-  return tier === 'brc156' || tier === 'brc150'
+  return tier === 'brc150'
 }
 
 /** Proven tiers never move backwards to unproven / weaker proofs. */
@@ -45,7 +45,6 @@ export function canAcceptVerdict(
   next: AuthenticityTier,
 ): boolean {
   if (isProvenTier(current) && !isProvenTier(next)) return false
-  if (current === 'brc156' && next === 'brc150') return false
   return true
 }
 
@@ -62,15 +61,18 @@ function load(): Map<string, ProvenVerdict> {
       for (const [outpoint, value] of Object.entries(parsed)) {
         if (!value || typeof value !== 'object' || Array.isArray(value)) continue
         const candidate = value as Record<string, unknown>
-        if (
-          candidate.tier !== 'brc156' &&
-          candidate.tier !== 'brc150' &&
-          candidate.tier !== 'unproven'
-        ) {
+        // Legacy `brc156` verdicts were cryptographic origin pins — read them
+        // forward as BRC-150 (the only proven tier now). Drop anything else.
+        let tier: AuthenticityTier
+        if (candidate.tier === 'brc156' || candidate.tier === 'brc150') {
+          tier = 'brc150'
+        } else if (candidate.tier === 'unproven') {
+          tier = 'unproven'
+        } else {
           continue
         }
         verdicts.set(key(outpoint), {
-          tier: candidate.tier,
+          tier,
           originScriptHash:
             typeof candidate.originScriptHash === 'string'
               ? candidate.originScriptHash
@@ -157,8 +159,7 @@ export function rememberOriginCommitment(origin: string, scriptHash: string): vo
 
 /** Last recorded verdict. False when never verified — never a claim of forgery. */
 export function isItemProven(outpoint: string): boolean {
-  const tier = load().get(key(outpoint))?.tier
-  return tier === 'brc156' || tier === 'brc150'
+  return load().get(key(outpoint))?.tier === 'brc150'
 }
 
 export function hasProvenVerdict(outpoint: string): boolean {
@@ -182,7 +183,7 @@ export function rememberProvenVerdict(
         ? { tier: verdict, verifiedAt: Date.now() }
         : verdict
   const existing = map.get(k)
-  // Monotonic authenticity: never let a transient ladder miss erase BRC-150/156.
+  // Monotonic authenticity: never let a transient ladder miss erase BRC-150.
   if (existing && !canAcceptVerdict(existing.tier, normalized.tier)) {
     return
   }
@@ -209,7 +210,6 @@ export function rememberProvenVerdict(
 /**
  * Paint authenticity from the durable verdict store — list cache alone can
  * still say `unproven` after a prior session proved the tip.
- * Legacy `brc156` verdicts display as BRC-150 (product is 150-only).
  */
 export function authenticityFromProvenCache(outpoint: string): {
   authenticity: AuthenticityTier
@@ -217,18 +217,15 @@ export function authenticityFromProvenCache(outpoint: string): {
 } {
   const verdict = getProvenVerdict(outpoint)
   if (!verdict) return { authenticity: 'unproven', proven: false }
-  const authenticity: AuthenticityTier =
-    verdict.tier === 'brc156' ? 'brc150' : verdict.tier
   return {
-    authenticity,
+    authenticity: verdict.tier,
     proven: isProvenTier(verdict.tier),
   }
 }
 
 /** True when a cryptographically proven tier is already on disk. */
 export function hasProvenTier(outpoint: string): boolean {
-  const tier = getProvenVerdict(outpoint)?.tier
-  return tier === 'brc156' || tier === 'brc150'
+  return getProvenVerdict(outpoint)?.tier === 'brc150'
 }
 
 const GENESIS_KEY = 'handcash.collectables.genesisAttempt.v1'
@@ -267,8 +264,7 @@ export function shouldAttemptGenesis(
   retryMs = GENESIS_RETRY_MS,
 ): boolean {
   const k = key(outpoint)
-  const tier = load().get(k)?.tier
-  if (tier === 'brc156' || tier === 'brc150') return false
+  if (load().get(k)?.tier === 'brc150') return false
   const attempted = loadGenesisAttempts().get(k)
   return attempted == null || now - attempted >= retryMs
 }

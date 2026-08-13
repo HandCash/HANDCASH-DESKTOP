@@ -2,14 +2,12 @@
  * Single authenticity policy for every collectable receive.
  *
  * Order is protocol, not preference:
- *   1. BRC-156 hardened constant-time induction
- *   2. BRC-150 complete tip→origin BEEF verification
- *   3. indexer/chain discovery for UX only (never proven)
+ *   1. BRC-150 complete tip→origin BEEF verification (the only proof)
+ *   2. indexer/chain discovery for UX only (never proven)
  */
 import { verifyProvenanceV2 } from './oneSatProvenance'
-import { Transaction } from '@bsv/sdk'
+import { Hash, Transaction, Utils } from '@bsv/sdk'
 import { getActiveWallet } from './session'
-import { originScriptHash } from './oneSatLatch'
 import { hasOrdEnvelope } from './ordinalOwnership'
 import {
   getOriginCommitment,
@@ -19,7 +17,20 @@ import {
 } from './provenCache'
 import type { Chain } from './vault'
 
-export type HardenedAuthenticityResult = {
+/** Immutable SHA-256 commitment to the origin locking script. */
+export function originScriptHash(scriptHex: string): string {
+  const normalized = scriptHex.trim()
+  if (!normalized || normalized.length % 2 !== 0 || !/^[0-9a-f]+$/i.test(normalized)) {
+    throw new Error('Invalid origin locking script')
+  }
+  return Utils.toHex(Hash.sha256(Utils.toArray(normalized, 'hex')))
+}
+
+export function isValidOriginScriptHash(hash: string): boolean {
+  return /^[0-9a-f]{64}$/i.test(hash.trim())
+}
+
+export type OriginCommitmentResult = {
   proven: boolean
   reason: string | null
   originScriptHash?: string
@@ -33,7 +44,7 @@ export type AuthenticityResult = {
 }
 
 /**
- * Verify and pin the one-time origin envelope commitment used by schema 2.
+ * Verify and pin the one-time origin envelope commitment.
  * Later transfers reuse the immutable local pin; they do not replay ownership.
  */
 export async function verifyOriginScriptCommitment(args: {
@@ -42,7 +53,7 @@ export async function verifyOriginScriptCommitment(args: {
   chain: Chain
   /** Already BEEF-verified origin, used by the genesis bootstrap and tests. */
   verifiedOriginTransaction?: Transaction
-}): Promise<HardenedAuthenticityResult> {
+}): Promise<OriginCommitmentResult> {
   const expected = args.expectedScriptHash.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(expected)) {
     return { proven: false, reason: 'invalid originScriptHash' }
@@ -103,14 +114,11 @@ export async function verifyOriginScriptCommitment(args: {
 
 export function verifyAuthenticityLadder(args: {
   heldOutpoint: string
-  /** Ignored — product authenticity is BRC-150 only. */
-  hardened?: HardenedAuthenticityResult | null
   /** BRC-150 v2 remittance, when available. */
   provenance?: unknown
   /** True only when identity was recovered through the final discovery fallback. */
   indexerResolved?: boolean
 }): AuthenticityResult {
-  void args.hardened
   if (args.provenance != null) {
     const v2 = verifyProvenanceV2(args.provenance, args.heldOutpoint)
     if (v2.proven) {

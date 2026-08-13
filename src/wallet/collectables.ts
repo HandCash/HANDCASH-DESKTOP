@@ -74,20 +74,6 @@ import {
   authenticityResultToVerdict,
   type AuthenticityResult,
 } from './oneSatAuthenticity'
-import {
-  GENESIS_PARENT_LATCH,
-  LATCH_DUST_SATS,
-  LATCH_SCHEMA_VERSION,
-  LATCH_TAG,
-  ONE_SAT_LATCH_BASKET,
-  RELATIVE_TIP,
-  buildLatchStateScript,
-  isLatchedSendEnabled,
-  latchOutputTags,
-  resolveLatchTipClaim,
-  toUnderscoreOutpoint,
-  type LatchListing,
-} from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { resolveDerivativeContent } from './derivativeContentResolve'
 import {
@@ -110,8 +96,8 @@ import {
   isSilentSenderBroadcast,
   maySenderBroadcast,
   mustDeliverToPeer,
-  softLatchSendMachine,
-} from './softLatchSendMachine'
+  itemSendMachine,
+} from './itemSendMachine'
 import { chooseItemSettlePath } from './itemSettlePath'
 import { createActor } from 'xstate'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
@@ -143,7 +129,6 @@ import {
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import {
   isAlreadySpentInputError,
-  isNoLongerSpendableError,
   releaseStaleSpendableOutputs,
 } from './staleOutputRelease'
 import type { Chain } from './vault'
@@ -170,11 +155,11 @@ export type Collectable = {
   collectionId?: string
   traits: CollectableTrait[]
   extras: CollectableTrait[]
-  /** Hardened BRC-156 or complete BRC-150 proof verified. */
+  /** Complete BRC-150 tip→origin proof verified. */
   proven: boolean
   /** Exact proof tier used for this verdict. */
   authenticity: AuthenticityTier
-  /** True when tip locking script is a stuck covenant (soft-latch cannot spend). */
+  /** True when tip locking script is a stuck covenant (cannot be spent). */
   covenantLocked?: boolean
 }
 
@@ -193,7 +178,7 @@ const collectablesListeners = new Set<CollectablesListener>()
  */
 const LIVE_ONE_SAT_TTL_MS = 20_000
 let cachedLiveOneSats: { at: number; keys: Set<string> } | null = null
-/** All address UTXOs (includes 2-sat soft latches) — same TTL as one-sats. */
+/** All address UTXOs — same TTL as one-sats. */
 let cachedLiveAllOutpoints: { at: number; keys: Set<string> } | null = null
 
 /** Feed a fresh address scan into the ownership filter (chain ingest). */
@@ -235,16 +220,16 @@ function loadDurableList(): Collectable[] {
     return parsed.items.filter(isCollectableShape).map((item) => {
       // Verdict store outranks a stale list-cache badge from last session.
       const fromProven = authenticityFromProvenCache(item.outpoint)
-      const authenticity = fromProven.proven
-        ? fromProven.authenticity
-        : item.authenticity === 'brc156' || item.authenticity === 'brc150'
-          ? item.authenticity
-          : 'unproven'
+      // Legacy caches may still carry `brc156` — read it forward as BRC-150.
+      const rawAuth = item.authenticity as string
+      const cachedAuth: AuthenticityTier =
+        rawAuth === 'brc150' || rawAuth === 'brc156' ? 'brc150' : 'unproven'
+      const authenticity = fromProven.proven ? fromProven.authenticity : cachedAuth
       return {
         ...item,
         traits: Array.isArray(item.traits) ? item.traits : [],
         extras: Array.isArray(item.extras) ? item.extras : [],
-        proven: authenticity === 'brc156' || authenticity === 'brc150',
+        proven: authenticity === 'brc150',
         authenticity,
       }
     })
@@ -429,6 +414,7 @@ function parseCustom(raw: string | undefined): {
   origin?: string
   name?: string
   app?: string
+  collectionId?: string
   content?: string
   provenance?: unknown
 } {
@@ -445,6 +431,7 @@ function parseCustom(raw: string | undefined): {
       origin: typeof o.origin === 'string' ? o.origin : undefined,
       name: typeof o.name === 'string' ? o.name : undefined,
       app: typeof o.app === 'string' ? o.app : undefined,
+      collectionId: typeof o.collectionId === 'string' ? o.collectionId : undefined,
       content,
       provenance: o.provenance,
     }
@@ -468,11 +455,7 @@ function toCollectable(
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
   // Provenance verdict comes from durable cache; detail view verifies on demand.
   const verdict = getProvenVerdict(normalizeOutpoint(o.outpoint))
-  // Product authenticity is BRC-150; legacy brc156 pins paint as brc150.
-  const authenticity: AuthenticityTier =
-    verdict?.tier === 'brc156' || verdict?.tier === 'brc150'
-      ? 'brc150'
-      : (verdict?.tier ?? 'unproven')
+  const authenticity: AuthenticityTier = verdict?.tier ?? 'unproven'
   const proven = authenticity === 'brc150'
   const claimed = tagValue(o.tags, 'origin:') ?? custom.origin
   // An indexer walk that came back with real inscription content knows the
@@ -521,9 +504,9 @@ function toCollectable(
 
 /**
  * An origin has exactly one live tip. Stray 1-sat outputs from the same
- * transfer (e.g. an unmarked latch) resolve to the tip's origin through the
- * indexer walk and would otherwise list as duplicates. Keep the best candidate:
- * proven remittance first, then sender-supplied metadata, then lowest vout.
+ * transfer resolve to the tip's origin through the indexer walk and would
+ * otherwise list as duplicates. Keep the best candidate: proven remittance
+ * first, then sender-supplied metadata, then lowest vout.
  */
 /**
  * One ordinal, one card — keeping the tip the wallet holds now.
@@ -655,8 +638,7 @@ function resolveLiveOneSatKeys(
 const firstSeenAt = new Map<string, number>()
 
 function isListableItem(o: ItemOutput): boolean {
-  if (o.tags?.includes(LATCH_TAG)) return false
-  // Tips are exactly 1 satoshi. Soft-latch dust or misfiled funds must not list.
+  // Tips are exactly 1 satoshi. Misfiled funds must not list.
   if ((o.satoshis ?? 1) !== 1) return false
   // A tip we already spent lingers in the basket until a review runs.
   if (isItemSent(o.outpoint)) return false
@@ -964,8 +946,8 @@ export function requestCollectableVerification(outpoint: string): void {
   const target = normalizeOutpoint(outpoint)
   preferCollectableVerification(target)
   const verdict = getProvenVerdict(target)
-  // Already proven (legacy brc156 paints as BRC-150) — nothing to walk.
-  if (verdict?.tier === 'brc156' || verdict?.tier === 'brc150') {
+  // Already proven — nothing to walk.
+  if (verdict?.tier === 'brc150') {
     clearAwaitingVerification(target)
     clearVerificationProgress(target)
     return
@@ -1113,7 +1095,7 @@ const LIST_TIMEOUT_MS = 20_000
 /**
  * Verify one tip's authenticity (BRC-150 only) and remember the verdict.
  *
- * Order: remittance (incl. parent soft-latch remittance) → lineage walk → unproven.
+ * Order: remittance (incl. parent remittance) → lineage walk → unproven.
  * Scoped to a single outpoint so remittance BEEF never loads for a whole basket.
  */
 export async function verifyItemAuthenticity(
@@ -1123,7 +1105,7 @@ export async function verifyItemAuthenticity(
 ): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
   const cached = getProvenVerdict(target)
-  if (cached?.tier === 'brc150' || cached?.tier === 'brc156') {
+  if (cached?.tier === 'brc150') {
     return {
       tier: 'brc150',
       proven: true,
@@ -1242,7 +1224,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
   // Durable provenCache is the only authenticity SSoT. Never paint Unverified
   // over an existing proven tier. Product badge is always BRC-150.
   const verdict = getProvenVerdict(target)
-  if (verdict?.tier === 'brc150' || verdict?.tier === 'brc156') {
+  if (verdict?.tier === 'brc150') {
     if (result.proven) clearAwaitingVerification(target)
     if (
       !cachedCollectables.some(
@@ -1265,7 +1247,7 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
   if (!result.proven) return
   clearAwaitingVerification(target)
   const painted = getProvenVerdict(target)
-  if (painted?.tier !== 'brc150' && painted?.tier !== 'brc156') return
+  if (painted?.tier !== 'brc150') return
   if (
     !cachedCollectables.some(
       (c) =>
@@ -1315,7 +1297,7 @@ async function listCollectablesNow(
         basket: '1sat',
         limit: 1000,
         includeTags: true,
-        // Locking scripts are small and let us spare BRC-156 covenant tips from
+        // Locking scripts are small and let us spare covenant tips from
         // address-scan ghosting. Never pull customInstructions for a whole
         // basket: remittance BEEF (~400k chars each) crashed phones.
         includeCustomInstructions: false,
@@ -1362,7 +1344,7 @@ async function listCollectablesNow(
     const keptMissing: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
     for (const o of spentOrMissing) {
-      if ((o.satoshis ?? 1) !== 1 || o.tags?.includes(LATCH_TAG)) continue
+      if ((o.satoshis ?? 1) !== 1) continue
       const unjudged = isOwnershipUnjudged({
         firstSeenAt: firstSeenAt.get(outpointKey(o.outpoint)) ?? seenNow,
         liveAt: live.at,
@@ -1404,7 +1386,7 @@ async function listCollectablesNow(
     const kept: ItemOutput[] = []
     const ghosts: ItemOutput[] = []
     for (const o of outputs) {
-      if ((o.satoshis ?? 1) !== 1 || o.tags?.includes(LATCH_TAG)) {
+      if ((o.satoshis ?? 1) !== 1) {
         kept.push(o)
         continue
       }
@@ -1412,11 +1394,7 @@ async function listCollectablesNow(
       const paysOurAddress =
         lockHex != null ? scriptPaysAddress(lockHex, wallet.address) : null
       const tipKind = classifyTipKind(o.lockingScript)
-      if (
-        paysOurAddress === false &&
-        tipKind.kind !== 'covenantLocked' &&
-        getProvenVerdict(normalizeOutpoint(o.outpoint))?.tier !== 'brc156'
-      ) {
+      if (paysOurAddress === false && tipKind.kind !== 'covenantLocked') {
         ghosts.push(o)
       } else {
         kept.push(o)
@@ -1568,7 +1546,7 @@ function formatSendError(err: unknown): Error {
     }
     if (/no longer spendable/i.test(msg)) {
       return new Error(
-        'A previous send left this item’s latch stuck. Recovered it — tap Send again.',
+        'A previous send left this item’s tip stuck. Recovered it — tap Send again.',
       )
     }
     if (
@@ -1625,11 +1603,10 @@ function assertOrdinalIsDeviceLocked(
  * BEEF covering every outpoint this send spends.
  *
  * `buildSignableTransaction` reads each user input's source transaction out of
- * the BEEF we pass, so a tip and a latch from different transactions both have to
- * be in it — otherwise the toolbox fails with "Every signableTransaction input
- * must have a sourceTransaction". Fetches run in parallel and share a session
- * cache with provenance / settle / origin lookups so a send never pays twice for
- * the same mined body.
+ * the BEEF we pass, so every spent input has to be in it — otherwise the toolbox
+ * fails with "Every signableTransaction input must have a sourceTransaction".
+ * Fetches run in parallel and share a session cache with provenance / settle /
+ * origin lookups so a send never pays twice for the same mined body.
  */
 async function buildInputBeefForSpends(
   wallet: ActiveWallet,
@@ -1639,8 +1616,8 @@ async function buildInputBeefForSpends(
 }
 
 /**
- * BRC-100 only auto-signs the wallet's own BRC-29 change, so ordinal / latch
- * inputs come back as a signable transaction for us to unlock with the root key.
+ * BRC-100 only auto-signs the wallet's own BRC-29 change, so the ordinal tip
+ * input comes back as a signable transaction for us to unlock with the root key.
  *
  * Covenant-locked tips MUST NOT use the P2PKH unlock template.
  */
@@ -1657,7 +1634,7 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
 async function signOrdinalTransfer(args: {
   wallet: ActiveWallet
   signable: SignableTransaction
-  /** Tip + optional latch outpoints we must unlock. */
+  /** Tip outpoint(s) we must unlock. */
   outpoints: string[]
 }): Promise<{ txid: string; atomicBeef: number[] }> {
   const targets = new Map<string, number>()
@@ -1706,7 +1683,7 @@ async function signOrdinalTransfer(args: {
       input.sourceTransaction?.outputs[input.sourceOutputIndex]?.lockingScript?.toHex()
     if (isCovenantLockedScript(locking)) {
       throw new Error(
-        'This collectable is covenant-locked and cannot be spent with a soft-latch P2PKH unlock. Abandon it instead.',
+        'This collectable is covenant-locked and cannot be spent with a P2PKH unlock. Abandon it instead.',
       )
     }
   }
@@ -1715,8 +1692,8 @@ async function signOrdinalTransfer(args: {
   const spends: Record<number, { unlockingScript: string }> = {}
   for (const vin of vins) {
     const input = unsigned.inputs[vin]!
-    // The sighash covers the source value, and a latch is not 1 sat like the tip,
-    // so read each value from its source transaction instead of assuming one.
+    // The sighash covers the source value, so read each value from its source
+    // transaction instead of assuming one.
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
     const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
     if (typeof satoshis !== 'number') {
@@ -1808,55 +1785,6 @@ async function signOrdinalTransfer(args: {
   return { txid, atomicBeef }
 }
 
-/** Find the soft-latch UTXO paired with this tip (same origin, tip: tag match). */
-async function findLatchForTip(
-  wallet: ActiveWallet,
-  tipOutpoint: string,
-  origin: string,
-): Promise<LatchListing | null> {
-  const tip = toUnderscoreOutpoint(tipOutpoint)
-  const originU = toUnderscoreOutpoint(origin)
-  const originTag = originU.replace(/_(\d+)$/, '.$1')
-  try {
-    // Origin tag first — a full latch basket read is wasted work when the tip's
-    // origin is already known (the usual case on send).
-    const result = await wallet.wallet.listOutputs({
-      basket: ONE_SAT_LATCH_BASKET,
-      tags: [`origin:${originTag}`],
-      tagQueryMode: 'all',
-      limit: 40,
-      includeTags: true,
-      include: 'locking scripts',
-      seekPermission: false,
-    })
-    for (const o of result.outputs ?? []) {
-      const tags = o.tags ?? []
-      if (!tags.includes(LATCH_TAG)) continue
-      // Never pair a new send with a latch an earlier send already spent.
-      if (isItemSent(o.outpoint)) continue
-      if ((o as { spendable?: boolean }).spendable === false) continue
-      const sats = o.satoshis ?? LATCH_DUST_SATS
-      if (sats !== LATCH_DUST_SATS) continue
-      const tagOrigin = tagValue(tags, 'origin:')
-      if (tagOrigin && toUnderscoreOutpoint(tagOrigin) !== originU) continue
-      const tipTag = tagValue(tags, 'tip:')
-      if (!tipTag) continue
-      const claimed = resolveLatchTipClaim(o.outpoint, tipTag)
-      if (claimed !== tip) continue
-      return {
-        outpoint: normalizeOutpoint(o.outpoint),
-        origin: originU,
-        tip,
-        satoshis: o.satoshis ?? LATCH_DUST_SATS,
-        lockingScript: o.lockingScript,
-      }
-    }
-  } catch (err) {
-    console.warn('[collectables] latch list failed', err)
-  }
-  return null
-}
-
 /**
  * Drop what a send just spent from its basket.
  *
@@ -1884,17 +1812,16 @@ async function relinquishSpentOutputs(
 }
 
 /**
- * Drop a stuck covenant tip (and its soft latch if any) from local inventory.
+ * Drop a stuck covenant tip from local inventory.
  *
- * Does not spend on-chain — covenant tips cannot soft-latch. Relinquishes basket
- * rows, marks sent/abandoned, and clears the collectables cache entry.
+ * Does not spend on-chain — covenant tips cannot be spent. Relinquishes the
+ * basket row, marks sent/abandoned, and clears the collectables cache entry.
  */
 export async function abandonCollectable(outpointRaw: string): Promise<void> {
   const outpoint = normalizeOutpoint(outpointRaw)
   const wallet = getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
 
-  const cachedItem = cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
   const held = await wallet.wallet.listOutputs({
     basket: '1sat',
     limit: 1000,
@@ -1908,32 +1835,13 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
   )
   if (!match) throw new Error('Collectable is no longer in this wallet')
 
-  const tipCustom = parseCustom(match.customInstructions)
-  const origin = parseOrigin(
-    getResolvedInscription(outpoint)?.origin ?? tipCustom.origin ?? cachedItem?.origin,
-    outpoint,
-  )
-  const priorLatch = isLatchedSendEnabled()
-    ? await findLatchForTip(wallet, outpoint, origin)
-    : null
-
   console.info(
     `[collectables] abandon tip=${outpoint} tipKind=${classifyTipKind(match.lockingScript).kind}`,
   )
 
-  markItemsSent([
-    { outpoint, txid: `abandon:${outpoint}` },
-    ...(priorLatch
-      ? [{ outpoint: priorLatch.outpoint, txid: `abandon:${outpoint}` }]
-      : []),
-  ])
+  markItemsSent([{ outpoint, txid: `abandon:${outpoint}` }])
 
-  await relinquishSpentOutputs(wallet, [
-    { outpoint, basket: '1sat' },
-    ...(priorLatch
-      ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
-      : []),
-  ])
+  await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
 
   invalidateLiveOneSatOutpoints()
   setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
@@ -1947,15 +1855,15 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
  * Transfer a basket `1sat` ordinal to a P2PKH address via BRC-100 createAction.
  *
  * Path selection is exhaustive via `chooseSendPath` + `collectableSendMachine`:
- * softLatch | refuse. Covenant-locked tips refuse (use {@link abandonCollectable}).
+ * p2pkhSend | refuse. Covenant-locked tips refuse (use {@link abandonCollectable}).
  *
- * Soft-latch (BRC-156): settle-style single tx spends tip (+ prior latch when
- * present) and creates recipient tip (vout 0) + latch (vout 1).
+ * A single `createAction` spends the 1-sat tip and creates the recipient tip
+ * (vout 0) with BRC-150 remittance in customInstructions. No latch output.
  */
 export async function sendCollectable(args: {
   outpoint: string
   toAddress: string
-  /** Optional recipient identity (friends / peerpay); soft-latch does not require it. */
+  /** Optional recipient identity (friends / peerpay); the send does not require it. */
   recipientIdentityKey?: string | null
   /** Optional friend label for the activity row. */
   friendLabel?: string | null
@@ -2079,6 +1987,8 @@ export async function sendCollectable(args: {
       .trim()
       .slice(0, 40) || 'Collectable'
   const app = resolvedMeta?.app ?? tipCustom.app ?? args.app ?? item?.app
+  const collectionId =
+    resolvedMeta?.collectionId ?? tipCustom.collectionId ?? item?.collectionId
 
   // Derivative / Kit Kat: forward shared media outpoint peer-to-peer.
   let content =
@@ -2108,14 +2018,12 @@ export async function sendCollectable(args: {
     `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
     `name:${name.slice(0, 80)}`,
     ...(app ? [`app:${app.slice(0, 40)}`] : []),
+    ...(collectionId ? [`collection:${collectionId.slice(0, 80)}`] : []),
     ...(content ? [`content:${content.replace(/_(\d+)$/, '.$1')}`] : []),
   ]
 
-  // Latch discovery and tip BEEF are independent — run them together so the
-  // slower of the two dominates instead of their sum.
   const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
-  const [foundLatch, tipBeefBin, live] = await Promise.all([
-    isLatchedSendEnabled() ? findLatchForTip(wallet, outpoint, origin) : Promise.resolve(null),
+  const [tipBeefBin, live] = await Promise.all([
     tipBeefPromise,
     awaitLiveOutpoints(wallet),
   ])
@@ -2128,30 +2036,8 @@ export async function sendCollectable(args: {
     )
   }
 
-  let priorLatch = foundLatch
-  if (priorLatch && live && !live.all.has(outpointKey(priorLatch.outpoint))) {
-    console.warn(
-      `[collectables] dropping spent latch ${priorLatch.outpoint} — tip-only soft-latch`,
-    )
-    markItemsSent([{ outpoint: priorLatch.outpoint, txid: `spent-on-chain:${outpoint}` }])
-    priorLatch = null
-  }
-  if (priorLatch) {
-    const latchTxid = normalizeOutpoint(priorLatch.outpoint).split('.')[0]
-    if (latchTxid && !Beef.fromBinary(tipBeefBin).findTxid(latchTxid)?.tx) {
-      try {
-        await getBeefForTxidCached(wallet, latchTxid)
-      } catch (err) {
-        console.warn(
-          `[collectables] latch BEEF missing ${priorLatch.outpoint} — tip-only soft-latch`,
-          err,
-        )
-        priorLatch = null
-      }
-    }
-  }
   // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
-  // Classify from the tip BEEF we already need for soft-latch.
+  // Classify from the tip BEEF we already need for the send.
   const tipLockingScript = resolveTipLockingScriptHex({
     listed: match.lockingScript,
     beefBin: tipBeefBin,
@@ -2163,26 +2049,12 @@ export async function sendCollectable(args: {
     )
   }
   assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
-  if (priorLatch?.lockingScript) {
-    assertOrdinalIsDeviceLocked(priorLatch.lockingScript, wallet)
-  }
-  const parentLatch = priorLatch
-    ? toUnderscoreOutpoint(priorLatch.outpoint)
-    : GENESIS_PARENT_LATCH
 
   rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
 
-  const rebuildInputBeef = async (): Promise<number[]> => {
-    if (!priorLatch) return tipBeefBin
-    const latchTxid = normalizeOutpoint(priorLatch.outpoint).split('.')[0]
-    if (latchTxid && !Beef.fromBinary(tipBeefBin).findTxid(latchTxid)?.tx) {
-      return buildInputBeefForSpends(wallet, [outpoint, priorLatch.outpoint])
-    }
-    return tipBeefBin
-  }
-  let inputBEEF = await rebuildInputBeef()
-  let spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
-  let knownTxids = [
+  const inputBEEF = tipBeefBin
+  const spendOutpoints = [outpoint]
+  const knownTxids = [
     ...new Set(
       spendOutpoints
         .map((op) => normalizeOutpoint(op).split('.')[0])
@@ -2198,7 +2070,6 @@ export async function sendCollectable(args: {
   const provenTier = getProvenVerdict(outpoint)?.tier ?? null
   const sendPath = chooseSendPath({
     tipKind,
-    latchOutpoint: priorLatch?.outpoint ?? null,
     provenTier,
   })
 
@@ -2243,41 +2114,24 @@ export async function sendCollectable(args: {
     clearPendingSend(outboundPending.id)
     const tx = txid.trim().toLowerCase()
     const newTip = `${tx}.0`
-    const newLatch = isLatchedSendEnabled() ? `${tx}.1` : null
     // createAction files the recipient tip in *this* wallet's `1sat` basket.
     // That is remittance metadata for the sender, not ownership — unless the
     // lock pays us (true self-receive).
     const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
-    // Hide spent tip + outbound remittance tips immediately. Post-send we
+    // Hide spent tip + outbound remittance tip immediately. Post-send we
     // invalidate the live address scan; without a fresh scan, ownership fate is
     // skipped and the filed tip would toast "Item received" on the sender.
     markItemsSent([
       { outpoint, txid },
-      ...(priorLatch ? [{ outpoint: priorLatch.outpoint, txid }] : []),
-      ...(!selfReceive
-        ? [
-            { outpoint: newTip, txid },
-            ...(newLatch ? [{ outpoint: newLatch, txid }] : []),
-          ]
-        : []),
+      ...(!selfReceive ? [{ outpoint: newTip, txid }] : []),
     ])
     invalidateLiveOneSatOutpoints()
-    await relinquishSpentOutputs(wallet, [
-      { outpoint, basket: '1sat' },
-      ...(priorLatch
-        ? [{ outpoint: priorLatch.outpoint, basket: ONE_SAT_LATCH_BASKET }]
-        : []),
-    ])
+    await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
     if (!selfReceive) {
-      await relinquishSpentOutputs(wallet, [
-        { outpoint: newTip, basket: '1sat' },
-        ...(newLatch
-          ? [{ outpoint: newLatch, basket: ONE_SAT_LATCH_BASKET }]
-          : []),
-      ])
+      await relinquishSpentOutputs(wallet, [{ outpoint: newTip, basket: '1sat' }])
     } else if (opts?.remittanceBuilt) {
-      // Soft-latch remittance proves the spent tip; pin BRC-150 on the tip we
-      // still hold (self-pay) so receive can show authenticity verified.
+      // Remittance proves the spent tip; pin BRC-150 on the tip we still hold
+      // (self-pay) so receive can show authenticity verified.
       rememberProvenVerdict(newTip, {
         tier: 'brc150',
         origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
@@ -2286,7 +2140,6 @@ export async function sendCollectable(args: {
     }
     if (selfReceive) {
       skipArrivalToast.add(normalizeOutpoint(newTip))
-      if (newLatch) skipArrivalToast.add(normalizeOutpoint(newLatch))
     }
     setPaymentProgress('finishing')
     setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
@@ -2322,13 +2175,8 @@ export async function sendCollectable(args: {
       pendingId: outboundPending.id,
       reason: formatted.message,
     })
-    protectTipsFromGhostDrop([outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])])
+    protectTipsFromGhostDrop([outpoint])
     forgetItemsSent([outpoint])
-    if (priorLatch && isNoLongerSpendableError(err)) {
-      markItemsSent([
-        { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
-      ])
-    }
     console.error('[collectables] send failed', formatted.message, err)
     chart.send({ type: 'FAIL', error: formatted.message })
     chart.stop()
@@ -2342,13 +2190,13 @@ export async function sendCollectable(args: {
     return failSend(new Error(sendPath.reason))
   }
 
-  // softLatch path — machine is in softLatch; covenant never reaches here.
-  if (!chart.getSnapshot().matches('softLatch')) {
-    return failSend(new Error('collectableSendMachine did not enter softLatch'))
+  // p2pkhSend path — machine is in p2pkhSend; covenant never reaches here.
+  if (!chart.getSnapshot().matches('p2pkhSend')) {
+    return failSend(new Error('collectableSendMachine did not enter p2pkhSend'))
   }
 
-  const softChart = createActor(softLatchSendMachine).start()
-  softChart.send({ type: 'START', outpoint, settlePath })
+  const itemChart = createActor(itemSendMachine).start()
+  itemChart.send({ type: 'START', outpoint, settlePath })
 
   setPaymentProgress(
     'building',
@@ -2360,11 +2208,10 @@ export async function sendCollectable(args: {
     origin,
     wallet,
     contentType: item?.mimeType,
-    parentLatch,
     inputBeef: inputBEEF,
     priorProvenance: tipCustom.provenance,
   })
-  softChart.send({ type: 'BUILT' })
+  itemChart.send({ type: 'BUILT' })
 
   const recoverSendFailure = async (
     err: unknown,
@@ -2383,69 +2230,31 @@ export async function sendCollectable(args: {
     return err instanceof Error ? err : new Error(String(err))
   }
 
-  const latchInputs = () => [
+  const itemInputs = () => [
     {
       outpoint,
       inputDescription: '1sat collectable',
       unlockingScriptLength: 108,
     },
-    ...(priorLatch
-      ? [
-          {
-            outpoint: priorLatch.outpoint,
-            inputDescription: '1sat latch',
-            unlockingScriptLength: 108,
-          },
-        ]
-      : []),
   ]
 
   let result: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>> | undefined
   let txid = ''
   let atomicBeef: number[] | undefined
-  let attemptedTipOnly = false
   let attemptedBatchAbort = false
   for (;;) {
-    spendOutpoints = [outpoint, ...(priorLatch ? [priorLatch.outpoint] : [])]
-    knownTxids = [
-      ...new Set(
-        spendOutpoints
-          .map((op) => normalizeOutpoint(op).split('.')[0])
-          .filter((id): id is string => !!id),
-      ),
-    ]
-    try {
-      inputBEEF = await rebuildInputBeef()
-    } catch (err) {
-      if (priorLatch && !attemptedTipOnly) {
-        console.warn('[collectables] latch inputBEEF failed — tip-only soft-latch', err)
-        priorLatch = null
-        attemptedTipOnly = true
-        continue
-      }
-      softChart.send({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      softChart.stop()
-      return failSend(err)
-    }
     try {
       setPaymentProgress(
         'signing',
         'Signing the collectable for the recipient',
         outpoint,
       )
-      console.info('[collectables] createAction softLatch start')
+      console.info('[collectables] createAction start')
       result = await wallet.wallet.createAction({
         description: `Send ${name}`.slice(0, 50),
-        labels: [
-          '1sat',
-          ...(isLatchedSendEnabled() ? ['1sat-latch'] : []),
-          'handcash-send-collectable',
-        ],
+        labels: ['1sat', 'handcash-send-collectable'],
         inputBEEF,
-        inputs: latchInputs(),
+        inputs: itemInputs(),
         outputs: [
           {
             lockingScript,
@@ -2457,40 +2266,11 @@ export async function sendCollectable(args: {
               origin,
               name,
               app,
+              ...(collectionId ? { collectionId } : {}),
               ...(content ? { content } : {}),
               provenance,
             }),
           },
-          ...(isLatchedSendEnabled()
-            ? [
-                {
-                  lockingScript,
-                  satoshis: LATCH_DUST_SATS,
-                  outputDescription: '1sat proof latch',
-                  basket: ONE_SAT_LATCH_BASKET,
-                  tags: latchOutputTags({ origin, tip: RELATIVE_TIP }),
-                  customInstructions: JSON.stringify({
-                    schema: 1,
-                    origin: toUnderscoreOutpoint(origin),
-                    tip: RELATIVE_TIP,
-                    parentLatch,
-                  }),
-                },
-                {
-                  lockingScript: buildLatchStateScript({
-                    schema: LATCH_SCHEMA_VERSION,
-                    origin,
-                    tip: RELATIVE_TIP,
-                    parentLatch,
-                    name,
-                    app,
-                    mimeType: item?.mimeType,
-                  }),
-                  satoshis: 0,
-                  outputDescription: '1sat latch state',
-                },
-              ]
-            : []),
         ],
         options: {
           trustSelf: 'known',
@@ -2507,9 +2287,9 @@ export async function sendCollectable(args: {
             : undefined),
         typeof result.txid === 'string' ? result.txid : undefined,
       )
-      softChart.send({ type: 'CREATED', txid: result.txid })
+      itemChart.send({ type: 'CREATED', txid: result.txid })
       console.info(
-        `[collectables] createAction softLatch done txid=${result.txid ?? 'signable'}`,
+        `[collectables] createAction done txid=${result.txid ?? 'signable'}`,
       )
     } catch (err) {
       const { isReservedActionBatchError, abortReservedActionBatches } =
@@ -2520,26 +2300,13 @@ export async function sendCollectable(args: {
         continue
       }
       const formatted = await recoverSendFailure(err)
-      if (priorLatch && !attemptedTipOnly && isNoLongerSpendableError(err)) {
-        console.warn(
-          `[collectables] latch ${priorLatch.outpoint} unspendable — retry tip-only`,
-        )
-        markItemsSent([
-          { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
-        ])
-        protectTipsFromGhostDrop([outpoint])
-        forgetItemsSent([outpoint])
-        priorLatch = null
-        attemptedTipOnly = true
-        continue
-      }
-      softChart.send({ type: 'FAIL', error: formatted.message })
-      softChart.stop()
+      itemChart.send({ type: 'FAIL', error: formatted.message })
+      itemChart.stop()
       return failSend(formatted)
     }
 
     if (!result) {
-      softChart.stop()
+      itemChart.stop()
       return failSend(new Error('Send completed without createAction result'))
     }
     txid = result.txid ?? ''
@@ -2548,13 +2315,13 @@ export async function sendCollectable(args: {
       break
     }
     if (!result.signableTransaction) {
-      softChart.send({ type: 'FAIL', error: 'Send completed without txid' })
-      softChart.stop()
+      itemChart.send({ type: 'FAIL', error: 'Send completed without txid' })
+      itemChart.stop()
       return failSend(new Error('Send completed without txid'))
     }
-    if (!softChart.getSnapshot().matches('signing')) {
-      softChart.stop()
-      return failSend(new Error('softLatchSendMachine did not enter signing'))
+    if (!itemChart.getSnapshot().matches('signing')) {
+      itemChart.stop()
+      return failSend(new Error('itemSendMachine did not enter signing'))
     }
     try {
       setPaymentProgress('signing', 'Signing the collectable transfer')
@@ -2565,38 +2332,25 @@ export async function sendCollectable(args: {
       })
       txid = signed.txid
       atomicBeef = signed.atomicBeef
-      softChart.send({ type: 'SIGNED', txid })
+      itemChart.send({ type: 'SIGNED', txid })
       break
     } catch (err) {
       const formatted = await recoverSendFailure(
         err,
         result.signableTransaction?.reference,
       )
-      if (priorLatch && !attemptedTipOnly && isNoLongerSpendableError(err)) {
-        console.warn(
-          `[collectables] latch ${priorLatch.outpoint} unspendable after sign — retry tip-only`,
-        )
-        markItemsSent([
-          { outpoint: priorLatch.outpoint, txid: `unspendable-latch:${outpoint}` },
-        ])
-        protectTipsFromGhostDrop([outpoint])
-        forgetItemsSent([outpoint])
-        priorLatch = null
-        attemptedTipOnly = true
-        continue
-      }
-      softChart.send({ type: 'FAIL', error: formatted.message })
-      softChart.stop()
+      itemChart.send({ type: 'FAIL', error: formatted.message })
+      itemChart.stop()
       return failSend(formatted)
     }
   }
 
   if (!txid) {
-    softChart.stop()
+    itemChart.stop()
     return failSend(new Error('Send completed without txid'))
   }
   if (!atomicBeef?.length) {
-    softChart.stop()
+    itemChart.stop()
     return failSend(new Error('Send completed without signed BEEF'))
   }
   rememberBeefTree(atomicBeef, txid)
@@ -2606,12 +2360,12 @@ export async function sendCollectable(args: {
     /* unused funding reservations only */
   }
 
-  const settleSnap = softChart.getSnapshot()
+  const settleSnap = itemChart.getSnapshot()
   try {
     if (mustDeliverToPeer(settleSnap)) {
       if (settlePath.settle !== 'peerDeliver') {
-        softChart.stop()
-        return failSend(new Error('softLatchSendMachine peerDeliver without settle path'))
+        itemChart.stop()
+        return failSend(new Error('itemSendMachine peerDeliver without settle path'))
       }
       setPaymentProgress('finishing', 'Delivering item to recipient', outpoint)
       const { notifyPeerItemIncoming } = await import('./messageTransport')
@@ -2634,17 +2388,17 @@ export async function sendCollectable(args: {
         `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
       )
       if (delivered.delivered === 'cloud') {
-        softChart.send({ type: 'DELIVERED' })
+        itemChart.send({ type: 'DELIVERED' })
       } else {
-        softChart.send({ type: 'DELIVER_FAILED' })
+        itemChart.send({ type: 'DELIVER_FAILED' })
       }
-      if (!maySenderBroadcast(softChart.getSnapshot())) {
-        softChart.stop()
+      if (!maySenderBroadcast(itemChart.getSnapshot())) {
+        itemChart.stop()
         return failSend(
-          new Error('softLatchSendMachine refused sender broadcast'),
+          new Error('itemSendMachine refused sender broadcast'),
         )
       }
-      const silent = isSilentSenderBroadcast(softChart.getSnapshot())
+      const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
       if (!silent) {
         setPaymentProgress(
           'broadcasting',
@@ -2654,14 +2408,14 @@ export async function sendCollectable(args: {
       }
       const ok = await broadcastAtomicBeef(txid, atomicBeef)
       if (silent) {
-        softChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
+        itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
       } else if (!ok) {
-        softChart.stop()
+        itemChart.stop()
         return failSend(
           new Error('Broadcast failed — could not confirm with the network'),
         )
       } else {
-        softChart.send({ type: 'BROADCASTED' })
+        itemChart.send({ type: 'BROADCASTED' })
       }
     } else if (maySenderBroadcast(settleSnap)) {
       setPaymentProgress(
@@ -2673,34 +2427,34 @@ export async function sendCollectable(args: {
       )
       const ok = await broadcastAtomicBeef(txid, atomicBeef)
       if (!ok) {
-        softChart.stop()
+        itemChart.stop()
         return failSend(
           new Error('Broadcast failed — could not confirm with the network'),
         )
       }
-      softChart.send({ type: 'BROADCASTED' })
+      itemChart.send({ type: 'BROADCASTED' })
     } else {
-      softChart.stop()
+      itemChart.stop()
       return failSend(
-        new Error('softLatchSendMachine has no legal settle phase'),
+        new Error('itemSendMachine has no legal settle phase'),
       )
     }
   } catch (err) {
-    softChart.send({
+    itemChart.send({
       type: 'FAIL',
       error: err instanceof Error ? err.message : String(err),
     })
-    softChart.stop()
+    itemChart.stop()
     return failSend(err)
   }
 
-  if (!softChart.getSnapshot().matches('done')) {
-    softChart.stop()
-    return failSend(new Error('softLatchSendMachine did not reach done'))
+  if (!itemChart.getSnapshot().matches('done')) {
+    itemChart.stop()
+    return failSend(new Error('itemSendMachine did not reach done'))
   }
-  softChart.stop()
-  // Soft-latch remittance on the wire names the spent tip. Extend once the
-  // settle txid is known so the next send reuses tip-named proof (no hydrate).
+  itemChart.stop()
+  // Remittance on the wire names the spent tip. Extend once the settle txid is
+  // known so the next send reuses tip-named proof (no hydrate).
   if (txid && provenance && parseProvenanceV2(provenance)) {
     try {
       const tipBeef = await getBeefForTxidCached(wallet, txid)

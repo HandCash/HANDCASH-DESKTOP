@@ -4,9 +4,8 @@
  * An ordinal imported from an indexer carries no remittance, and the BEEF the
  * wallet holds for its tip stops at that transaction — so `rebuildProvenanceV2FromBeef`
  * has nothing older to walk and every imported item stays `unproven` forever.
- * Because hardened induction refuses to adopt an unproven tip, such an item can
- * also never climb to BRC-156: it sends over soft-latch, and the recipient
- * inherits the same unproven claim.
+ * Such an item then sends without a BRC-150 proof, and the recipient inherits the
+ * same unproven claim.
  *
  * This breaks that loop by hydrating the ancestry itself — one transaction per
  * hop, each with its own merkle proof — and then handing the assembled BEEF to

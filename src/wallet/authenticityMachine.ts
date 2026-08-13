@@ -1,5 +1,5 @@
 /**
- * Per-outpoint authenticity statechart (BRC-156 → BRC-150 → unproven).
+ * Per-outpoint authenticity statechart (BRC-150 → unproven).
  *
  * Owns transition policy. Durable projection lives in `provenCache.ts`.
  * UI (list badge / spinner) reads snapshot + verificationProgress — never
@@ -34,7 +34,7 @@ export type AuthenticityEvent =
   | { type: 'START_VERIFY' }
   | {
       type: 'PROVEN'
-      tier: 'brc156' | 'brc150'
+      tier: 'brc150'
       origin?: string
       originScriptHash?: string
     }

@@ -1,8 +1,8 @@
 /**
  * Parent statechart for collectable transfer routing.
  *
- * Classifies once into an exhaustive `SendPath`, then invokes soft-latch or
- * refuses. Covenant-locked tips have no spend edge — abandon instead.
+ * Classifies once into an exhaustive `SendPath`, then invokes the P2PKH item
+ * send or refuses. Covenant-locked tips have no spend edge — abandon instead.
  *
  * UI confirm flow (edit → confirm) stays in the panel machine; this chart owns
  * the on-chain path only.
@@ -13,7 +13,7 @@ import type { SendPath } from './collectableTipKind'
 export type CollectableSendPhase =
   | 'idle'
   | 'classifying'
-  | 'softLatch'
+  | 'p2pkhSend'
   | 'refusing'
   | 'done'
   | 'failed'
@@ -27,16 +27,16 @@ export type CollectableSendContext = {
 
 export type CollectableSendEvent =
   | { type: 'START'; outpoint: string; sendPath: SendPath }
-  | { type: 'PATH_SOFT_LATCH' }
+  | { type: 'PATH_P2PKH_SEND' }
   | { type: 'PATH_REFUSE'; reason: string }
   | { type: 'SUCCESS'; txid: string }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
-function pathKind(path: SendPath | null): 'softLatch' | 'refuse' | null {
+function pathKind(path: SendPath | null): 'p2pkhSend' | 'refuse' | null {
   if (!path) return null
   if (path.path === 'refuse') return 'refuse'
-  if (path.path === 'softLatch') return 'softLatch'
+  if (path.path === 'p2pkhSend') return 'p2pkhSend'
   return null
 }
 
@@ -46,7 +46,7 @@ export const collectableSendMachine = setup({
     events: {} as CollectableSendEvent,
   },
   guards: {
-    choseSoftLatch: ({ context }) => pathKind(context.sendPath) === 'softLatch',
+    choseP2pkhSend: ({ context }) => pathKind(context.sendPath) === 'p2pkhSend',
     choseRefuse: ({ context }) => pathKind(context.sendPath) === 'refuse',
   },
   actions: {
@@ -92,14 +92,14 @@ export const collectableSendMachine = setup({
     classifying: {
       always: [
         { guard: 'choseRefuse', target: 'refusing' },
-        { guard: 'choseSoftLatch', target: 'softLatch' },
+        { guard: 'choseP2pkhSend', target: 'p2pkhSend' },
         {
           target: 'failed',
           actions: assign({ error: 'Send path was not classified' }),
         },
       ],
     },
-    softLatch: {
+    p2pkhSend: {
       on: {
         SUCCESS: { target: 'done', actions: 'setTxid' },
         FAIL: { target: 'failed', actions: 'setError' },

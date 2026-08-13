@@ -11,7 +11,7 @@ export type SyncHealth = {
   /** Longer user-facing line; null when quiet. */
   message: string | null
   heldOneSats: number
-  /** Held tips a co-created BRC-156 latch proves are items, still awaiting an origin. */
+  /** Held tips known to be items, still awaiting an origin. */
   pendingTips: number
   updatedAt: number
 }

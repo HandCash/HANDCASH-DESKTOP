@@ -1,7 +1,7 @@
 /**
  * SPV-first funding ingest from a known payment txid (DM tip / pay-sent).
  *
- * Pattern mirrors soft-latch item receive: messagebox is the wake-up (grade B);
+ * Pattern mirrors the P2P item receive: messagebox is the wake-up (grade B);
  * we fetch BEEF, prove the outs that pay us, and sweep into managed change
  * (grade A). Address-index polling is only a fallback / secondary verify.
  */
@@ -11,7 +11,6 @@ import {
   noteInboundReceivePending,
 } from './appActivity'
 import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
-import { isLatchDustSats } from './oneSatLatch'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { fetchBalanceSats, getActiveWallet } from './session'
 import { setSyncHealth } from './walletHealth'
@@ -83,7 +82,7 @@ export async function ingestPaymentByTxid(
       const out = tx.outputs[vout]
       if (!out) continue
       const sats = Number(out.satoshis ?? 0)
-      if (!(sats > 1) || isLatchDustSats(sats)) continue
+      if (!(sats > 1)) continue
       const lockHex = out.lockingScript?.toHex?.() ?? ''
       if (!scriptPaysAddress(lockHex, active.address)) continue
       funding.push({

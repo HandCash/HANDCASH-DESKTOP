@@ -2,25 +2,25 @@
  * Explicit tip / send-path vocabulary for collectables.
  *
  * Tip kind and send path are tagged unions so a covenant-locked tip cannot
- * silently fall through to soft-latch. Routing lives in `chooseSendPath`; the
- * XState parent (`collectableSendMachine`) only invokes what that returns.
+ * silently fall through to a spendable send. Routing lives in `chooseSendPath`;
+ * the XState parent (`collectableSendMachine`) only invokes what that returns.
  *
- * Soft-latch (tip + 2-sat latch) is the only spend path. Covenant / unknown
- * tips refuse — the UI offers abandon instead of send.
+ * A spendable P2PKH tip is the only send path. Covenant / unknown tips refuse —
+ * the UI offers abandon instead of send. Item identity is BRC-150 (offline
+ * tip->origin proof); there is no on-chain latch companion.
  */
 import { Beef } from '@bsv/sdk'
-import { toUnderscoreOutpoint } from './oneSatLatch'
 
 export type TipKind =
   | { kind: 'covenantLocked'; lockingScript: string }
-  | { kind: 'softP2pkh'; lockingScript: string }
+  | { kind: 'p2pkh'; lockingScript: string }
   | { kind: 'unknown' }
 
 export type SendPath =
-  | { path: 'softLatch'; latchOutpoint: string | null }
+  | { path: 'p2pkhSend' }
   | { path: 'refuse'; reason: string }
 
-export type ProvenTier = 'brc156' | 'brc150' | 'unproven'
+export type ProvenTier = 'brc150' | 'unproven'
 
 /** Bare or embedded P2PKH locking branch: `OP_DUP OP_HASH160 <20> OP_EQUALVERIFY OP_CHECKSIG`. */
 const P2PKH_BRANCH = /76a914[0-9a-f]{40}88ac/i
@@ -60,7 +60,7 @@ export function normalizeLockingScriptHex(
  *
  * wallet-toolbox IDB `validateOutputScript` no-ops when `scriptOffset === 0`,
  * so `include: 'locking scripts'` often returns no script even for spendable
- * tips. The tip BEEF we already fetch for soft-latch always has the output.
+ * tips. The tip BEEF we already fetch for the send always has the output.
  */
 export function lockingScriptHexFromBeef(
   beefBin: number[] | Uint8Array,
@@ -112,13 +112,14 @@ export function classifyTipKind(
   const hex = normalizeLockingScriptHex(lockingScript)
   if (!hex) return { kind: 'unknown' }
 
-  // Soft tips: bare P2PKH, or inscribed (ord envelope + P2PKH) still unlocked
-  // by the device root key — soft-latch spends the P2PKH branch.
+  // Spendable tips: bare P2PKH, or inscribed (ord envelope + P2PKH) still
+  // unlocked by the device root key — the send spends the P2PKH branch.
   if (hasSpendableP2pkhBranch(hex)) {
-    return { kind: 'softP2pkh', lockingScript: hex }
+    return { kind: 'p2pkh', lockingScript: hex }
   }
 
-  // Long non-P2PKH scripts (legacy BRC-156 covenant tips) cannot soft-latch.
+  // Long non-P2PKH scripts (legacy covenant tips) cannot be spent by this
+  // wallet — they refuse and are abandoned, never sent.
   if (hex.length >= 80 && /^[0-9a-f]+$/i.test(hex)) {
     return { kind: 'covenantLocked', lockingScript: hex }
   }
@@ -134,12 +135,10 @@ export function isCovenantLockedScript(
 
 export type ChooseSendPathArgs = {
   tipKind: TipKind
-  /** Soft-latch dust outpoint when present. */
-  latchOutpoint?: string | null
   /**
-   * BRC-150 (or legacy brc156 paint) authenticity. When listOutputs/BEEF omit
-   * the locking script, a verified tip still soft-latches — authenticity is
-   * independent of the toolbox scriptOffset bug.
+   * BRC-150 authenticity. When listOutputs/BEEF omit the locking script, a
+   * verified tip still sends — authenticity is independent of the toolbox
+   * scriptOffset bug.
    */
   provenTier?: ProvenTier | null
   /** @deprecated Ignored — hardened genesis/resend removed. */
@@ -149,20 +148,15 @@ export type ChooseSendPathArgs = {
 }
 
 function isAuthenticityProven(tier: ProvenTier | null | undefined): boolean {
-  return tier === 'brc150' || tier === 'brc156'
+  return tier === 'brc150'
 }
 
 /**
- * Exhaustive send-path choice. Covenant tips never return `softLatch`.
- * Soft P2PKH → softLatch. Unknown + BRC-150 proven → softLatch (missing script).
- * Unknown without proof refuses.
+ * Exhaustive send-path choice. Covenant tips never send.
+ * Spendable P2PKH → p2pkhSend. Unknown + BRC-150 proven → p2pkhSend (missing
+ * script). Unknown without proof refuses.
  */
 export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
-  const latch =
-    typeof args.latchOutpoint === 'string' && args.latchOutpoint.trim()
-      ? toUnderscoreOutpoint(args.latchOutpoint)
-      : null
-
   if (args.tipKind.kind === 'covenantLocked') {
     return {
       path: 'refuse',
@@ -173,10 +167,10 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
 
   if (args.tipKind.kind === 'unknown') {
     if (isAuthenticityProven(args.provenTier)) {
-      return { path: 'softLatch', latchOutpoint: latch }
+      return { path: 'p2pkhSend' }
     }
     return { path: 'refuse', reason: 'Collectable locking script is unrecognized' }
   }
 
-  return { path: 'softLatch', latchOutpoint: latch }
+  return { path: 'p2pkhSend' }
 }

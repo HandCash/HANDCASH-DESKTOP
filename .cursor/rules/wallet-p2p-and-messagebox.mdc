@@ -10,11 +10,11 @@ Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md
 ## Vocabulary
 
 - **P2P** = counterparty gets value/facts without an indexer deciding ownership/identity.
-  - **A** chain custody (P2PKH, soft-latch tip+latch+OP_RETURN)
+  - **A** chain custody (P2PKH tip)
   - **B** identity messagebox (BRC-33; any host)
   - **C** convenience (GorillaPool content, handle resolve)
-- **BRC-150 remittance** (`customInstructions.provenance`) is **local** — does not travel on P2PKH.
-- **BRC-156 latch state** (OP_RETURN on settle) **is** P2P item identity. Soft-latch classify must not call GorillaPool.
+- **BRC-150 remittance** (`customInstructions.provenance`) is **local** — does not travel on P2PKH. It is the **only** item authenticity/identity model; **BRC-156 (soft-latch) was cancelled and fully removed** — there is no on-chain latch companion.
+- Item tips are plain P2PKH; item identity/authenticity is the BRC-150 offline tip→origin proof, not on-chain state.
 - **Messagebox** = BRC-33 store-and-forward. **BRC-CLOUD is a convenience host**, not required for custody. Prefer resolved `messagebox` URL from handle resolve; do not hardcode our cloud as the only box forever.
 - Device peer / BRC-39 = same-identity sync, not counterparty P2P.
 

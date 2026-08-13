@@ -1,31 +1,16 @@
 import { LockingScript, Transaction } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import {
+  originScriptHash,
   verifyAuthenticityLadder,
   verifyOriginScriptCommitment,
 } from './oneSatAuthenticity'
-import { originScriptHash } from './oneSatLatch'
 
 const HELD = `${'a'.repeat(64)}.0`
 const ORD_ENVELOPE =
   '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
 
 describe('collectable authenticity ladder (BRC-150 only)', () => {
-  it('ignores hardened evidence — product authenticity is BRC-150', () => {
-    const result = verifyAuthenticityLadder({
-      heldOutpoint: HELD,
-      hardened: {
-        proven: true,
-        reason: null,
-        originScriptHash: 'b'.repeat(64),
-      },
-      indexerResolved: true,
-    })
-
-    expect(result.tier).toBe('unproven')
-    expect(result.proven).toBe(false)
-  })
-
   it('never promotes indexer identity to proven', () => {
     const result = verifyAuthenticityLadder({
       heldOutpoint: HELD,

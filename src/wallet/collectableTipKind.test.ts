@@ -10,8 +10,6 @@ import {
   resolveTipLockingScriptHex,
 } from './collectableTipKind'
 
-const TX2 = 'b'.repeat(64)
-const BEACON = `${TX2}_1`
 const P2PKH_HEX = `76a914${'ab'.repeat(20)}88ac`
 const COVENANT = `01${'cd'.repeat(100)}` // non-P2PKH, long enough
 const ORD_PREFIX =
@@ -52,26 +50,26 @@ describe('lockingScriptHexFromBeef', () => {
         outpoint,
       }),
     ).toBe(script)
-    expect(classifyTipKind(script).kind).toBe('softP2pkh')
+    expect(classifyTipKind(script).kind).toBe('p2pkh')
   })
 })
 
 describe('classifyTipKind', () => {
-  it('labels P2PKH as softP2pkh', () => {
+  it('labels P2PKH as p2pkh', () => {
     expect(classifyTipKind(P2PKH_HEX)).toEqual({
-      kind: 'softP2pkh',
+      kind: 'p2pkh',
       lockingScript: P2PKH_HEX,
     })
   })
 
-  it('labels 0x-prefixed P2PKH as softP2pkh', () => {
-    expect(classifyTipKind(`0x${P2PKH_HEX}`).kind).toBe('softP2pkh')
+  it('labels 0x-prefixed P2PKH as p2pkh', () => {
+    expect(classifyTipKind(`0x${P2PKH_HEX}`).kind).toBe('p2pkh')
   })
 
-  it('labels inscribed (ord + P2PKH) tips as softP2pkh', () => {
+  it('labels inscribed (ord + P2PKH) tips as p2pkh', () => {
     expect(hasSpendableP2pkhBranch(INSCRIBED)).toBe(true)
     expect(classifyTipKind(INSCRIBED)).toEqual({
-      kind: 'softP2pkh',
+      kind: 'p2pkh',
       lockingScript: INSCRIBED,
     })
     expect(isCovenantLockedScript(INSCRIBED)).toBe(false)
@@ -96,7 +94,6 @@ describe('chooseSendPath', () => {
       chooseSendPath({
         tipKind,
         recipientIdentityKey: null,
-        latchOutpoint: BEACON,
       }),
     ).toMatchObject({
       path: 'refuse',
@@ -107,49 +104,44 @@ describe('chooseSendPath', () => {
       chooseSendPath({
         tipKind,
         recipientIdentityKey: IDENTITY,
-        latchOutpoint: BEACON,
       }).path,
     ).toBe('refuse')
   })
 
-  it('soft-latches proven soft P2PKH regardless of identity', () => {
+  it('sends proven P2PKH regardless of identity', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(P2PKH_HEX),
         provenTier: 'brc150',
         recipientIdentityKey: IDENTITY,
-        latchOutpoint: BEACON,
       }),
-    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
+    ).toEqual({ path: 'p2pkhSend' })
   })
 
-  it('soft-latches inscribed soft tips', () => {
+  it('sends inscribed P2PKH tips', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(INSCRIBED),
-        latchOutpoint: BEACON,
       }),
-    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
+    ).toEqual({ path: 'p2pkhSend' })
   })
 
-  it('soft-latches unproven soft P2PKH (or missing identity)', () => {
+  it('sends unproven P2PKH (or missing identity)', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(P2PKH_HEX),
         provenTier: 'unproven',
         recipientIdentityKey: IDENTITY,
-        latchOutpoint: BEACON,
       }),
-    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
+    ).toEqual({ path: 'p2pkhSend' })
 
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(P2PKH_HEX),
         provenTier: 'brc150',
         recipientIdentityKey: null,
-        latchOutpoint: null,
       }),
-    ).toEqual({ path: 'softLatch', latchOutpoint: null })
+    ).toEqual({ path: 'p2pkhSend' })
   })
 
   it('refuses unknown tip kinds without authenticity', () => {
@@ -161,14 +153,13 @@ describe('chooseSendPath', () => {
     ).toMatchObject({ path: 'refuse' })
   })
 
-  it('soft-latches unknown tips that already verified BRC-150', () => {
+  it('sends unknown tips that already verified BRC-150', () => {
     expect(
       chooseSendPath({
         tipKind: { kind: 'unknown' },
         provenTier: 'brc150',
-        latchOutpoint: BEACON,
       }),
-    ).toEqual({ path: 'softLatch', latchOutpoint: toUnderscore(BEACON) })
+    ).toEqual({ path: 'p2pkhSend' })
   })
 
   it('still refuses covenant even when BRC-150 is proven', () => {
@@ -176,12 +167,7 @@ describe('chooseSendPath', () => {
       chooseSendPath({
         tipKind: classifyTipKind(COVENANT),
         provenTier: 'brc150',
-        latchOutpoint: BEACON,
       }).path,
     ).toBe('refuse')
   })
 })
-
-function toUnderscore(op: string): string {
-  return op.replace(/\.(\d+)$/, '_$1')
-}

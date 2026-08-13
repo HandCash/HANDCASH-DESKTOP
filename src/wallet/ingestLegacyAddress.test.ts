@@ -36,18 +36,6 @@ vi.mock('./oneSatImport', () => ({
     errors: [],
     outpoints: [],
   })),
-  importOneSatLatches: vi.fn(async () => ({
-    imported: 0,
-    failed: 0,
-    errors: [],
-    outpoints: [],
-  })),
-  importSoftLatchSettlements: vi.fn(async () => ({
-    imported: 0,
-    failed: 0,
-    errors: [],
-    outpoints: [],
-  })),
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
@@ -85,7 +73,6 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
       funding: [FUNDING],
       oneSats: [],
       bsv21: [],
-      latches: [],
       heldOneSats: [],
       pendingTips: [],
     })
@@ -304,7 +291,6 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
           sym: 'DEMO',
         },
       ],
-      latches: [],
       heldOneSats: [],
       pendingTips: [],
     })

@@ -83,7 +83,7 @@ function authenticityView(
   item: Collectable,
   verification: VerificationProgress,
 ): { label: string; tone: string; title: string } {
-  if (item.authenticity === 'brc150' || item.authenticity === 'brc156') {
+  if (item.authenticity === 'brc150') {
     return {
       label: 'Verified · BRC-150',
       tone: 'brc150',
@@ -296,7 +296,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           </p>
           {item.covenantLocked ? (
             <p className="collectable-details-app">
-              Stuck covenant tip (legacy BRC-156). It cannot be sent. Remove it
+              Stuck covenant tip (legacy). It cannot be sent. Remove it
               from this wallet — the sat stays locked on chain.
             </p>
           ) : null}

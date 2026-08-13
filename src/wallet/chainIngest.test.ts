@@ -89,7 +89,7 @@ describe('refreshFromChain spendable review', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [],
       oneSats: [],
-      latches: [],
+      bsv21: [],
       heldOneSats: [],
       pendingTips: [],
     })
@@ -248,7 +248,7 @@ describe('refreshFromChain spendable review', () => {
     mockClassifyLegacyUtxos.mockResolvedValue({
       funding: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
       oneSats: [],
-      latches: [],
+      bsv21: [],
       heldOneSats: [],
       pendingTips: [],
     })

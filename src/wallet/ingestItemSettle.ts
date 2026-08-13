@@ -1,20 +1,16 @@
 /**
- * Payee ingest of a P2P soft-latch item settle (Atomic BEEF from messagebox).
+ * Payee ingest of a P2P item settle (Atomic BEEF from messagebox).
  *
- * Internalize tip + latch, then the **payee** broadcasts. If the box has no
- * Atomic BEEF, SPV-fetch by txid (sender-broadcast fallback). Address scan
- * remains the last-resort custody path.
+ * Internalize the tip, then the **payee** broadcasts. If the box has no Atomic
+ * BEEF, SPV-fetch by txid (sender-broadcast fallback). Address scan remains the
+ * last-resort custody path. Item identity is BRC-150 (offline tip→origin proof)
+ * resolved from the origin hint + normal inscription resolution — no on-chain
+ * latch companion.
  */
 import { Beef } from '@bsv/sdk'
 import { getActiveWallet } from './session'
 import { rememberBeefTree } from './beefCache'
 import { scriptPaysAddress } from './ordinalOwnership'
-import {
-  findLatchStateForTip,
-  isLatchDustSats,
-  latchOutputTags,
-  ONE_SAT_LATCH_BASKET,
-} from './oneSatLatch'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import {
   beginOneSatImport,
@@ -58,6 +54,9 @@ export async function internalizePeerItemSettle(opts: {
   tx?: number[]
   beefUrl?: string
   name?: string
+  /** Optional BRC-150 origin hint from the messagebox notify. */
+  origin?: string
+  app?: string
 }): Promise<IngestItemSettleResult> {
   const id = opts.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) {
@@ -99,10 +98,13 @@ export async function internalizePeerItemSettle(opts: {
   }
 
   let tipVout = -1
-  let latchVout = -1
-  let origin = `${id}_0`
+  const originHint = opts.origin?.trim()
+  let origin =
+    originHint && /^[0-9a-f]{64}[._]\d+$/i.test(originHint)
+      ? originHint.replace(/\.(\d+)$/, '_$1').toLowerCase()
+      : `${id}_0`
   let name = opts.name?.trim() || 'Collectable'
-  let app: string | undefined
+  const app = opts.app?.trim() || undefined
   try {
     const beef = Beef.fromBinary(atomic)
     const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
@@ -117,21 +119,11 @@ export async function internalizePeerItemSettle(opts: {
       const hex = out?.lockingScript?.toHex()
       if (!hex || !scriptPaysAddress(hex, active.address)) continue
       if (sats === 1 && tipVout < 0) tipVout = i
-      else if (typeof sats === 'number' && isLatchDustSats(sats) && latchVout < 0) {
-        latchVout = i
-      }
     }
     if (tipVout < 0) {
       clearInboundReceivePending(id)
       return { accepted: false, outpoints: [], reason: 'no-tip-paying-us' }
     }
-    const latchState = findLatchStateForTip(
-      outputs.map((o) => ({ lockingScript: o?.lockingScript?.toHex() })),
-      tipVout,
-    )
-    if (latchState?.origin) origin = latchState.origin
-    if (latchState?.name?.trim()) name = latchState.name.trim()
-    if (latchState?.app?.trim()) app = latchState.app.trim()
   } catch (err) {
     clearInboundReceivePending(id)
     return {
@@ -142,8 +134,7 @@ export async function internalizePeerItemSettle(opts: {
   }
 
   const tipOp = `${id}.${tipVout}`
-  const latchOp = latchVout >= 0 ? `${id}.${latchVout}` : null
-  const allOps = latchOp ? [tipOp, latchOp] : [tipOp]
+  const allOps = [tipOp]
   const claimed = beginOneSatImport(allOps)
   if (claimed.length === 0) {
     return { accepted: true, outpoints: allOps, reason: 'already-imported' }
@@ -181,26 +172,11 @@ export async function internalizePeerItemSettle(opts: {
         },
       },
     ]
-    if (latchVout >= 0) {
-      remittanceOutputs.push({
-        outputIndex: latchVout,
-        protocol: 'basket insertion',
-        insertionRemittance: {
-          basket: ONE_SAT_LATCH_BASKET,
-          tags: latchOutputTags({ origin, tip: 'OUTPUT:0' }),
-          customInstructions: JSON.stringify({
-            schema: 1,
-            origin,
-            tip: 'OUTPUT:0',
-          }),
-        },
-      })
-    }
 
     await active.wallet.internalizeAction({
       tx: atomic,
-      description: 'Receive soft-latch item',
-      labels: ['1sat', '1sat-latch', 'handcash-item-p2p'],
+      description: 'Receive item',
+      labels: ['1sat', 'handcash-item-p2p'],
       outputs: remittanceOutputs,
       seekPermission: false,
     })

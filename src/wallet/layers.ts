@@ -23,13 +23,12 @@
  * - **Items (1sat / recursive)** → basket `1sat` in `localState`.
  *   - **BRC-150 remittance** (`oneSatProvenance.ts`) — tip→origin proof in
  *     `customInstructions`; **wallet-local**, does not ride a P2PKH lock to peers.
- *   - **Soft-latch state** (`oneSatLatch.ts`) — OP_RETURN on soft-latch settle (`BRC156` marker, BRC withdrawn);
- *     **this** is peer-visible item identity (origin/name). Soft-latch receive must
- *     not use an ordinal indexer for naming.
+ *     This is the *only* item authenticity/identity model — there is no on-chain
+ *     latch companion (BRC-156 was withdrawn and fully removed).
  *   - **Self-send** keeps the settle Atomic BEEF locally (`beefCache`) so the next
- *     spend does not wait on an indexer; a stuck latch falls back to tip-only.
+ *     spend does not wait on an indexer.
  *     Failed sends must not ghost-relinquish the tip (that burned 1-sats).
- *   - **Item P2P settle** (`itemSettlePath.ts` + `softLatchSendMachine`): sender
+ *   - **Item P2P settle** (`itemSettlePath.ts` + `itemSendMachine`): sender
  *     signs `noSend` and classifies once — `peerDeliver` (Atomic BEEF to peer;
  *     **payee** broadcasts), `selfReceive`, or `externalBroadcast` (pasted
  *     address). There is no broadcast-then-notify path; `peerDeliver` has no
@@ -76,10 +75,9 @@ export const WALLET_LAYER_MODULES = {
     'bsv21TipKind.ts',
     'brc100Handler.ts',
     'oneSatProvenance.ts',
-    'oneSatLatch.ts',
     'authenticityMachine.ts',
     'collectableSendMachine.ts',
-    'softLatchSendMachine.ts',
+    'itemSendMachine.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
     'bsvSendMachine.ts',
@@ -205,7 +203,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     ])
 
   // 1sat / bsv21 from address scan alone are not historyReplica. After restore,
-  // chain ingest can land soft-latch dust before BRC-39 pull — those outs must
+  // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history.
   const looksEmpty =
     spendableSats <= 0 && defaultOutputCount <= 0 && actionCount <= 0

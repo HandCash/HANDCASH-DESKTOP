@@ -42,7 +42,7 @@ describe('ingestPaymentByTxid', () => {
     tx.addOutput({ satoshis: 5_000, lockingScript: new P2PKH().lock(address) })
     tx.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(address) })
     tx.addOutput({ satoshis: 2_000, lockingScript: new P2PKH().lock(other) })
-    // Soft-latch dust
+    // 2-sat out to us: post BRC-156 purge this is plain funding, not latch dust.
     tx.addOutput({ satoshis: 2, lockingScript: new P2PKH().lock(address) })
     const txid = tx.id('hex')
 
@@ -50,14 +50,15 @@ describe('ingestPaymentByTxid', () => {
     beef.mergeRawTx(tx.toBinary())
     mockGetBeef.mockResolvedValue(beef)
     mockImportLegacyUtxos.mockResolvedValue({
-      imported: 1,
+      imported: 2,
       failed: 0,
       errors: [],
       skippedOneSats: 0,
       skippedKnown: 0,
-      importedOutpoints: [`${txid}.0`],
+      importedOutpoints: [`${txid}.0`, `${txid}.3`],
       importedReceipts: [
         { outpoint: `${txid}.0`, satoshis: 5_000, receiveTxid: txid },
+        { outpoint: `${txid}.3`, satoshis: 2, receiveTxid: txid },
       ],
     })
 
@@ -78,12 +79,13 @@ describe('ingestPaymentByTxid', () => {
     const { ingestPaymentByTxid } = await import('./ingestPaymentByTxid')
     const result = await ingestPaymentByTxid(txid)
 
-    expect(result.imported).toBe(1)
-    expect(result.satoshis).toBe(5_000)
+    expect(result.imported).toBe(2)
+    expect(result.satoshis).toBe(5_002)
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
     const [utxos] = mockImportLegacyUtxos.mock.calls[0] as [Array<{ outpoint: string; satoshis: number }>]
-    expect(utxos.map((u) => u.outpoint)).toEqual([`${txid}.0`])
-    expect(utxos.every((u) => u.satoshis > 2)).toBe(true)
+    expect(utxos.map((u) => u.outpoint)).toEqual([`${txid}.0`, `${txid}.3`])
+    // 1-sat dust is never swept; everything else that pays us is funding.
+    expect(utxos.every((u) => u.satoshis > 1)).toBe(true)
     expect(mockGetBeef).toHaveBeenCalledWith(
       expect.anything(),
       txid,

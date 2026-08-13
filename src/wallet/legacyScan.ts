@@ -7,7 +7,6 @@ import {
   markLegacyImported,
   releaseLegacyImport,
 } from './legacyImportGuard'
-import { isLatchDustSats } from './oneSatLatch'
 import { buildLegacyInputBeef } from './legacyBeef'
 
 export type LegacyUtxo = {
@@ -299,17 +298,11 @@ export async function importLegacyUtxos(
   if (!wallet) throw new Error('Wallet locked')
 
   const skippedOneSats = utxos.filter((u) => u.satoshis === 1).length
-  const skippedLatchDust = utxos.filter((u) => isLatchDustSats(u.satoshis)).length
-  const safe = utxos.filter((u) => u.satoshis > 1 && !isLatchDustSats(u.satoshis))
+  const safe = utxos.filter((u) => u.satoshis > 1)
   const byOutpoint = new Map(safe.map((u) => [u.outpoint.trim().toLowerCase(), u]))
   if (skippedOneSats > 0) {
     console.warn(
       `[legacy] refused to sweep ${skippedOneSats} one-sat outpoint(s) — possible ordinals`,
-    )
-  }
-  if (skippedLatchDust > 0) {
-    console.warn(
-      `[legacy] refused to sweep ${skippedLatchDust} soft-latch dust outpoint(s)`,
     )
   }
   if (safe.length === 0) {

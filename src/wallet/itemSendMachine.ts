@@ -1,7 +1,7 @@
 /**
- * Soft-latch (BRC-150 / P2PKH tip) send phases.
+ * Collectable item send phases (BRC-150 remittance + P2PKH tip).
  *
- * Parent: `collectableSendMachine` (softLatch state). createAction is always
+ * Parent: `collectableSendMachine` (p2pkhSend state). createAction is always
  * `noSend` — the settle chart (`ItemSettlePath`) owns who may broadcast.
  * `peerDeliver` has no `BROADCASTED` edge. After inbox delivery, sender
  * silently `postBeef` (`confirmBroadcast`) so the tx is on-chain even if the
@@ -10,7 +10,7 @@
 import { assign, setup, type SnapshotFrom } from 'xstate'
 import type { ItemSettlePath } from './itemSettlePath'
 
-export type SoftLatchSendPhase =
+export type ItemSendPhase =
   | 'idle'
   | 'building'
   | 'createAction'
@@ -24,14 +24,14 @@ export type SoftLatchSendPhase =
   | 'done'
   | 'failed'
 
-export type SoftLatchSendContext = {
+export type ItemSendContext = {
   outpoint: string
   settlePath: ItemSettlePath | null
   txid: string | null
   error: string | null
 }
 
-export type SoftLatchSendEvent =
+export type ItemSendEvent =
   | { type: 'START'; outpoint: string; settlePath: ItemSettlePath }
   | { type: 'BUILT' }
   | { type: 'CREATED'; txid?: string }
@@ -43,10 +43,10 @@ export type SoftLatchSendEvent =
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
 
-export const softLatchSendMachine = setup({
+export const itemSendMachine = setup({
   types: {
-    context: {} as SoftLatchSendContext,
-    events: {} as SoftLatchSendEvent,
+    context: {} as ItemSendContext,
+    events: {} as ItemSendEvent,
   },
   actions: {
     begin: assign(({ event }) =>
@@ -88,7 +88,7 @@ export const softLatchSendMachine = setup({
       context.settlePath?.settle === 'externalBroadcast',
   },
 }).createMachine({
-  id: 'softLatchSend',
+  id: 'itemSend',
   initial: 'idle',
   context: { outpoint: '', settlePath: null, txid: null, error: null },
   states: {
@@ -177,10 +177,10 @@ export const softLatchSendMachine = setup({
   },
 })
 
-export type SoftLatchSendSnapshot = SnapshotFrom<typeof softLatchSendMachine>
+export type ItemSendSnapshot = SnapshotFrom<typeof itemSendMachine>
 
 /** Sender postBeef is legal only in these states — never `peerDeliver`. */
-export function maySenderBroadcast(snapshot: SoftLatchSendSnapshot): boolean {
+export function maySenderBroadcast(snapshot: ItemSendSnapshot): boolean {
   return (
     snapshot.matches('selfReceive') ||
     snapshot.matches('externalBroadcast') ||
@@ -189,10 +189,10 @@ export function maySenderBroadcast(snapshot: SoftLatchSendSnapshot): boolean {
   )
 }
 
-export function isSilentSenderBroadcast(snapshot: SoftLatchSendSnapshot): boolean {
+export function isSilentSenderBroadcast(snapshot: ItemSendSnapshot): boolean {
   return snapshot.matches('confirmBroadcast')
 }
 
-export function mustDeliverToPeer(snapshot: SoftLatchSendSnapshot): boolean {
+export function mustDeliverToPeer(snapshot: ItemSendSnapshot): boolean {
   return snapshot.matches('peerDeliver')
 }
