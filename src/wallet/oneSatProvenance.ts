@@ -310,6 +310,149 @@ export function provenanceFitsBudget(p: ProvenanceV2): boolean {
   return typeof p.beefB64 === 'string' && p.beefB64.length <= REMITTANCE_MAX_BEEF_B64_CHARS
 }
 
+function pathTxid(outpoint: string): string {
+  return toUnderscore(outpoint).slice(0, 64).toLowerCase()
+}
+
+/**
+ * Path transactions present in `beef` as txid-only (no raw body).
+ *
+ * BRC-150 / BRC-96 allow these when the receiver can supply the body by other
+ * means — which is how a lean remittance ships a Pixel Foxes tip without the
+ * megabyte mint transaction.
+ */
+export function missingPathTxBodies(beef: Beef, path: string[]): string[] {
+  const missing: string[] = []
+  for (const point of path) {
+    const txid = pathTxid(point)
+    if (!/^[0-9a-f]{64}$/.test(txid)) continue
+    const entry = beef.findTxid(txid)
+    if (!entry?.tx) missing.push(txid)
+  }
+  return missing
+}
+
+/**
+ * Shrink a tip→origin BEEF so it fits the remittance wire budget.
+ *
+ * Batch-mint origins (Pixel Foxes) are megabytes because one transaction carries
+ * hundreds of sibling inscriptions. BRC-150 allows txid-only entries when the
+ * receiver can supply those transactions by other means ([BRC-96](transactions)).
+ * We drop raw bodies of fat path transactions — origin first — while keeping
+ * their merkle bumps and the tip's raw bytes. The receiver hydrates missing
+ * bodies once; a whole collection shares one origin fetch.
+ *
+ * Returns null only when even a tip-only package cannot fit (pathological tip).
+ */
+export function fitRemittanceBeef(
+  beef: Beef,
+  path: string[],
+  maxBytes: number = REMITTANCE_MAX_BEEF_BYTES,
+): { beef: Beef; binary: number[]; stripped: string[] } | null {
+  const lean = beef.clone()
+  // Remittance is a full BEEF package. A prior AtomicBEEF subject is the spent
+  // tip, not the tip we are about to prove — leaving it set makes structural
+  // validation fail the moment we merge the next hop.
+  lean.atomicTxid = undefined
+  const stripped: string[] = []
+  const tipTxid = pathTxid(path[0] ?? '')
+  const originTxid = pathTxid(path[path.length - 1] ?? '')
+  const pathTxids = [
+    ...new Set(
+      path.map(pathTxid).filter((txid) => /^[0-9a-f]{64}$/.test(txid)),
+    ),
+  ]
+
+  const measure = (): number[] =>
+    typeof lean.toBinary === 'function' ? lean.toBinary() : []
+
+  let binary = measure()
+  if (binary.length <= maxBytes) {
+    return { beef: lean, binary, stripped }
+  }
+
+  const strip = (txid: string): boolean => {
+    if (!txid || txid === tipTxid) return false
+    const entry = lean.findTxid(txid)
+    if (!entry || entry.isTxidOnly || !entry.tx) return false
+    lean.makeTxidOnly(txid)
+    stripped.push(txid)
+    return true
+  }
+
+  // Origin first — almost always the batch mint.
+  if (originTxid && originTxid !== tipTxid && strip(originTxid)) {
+    binary = measure()
+    if (binary.length <= maxBytes) return { beef: lean, binary, stripped }
+  }
+
+  // Then other non-tip path txs, largest first (rare; deep hops with fat parents).
+  const candidates = pathTxids
+    .filter((txid) => txid !== tipTxid && txid !== originTxid)
+    .map((txid) => ({
+      txid,
+      len: lean.findTxid(txid)?.rawTx?.length ?? 0,
+    }))
+    .filter((c) => c.len > 0)
+    .sort((a, b) => b.len - a.len)
+
+  for (const c of candidates) {
+    if (!strip(c.txid)) continue
+    binary = measure()
+    if (binary.length <= maxBytes) return { beef: lean, binary, stripped }
+  }
+
+  binary = measure()
+  return binary.length <= maxBytes ? { beef: lean, binary, stripped } : null
+}
+
+/**
+ * Fetch raw bodies for any path transactions that arrived as txid-only.
+ *
+ * One Pixel Foxes origin fetch is reused by every tip in the collection via
+ * {@link getBeefForTxidCached}. Failures leave the beef unchanged so verify
+ * fails closed.
+ */
+export async function hydrateMissingPathTxs(
+  beef: Beef,
+  path: string[],
+  getBeef: (txid: string) => Promise<Beef>,
+): Promise<{ beef: Beef; fetched: string[] }> {
+  const missing = missingPathTxBodies(beef, path)
+  if (missing.length === 0) return { beef, fetched: [] }
+  const merged = beef.clone()
+  const fetched: string[] = []
+  await Promise.all(
+    missing.map(async (txid) => {
+      try {
+        const piece = await getBeef(txid)
+        if (!piece.findTxid(txid)?.tx) return
+        merged.mergeBeef(piece.toBinary())
+        fetched.push(txid)
+      } catch {
+        // Verify will fail closed on the still-missing body.
+      }
+    }),
+  )
+  return { beef: merged, fetched }
+}
+
+/**
+ * Encode a verified lineage as remittance bytes, slimming when the full BEEF
+ * exceeds the wire budget. Returns null when even the slim form cannot travel.
+ */
+export function encodeRemittanceBeef(
+  beef: Beef,
+  path: string[],
+): { beefB64: string; stripped: string[] } | null {
+  const fitted = fitRemittanceBeef(beef, path)
+  if (!fitted) return null
+  return {
+    beefB64: bytesToBase64(fitted.binary),
+    stripped: fitted.stripped,
+  }
+}
+
 /**
  * Session cache of tip-named remittances built by extending a parent proof
  * after item settle (or imported). Avoids re-hydrate on the next send.
@@ -363,12 +506,31 @@ export function rememberProvenLineage(args: {
 }): boolean {
   if (args.beef.length === 0) return false
   try {
+    const path = args.path.map((x) => toUnderscore(x).toLowerCase())
+    const tip = toUnderscore(args.tipOutpoint).toLowerCase()
+    const origin = toUnderscore(args.origin).toLowerCase()
+    let beefB64: string
+    if (args.beef.length <= REMITTANCE_MAX_BEEF_BYTES) {
+      beefB64 = bytesToBase64(args.beef)
+    } else {
+      // Batch-mint origins blow the wire budget as raw bytes. Slim to txid-only
+      // origin (and any other fat path txs) so the next send still has something
+      // to attach — the receiver hydrates the shared mint once.
+      const encoded = encodeRemittanceBeef(Beef.fromBinary(args.beef), path)
+      if (!encoded) return false
+      beefB64 = encoded.beefB64
+      if (encoded.stripped.length > 0) {
+        console.info(
+          `[brc-150] remittance slimmed for ${tip} — stripped ${encoded.stripped.length} fat path tx(s)`,
+        )
+      }
+    }
     const remittance: ProvenanceV2 = {
       v: 2,
-      origin: toUnderscore(args.origin).toLowerCase(),
-      tip: toUnderscore(args.tipOutpoint).toLowerCase(),
-      path: args.path.map((x) => toUnderscore(x).toLowerCase()),
-      beefB64: bytesToBase64(args.beef),
+      origin,
+      tip,
+      path,
+      beefB64,
     }
     if (!provenanceFitsBudget(remittance)) return false
     rememberProvenanceRemittance(remittance)
@@ -386,14 +548,18 @@ export function rememberProvenLineage(args: {
  *
  * Prior must already verify for `prior.tip`. Held tip must spend that tip as a
  * 1-sat input. Returns null when the inductive step cannot be proven or the
- * extended package exceeds the remittance budget.
+ * extended package exceeds the remittance budget even after slimming.
+ *
+ * Lean priors (txid-only origin) hydrate via `getBeef` before the check — the
+ * shared mint is almost always already in the BEEF cache after a prior walk.
  */
-export function extendProvenanceV2(args: {
+export async function extendProvenanceV2(args: {
   prior: unknown
   heldOutpoint: string
   /** BEEF or raw tx bytes that include the held tip transaction. */
   tipBeef: number[] | Beef
-}): ProvenanceV2 | null {
+  getBeef?: (txid: string) => Promise<Beef>
+}): Promise<ProvenanceV2 | null> {
   const prior = parseProvenanceV2(args.prior)
   if (!prior) return null
   const held = toUnderscore(args.heldOutpoint).toLowerCase()
@@ -401,11 +567,38 @@ export function extendProvenanceV2(args: {
   const origin = toUnderscore(prior.origin).toLowerCase()
 
   if (priorTip === held) {
+    if (args.getBeef) {
+      const ok = await verifyProvenanceV2Async(prior, held, {
+        enforceBudget: true,
+        getBeef: args.getBeef,
+      })
+      return ok.proven ? prior : null
+    }
     const direct = verifyProvenanceV2(prior, held, { enforceBudget: true })
     return direct.proven ? prior : null
   }
 
-  const priorOk = verifyProvenanceV2(prior, priorTip, { enforceBudget: false })
+  let priorBeef: Beef
+  try {
+    priorBeef = Beef.fromBinary(base64ToBytes(prior.beefB64))
+  } catch {
+    return null
+  }
+  if (args.getBeef && missingPathTxBodies(priorBeef, prior.path).length > 0) {
+    const hydrated = await hydrateMissingPathTxs(
+      priorBeef,
+      prior.path,
+      args.getBeef,
+    )
+    priorBeef = hydrated.beef
+  }
+  const priorOk = verifyLineageInBeef({
+    beef: priorBeef,
+    origin: prior.origin,
+    tip: prior.tip,
+    path: prior.path,
+    heldOutpoint: priorTip,
+  })
   if (!priorOk.proven) return null
 
   const heldMatch = /^([0-9a-f]{64})_(\d+)$/.exec(held)
@@ -428,13 +621,12 @@ export function extendProvenanceV2(args: {
     const vin = vinSpendingParent(heldTx, parentTxid, parentVout)
     if (vin < 0) return null
 
-    const beef = Beef.fromBinary(base64ToBytes(prior.beefB64))
-    beef.mergeRawTx(heldTx.toBinary())
-    mergePrecedingInputSources(beef, heldTx, vin, tipBeef)
-    if (!ordinalVinMapsToVout(beef, heldTx, vin, heldVout)) return null
-    // Prefer a full (non-atomic) serialization so ancestry is not dropped.
-    const bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
-    if (!bin.length) return null
+    priorBeef.mergeRawTx(heldTx.toBinary())
+    mergePrecedingInputSources(priorBeef, heldTx, vin, tipBeef)
+    if (!ordinalVinMapsToVout(priorBeef, heldTx, vin, heldVout)) return null
+    // The prior package may have arrived as AtomicBEEF of the spent tip. Once
+    // we merge the new tip that subject is wrong — clear it before verifying.
+    priorBeef.atomicTxid = undefined
 
     const path = [
       held,
@@ -443,17 +635,27 @@ export function extendProvenanceV2(args: {
     // Drop accidental duplicate if prior.path already started with held.
     if (path.length >= 2 && path[1] === held) path.splice(1, 1)
 
+    const check = verifyLineageInBeef({
+      beef: priorBeef,
+      origin,
+      tip: held,
+      path,
+      heldOutpoint: held,
+    })
+    if (!check.proven) return null
+
+    const encoded = encodeRemittanceBeef(priorBeef, path)
+    if (!encoded) return null
+
     const provenance: ProvenanceV2 = {
       v: 2,
       origin,
       tip: held,
       path,
-      beefB64: bytesToBase64(bin),
+      beefB64: encoded.beefB64,
       ...(prior.contentType ? { contentType: prior.contentType } : {}),
     }
     if (!provenanceFitsBudget(provenance)) return null
-    const check = verifyProvenanceV2(provenance, held, { enforceBudget: true })
-    if (!check.proven) return null
     return provenance
   } catch {
     return null
@@ -485,6 +687,10 @@ export function parseProvenanceV2(raw: unknown): ProvenanceV2 | null {
  * true: a locally assembled lineage is verified from the same transactions
  * whether or not it would fit in an output's customInstructions, and an
  * inscription large enough to blow the cap must still be provable to its owner.
+ *
+ * Sync entry point — lean remittances with txid-only path txs fail here until
+ * {@link verifyProvenanceV2Async} (or {@link verifyProvenanceForHeldTip})
+ * hydrates them.
  */
 export function verifyProvenanceV2(
   provenance: unknown,
@@ -506,6 +712,62 @@ export function verifyProvenanceV2(
     return {
       proven: false,
       reason: err instanceof Error ? err.message : 'beef parse failed',
+    }
+  }
+  const missing = missingPathTxBodies(beef, p.path)
+  if (missing.length > 0) {
+    return {
+      proven: false,
+      reason: `path transaction missing: ${missing[0]}`,
+    }
+  }
+  return verifyLineageInBeef({
+    beef,
+    origin: p.origin,
+    tip: p.tip,
+    path: p.path,
+    heldOutpoint,
+  })
+}
+
+/**
+ * Like {@link verifyProvenanceV2}, but hydrates txid-only path bodies first.
+ *
+ * This is how a lean Pixel Foxes remittance verifies in O(1) package work plus
+ * one shared origin fetch — not an O(hops) rediscovery walk.
+ */
+export async function verifyProvenanceV2Async(
+  provenance: unknown,
+  heldOutpoint: string,
+  opts?: {
+    enforceBudget?: boolean
+    getBeef?: (txid: string) => Promise<Beef>
+  },
+): Promise<ProvenanceVerifyResult> {
+  const p = parseProvenanceV2(provenance)
+  if (!p) return { proven: false, reason: 'missing or non-v2 provenance' }
+  if (opts?.enforceBudget !== false && !provenanceFitsBudget(p)) {
+    return { proven: false, reason: 'remittance over size budget' }
+  }
+  const shape = checkLineageShape(p, heldOutpoint)
+  if (shape) return shape
+
+  let beef: Beef
+  try {
+    beef = Beef.fromBinary(base64ToBytes(p.beefB64))
+  } catch (err) {
+    return {
+      proven: false,
+      reason: err instanceof Error ? err.message : 'beef parse failed',
+    }
+  }
+  if (opts?.getBeef) {
+    const hydrated = await hydrateMissingPathTxs(beef, p.path, opts.getBeef)
+    beef = hydrated.beef
+    if (hydrated.fetched.length > 0) {
+      console.info(
+        `[brc-150] hydrated ${hydrated.fetched.length} lean path tx(s) for verify`,
+      )
     }
   }
   return verifyLineageInBeef({
@@ -671,6 +933,18 @@ export async function verifyProvenanceForHeldTip(args: {
       reason: err instanceof Error ? err.message : 'beef parse failed',
     }
   }
+  // Lean remittances ship the tip + path with the fat origin as txid-only.
+  // Hydrate before any structural check so Pixel Foxes verify in one shared
+  // origin fetch instead of a rediscovery walk.
+  if (args.getBeef && missingPathTxBodies(beef, p.path).length > 0) {
+    const hydrated = await hydrateMissingPathTxs(beef, p.path, args.getBeef)
+    beef = hydrated.beef
+    if (hydrated.fetched.length > 0) {
+      console.info(
+        `[brc-150] hydrated ${hydrated.fetched.length} lean path tx(s) for held tip`,
+      )
+    }
+  }
   const lineage = { beef, origin: p.origin, tip: p.tip, path: p.path }
 
   const held = toUnderscore(args.heldOutpoint)
@@ -782,7 +1056,7 @@ export function verifyProvenance(
 async function hydrateLineageForSend(
   wallet: ActiveWallet,
   tip: string,
-  opts?: { maxBeefBytes?: number; shouldStop?: () => boolean },
+  opts?: { shouldStop?: () => boolean },
 ): Promise<{ origin: string; path: string[]; beef: number[] } | null> {
   if (!wallet.services?.getBeefForTxid) return null
   try {
@@ -790,12 +1064,13 @@ async function hydrateLineageForSend(
       import('./oneSatGenesisProof'),
       import('./beefCache'),
     ])
+    // Walk the full lineage without a wire-size abort — batch-mint origins are
+    // megabytes, but {@link encodeRemittanceBeef} slims them to txid-only for
+    // the wire. Aborting mid-walk left Pixel Foxes sends bare forever.
     const proof = await proveGenesisLineage({
       tipOutpoint: tip,
       getBeef: (hop) => getBeefForTxidCached(wallet, hop),
-      maxBeefBytes: opts?.maxBeefBytes,
       shouldStop: opts?.shouldStop,
-      // This lineage is going on the wire, so the serialized BEEF is the point.
       includeBeef: true,
     })
     if (!proof) return null
@@ -829,7 +1104,7 @@ function knownProvenPath(tip: string, origin: string): string[] | null {
 
 /**
  * Build v2 remittance for a known tip outpoint (usually the UTXO being spent).
- * Returns null when beef unavailable or over budget (omit — do not truncate).
+ * Returns null when beef unavailable or cannot fit even as a lean package.
  *
  * Preference order (cheapest first):
  * 1. Session-remembered tip-named remittance
@@ -837,6 +1112,9 @@ function knownProvenPath(tip: string, origin: string): string[] | null {
  * 3. Extend prior parent remittance (prepend tip + merge tip tx) — O(1) growth
  * 4. Replay a path this wallet already proved, over a warmed BEEF cache
  * 5. Derive path from tip BEEF / hydrate lineage — O(hops) fallback
+ *
+ * Oversized batch-mint origins are slimmed to txid-only bodies (BRC-96); the
+ * receiver hydrates the shared mint once instead of forcing an omit.
  */
 export async function tryBuildProvenanceV2(args: {
   tipOutpoint: string
@@ -857,8 +1135,8 @@ export async function tryBuildProvenanceV2(args: {
   priorProvenance?: unknown
   /**
    * Walk tip→origin from chain when the tip BEEF has no path. Default false —
-   * Pixel Fox hydrates take tens of seconds on phones and usually omit under
-   * remittance budget. Item send must stay interactive.
+   * Pixel Fox hydrates take tens of seconds on phones. Prefer a known proven
+   * path (warm cache + slim remittance) over a cold walk on the send hot path.
    */
   allowLineageHydrate?: boolean
 }): Promise<ProvenanceV2 | null> {
@@ -878,9 +1156,15 @@ export async function tryBuildProvenanceV2(args: {
   }
 
   try {
+    const { getBeefForTxidCached } = await import('./beefCache')
+    const getBeef = (hop: string) => getBeefForTxidCached(args.wallet, hop)
+
     const remembered = getRememberedProvenanceRemittance(tipKey)
     if (remembered) {
-      const ok = verifyProvenanceV2(remembered, tipDot, { enforceBudget: true })
+      const ok = await verifyProvenanceV2Async(remembered, tipDot, {
+        enforceBudget: true,
+        getBeef,
+      })
       if (ok.proven && remembered.origin === originKey) return finish(remembered)
     }
 
@@ -893,12 +1177,11 @@ export async function tryBuildProvenanceV2(args: {
         // Fall through to a fresh fetch.
       }
     }
-    if (!beef) {
-      if (!args.wallet.services?.getBeefForTxid) {
-        // Still try prior-only reuse/extend without a tip beef when possible.
-      } else {
-        const { getBeefForTxidCached } = await import('./beefCache')
-        beef = await getBeefForTxidCached(args.wallet, txid)
+    if (!beef && args.wallet.services) {
+      try {
+        beef = await getBeef(txid)
+      } catch {
+        beef = null
       }
     }
 
@@ -907,29 +1190,31 @@ export async function tryBuildProvenanceV2(args: {
       remembered ??
       null
     if (prior) {
-      const direct = verifyProvenanceV2(prior, tipDot, { enforceBudget: true })
+      const direct = await verifyProvenanceV2Async(prior, tipDot, {
+        enforceBudget: true,
+        getBeef,
+      })
       if (direct.proven) return finish(prior)
       if (beef) {
-        const extended = extendProvenanceV2({
+        const extended = await extendProvenanceV2({
           prior,
           heldOutpoint: tip,
           tipBeef: beef,
+          getBeef,
         })
         if (extended) return finish(extended)
       }
     }
 
     if (!beef) {
-      if (!args.wallet.services?.getBeefForTxid) return null
-      const { getBeefForTxidCached } = await import('./beefCache')
-      beef = await getBeefForTxidCached(args.wallet, txid)
+      if (!args.wallet.services) return null
+      beef = await getBeef(txid)
     }
     if (!beef) return null
-    // Serialized whole, never atomically: AtomicBEEF keeps only the subject and
-    // its recursive dependencies, and a mined tip carrying its own merkle proof
-    // depends on nothing — so the atomic form drops the very ancestry the
-    // receiver has to walk.
-    let bin = typeof beef.toBinary === 'function' ? beef.toBinary() : []
+
+    // Assembled as a full (non-atomic) BEEF so ancestry survives; AtomicBEEF
+    // would drop mined parents. Wire encoding may later strip fat bodies.
+    let assembled = beef
     let path =
       args.path && args.path.length > 0
         ? args.path.map(toUnderscore)
@@ -956,44 +1241,47 @@ export async function tryBuildProvenanceV2(args: {
           `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
         )
       }
-      // Abort once the assembled BEEF cannot fit on the wire — Pixel Fox
-      // lineages routinely exceed the remittance budget.
-      const hydrated = await hydrateLineageForSend(args.wallet, tip, {
-        maxBeefBytes: REMITTANCE_MAX_BEEF_BYTES,
-      })
+      const hydrated = await hydrateLineageForSend(args.wallet, tip)
       if (!hydrated || hydrated.origin !== origin) {
         console.warn(
-          '[brc-150] omit provenance — no complete one-sat path to origin under remittance budget',
+          '[brc-150] omit provenance — no complete one-sat path to origin',
         )
         return null
       }
       path = hydrated.path
-      bin = hydrated.beef
+      assembled = Beef.fromBinary(hydrated.beef)
     }
-    if (!bin.length) return null
-    const beefB64 = bytesToBase64(bin)
+
+    const check = verifyLineageInBeef({
+      beef: assembled,
+      origin,
+      tip,
+      path,
+      heldOutpoint: tipDot,
+    })
+    if (!check.proven) return null
+
+    const encoded = encodeRemittanceBeef(assembled, path)
+    if (!encoded) {
+      console.info(
+        '[brc-150] omit provenance — lineage cannot fit remittance budget even lean',
+      )
+      return null
+    }
+    if (encoded.stripped.length > 0) {
+      console.info(
+        `[brc-150] remittance slimmed for ${tip} — stripped ${encoded.stripped.length} fat path tx(s); receiver hydrates`,
+      )
+    }
     const provenance: ProvenanceV2 = {
       v: 2,
       origin,
       tip,
       path,
-      beefB64,
+      beefB64: encoded.beefB64,
       ...(args.contentType ? { contentType: args.contentType } : {}),
     }
-    if (!provenanceFitsBudget(provenance)) {
-      try {
-        const { appendAppLog } = await import('./appLog')
-        appendAppLog(
-          'info',
-          `[brc-150] omit provenance — beefB64 ${beefB64.length} > ${REMITTANCE_MAX_BEEF_B64_CHARS}`,
-        )
-      } catch {
-        /* ignore */
-      }
-      return null
-    }
-    const check = verifyProvenanceV2(provenance, tipDot)
-    if (!check.proven) return null
+    if (!provenanceFitsBudget(provenance)) return null
     return finish(provenance)
   } catch (err) {
     console.warn('[brc-150] build provenance failed', err)

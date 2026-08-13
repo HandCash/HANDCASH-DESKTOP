@@ -11,13 +11,16 @@ import {
   clearRememberedProvenanceRemittances,
   deriveOneSatPathFromBeef,
   findOrdinalParentVin,
+  fitRemittanceBeef,
   getRememberedProvenanceRemittance,
+  hydrateMissingPathTxs,
   rebuildProvenanceV2FromBeef,
   provenanceFitsBudget,
   rememberProvenLineage,
   REMITTANCE_MAX_BEEF_B64_CHARS,
   REMITTANCE_MAX_BEEF_BYTES,
   verifyProvenanceV2,
+  verifyProvenanceV2Async,
   extendProvenanceV2,
   type ProvenanceV2,
 } from './oneSatProvenance'
@@ -191,7 +194,7 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
     })
   })
 
-  it('extends a prior remittance by one hop without a lineage walk', () => {
+  it('extends a prior remittance by one hop without a lineage walk', async () => {
     const { provenance: parentProv, held: parentHeld } = buildV2Fixture()
     const parentTxid = parentHeld.replace('.', '_').slice(0, 64)
     const parentBeef = Beef.fromBinary(
@@ -212,7 +215,7 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
     childBeef.mergeBeef(parentBeef)
     childBeef.mergeRawTx(child.toBinary())
 
-    const extended = extendProvenanceV2({
+    const extended = await extendProvenanceV2({
       prior: parentProv,
       heldOutpoint: `${child.id('hex')}_0`,
       tipBeef: childBeef,
@@ -425,5 +428,107 @@ describe('keeping a proven lineage for the next send', () => {
       }),
     ).toBe(false)
     expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
+  })
+})
+
+describe('lean remittance for batch-mint origins', () => {
+  // Pixel Foxes mint hundreds of inscriptions in one origin tx. Shipping that
+  // body with every hop is what blew the remittance budget and left sends bare.
+  function fatOriginFixture(): {
+    provenance: ProvenanceV2
+    held: string
+    fullBeef: Beef
+    originTxid: string
+  } {
+    const origin = new Transaction()
+    // One real inscription plus many sibling outputs — enough that stripping
+    // the origin body is what makes the package fit a tiny budget.
+    origin.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(ORD_ENVELOPE),
+    })
+    for (let i = 0; i < 40; i++) {
+      origin.addOutput({
+        satoshis: 1,
+        lockingScript: LockingScript.fromHex(ORD_ENVELOPE + '51'.repeat(80)),
+      })
+    }
+
+    const tip = new Transaction()
+    tip.addInput({
+      sourceTransaction: origin,
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+
+    const beef = new Beef()
+    const originEntry = beef.mergeRawTx(origin.toBinary())
+    originEntry.bumpIndex = beef.mergeBump(provenAt(origin))
+    beef.mergeRawTx(tip.toBinary())
+
+    const originOutpoint = `${origin.id('hex')}_0`
+    const tipOutpoint = `${tip.id('hex')}_0`
+    return {
+      held: tipOutpoint.replace('_0', '.0'),
+      originTxid: origin.id('hex'),
+      fullBeef: beef,
+      provenance: {
+        v: 2,
+        origin: originOutpoint,
+        tip: tipOutpoint,
+        path: [tipOutpoint, originOutpoint],
+        beefB64: toBase64(beef.toBinary()),
+      },
+    }
+  }
+
+  it('strips the fat origin body so the package fits the wire', () => {
+    const { provenance, fullBeef, originTxid } = fatOriginFixture()
+    const fullSize = fullBeef.toBinary().length
+    expect(fullSize).toBeGreaterThan(2_000)
+
+    const fitted = fitRemittanceBeef(fullBeef, provenance.path, 2_000)
+    expect(fitted).not.toBeNull()
+    expect(fitted!.binary.length).toBeLessThanOrEqual(2_000)
+    expect(fitted!.stripped).toContain(originTxid.toLowerCase())
+    expect(fitted!.beef.findTxid(originTxid)?.isTxidOnly).toBe(true)
+    expect(fitted!.beef.findTxid(provenance.tip.slice(0, 64))?.tx).toBeTruthy()
+  })
+
+  it('verifies after the receiver hydrates the shared origin', async () => {
+    const { provenance, held, fullBeef, originTxid } = fatOriginFixture()
+    const fitted = fitRemittanceBeef(fullBeef, provenance.path, 2_000)!
+    const lean: ProvenanceV2 = { ...provenance, beefB64: toBase64(fitted.binary) }
+
+    // Sync verify correctly refuses — tip body alone is not enough.
+    expect(verifyProvenanceV2(lean, held).proven).toBe(false)
+
+    const originOnly = new Beef()
+    const entry = originOnly.mergeRawTx(fullBeef.findTxid(originTxid)!.rawTx!)
+    entry.bumpIndex = originOnly.mergeBump(fullBeef.findBump(originTxid)!)
+
+    const ok = await verifyProvenanceV2Async(lean, held, {
+      getBeef: async (txid) => {
+        expect(txid).toBe(originTxid.toLowerCase())
+        return originOnly
+      },
+    })
+    expect(ok).toEqual({ proven: true, reason: null })
+  })
+
+  it('hydrates missing path bodies in parallel', async () => {
+    const { provenance, fullBeef, originTxid } = fatOriginFixture()
+    const fitted = fitRemittanceBeef(fullBeef, provenance.path, 2_000)!
+    const originOnly = new Beef()
+    originOnly.mergeRawTx(fullBeef.findTxid(originTxid)!.rawTx!)
+
+    const { beef, fetched } = await hydrateMissingPathTxs(
+      fitted.beef,
+      provenance.path,
+      async () => originOnly,
+    )
+    expect(fetched).toEqual([originTxid.toLowerCase()])
+    expect(beef.findTxid(originTxid)?.tx).toBeTruthy()
   })
 })

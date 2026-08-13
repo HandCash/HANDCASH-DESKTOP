@@ -2777,10 +2777,11 @@ export async function sendCollectable(args: {
           if (txid && provenance && parseProvenanceV2(provenance)) {
             try {
               const tipBeef = await getBeefForTxidCached(wallet, txid)
-              const extended = extendProvenanceV2({
+              const extended = await extendProvenanceV2({
                 prior: provenance,
                 heldOutpoint: `${txid.trim().toLowerCase()}_0`,
                 tipBeef,
+                getBeef: (hop) => getBeefForTxidCached(wallet, hop),
               })
               if (extended) {
                 rememberProvenanceRemittance(extended)

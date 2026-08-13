@@ -21,6 +21,7 @@ import { Beef } from '@bsv/sdk'
 import {
   deriveOneSatPathFromBeef,
   findOrdinalParentVin,
+  fitRemittanceBeef,
   verifyLineageInBeef,
 } from './oneSatProvenance'
 import { hasOrdEnvelope } from './ordinalOwnership'
@@ -125,15 +126,13 @@ export type GenesisWalkArgs = {
    */
   includeBeef?: boolean
   /**
-   * Serialize into {@link GenesisProof.beef} only when the lineage is at most
-   * this many bytes — and prove it either way.
+   * Serialize into {@link GenesisProof.beef} under this many bytes when possible.
    *
-   * A background verify wants the bytes as a bonus, not a requirement: keeping
-   * them lets the next send attach remittance so the receiver verifies in one
-   * step instead of repeating this walk. But bytes are worthless past the
-   * remittance budget because they can never travel, and a lineage too big to
-   * send must still be provable to its owner. So over the limit we keep the
-   * verdict and skip the serialize that would freeze the thread.
+   * A background verify wants remittance for the next send. Fat batch-mint
+   * origins are slimmed to txid-only (receiver hydrates) rather than discarded,
+   * so Pixel Foxes stay attachable without freezing the phone on a multi-MB
+   * serialize. Over the limit even after slimming, the verdict still stands and
+   * `beef` is empty.
    */
   serializeIfUnder?: number
 }
@@ -326,22 +325,32 @@ export async function walkGenesisLineage(
     }
   }
 
-  // Only a sender putting the lineage on the wire needs the bytes outright. A
-  // verify takes them when they are small enough to be reusable as remittance,
-  // and otherwise skips a serialize of megabytes it could never send.
-  // `fetchedBytes` sums the pieces before merge, so it is an upper bound — a
-  // cheap gate that never serializes something it would then have to discard.
+  // Prefer a lean remittance over discarding bytes. Batch-mint origins are
+  // megabytes; {@link fitRemittanceBeef} keeps the tip raw and strips fat path
+  // bodies to txid-only so the next send can still attach proof.
   //
   // Serialized whole rather than atomically: AtomicBEEF keeps only the subject
   // and its recursive dependencies, and a mined tip carrying its own merkle
-  // proof depends on nothing — which strips the very ancestry being proven and
-  // is why the older rebuild could never prove a confirmed item.
-  const serialize =
-    mustSerialize ||
-    (args.serializeIfUnder != null && fetchedBytes <= args.serializeIfUnder)
-  const beef = serialize ? merged.toBinary() : []
-  if (maxBeefBytes != null && beef.length > maxBeefBytes) {
-    return { kind: 'overBudget', bytes: beef.length, hops }
+  // proof depends on nothing — which strips the very ancestry being proven.
+  let beef: number[] = []
+  if (mustSerialize || args.serializeIfUnder != null) {
+    const maxWire =
+      maxBeefBytes ??
+      args.serializeIfUnder ??
+      Number.POSITIVE_INFINITY
+    if (args.serializeIfUnder != null || maxBeefBytes != null) {
+      const fitted = fitRemittanceBeef(merged, path, maxWire)
+      if (fitted) {
+        beef = fitted.binary
+      } else if (mustSerialize) {
+        return { kind: 'overBudget', bytes: fetchedBytes, hops }
+      }
+    } else {
+      beef = merged.toBinary()
+      if (maxBeefBytes != null && beef.length > maxBeefBytes) {
+        return { kind: 'overBudget', bytes: beef.length, hops }
+      }
+    }
   }
   return { kind: 'proven', proof: { origin, path, hops, beef } }
 }
