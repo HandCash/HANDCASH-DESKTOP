@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.223] - 2026-08-13
+
+### Fixed
+- **Foxes stuck on Verifying forever.** Chain-provider outages looked identical to unprovable items (walker returned bare `null`), burned the 8-walk session budget, and left Collect spinning. Lineage walks now return named outcomes (`unavailable` / `invalid` / `aborted`); only conclusive misses cool down for 24h; the budget is a rolling 8 per 10 minutes; details show “Cannot be verified” with the reason when the chain says so.
+- **Spend priority could leak and starve item verify + cloud backup.** Permission prompts and exclusive spends now hold named, expiring leases instead of a counter that could stick >0.
+- **Failed sends (items and BSV) can be retried or cleared from Activity**, including a bulk “Clear N failed” on the full Activity panel. Retry is gated on spendability; unspendable attempts offer clear only.
+- **Live “Sending…” row disagreed between Recent Activity and full Activity** — matching is now by outpoint (or coin send) via `liveOutboundRow`, not “any pending spend”.
+- Peer-delivered item sends keep a settle-path grace so tips are not healed back into inventory while the payee has not broadcast yet.
+
 ## [1.2.222] - 2026-08-13
 
 ### Changed
