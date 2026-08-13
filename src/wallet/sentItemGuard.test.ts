@@ -31,6 +31,29 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent('aa_0')).toBe(true)
   })
 
+  it('lets the payee settle a peerDeliver transfer long after a sender-broadcast one is a ghost', async () => {
+    const guard = await import('./sentItemGuard')
+    guard.markItemsSent([
+      { outpoint: 'aa.0', txid: 'b'.repeat(64), settle: 'peerDeliver' },
+      { outpoint: 'cc.0', txid: 'd'.repeat(64), settle: 'senderBroadcast' },
+    ])
+    const hourLater = Date.now() + 60 * 60_000
+
+    // Same windows ghostHealFate waits on, so retry/clear never runs ahead of it.
+    expect(guard.counterpartyMaySettle('aa.0', hourLater)).toBe(true)
+    expect(guard.counterpartyMaySettle('cc.0', hourLater)).toBe(false)
+    expect(guard.counterpartyMaySettle('aa.0', Date.now() + 13 * 60 * 60_000)).toBe(
+      false,
+    )
+  })
+
+  it('reports no pending settle for an outpoint this wallet never sent', async () => {
+    const guard = await import('./sentItemGuard')
+
+    expect(guard.counterpartyMaySettle('aa.0')).toBe(false)
+    expect(guard.getSentItemRecord('aa.0')).toBeNull()
+  })
+
   it('survives a reload mid-broadcast', async () => {
     const guard = await import('./sentItemGuard')
     guard.markItemsSent(['aa.0'])

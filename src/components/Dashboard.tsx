@@ -688,11 +688,16 @@ export function Dashboard({
                 aria-label="Processing payment"
                 aria-busy="true"
               >
-                <p className="permission-eyebrow">Working</p>
-                <h2 className="permission-request-title">
+                {/*
+                  Mirrors the send panel's old status stage. The panel now hands
+                  a send off and closes, so this is the live view of one in
+                  flight and has to carry the same spinner and copy.
+                */}
+                <div className="send-spinner" aria-hidden />
+                <p className="send-status-title">
                   {paymentProgress.label || 'Sending…'}
-                </h2>
-                <p className="lede permission-lede-compact">
+                </p>
+                <p className="send-status-sub">
                   {paymentProgress.detail ||
                     (lastApproved
                       ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`

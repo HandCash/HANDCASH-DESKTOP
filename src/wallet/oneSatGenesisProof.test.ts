@@ -297,3 +297,64 @@ describe('walkGenesisLineage outcomes', () => {
     expect(outcome.proof.origin).toBe(`${origin.id('hex')}_0`)
   })
 })
+
+describe('serializing the assembled lineage', () => {
+  // Serializing a Pixel Foxes origin — one transaction carrying hundreds of
+  // inscriptions — is seconds of blocked main thread on a phone. A background
+  // verify pins a verdict and throws the BEEF away, so it must not pay for it.
+  it('does not serialize the BEEF for a verify that only wants the verdict', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+    })
+
+    if (outcome.kind !== 'proven') throw new Error('expected a proof')
+    expect(outcome.proof.beef).toEqual([])
+  })
+
+  it('serializes it for a sender putting the lineage on the wire', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+      includeBeef: true,
+    })
+
+    if (outcome.kind !== 'proven') throw new Error('expected a proof')
+    expect(outcome.proof.beef.length).toBeGreaterThan(0)
+  })
+
+  it('still measures the wire budget, which implies serializing', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+      maxBeefBytes: 1,
+    })
+
+    expect(outcome.kind).toBe('overBudget')
+  })
+
+  it('abandons before the verification tail, the most expensive stretch', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+    const getBeef = service([origin, tip])
+    // Let every hop through, then claim the thread. Without a check after the
+    // walk reaches the origin this would run verification to completion — the
+    // stretch that froze the phone for 33s.
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef,
+      shouldStop: () => getBeef.mock.calls.length >= 2,
+    })
+
+    expect(outcome.kind).toBe('aborted')
+  })
+})

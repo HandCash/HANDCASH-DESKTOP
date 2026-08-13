@@ -7,12 +7,17 @@ export type SendContext = {
   /** When set, confirm uses BRC-29 to this identity key (not plain address P2PKH). */
   payeeIdentityKey: string | null
   error: string | null
-  txid: string | null
 }
 
 /**
  * Chart: sendPayment
- * States: editing → confirming → broadcasting → success | failure
+ * States: editing → confirming → handoff | failure
+ *
+ * The panel owns composing and confirming a payment — not watching it land.
+ * `CONFIRM` hands the payment to the wallet and closes the panel, so progress
+ * and the final result are read from the global payment progress store and
+ * Activity instead of being mirrored here. `failure` is reached only by a
+ * pre-flight refusal, which the user can still edit their way out of.
  */
 export const sendMachine = setup({
   types: {
@@ -28,7 +33,6 @@ export const sendMachine = setup({
       | { type: 'REVIEW' }
       | { type: 'BACK' }
       | { type: 'CONFIRM' }
-      | { type: 'SUCCESS'; txid: string }
       | { type: 'FAIL'; error: string }
       | { type: 'RESET' },
   },
@@ -41,7 +45,6 @@ export const sendMachine = setup({
     friendLabel: null,
     payeeIdentityKey: null,
     error: null,
-    txid: null,
   },
   states: {
     editing: {
@@ -69,25 +72,15 @@ export const sendMachine = setup({
     confirming: {
       on: {
         BACK: 'editing',
-        CONFIRM: 'broadcasting',
-      },
-    },
-    broadcasting: {
-      on: {
-        SUCCESS: {
-          target: 'success',
-          actions: assign({
-            txid: ({ event }) => event.txid,
-            error: null,
-          }),
-        },
+        CONFIRM: 'handoff',
         FAIL: {
           target: 'failure',
           actions: assign({ error: ({ event }) => event.error }),
         },
       },
     },
-    success: {
+    /** Handed to the wallet. The panel closes; the send outlives this chart. */
+    handoff: {
       on: {
         RESET: {
           target: 'editing',
@@ -96,7 +89,6 @@ export const sendMachine = setup({
             amount: '',
             friendLabel: null,
             payeeIdentityKey: null,
-            txid: null,
             error: null,
           }),
         },

@@ -1223,12 +1223,15 @@ body {
 
 .dashboard-side > .permission-side-panel--processing {
   justify-content: center;
-  gap: 8px;
+  align-items: center;
+  text-align: center;
+  gap: 6px;
   padding: 18px 16px;
 }
 
-.dashboard-side > .permission-side-panel--processing .permission-request-title {
-  margin: 0;
+/* Sidebar column is narrower than the send panel the status stage came from. */
+.dashboard-side > .permission-side-panel--processing .send-status-title {
+  font-size: 1.05rem;
 }
 
 .what-is-bsv {
@@ -5600,18 +5603,14 @@ a.app-details-host:hover {
   background: none;
 }
 
-.send-stage-success,
-.send-stage-failure,
-.send-stage-status {
+.send-stage-failure {
   justify-content: center;
   align-items: center;
   gap: 22px;
   padding: 18px 16px 24px;
 }
 
-.send-stage-success .send-stage-body-center,
-.send-stage-failure .send-stage-body-center,
-.send-stage-status .send-stage-body-center {
+.send-stage-failure .send-stage-body-center {
   flex: 0 1 auto;
   width: 100%;
   max-width: 420px;
@@ -5619,14 +5618,12 @@ a.app-details-host:hover {
   padding: 0;
 }
 
-.send-stage-success .send-actions,
 .send-stage-failure .send-actions {
   justify-content: center;
   width: 100%;
   max-width: 420px;
 }
 
-.send-stage-success .send-actions .btn,
 .send-stage-failure .send-actions .btn {
   min-width: 148px;
 }
@@ -5746,42 +5743,6 @@ a.app-details-host:hover {
   to {
     transform: rotate(360deg);
   }
-}
-
-.send-success-mark {
-  display: grid;
-  place-items: center;
-  color: var(--hc-accent);
-  margin: 0 0 8px;
-  animation: send-success-pop 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
-}
-
-.send-success-mark svg {
-  width: 80px;
-  height: 80px;
-}
-
-@keyframes send-success-pop {
-  from {
-    opacity: 0;
-    transform: scale(0.72);
-  }
-  to {
-    opacity: 1;
-    transform: scale(1);
-  }
-}
-
-.send-success-amount {
-  color: var(--hc-accent);
-}
-
-.send-txid {
-  margin: 4px 0 0;
-  max-width: min(100%, 360px);
-  color: var(--hc-muted);
-  font-size: 0.72rem;
-  overflow-wrap: anywhere;
 }
 
 .send-failure-error {

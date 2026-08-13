@@ -9,7 +9,13 @@ const mocks = vi.hoisted(() => ({
   broadcastAtomicBeef: vi.fn(),
   removeActivityById: vi.fn(),
   removeFailedActivity: vi.fn(),
+  countFailedActivity: vi.fn(),
   repairFailedSpendState: vi.fn(),
+  counterpartyMaySettle: vi.fn(),
+}))
+
+vi.mock('./sentItemGuard', () => ({
+  counterpartyMaySettle: mocks.counterpartyMaySettle,
 }))
 
 vi.mock('./legacyScan', () => ({
@@ -41,6 +47,7 @@ vi.mock('./appActivity', async (importOriginal) => ({
   ...(await importOriginal<typeof import('./appActivity')>()),
   removeActivityById: mocks.removeActivityById,
   removeFailedActivity: mocks.removeFailedActivity,
+  countFailedActivity: mocks.countFailedActivity,
 }))
 
 import {
@@ -93,6 +100,8 @@ beforeEach(() => {
   })
   mocks.removeActivityById.mockReturnValue(true)
   mocks.removeFailedActivity.mockReturnValue(0)
+  mocks.countFailedActivity.mockReturnValue(0)
+  mocks.counterpartyMaySettle.mockReturnValue(false)
 })
 
 describe('resolveSpendAttemptFate — items', () => {
@@ -216,6 +225,56 @@ describe('resolveSpendAttemptFate — payments', () => {
   })
 })
 
+describe('a transfer the recipient can still settle', () => {
+  it('offers neither retry nor clear while the payee may still broadcast', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(false)
+
+    const fate = await resolveSpendAttemptFate(
+      itemAttempt({ status: 'failed' }),
+      'main',
+    )
+    expect(fate).toMatchObject({
+      kind: 'refuse',
+      reason: 'counterpartyMaySettle',
+      mayClear: false,
+      mayReleaseFunds: true,
+    })
+    // Classifying must not even reach the chain or spendability probes.
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
+  })
+
+  it('refuses to delete the sender’s only record of it', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+
+    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).rejects.toThrow(
+      /can still broadcast/i,
+    )
+    expect(mocks.removeActivityById).not.toHaveBeenCalled()
+  })
+
+  it('refuses to re-send it, so the wallet cannot race a live transfer', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+
+    await expect(
+      retrySpendAttempt(itemAttempt({ txid: undefined, status: 'failed' }), 'main'),
+    ).rejects.toThrow(/can still broadcast/i)
+    expect(mocks.sendCollectable).not.toHaveBeenCalled()
+    expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
+  })
+
+  it('does not gate a coin payment, which has no payee-broadcast path', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    mocks.txExistsOnChain.mockResolvedValue(false)
+
+    await expect(
+      resolveSpendAttemptFate(paymentAttempt(), 'main'),
+    ).resolves.toMatchObject({ kind: 'retry', action: 'reopenPayment' })
+  })
+})
+
 describe('clearSpendAttempt', () => {
   it('releases local spend reservations before removing the row', async () => {
     const order: string[] = []
@@ -246,9 +305,13 @@ describe('clearSpendAttempt', () => {
 
 describe('clearAllFailedSpends', () => {
   it('repairs local reservations once, then drops every failed row', async () => {
+    mocks.countFailedActivity.mockReturnValue(5)
     mocks.removeFailedActivity.mockReturnValue(5)
 
-    await expect(clearAllFailedSpends()).resolves.toEqual({ removed: 5 })
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 5,
+      kept: 0,
+    })
     expect(mocks.repairFailedSpendState).toHaveBeenCalledTimes(1)
     expect(mocks.removeFailedActivity).toHaveBeenCalledTimes(1)
     expect(mocks.removeActivityById).not.toHaveBeenCalled()
@@ -256,8 +319,34 @@ describe('clearAllFailedSpends', () => {
 
   it('clears the backlog even when the repair throws', async () => {
     mocks.repairFailedSpendState.mockRejectedValue(new Error('storage locked'))
+    mocks.countFailedActivity.mockReturnValue(3)
     mocks.removeFailedActivity.mockReturnValue(3)
 
-    await expect(clearAllFailedSpends()).resolves.toEqual({ removed: 3 })
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 3,
+      kept: 0,
+    })
+  })
+
+  it('keeps back rows the recipient can still broadcast, and reports them', async () => {
+    mocks.countFailedActivity.mockReturnValue(4)
+    mocks.removeFailedActivity.mockReturnValue(3)
+
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 3,
+      kept: 1,
+    })
+    // The predicate is what protects them — a bulk clear must not pass none.
+    expect(mocks.removeFailedActivity).toHaveBeenCalledWith(expect.any(Function))
+  })
+
+  it('never reports a negative backlog when repair settles rows mid-clear', async () => {
+    mocks.countFailedActivity.mockReturnValue(0)
+    mocks.removeFailedActivity.mockReturnValue(2)
+
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 2,
+      kept: 0,
+    })
   })
 })

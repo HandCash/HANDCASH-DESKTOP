@@ -818,23 +818,37 @@ export function removeActivityById(id: string): boolean {
   return true
 }
 
-/** How many failed send rows are in local history right now. */
-export function countFailedActivity(): number {
-  return readAll().reduce((n, e) => (e.status === 'failed' ? n + 1 : n), 0)
+/**
+ * How many failed send rows are in local history right now.
+ *
+ * `keep` protects rows the caller must not delete — see
+ * {@link removeFailedActivity} — so the count always matches what a bulk clear
+ * would actually remove.
+ */
+export function countFailedActivity(
+  keep?: (entry: ActivityEntry) => boolean,
+): number {
+  return readAll().reduce(
+    (n, e) => (e.status === 'failed' && !keep?.(e) ? n + 1 : n),
+    0,
+  )
 }
 
 /**
- * Drop every failed send row in one write.
+ * Drop failed send rows in one write, minus anything `keep` protects.
  *
- * A failed row is local-only bookkeeping — the transaction never landed — so
- * removing it cancels nothing on-chain. This is the bulk companion to
- * `removeActivityById` for when the backlog is too large to clear one tap at a
- * time. Local reservation repair is the caller's job (see `clearSpendAttempt`);
- * this only edits the history list. Returns how many rows were removed.
+ * Most failed rows are local-only bookkeeping — the transaction never landed —
+ * so removing them cancels nothing on-chain. The exception is an item transfer
+ * the payee can still broadcast, which callers exclude via `keep`: that row is
+ * the sender's only record of an item that has already left. Local reservation
+ * repair is the caller's job (see `clearSpendAttempt`); this only edits the
+ * history list. Returns how many rows were removed.
  */
-export function removeFailedActivity(): number {
+export function removeFailedActivity(
+  keep?: (entry: ActivityEntry) => boolean,
+): number {
   const prev = readAll()
-  const next = prev.filter((entry) => entry.status !== 'failed')
+  const next = prev.filter((entry) => entry.status !== 'failed' || keep?.(entry))
   const removed = prev.length - next.length
   if (removed > 0) writeAll(next)
   return removed

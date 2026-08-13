@@ -49,11 +49,12 @@ import { playWalletSound } from '../wallet/soundService'
 import {
   clearSpendAttempt,
   isSpendAttempt,
+  releaseSpendAttemptFunds,
   resolveSpendAttemptFate,
   retrySpendAttempt,
   type SpendAttemptFate,
 } from '../wallet/spendAttempt'
-import { toastError } from '../wallet/toast'
+import { toastError, toastSuccess } from '../wallet/toast'
 
 type Props = {
   entryId: string
@@ -115,6 +116,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   })
   const [retrying, setRetrying] = useState(false)
   const [clearing, setClearing] = useState(false)
+  const [releasing, setReleasing] = useState(false)
   const [attemptError, setAttemptError] = useState<string | null>(null)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
@@ -294,6 +296,25 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       setAttemptFate(next)
     } finally {
       setRetrying(false)
+    }
+  }
+
+  const releaseFunds = async () => {
+    if (releasing) return
+    setReleasing(true)
+    setAttemptError(null)
+    try {
+      await releaseSpendAttemptFunds()
+      toastSuccess(
+        'Freed reserved funds',
+        'Coins held by half-built sends are spendable again.',
+      )
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setAttemptError(message)
+      toastError('Could not free funds', message)
+    } finally {
+      setReleasing(false)
     }
   }
 
@@ -510,7 +531,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           attemptFate.kind !== 'confirmed' ? (
             <section className="payment-attempt-actions" aria-live="polite">
               <strong>
-                {isFailedActivity(entry) ? 'Failed send' : 'Unconfirmed send'}
+                {attemptFate.kind === 'refuse' &&
+                attemptFate.reason === 'counterpartyMaySettle'
+                  ? 'Waiting on the recipient'
+                  : isFailedActivity(entry)
+                  ? 'Failed send'
+                  : 'Unconfirmed send'}
               </strong>
               <p>
                 {attemptFate.kind === 'checking'
@@ -540,12 +566,25 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   <button
                     type="button"
                     className="btn btn-danger"
-                    disabled={retrying || clearing}
+                    disabled={retrying || clearing || releasing}
                     onClick={() => void clearAttempt()}
                   >
                     {clearing ? 'Clearing…' : 'Clear from Activity'}
                   </button>
                 )}
+                {attemptFate.kind === 'refuse' &&
+                !attemptFate.mayClear &&
+                attemptFate.mayReleaseFunds ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={retrying || clearing || releasing}
+                    onClick={() => void releaseFunds()}
+                    title="Unlock coins reserved by half-built sends without removing this record"
+                  >
+                    {releasing ? 'Freeing…' : 'Free up reserved funds'}
+                  </button>
+                ) : null}
               </div>
             </section>
           ) : null}

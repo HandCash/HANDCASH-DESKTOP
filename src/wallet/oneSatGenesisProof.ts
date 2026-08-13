@@ -21,7 +21,7 @@ import { Beef } from '@bsv/sdk'
 import {
   deriveOneSatPathFromBeef,
   findOrdinalParentVin,
-  verifyProvenanceV2,
+  verifyLineageInBeef,
 } from './oneSatProvenance'
 import { hasOrdEnvelope } from './ordinalOwnership'
 
@@ -44,9 +44,12 @@ export type GenesisProof = {
   path: string[]
   hops: number
   /**
-   * The whole assembled lineage, serialized. A sender needs this to put a
-   * complete BRC-150 remittance on the wire; discard it once the verdict is
-   * pinned, because it runs to hundreds of kilobytes.
+   * The whole assembled lineage, serialized — but **empty unless the walk was
+   * asked for it** via `includeBeef` or `maxBeefBytes`.
+   *
+   * A sender needs this to put a complete BRC-150 remittance on the wire.
+   * A background verify does not: it pins the verdict and throws the lineage
+   * away, and serializing megabytes for that blocks the thread for seconds.
    */
   beef: number[]
 }
@@ -110,6 +113,7 @@ export async function proveGenesisLineage(args: {
   maxHops?: number
   shouldStop?: () => boolean
   maxBeefBytes?: number
+  includeBeef?: boolean
 }): Promise<GenesisProof | null> {
   const outcome = await walkGenesisLineage(args)
   return outcome.kind === 'proven' ? outcome.proof : null
@@ -129,9 +133,16 @@ export async function walkGenesisLineage(args: {
   /**
    * Abort once merged BEEF inputs exceed this many bytes (upper bound via sum of
    * fetched piece lengths). Used by send remittance so we do not walk a deep
-   * lineage only to omit it for being over the wire budget.
+   * lineage only to omit it for being over the wire budget. Implies
+   * {@link includeBeef}, since the final size can only be known by serializing.
    */
   maxBeefBytes?: number
+  /**
+   * Serialize the assembled lineage into {@link GenesisProof.beef}. Only a
+   * sender needs it; leaving it off keeps a background verify from spending
+   * seconds of blocked main thread on bytes nobody reads.
+   */
+  includeBeef?: boolean
 }): Promise<GenesisWalkOutcome> {
   const tip = toPoint(args.tipOutpoint)
   if (!POINT.test(tip)) {
@@ -139,6 +150,7 @@ export async function walkGenesisLineage(args: {
   }
   const maxHops = args.maxHops ?? MAX_GENESIS_HOPS
   const maxBeefBytes = args.maxBeefBytes
+  const needBeefBytes = args.includeBeef === true || maxBeefBytes != null
 
   const merged = new Beef()
   const fetched = new Set<string>()
@@ -268,13 +280,15 @@ export async function walkGenesisLineage(args: {
     }
   }
 
+  // Everything below is uninterrupted CPU on the shared thread, and it is the
+  // most expensive stretch of the walk — an origin that mints hundreds of
+  // inscriptions in one transaction takes tens of seconds. Give the UI a frame
+  // and one last chance to claim the thread before committing to it.
+  if (args.shouldStop?.()) return { kind: 'aborted', hops }
+  await new Promise<void>((r) => setTimeout(r, 0))
+
   // Re-derive the path from the hydrated BEEF and verify it with the shared
   // verifier, so the proof never rests on the order this walk happened to take.
-  //
-  // The BEEF is serialized whole rather than atomically: AtomicBEEF keeps only
-  // the subject and its recursive dependencies, and a mined tip carrying its own
-  // merkle proof depends on nothing — which strips the very ancestry being
-  // proven and is why the older rebuild could never prove a confirmed item.
   const path = deriveOneSatPathFromBeef(merged, tip, origin)
   if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
     return {
@@ -283,15 +297,15 @@ export async function walkGenesisLineage(args: {
       hops,
     }
   }
-  const beef = merged.toBinary()
-  if (maxBeefBytes != null && beef.length > maxBeefBytes) {
-    return { kind: 'overBudget', bytes: beef.length, hops }
-  }
-  const result = verifyProvenanceV2(
-    { v: 2, origin, tip, path, beefB64: bytesToBase64(beef) },
+  // Verified in memory. Serializing to the wire format only to decode and
+  // re-parse it is pure waste, and on a phone it is most of the freeze.
+  const result = verifyLineageInBeef({
+    beef: merged,
+    origin,
     tip,
-    { enforceBudget: false },
-  )
+    path,
+    heldOutpoint: tip,
+  })
   if (!result.proven) {
     return {
       kind: 'invalid',
@@ -299,15 +313,18 @@ export async function walkGenesisLineage(args: {
       hops,
     }
   }
-  return { kind: 'proven', proof: { origin, path, hops, beef } }
-}
 
-function bytesToBase64(bytes: number[]): string {
-  let binary = ''
-  // Chunked: spreading a multi-megabyte inscription into `fromCharCode` blows
-  // the argument limit on exactly the items most worth proving.
-  for (let i = 0; i < bytes.length; i += 8192) {
-    binary += String.fromCharCode(...bytes.slice(i, i + 8192))
+  // Only a sender putting the lineage on the wire needs the bytes. A background
+  // verify pins a verdict and throws the BEEF away, so it must not pay to
+  // serialize megabytes it will never read.
+  //
+  // Serialized whole rather than atomically: AtomicBEEF keeps only the subject
+  // and its recursive dependencies, and a mined tip carrying its own merkle
+  // proof depends on nothing — which strips the very ancestry being proven and
+  // is why the older rebuild could never prove a confirmed item.
+  const beef = needBeefBytes ? merged.toBinary() : []
+  if (maxBeefBytes != null && beef.length > maxBeefBytes) {
+    return { kind: 'overBudget', bytes: beef.length, hops }
   }
-  return btoa(binary)
+  return { kind: 'proven', proof: { origin, path, hops, beef } }
 }

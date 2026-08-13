@@ -9,6 +9,7 @@
  * payment".
  */
 import {
+  countFailedActivity,
   isFailedActivity,
   removeActivityById,
   removeFailedActivity,
@@ -16,6 +17,7 @@ import {
   type ActivityRetry,
 } from './appActivity'
 import { isCollectableOutpointSpendable, sendCollectable } from './collectables'
+import { counterpartyMaySettle } from './sentItemGuard'
 import { getBeefForTxidCached } from './beefCache'
 import { txExistsOnChain } from './legacyScan'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
@@ -30,9 +32,25 @@ export type SpendAttemptFate =
   | { kind: 'confirmed' }
   | {
       kind: 'refuse'
-      reason: 'statusUnknown' | 'missingRetryDetails' | 'sourceNotSpendable'
+      reason:
+        | 'statusUnknown'
+        | 'missingRetryDetails'
+        | 'sourceNotSpendable'
+        /**
+         * The transfer left this wallet and the payee may still broadcast it.
+         * Neither retry nor clear is safe: retry would race a live transaction,
+         * and clearing would delete the sender's only record of an item that can
+         * still land in the recipient's wallet.
+         */
+        | 'counterpartyMaySettle'
       message: string
       mayClear: boolean
+      /**
+       * Reserved coins may be released even when the row must stay. Repair only
+       * fails *unsigned* transactions, so it frees a stuck balance without
+       * touching a signed transfer the payee still holds.
+       */
+      mayReleaseFunds?: boolean
     }
   | {
       kind: 'retry'
@@ -71,6 +89,28 @@ export function isSpendAttempt(
   return now - entry.at >= grace
 }
 
+/**
+ * True when the payee still owns the outcome of this item transfer.
+ *
+ * A failed row is not automatically a dead row: on a `peerDeliver` settle the
+ * signed transfer is already in the recipient's inbox, so it can land hours
+ * later. Offering retry or clear in that window is how a sender either races a
+ * live transaction or deletes the only local record of an item that is really
+ * gone.
+ */
+export function isCounterpartySettlePending(
+  entry: ActivityEntry,
+  now = Date.now(),
+): boolean {
+  if (entry.method !== ITEM_METHOD) return false
+  const outpoint =
+    entry.retry?.kind === 'send-collectable'
+      ? entry.retry.outpoint
+      : entry.item?.outpoint
+  if (!outpoint) return false
+  return counterpartyMaySettle(outpoint, now)
+}
+
 function hasTxid(entry: ActivityEntry): boolean {
   return Boolean(entry.txid && /^[0-9a-f]{64}$/i.test(entry.txid))
 }
@@ -80,6 +120,17 @@ export async function resolveSpendAttemptFate(
   chain: Chain,
 ): Promise<SpendAttemptFate> {
   if (!isSpendAttempt(entry)) return { kind: 'notAttempt' }
+
+  if (isCounterpartySettlePending(entry)) {
+    return {
+      kind: 'refuse',
+      reason: 'counterpartyMaySettle',
+      message:
+        'The recipient has this transfer and can still broadcast it, so it is not lost. Retrying would race a live transaction and clearing would delete your only record of it.',
+      mayClear: false,
+      mayReleaseFunds: true,
+    }
+  }
 
   if (hasTxid(entry)) {
     const onChain = await txExistsOnChain(entry.txid!, chain).catch(() => null)
@@ -238,24 +289,53 @@ export async function retrySpendAttempt(
  * Drop a dead attempt: release the local reservations it left on our outputs,
  * then remove the row. Repair runs first so clearing a payment actually unblocks
  * the next send rather than only hiding the evidence.
+ *
+ * Refuses while the payee could still broadcast the transfer — the row is then
+ * the sender's only record of an item that has already left the wallet.
  */
 export async function clearSpendAttempt(
   entry: ActivityEntry,
 ): Promise<{ removed: boolean }> {
+  if (isCounterpartySettlePending(entry)) {
+    throw new Error(
+      'The recipient can still broadcast this transfer, so it cannot be cleared yet.',
+    )
+  }
   await releaseLocalSpendReservations()
   return { removed: removeActivityById(entry.id) }
 }
 
 /**
- * Clear every failed send from history in one pass.
+ * Free the coins a dead attempt reserved, without touching history.
  *
- * Repair runs once — not once per row — then all failed rows are dropped. Failed
- * rows are local-only, so this cancels nothing on chain. Returns how many rows
- * were removed so the caller can report it.
+ * Repair only fails *unsigned* transactions, so this unblocks a balance that a
+ * half-built send is sitting on while leaving any signed transfer — and every
+ * Activity row — alone. It is the safe half of "clear" for an attempt whose
+ * record has to stay.
  */
-export async function clearAllFailedSpends(): Promise<{ removed: number }> {
+export async function releaseSpendAttemptFunds(): Promise<void> {
   await releaseLocalSpendReservations()
-  return { removed: removeFailedActivity() }
+}
+
+/**
+ * Clear failed sends from history in one pass.
+ *
+ * Repair runs once — not once per row — then failed rows are dropped, except
+ * item transfers the payee can still broadcast. Everything removed is local-only
+ * bookkeeping, so this cancels nothing on chain. Returns how many rows were
+ * removed and how many were kept back, so the caller can report both.
+ */
+export async function clearAllFailedSpends(): Promise<{
+  removed: number
+  kept: number
+}> {
+  const now = Date.now()
+  const keep = (entry: ActivityEntry) => isCounterpartySettlePending(entry, now)
+  const failed = countFailedActivity()
+  await releaseLocalSpendReservations()
+  const removed = removeFailedActivity(keep)
+  // Repair can settle rows between the two reads, so never report a negative.
+  return { removed, kept: Math.max(0, failed - removed) }
 }
 
 /** Best-effort release of the local reservations a dead spend left behind. */

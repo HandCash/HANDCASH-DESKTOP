@@ -23,14 +23,9 @@ import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
-import { toastError } from '../wallet/toast'
+import { toastError, toastSuccess } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
-import {
-  getPaymentProgress,
-  subscribePaymentProgress,
-} from '../wallet/paymentProgress'
 import type { Chain } from '../wallet/vault'
-import { CheckCircleIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
@@ -40,7 +35,8 @@ type Props = {
   onFail?: (error: string) => void
 }
 
-type Stage = 'edit' | 'confirm' | 'sending' | 'success' | 'failure'
+/** The panel only composes and confirms; the send outlives it. */
+type Stage = 'edit' | 'confirm'
 
 function shortenAddress(value: string): string {
   const v = value.trim()
@@ -59,11 +55,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [stage, setStage] = useState<Stage>('edit')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
-  const [txid, setTxid] = useState<string | null>(null)
-  const [paymentProgress, setPaymentProgressState] = useState(() => getPaymentProgress())
 
   useEffect(() => subscribeFriends(setFriends), [])
-  useEffect(() => subscribePaymentProgress(setPaymentProgressState), [])
 
   useEffect(() => {
     let cancelled = false
@@ -74,11 +67,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
       cancelled = true
     }
   }, [outpoint])
-
-  useEffect(() => {
-    if (stage === 'success') playPaymentSuccessSound()
-    if (stage === 'failure') playWalletSound('error')
-  }, [stage])
 
   const matches = useMemo(
     () => searchFriends(recipientQuery, friends).slice(0, 8),
@@ -159,41 +147,50 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     }
   }
 
-  const confirmSend = async () => {
+  /**
+   * Hand the transfer to the wallet and return to the inventory.
+   *
+   * The grid marks the tile as sending, the sidebar mirrors live progress and
+   * Activity carries the result, so a status screen here would only cover the
+   * surfaces that outlive this panel.
+   */
+  const confirmSend = () => {
     if (!item || sendingRef.current) return
     sendingRef.current = true
-    setStage('sending')
     setError(null)
-    try {
-      const result = await sendCollectable({
-        outpoint: item.outpoint,
-        toAddress: to,
-        recipientIdentityKey,
-        friendLabel,
-        name: item.name,
-        origin: item.origin,
-        app: item.app,
-      })
-      setTxid(result.txid)
-      // Activity is recorded inside finishSend as soon as the txid exists.
-
-      setStage('success')
-      void listCollectables().catch(() => {})
-      // Local state is authoritative for the spend; Dashboard poll reconciles after.
-      void fetchBalanceSats(getActiveWallet()?.wallet)
-        .then((balance) => {
-          onSent?.(balance)
-        })
-        .catch((err) => {
-          console.warn('[send-collectable] balance refresh failed', err)
-        })
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      setError(message)
-      setStage('failure')
-      toastError('Send failed', message)
-      sendingRef.current = false
+    const send = {
+      outpoint: item.outpoint,
+      toAddress: to,
+      recipientIdentityKey,
+      friendLabel,
+      name: item.name,
+      origin: item.origin,
+      app: item.app,
     }
+    const label = recipientLabel
+    clearNavChild()
+
+    // Deliberately not awaited: the panel is gone by the time this settles.
+    void (async () => {
+      try {
+        // Activity is recorded inside finishSend as soon as the txid exists.
+        await sendCollectable(send)
+        playPaymentSuccessSound()
+        toastSuccess('Sent', `${send.name} on the way to ${label}.`)
+        void listCollectables().catch(() => {})
+        // Local state is authoritative for the spend; Dashboard poll reconciles after.
+        try {
+          onSent?.(await fetchBalanceSats(getActiveWallet()?.wallet))
+        } catch (err) {
+          console.warn('[send-collectable] balance refresh failed', err)
+        }
+      } catch (err) {
+        playWalletSound('error')
+        toastError('Send failed', err instanceof Error ? err.message : String(err))
+      } finally {
+        sendingRef.current = false
+      }
+    })()
   }
 
   if (!item) {
@@ -340,7 +337,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
               </p>
               {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
               <div className="actions send-actions">
-                <button type="button" className="btn btn-primary" onClick={() => void confirmSend()}>
+                <button type="button" className="btn btn-primary" onClick={confirmSend}>
                   Confirm
                 </button>
                 <button type="button" className="btn btn-ghost" onClick={() => setStage('edit')}>
@@ -352,65 +349,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
         </div>
       )}
 
-      {stage === 'sending' && (
-        <div className="send-stage send-stage-status">
-          <div className="send-stage-body send-stage-body-center">
-            <div className="send-spinner" aria-hidden />
-            <p className="send-status-title">
-              {paymentProgress.label ?? 'Sending…'}
-            </p>
-            <p className="send-status-sub">
-              {paymentProgress.detail ?? 'Preparing the collectable…'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {stage === 'success' && (
-        <div className="send-stage send-stage-success">
-          <div className="send-stage-body send-stage-body-center">
-            <div className="send-success-mark" aria-hidden>
-              <CheckCircleIcon size={80} />
-            </div>
-            <p className="send-status-title">Sent</p>
-            <strong className="collectable-details-name">{item.name}</strong>
-            <p className="send-confirm-to">
-              to <strong>{recipientLabel}</strong>
-            </p>
-            {txid ? (
-              <p className="mono send-txid" title={txid}>
-                {shortenAddress(txid)}
-              </p>
-            ) : null}
-          </div>
-          <div className="actions send-actions">
-            <button type="button" className="btn btn-primary" onClick={() => clearNavChild()}>
-              Done
-            </button>
-          </div>
-        </div>
-      )}
-
-      {stage === 'failure' && (
-        <div className="send-stage send-stage-failure">
-          <div className="send-stage-body send-stage-body-center">
-            <p className="send-status-title">Couldn’t send</p>
-            <p className="error send-failure-error">{error}</p>
-          </div>
-          <div className="actions send-actions">
-            <button type="button" className="btn btn-primary" onClick={() => setStage('edit')}>
-              Edit
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => openCollectableDetails(item.outpoint)}
-            >
-              Back
-            </button>
-          </div>
-        </div>
-      )}
     </div>
   )
 }

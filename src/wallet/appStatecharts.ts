@@ -161,16 +161,14 @@ const SEND = `stateDiagram-v2
   [*] --> editing
   editing --> confirming : REVIEW
   confirming --> editing : BACK
-  confirming --> broadcasting : CONFIRM
-  broadcasting --> success : SUCCESS
-  broadcasting --> failure : FAIL
-  success --> editing : RESET
+  confirming --> handoff : CONFIRM
+  confirming --> failure : FAIL (pre-flight)
+  handoff --> [*] : panel closes
   failure --> editing : BACK / RESET
   editing : Edit
   confirming : Confirm
-  broadcasting : Broadcast
-  success : Success
-  failure : Failure
+  handoff : Handed to wallet
+  failure : Refused before send
 `
 
 const RECEIVE = `stateDiagram-v2
@@ -774,7 +772,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendPayment',
     label: 'Send',
-    caption: 'sendPayment — edit → confirm → broadcast',
+    caption: 'sendPayment — edit → confirm → hand off to the wallet',
     source: SEND,
   },
   {

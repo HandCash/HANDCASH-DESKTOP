@@ -177,6 +177,40 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
   return now - record.at < SENT_HIDE_MS
 }
 
+/**
+ * What this wallet recorded when it sent the tip — who was going to broadcast,
+ * and when. Callers deciding whether a stalled send may be retried or cleared
+ * need the settle path: a `peerDeliver` transfer is the payee's to broadcast, so
+ * it is legitimately absent from the chain long after a sender-broadcast one
+ * would be a ghost.
+ */
+export function getSentItemRecord(outpoint: string): SentItemRecord | null {
+  const op = key(outpoint)
+  if (!op) return null
+  return readSent().get(op) ?? null
+}
+
+/**
+ * True while the counterparty could still put this transfer on chain.
+ *
+ * Mirrors {@link ghostHealFate}'s grace windows so the two never disagree —
+ * offering "clear" on a transfer that the ghost healer is still patiently
+ * waiting on is how a sender deletes the only record of an item that later
+ * lands in the recipient's wallet.
+ */
+export function counterpartyMaySettle(
+  outpoint: string,
+  now = Date.now(),
+): boolean {
+  const record = getSentItemRecord(outpoint)
+  if (!record) return false
+  const grace =
+    record.settle === 'peerDeliver'
+      ? PEER_DELIVER_GHOST_GRACE_MS
+      : SENDER_GHOST_GRACE_MS
+  return now - record.at < grace
+}
+
 /** Un-hide — for a send that turned out not to have spent these after all. */
 export function forgetItemsSent(outpoints: string[]): void {
   if (outpoints.length === 0) return

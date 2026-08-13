@@ -36,15 +36,11 @@ import {
 } from '../wallet/sendBrc29Payment'
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { requestSpendPriority } from '../wallet/walletCoordinator'
-import {
-  getPaymentProgress,
-  subscribePaymentProgress,
-} from '../wallet/paymentProgress'
+import { toastSuccess } from '../wallet/toast'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
-import { CheckCircleIcon } from './icons'
 
 type Props = {
   chain: Chain
@@ -78,15 +74,12 @@ export function SendPanel({
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
-  const [paymentProgress, setPaymentProgressState] = useState(() => getPaymentProgress())
-  const [creditedBack, setCreditedBack] = useState(false)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-  useEffect(() => subscribePaymentProgress(setPaymentProgressState), [])
   useEffect(() => {
     const sync = () => setOfflineBlock(offlinePaymentBlockedMessage())
     sync()
@@ -98,12 +91,7 @@ export function SendPanel({
     }
   }, [])
 
-  const isSuccess = sendSnap.matches('success')
   const isFailure = sendSnap.matches('failure')
-  useEffect(() => {
-    if (!isSuccess) return
-    playPaymentSuccessSound()
-  }, [isSuccess])
   useEffect(() => {
     if (!isFailure) return
     playWalletSound('error')
@@ -198,7 +186,9 @@ export function SendPanel({
           const result = await claimBrc29SettlementUri(value)
           if (result.accepted) {
             if (result.balanceSats != null) onSent(result.balanceSats)
-            send({ type: 'SUCCESS', txid: tryParseBrc29SettlementUri(value)!.txid })
+            playPaymentSuccessSound()
+            toastSuccess('Payment claimed', 'The BRC-29 payment is in your wallet.')
+            setRecipientQuery('')
             return
           }
           onFail(result.reason || 'Could not claim BRC-29 payment')
@@ -268,56 +258,70 @@ export function SendPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [initialRecipient])
 
-  const confirmSend = async () => {
-    send({ type: 'CONFIRM' })
-    try {
-      const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
-      if (!Number.isFinite(satoshis) || satoshis <= 0) {
-        throw new Error(
+  /**
+   * Hand the payment to the wallet and get out of the way.
+   *
+   * Everything after this point is already visible outside the panel — the
+   * sidebar mirrors live progress and Activity carries the settled or failed
+   * row — so keeping the user on a status screen only hides the surfaces that
+   * outlive it. Only a pre-flight refusal stays here, where the amount can
+   * still be edited.
+   */
+  const confirmSend = () => {
+    const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+    if (!Number.isFinite(satoshis) || satoshis <= 0) {
+      send({
+        type: 'FAIL',
+        error:
           currency === 'usd' && usdPerBsv == null
             ? 'USD rate unavailable'
             : 'Invalid amount',
-        )
-      }
-
-      const to = sendSnap.context.to.trim()
-      const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
-      let txid: string
-      let nextBalance: number
-      let selfReceived = false
-
-      if (payeeKey != null) {
-        const next = await sendBrc29ToIdentityKey({
-          payeeIdentityKey: payeeKey,
-          satoshis,
-          friendLabel: sendSnap.context.friendLabel,
-        })
-        txid = next.txid
-        nextBalance = next.balanceSats
-        selfReceived = Boolean(next.selfReceived)
-      } else {
-        const next = await sendSatsToAddress({
-          to,
-          satoshis,
-          friendLabel: sendSnap.context.friendLabel,
-        })
-        txid = next.txid
-        nextBalance = next.balanceSats
-      }
-
-      setCreditedBack(selfReceived)
-      send({ type: 'SUCCESS', txid })
-      onSent(nextBalance)
-    } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      send({ type: 'FAIL', error: message })
-      try {
-        const available = await refreshSpendableBalance()
-        onSent(available)
-      } catch {
-        // ignore — still show send failure
-      }
+      })
+      return
     }
+
+    const to = sendSnap.context.to.trim()
+    const payeeKey = sendSnap.context.payeeIdentityKey?.trim() || null
+    const friendLabel = sendSnap.context.friendLabel
+    const label = recipientLabel
+
+    send({ type: 'CONFIRM' })
+    onClose()
+
+    // Deliberately not awaited: the panel is gone by the time this settles.
+    void (async () => {
+      try {
+        let balanceSats: number
+        let selfReceived = false
+        if (payeeKey != null) {
+          const next = await sendBrc29ToIdentityKey({
+            payeeIdentityKey: payeeKey,
+            satoshis,
+            friendLabel,
+          })
+          balanceSats = next.balanceSats
+          selfReceived = Boolean(next.selfReceived)
+        } else {
+          const next = await sendSatsToAddress({ to, satoshis, friendLabel })
+          balanceSats = next.balanceSats
+        }
+        playPaymentSuccessSound()
+        toastSuccess(
+          'Sent',
+          selfReceived
+            ? `${amountLabel} credited back to this wallet.`
+            : `${amountLabel} on the way to ${label}.`,
+        )
+        onSent(balanceSats)
+      } catch (err) {
+        onFail(err instanceof Error ? err.message : String(err))
+        try {
+          onSent(await refreshSpendableBalance())
+        } catch {
+          // ignore — the failure is already reported
+        }
+      }
+    })()
   }
 
   return (
@@ -439,7 +443,7 @@ export function SendPanel({
                 <p className="mono send-confirm-address">{sendSnap.context.to}</p>
               ) : null}
               <div className="actions send-actions">
-                <button className="btn btn-primary" onClick={() => void confirmSend()}>
+                <button className="btn btn-primary" onClick={confirmSend}>
                   Confirm
                 </button>
                 <button className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
@@ -449,35 +453,6 @@ export function SendPanel({
             </div>
           </div>
         </div>
-      )}
-
-      {sendSnap.matches('broadcasting') && (
-        <div className="send-stage send-stage-status">
-          <div className="send-stage-body send-stage-body-center">
-            <div className="send-spinner" aria-hidden />
-            <p className="send-status-title">
-              {paymentProgress.label ?? 'Sending…'}
-            </p>
-            <p className="send-status-sub">
-              {paymentProgress.detail ?? 'Preparing your payment…'}
-            </p>
-          </div>
-        </div>
-      )}
-
-      {sendSnap.matches('success') && (
-        <SendSuccess
-          amountLabel={amountLabel}
-          amountSecondary={amountSecondary}
-          recipientLabel={recipientLabel}
-          txid={sendSnap.context.txid}
-          creditedBack={creditedBack}
-          onDone={() => {
-            send({ type: 'RESET' })
-            setCreditedBack(false)
-            onClose()
-          }}
-        />
       )}
 
       {sendSnap.matches('failure') && (
@@ -496,48 +471,6 @@ export function SendPanel({
           </div>
         </div>
       )}
-    </div>
-  )
-}
-
-function SendSuccess(props: {
-  amountLabel: string
-  amountSecondary: string | null
-  recipientLabel: string
-  txid: string | null
-  creditedBack?: boolean
-  onDone: () => void
-}) {
-  return (
-    <div className="send-stage send-stage-success">
-      <div className="send-stage-body send-stage-body-center">
-        <div className="send-success-mark" aria-hidden>
-          <CheckCircleIcon size={80} />
-        </div>
-        <p className="send-status-title">Sent</p>
-        <p className="send-confirm-amount send-success-amount">{props.amountLabel}</p>
-        {props.amountSecondary ? (
-          <p className="send-amount-secondary">≈ {props.amountSecondary}</p>
-        ) : null}
-        <p className="send-confirm-to">
-          to <strong>{props.recipientLabel}</strong>
-        </p>
-        {props.txid ? (
-          <p className="mono send-txid" title={props.txid}>
-            {shortenAddress(props.txid)}
-          </p>
-        ) : null}
-        {props.creditedBack ? (
-          <p className="send-status-sub">Credited back to this wallet</p>
-        ) : (
-          <p className="send-status-sub">On the way to the recipient</p>
-        )}
-      </div>
-      <div className="actions send-actions">
-        <button className="btn btn-primary" onClick={props.onDone}>
-          Done
-        </button>
-      </div>
     </div>
   )
 }

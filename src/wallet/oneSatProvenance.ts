@@ -452,15 +452,70 @@ export function verifyProvenanceV2(
   if (opts?.enforceBudget !== false && !provenanceFitsBudget(p)) {
     return { proven: false, reason: 'remittance over size budget' }
   }
+  const shape = checkLineageShape(p, heldOutpoint)
+  if (shape) return shape
+
+  let beef: Beef
+  try {
+    beef = Beef.fromBinary(base64ToBytes(p.beefB64))
+  } catch (err) {
+    return {
+      proven: false,
+      reason: err instanceof Error ? err.message : 'beef parse failed',
+    }
+  }
+  return verifyLineageInBeef({
+    beef,
+    origin: p.origin,
+    tip: p.tip,
+    path: p.path,
+    heldOutpoint,
+  })
+}
+
+/** Cheap ordering checks that need no BEEF, shared by both entry points. */
+function checkLineageShape(
+  p: { origin: string; tip: string; path: string[] },
+  heldOutpoint: string,
+): ProvenanceVerifyResult | null {
   if (p.path[0] !== p.tip) return { proven: false, reason: 'path[0] !== tip' }
   if (p.path[p.path.length - 1] !== p.origin) {
     return { proven: false, reason: 'path does not end at origin' }
   }
   const held = toUnderscore(heldOutpoint)
-  if (p.tip !== held) return { proven: false, reason: 'tip does not match held outpoint' }
+  if (p.tip !== held) {
+    return { proven: false, reason: 'tip does not match held outpoint' }
+  }
+  return null
+}
+
+/**
+ * {@link verifyProvenanceV2} against a BEEF that is already parsed.
+ *
+ * A locally assembled lineage is verified from the same transactions whether or
+ * not it ever reaches the wire, and re-encoding one only to decode and re-parse
+ * it costs seconds of blocked main thread on a phone — a Pixel Foxes origin is
+ * a single transaction carrying hundreds of inscriptions. Callers that hold the
+ * `Beef` should verify it here; {@link verifyProvenanceV2} remains the entry
+ * point for remittance that genuinely arrived as bytes.
+ */
+export function verifyLineageInBeef(args: {
+  beef: Beef
+  origin: string
+  tip: string
+  path: string[]
+  heldOutpoint: string
+}): ProvenanceVerifyResult {
+  const p = {
+    origin: toUnderscore(args.origin),
+    tip: toUnderscore(args.tip),
+    path: args.path.map(toUnderscore),
+  }
+  const shape = checkLineageShape(p, args.heldOutpoint)
+  if (shape) return shape
 
   try {
-    const beef = Beef.fromBinary(base64ToBytes(p.beefB64))
+    const beef = args.beef
     // A txid-only entry is only legal when the receiver independently trusts
     // that transaction. This verifier has no such trust input, so every path
     // transaction must be present and structurally proven by the BEEF.
@@ -559,12 +614,28 @@ export async function verifyProvenanceForHeldTip(args: {
     return { proven: false, reason: 'missing provenance' }
   }
 
+  // Parsed once and reused. This runs on every incoming tip, and re-decoding a
+  // remittance BEEF per check used to cost four full parses of the same bytes.
+  let beef: Beef
+  try {
+    beef = Beef.fromBinary(base64ToBytes(p.beefB64))
+  } catch (err) {
+    return {
+      proven: false,
+      reason: err instanceof Error ? err.message : 'beef parse failed',
+    }
+  }
+  const lineage = { beef, origin: p.origin, tip: p.tip, path: p.path }
+
   const held = toUnderscore(args.heldOutpoint)
-  const direct = verifyProvenanceV2(p, held, { enforceBudget: false })
+  const direct = verifyLineageInBeef({ ...lineage, heldOutpoint: held })
   if (direct.proven) return { ...direct, origin: p.origin }
   if (p.tip === held) return direct
 
-  const parentOk = verifyProvenanceV2(p, toDot(p.tip), { enforceBudget: false })
+  const parentOk = verifyLineageInBeef({
+    ...lineage,
+    heldOutpoint: toDot(p.tip),
+  })
   if (!parentOk.proven) {
     return {
       proven: false,
@@ -582,14 +653,7 @@ export async function verifyProvenanceForHeldTip(args: {
   const parentTxid = parentMatch[1]!.toLowerCase()
   const parentVout = Number(parentMatch[2])
 
-  let heldTx =
-    (() => {
-      try {
-        return Beef.fromBinary(base64ToBytes(p.beefB64)).findTxid(heldTxid)?.tx
-      } catch {
-        return undefined
-      }
-    })() ?? null
+  let heldTx = beef.findTxid(heldTxid)?.tx ?? null
   if (!heldTx && args.getBeef) {
     try {
       heldTx = (await args.getBeef(heldTxid)).findTxid(heldTxid)?.tx ?? null
@@ -614,9 +678,10 @@ export async function verifyProvenanceForHeldTip(args: {
       reason: 'held tip does not spend remittance tip (parent)',
     }
   }
-  let mapBeef: Beef
+  // Verification is finished, so the remittance BEEF can be extended in place
+  // for sat mapping rather than parsed a second time.
+  let mapBeef = beef
   try {
-    mapBeef = Beef.fromBinary(base64ToBytes(p.beefB64))
     mapBeef.mergeRawTx(heldTx.toBinary())
   } catch {
     mapBeef = new Beef()
@@ -680,6 +745,8 @@ async function hydrateLineageForSend(
       getBeef: (hop) => getBeefForTxidCached(wallet, hop),
       maxBeefBytes: opts?.maxBeefBytes,
       shouldStop: opts?.shouldStop,
+      // This lineage is going on the wire, so the serialized BEEF is the point.
+      includeBeef: true,
     })
     if (!proof) return null
     console.info(

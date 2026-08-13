@@ -32,7 +32,10 @@ import {
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from '../wallet/appActivity'
-import { clearAllFailedSpends } from '../wallet/spendAttempt'
+import {
+  clearAllFailedSpends,
+  isCounterpartySettlePending,
+} from '../wallet/spendAttempt'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
   markActivitySeen,
@@ -538,9 +541,14 @@ export function ActivityFeed({
     filters.origin !== DEFAULT_PAYMENT_FILTERS.origin
 
   // Count from the store, not the capped feed — the button must reflect the true
-  // backlog even when more failed rows exist than are rendered.
+  // backlog even when more failed rows exist than are rendered. Transfers the
+  // recipient can still broadcast are excluded: the bulk clear leaves them, so
+  // counting them would promise rows the button will not remove.
   const failedCount = useMemo(
-    () => (showFilters ? countFailedActivity() : 0),
+    () =>
+      showFilters
+        ? countFailedActivity((entry) => isCounterpartySettlePending(entry))
+        : 0,
     [entries, showFilters],
   )
   const [clearingFailed, setClearingFailed] = useState(false)
@@ -550,15 +558,17 @@ export function ActivityFeed({
     const confirmed = window.confirm(
       `Clear ${failedCount} failed send${
         failedCount === 1 ? '' : 's'
-      } from Activity? Failed sends never left this wallet, so this cancels nothing on chain.`,
+      } from Activity? These never left this wallet, so this cancels nothing on chain.`,
     )
     if (!confirmed) return
     setClearingFailed(true)
     try {
-      const { removed } = await clearAllFailedSpends()
+      const { removed, kept } = await clearAllFailedSpends()
       toastSuccess(
         'Cleared failed sends',
-        `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.`,
+        `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.${
+          kept > 0 ? ` Kept ${kept} the recipient can still broadcast.` : ''
+        }`,
       )
     } catch (err) {
       toastError(
