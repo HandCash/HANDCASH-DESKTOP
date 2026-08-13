@@ -26,35 +26,93 @@ const recomposeQueue = createSerialQueue()
 let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinatorMachine).start()
 
 /**
- * Count of spends waiting on / holding their region. Chain ingest checks this to
- * skip ordinal work and finish early so a queued send can begin.
+ * Callers who want the FIFO freed for a spend. Chain ingest checks this to skip
+ * ordinal work and finish early so a queued send can begin.
+ *
+ * Holds are named and expire. This is a scheduling *hint* — region exclusion is
+ * owned by the machine, so a hold that outlives its work costs throughput, not
+ * correctness. A leaked hold used to be permanent and invisible: chain ingest
+ * stayed funding-only for the rest of the session, so items never got named or
+ * verified, and history backup rescheduled itself forever. Expiring the hold and
+ * naming the holder turns that into a bounded, diagnosable stall.
  */
-let spendPriorityDepth = 0
+type SpendPriorityHold = { id: number; reason: string; at: number }
+
+const SPEND_PRIORITY_MAX_MS = 90_000
+
+let spendPriorityHolds: SpendPriorityHold[] = []
+let nextSpendPriorityId = 1
 
 /** Test-only — reset coordinator between cases. */
 export function resetWalletCoordinatorForTests(): void {
   actor.stop()
   actor = createActor(walletCoordinatorMachine).start()
-  spendPriorityDepth = 0
+  spendPriorityHolds = []
 }
 
-/** Raise before enqueueing a spend so in-flight chain ingest can yield. */
-export function requestSpendPriority(): void {
-  spendPriorityDepth += 1
+function dropExpiredSpendPriority(now = Date.now()): void {
+  if (spendPriorityHolds.length === 0) return
+  const live: SpendPriorityHold[] = []
+  for (const hold of spendPriorityHolds) {
+    const heldMs = now - hold.at
+    if (heldMs < SPEND_PRIORITY_MAX_MS) {
+      live.push(hold)
+      continue
+    }
+    console.warn(
+      `[coordinator] spend priority expired — "${hold.reason}" held ${Math.round(
+        heldMs / 1000,
+      )}s without releasing; resuming item ingest and backup`,
+    )
+  }
+  spendPriorityHolds = live
 }
 
+/**
+ * Raise before enqueueing a spend so in-flight chain ingest can yield. Returns
+ * the release — prefer it over `releaseSpendPriority()`, since it is idempotent
+ * and releases the hold it created rather than whichever is oldest.
+ */
+export function requestSpendPriority(reason = 'spend'): () => void {
+  dropExpiredSpendPriority()
+  const hold: SpendPriorityHold = {
+    id: nextSpendPriorityId++,
+    reason,
+    at: Date.now(),
+  }
+  spendPriorityHolds.push(hold)
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    spendPriorityHolds = spendPriorityHolds.filter((h) => h.id !== hold.id)
+  }
+}
+
+/** Release the oldest hold. Kept for callers that cannot carry the releaser. */
 export function releaseSpendPriority(): void {
-  spendPriorityDepth = Math.max(0, spendPriorityDepth - 1)
+  spendPriorityHolds = spendPriorityHolds.slice(1)
 }
 
 /** True while a send is queued or running — ingest should prefer funding-only. */
 export function shouldYieldChainIngestToSpend(): boolean {
-  return spendPriorityDepth > 0
+  dropExpiredSpendPriority()
+  return spendPriorityHolds.length > 0
 }
 
 /** How many callers currently want the FIFO freed for a spend. */
 export function getSpendPriorityDepth(): number {
-  return spendPriorityDepth
+  dropExpiredSpendPriority()
+  return spendPriorityHolds.length
+}
+
+/** Who is holding spend priority right now — for Settings and stall reports. */
+export function describeSpendPriorityHolds(): string[] {
+  dropExpiredSpendPriority()
+  const now = Date.now()
+  return spendPriorityHolds.map(
+    (h) => `${h.reason} (${Math.round((now - h.at) / 1000)}s)`,
+  )
 }
 
 export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
@@ -66,7 +124,8 @@ export type WalletCoordinatorLiveStatus = WalletCoordinatorSnapshot & {
 /** Live coordinator view — use this instead of guessing which layer is stuck. */
 export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
   const snap = getWalletCoordinatorSnapshot()
-  const spendWaiting = spendPriorityDepth
+  const holders = describeSpendPriorityHolds()
+  const spendWaiting = holders.length
   const active = (
     Object.entries(snap) as Array<[keyof WalletCoordinatorSnapshot, 'idle' | 'active']>
   )
@@ -75,7 +134,7 @@ export function describeWalletCoordinator(): WalletCoordinatorLiveStatus {
   const parts: string[] = []
   if (active.length === 0) parts.push('layers idle')
   else parts.push(`active: ${active.join(', ')}`)
-  if (spendWaiting > 0) parts.push(`spend waiting×${spendWaiting}`)
+  if (spendWaiting > 0) parts.push(`spend waiting: ${holders.join(', ')}`)
   return {
     ...snap,
     spendWaiting,
@@ -198,7 +257,7 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
 ): Promise<T> {
   // Before the region waits — so a running refresh can yield ordinal work now.
-  requestSpendPriority()
+  const releasePriority = requestSpendPriority('runExclusiveSpend')
   return spendQueue(async () => {
     try {
       const releaseSpend = await acquireSpend()
@@ -212,9 +271,14 @@ export function runExclusiveSpend<T>(
         releaseSpend()
       }
     } finally {
-      releaseSpendPriority()
+      releasePriority()
     }
   })
+    .catch((err) => {
+      // The queue itself can reject before the body runs; the hold must not survive it.
+      releasePriority()
+      throw err
+    })
 }
 
 /**

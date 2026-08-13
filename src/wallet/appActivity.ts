@@ -31,6 +31,23 @@ export type ActivityItem = {
   icon?: string
 }
 
+/** Structured data required to retry the exact same spend without guessing. */
+export type ActivityRetry =
+  | {
+      kind: 'send-collectable'
+      outpoint: string
+      toAddress: string
+      recipientIdentityKey?: string
+      friendLabel?: string
+    }
+  | {
+      kind: 'send-bsv'
+      toAddress: string
+      satoshis: number
+      recipientIdentityKey?: string
+      friendLabel?: string
+    }
+
 export type ActivityEntry = {
   id: string
   origin: string
@@ -48,6 +65,8 @@ export type ActivityEntry = {
   pendingId?: string
   /** Why a `failed` row failed — shown in Activity so a dead send is never silent. */
   failureReason?: string
+  /** Present only when the original action can be reconstructed safely. */
+  retry?: ActivityRetry
 }
 
 /** Keeps stored reasons short enough that one row cannot bloat history. */
@@ -112,19 +131,27 @@ function readAll(): ActivityEntry[] {
         const row = e as ActivityEntry
         const item = normalizeActivityItem(row.item)
         const status: ActivityStatus | undefined =
-          row.status === 'pending' ? 'pending' : row.status === 'failed' ? 'failed' : undefined
+          row.status === 'pending'
+            ? 'pending'
+            : row.status === 'failed'
+            ? 'failed'
+            : undefined
         const pendingId =
           typeof row.pendingId === 'string' && row.pendingId.trim()
             ? row.pendingId.trim()
             : undefined
         const failureReason =
-          status === 'failed' ? normalizeFailureReason(row.failureReason) : undefined
+          status === 'failed'
+            ? normalizeFailureReason(row.failureReason)
+            : undefined
+        const retry = normalizeActivityRetry(row.retry)
         return {
           ...row,
           item: item ?? undefined,
           status,
           ...(pendingId ? { pendingId } : {}),
           ...(failureReason ? { failureReason } : { failureReason: undefined }),
+          ...(retry ? { retry } : { retry: undefined }),
         }
       })
     parsedRaw = raw
@@ -133,6 +160,47 @@ function readAll(): ActivityEntry[] {
   } catch {
     return []
   }
+}
+
+function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const row = value as Record<string, unknown>
+  const toAddress = typeof row.toAddress === 'string' ? row.toAddress.trim() : ''
+  if (!toAddress) return undefined
+  const recipientIdentityKey =
+    typeof row.recipientIdentityKey === 'string' && row.recipientIdentityKey.trim()
+      ? row.recipientIdentityKey.trim()
+      : undefined
+  const friendLabel =
+    typeof row.friendLabel === 'string' && row.friendLabel.trim()
+      ? row.friendLabel.trim().slice(0, 80)
+      : undefined
+  if (row.kind === 'send-collectable') {
+    const outpoint = typeof row.outpoint === 'string' ? row.outpoint.trim() : ''
+    if (!outpoint) return undefined
+    return {
+      kind: 'send-collectable',
+      outpoint,
+      toAddress,
+      ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
+      ...(friendLabel ? { friendLabel } : {}),
+    }
+  }
+  if (row.kind === 'send-bsv') {
+    const satoshis =
+      typeof row.satoshis === 'number' && Number.isFinite(row.satoshis)
+        ? Math.trunc(row.satoshis)
+        : 0
+    if (satoshis <= 0) return undefined
+    return {
+      kind: 'send-bsv',
+      toAddress,
+      satoshis,
+      ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
+      ...(friendLabel ? { friendLabel } : {}),
+    }
+  }
+  return undefined
 }
 
 /** Bumps on every write — activity feed caches must not serve a pre-write snapshot. */
@@ -151,9 +219,10 @@ function writeAll(entries: ActivityEntry[]): void {
   for (const cb of listeners) cb()
 }
 
-function activityRowIsItem(
-  row: { item?: ActivityItem; method: string },
-): boolean {
+function activityRowIsItem(row: {
+  item?: ActivityItem
+  method: string
+}): boolean {
   return Boolean(row.item) || /collectable|token|1sat|ordinal/i.test(row.method)
 }
 
@@ -201,7 +270,9 @@ export function activityFailureReason(entry: ActivityEntry): string | null {
 }
 
 /** True if we already logged a collectable receive/send for this tip outpoint. */
-export function hasActivityItemOutpoint(outpoint: string | undefined | null): boolean {
+export function hasActivityItemOutpoint(
+  outpoint: string | undefined | null,
+): boolean {
   const key = outpoint?.trim().toLowerCase().replace('_', '.')
   if (!key) return false
   return readAll().some((e) => {
@@ -305,6 +376,7 @@ export function upsertAppActivity(args: {
   status?: ActivityStatus
   pendingId?: string
   failureReason?: string
+  retry?: ActivityRetry
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
@@ -336,8 +408,8 @@ export function upsertAppActivity(args: {
       prev.status !== 'pending' && pending
         ? prev.status
         : args.status === 'complete'
-          ? undefined
-          : args.status ?? prev.status
+        ? undefined
+        : args.status ?? prev.status
     const nextItem = item
       ? prev.item
         ? { ...prev.item, ...item }
@@ -352,6 +424,7 @@ export function upsertAppActivity(args: {
       nextStatus === 'failed'
         ? normalizeFailureReason(args.failureReason) ?? prev.failureReason
         : undefined
+    const nextRetry = normalizeActivityRetry(args.retry) ?? prev.retry
     entries[idx] = {
       ...prev,
       origin: origin || prev.origin,
@@ -363,8 +436,13 @@ export function upsertAppActivity(args: {
       ...(nextStatus === 'pending' || nextStatus === 'failed'
         ? { status: nextStatus }
         : { status: undefined }),
-      ...(nextPendingId ? { pendingId: nextPendingId } : { pendingId: undefined }),
-      ...(nextFailureReason ? { failureReason: nextFailureReason } : { failureReason: undefined }),
+      ...(nextPendingId
+        ? { pendingId: nextPendingId }
+        : { pendingId: undefined }),
+      ...(nextFailureReason
+        ? { failureReason: nextFailureReason }
+        : { failureReason: undefined }),
+      ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
     }
     writeAll(entries)
     return
@@ -383,8 +461,13 @@ export function upsertAppActivity(args: {
       ...(item ? { item } : {}),
       ...(pending ? { status: 'pending' as const } : {}),
       ...(failed ? { status: 'failed' as const } : {}),
-      ...(failed ? { failureReason: normalizeFailureReason(args.failureReason) } : {}),
+      ...(failed
+        ? { failureReason: normalizeFailureReason(args.failureReason) }
+        : {}),
       ...((pending || failed) && pendingId ? { pendingId } : {}),
+      ...(normalizeActivityRetry(args.retry)
+        ? { retry: normalizeActivityRetry(args.retry) }
+        : {}),
     },
   ])
 }
@@ -472,6 +555,7 @@ export function noteOutboundSendPending(args: {
   sats: number
   to: string
   friendLabel?: string | null
+  recipientIdentityKey?: string | null
   item?: ActivityItem
 }): void {
   const pendingId = args.pendingId.trim()
@@ -490,6 +574,15 @@ export function noteOutboundSendPending(args: {
       status: 'pending',
       pendingId,
       item: args.item,
+      retry: {
+        kind: 'send-collectable',
+        outpoint: args.item.outpoint ?? '',
+        toAddress: args.to,
+        ...(args.recipientIdentityKey
+          ? { recipientIdentityKey: args.recipientIdentityKey }
+          : {}),
+        ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+      },
     })
     return
   }
@@ -501,7 +594,29 @@ export function noteOutboundSendPending(args: {
     note: `Sending to ${recipient}`,
     status: 'pending',
     pendingId,
+    retry: bsvRetry(args),
   })
+}
+
+/** Recipient + amount a payment row needs to be retried or explained after it dies. */
+function bsvRetry(args: {
+  sats: number
+  to: string
+  friendLabel?: string | null
+  recipientIdentityKey?: string | null
+}): ActivityRetry | undefined {
+  const satoshis = Math.max(0, Math.trunc(args.sats))
+  const toAddress = args.to.trim()
+  if (satoshis <= 0 || !toAddress) return undefined
+  return {
+    kind: 'send-bsv',
+    toAddress,
+    satoshis,
+    ...(args.recipientIdentityKey
+      ? { recipientIdentityKey: args.recipientIdentityKey }
+      : {}),
+    ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+  }
 }
 
 /** Promote a Sending… row to Settled after broadcast accepts. */
@@ -511,6 +626,7 @@ export function noteOutboundSendComplete(args: {
   sats: number
   to: string
   friendLabel?: string | null
+  recipientIdentityKey?: string | null
   item?: ActivityItem
 }): void {
   const pendingId = args.pendingId.trim()
@@ -532,6 +648,15 @@ export function noteOutboundSendComplete(args: {
       status: 'complete',
       pendingId,
       item: args.item,
+      retry: {
+        kind: 'send-collectable',
+        outpoint: args.item.outpoint ?? '',
+        toAddress: args.to,
+        ...(args.recipientIdentityKey
+          ? { recipientIdentityKey: args.recipientIdentityKey }
+          : {}),
+        ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+      },
     })
     return
   }
@@ -544,6 +669,7 @@ export function noteOutboundSendComplete(args: {
     txid,
     status: 'complete',
     pendingId,
+    retry: bsvRetry(args),
   })
 }
 
@@ -557,7 +683,8 @@ export function clearOutboundSendPending(pendingId: string): void {
   if (!id) return
   const prev = readAll()
   const entries = prev.filter(
-    (e) => !(e.pendingId === id && e.status === 'pending' && e.kind === 'spent'),
+    (e) =>
+      !(e.pendingId === id && e.status === 'pending' && e.kind === 'spent'),
   )
   if (entries.length !== prev.length) writeAll(entries)
 }
@@ -567,7 +694,10 @@ export function clearOutboundSendPending(pendingId: string): void {
  * Keeps the amount, recipient and item so Activity can explain the dead send
  * instead of silently dropping it.
  */
-export function failOutboundSendPending(args: { pendingId: string; reason: string }): boolean {
+export function failOutboundSendPending(args: {
+  pendingId: string
+  reason: string
+}): boolean {
   const id = args.pendingId.trim()
   if (!id) return false
   const reason = normalizeFailureReason(args.reason) ?? 'Send failed'
@@ -591,7 +721,10 @@ export function failOutboundSendPending(args: { pendingId: string; reason: strin
 }
 
 function normalizeActivityOutpoint(outpoint: string): string {
-  return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  return outpoint
+    .trim()
+    .toLowerCase()
+    .replace(/_(\d+)$/, '.$1')
 }
 
 /** Drop a Verifying… receive when ingest fails before the tip is held. */
@@ -600,7 +733,12 @@ export function clearInboundReceivePending(txid: string): void {
   if (!/^[0-9a-f]{64}$/.test(id)) return
   const prev = readAll()
   const entries = prev.filter(
-    (e) => !(e.txid?.toLowerCase() === id && e.status === 'pending' && e.kind === 'earned'),
+    (e) =>
+      !(
+        e.txid?.toLowerCase() === id &&
+        e.status === 'pending' &&
+        e.kind === 'earned'
+      ),
   )
   if (entries.length !== prev.length) writeAll(entries)
 }
@@ -609,7 +747,10 @@ export function clearInboundReceivePending(txid: string): void {
  * Drop Verifying… receives older than `maxAgeMs` that never internalized.
  * Stops Activity from spinning forever after a failed soft-latch ingest.
  */
-export function expireStaleInboundPending(maxAgeMs = 120_000, now = Date.now()): number {
+export function expireStaleInboundPending(
+  maxAgeMs = 120_000,
+  now = Date.now(),
+): number {
   const prev = readAll()
   const entries = prev.filter((e) => {
     if (e.status !== 'pending' || e.kind !== 'earned') return true
@@ -625,7 +766,10 @@ export function expireStaleInboundPending(maxAgeMs = 120_000, now = Date.now()):
  * txid / complete. Matches the payment-progress stuck watchdog so Activity
  * cannot spin forever — and, unlike the old prune, says what happened.
  */
-export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()): number {
+export function expireStaleOutboundPending(
+  maxAgeMs = 90_000,
+  now = Date.now(),
+): number {
   const prev = readAll()
   let expired = 0
   const entries = prev.map((e) => {
@@ -636,7 +780,8 @@ export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()):
     return {
       ...e,
       status: 'failed' as const,
-      failureReason: 'Send never confirmed — the wallet stopped hearing back. Refresh, then try again.',
+      failureReason:
+        'Send never confirmed — the wallet stopped hearing back. Refresh, then try again.',
       note: name ? `${name} was not sent` : 'Payment was not sent',
     }
   })
@@ -647,7 +792,9 @@ export function expireStaleOutboundPending(maxAgeMs = 90_000, now = Date.now()):
 /** Drop every Activity row for these txids (ghost send / 404 prune). */
 export function removeActivityForTxids(txids: string[]): number {
   const missing = new Set(
-    txids.map((t) => t.trim().toLowerCase()).filter((t) => /^[0-9a-f]{64}$/.test(t)),
+    txids
+      .map((t) => t.trim().toLowerCase())
+      .filter((t) => /^[0-9a-f]{64}$/.test(t)),
   )
   if (missing.size === 0) return 0
   const prev = readAll()
@@ -655,6 +802,39 @@ export function removeActivityForTxids(txids: string[]): number {
     const txid = e.txid?.toLowerCase()
     return !txid || !missing.has(txid)
   })
+  const removed = prev.length - next.length
+  if (removed > 0) writeAll(next)
+  return removed
+}
+
+/** Delete one local Activity attempt. This never mutates or cancels a transaction. */
+export function removeActivityById(id: string): boolean {
+  const key = id.trim()
+  if (!key) return false
+  const prev = readAll()
+  const next = prev.filter((entry) => entry.id !== key)
+  if (next.length === prev.length) return false
+  writeAll(next)
+  return true
+}
+
+/** How many failed send rows are in local history right now. */
+export function countFailedActivity(): number {
+  return readAll().reduce((n, e) => (e.status === 'failed' ? n + 1 : n), 0)
+}
+
+/**
+ * Drop every failed send row in one write.
+ *
+ * A failed row is local-only bookkeeping — the transaction never landed — so
+ * removing it cancels nothing on-chain. This is the bulk companion to
+ * `removeActivityById` for when the backlog is too large to clear one tap at a
+ * time. Local reservation repair is the caller's job (see `clearSpendAttempt`);
+ * this only edits the history list. Returns how many rows were removed.
+ */
+export function removeFailedActivity(): number {
+  const prev = readAll()
+  const next = prev.filter((entry) => entry.status !== 'failed')
   const removed = prev.length - next.length
   if (removed > 0) writeAll(next)
   return removed
@@ -674,7 +854,10 @@ export function removeActivityForTxids(txids: string[]): number {
  */
 export async function pruneMissingOnChainActivity(
   chain: import('./vault').Chain,
-  exists: (txid: string, chain: import('./vault').Chain) => Promise<boolean | null>,
+  exists: (
+    txid: string,
+    chain: import('./vault').Chain,
+  ) => Promise<boolean | null>,
   opts?: { minAgeMs?: number; pendingMinAgeMs?: number; limit?: number },
 ): Promise<number> {
   const settledMinAgeMs = opts?.minAgeMs ?? 10 * 60_000
@@ -733,7 +916,12 @@ export async function pruneMissingOnChainActivity(
  * @returns how many rows were settled.
  */
 export function reconcilePendingActivityWithHeldItems(
-  held: Array<{ outpoint: string; proven?: boolean; name?: string; origin?: string }>,
+  held: Array<{
+    outpoint: string
+    proven?: boolean
+    name?: string
+    origin?: string
+  }>,
 ): number {
   if (!held.length) return 0
   const byOutpoint = new Map(
@@ -742,7 +930,9 @@ export function reconcilePendingActivityWithHeldItems(
         const op = normalizeActivityOutpoint(h.outpoint)
         return op ? ([op, h] as const) : null
       })
-      .filter((row): row is readonly [string, (typeof held)[number]] => row != null),
+      .filter(
+        (row): row is readonly [string, (typeof held)[number]] => row != null,
+      ),
   )
   if (byOutpoint.size === 0) return 0
 
@@ -763,7 +953,10 @@ export function reconcilePendingActivityWithHeldItems(
       status: undefined,
       item: {
         name: item.name?.trim() || entry.item?.name || 'Collectable',
-        origin: item.origin?.trim() || entry.item?.origin || `${op.replace('.', '_')}`,
+        origin:
+          item.origin?.trim() ||
+          entry.item?.origin ||
+          `${op.replace('.', '_')}`,
         outpoint: op,
         ...(entry.item?.imageUrl ? { imageUrl: entry.item.imageUrl } : {}),
         ...(entry.item?.app ? { app: entry.item.app } : {}),
@@ -795,7 +988,9 @@ export function isEventActivity(entry: ActivityEntry): boolean {
   return entry.kind === 'event'
 }
 
-function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | undefined {
+function normalizeActivityItem(
+  raw: ActivityItem | undefined,
+): ActivityItem | undefined {
   if (!raw || typeof raw !== 'object') return undefined
   const name = typeof raw.name === 'string' ? raw.name.trim() : ''
   const origin = typeof raw.origin === 'string' ? raw.origin.trim() : ''
@@ -821,7 +1016,9 @@ function normalizeActivityItem(raw: ActivityItem | undefined): ActivityItem | un
     ...(typeof raw.imageUrl === 'string' && raw.imageUrl.trim()
       ? { imageUrl: raw.imageUrl.trim() }
       : {}),
-    ...(typeof raw.app === 'string' && raw.app.trim() ? { app: raw.app.trim().slice(0, 40) } : {}),
+    ...(typeof raw.app === 'string' && raw.app.trim()
+      ? { app: raw.app.trim().slice(0, 40) }
+      : {}),
     ...(typeof raw.tokenId === 'string' && raw.tokenId.trim()
       ? { tokenId: raw.tokenId.trim().toLowerCase() }
       : {}),
@@ -888,7 +1085,9 @@ export function formatActivityTokenAmt(amt: string, dec = 0): string {
 }
 
 /** Quantity label for a token row, or null when amt was never stored. */
-export function activityTokenQuantity(item: ActivityItem | undefined): string | null {
+export function activityTokenQuantity(
+  item: ActivityItem | undefined,
+): string | null {
   if (!item?.amt?.trim()) return null
   return formatActivityTokenAmt(item.amt, item.dec ?? 0)
 }
@@ -966,7 +1165,10 @@ export function getAppActivityVolume(origin: string): number {
 }
 
 /** Spent satoshis for an origin since `sinceMs` (inclusive). */
-export function getSpentSatsSince(origin: string | undefined, sinceMs: number): number {
+export function getSpentSatsSince(
+  origin: string | undefined,
+  sinceMs: number,
+): number {
   const key = normalizeAppHost(origin)
   let total = 0
   for (const e of readAll()) {
@@ -989,10 +1191,15 @@ export function getSpentSatsSince(origin: string | undefined, sinceMs: number): 
  */
 export function activityEntryKey(entry: ActivityEntry): string {
   const kind = entry.kind
-  // Item / token tips: outpoint is the durable identity (one tx can carry many tips).
-  const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
-  if (outpoint) return `item:${outpoint}:${kind}`
   const txid = entry.txid?.trim().toLowerCase()
+  // Item / token tips: outpoint is the durable identity (one tx can carry many
+  // tips). One tip can still be spent by more than one attempt — a send whose
+  // tip came back unspent and was sent again — so the spending txid separates
+  // those rows. Attempts that died before signing have no txid to separate them
+  // and are local-only, so their row id is both unique and as durable as they
+  // get. Without either, React saw duplicate keys and dropped a row.
+  const outpoint = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+  if (outpoint) return `item:${outpoint}:${kind}:${txid ?? entry.id}`
   if (txid) return `tx:${txid}:${kind}`
   if (kind === 'event') {
     return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
@@ -1034,7 +1241,10 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
       return entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`
     }
-    return entry.note?.trim() || (entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`)
+    return (
+      entry.note?.trim() ||
+      (entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`)
+    )
   }
   if (entry.method === 'send-collectable' && entry.note?.trim()) {
     return entry.note.trim()
@@ -1102,7 +1312,8 @@ export function extractSatsFromArgs(method: string, args: unknown): number {
     for (const raw of outputs) {
       if (!raw || typeof raw !== 'object') continue
       const sats = (raw as { satoshis?: unknown }).satoshis
-      if (typeof sats === 'number' && Number.isFinite(sats)) total += Math.max(0, sats)
+      if (typeof sats === 'number' && Number.isFinite(sats))
+        total += Math.max(0, sats)
     }
     return Math.trunc(total)
   }

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   canBeginChainIngest,
   canBeginSpend,
@@ -14,6 +14,8 @@ import {
   requestSpendPriority,
   releaseSpendPriority,
   shouldYieldChainIngestToSpend,
+  getSpendPriorityDepth,
+  describeSpendPriorityHolds,
 } from './walletCoordinator'
 
 describe('walletCoordinator guards', () => {
@@ -155,6 +157,40 @@ describe('walletCoordinator runtime', () => {
     expect(shouldYieldChainIngestToSpend()).toBe(true)
     releaseSpendPriority()
     expect(shouldYieldChainIngestToSpend()).toBe(false)
+  })
+
+  it('releases only its own hold, and does so once', () => {
+    const releaseA = requestSpendPriority('a')
+    requestSpendPriority('b')
+    expect(getSpendPriorityDepth()).toBe(2)
+
+    releaseA()
+    releaseA()
+
+    expect(describeSpendPriorityHolds().map((h) => h.split(' ')[0])).toEqual(['b'])
+  })
+
+  it('expires a leaked hold instead of disabling item ingest forever', () => {
+    vi.useFakeTimers()
+    try {
+      const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+      requestSpendPriority('permission-prompt')
+      expect(shouldYieldChainIngestToSpend()).toBe(true)
+
+      vi.advanceTimersByTime(91_000)
+
+      expect(shouldYieldChainIngestToSpend()).toBe(false)
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('permission-prompt'),
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('names the holder so a stall can be attributed', () => {
+    requestSpendPriority('runExclusiveSpend')
+    expect(describeSpendPriorityHolds()[0]).toMatch(/^runExclusiveSpend \(\d+s\)$/)
   })
 
   it('defers historyReplica when spend priority is raised', async () => {

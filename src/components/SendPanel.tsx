@@ -35,10 +35,7 @@ import {
   sendBrc29ToIdentityKey,
 } from '../wallet/sendBrc29Payment'
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
-import {
-  requestSpendPriority,
-  releaseSpendPriority,
-} from '../wallet/walletCoordinator'
+import { requestSpendPriority } from '../wallet/walletCoordinator'
 import {
   getPaymentProgress,
   subscribePaymentProgress,
@@ -148,25 +145,25 @@ export function SendPanel({
         send({ type: 'REVIEW' })
         return
       }
-      requestSpendPriority()
+      const release = requestSpendPriority('send-review-balance')
       try {
         const available = await assertSendableBalance(satoshis)
         onSent(available)
         send({ type: 'REVIEW' })
       } finally {
-        releaseSpendPriority()
+        release()
       }
     } catch (err) {
       playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
+      const release = requestSpendPriority('send-refresh-balance')
       try {
-        requestSpendPriority()
         const available = await refreshSpendableBalance()
         onSent(available)
       } catch {
         // ignore secondary refresh failure
       } finally {
-        releaseSpendPriority()
+        release()
       }
     } finally {
       setReviewBusy(false)

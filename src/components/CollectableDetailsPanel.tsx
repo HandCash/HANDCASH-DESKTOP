@@ -20,6 +20,7 @@ import {
   subscribeVerificationProgress,
   type VerificationProgress,
 } from '../wallet/verificationProgress'
+import { getGenesisFailure } from '../wallet/provenCache'
 import {
   isOutpointSending,
   subscribePaymentProgress,
@@ -97,11 +98,23 @@ function authenticityView(
       title: verification.detail ?? 'Proving this item’s identity on chain',
     }
   }
+  // A tip the wallet already gave up on reads as "unprovable", not "not yet
+  // done" — otherwise an item that can never earn a badge is indistinguishable
+  // from one still waiting its turn.
+  const failure = getGenesisFailure(item.outpoint)
+  if (failure?.kind === 'invalid') {
+    return {
+      label: 'Cannot be verified',
+      tone: 'unproven',
+      title: `BRC-150 lineage ${failure.reason}`,
+    }
+  }
   return {
     label: 'Unverified identity',
     tone: 'unproven',
-    title:
-      'Identity is a chain/indexer claim and has not been cryptographically proven',
+    title: failure
+      ? `Not proven yet — ${failure.reason}`
+      : 'Identity is a chain/indexer claim and has not been cryptographically proven',
   }
 }
 

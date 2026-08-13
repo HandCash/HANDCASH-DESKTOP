@@ -26,11 +26,14 @@ import {
   isPendingActivity,
   isFailedActivity,
   activityFailureReason,
+  countFailedActivity,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from '../wallet/appActivity'
+import { clearAllFailedSpends } from '../wallet/spendAttempt'
+import { toastError, toastSuccess } from '../wallet/toast'
 import {
   markActivitySeen,
   noteActivityAnnounced,
@@ -67,6 +70,10 @@ import {
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
+import {
+  LIVE_OUTBOUND_ID,
+  mergeLiveOutbound,
+} from '../wallet/liveOutboundRow'
 import { openPaymentDetails, setNavSection } from '../wallet/navStore'
 import { subscribeConnectedApps } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
@@ -356,45 +363,6 @@ type FeedProps = {
   onViewAll?: () => void
 }
 
-const LIVE_OUTBOUND_ID = 'live-outbound-send'
-
-/** Top-of-feed row while paymentProgress is active and durable pending is late. */
-function liveOutboundActivityEntry(progress: PaymentProgress): ActivityEntry {
-  return {
-    id: LIVE_OUTBOUND_ID,
-    origin: WALLET_ACTIVITY_ORIGIN,
-    kind: 'spent',
-    sats: 0,
-    at: Date.now(),
-    method: progress.outpoint ? 'send-collectable' : 'send',
-    note: progress.detail || 'Sending…',
-    status: 'pending',
-    pendingId: LIVE_OUTBOUND_ID,
-    ...(progress.outpoint
-      ? {
-          item: {
-            name: 'Collectable',
-            origin: progress.outpoint.replace(/_/g, '.'),
-            outpoint: progress.outpoint.replace(/_/g, '.'),
-          },
-        }
-      : {}),
-  }
-}
-
-function mergeLiveOutbound(
-  entries: ActivityEntry[],
-  progress: PaymentProgress,
-): ActivityEntry[] {
-  if (progress.phase === 'idle' || progress.phase === 'finishing') {
-    return entries.filter((e) => e.id !== LIVE_OUTBOUND_ID)
-  }
-  if (entries.some((e) => e.status === 'pending' && e.kind === 'spent')) {
-    return entries.filter((e) => e.id !== LIVE_OUTBOUND_ID)
-  }
-  return [liveOutboundActivityEntry(progress), ...entries]
-}
-
 function useActivityFeed(limit: number) {
   const [entries, setEntries] = useState<ActivityEntry[]>(() => readActivityFeed(limit).entries)
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
@@ -569,6 +537,39 @@ export function ActivityFeed({
     filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
     filters.origin !== DEFAULT_PAYMENT_FILTERS.origin
 
+  // Count from the store, not the capped feed — the button must reflect the true
+  // backlog even when more failed rows exist than are rendered.
+  const failedCount = useMemo(
+    () => (showFilters ? countFailedActivity() : 0),
+    [entries, showFilters],
+  )
+  const [clearingFailed, setClearingFailed] = useState(false)
+
+  const clearFailed = async () => {
+    if (clearingFailed || failedCount === 0) return
+    const confirmed = window.confirm(
+      `Clear ${failedCount} failed send${
+        failedCount === 1 ? '' : 's'
+      } from Activity? Failed sends never left this wallet, so this cancels nothing on chain.`,
+    )
+    if (!confirmed) return
+    setClearingFailed(true)
+    try {
+      const { removed } = await clearAllFailedSpends()
+      toastSuccess(
+        'Cleared failed sends',
+        `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.`,
+      )
+    } catch (err) {
+      toastError(
+        'Clear failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    } finally {
+      setClearingFailed(false)
+    }
+  }
+
   // Drop a selected app filter if that origin disappears.
   useEffect(() => {
     if (filters.origin === 'all') return
@@ -634,6 +635,20 @@ export function ActivityFeed({
       <h2>{title}</h2>
       <div className="connected-panel-head-actions">
         {showCount ? <span className="connected-count">{filtered.length}</span> : null}
+        {showFilters && failedCount > 0 ? (
+          <button
+            type="button"
+            className="activity-clear-failed"
+            disabled={clearingFailed}
+            title="Remove all failed sends from Activity"
+            onClick={() => {
+              playWalletSound('soft')
+              void clearFailed()
+            }}
+          >
+            {clearingFailed ? 'Clearing…' : `Clear ${failedCount} failed`}
+          </button>
+        ) : null}
         {showFilters ? (
           <button
             type="button"

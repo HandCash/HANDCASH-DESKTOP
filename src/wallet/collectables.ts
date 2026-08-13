@@ -39,10 +39,7 @@ import { isBsv21Mime } from './bsv21'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
-import {
-  clearPaymentProgress,
-  setPaymentProgress,
-} from './paymentProgress'
+import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
   clearAwaitingVerification,
   clearVerificationProgress,
@@ -98,22 +95,34 @@ import {
   mustDeliverToPeer,
   itemSendMachine,
 } from './itemSendMachine'
-import { chooseItemSettlePath } from './itemSettlePath'
+import { chooseItemSettlePath, isPeerDeliverSettle } from './itemSettlePath'
 import { createActor } from 'xstate'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { scanLegacyAddress } from './legacyScan'
-import { isItemSent, markItemsSent, forgetItemsSent } from './sentItemGuard'
+import {
+  isItemSent,
+  markItemsSent,
+  forgetItemsSent,
+  type SentItemSettle,
+} from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import {
+  clearGenesisFailure,
   getProvenVerdict,
   rememberGenesisAttempt,
+  rememberGenesisFailure,
   rememberProvenVerdict,
   shouldAttemptGenesis,
   authenticityFromProvenCache,
   type AuthenticityTier,
 } from './provenCache'
 import { listRecentActivity } from './appActivity'
-import { proveGenesisLineage, type GenesisProof } from './oneSatGenesisProof'
+import {
+  describeGenesisWalk,
+  proveGenesisLineage,
+  walkGenesisLineage,
+  type GenesisWalkOutcome,
+} from './oneSatGenesisProof'
 import { getWalletCoordinatorSnapshot } from './walletCoordinator'
 import {
   getResolvedInscription,
@@ -126,7 +135,11 @@ import {
   shouldResolveInscription,
   shouldUpgradeResolution,
 } from './inscriptionCache'
-import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import {
+  durableGetItem,
+  durableRemoveItem,
+  durableSetItem,
+} from './durableStorage'
 import {
   isAlreadySpentInputError,
   releaseStaleSpendableOutputs,
@@ -224,7 +237,9 @@ function loadDurableList(): Collectable[] {
       const rawAuth = item.authenticity as string
       const cachedAuth: AuthenticityTier =
         rawAuth === 'brc150' || rawAuth === 'brc156' ? 'brc150' : 'unproven'
-      const authenticity = fromProven.proven ? fromProven.authenticity : cachedAuth
+      const authenticity = fromProven.proven
+        ? fromProven.authenticity
+        : cachedAuth
       return {
         ...item,
         traits: Array.isArray(item.traits) ? item.traits : [],
@@ -380,7 +395,9 @@ export function areCollectablesHydrated(): boolean {
   return collectablesHydrated
 }
 
-export function subscribeCollectables(listener: CollectablesListener): () => void {
+export function subscribeCollectables(
+  listener: CollectablesListener,
+): () => void {
   collectablesListeners.add(listener)
   listener(getCachedCollectables())
   return () => {
@@ -393,19 +410,27 @@ export function normalizeOutpoint(outpoint: string): string {
 }
 
 export function shortOrigin(origin: string): string {
-  const underscored = origin.includes('.') ? origin.replace(/\.(\d+)$/, '_$1') : origin
+  const underscored = origin.includes('.')
+    ? origin.replace(/\.(\d+)$/, '_$1')
+    : origin
   const [txid, vout] = underscored.split('_')
   if (!txid) return origin
   return `${txid.slice(0, 8)}…_${vout ?? '?'}`
 }
 
-function tagValue(tags: string[] | undefined, prefix: string): string | undefined {
+function tagValue(
+  tags: string[] | undefined,
+  prefix: string,
+): string | undefined {
   if (!tags) return undefined
   const hit = tags.find((t) => t.startsWith(prefix))
   return hit ? hit.slice(prefix.length) : undefined
 }
 
-function parseOrigin(raw: string | undefined, fallbackOutpoint: string): string {
+function parseOrigin(
+  raw: string | undefined,
+  fallbackOutpoint: string,
+): string {
   const source = raw?.trim() || fallbackOutpoint
   return source.includes('.') ? source.replace(/\.(\d+)$/, '_$1') : source
 }
@@ -425,13 +450,14 @@ function parseCustom(raw: string | undefined): {
       typeof o.content === 'string'
         ? o.content
         : typeof o.media === 'string'
-          ? o.media
-          : undefined
+        ? o.media
+        : undefined
     return {
       origin: typeof o.origin === 'string' ? o.origin : undefined,
       name: typeof o.name === 'string' ? o.name : undefined,
       app: typeof o.app === 'string' ? o.app : undefined,
-      collectionId: typeof o.collectionId === 'string' ? o.collectionId : undefined,
+      collectionId:
+        typeof o.collectionId === 'string' ? o.collectionId : undefined,
       content,
       provenance: o.provenance,
     }
@@ -465,14 +491,17 @@ function toCollectable(
   const origin = parseOrigin(
     // A lineage proof outranks both: it is the only origin this wallet verified.
     verdict?.origin ??
-      (trustWalk ? (resolved?.origin ?? claimed) : (claimed ?? resolved?.origin)),
+      (trustWalk ? resolved?.origin ?? claimed : claimed ?? resolved?.origin),
     o.outpoint,
   )
   // Tags are not display text: @bsv/sdk validateTag lowercases them, so a
   // `name:` / `app:` tag is only a flattened search key. Prefer the resolution
   // cache and remittance, which keep the original casing.
   const name =
-    resolved?.name ?? custom.name ?? tagValue(o.tags, 'name:') ?? shortOrigin(origin)
+    resolved?.name ??
+    custom.name ??
+    tagValue(o.tags, 'name:') ??
+    shortOrigin(origin)
   const app = resolved?.app ?? custom.app ?? tagValue(o.tags, 'app:')
   const content =
     resolveDerivativeContent({
@@ -580,7 +609,10 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
       void listCollectables(wallet)
     })
     .catch((err) => {
-      console.warn('[collectables] address UTXO scan failed — keeping basket list', err)
+      console.warn(
+        '[collectables] address UTXO scan failed — keeping basket list',
+        err,
+      )
     })
     .finally(() => {
       liveScan = null
@@ -597,18 +629,44 @@ async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
     cachedLiveAllOutpoints != null &&
     Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
   ) {
-    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+    return {
+      oneSats: cachedLiveOneSats.keys,
+      all: cachedLiveAllOutpoints.keys,
+    }
   }
   try {
     const scan = await scanLegacyAddress(wallet)
     rememberLiveOneSatOutpoints(scan.utxos)
     if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
-    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+    return {
+      oneSats: cachedLiveOneSats.keys,
+      all: cachedLiveAllOutpoints.keys,
+    }
   } catch (err) {
     console.warn('[collectables] live UTXO await failed', err)
     if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
-    return { oneSats: cachedLiveOneSats.keys, all: cachedLiveAllOutpoints.keys }
+    return {
+      oneSats: cachedLiveOneSats.keys,
+      all: cachedLiveAllOutpoints.keys,
+    }
   }
+}
+
+/**
+ * Chain-authoritative retry gate for an item tip.
+ *
+ * The basket may still mark a signed/noSend input as spent while its transaction
+ * remains unbroadcast. A fresh address scan answers the question that matters:
+ * whether this wallet's original 1-sat output is still an unspent candidate.
+ */
+export async function isCollectableOutpointSpendable(
+  outpoint: string,
+  active: ActiveWallet | null = getActiveWallet(),
+): Promise<boolean | null> {
+  if (!active) return null
+  const live = await awaitLiveOutpoints(active)
+  if (!live) return null
+  return live.oneSats.has(outpointKey(normalizeOutpoint(outpoint)))
 }
 
 /**
@@ -623,7 +681,8 @@ function resolveLiveOneSatKeys(
   wallet: ActiveWallet,
 ): { at: number; keys: Set<string> } | null {
   const fresh =
-    cachedLiveOneSats != null && Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
+    cachedLiveOneSats != null &&
+    Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
   if (!fresh) refreshLiveOneSatKeys(wallet)
   return cachedLiveOneSats
 }
@@ -668,9 +727,18 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
   const items: Collectable[] = []
   for (const o of outputs) {
     if (!isListableItem(o)) continue
-    items.push(toCollectable(o, chain, getResolvedInscription(normalizeOutpoint(o.outpoint))))
+    items.push(
+      toCollectable(
+        o,
+        chain,
+        getResolvedInscription(normalizeOutpoint(o.outpoint)),
+      ),
+    )
   }
-  return dedupeByOrigin(items, (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0)
+  return dedupeByOrigin(
+    items,
+    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+  )
 }
 
 /**
@@ -695,7 +763,9 @@ async function resolveUnknownOrigins(): Promise<void> {
   if (resolvingOrigins) return
   const listable = lastItemOutputs.filter(isListableItem)
   const pending = listable.filter(
-    (o) => needsIndexerResolve(o) && shouldResolveInscription(normalizeOutpoint(o.outpoint)),
+    (o) =>
+      needsIndexerResolve(o) &&
+      shouldResolveInscription(normalizeOutpoint(o.outpoint)),
   )
   // Thin cards need an upgrade whether remittance named them or lineage did —
   // both paths can land an origin with no traits, and that is what "came in
@@ -725,8 +795,12 @@ async function resolveUnknownOrigins(): Promise<void> {
       : pending
     const orderedUpgrades = preferred
       ? [
-          ...upgrades.filter((o) => normalizeOutpoint(o.outpoint) === preferred),
-          ...upgrades.filter((o) => normalizeOutpoint(o.outpoint) !== preferred),
+          ...upgrades.filter(
+            (o) => normalizeOutpoint(o.outpoint) === preferred,
+          ),
+          ...upgrades.filter(
+            (o) => normalizeOutpoint(o.outpoint) !== preferred,
+          ),
         ]
       : upgrades
     for (const o of orderedPending) {
@@ -762,7 +836,8 @@ async function resolveUnknownOrigins(): Promise<void> {
       }
       clearVerificationProgress(outpoint)
     }
-    if (changed) setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
+    if (changed)
+      setCollectablesCache(buildItems(lastItemOutputs, lastItemChain))
   } finally {
     resolvingOrigins = false
     clearVerificationProgress()
@@ -770,17 +845,37 @@ async function resolveUnknownOrigins(): Promise<void> {
 }
 
 /**
- * Lineage proofs attempted per session.
+ * Lineage walks allowed inside {@link GENESIS_WALK_WINDOW_MS}.
  *
  * A walk costs a fetch per hop, so an inventory of imported ordinals must earn
- * its badges over several sessions rather than opening the Collect page into a
- * few hundred requests.
+ * its badges gradually rather than opening the Collect page into a few hundred
+ * requests.
  */
-const GENESIS_SESSION_BUDGET = 8
+const GENESIS_WALK_BUDGET = 8
+/**
+ * The budget refills instead of being spent once per session.
+ *
+ * A hard per-session cap meant an outage stranded the inventory: with no chain
+ * service reachable, eight walks failed on the network, the budget was gone,
+ * and every remaining tip sat unverified until the app was restarted. A rolling
+ * window bounds the request rate just as well and heals on its own.
+ */
+const GENESIS_WALK_WINDOW_MS = 10 * 60_000
 /** Activity rows scanned for tips this wallet no longer holds. */
 const ACTIVITY_REPAIR_DEPTH = 50
-let genesisWalksThisSession = 0
+let genesisWalkTimes: number[] = []
 let provingGenesis = false
+
+function genesisWalkBudgetSpent(now = Date.now()): boolean {
+  genesisWalkTimes = genesisWalkTimes.filter(
+    (at) => now - at < GENESIS_WALK_WINDOW_MS,
+  )
+  return genesisWalkTimes.length >= GENESIS_WALK_BUDGET
+}
+
+function noteGenesisWalk(now = Date.now()): void {
+  genesisWalkTimes.push(now)
+}
 
 /**
  * Earn BRC-150 for held tips that arrived without a proof.
@@ -798,8 +893,8 @@ async function proveHeldGenesis(
   }
 
   if (provingGenesis) return
-  if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) {
-    // Session budget spent — drop spinners so cards show Unverified, not forever Verifying.
+  if (genesisWalkBudgetSpent()) {
+    // Budget spent for now — drop spinners so cards show Unverified, not forever Verifying.
     settleAwaitingOutsideQueue(new Set())
     return
   }
@@ -824,7 +919,11 @@ async function proveHeldGenesis(
   const candidates = [...held, ...inActivity].filter((outpoint) =>
     shouldAttemptGenesis(outpoint),
   )
-  if (preferred && shouldAttemptGenesis(preferred) && !candidates.includes(preferred)) {
+  if (
+    preferred &&
+    shouldAttemptGenesis(preferred) &&
+    !candidates.includes(preferred)
+  ) {
     candidates.unshift(preferred)
   } else if (preferred && candidates.includes(preferred)) {
     candidates.splice(candidates.indexOf(preferred), 1)
@@ -840,17 +939,13 @@ async function proveHeldGenesis(
   const queued = new Set(candidates)
   try {
     for (const outpoint of candidates) {
-      if (genesisWalksThisSession >= GENESIS_SESSION_BUDGET) break
+      if (genesisWalkBudgetSpent()) break
       if (getWalletCoordinatorSnapshot().spend === 'active') break
       // A basket read newer than the one that spawned us is somebody looking at
       // the panel right now. That read has its own timeout, and a walk fetching
       // through it is how the list ends up timing out instead of painting.
       // Exception: the tip the user opened in details — finish that walk.
-      if (
-        outpoint !== preferred &&
-        listInFlight &&
-        listInFlight !== ownRead
-      ) {
+      if (outpoint !== preferred && listInFlight && listInFlight !== ownRead) {
         break
       }
       setVerificationProgress(
@@ -858,10 +953,14 @@ async function proveHeldGenesis(
         outpoint,
         'Proving tip-to-origin lineage (BRC-150)',
       )
-      let proof: GenesisProof | null = null
+      let outcome: GenesisWalkOutcome = {
+        kind: 'unavailable',
+        reason: 'walk did not run',
+        hops: 0,
+      }
       let aborted = false
       try {
-        proof = await proveGenesisLineage({
+        outcome = await walkGenesisLineage({
           tipOutpoint: outpoint,
           // Yield per hop for the same reason: each one is a round trip, and the
           // UI shares this thread.
@@ -882,25 +981,56 @@ async function proveHeldGenesis(
           },
         })
       } catch (err) {
-        console.warn('[brc-150] lineage walk failed', outpoint, err)
+        outcome = {
+          kind: 'unavailable',
+          reason: err instanceof Error ? err.message : String(err),
+          hops: 0,
+        }
       }
       // Only pin the attempt after a conclusive result. A transient network miss
       // must not burn the 24h budget and leave a just-received tip "Unverified"
       // until tomorrow. Aborted walks also must not burn the session budget —
       // opening details mid-walk used to exhaust the budget and strand the tip.
-      if (!proof) {
+      if (outcome.kind !== 'proven') {
+        // Say which tip and why. Without this every failure looked the same in
+        // the log, so "stuck on the network" and "not a provable item" were
+        // indistinguishable to anyone reading it.
+        if (aborted || outcome.kind === 'aborted') {
+          console.info(
+            `[brc-150] walk deferred ${outpoint} — ${describeGenesisWalk(outcome)}`,
+          )
+        } else if (outcome.kind === 'invalid') {
+          console.warn(
+            `[brc-150] unprovable ${outpoint} — ${describeGenesisWalk(outcome)}`,
+          )
+        } else {
+          console.info(
+            `[brc-150] walk incomplete ${outpoint} — ${describeGenesisWalk(outcome)}`,
+          )
+        }
+        rememberGenesisFailure(
+          outpoint,
+          outcome.kind,
+          describeGenesisWalk(outcome),
+        )
         clearVerificationProgress(outpoint)
-        if (!aborted) {
+        if (!aborted && outcome.kind !== 'aborted') {
           // Conclusive miss — drop the receive spinner so we are not stuck on
           // "Verifying…" forever with no chance to look unverified + retry later.
           clearAwaitingVerification(outpoint)
           queued.delete(outpoint)
-          genesisWalksThisSession++
+          noteGenesisWalk()
+          // Chain data says this item cannot be proven. Re-walking it every
+          // session spends the whole budget on a known answer and starves the
+          // tips that could still earn a badge.
+          if (outcome.kind === 'invalid') rememberGenesisAttempt(outpoint)
         }
         continue
       }
-      genesisWalksThisSession++
+      const proof = outcome.proof
+      noteGenesisWalk()
       rememberGenesisAttempt(outpoint)
+      clearGenesisFailure(outpoint)
       queued.delete(outpoint)
 
       console.info(
@@ -952,7 +1082,9 @@ export function requestCollectableVerification(outpoint: string): void {
     clearVerificationProgress(target)
     return
   }
-  const cached = getCachedCollectables().find((c) => normalizeOutpoint(c.outpoint) === target)
+  const cached = getCachedCollectables().find(
+    (c) => normalizeOutpoint(c.outpoint) === target,
+  )
   noteAwaitingVerification(target)
   setVerificationProgress(
     'verifying',
@@ -1009,7 +1141,10 @@ export function requestCollectableVerification(outpoint: string): void {
  * Ask the indexer about the origin we just proved instead.
  */
 function originKey(value: string): string {
-  return value.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/\.(\d+)$/, '_$1')
 }
 
 async function adoptProvenOrigin(
@@ -1033,23 +1168,23 @@ async function adoptProvenOrigin(
   const merged = {
     ...(rich ?? keep ?? { traits: [], extras: [] }),
     origin: point,
-    ...(resolved?.name || keep?.name ? { name: resolved?.name || keep?.name } : {}),
+    ...(resolved?.name || keep?.name
+      ? { name: resolved?.name || keep?.name }
+      : {}),
     ...(resolved?.app || keep?.app ? { app: resolved?.app || keep?.app } : {}),
     ...(resolved?.mimeType || keep?.mimeType
       ? { mimeType: resolved?.mimeType || keep?.mimeType }
       : {}),
-    traits:
-      rich?.traits?.length
-        ? rich.traits
-        : resolved?.traits?.length
-          ? resolved.traits
-          : (keep?.traits ?? []),
-    extras:
-      rich?.extras?.length
-        ? rich.extras
-        : resolved?.extras?.length
-          ? resolved.extras
-          : (keep?.extras ?? []),
+    traits: rich?.traits?.length
+      ? rich.traits
+      : resolved?.traits?.length
+      ? resolved.traits
+      : keep?.traits ?? [],
+    extras: rich?.extras?.length
+      ? rich.extras
+      : resolved?.extras?.length
+      ? resolved.extras
+      : keep?.extras ?? [],
   }
   rememberResolvedInscription(outpoint, merged)
   // Seed the origin key so later prefer-origin lookups do not re-fetch empty.
@@ -1067,9 +1202,12 @@ async function adoptProvenOrigin(
  * BRC-150 card keeps its image (built from the origin content URL) but shows a
  * truncated outpoint and empty traits.
  */
-async function walkInscription(outpoint: string): Promise<ResolvedInscription | null> {
+async function walkInscription(
+  outpoint: string,
+): Promise<ResolvedInscription | null> {
   const knownOrigin =
-    getProvenVerdict(outpoint)?.origin ?? getResolvedInscription(outpoint)?.origin
+    getProvenVerdict(outpoint)?.origin ??
+    getResolvedInscription(outpoint)?.origin
   try {
     return await resolveInscriptionPreferringOrigin(
       outpoint,
@@ -1138,7 +1276,11 @@ export async function verifyItemAuthenticity(
       (o) => normalizeOutpoint(o.outpoint) === target,
     )
     if (!match) {
-      return { tier: 'unproven', proven: false, reason: 'Collectable output not found' }
+      return {
+        tier: 'unproven',
+        proven: false,
+        reason: 'Collectable output not found',
+      }
     }
 
     await yieldToUi()
@@ -1170,7 +1312,9 @@ export async function verifyItemAuthenticity(
           custom.origin ??
           tag
         console.info(
-          `[brc-150] remittance verified ${target.slice(0, 14)}… → ${String(provenOrigin).slice(0, 18)}…`,
+          `[brc-150] remittance verified ${target.slice(0, 14)}… → ${String(
+            provenOrigin,
+          ).slice(0, 18)}…`,
         )
       }
     }
@@ -1187,7 +1331,9 @@ export async function verifyItemAuthenticity(
         provenOrigin = proof.origin
         authenticity = { tier: 'brc150', proven: true, reason: null }
         console.info(
-          `[brc-150] lineage proved ${target.slice(0, 14)}… in ${proof.hops} hop(s)`,
+          `[brc-150] lineage proved ${target.slice(0, 14)}… in ${
+            proof.hops
+          } hop(s)`,
         )
       }
     }
@@ -1219,7 +1365,10 @@ export async function verifyItemAuthenticity(
   }
 }
 
-function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): void {
+function applyAuthenticityResult(
+  outpoint: string,
+  result: AuthenticityResult,
+): void {
   const target = normalizeOutpoint(outpoint)
   // Durable provenCache is the only authenticity SSoT. Never paint Unverified
   // over an existing proven tier. Product badge is always BRC-150.
@@ -1271,7 +1420,9 @@ function applyAuthenticityResult(outpoint: string, result: AuthenticityResult): 
  * bar would otherwise stack identical `listOutputs` queries. Callers all share the
  * one session wallet, so joining the in-flight read is the same answer.
  */
-export function listCollectables(active?: ActiveWallet | null): Promise<Collectable[]> {
+export function listCollectables(
+  active?: ActiveWallet | null,
+): Promise<Collectable[]> {
   if (listInFlight) return listInFlight
   const run = listCollectablesNow(active)
   listInFlight = run
@@ -1305,7 +1456,10 @@ async function listCollectablesNow(
         seekPermission: false,
       }),
       new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('listOutputs timed out')), LIST_TIMEOUT_MS),
+        setTimeout(
+          () => reject(new Error('listOutputs timed out')),
+          LIST_TIMEOUT_MS,
+        ),
       ),
     ])
     outputs = (result.outputs ?? []).map((o) => {
@@ -1362,7 +1516,8 @@ async function listCollectablesNow(
         provenTier: verdict?.tier ?? null,
         paysOurAddress,
       })
-      if (fate === 'ghostDrop' && !isProtectedFromGhostDrop(o.outpoint)) ghosts.push(o)
+      if (fate === 'ghostDrop' && !isProtectedFromGhostDrop(o.outpoint))
+        ghosts.push(o)
       else keptMissing.push(o)
     }
     if (ghosts.length > 0) {
@@ -1473,12 +1628,12 @@ export async function getCollectable(
         cachedResolved && !thin
           ? cachedResolved
           : shouldAskIndexer
-            ? await resolveInscriptionPreferringOrigin(
-                target,
-                wallet.chain,
-                knownOrigin,
-              ).catch(() => cachedResolved)
-            : cachedResolved
+          ? await resolveInscriptionPreferringOrigin(
+              target,
+              wallet.chain,
+              knownOrigin,
+            ).catch(() => cachedResolved)
+          : cachedResolved
       if (resolved) {
         rememberResolvedInscription(target, resolved)
         const content =
@@ -1537,11 +1692,19 @@ function formatSendError(err: unknown): Error {
         'Signing was interrupted (wallet storage busy). Wait a second and send again.',
       )
     }
-    if (name.includes('INSUFFICIENT_FUNDS') || /insufficient.?funds/i.test(msg)) {
-      return new Error('Not enough BSV to cover the network fee for this transfer')
+    if (
+      name.includes('INSUFFICIENT_FUNDS') ||
+      /insufficient.?funds/i.test(msg)
+    ) {
+      return new Error(
+        'Not enough BSV to cover the network fee for this transfer',
+      )
     }
     // Must not match `unlockingScript` — that is a signing fault, not a bad recipient.
-    if (/invalid.*(address|identity key)/i.test(msg) || /outputs\[\d+]\.lockingScript/i.test(msg)) {
+    if (
+      /invalid.*(address|identity key)/i.test(msg) ||
+      /outputs\[\d+]\.lockingScript/i.test(msg)
+    ) {
       return new Error('Invalid recipient address or identity key')
     }
     if (/no longer spendable/i.test(msg)) {
@@ -1655,7 +1818,9 @@ async function signOrdinalTransfer(args: {
     if (!btx.tx) continue
     for (let i = 0; i < btx.tx.inputs.length; i++) {
       const input = btx.tx.inputs[i]
-      const key = `${String(input?.sourceTXID).toLowerCase()}.${input?.sourceOutputIndex}`
+      const key = `${String(input?.sourceTXID).toLowerCase()}.${
+        input?.sourceOutputIndex
+      }`
       if (targets.has(key)) {
         unsigned = btx.tx
         vins.push(i)
@@ -1672,15 +1837,24 @@ async function signOrdinalTransfer(args: {
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
     if (!input.sourceTransaction && input.sourceTXID) {
       try {
-        const extra = await getBeefForTxidCached(args.wallet, String(input.sourceTXID))
+        const extra = await getBeefForTxidCached(
+          args.wallet,
+          String(input.sourceTXID),
+        )
         beef.mergeBeef(extra.toBinary())
         input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
       } catch (err) {
-        console.warn('[collectables] source tx hydrate failed', input.sourceTXID, err)
+        console.warn(
+          '[collectables] source tx hydrate failed',
+          input.sourceTXID,
+          err,
+        )
       }
     }
     const locking =
-      input.sourceTransaction?.outputs[input.sourceOutputIndex]?.lockingScript?.toHex()
+      input.sourceTransaction?.outputs[
+        input.sourceOutputIndex
+      ]?.lockingScript?.toHex()
     if (isCovenantLockedScript(locking)) {
       throw new Error(
         'This collectable is covenant-locked and cannot be spent with a P2PKH unlock. Abandon it instead.',
@@ -1695,16 +1869,21 @@ async function signOrdinalTransfer(args: {
     // The sighash covers the source value, so read each value from its source
     // transaction instead of assuming one.
     input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
-    const satoshis = input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
+    const satoshis =
+      input.sourceTransaction?.outputs[input.sourceOutputIndex]?.satoshis
     if (typeof satoshis !== 'number') {
       throw new Error('Collectable input is missing its source transaction')
     }
-    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(rootKey, satoshis)
+    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+      rootKey,
+      satoshis,
+    )
   }
   await unsigned.sign()
   for (const vin of vins) {
     const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
-    if (!unlockingScript) throw new Error('Could not sign the collectable transfer')
+    if (!unlockingScript)
+      throw new Error('Could not sign the collectable transfer')
     spends[vin] = { unlockingScript }
   }
 
@@ -1720,8 +1899,11 @@ async function signOrdinalTransfer(args: {
       },
     })
   } catch (err) {
-    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
-      await import('./actionReview')
+    const {
+      isReviewActionsError,
+      formatReviewActionsError,
+      recoverFromReviewActions,
+    } = await import('./actionReview')
     if (isReviewActionsError(err)) {
       await recoverFromReviewActions({
         err,
@@ -1806,7 +1988,11 @@ async function relinquishSpentOutputs(
       const msg = err instanceof Error ? err.message : String(err)
       if (/must exist and be unique/i.test(msg)) continue
       // Already marked spent by createAction — nothing left to release.
-      console.warn('[collectables] relinquish after send skipped', spend.outpoint, err)
+      console.warn(
+        '[collectables] relinquish after send skipped',
+        spend.outpoint,
+        err,
+      )
     }
   }
 }
@@ -1836,7 +2022,9 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
   if (!match) throw new Error('Collectable is no longer in this wallet')
 
   console.info(
-    `[collectables] abandon tip=${outpoint} tipKind=${classifyTipKind(match.lockingScript).kind}`,
+    `[collectables] abandon tip=${outpoint} tipKind=${
+      classifyTipKind(match.lockingScript).kind
+    }`,
   )
 
   markItemsSent([{ outpoint, txid: `abandon:${outpoint}` }])
@@ -1844,7 +2032,9 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
   await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
 
   invalidateLiveOneSatOutpoints()
-  setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
+  setCollectablesCache(
+    cachedCollectables.filter((i) => i.outpoint !== outpoint),
+  )
   scheduleHistoryBackupPush('abandonCollectable')
   void listCollectables(wallet).catch((err) => {
     console.warn('[collectables] post-abandon refresh failed', err)
@@ -1872,23 +2062,23 @@ export async function sendCollectable(args: {
   app?: string
 }): Promise<{ txid: string }> {
   const outpoint = normalizeOutpoint(args.outpoint)
-  const cachedEarly = cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
+  const cachedEarly =
+    cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
   const earlyName =
-    (args.name ?? cachedEarly?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable'
+    (args.name ?? cachedEarly?.name ?? 'Collectable').trim().slice(0, 40) ||
+    'Collectable'
   const earlyOrigin = parseOrigin(args.origin ?? cachedEarly?.origin, outpoint)
   const earlyItem = {
     name: earlyName,
     origin: earlyOrigin,
     outpoint,
     ...(cachedEarly?.imageUrl ? { imageUrl: cachedEarly.imageUrl } : {}),
-    ...((args.app ?? cachedEarly?.app) ? { app: args.app ?? cachedEarly?.app } : {}),
+    ...(args.app ?? cachedEarly?.app
+      ? { app: args.app ?? cachedEarly?.app }
+      : {}),
   }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
-  setPaymentProgress(
-    'preparing',
-    'Waiting to send the collectable',
-    outpoint,
-  )
+  setPaymentProgress('preparing', 'Waiting to send the collectable', outpoint)
   const outboundPending = beginPendingSend({
     to: args.toAddress,
     sats: 1,
@@ -1899,583 +2089,667 @@ export async function sendCollectable(args: {
     sats: 1,
     to: args.toAddress,
     friendLabel: args.friendLabel ?? null,
+    recipientIdentityKey: args.recipientIdentityKey ?? null,
     item: earlyItem,
   })
 
   try {
-  return await runExclusiveSpend(
-    async () => {
-    try {
-    pauseCollectableArrivalToasts++
-    assertOnlineForPayment()
-    const wallet = getActiveWallet()
-    if (!wallet) throw new Error('Wallet locked')
-    {
-      const { abortReservedActionBatches } = await import('./actionReview')
-      await abortReservedActionBatches(wallet)
-    }
-    // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
-    // createAction fails closed if they aren't. Do not await balance() here
-    // (that contended with sync and made "Waiting to send" feel stuck).
-
-  setPaymentProgress(
-    'building',
-    'Preparing the collectable for transfer',
-    outpoint,
-  )
-  const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
-
-  let lockingScript: string
-  try {
-    lockingScript = new P2PKH().lock(to).toHex()
-  } catch {
-    throw new Error('Invalid recipient address or identity key')
-  }
-
-  // Prefer the in-memory list for name/origin so the tip listOutputs can be a
-  // tagged narrow query instead of a full-basket read of every held ordinal.
-  const cachedItem = cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
-  const originGuess = parseOrigin(args.origin ?? cachedItem?.origin, outpoint)
-  const originTag = originGuess.replace(/_(\d+)$/, '.$1')
-
-  const held = await wallet.wallet.listOutputs({
-    basket: '1sat',
-    tags: [`origin:${originTag}`],
-    tagQueryMode: 'all',
-    limit: 20,
-    includeTags: true,
-    // Locking script and satoshis are all this needs; remittance BEEF for every
-    // held item would be tens of megabytes on a full wallet.
-    includeCustomInstructions: true,
-    include: 'locking scripts',
-    seekPermission: false,
-  })
-  let match = (held.outputs ?? []).find(
-    (o) => normalizeOutpoint(o.outpoint) === outpoint,
-  )
-  // Origin tag can miss after a migrate / rename; one broader pass is enough.
-  if (!match) {
-    const wide = await wallet.wallet.listOutputs({
-      basket: '1sat',
-      limit: 1000,
-      includeTags: true,
-      includeCustomInstructions: true,
-      include: 'locking scripts',
-      seekPermission: false,
-    })
-    match = (wide.outputs ?? []).find(
-      (o) => normalizeOutpoint(o.outpoint) === outpoint,
-    )
-  }
-  if (!match) throw new Error('Collectable is no longer in this wallet')
-  if ((match.satoshis ?? 1) !== 1) {
-    throw new Error('Collectable UTXO is not a 1-sat ordinal')
-  }
-
-  const item = cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
-  // Remittance identity must not come from tags — the SDK lowercases them, and
-  // after the signing-speed path we paint the list from those flattened tags.
-  // Resolution cache + tip remittance keep the case the recipient should see.
-  const resolvedMeta = getResolvedInscription(outpoint)
-  const tipCustom = parseCustom(match.customInstructions)
-  const origin = parseOrigin(
-    resolvedMeta?.origin ?? tipCustom.origin ?? args.origin ?? item?.origin,
-    outpoint,
-  )
-  const name =
-    (resolvedMeta?.name ?? tipCustom.name ?? args.name ?? item?.name ?? 'Collectable')
-      .trim()
-      .slice(0, 40) || 'Collectable'
-  const app = resolvedMeta?.app ?? tipCustom.app ?? args.app ?? item?.app
-  const collectionId =
-    resolvedMeta?.collectionId ?? tipCustom.collectionId ?? item?.collectionId
-
-  // Derivative / Kit Kat: forward shared media outpoint peer-to-peer.
-  let content =
-    item?.content ??
-    resolveDerivativeContent({
-      claimed: tipCustom.content ?? tagValue(match.tags, 'content:'),
-    })
-  if (!content) {
-    try {
-      const originParts = origin.replace(/\.(\d+)$/, '_$1').split('_')
-      const originTxid = originParts[0]?.toLowerCase()
-      const originVout = Number(originParts[1])
-      if (originTxid?.length === 64 && Number.isInteger(originVout)) {
-        const originBeef = await getBeefForTxidCached(wallet, originTxid)
-        const scriptHex =
-          originBeef.findTxid(originTxid)?.tx?.outputs?.[originVout]?.lockingScript?.toHex() ??
-          null
-        content = resolveDerivativeContent({ originScriptHex: scriptHex })
-      }
-    } catch (err) {
-      console.warn('[collectables] derivative content resolve skipped', err)
-    }
-  }
-
-  const tags = [
-    'ordinal',
-    `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
-    `name:${name.slice(0, 80)}`,
-    ...(app ? [`app:${app.slice(0, 40)}`] : []),
-    ...(collectionId ? [`collection:${collectionId.slice(0, 80)}`] : []),
-    ...(content ? [`content:${content.replace(/_(\d+)$/, '.$1')}`] : []),
-  ]
-
-  const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
-  const [tipBeefBin, live] = await Promise.all([
-    tipBeefPromise,
-    awaitLiveOutpoints(wallet),
-  ])
-
-  if (live && !live.oneSats.has(outpointKey(outpoint))) {
-    markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
-    void listCollectables(wallet).catch(() => {})
-    throw new Error(
-      'This collectable is no longer unspent on your address (already sent). Inventory refreshed.',
-    )
-  }
-
-  // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
-  // Classify from the tip BEEF we already need for the send.
-  const tipLockingScript = resolveTipLockingScriptHex({
-    listed: match.lockingScript,
-    beefBin: tipBeefBin,
-    outpoint,
-  })
-  if (!normalizeLockingScriptHex(match.lockingScript) && tipLockingScript) {
-    console.info(
-      `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`,
-    )
-  }
-  assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
-
-  rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
-
-  const inputBEEF = tipBeefBin
-  const spendOutpoints = [outpoint]
-  const knownTxids = [
-    ...new Set(
-      spendOutpoints
-        .map((op) => normalizeOutpoint(op).split('.')[0])
-        .filter((txid): txid is string => !!txid),
-    ),
-  ]
-
-  const settlePath = chooseItemSettlePath({
-    paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
-    recipientIdentityKey: args.recipientIdentityKey,
-  })
-  const tipKind = classifyTipKind(tipLockingScript)
-  const provenTier = getProvenVerdict(outpoint)?.tier ?? null
-  const sendPath = chooseSendPath({
-    tipKind,
-    provenTier,
-  })
-
-  const activityItem = {
-    name,
-    origin,
-    outpoint,
-    ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
-    ...(app ? { app } : {}),
-  }
-  noteOutboundSendPending({
-    pendingId: outboundPending.id,
-    sats: 1,
-    to,
-    friendLabel: args.friendLabel ?? null,
-    item: activityItem,
-  })
-
-  const chart = createActor(collectableSendMachine).start()
-  chart.send({ type: 'START', outpoint, sendPath })
-  console.info(
-    `[collectables] send path=${sendPath.path}${
-      sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
-    } settle=${settlePath.settle} tipKind=${tipKind.kind} proven=${provenTier ?? 'none'} scriptChars=${tipLockingScript.length}`,
-  )
-
-  const finishSend = async (
-    txid: string,
-    opts?: { remittanceBuilt?: boolean },
-  ): Promise<{ txid: string }> => {
-    // Record activity as soon as the txid exists — before relinquish / list /
-    // progress clear — so the feed updates while Working is still showing.
-    completePendingSend(outboundPending.id, txid)
-    noteOutboundSendComplete({
-      pendingId: outboundPending.id,
-      txid,
-      sats: 1,
-      to,
-      friendLabel: args.friendLabel ?? null,
-      item: activityItem,
-    })
-    clearPendingSend(outboundPending.id)
-    const tx = txid.trim().toLowerCase()
-    const newTip = `${tx}.0`
-    // createAction files the recipient tip in *this* wallet's `1sat` basket.
-    // That is remittance metadata for the sender, not ownership — unless the
-    // lock pays us (true self-receive).
-    const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
-    // Hide spent tip + outbound remittance tip immediately. Post-send we
-    // invalidate the live address scan; without a fresh scan, ownership fate is
-    // skipped and the filed tip would toast "Item received" on the sender.
-    markItemsSent([
-      { outpoint, txid },
-      ...(!selfReceive ? [{ outpoint: newTip, txid }] : []),
-    ])
-    invalidateLiveOneSatOutpoints()
-    await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
-    if (!selfReceive) {
-      await relinquishSpentOutputs(wallet, [{ outpoint: newTip, basket: '1sat' }])
-    } else if (opts?.remittanceBuilt) {
-      // Remittance proves the spent tip; pin BRC-150 on the tip we still hold
-      // (self-pay) so receive can show authenticity verified.
-      rememberProvenVerdict(newTip, {
-        tier: 'brc150',
-        origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
-        verifiedAt: Date.now(),
-      })
-    }
-    if (selfReceive) {
-      skipArrivalToast.add(normalizeOutpoint(newTip))
-    }
-    setPaymentProgress('finishing')
-    setCollectablesCache(cachedCollectables.filter((i) => i.outpoint !== outpoint))
-    scheduleHistoryBackupPush('sendCollectable')
-    await listCollectables(wallet).catch((err) => {
-      console.warn('[collectables] post-send refresh failed', err)
-    })
-    if (selfReceive) {
-      announceItemsReceived([newTip])
-      try {
-        playWalletSound('receive')
-        document.dispatchEvent(
-          new CustomEvent('handcash:receive', {
-            detail: {
-              title: 'Item received',
-              body: 'A collectable landed in your wallet',
-            },
-          }),
-        )
-      } catch {
-        // Node tests / no DOM
-      }
-    }
-    chart.send({ type: 'SUCCESS', txid })
-    chart.stop()
-    return { txid }
-  }
-
-  const failSend = (err: unknown): never => {
-    clearPendingSend(outboundPending.id)
-    const formatted = formatSendError(err)
-    failOutboundSendPending({
-      pendingId: outboundPending.id,
-      reason: formatted.message,
-    })
-    protectTipsFromGhostDrop([outpoint])
-    forgetItemsSent([outpoint])
-    console.error('[collectables] send failed', formatted.message, err)
-    chart.send({ type: 'FAIL', error: formatted.message })
-    chart.stop()
-    void import('./logShip')
-      .then((m) => m.shipAppLogsAuto('send-failure'))
-      .catch(() => {})
-    throw formatted
-  }
-
-  if (sendPath.path === 'refuse') {
-    return failSend(new Error(sendPath.reason))
-  }
-
-  // p2pkhSend path — machine is in p2pkhSend; covenant never reaches here.
-  if (!chart.getSnapshot().matches('p2pkhSend')) {
-    return failSend(new Error('collectableSendMachine did not enter p2pkhSend'))
-  }
-
-  const itemChart = createActor(itemSendMachine).start()
-  itemChart.send({ type: 'START', outpoint, settlePath })
-
-  setPaymentProgress(
-    'building',
-    'Preparing authenticity proof',
-    outpoint,
-  )
-  const provenance = await tryBuildProvenanceForSend({
-    tipOutpoint: outpoint,
-    origin,
-    wallet,
-    contentType: item?.mimeType,
-    inputBeef: inputBEEF,
-    priorProvenance: tipCustom.provenance,
-  })
-  itemChart.send({ type: 'BUILT' })
-
-  const recoverSendFailure = async (
-    err: unknown,
-    reference?: string | null,
-  ): Promise<Error> => {
-    const { isReviewActionsError, formatReviewActionsError, recoverFromReviewActions } =
-      await import('./actionReview')
-    if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
-    await recoverFromReviewActions({
-      err,
-      reference,
-      tipOutpoints: spendOutpoints,
-      active: wallet,
-    })
-    if (isReviewActionsError(err)) return new Error(formatReviewActionsError(err))
-    return err instanceof Error ? err : new Error(String(err))
-  }
-
-  const itemInputs = () => [
-    {
-      outpoint,
-      inputDescription: '1sat collectable',
-      unlockingScriptLength: 108,
-    },
-  ]
-
-  let result: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>> | undefined
-  let txid = ''
-  let atomicBeef: number[] | undefined
-  let attemptedBatchAbort = false
-  for (;;) {
-    try {
-      setPaymentProgress(
-        'signing',
-        'Signing the collectable for the recipient',
-        outpoint,
-      )
-      console.info('[collectables] createAction start')
-      result = await wallet.wallet.createAction({
-        description: `Send ${name}`.slice(0, 50),
-        labels: ['1sat', 'handcash-send-collectable'],
-        inputBEEF,
-        inputs: itemInputs(),
-        outputs: [
+    return await runExclusiveSpend(
+      async () => {
+        try {
+          pauseCollectableArrivalToasts++
+          assertOnlineForPayment()
+          const wallet = getActiveWallet()
+          if (!wallet) throw new Error('Wallet locked')
           {
-            lockingScript,
-            satoshis: 1,
-            outputDescription: 'Collectable transfer',
+            const { abortReservedActionBatches } = await import(
+              './actionReview'
+            )
+            await abortReservedActionBatches(wallet)
+          }
+          // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
+          // createAction fails closed if they aren't. Do not await balance() here
+          // (that contended with sync and made "Waiting to send" feel stuck).
+
+          setPaymentProgress(
+            'building',
+            'Preparing the collectable for transfer',
+            outpoint,
+          )
+          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+
+          let lockingScript: string
+          try {
+            lockingScript = new P2PKH().lock(to).toHex()
+          } catch {
+            throw new Error('Invalid recipient address or identity key')
+          }
+
+          // Prefer the in-memory list for name/origin so the tip listOutputs can be a
+          // tagged narrow query instead of a full-basket read of every held ordinal.
+          const cachedItem =
+            cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
+          const originGuess = parseOrigin(
+            args.origin ?? cachedItem?.origin,
+            outpoint,
+          )
+          const originTag = originGuess.replace(/_(\d+)$/, '.$1')
+
+          const held = await wallet.wallet.listOutputs({
             basket: '1sat',
-            tags,
-            customInstructions: buildCollectableCustomInstructions({
-              origin,
-              name,
-              app,
-              ...(collectionId ? { collectionId } : {}),
-              ...(content ? { content } : {}),
-              provenance,
-            }),
-          },
-        ],
-        options: {
-          trustSelf: 'known',
-          ...(knownTxids.length > 0 ? { knownTxids } : {}),
-          randomizeOutputs: false,
-          signAndProcess: true,
-          noSend: true,
-        },
-      })
-      rememberBeefTree(
-        atomicBeefFromWalletResult(result) ??
-          (result.signableTransaction?.tx
-            ? Array.from(result.signableTransaction.tx)
-            : undefined),
-        typeof result.txid === 'string' ? result.txid : undefined,
-      )
-      itemChart.send({ type: 'CREATED', txid: result.txid })
-      console.info(
-        `[collectables] createAction done txid=${result.txid ?? 'signable'}`,
-      )
-    } catch (err) {
-      const { isReservedActionBatchError, abortReservedActionBatches } =
-        await import('./actionReview')
-      if (!attemptedBatchAbort && isReservedActionBatchError(err)) {
-        attemptedBatchAbort = true
-        await abortReservedActionBatches(wallet)
-        continue
-      }
-      const formatted = await recoverSendFailure(err)
-      itemChart.send({ type: 'FAIL', error: formatted.message })
-      itemChart.stop()
-      return failSend(formatted)
-    }
+            tags: [`origin:${originTag}`],
+            tagQueryMode: 'all',
+            limit: 20,
+            includeTags: true,
+            // Locking script and satoshis are all this needs; remittance BEEF for every
+            // held item would be tens of megabytes on a full wallet.
+            includeCustomInstructions: true,
+            include: 'locking scripts',
+            seekPermission: false,
+          })
+          let match = (held.outputs ?? []).find(
+            (o) => normalizeOutpoint(o.outpoint) === outpoint,
+          )
+          // Origin tag can miss after a migrate / rename; one broader pass is enough.
+          if (!match) {
+            const wide = await wallet.wallet.listOutputs({
+              basket: '1sat',
+              limit: 1000,
+              includeTags: true,
+              includeCustomInstructions: true,
+              include: 'locking scripts',
+              seekPermission: false,
+            })
+            match = (wide.outputs ?? []).find(
+              (o) => normalizeOutpoint(o.outpoint) === outpoint,
+            )
+          }
+          if (!match) throw new Error('Collectable is no longer in this wallet')
+          if ((match.satoshis ?? 1) !== 1) {
+            throw new Error('Collectable UTXO is not a 1-sat ordinal')
+          }
 
-    if (!result) {
-      itemChart.stop()
-      return failSend(new Error('Send completed without createAction result'))
-    }
-    txid = result.txid ?? ''
-    if (txid) {
-      atomicBeef = atomicBeefFromWalletResult(result)
-      break
-    }
-    if (!result.signableTransaction) {
-      itemChart.send({ type: 'FAIL', error: 'Send completed without txid' })
-      itemChart.stop()
-      return failSend(new Error('Send completed without txid'))
-    }
-    if (!itemChart.getSnapshot().matches('signing')) {
-      itemChart.stop()
-      return failSend(new Error('itemSendMachine did not enter signing'))
-    }
-    try {
-      setPaymentProgress('signing', 'Signing the collectable transfer')
-      const signed = await signOrdinalTransfer({
-        wallet,
-        signable: result.signableTransaction,
-        outpoints: spendOutpoints,
-      })
-      txid = signed.txid
-      atomicBeef = signed.atomicBeef
-      itemChart.send({ type: 'SIGNED', txid })
-      break
-    } catch (err) {
-      const formatted = await recoverSendFailure(
-        err,
-        result.signableTransaction?.reference,
-      )
-      itemChart.send({ type: 'FAIL', error: formatted.message })
-      itemChart.stop()
-      return failSend(formatted)
-    }
-  }
+          const item =
+            cachedItem ?? (await getCollectable(outpoint, wallet)) ?? null
+          // Remittance identity must not come from tags — the SDK lowercases them, and
+          // after the signing-speed path we paint the list from those flattened tags.
+          // Resolution cache + tip remittance keep the case the recipient should see.
+          const resolvedMeta = getResolvedInscription(outpoint)
+          const tipCustom = parseCustom(match.customInstructions)
+          const origin = parseOrigin(
+            resolvedMeta?.origin ??
+              tipCustom.origin ??
+              args.origin ??
+              item?.origin,
+            outpoint,
+          )
+          const name =
+            (
+              resolvedMeta?.name ??
+              tipCustom.name ??
+              args.name ??
+              item?.name ??
+              'Collectable'
+            )
+              .trim()
+              .slice(0, 40) || 'Collectable'
+          const app =
+            resolvedMeta?.app ?? tipCustom.app ?? args.app ?? item?.app
+          const collectionId =
+            resolvedMeta?.collectionId ??
+            tipCustom.collectionId ??
+            item?.collectionId
 
-  if (!txid) {
-    itemChart.stop()
-    return failSend(new Error('Send completed without txid'))
-  }
-  if (!atomicBeef?.length) {
-    itemChart.stop()
-    return failSend(new Error('Send completed without signed BEEF'))
-  }
-  rememberBeefTree(atomicBeef, txid)
-  try {
-    await wallet.wallet.actionBatch.abort()
-  } catch {
-    /* unused funding reservations only */
-  }
+          // Derivative / Kit Kat: forward shared media outpoint peer-to-peer.
+          let content =
+            item?.content ??
+            resolveDerivativeContent({
+              claimed: tipCustom.content ?? tagValue(match.tags, 'content:'),
+            })
+          if (!content) {
+            try {
+              const originParts = origin.replace(/\.(\d+)$/, '_$1').split('_')
+              const originTxid = originParts[0]?.toLowerCase()
+              const originVout = Number(originParts[1])
+              if (originTxid?.length === 64 && Number.isInteger(originVout)) {
+                const originBeef = await getBeefForTxidCached(
+                  wallet,
+                  originTxid,
+                )
+                const scriptHex =
+                  originBeef
+                    .findTxid(originTxid)
+                    ?.tx?.outputs?.[originVout]?.lockingScript?.toHex() ?? null
+                content = resolveDerivativeContent({
+                  originScriptHex: scriptHex,
+                })
+              }
+            } catch (err) {
+              console.warn(
+                '[collectables] derivative content resolve skipped',
+                err,
+              )
+            }
+          }
 
-  const settleSnap = itemChart.getSnapshot()
-  try {
-    if (mustDeliverToPeer(settleSnap)) {
-      if (settlePath.settle !== 'peerDeliver') {
-        itemChart.stop()
-        return failSend(new Error('itemSendMachine peerDeliver without settle path'))
-      }
-      setPaymentProgress('finishing', 'Delivering item to recipient', outpoint)
-      const { notifyPeerItemIncoming } = await import('./messageTransport')
-      const { listFriends } = await import('./friends')
-      const friend = listFriends().find(
-        (f) =>
-          f.identityKey.toLowerCase() ===
-          settlePath.recipientIdentityKey.toLowerCase(),
-      )
-      const delivered = await notifyPeerItemIncoming({
-        recipientIdentityKey: settlePath.recipientIdentityKey,
-        rootKeyHex: wallet.rootKeyHex,
-        senderIdentityKey: wallet.identityKey,
-        messagebox: friend?.messagebox,
-        txid,
-        itemName: name,
-        atomicBeef,
-      })
-      console.info(
-        `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
-      )
-      if (delivered.delivered === 'cloud') {
-        itemChart.send({ type: 'DELIVERED' })
-      } else {
-        itemChart.send({ type: 'DELIVER_FAILED' })
-      }
-      if (!maySenderBroadcast(itemChart.getSnapshot())) {
-        itemChart.stop()
-        return failSend(
-          new Error('itemSendMachine refused sender broadcast'),
-        )
-      }
-      const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
-      if (!silent) {
-        setPaymentProgress(
-          'broadcasting',
-          'Inbox unreachable — submitting on chain',
-          outpoint,
-        )
-      }
-      const ok = await broadcastAtomicBeef(txid, atomicBeef)
-      if (silent) {
-        itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
-      } else if (!ok) {
-        itemChart.stop()
-        return failSend(
-          new Error('Broadcast failed — could not confirm with the network'),
-        )
-      } else {
-        itemChart.send({ type: 'BROADCASTED' })
-      }
-    } else if (maySenderBroadcast(settleSnap)) {
-      setPaymentProgress(
-        'broadcasting',
-        settleSnap.matches('selfReceive')
-          ? 'Broadcasting item back to this wallet'
-          : 'Broadcasting the collectable',
-        outpoint,
-      )
-      const ok = await broadcastAtomicBeef(txid, atomicBeef)
-      if (!ok) {
-        itemChart.stop()
-        return failSend(
-          new Error('Broadcast failed — could not confirm with the network'),
-        )
-      }
-      itemChart.send({ type: 'BROADCASTED' })
-    } else {
-      itemChart.stop()
-      return failSend(
-        new Error('itemSendMachine has no legal settle phase'),
-      )
-    }
-  } catch (err) {
-    itemChart.send({
-      type: 'FAIL',
-      error: err instanceof Error ? err.message : String(err),
-    })
-    itemChart.stop()
-    return failSend(err)
-  }
+          const tags = [
+            'ordinal',
+            `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
+            `name:${name.slice(0, 80)}`,
+            ...(app ? [`app:${app.slice(0, 40)}`] : []),
+            ...(collectionId
+              ? [`collection:${collectionId.slice(0, 80)}`]
+              : []),
+            ...(content
+              ? [`content:${content.replace(/_(\d+)$/, '.$1')}`]
+              : []),
+          ]
 
-  if (!itemChart.getSnapshot().matches('done')) {
-    itemChart.stop()
-    return failSend(new Error('itemSendMachine did not reach done'))
-  }
-  itemChart.stop()
-  // Remittance on the wire names the spent tip. Extend once the settle txid is
-  // known so the next send reuses tip-named proof (no hydrate).
-  if (txid && provenance && parseProvenanceV2(provenance)) {
-    try {
-      const tipBeef = await getBeefForTxidCached(wallet, txid)
-      const extended = extendProvenanceV2({
-        prior: provenance,
-        heldOutpoint: `${txid.trim().toLowerCase()}_0`,
-        tipBeef,
-      })
-      if (extended) rememberProvenanceRemittance(extended)
-    } catch (err) {
-      console.warn('[brc-150] post-send remittance extend failed', err)
-    }
-  }
-  return await finishSend(txid, { remittanceBuilt: Boolean(provenance) })
-} finally {
-      pauseCollectableArrivalToasts = Math.max(0, pauseCollectableArrivalToasts - 1)
-      clearPaymentProgress()
-    }
-  },
-    () => setPaymentProgress('preparing', undefined, outpoint),
-  )
+          const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
+          const [tipBeefBin, live] = await Promise.all([
+            tipBeefPromise,
+            awaitLiveOutpoints(wallet),
+          ])
+
+          if (live && !live.oneSats.has(outpointKey(outpoint))) {
+            markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
+            void listCollectables(wallet).catch(() => {})
+            throw new Error(
+              'This collectable is no longer unspent on your address (already sent). Inventory refreshed.',
+            )
+          }
+
+          // listOutputs often omits lockingScript (toolbox skips scriptOffset===0).
+          // Classify from the tip BEEF we already need for the send.
+          const tipLockingScript = resolveTipLockingScriptHex({
+            listed: match.lockingScript,
+            beefBin: tipBeefBin,
+            outpoint,
+          })
+          if (
+            !normalizeLockingScriptHex(match.lockingScript) &&
+            tipLockingScript
+          ) {
+            console.info(
+              `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`,
+            )
+          }
+          assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
+
+          rememberBeefBinary(outpoint.split('.')[0]!, tipBeefBin)
+
+          const inputBEEF = tipBeefBin
+          const spendOutpoints = [outpoint]
+          const knownTxids = [
+            ...new Set(
+              spendOutpoints
+                .map((op) => normalizeOutpoint(op).split('.')[0])
+                .filter((txid): txid is string => !!txid),
+            ),
+          ]
+
+          const settlePath = chooseItemSettlePath({
+            paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
+            recipientIdentityKey: args.recipientIdentityKey,
+          })
+          const tipKind = classifyTipKind(tipLockingScript)
+          const provenTier = getProvenVerdict(outpoint)?.tier ?? null
+          const sendPath = chooseSendPath({
+            tipKind,
+            provenTier,
+          })
+
+          const activityItem = {
+            name,
+            origin,
+            outpoint,
+            ...(item?.imageUrl ? { imageUrl: item.imageUrl } : {}),
+            ...(app ? { app } : {}),
+          }
+          noteOutboundSendPending({
+            pendingId: outboundPending.id,
+            sats: 1,
+            to,
+            friendLabel: args.friendLabel ?? null,
+            recipientIdentityKey: args.recipientIdentityKey ?? null,
+            item: activityItem,
+          })
+
+          const chart = createActor(collectableSendMachine).start()
+          chart.send({ type: 'START', outpoint, sendPath })
+          console.info(
+            `[collectables] send path=${sendPath.path}${
+              sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
+            } settle=${settlePath.settle} tipKind=${tipKind.kind} proven=${
+              provenTier ?? 'none'
+            } scriptChars=${tipLockingScript.length}`,
+          )
+
+          const finishSend = async (
+            txid: string,
+            opts?: { remittanceBuilt?: boolean },
+          ): Promise<{ txid: string }> => {
+            // Record activity as soon as the txid exists — before relinquish / list /
+            // progress clear — so the feed updates while Working is still showing.
+            completePendingSend(outboundPending.id, txid)
+            noteOutboundSendComplete({
+              pendingId: outboundPending.id,
+              txid,
+              sats: 1,
+              to,
+              friendLabel: args.friendLabel ?? null,
+              recipientIdentityKey: args.recipientIdentityKey ?? null,
+              item: activityItem,
+            })
+            clearPendingSend(outboundPending.id)
+            const tx = txid.trim().toLowerCase()
+            const newTip = `${tx}.0`
+            // createAction files the recipient tip in *this* wallet's `1sat` basket.
+            // That is remittance metadata for the sender, not ownership — unless the
+            // lock pays us (true self-receive).
+            const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
+            // Hide spent tip + outbound remittance tip immediately. Post-send we
+            // invalidate the live address scan; without a fresh scan, ownership fate is
+            // skipped and the filed tip would toast "Item received" on the sender.
+            // The settle path rides along: on peerDeliver the payee broadcasts, so the
+            // ghost heal must not read an early 404 as a send that never happened.
+            const settle: SentItemSettle = isPeerDeliverSettle(settlePath)
+              ? 'peerDeliver'
+              : 'senderBroadcast'
+            markItemsSent([
+              { outpoint, txid, settle },
+              ...(!selfReceive ? [{ outpoint: newTip, txid, settle }] : []),
+            ])
+            invalidateLiveOneSatOutpoints()
+            await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
+            if (!selfReceive) {
+              await relinquishSpentOutputs(wallet, [
+                { outpoint: newTip, basket: '1sat' },
+              ])
+            } else if (opts?.remittanceBuilt) {
+              // Remittance proves the spent tip; pin BRC-150 on the tip we still hold
+              // (self-pay) so receive can show authenticity verified.
+              rememberProvenVerdict(newTip, {
+                tier: 'brc150',
+                origin: origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
+                verifiedAt: Date.now(),
+              })
+            }
+            if (selfReceive) {
+              skipArrivalToast.add(normalizeOutpoint(newTip))
+            }
+            setPaymentProgress('finishing')
+            setCollectablesCache(
+              cachedCollectables.filter((i) => i.outpoint !== outpoint),
+            )
+            scheduleHistoryBackupPush('sendCollectable')
+            await listCollectables(wallet).catch((err) => {
+              console.warn('[collectables] post-send refresh failed', err)
+            })
+            if (selfReceive) {
+              announceItemsReceived([newTip])
+              try {
+                playWalletSound('receive')
+                document.dispatchEvent(
+                  new CustomEvent('handcash:receive', {
+                    detail: {
+                      title: 'Item received',
+                      body: 'A collectable landed in your wallet',
+                    },
+                  }),
+                )
+              } catch {
+                // Node tests / no DOM
+              }
+            }
+            chart.send({ type: 'SUCCESS', txid })
+            chart.stop()
+            return { txid }
+          }
+
+          const failSend = (err: unknown): never => {
+            clearPendingSend(outboundPending.id)
+            const formatted = formatSendError(err)
+            failOutboundSendPending({
+              pendingId: outboundPending.id,
+              reason: formatted.message,
+            })
+            protectTipsFromGhostDrop([outpoint])
+            forgetItemsSent([outpoint])
+            console.error('[collectables] send failed', formatted.message, err)
+            chart.send({ type: 'FAIL', error: formatted.message })
+            chart.stop()
+            void import('./logShip')
+              .then((m) => m.shipAppLogsAuto('send-failure'))
+              .catch(() => {})
+            throw formatted
+          }
+
+          if (sendPath.path === 'refuse') {
+            return failSend(new Error(sendPath.reason))
+          }
+
+          // p2pkhSend path — machine is in p2pkhSend; covenant never reaches here.
+          if (!chart.getSnapshot().matches('p2pkhSend')) {
+            return failSend(
+              new Error('collectableSendMachine did not enter p2pkhSend'),
+            )
+          }
+
+          const itemChart = createActor(itemSendMachine).start()
+          itemChart.send({ type: 'START', outpoint, settlePath })
+
+          setPaymentProgress(
+            'building',
+            'Preparing authenticity proof',
+            outpoint,
+          )
+          const provenance = await tryBuildProvenanceForSend({
+            tipOutpoint: outpoint,
+            origin,
+            wallet,
+            contentType: item?.mimeType,
+            inputBeef: inputBEEF,
+            priorProvenance: tipCustom.provenance,
+          })
+          itemChart.send({ type: 'BUILT' })
+
+          const recoverSendFailure = async (
+            err: unknown,
+            reference?: string | null,
+          ): Promise<Error> => {
+            const {
+              isReviewActionsError,
+              formatReviewActionsError,
+              recoverFromReviewActions,
+            } = await import('./actionReview')
+            if (isAlreadySpentInputError(err))
+              await releaseStaleSpendableOutputs()
+            await recoverFromReviewActions({
+              err,
+              reference,
+              tipOutpoints: spendOutpoints,
+              active: wallet,
+            })
+            if (isReviewActionsError(err))
+              return new Error(formatReviewActionsError(err))
+            return err instanceof Error ? err : new Error(String(err))
+          }
+
+          const itemInputs = () => [
+            {
+              outpoint,
+              inputDescription: '1sat collectable',
+              unlockingScriptLength: 108,
+            },
+          ]
+
+          let result:
+            | Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
+            | undefined
+          let txid = ''
+          let atomicBeef: number[] | undefined
+          let attemptedBatchAbort = false
+          for (;;) {
+            try {
+              setPaymentProgress(
+                'signing',
+                'Signing the collectable for the recipient',
+                outpoint,
+              )
+              console.info('[collectables] createAction start')
+              result = await wallet.wallet.createAction({
+                description: `Send ${name}`.slice(0, 50),
+                labels: ['1sat', 'handcash-send-collectable'],
+                inputBEEF,
+                inputs: itemInputs(),
+                outputs: [
+                  {
+                    lockingScript,
+                    satoshis: 1,
+                    outputDescription: 'Collectable transfer',
+                    basket: '1sat',
+                    tags,
+                    customInstructions: buildCollectableCustomInstructions({
+                      origin,
+                      name,
+                      app,
+                      ...(collectionId ? { collectionId } : {}),
+                      ...(content ? { content } : {}),
+                      provenance,
+                    }),
+                  },
+                ],
+                options: {
+                  trustSelf: 'known',
+                  ...(knownTxids.length > 0 ? { knownTxids } : {}),
+                  randomizeOutputs: false,
+                  signAndProcess: true,
+                  noSend: true,
+                },
+              })
+              rememberBeefTree(
+                atomicBeefFromWalletResult(result) ??
+                  (result.signableTransaction?.tx
+                    ? Array.from(result.signableTransaction.tx)
+                    : undefined),
+                typeof result.txid === 'string' ? result.txid : undefined,
+              )
+              itemChart.send({ type: 'CREATED', txid: result.txid })
+              console.info(
+                `[collectables] createAction done txid=${
+                  result.txid ?? 'signable'
+                }`,
+              )
+            } catch (err) {
+              const { isReservedActionBatchError, abortReservedActionBatches } =
+                await import('./actionReview')
+              if (!attemptedBatchAbort && isReservedActionBatchError(err)) {
+                attemptedBatchAbort = true
+                await abortReservedActionBatches(wallet)
+                continue
+              }
+              const formatted = await recoverSendFailure(err)
+              itemChart.send({ type: 'FAIL', error: formatted.message })
+              itemChart.stop()
+              return failSend(formatted)
+            }
+
+            if (!result) {
+              itemChart.stop()
+              return failSend(
+                new Error('Send completed without createAction result'),
+              )
+            }
+            txid = result.txid ?? ''
+            if (txid) {
+              atomicBeef = atomicBeefFromWalletResult(result)
+              break
+            }
+            if (!result.signableTransaction) {
+              itemChart.send({
+                type: 'FAIL',
+                error: 'Send completed without txid',
+              })
+              itemChart.stop()
+              return failSend(new Error('Send completed without txid'))
+            }
+            if (!itemChart.getSnapshot().matches('signing')) {
+              itemChart.stop()
+              return failSend(
+                new Error('itemSendMachine did not enter signing'),
+              )
+            }
+            try {
+              setPaymentProgress('signing', 'Signing the collectable transfer')
+              const signed = await signOrdinalTransfer({
+                wallet,
+                signable: result.signableTransaction,
+                outpoints: spendOutpoints,
+              })
+              txid = signed.txid
+              atomicBeef = signed.atomicBeef
+              itemChart.send({ type: 'SIGNED', txid })
+              break
+            } catch (err) {
+              const formatted = await recoverSendFailure(
+                err,
+                result.signableTransaction?.reference,
+              )
+              itemChart.send({ type: 'FAIL', error: formatted.message })
+              itemChart.stop()
+              return failSend(formatted)
+            }
+          }
+
+          if (!txid) {
+            itemChart.stop()
+            return failSend(new Error('Send completed without txid'))
+          }
+          if (!atomicBeef?.length) {
+            itemChart.stop()
+            return failSend(new Error('Send completed without signed BEEF'))
+          }
+          rememberBeefTree(atomicBeef, txid)
+          try {
+            await wallet.wallet.actionBatch.abort()
+          } catch {
+            /* unused funding reservations only */
+          }
+
+          const settleSnap = itemChart.getSnapshot()
+          try {
+            if (mustDeliverToPeer(settleSnap)) {
+              if (settlePath.settle !== 'peerDeliver') {
+                itemChart.stop()
+                return failSend(
+                  new Error('itemSendMachine peerDeliver without settle path'),
+                )
+              }
+              setPaymentProgress(
+                'finishing',
+                'Delivering item to recipient',
+                outpoint,
+              )
+              const { notifyPeerItemIncoming } = await import(
+                './messageTransport'
+              )
+              const { listFriends } = await import('./friends')
+              const friend = listFriends().find(
+                (f) =>
+                  f.identityKey.toLowerCase() ===
+                  settlePath.recipientIdentityKey.toLowerCase(),
+              )
+              const delivered = await notifyPeerItemIncoming({
+                recipientIdentityKey: settlePath.recipientIdentityKey,
+                rootKeyHex: wallet.rootKeyHex,
+                senderIdentityKey: wallet.identityKey,
+                messagebox: friend?.messagebox,
+                txid,
+                itemName: name,
+                atomicBeef,
+              })
+              console.info(
+                `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
+              )
+              if (delivered.delivered === 'cloud') {
+                itemChart.send({ type: 'DELIVERED' })
+              } else {
+                itemChart.send({ type: 'DELIVER_FAILED' })
+              }
+              if (!maySenderBroadcast(itemChart.getSnapshot())) {
+                itemChart.stop()
+                return failSend(
+                  new Error('itemSendMachine refused sender broadcast'),
+                )
+              }
+              const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
+              if (!silent) {
+                setPaymentProgress(
+                  'broadcasting',
+                  'Inbox unreachable — submitting on chain',
+                  outpoint,
+                )
+              }
+              const ok = await broadcastAtomicBeef(txid, atomicBeef)
+              if (silent) {
+                itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
+              } else if (!ok) {
+                itemChart.stop()
+                return failSend(
+                  new Error(
+                    'Broadcast failed — could not confirm with the network',
+                  ),
+                )
+              } else {
+                itemChart.send({ type: 'BROADCASTED' })
+              }
+            } else if (maySenderBroadcast(settleSnap)) {
+              setPaymentProgress(
+                'broadcasting',
+                settleSnap.matches('selfReceive')
+                  ? 'Broadcasting item back to this wallet'
+                  : 'Broadcasting the collectable',
+                outpoint,
+              )
+              const ok = await broadcastAtomicBeef(txid, atomicBeef)
+              if (!ok) {
+                itemChart.stop()
+                return failSend(
+                  new Error(
+                    'Broadcast failed — could not confirm with the network',
+                  ),
+                )
+              }
+              itemChart.send({ type: 'BROADCASTED' })
+            } else {
+              itemChart.stop()
+              return failSend(
+                new Error('itemSendMachine has no legal settle phase'),
+              )
+            }
+          } catch (err) {
+            itemChart.send({
+              type: 'FAIL',
+              error: err instanceof Error ? err.message : String(err),
+            })
+            itemChart.stop()
+            return failSend(err)
+          }
+
+          if (!itemChart.getSnapshot().matches('done')) {
+            itemChart.stop()
+            return failSend(new Error('itemSendMachine did not reach done'))
+          }
+          itemChart.stop()
+          // Remittance on the wire names the spent tip. Extend once the settle txid is
+          // known so the next send reuses tip-named proof (no hydrate).
+          if (txid && provenance && parseProvenanceV2(provenance)) {
+            try {
+              const tipBeef = await getBeefForTxidCached(wallet, txid)
+              const extended = extendProvenanceV2({
+                prior: provenance,
+                heldOutpoint: `${txid.trim().toLowerCase()}_0`,
+                tipBeef,
+              })
+              if (extended) rememberProvenanceRemittance(extended)
+            } catch (err) {
+              console.warn('[brc-150] post-send remittance extend failed', err)
+            }
+          }
+          return await finishSend(txid, {
+            remittanceBuilt: Boolean(provenance),
+          })
+        } finally {
+          pauseCollectableArrivalToasts = Math.max(
+            0,
+            pauseCollectableArrivalToasts - 1,
+          )
+          clearPaymentProgress()
+        }
+      },
+      () => setPaymentProgress('preparing', undefined, outpoint),
+    )
   } catch (err) {
     clearPendingSend(outboundPending.id)
     failOutboundSendPending({

@@ -33,6 +33,7 @@ export type ItemSendContext = {
 
 export type ItemSendEvent =
   | { type: 'START'; outpoint: string; settlePath: ItemSettlePath }
+  | { type: 'RETRY_BROADCAST'; outpoint: string; txid: string }
   | { type: 'BUILT' }
   | { type: 'CREATED'; txid?: string }
   | { type: 'SIGNED'; txid: string }
@@ -55,6 +56,16 @@ export const itemSendMachine = setup({
             outpoint: event.outpoint,
             settlePath: event.settlePath,
             txid: null,
+            error: null,
+          }
+        : {},
+    ),
+    beginRetryBroadcast: assign(({ event }) =>
+      event.type === 'RETRY_BROADCAST'
+        ? {
+            outpoint: event.outpoint,
+            settlePath: null,
+            txid: event.txid,
             error: null,
           }
         : {},
@@ -82,8 +93,10 @@ export const itemSendMachine = setup({
     createNeedsSign: ({ event }) =>
       event.type === 'CREATED' &&
       !(typeof event.txid === 'string' && event.txid.length > 0),
-    chosePeerDeliver: ({ context }) => context.settlePath?.settle === 'peerDeliver',
-    choseSelfReceive: ({ context }) => context.settlePath?.settle === 'selfReceive',
+    chosePeerDeliver: ({ context }) =>
+      context.settlePath?.settle === 'peerDeliver',
+    choseSelfReceive: ({ context }) =>
+      context.settlePath?.settle === 'selfReceive',
     choseExternalBroadcast: ({ context }) =>
       context.settlePath?.settle === 'externalBroadcast',
   },
@@ -93,7 +106,13 @@ export const itemSendMachine = setup({
   context: { outpoint: '', settlePath: null, txid: null, error: null },
   states: {
     idle: {
-      on: { START: { target: 'building', actions: 'begin' } },
+      on: {
+        START: { target: 'building', actions: 'begin' },
+        RETRY_BROADCAST: {
+          target: 'confirmBroadcast',
+          actions: 'beginRetryBroadcast',
+        },
+      },
     },
     building: {
       on: {

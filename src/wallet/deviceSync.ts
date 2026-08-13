@@ -343,6 +343,10 @@ export function markHistoryBackupDirty(): void {
  * Yields to in-flight / queued spends: Argon2 + upload must not sit on the wallet
  * FIFO ahead of createAction (sequential mint hung on "Preparing payment").
  */
+/** Consecutive spend-priority deferrals before the log escalates and names names. */
+const DEFER_STREAK_WARN = 8
+let deferStreak = 0
+
 export function scheduleHistoryBackupPush(reason = 'dirty'): void {
   if (!getSessionBackupPassword()) {
     void import('./appLog').then(({ appendAppLog }) =>
@@ -356,16 +360,24 @@ export function scheduleHistoryBackupPush(reason = 'dirty'): void {
     pushTimer = null
     void (async () => {
       try {
-        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+        const { shouldYieldChainIngestToSpend, describeSpendPriorityHolds } =
+          await import('./walletCoordinator')
         if (shouldYieldChainIngestToSpend()) {
+          deferStreak += 1
           const { appendAppLog } = await import('./appLog')
+          // Name the holder: a backup that defers forever means someone never
+          // released spend priority, and the count alone never said who.
+          const holders = describeSpendPriorityHolds().join(', ') || 'unknown'
           appendAppLog(
-            'info',
-            `[cloud-backup] defer schedule (${reason}) — spend waiting`,
+            deferStreak >= DEFER_STREAK_WARN ? 'warn' : 'info',
+            `[cloud-backup] defer schedule (${reason}) — spend waiting: ${holders}${
+              deferStreak >= DEFER_STREAK_WARN ? ` ×${deferStreak}` : ''
+            }`,
           )
           scheduleHistoryBackupPush(reason)
           return
         }
+        deferStreak = 0
       } catch {
         /* coordinator optional during early boot */
       }

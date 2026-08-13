@@ -66,6 +66,20 @@ describe('itemSendMachine', () => {
     expect(actor.getSnapshot().matches('done')).toBe(true)
   })
 
+  it('retries an existing signed BEEF through confirmBroadcast', () => {
+    const actor = createActor(itemSendMachine).start()
+    actor.send({
+      type: 'RETRY_BROADCAST',
+      outpoint: `${TX}.0`,
+      txid: 'b'.repeat(64),
+    })
+    expect(actor.getSnapshot().matches('confirmBroadcast')).toBe(true)
+    expect(maySenderBroadcast(actor.getSnapshot())).toBe(true)
+    expect(actor.getSnapshot().context.txid).toBe('b'.repeat(64))
+    actor.send({ type: 'BROADCASTED' })
+    expect(actor.getSnapshot().matches('done')).toBe(true)
+  })
+
   it('sender broadcast only after DELIVER_FAILED', () => {
     const actor = start(peerSettle)
     actor.send({ type: 'CREATED', txid: 'b'.repeat(64) })

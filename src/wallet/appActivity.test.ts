@@ -30,6 +30,9 @@ import {
   expireStaleInboundPending,
   expireStaleOutboundPending,
   pruneMissingOnChainActivity,
+  removeActivityById,
+  removeFailedActivity,
+  countFailedActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
   type ActivityEntry,
@@ -113,13 +116,19 @@ describe('activityDetailLabel', () => {
   it('labels app money rows as Payment', () => {
     expect(
       activityDetailLabel(
-        entry({ origin: 'https://market.example', method: 'createAction', sats: 1000 }),
+        entry({
+          origin: 'https://market.example',
+          method: 'createAction',
+          sats: 1000,
+        }),
       ),
     ).toBe('Payment')
   })
 
   it('labels wallet BSV sends as Transaction', () => {
-    expect(activityDetailLabel(entry({ method: 'send', sats: 5000 }))).toBe('Transaction')
+    expect(activityDetailLabel(entry({ method: 'send', sats: 5000 }))).toBe(
+      'Transaction',
+    )
   })
 
   it('labels permission / friend rows as Activity', () => {
@@ -153,9 +162,40 @@ describe('activityEntryKey', () => {
     expect(activityEntryKey(sent)).not.toBe(activityEntryKey(earned))
   })
 
-  it('falls back to the tip outpoint for an item row with no txid', () => {
-    const row = entry({ item: { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' } })
-    expect(activityEntryKey(row)).toBe('item:bb.0:spent')
+  it('keys an item row with no txid on the tip and its own row id', () => {
+    const row = entry({
+      id: 'attempt-1',
+      item: { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' },
+    })
+    expect(activityEntryKey(row)).toBe('item:bb.0:spent:attempt-1')
+  })
+
+  it('separates two attempts on the same tip that never produced a txid', () => {
+    // Both died before signing, so neither has a txid to tell them apart. They
+    // are still two rows, and React needs two keys.
+    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' }
+    const first = entry({ id: 'attempt-1', item, status: 'failed' })
+    const second = entry({ id: 'attempt-2', item, status: 'failed' })
+
+    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second))
+  })
+
+  it('separates two send attempts that spent the same tip', () => {
+    // A send the payee never broadcast returns the tip; sending it again leaves
+    // two spent rows on one outpoint. Sharing a key made React drop one.
+    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'bb.0' }
+    const first = entry({ txid: 'cc', item })
+    const second = entry({ txid: 'dd', item })
+
+    expect(activityEntryKey(first)).not.toBe(activityEntryKey(second))
+  })
+
+  it('still matches an item row re-recorded from restored history', () => {
+    const item = { name: 'Fox', origin: 'aa_0', outpoint: 'BB.0' }
+    const local = entry({ id: '1770000000000-ab12', txid: 'CC', item })
+    const restored = entry({ id: '1780000000000-cd34', txid: 'cc', item })
+
+    expect(activityEntryKey(restored)).toBe(activityEntryKey(local))
   })
 
   it('keys a local-only row on its timestamp', () => {
@@ -214,9 +254,11 @@ describe('inbound receive activity', () => {
     const rows = listRecentActivity(10).filter((e) => e.txid === TX)
     expect(rows).toHaveLength(2)
     expect(rows.some((e) => e.method === 'receive' && !e.item)).toBe(true)
-    expect(rows.some((e) => e.method === 'receive-collectable' && e.item?.name === 'Fox')).toBe(
-      true,
-    )
+    expect(
+      rows.some(
+        (e) => e.method === 'receive-collectable' && e.item?.name === 'Fox',
+      ),
+    ).toBe(true)
   })
 
   it('does not take a settled receive back to verifying', () => {
@@ -284,8 +326,78 @@ describe('inbound receive activity', () => {
       (e) => e.item?.outpoint === `${TX}.0` && e.kind === 'spent',
     )
     expect(rows).toHaveLength(2)
-    expect(rows.some((e) => e.status === 'pending' && e.pendingId === 'new-send')).toBe(true)
+    expect(
+      rows.some((e) => e.status === 'pending' && e.pendingId === 'new-send'),
+    ).toBe(true)
     expect(rows.some((e) => e.status !== 'pending' && e.txid)).toBe(true)
+  })
+
+  it('persists the exact recipient details required to retry an item send', () => {
+    noteOutboundSendPending({
+      pendingId: 'retryable',
+      sats: 1,
+      to: '1retry',
+      friendLabel: 'Alice',
+      recipientIdentityKey: '02'.padEnd(66, '1'),
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    noteOutboundSendComplete({
+      pendingId: 'retryable',
+      txid: 'cc'.repeat(32),
+      sats: 1,
+      to: '1retry',
+      friendLabel: 'Alice',
+      recipientIdentityKey: '02'.padEnd(66, '1'),
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+
+    expect(listRecentActivity(10)[0]?.retry).toEqual({
+      kind: 'send-collectable',
+      outpoint: `${TX}.0`,
+      toAddress: '1retry',
+      friendLabel: 'Alice',
+      recipientIdentityKey: '02'.padEnd(66, '1'),
+    })
+  })
+
+  it('deletes one local attempt by id without touching another row', () => {
+    noteOutboundSendPending({
+      pendingId: 'delete-me',
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    noteInboundReceiveComplete({ txid: 'dd'.repeat(32), sats: 10 })
+    const attempt = listRecentActivity(10).find(
+      (row) => row.pendingId === 'delete-me',
+    )!
+
+    expect(removeActivityById(attempt.id)).toBe(true)
+    expect(listRecentActivity(10).some((row) => row.id === attempt.id)).toBe(
+      false,
+    )
+    expect(listRecentActivity(10)).toHaveLength(1)
+    expect(removeActivityById(attempt.id)).toBe(false)
+  })
+
+  it('counts and bulk-removes every failed send, keeping healthy rows', () => {
+    for (const id of ['fail-a', 'fail-b', 'fail-c']) {
+      noteOutboundSendPending({ pendingId: id, sats: 100, to: '1abc' })
+      failOutboundSendPending({ pendingId: id, reason: 'Broadcast refused' })
+    }
+    noteOutboundSendPending({ pendingId: 'live', sats: 200, to: '1abc' })
+    noteInboundReceiveComplete({ txid: 'dd'.repeat(32), sats: 10 })
+
+    expect(countFailedActivity()).toBe(3)
+
+    expect(removeFailedActivity()).toBe(3)
+    expect(countFailedActivity()).toBe(0)
+    expect(removeFailedActivity()).toBe(0)
+
+    const rows = listRecentActivity(20)
+    expect(rows.some((r) => r.pendingId === 'live')).toBe(true)
+    expect(rows.some((r) => r.txid === 'dd'.repeat(32))).toBe(true)
+    expect(rows.every((r) => r.status !== 'failed')).toBe(true)
   })
 
   it('marks stale Sending… rows as failed with a reason', () => {
@@ -386,7 +498,10 @@ describe('inbound receive activity', () => {
     const pruned = await pruneMissingOnChainActivity(
       'main',
       async () => false,
-      { minAgeMs: 0, pendingMinAgeMs: 60_000 },
+      {
+        minAgeMs: 0,
+        pendingMinAgeMs: 60_000,
+      },
     )
     expect(pruned).toBe(1)
     const left = listRecentActivity(10)
@@ -397,7 +512,12 @@ describe('inbound receive activity', () => {
 
   it('refuses to re-pin Verifying… for a suppressed ghost txid', () => {
     rememberGhostTx(TX)
-    noteInboundReceivePending({ txid: TX, sats: 99, item: true, itemName: 'Fox' })
+    noteInboundReceivePending({
+      txid: TX,
+      sats: 99,
+      item: true,
+      itemName: 'Fox',
+    })
     expect(listRecentActivity(10)).toHaveLength(0)
   })
 

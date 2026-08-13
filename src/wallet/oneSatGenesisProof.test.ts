@@ -6,7 +6,11 @@ import {
   UnlockingScript,
 } from '@bsv/sdk'
 import { describe, expect, it, vi } from 'vitest'
-import { proveGenesisLineage } from './oneSatGenesisProof'
+import {
+  describeGenesisWalk,
+  proveGenesisLineage,
+  walkGenesisLineage,
+} from './oneSatGenesisProof'
 
 const ORD_ENVELOPE =
   '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
@@ -208,5 +212,88 @@ describe('proveGenesisLineage', () => {
     expect(proof).toBeNull()
     // The cap is what it claims: no fetch storm after giving up.
     expect(getBeef.mock.calls.length).toBeLessThanOrEqual(5)
+  })
+})
+
+describe('walkGenesisLineage outcomes', () => {
+  it('reports an unreachable hop as retryable, not as a verdict on the item', async () => {
+    const origin = inscription()
+    const hop1 = transfer(origin)
+    const tip = transfer(hop1)
+    const getBeef = service([origin, tip])
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef,
+    })
+
+    expect(outcome.kind).toBe('unavailable')
+    expect(describeGenesisWalk(outcome)).toContain('no such transaction')
+  })
+
+  it('reports a chain that never reaches an inscription as invalid', async () => {
+    const notAnOrdinal = new Transaction()
+    notAnOrdinal.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex('51'),
+    })
+    const tip = transfer(notAnOrdinal)
+    const getBeef = service([notAnOrdinal, tip])
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef,
+      maxHops: 2,
+    })
+
+    expect(outcome.kind).toBe('invalid')
+  })
+
+  it('reports a hop cap as invalid rather than as a network miss', async () => {
+    const origin = inscription()
+    let current = transfer(origin)
+    const chain: Transaction[] = [origin, current]
+    for (let i = 0; i < 6; i++) {
+      current = transfer(current)
+      chain.push(current)
+    }
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${current.id('hex')}.0`,
+      getBeef: service(chain),
+      maxHops: 3,
+    })
+
+    expect(outcome).toMatchObject({ kind: 'invalid' })
+    expect(describeGenesisWalk(outcome)).toContain(
+      'no inscription within 3 hops',
+    )
+  })
+
+  it('reports yielding to the user as aborted, so nothing is recorded against the tip', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+      shouldStop: () => true,
+    })
+
+    expect(outcome.kind).toBe('aborted')
+  })
+
+  it('carries the proof through on success', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+
+    const outcome = await walkGenesisLineage({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      getBeef: service([origin, tip]),
+    })
+
+    expect(outcome.kind).toBe('proven')
+    if (outcome.kind !== 'proven') throw new Error('expected a proof')
+    expect(outcome.proof.origin).toBe(`${origin.id('hex')}_0`)
   })
 })

@@ -88,8 +88,10 @@ describe('sentItemGuard', () => {
       to: '1abc',
       item: { name: 'Fox', origin: 'tip_0', outpoint: 'tip.0' },
     })
-    const healed = await guard.healGhostSentItems('main', async (txid) =>
-      txid === ghost ? false : true,
+    const healed = await guard.healGhostSentItems(
+      'main',
+      async (txid) => (txid === ghost ? false : true),
+      Date.now() + guard.SENDER_GHOST_GRACE_MS + 1,
     )
     expect(healed.sort()).toEqual(['latch.1', 'tip.0'])
     expect(guard.isItemSent('tip.0')).toBe(false)
@@ -108,5 +110,74 @@ describe('sentItemGuard', () => {
     const healed = await guard.healGhostSentItems('main', async () => null)
     expect(healed).toEqual([])
     expect(guard.isItemSent('tip.0')).toBe(true)
+  })
+
+  it('does not treat a fresh 404 as a ghost send', async () => {
+    // Chain ingest runs seconds after createAction. Restoring that fast handed
+    // the tip back mid-flight and deleted the Sent row.
+    const guard = await import('./sentItemGuard')
+    const txid = 'd'.repeat(64)
+    guard.markItemsSent([{ outpoint: 'tip.0', txid }])
+
+    const healed = await guard.healGhostSentItems('main', async () => false)
+
+    expect(healed).toEqual([])
+    expect(guard.isItemSent('tip.0')).toBe(true)
+  })
+
+  it('keeps a peerDeliver send hidden and its Activity row intact on a 404', async () => {
+    // The payee broadcasts a peerDeliver settle, so a 404 hours later is still
+    // normal. Deleting the row here is what left the details panel showing
+    // "Transaction not found" for a transfer that really happened.
+    const guard = await import('./sentItemGuard')
+    const activity = await import('./appActivity')
+    const txid = 'e'.repeat(64)
+    guard.markItemsSent([{ outpoint: 'tip.0', txid, settle: 'peerDeliver' }])
+    activity.noteOutboundSendComplete({
+      pendingId: 'peer-send',
+      txid,
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: 'tip_0', outpoint: 'tip.0' },
+    })
+
+    const healed = await guard.healGhostSentItems(
+      'main',
+      async () => false,
+      Date.now() + guard.SENDER_GHOST_GRACE_MS + 1,
+    )
+
+    expect(healed).toEqual([])
+    expect(guard.isItemSent('tip.0')).toBe(true)
+    expect(activity.listRecentActivity(10).some((e) => e.txid === txid)).toBe(
+      true,
+    )
+  })
+
+  it('returns a peerDeliver tip the payee never broadcast, keeping the row', async () => {
+    const guard = await import('./sentItemGuard')
+    const activity = await import('./appActivity')
+    const txid = 'f'.repeat(64)
+    guard.markItemsSent([{ outpoint: 'tip.0', txid, settle: 'peerDeliver' }])
+    activity.noteOutboundSendComplete({
+      pendingId: 'peer-send-stale',
+      txid,
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: 'tip_0', outpoint: 'tip.0' },
+    })
+
+    const healed = await guard.healGhostSentItems(
+      'main',
+      async () => false,
+      Date.now() + guard.PEER_DELIVER_GHOST_GRACE_MS + 1,
+    )
+
+    expect(healed).toEqual(['tip.0'])
+    expect(guard.isItemSent('tip.0')).toBe(false)
+    // The tip came back, but the send still happened — keep the evidence.
+    expect(activity.listRecentActivity(10).some((e) => e.txid === txid)).toBe(
+      true,
+    )
   })
 })

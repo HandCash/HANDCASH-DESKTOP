@@ -25,10 +25,63 @@ const MAX_ENTRIES = 500
 /** A send that never landed has to give the item back rather than hide it forever. */
 export const SENT_HIDE_MS = 24 * 60 * 60_000
 
+/**
+ * Who was going to broadcast this send. A 404 means opposite things per path:
+ * we failed, or the payee simply has not broadcast yet.
+ */
+export type SentItemSettle = 'senderBroadcast' | 'peerDeliver'
+
+/**
+ * A send we broadcast ourselves should be findable in seconds, so a 404 past
+ * this window is a real ghost. A `peerDeliver` settle is broadcast by the
+ * **payee** — they may be offline for hours — so treating an early 404 as a
+ * ghost hands the item back to the sender while the transfer is still in
+ * flight, and (before this grace existed) deleted the only Activity record of
+ * it. Past this window the payee has almost certainly dropped it; the blunt
+ * {@link SENT_HIDE_MS} expiry would return the tip a few hours later anyway.
+ */
+export const SENDER_GHOST_GRACE_MS = 2 * 60_000
+export const PEER_DELIVER_GHOST_GRACE_MS = 12 * 60 * 60_000
+
 export type SentItemRecord = {
   at: number
   /** Sending transaction, for log correlation. */
   txid?: string
+  /** Broadcaster for this send. Legacy rows read as `senderBroadcast`. */
+  settle: SentItemSettle
+}
+
+/** Explicit fate for one hidden send, so a 404 never silently un-hides. */
+export type GhostHealFate =
+  | { kind: 'keep'; reason: 'onChain' | 'inconclusive' | 'withinGrace' }
+  | {
+      kind: 'restore'
+      reason: 'senderNeverBroadcast' | 'peerNeverBroadcast'
+      /**
+       * Only a send we were supposed to broadcast leaves a row worth deleting.
+       * A peerDeliver row is the sender's only record that the tip left, so it
+       * survives the restore.
+       */
+      dropActivity: boolean
+    }
+
+export function ghostHealFate(args: {
+  settle: SentItemSettle
+  ageMs: number
+  onChain: boolean | null
+}): GhostHealFate {
+  if (args.onChain !== false) {
+    return {
+      kind: 'keep',
+      reason: args.onChain === true ? 'onChain' : 'inconclusive',
+    }
+  }
+  const peer = args.settle === 'peerDeliver'
+  const grace = peer ? PEER_DELIVER_GHOST_GRACE_MS : SENDER_GHOST_GRACE_MS
+  if (args.ageMs < grace) return { kind: 'keep', reason: 'withinGrace' }
+  return peer
+    ? { kind: 'restore', reason: 'peerNeverBroadcast', dropActivity: false }
+    : { kind: 'restore', reason: 'senderNeverBroadcast', dropActivity: true }
 }
 
 /**
@@ -46,14 +99,27 @@ function readSent(): Map<string, SentItemRecord> {
     if (!raw) return records
     if (raw === cachedRaw) return cachedRecords
     const parsed = JSON.parse(raw) as unknown
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return records
-    for (const [op, value] of Object.entries(parsed as Record<string, unknown>)) {
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed))
+      return records
+    for (const [op, value] of Object.entries(
+      parsed as Record<string, unknown>,
+    )) {
       if (!op.includes('.')) continue
-      const row = (value ?? {}) as { at?: unknown; txid?: unknown }
-      const at = typeof row.at === 'number' && Number.isFinite(row.at) ? row.at : 0
+      const row = (value ?? {}) as {
+        at?: unknown
+        txid?: unknown
+        settle?: unknown
+      }
+      const at =
+        typeof row.at === 'number' && Number.isFinite(row.at) ? row.at : 0
       records.set(op, {
         at,
-        txid: typeof row.txid === 'string' && row.txid.trim() ? row.txid.trim() : undefined,
+        txid:
+          typeof row.txid === 'string' && row.txid.trim()
+            ? row.txid.trim()
+            : undefined,
+        settle:
+          row.settle === 'peerDeliver' ? 'peerDeliver' : 'senderBroadcast',
       })
     }
     cachedRaw = raw
@@ -79,7 +145,9 @@ function key(outpoint: string): string {
 
 /** Hide outpoints a send just spent. Call only once the send has a txid. */
 export function markItemsSent(
-  outpoints: Array<string | { outpoint: string; txid?: string }>,
+  outpoints: Array<
+    string | { outpoint: string; txid?: string; settle?: SentItemSettle }
+  >,
 ): void {
   if (outpoints.length === 0) return
   const records = new Map(readSent())
@@ -89,7 +157,13 @@ export function markItemsSent(
     const entry = typeof raw === 'string' ? { outpoint: raw } : raw
     const op = key(entry.outpoint)
     if (!op) continue
-    records.set(op, entry.txid ? { at, txid: entry.txid.trim().toLowerCase() } : { at })
+    const settle: SentItemSettle = entry.settle ?? 'senderBroadcast'
+    records.set(
+      op,
+      entry.txid
+        ? { at, txid: entry.txid.trim().toLowerCase(), settle }
+        : { at, settle },
+    )
     marked += 1
   }
   if (marked > 0) writeSent(records)
@@ -116,11 +190,14 @@ export function forgetItemsSent(outpoints: string[]): void {
 
 /**
  * Drop hide marks whose recorded spend txid is proven absent from the chain
- * (ghost delayed-broadcast / failed post). Returns the outpoints restored.
+ * *and* past the grace window for who was supposed to broadcast it. Returns
+ * the outpoints restored.
  *
- * Also strips Activity "Sent" / Verifying rows for those txids and suppresses
- * tip-hint re-pins — otherwise the feed keeps a Sent link that 404s on WoC
- * while a later successful transfer (different txid) already moved the tip.
+ * A sender-broadcast ghost also loses its Activity "Sent" / Verifying rows and
+ * gets tip-hint re-pins suppressed — otherwise the feed keeps a Sent link that
+ * 404s on WoC while a later successful transfer (different txid) already moved
+ * the tip. A `peerDeliver` restore keeps its rows: the tip left this basket and
+ * the row is the only local record of the transfer.
  *
  * Abandon markers (`abandon:…`) are left alone — those are intentional hides.
  */
@@ -130,26 +207,44 @@ export async function healGhostSentItems(
     txid: string,
     chain: import('./vault').Chain,
   ) => Promise<boolean | null>,
+  now = Date.now(),
 ): Promise<string[]> {
   const records = readSent()
-  const byTx = new Map<string, string[]>()
+  const byTx = new Map<
+    string,
+    { ops: string[]; at: number; settle: SentItemSettle }
+  >()
   for (const [op, rec] of records) {
     const tx = rec.txid?.trim().toLowerCase() ?? ''
     if (!tx || tx.startsWith('abandon:')) continue
     if (!/^[0-9a-f]{64}$/.test(tx)) continue
-    const list = byTx.get(tx) ?? []
-    list.push(op)
-    byTx.set(tx, list)
+    const group = byTx.get(tx)
+    if (!group) {
+      byTx.set(tx, { ops: [op], at: rec.at, settle: rec.settle })
+      continue
+    }
+    group.ops.push(op)
+    // Newest mark and the more patient settle both bias toward waiting.
+    group.at = Math.max(group.at, rec.at)
+    if (rec.settle === 'peerDeliver') group.settle = 'peerDeliver'
   }
   if (byTx.size === 0) return []
 
   const healed: string[] = []
   const ghostTxids: string[] = []
-  for (const [txid, ops] of byTx) {
-    if ((await existsOnChain(txid, chain)) !== false) continue
-    forgetItemsSent(ops)
-    healed.push(...ops)
-    ghostTxids.push(txid)
+  for (const [txid, group] of byTx) {
+    const fate = ghostHealFate({
+      settle: group.settle,
+      ageMs: now - group.at,
+      onChain: await existsOnChain(txid, chain),
+    })
+    if (fate.kind === 'keep') continue
+    console.info(
+      `[sent-item-guard] restore ${group.ops.length} tip(s) reason=${fate.reason} txid=${txid}`,
+    )
+    forgetItemsSent(group.ops)
+    healed.push(...group.ops)
+    if (fate.dropActivity) ghostTxids.push(txid)
   }
   if (ghostTxids.length > 0) {
     try {

@@ -51,10 +51,50 @@ export type GenesisProof = {
   beef: number[]
 }
 
+/**
+ * Why a walk ended, so the caller can tell "the network was down" from "this is
+ * not a provable ordinal lineage".
+ *
+ * Collapsing both into `null` is what left items spinning with no explanation:
+ * a transient indexer outage looked identical to a genuinely invalid item, so
+ * neither could be reported to the user or scheduled correctly.
+ */
+export type GenesisWalkOutcome =
+  | { kind: 'proven'; proof: GenesisProof }
+  /** Yielded to something the user is waiting on. Costs one retry, nothing else. */
+  | { kind: 'aborted'; hops: number }
+  /** A hop could not be fetched. Retryable — the lineage may still be fine. */
+  | { kind: 'unavailable'; reason: string; hops: number }
+  /** Assembled BEEF exceeded the caller's wire budget. */
+  | { kind: 'overBudget'; bytes: number; hops: number }
+  /** Conclusive: the chain data says this is not a provable 1-sat lineage. */
+  | { kind: 'invalid'; reason: string; hops: number }
+
+/** One-line explanation for logs and the details panel. */
+export function describeGenesisWalk(outcome: GenesisWalkOutcome): string {
+  switch (outcome.kind) {
+    case 'proven':
+      return `proven back to ${outcome.proof.origin} in ${outcome.proof.hops} hop(s)`
+    case 'aborted':
+      return `abandoned after ${outcome.hops} hop(s) — the wallet needed the network`
+    case 'unavailable':
+      return `could not read hop ${outcome.hops} — ${outcome.reason}`
+    case 'overBudget':
+      return `lineage is ${outcome.bytes} bytes, over the wire budget`
+    case 'invalid':
+      return `not a provable lineage at hop ${outcome.hops} — ${outcome.reason}`
+  }
+}
+
 const POINT = /^([0-9a-f]{64})_(\d+)$/
 
 function toPoint(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
+function errText(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.slice(0, 140)
 }
 
 /**
@@ -65,6 +105,18 @@ function toPoint(outpoint: string): string {
  * unmined or unprovable hop fails the whole attempt rather than weakening it.
  */
 export async function proveGenesisLineage(args: {
+  tipOutpoint: string
+  getBeef: (txid: string) => Promise<Beef>
+  maxHops?: number
+  shouldStop?: () => boolean
+  maxBeefBytes?: number
+}): Promise<GenesisProof | null> {
+  const outcome = await walkGenesisLineage(args)
+  return outcome.kind === 'proven' ? outcome.proof : null
+}
+
+/** {@link proveGenesisLineage}, but says why it stopped. */
+export async function walkGenesisLineage(args: {
   tipOutpoint: string
   getBeef: (txid: string) => Promise<Beef>
   maxHops?: number
@@ -80,9 +132,11 @@ export async function proveGenesisLineage(args: {
    * lineage only to omit it for being over the wire budget.
    */
   maxBeefBytes?: number
-}): Promise<GenesisProof | null> {
+}): Promise<GenesisWalkOutcome> {
   const tip = toPoint(args.tipOutpoint)
-  if (!POINT.test(tip)) return null
+  if (!POINT.test(tip)) {
+    return { kind: 'invalid', reason: 'tip is not an outpoint', hops: 0 }
+  }
   const maxHops = args.maxHops ?? MAX_GENESIS_HOPS
   const maxBeefBytes = args.maxBeefBytes
 
@@ -112,65 +166,107 @@ export async function proveGenesisLineage(args: {
   let origin: string | null = null
   let hops = 0
   for (; hops <= maxHops; hops++) {
-    if (args.shouldStop?.()) return null
+    if (args.shouldStop?.()) return { kind: 'aborted', hops }
     // Let the UI paint between hops — phone main thread otherwise freezes for
     // the whole walk (tens of seconds on deep Pixel Foxes lineages).
     if (hops > 0) await new Promise<void>((r) => setTimeout(r, 0))
     const match = POINT.exec(point)
-    if (!match) return null
+    if (!match) {
+      return { kind: 'invalid', reason: 'parent is not an outpoint', hops }
+    }
     try {
       await hydrate(match[1]!)
     } catch (err) {
-      if (err instanceof Error && err.message === 'genesis-lineage-over-budget') {
-        console.info(
-          `[brc-150] stop lineage hydrate — assembled BEEF would exceed remittance budget (${fetchedBytes} bytes, ${hops} hop(s))`,
-        )
-        return null
+      if (
+        err instanceof Error &&
+        err.message === 'genesis-lineage-over-budget'
+      ) {
+        return { kind: 'overBudget', bytes: fetchedBytes, hops }
       }
-      return null
+      return { kind: 'unavailable', reason: errText(err), hops }
     }
 
     const here = outputAt(point)
+    // Hydration succeeded but the transaction or output is missing from what the
+    // provider returned — a data gap, not a verdict about the item.
+    if (!here?.output) {
+      return {
+        kind: 'unavailable',
+        reason: 'provider returned no such output',
+        hops,
+      }
+    }
     // A lineage that runs through anything but a single satoshi is not an
     // ordinal lineage; stop rather than invent one.
-    if (!here?.output || here.output.satoshis !== 1) return null
+    if (here.output.satoshis !== 1) {
+      return {
+        kind: 'invalid',
+        reason: `ancestor holds ${here.output.satoshis} sats, not 1`,
+        hops,
+      }
+    }
     if (hasOrdEnvelope(here.output.lockingScript?.toHex())) {
       origin = point
       break
     }
-    if (hops === maxHops) return null
+    if (hops === maxHops) {
+      return {
+        kind: 'invalid',
+        reason: `no inscription within ${maxHops} hops`,
+        hops,
+      }
+    }
 
     const vout = Number(match[2])
     let parent: string | null = null
     for (let vin = 0; vin < Math.min(here.tx.inputs.length, MAX_PARENT_CANDIDATES); vin++) {
       const srcTxid = String(here.tx.inputs[vin]?.sourceTXID ?? '').toLowerCase()
       const srcVout = here.tx.inputs[vin]?.sourceOutputIndex
-      if (!/^[0-9a-f]{64}$/.test(srcTxid) || !Number.isSafeInteger(srcVout)) return null
+      if (!/^[0-9a-f]{64}$/.test(srcTxid) || !Number.isSafeInteger(srcVout)) {
+        return { kind: 'invalid', reason: 'ancestor input is malformed', hops }
+      }
       try {
         await hydrate(srcTxid)
       } catch (err) {
-        if (err instanceof Error && err.message === 'genesis-lineage-over-budget') {
-          console.info(
-            `[brc-150] stop lineage hydrate — assembled BEEF would exceed remittance budget (${fetchedBytes} bytes, ${hops} hop(s))`,
-          )
-          return null
+        if (
+          err instanceof Error &&
+          err.message === 'genesis-lineage-over-budget'
+        ) {
+          return { kind: 'overBudget', bytes: fetchedBytes, hops }
         }
-        return null
+        return { kind: 'unavailable', reason: errText(err), hops }
       }
       const ordinalVin = findOrdinalParentVin(merged, here.tx, vout)
       if (ordinalVin == null) continue
       const input = here.tx.inputs[ordinalVin]!
       const parentTxid = String(input.sourceTXID ?? '').toLowerCase()
       const parentVout = input.sourceOutputIndex
-      if (!/^[0-9a-f]{64}$/.test(parentTxid) || !Number.isSafeInteger(parentVout)) return null
+      if (
+        !/^[0-9a-f]{64}$/.test(parentTxid) ||
+        !Number.isSafeInteger(parentVout)
+      ) {
+        return { kind: 'invalid', reason: 'parent input is malformed', hops }
+      }
       parent = `${parentTxid}_${parentVout}`
       break
     }
-    if (!parent) return null
+    if (!parent) {
+      return {
+        kind: 'invalid',
+        reason: 'could not map the satoshi to a parent input',
+        hops,
+      }
+    }
     point = parent
   }
 
-  if (!origin) return null
+  if (!origin) {
+    return {
+      kind: 'invalid',
+      reason: 'walk ended without an inscription',
+      hops,
+    }
+  }
 
   // Re-derive the path from the hydrated BEEF and verify it with the shared
   // verifier, so the proof never rests on the order this walk happened to take.
@@ -180,13 +276,16 @@ export async function proveGenesisLineage(args: {
   // merkle proof depends on nothing — which strips the very ancestry being
   // proven and is why the older rebuild could never prove a confirmed item.
   const path = deriveOneSatPathFromBeef(merged, tip, origin)
-  if (!path || path[0] !== tip || path[path.length - 1] !== origin) return null
+  if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
+    return {
+      kind: 'invalid',
+      reason: 're-derived path does not run tip to origin',
+      hops,
+    }
+  }
   const beef = merged.toBinary()
   if (maxBeefBytes != null && beef.length > maxBeefBytes) {
-    console.info(
-      `[brc-150] omit assembled lineage — ${beef.length} bytes > remittance budget ${maxBeefBytes}`,
-    )
-    return null
+    return { kind: 'overBudget', bytes: beef.length, hops }
   }
   const result = verifyProvenanceV2(
     { v: 2, origin, tip, path, beefB64: bytesToBase64(beef) },
@@ -194,10 +293,13 @@ export async function proveGenesisLineage(args: {
     { enforceBudget: false },
   )
   if (!result.proven) {
-    console.warn('[brc-150] assembled lineage failed verification', tip, result.reason)
-    return null
+    return {
+      kind: 'invalid',
+      reason: result.reason || 'assembled lineage failed verification',
+      hops,
+    }
   }
-  return { origin, path, hops, beef }
+  return { kind: 'proven', proof: { origin, path, hops, beef } }
 }
 
 function bytesToBase64(bytes: number[]): string {

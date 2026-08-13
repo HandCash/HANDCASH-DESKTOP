@@ -3323,6 +3323,32 @@ button.identity-qr-copy:focus-visible {
   margin-left: auto;
 }
 
+.activity-clear-failed {
+  appearance: none;
+  margin: 0;
+  padding: 0 10px;
+  height: 28px;
+  border-radius: var(--radius);
+  border: 1px solid rgb(255 107 107 / 34%);
+  background: rgb(255 107 107 / 10%);
+  color: var(--hc-danger);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
+}
+
+.activity-clear-failed:hover {
+  background: rgb(255 107 107 / 16%);
+  border-color: rgb(255 107 107 / 48%);
+}
+
+.activity-clear-failed:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .activity-filter-toggle {
   appearance: none;
   position: relative;
@@ -4617,6 +4643,29 @@ a.app-details-host:hover {
   margin: 0;
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.payment-attempt-actions {
+  display: grid;
+  gap: 9px;
+  padding: 14px;
+  border: 1px solid rgb(255 184 77 / 32%);
+  border-radius: 10px;
+  background: rgb(255 184 77 / 8%);
+}
+
+.payment-attempt-actions p {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.82rem;
+  line-height: 1.45;
+}
+
+.payment-attempt-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 2px;
 }
 
 .app-details-inline .app-details-head h3 {

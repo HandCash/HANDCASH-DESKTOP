@@ -35,9 +35,25 @@ import {
 import { isExplorerTxid, txExplorerUrl } from '../wallet/txExplorer'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
-import { getCachedCollectables, normalizeOutpoint } from '../wallet/collectables'
-import { openCollectableDetails, openFungibleDetails } from '../wallet/navStore'
+import {
+  getCachedCollectables,
+  normalizeOutpoint,
+} from '../wallet/collectables'
+import {
+  clearNavChild,
+  openCollectableDetails,
+  openFungibleDetails,
+  openSendFlow,
+} from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import {
+  clearSpendAttempt,
+  isSpendAttempt,
+  resolveSpendAttemptFate,
+  retrySpendAttempt,
+  type SpendAttemptFate,
+} from '../wallet/spendAttempt'
+import { toastError } from '../wallet/toast'
 
 type Props = {
   entryId: string
@@ -53,12 +69,22 @@ function openExplorer(url: string) {
 }
 
 /** Prefer a tip we still hold for this origin; fall back to a received outpoint. */
-function itemLinkOutpoint(entry: ActivityEntry, item: ActivityItem | undefined): string | null {
+function itemLinkOutpoint(
+  entry: ActivityEntry,
+  item: ActivityItem | undefined,
+): string | null {
   if (!item) return null
   if (item.tokenId?.trim()) return null
-  const originKey = item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const originKey = item.origin
+    .trim()
+    .toLowerCase()
+    .replace(/\.(\d+)$/, '_$1')
   const held = getCachedCollectables().find(
-    (c) => c.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') === originKey,
+    (c) =>
+      c.origin
+        .trim()
+        .toLowerCase()
+        .replace(/\.(\d+)$/, '_$1') === originKey,
   )
   if (held) return held.outpoint
   // A receive may not be in the Collect cache yet — the activity outpoint is live.
@@ -74,10 +100,22 @@ function tokenLinkId(item: ActivityItem | undefined): string | null {
 }
 
 export function PaymentDetailsPanel({ entryId, chain }: Props) {
-  const [entry, setEntry] = useState<ActivityEntry | null>(() => getActivityById(entryId))
-  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
-  const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [entry, setEntry] = useState<ActivityEntry | null>(() =>
+    getActivityById(entryId),
+  )
+  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() =>
+    getCachedUsdPerBsv(),
+  )
+  const [currency, setCurrency] = useState<DisplayCurrency>(() =>
+    getDisplayCurrency(),
+  )
   const [iconReady, setIconReady] = useState(false)
+  const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
+    kind: 'notAttempt',
+  })
+  const [retrying, setRetrying] = useState(false)
+  const [clearing, setClearing] = useState(false)
+  const [attemptError, setAttemptError] = useState<string | null>(null)
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -87,6 +125,23 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
     refresh()
     return subscribeAppActivity(refresh)
   }, [entryId])
+  useEffect(() => {
+    let cancelled = false
+    setAttemptError(null)
+    if (!isSpendAttempt(entry)) {
+      setAttemptFate({ kind: 'notAttempt' })
+      return () => {
+        cancelled = true
+      }
+    }
+    setAttemptFate({ kind: 'checking' })
+    void resolveSpendAttemptFate(entry!, chain).then((fate) => {
+      if (!cancelled) setAttemptFate(fate)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [entry, chain])
 
   if (!entry) {
     return <p className="connected-empty-line">Transaction not found</p>
@@ -115,7 +170,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           </div>
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
-              <strong className="payment-details-title">{activityEntryTitle(entry)}</strong>
+              <strong className="payment-details-title">
+                {activityEntryTitle(entry)}
+              </strong>
             </div>
             <p className="history-when">
               {new Date(entry.at).toLocaleString(undefined, {
@@ -129,7 +186,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           <dl className="wallet-details">
             <div className="wallet-detail">
               <span>Type</span>
-              <span className="wallet-detail-value">{activityDetailLabel(entry)}</span>
+              <span className="wallet-detail-value">
+                {activityDetailLabel(entry)}
+              </span>
             </div>
             <div className="wallet-detail">
               <span>Action</span>
@@ -138,7 +197,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             {!isWallet ? (
               <div className="wallet-detail">
                 <span>App</span>
-                <span className="wallet-detail-value">{appDisplayName(entry.origin)}</span>
+                <span className="wallet-detail-value">
+                  {appDisplayName(entry.origin)}
+                </span>
               </div>
             ) : null}
           </dl>
@@ -159,8 +220,14 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       getCachedCollectables().some(
         (c) =>
           c.proven === true &&
-          c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
-            entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+          c.outpoint
+            .trim()
+            .toLowerCase()
+            .replace(/_(\d+)$/, '.$1') ===
+            entry
+              .item!.outpoint!.trim()
+              .toLowerCase()
+              .replace(/_(\d+)$/, '.$1'),
       ),
   )
   const showPending = pending && (spent || !inventoryProven)
@@ -176,17 +243,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         openFungibleDetails(tokenId)
       }
     : itemOutpoint
-      ? () => {
-          playWalletSound('soft')
-          openCollectableDetails(itemOutpoint)
-        }
-      : null
+    ? () => {
+        playWalletSound('soft')
+        openCollectableDetails(itemOutpoint)
+      }
+    : null
   const viewed = shownItem ? { ...entry, item: shownItem } : entry
   const primary = token
     ? activityTokenAmountDisplay(viewed)
     : item
-      ? shownItem?.name || 'Collectable'
-      : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+    ? shownItem?.name || 'Collectable'
+    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const secondary = item
     ? token
       ? minted
@@ -194,15 +261,61 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           ? `Minted · ${shownItem.name}`
           : 'Minted BSV-21'
         : spent
-          ? shownItem?.name
-            ? `Sent · ${shownItem.name}`
-            : 'Sent BSV-21'
-          : shownItem?.app || shownItem?.name || 'BSV-21 token'
+        ? shownItem?.name
+          ? `Sent · ${shownItem.name}`
+          : 'Sent BSV-21'
+        : shownItem?.app || shownItem?.name || 'BSV-21 token'
       : shownItem?.app || '1Sat collectable'
     : formatSecondaryFromSats(entry.sats, currency, usdPerBsv)
-  const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
+  const explorer = isExplorerTxid(entry.txid)
+    ? txExplorerUrl(entry.txid!, chain)
+    : null
   const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const ready = isWallet || item || iconReady
+
+  const retryAttempt = async () => {
+    if (!entry || attemptFate.kind !== 'retry' || retrying) return
+    setRetrying(true)
+    setAttemptError(null)
+    try {
+      const result = await retrySpendAttempt(entry, chain)
+      // A pre-tx failure creates a fresh row; a signed attempt keeps this row
+      // and rebroadcasts its original BEEF. Activity reflects either outcome.
+      clearNavChild()
+      if (result.kind === 'reopenPayment') openSendFlow(result.toAddress)
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setAttemptError(message)
+      toastError('Retry failed', message)
+      playWalletSound('error')
+      // The failed retry may have changed spendability; classify again.
+      setAttemptFate({ kind: 'checking' })
+      const next = await resolveSpendAttemptFate(entry, chain)
+      setAttemptFate(next)
+    } finally {
+      setRetrying(false)
+    }
+  }
+
+  const clearAttempt = async () => {
+    if (!entry || clearing) return
+    const confirmed = window.confirm(
+      'Clear this send from Activity? This releases the local reservations it left behind. It does not cancel a transfer already delivered to the recipient.',
+    )
+    if (!confirmed) return
+    setClearing(true)
+    setAttemptError(null)
+    try {
+      const { removed } = await clearSpendAttempt(entry)
+      if (removed) clearNavChild()
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setAttemptError(message)
+      toastError('Clear failed', message)
+    } finally {
+      setClearing(false)
+    }
+  }
 
   return (
     <div
@@ -248,7 +361,11 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               />
             )
           ) : isWallet ? (
-            spent ? <SendIcon size={16} /> : <ReceiveIcon size={16} />
+            spent ? (
+              <SendIcon size={16} />
+            ) : (
+              <ReceiveIcon size={16} />
+            )
           ) : (
             <AppAvatar
               origin={entry.origin}
@@ -261,7 +378,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         {ready ? (
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
-              <strong className="payment-details-title">{activityEntryTitle(entry)}</strong>
+              <strong className="payment-details-title">
+                {activityEntryTitle(entry)}
+              </strong>
               {explorer ? (
                 <button
                   type="button"
@@ -276,11 +395,11 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               {showPending
                 ? pendingLabel
                 : failed && failureReason
-                  ? failureReason
-                  : new Date(entry.at).toLocaleString(undefined, {
-                      dateStyle: 'medium',
-                      timeStyle: 'short',
-                    })}
+                ? failureReason
+                : new Date(entry.at).toLocaleString(undefined, {
+                    dateStyle: 'medium',
+                    timeStyle: 'short',
+                  })}
             </p>
           </div>
         ) : (
@@ -386,6 +505,50 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
               </>
             ) : null}
           </dl>
+
+          {attemptFate.kind !== 'notAttempt' &&
+          attemptFate.kind !== 'confirmed' ? (
+            <section className="payment-attempt-actions" aria-live="polite">
+              <strong>
+                {isFailedActivity(entry) ? 'Failed send' : 'Unconfirmed send'}
+              </strong>
+              <p>
+                {attemptFate.kind === 'checking'
+                  ? 'Checking confirmation and whether the funds are still spendable…'
+                  : attemptFate.message}
+              </p>
+              {attemptError ? (
+                <p className="form-error">{attemptError}</p>
+              ) : null}
+              <div className="payment-attempt-buttons">
+                {attemptFate.kind === 'retry' ? (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    disabled={retrying || clearing}
+                    onClick={() => void retryAttempt()}
+                  >
+                    {retrying
+                      ? 'Retrying…'
+                      : attemptFate.action === 'reopenPayment'
+                      ? 'Send again'
+                      : 'Retry send'}
+                  </button>
+                ) : null}
+                {(attemptFate.kind === 'retry' ||
+                  (attemptFate.kind === 'refuse' && attemptFate.mayClear)) && (
+                  <button
+                    type="button"
+                    className="btn btn-danger"
+                    disabled={retrying || clearing}
+                    onClick={() => void clearAttempt()}
+                  >
+                    {clearing ? 'Clearing…' : 'Clear from Activity'}
+                  </button>
+                )}
+              </div>
+            </section>
+          ) : null}
         </>
       )}
     </div>

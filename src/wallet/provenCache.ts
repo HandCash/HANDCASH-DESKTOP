@@ -288,8 +288,86 @@ export function rememberGenesisAttempt(outpoint: string, now = Date.now()): void
   }
 }
 
+const GENESIS_FAILURE_KEY = 'handcash.collectables.genesisFailure.v1'
+const GENESIS_FAILURE_MAX_ENTRIES = 200
+
+/**
+ * Why the last lineage walk for a tip did not produce a proof.
+ *
+ * `invalid` is a verdict about the item — the chain says it cannot be proven.
+ * Everything else is a verdict about the attempt, and is worth retrying. Keeping
+ * them apart is the difference between telling someone their item is stuck and
+ * telling them it is unprovable.
+ */
+export type GenesisFailureKind = 'aborted' | 'unavailable' | 'overBudget' | 'invalid'
+
+export type GenesisFailure = { kind: GenesisFailureKind; reason: string; at: number }
+
+let genesisFailures: Map<string, GenesisFailure> | null = null
+
+function loadGenesisFailures(): Map<string, GenesisFailure> {
+  if (genesisFailures) return genesisFailures
+  genesisFailures = new Map()
+  try {
+    const raw = durableGetItem(GENESIS_FAILURE_KEY)
+    if (!raw) return genesisFailures
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    for (const [outpoint, value] of Object.entries(parsed)) {
+      const entry = value as Partial<GenesisFailure>
+      if (typeof entry?.kind !== 'string' || typeof entry?.reason !== 'string') continue
+      genesisFailures.set(key(outpoint), {
+        kind: entry.kind as GenesisFailureKind,
+        reason: entry.reason,
+        at: typeof entry.at === 'number' ? entry.at : 0,
+      })
+    }
+  } catch {
+    // Diagnostics only — losing them costs an explanation, not correctness.
+  }
+  return genesisFailures
+}
+
+function persistGenesisFailures(map: Map<string, GenesisFailure>): void {
+  try {
+    durableSetItem(GENESIS_FAILURE_KEY, JSON.stringify(Object.fromEntries(map)))
+  } catch {
+    // Diagnostics only.
+  }
+}
+
+export function rememberGenesisFailure(
+  outpoint: string,
+  kind: GenesisFailureKind,
+  reason: string,
+  now = Date.now(),
+): void {
+  const map = loadGenesisFailures()
+  const k = key(outpoint)
+  map.delete(k)
+  map.set(k, { kind, reason, at: now })
+  if (map.size > GENESIS_FAILURE_MAX_ENTRIES) {
+    let drop = map.size - GENESIS_FAILURE_MAX_ENTRIES
+    for (const existing of map.keys()) {
+      if (drop-- <= 0) break
+      map.delete(existing)
+    }
+  }
+  persistGenesisFailures(map)
+}
+
+export function getGenesisFailure(outpoint: string): GenesisFailure | null {
+  return loadGenesisFailures().get(key(outpoint)) ?? null
+}
+
+export function clearGenesisFailure(outpoint: string): void {
+  const map = loadGenesisFailures()
+  if (!map.delete(key(outpoint))) return
+  persistGenesisFailures(map)
+}
+
 export function resetProvenCacheForTests(): void {
   verdicts = null
   originCommitments = null
   genesisAttempts = null
+  genesisFailures = null
 }

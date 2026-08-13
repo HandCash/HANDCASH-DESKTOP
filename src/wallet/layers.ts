@@ -34,7 +34,9 @@
  *     address). There is no broadcast-then-notify path; `peerDeliver` has no
  *     sender-broadcast edge. After inbox delivery, sender silently `postBeef`
  *     (`confirmBroadcast`) so the tx is on-chain even if the payee never
- *     broadcasts. Remittance ± inline BEEF on `sendMessage`.
+ *     broadcasts. A user retry re-enters `confirmBroadcast` with the same signed
+ *     BEEF only when the original tip remains unspent; it never creates a
+ *     competing spend. Remittance ± inline BEEF on `sendMessage`.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
@@ -78,6 +80,7 @@ export const WALLET_LAYER_MODULES = {
     'authenticityMachine.ts',
     'collectableSendMachine.ts',
     'itemSendMachine.ts',
+    'spendAttempt.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
     'bsvSendMachine.ts',
@@ -120,8 +123,16 @@ export const WALLET_LAYER_MODULES = {
     'historyEmptyGuard.ts',
     'recompose.ts',
   ],
-  balanceView: ['session.ts#fetchBalanceSats', 'layers.ts#inspectLocalToolboxState'],
-  health: ['walletHealth.ts', 'cloudBackupHealth.ts', 'backupStatus.ts', 'walletRuntimeStatus.ts'],
+  balanceView: [
+    'session.ts#fetchBalanceSats',
+    'layers.ts#inspectLocalToolboxState',
+  ],
+  health: [
+    'walletHealth.ts',
+    'cloudBackupHealth.ts',
+    'backupStatus.ts',
+    'walletRuntimeStatus.ts',
+  ],
   coordinator: [
     'walletCoordinatorMachine.ts',
     'walletCoordinator.ts',
@@ -159,7 +170,8 @@ async function countOutputs(basket: string): Promise<number> {
   if (!active) return 0
   try {
     const result = await active.wallet.listOutputs({ basket, limit: 1 })
-    if (Number.isFinite(result.totalOutputs)) return Math.max(0, Math.trunc(result.totalOutputs))
+    if (Number.isFinite(result.totalOutputs))
+      return Math.max(0, Math.trunc(result.totalOutputs))
     return result.outputs?.length ?? 0
   } catch {
     return 0
@@ -193,14 +205,19 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     }
   }
 
-  const [spendableSats, defaultOutputCount, oneSatOutputCount, bsv21OutputCount, actionCount] =
-    await Promise.all([
-      fetchBalanceSats(active.wallet).catch(() => 0),
-      countOutputs('default'),
-      countOutputs('1sat'),
-      countOutputs('bsv21'),
-      countActions(),
-    ])
+  const [
+    spendableSats,
+    defaultOutputCount,
+    oneSatOutputCount,
+    bsv21OutputCount,
+    actionCount,
+  ] = await Promise.all([
+    fetchBalanceSats(active.wallet).catch(() => 0),
+    countOutputs('default'),
+    countOutputs('1sat'),
+    countOutputs('bsv21'),
+    countActions(),
+  ])
 
   // 1sat / bsv21 from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must

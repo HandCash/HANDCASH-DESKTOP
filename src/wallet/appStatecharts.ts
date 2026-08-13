@@ -259,6 +259,7 @@ const ITEM_SEND = `stateDiagram-v2
   direction LR
   [*] --> idle
   idle --> building : START with ItemSettlePath
+  idle --> confirmBroadcast : RETRY_BROADCAST\\nexisting signed BEEF
   building --> createAction : BUILT
   createAction --> chooseSettle : CREATED with txid\\nnoSend
   createAction --> signing : CREATED needs sign
@@ -272,6 +273,10 @@ const ITEM_SEND = `stateDiagram-v2
   senderFallback --> done : BROADCASTED
   selfReceive --> done : BROADCASTED
   externalBroadcast --> done : BROADCASTED
+  note right of confirmBroadcast
+    Initial send: silent postBeef after inbox.
+    Retry: same signed BEEF, never a competing spend.
+  end note
   note right of peerDeliver
     No BROADCASTED edge.
     Silent sender postBeef after inbox.
@@ -604,6 +609,7 @@ const SPEND_SIGN = `stateDiagram-v2
   signedNoSend --> peerDeliver : ItemSettlePath peerDeliver
   signedNoSend --> selfReceive : selfReceive
   signedNoSend --> externalBroadcast : pasted address
+  prepare --> confirmBroadcast : retry unconfirmed signed BEEF\\nsource still unspent
   peerDeliver --> confirmBroadcast : messagebox accepted
   confirmBroadcast --> postBeef : silent sender postBeef
   peerDeliver --> senderFallback : DELIVER_FAILED
@@ -724,13 +730,15 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'spendSign',
     label: 'Sign / broadcast',
-    caption: 'noSend sign → ItemSettlePath (peer first) → optional sender postBeef',
+    caption:
+      'noSend sign → ItemSettlePath (peer first) → optional sender postBeef',
     source: SPEND_SIGN,
   },
   {
     id: 'txUtxoLifecycle',
     label: 'Tx / UTXO lifecycle',
-    caption: 'Dual-layer confirmation — ARC status + soft-locks; MINED only after SPV BUMP',
+    caption:
+      'Dual-layer confirmation — ARC status + soft-locks; MINED only after SPV BUMP',
     source: TX_UTXO_LIFECYCLE,
   },
   {
@@ -796,7 +804,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendPath',
     label: 'Send path',
-    caption: 'chooseSendPath — TipKind → p2pkhSend | refuse (150-proven unknown ok)',
+    caption:
+      'chooseSendPath — TipKind → p2pkhSend | refuse (150-proven unknown ok)',
     source: COLLECTABLE_SEND_PATH,
   },
   {
@@ -808,7 +817,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'itemSend',
     label: 'Item send',
-    caption: 'itemSendMachine — noSend sign → peerDeliver | self | external',
+    caption: 'itemSendMachine — noSend sign/settle + safe signed-BEEF retry',
     source: ITEM_SEND,
   },
   {

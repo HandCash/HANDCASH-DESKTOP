@@ -208,17 +208,18 @@ function pumpQueue(): void {
  * While a connect/pay prompt is open, yield the wallet FIFO the same way a
  * queued spend does — so BRC-39 encrypt/upload cannot sit ahead of Approve.
  */
-let permissionSpendPriorityHeld = false
+let releasePermissionSpendPriority: (() => void) | null = null
 function syncPermissionSpendPriority(): void {
   void import('./walletCoordinator')
-    .then(({ requestSpendPriority, releaseSpendPriority }) => {
+    .then(({ requestSpendPriority }) => {
+      // Re-read intent inside the callback: the prompt may have resolved while
+      // the dynamic import was in flight.
       const want = current != null || queue.length > 0
-      if (want && !permissionSpendPriorityHeld) {
-        requestSpendPriority()
-        permissionSpendPriorityHeld = true
-      } else if (!want && permissionSpendPriorityHeld) {
-        releaseSpendPriority()
-        permissionSpendPriorityHeld = false
+      if (want && !releasePermissionSpendPriority) {
+        releasePermissionSpendPriority = requestSpendPriority('permission-prompt')
+      } else if (!want && releasePermissionSpendPriority) {
+        releasePermissionSpendPriority()
+        releasePermissionSpendPriority = null
       }
     })
     .catch(() => {
