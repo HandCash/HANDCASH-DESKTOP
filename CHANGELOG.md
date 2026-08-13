@@ -2,9 +2,8 @@
 
 ## [1.2.227] - 2026-08-13
 
-### Changed
-
-- Patch release (every push must ship a new version).
+### Fixed
+- **Pixel Foxes (and other batch-mint) sends no longer omit BRC-150 remittance for being over budget.** The fat part is the shared origin mint — hundreds of sibling inscriptions in one transaction — not the tip→origin path. Remittance slims those bodies to txid-only (BRC-96), keeps the tip raw, and the receiver hydrates the shared origin once (cached for the whole collection). Extending a prior remittance clears a stale AtomicBEEF subject so the next hop still verifies.
 
 ## [1.2.226] - 2026-08-13
 
