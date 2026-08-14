@@ -96,7 +96,12 @@ describe('bsv21Issuer', () => {
     }
     expect(isBsv21IdentityMintArgs('createAction', args)).toBe(true)
     expect(isBsv21IdentityMintArgs('signAction', args)).toBe(false)
-    expect(bsv21IdentityMintHints(args)).toEqual({ sym: 'DEMO', amt: '1000' })
+    expect(bsv21IdentityMintHints(args)).toEqual({
+      sym: 'DEMO',
+      amt: '1000',
+      dec: null,
+      icon: null,
+    })
     expect(
       isBsv21IdentityMintArgs('createAction', {
         outputs: [{ satoshis: 1000, basket: 'default' }],
@@ -148,6 +153,8 @@ describe('bsv21Issuer', () => {
     expect(bsv21IdentityMintHints(mintArgs)).toEqual({
       sym: 'DEMO',
       amt: '500',
+      dec: null,
+      icon: null,
     })
   })
 

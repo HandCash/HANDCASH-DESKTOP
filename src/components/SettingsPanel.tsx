@@ -8,6 +8,12 @@ import {
   setWalletSfxEnabled,
   subscribeWalletSfx,
 } from '../wallet/soundPrefs'
+import {
+  getAppearancePreference,
+  setAppearancePreference,
+  subscribeAppearance,
+  type AppearancePreference,
+} from '../wallet/themePrefs'
 import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
 import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
@@ -88,6 +94,12 @@ const UPDATE_MODES: { value: UpdateMode; label: string; description: string }[] 
   },
 ]
 
+const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
+  { value: 'system', label: 'System' },
+  { value: 'light', label: 'Light' },
+  { value: 'dark', label: 'Dark' },
+]
+
 function phaseLabel(phase: string, error: string | null): string {
   switch (phase) {
     case 'checking':
@@ -130,6 +142,7 @@ export function SettingsPanel() {
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
+  const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
   const [logPath, setLogPath] = useState<string | null>(null)
   const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
   const [uploadingLogs, setUploadingLogs] = useState(false)
@@ -146,6 +159,14 @@ export function SettingsPanel() {
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
+
+  useEffect(
+    () =>
+      subscribeAppearance((pref) => {
+        setAppearance(pref)
+      }),
+    [],
+  )
 
   useEffect(() => {
     const bump = () => setStatusTick((n) => n + 1)
@@ -201,6 +222,35 @@ export function SettingsPanel() {
 
       <SettingsSection title="Application" part="application">
         <ul className="settings-list">
+          <li className="settings-row settings-row-static">
+            <div className="settings-update-row">
+              <span className="settings-row-body">
+                <label className="settings-row-label" htmlFor="settings-appearance">
+                  Appearance
+                </label>
+              </span>
+              <select
+                id="settings-appearance"
+                className="settings-interval-select"
+                value={appearance}
+                data-aeon-part="appearance"
+                data-aeon-state={appearance}
+                onChange={(e) => {
+                  playWalletSound('soft')
+                  const next = e.target.value as AppearancePreference
+                  setAppearancePreference(next)
+                  setAppearance(next)
+                }}
+              >
+                {APPEARANCE_OPTIONS.map((opt) => (
+                  <option key={opt.value} value={opt.value}>
+                    {opt.label}
+                  </option>
+                ))}
+              </select>
+            </div>
+          </li>
+
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
               <span className="settings-row-body">

@@ -718,6 +718,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         dispatchWalletMethod(active.wallet, method, args, originator),
       )
     } else {
+      // Reads share the wallet with background ingest but must not raise spend
+      // priority. Mint Studio / explorers poll `listOutputs` while a ticker is
+      // open; each hold was starving the Dashboard poll and firing the
+      // "Network slow" soft deadline. Mutating methods already raise priority
+      // inside `runExclusiveSpend`.
       result = await dispatchWalletMethod(active.wallet, method, args, originator)
     }
 

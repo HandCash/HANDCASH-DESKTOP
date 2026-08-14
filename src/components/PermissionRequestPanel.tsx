@@ -299,18 +299,20 @@ export function PermissionRequestPanel({
                 />
               </label>
               <span className="auto-pay-sep">every</span>
-              <label className="auto-pay-field auto-pay-field-hours">
-                <input
-                  type="number"
-                  min="1"
-                  step="1"
-                  inputMode="numeric"
-                  value={windowHours}
-                  onChange={(e) => setWindowHours(e.target.value)}
-                  aria-label="Hours"
-                />
-              </label>
-              <span className="auto-pay-sep">hours</span>
+              <span className="auto-pay-unit">
+                <label className="auto-pay-field auto-pay-field-hours">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={windowHours}
+                    onChange={(e) => setWindowHours(e.target.value)}
+                    aria-label="Hours"
+                  />
+                </label>
+                <span className="auto-pay-sep">hours</span>
+              </span>
             </div>
           ) : null}
         </div>

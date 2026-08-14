@@ -15,6 +15,8 @@ const FIT_PADDING = 24
 const DRAG_CLICK_MAX_PX = 6
 
 function ensureMermaid(mermaid: typeof import('mermaid').default) {
+  const light =
+    typeof document !== 'undefined' && document.documentElement.dataset.aeonMode === 'light'
   mermaid.initialize({
     startOnLoad: false,
     securityLevel: 'loose',
@@ -22,19 +24,33 @@ function ensureMermaid(mermaid: typeof import('mermaid').default) {
     htmlLabels: true,
     wrap: true,
     fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
-    themeVariables: {
-      fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
-      fontSize: '13px',
-      primaryColor: '#1a2420',
-      primaryTextColor: '#e8f5ef',
-      primaryBorderColor: '#38d385',
-      lineColor: '#8b9a92',
-      secondaryColor: '#121a16',
-      tertiaryColor: '#0c1210',
-      noteBkgColor: '#15201a',
-      noteTextColor: '#c5d4cb',
-      noteBorderColor: '#2a3d34',
-    },
+    themeVariables: light
+      ? {
+          fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
+          fontSize: '13px',
+          primaryColor: '#e8f5ef',
+          primaryTextColor: '#0a1210',
+          primaryBorderColor: '#12a85a',
+          lineColor: '#5c6560',
+          secondaryColor: '#f0f4f1',
+          tertiaryColor: '#ffffff',
+          noteBkgColor: '#eef5f0',
+          noteTextColor: '#1a2420',
+          noteBorderColor: '#b8c9be',
+        }
+      : {
+          fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
+          fontSize: '13px',
+          primaryColor: '#1a2420',
+          primaryTextColor: '#e8f5ef',
+          primaryBorderColor: '#38d385',
+          lineColor: '#8b9a92',
+          secondaryColor: '#121a16',
+          tertiaryColor: '#0c1210',
+          noteBkgColor: '#15201a',
+          noteTextColor: '#c5d4cb',
+          noteBorderColor: '#2a3d34',
+        },
     flowchart: {
       useMaxWidth: false,
       htmlLabels: true,

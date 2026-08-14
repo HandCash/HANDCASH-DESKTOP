@@ -367,6 +367,31 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
   return false
 }
 
+/**
+ * True when an item createAction issues a new collectable rather than moving
+ * one this wallet already holds.
+ *
+ * Issuance spends only funding: the item output is a fresh inscription, so
+ * there is no tip to name as an input. That is the whole distinction — an
+ * approval that says "Send item" when nothing is leaving the wallet teaches
+ * the user to ignore the word "send".
+ */
+export function isItemIssuanceArgs(method: string, args: unknown): boolean {
+  if (method !== 'createAction') return false
+  if (!isItemSpendArgs(method, args)) return false
+
+  const body = asRecord(args)
+  const inputs = Array.isArray(body.inputs) ? body.inputs : []
+  if (inputs.length > 0) return false
+
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  return outputs.some((raw) => {
+    if (!raw || typeof raw !== 'object') return false
+    const out = raw as Record<string, unknown>
+    return out.satoshis === 1 && isItemBasket(out.basket)
+  })
+}
+
 /** Basket insertion of collectables (receive / import). */
 export function isItemReceiveArgs(method: string, args: unknown): boolean {
   if (method !== 'internalizeAction') return false

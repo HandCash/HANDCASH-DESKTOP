@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.228] - 2026-08-14
+
+### Changed
+- **Arcade is the BRC wallet broadcaster**, with status wired into the existing dual-layer confirmation path. Mainnet submits to Arcade only (legacy Taal/GP ARC stays on HandCash Cloud for free consolidations). A shared callback token filters Arcade SSE `/events`; those statuses feed `applyDualLayerArc` / SPV finalize, and balance refresh catch-up pulls missed events. No wallet webhook URL — Desktop/Mobile listen over SSE.
+- **Minting a collectable asks “Mint item”**, not “Send item”. Issuance has no item tip input; the permission copy names it as mint so Auto-pay / Pay wording is not trained on the wrong verb.
+- **Send amount and recipient chrome no longer jump while typing.** Reserved slots hold the USD note and resolved-handle line so the caret and buttons stay put.
+- Theme prefs / HandCash mark polish and Settings surface for appearance.
+
 ## [1.2.227] - 2026-08-13
 
 ### Fixed

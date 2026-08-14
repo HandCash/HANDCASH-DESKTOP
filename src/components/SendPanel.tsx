@@ -353,17 +353,25 @@ export function SendPanel({
               <p className="send-amount-unit" aria-hidden>
                 {currency === 'usd' ? 'USD' : 'BSV'}
               </p>
-              {amountSecondary ? (
-                <p className="send-amount-secondary">≈ {amountSecondary}</p>
-              ) : null}
+              {/*
+                One reserved line for whichever note applies. Mounting these as
+                they became true moved the amount under the caret while it was
+                being typed.
+              */}
+              <div className="send-amount-note" aria-live="polite">
+                {currency === 'usd' && usdPerBsv == null ? (
+                  <span className="send-amount-warning">
+                    USD rate unavailable — switch to BSV or refresh
+                  </span>
+                ) : amountSecondary ? (
+                  <span className="send-amount-secondary">≈ {amountSecondary}</span>
+                ) : null}
+              </div>
               <p className="send-available">
                 Available {formatPrimaryFromSats(balanceSats, currency, usdPerBsv)} ·{' '}
                 {formatSecondaryFromSats(balanceSats, currency, usdPerBsv)}
                 {reviewBusy ? ' · refreshing…' : ''}
               </p>
-              {currency === 'usd' && usdPerBsv == null ? (
-                <p className="send-amount-warning">USD rate unavailable — switch to BSV or refresh</p>
-              ) : null}
             </div>
 
             <div className="send-side">
@@ -384,11 +392,14 @@ export function SendPanel({
                 <p className="friend-recipient-hint send-recipient-hint">
                   PeerPay links, $handles, and identity keys resolve to a payment address on this network.
                 </p>
-                {sendSnap.context.friendLabel && (
-                  <p className="friend-recipient-hint">
-                    Sending to <strong>{sendSnap.context.friendLabel}</strong>
-                  </p>
-                )}
+                {/* Reserved so resolving a handle does not shift the buttons. */}
+                <div className="send-resolved-slot" aria-live="polite">
+                  {sendSnap.context.friendLabel ? (
+                    <p className="friend-recipient-hint">
+                      Sending to <strong>{sendSnap.context.friendLabel}</strong>
+                    </p>
+                  ) : null}
+                </div>
                 {showFriendMatches && friendMatches.length > 0 && (
                   <ul className="friend-suggest-list send-friend-suggest" role="listbox">
                     {friendMatches.map((friend) => (
@@ -431,17 +442,21 @@ export function SendPanel({
             <div className="send-amount-hero">
               <p className="send-eyebrow">You’re sending</p>
               <p className="send-confirm-amount">{amountLabel}</p>
-              {amountSecondary ? (
-                <p className="send-amount-secondary">≈ {amountSecondary}</p>
-              ) : null}
+              <div className="send-amount-note">
+                {amountSecondary ? (
+                  <span className="send-amount-secondary">≈ {amountSecondary}</span>
+                ) : null}
+              </div>
             </div>
             <div className="send-side">
               <p className="send-confirm-to">
                 to <strong>{recipientLabel}</strong>
               </p>
-              {sendSnap.context.friendLabel ? (
-                <p className="mono send-confirm-address">{sendSnap.context.to}</p>
-              ) : null}
+              <div className="send-resolved-slot">
+                {sendSnap.context.friendLabel ? (
+                  <p className="mono send-confirm-address">{sendSnap.context.to}</p>
+                ) : null}
+              </div>
               <div className="actions send-actions">
                 <button className="btn btn-primary" onClick={confirmSend}>
                   Confirm

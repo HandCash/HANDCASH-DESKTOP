@@ -355,10 +355,12 @@ export async function refreshFromChainExclusive(
           )
         })
         .catch(() => {})
+      // Soft deadline is a UI comfort: clear Syncing while beef / SPV still
+      // finish under the lock. Do not claim the network is slow — that pill
+      // stuck after every long pass even when funds were fine.
       setSyncHealth({
         phase: 'ok',
-        message:
-          'Network refresh took too long — showing local balance. Tap Sync to retry.',
+        message: null,
         heldOneSats: heldCount,
         pendingTips,
       })

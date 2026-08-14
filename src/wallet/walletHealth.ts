@@ -70,12 +70,13 @@ function armSyncingWatchdog(): void {
     } catch {
       /* ignore */
     }
-    // Not a hard failure — local keys/balance are fine; the network pass stalled
-    // (Bitails / Chaintracks / beef SPV). Avoid the "Sync failed" error pill.
+    // Not a hard failure — local keys/balance are fine; the Syncing phase just
+    // outlived the pass (history pull, soft ingest, stalled provider). Clear
+    // the pill quietly: labeling this "Network slow" made every long pass look
+    // like an outage when funds were already usable.
     setSyncHealth({
       phase: 'ok',
-      message:
-        'Network refresh took too long — showing local balance. Tap Sync to retry.',
+      message: null,
     })
   }, SYNCING_WATCHDOG_MS)
 }

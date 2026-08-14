@@ -4,9 +4,12 @@ For app developers (foxplorer, Pixel War, any BRC-100 client). This is the
 **actual `listOutputs` contract** the HandCash wallet honors today — copy the
 snippets verbatim.
 
-Companion to [`PR-200-RESPONSE.md`](./PR-200-RESPONSE.md). Storage and
-permissions are **different layers**: storage basket is always `1sat`;
-permission scope travels as `p 1sat <scope>`.
+Companion to [`p1sat-permission-scheme.md`](./p1sat-permission-scheme.md)
+(credits [BRCs PR #200](https://github.com/bsv-blockchain/BRCs/pull/200) as
+source material and documents HandCash deltas) and
+[`PR-200-RESPONSE.md`](./PR-200-RESPONSE.md). Storage and permissions are
+**different layers**: storage basket is always `1sat`; permission scope
+travels as `p 1sat <scope>`.
 
 ---
 

@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import {
   isItemBasket,
+  isItemIssuanceArgs,
+  isItemSpendArgs,
   isUnsupportedPBasket,
   itemViewGranted,
   mergeItemViewGrant,
@@ -113,5 +115,45 @@ describe('BRC-99 p 1sat baskets', () => {
       origins: [],
       canSend: true,
     })
+  })
+})
+
+describe('telling an item mint from an item send', () => {
+  const mint = {
+    description: 'Mint Studio Item',
+    labels: ['1sat', 'handcash-mint-studio', 'item'],
+    outputs: [
+      {
+        lockingScript: '00',
+        satoshis: 1,
+        basket: '1sat',
+        tags: ['name:Studio Item', 'app:mint-studio'],
+      },
+    ],
+  }
+
+  it('reads a fresh inscription as issuance', () => {
+    expect(isItemIssuanceArgs('createAction', mint)).toBe(true)
+    // Still an item action: never covered by Pay or Auto-pay.
+    expect(isItemSpendArgs('createAction', mint)).toBe(true)
+  })
+
+  it('refuses issuance once a tip is being spent', () => {
+    const send = {
+      ...mint,
+      inputs: [{ outpoint: `${'ab'.repeat(32)}.0`, inputDescription: '1sat tip' }],
+    }
+    expect(isItemIssuanceArgs('createAction', send)).toBe(false)
+    expect(isItemSpendArgs('createAction', send)).toBe(true)
+  })
+
+  it('leaves plain payments and signAction alone', () => {
+    expect(isItemIssuanceArgs('signAction', mint)).toBe(false)
+    expect(
+      isItemIssuanceArgs('createAction', {
+        description: 'Pay',
+        outputs: [{ lockingScript: '00', satoshis: 5000 }],
+      }),
+    ).toBe(false)
   })
 })

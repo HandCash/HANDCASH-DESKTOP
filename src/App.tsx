@@ -176,7 +176,13 @@ export function App() {
           phase: 'syncing',
           message: 'Checking for a newer history backup',
         })
-        await softPullHistoryIfRemoteNewer()
+        try {
+          await softPullHistoryIfRemoteNewer()
+        } finally {
+          // History pull can outlive the syncing watchdog; never leave its
+          // message (or a cleared-but-stuck Syncing phase) for chain ingest.
+          setSyncHealth({ phase: 'idle', message: null })
+        }
       }
       const sats = await refreshFromChain({ forceReview: true, announceReceive: true })
       if (sats != null) send({ type: 'REFRESHED', balanceSats: sats })

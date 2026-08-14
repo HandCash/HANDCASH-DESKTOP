@@ -93,10 +93,8 @@ export const itemSendMachine = setup({
     createNeedsSign: ({ event }) =>
       event.type === 'CREATED' &&
       !(typeof event.txid === 'string' && event.txid.length > 0),
-    chosePeerDeliver: ({ context }) =>
-      context.settlePath?.settle === 'peerDeliver',
-    choseSelfReceive: ({ context }) =>
-      context.settlePath?.settle === 'selfReceive',
+    chosePeerDeliver: ({ context }) => context.settlePath?.settle === 'peerDeliver',
+    choseSelfReceive: ({ context }) => context.settlePath?.settle === 'selfReceive',
     choseExternalBroadcast: ({ context }) =>
       context.settlePath?.settle === 'externalBroadcast',
   },

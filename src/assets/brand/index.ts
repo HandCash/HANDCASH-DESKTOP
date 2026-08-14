@@ -1,6 +1,10 @@
 /**
  * HandCash brand assets for official HandCash Desktop (sourced from handcash.io + Connect SDK).
  * Prefer PNG marks for pixel fidelity; SVGs are vector recreations for theming.
+ *
+ * markGreenPng is handcash.io/images/handcash_v6_icon.png verbatim. Keep it
+ * alpha-transparent: an earlier copy had the black plate flattened into the
+ * bitmap, which no CSS can remove on the light sheet.
  */
 import markGreenPng from './handcash-mark-green.png'
 import markDarkPng from './handcash-mark-dark.png'

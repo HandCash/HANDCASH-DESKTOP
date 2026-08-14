@@ -246,11 +246,14 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                 <p className="friend-recipient-hint send-recipient-hint">
                   Handles and identity keys resolve to a payment address on this network.
                 </p>
-                {friendLabel && (
-                  <p className="friend-recipient-hint">
-                    Sending to <strong>{friendLabel}</strong>
-                  </p>
-                )}
+                {/* Reserved so resolving a handle does not shift the buttons. */}
+                <div className="send-resolved-slot" aria-live="polite">
+                  {friendLabel ? (
+                    <p className="friend-recipient-hint">
+                      Sending to <strong>{friendLabel}</strong>
+                    </p>
+                  ) : null}
+                </div>
                 {error && stage === 'edit' ? (
                   <p className="error" role="status">
                     {error}

@@ -6,6 +6,8 @@ Brandon Cryderman / HandCash (brandongcryderman@gmail.com)
 
 This is not a rejection of the series. Documenting live 1Sat behavior is overdue and welcome. The ask is a **clear ideal filing contract**: storage and permissions are different layers.
 
+**Canonical write-up (credits PR #200 as source, then lists HandCash deltas):** [`p1sat-permission-scheme.md`](./p1sat-permission-scheme.md).
+
 ---
 
 ## 1. Ground covered (same map as 300–307)

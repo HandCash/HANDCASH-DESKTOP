@@ -6,6 +6,7 @@ import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
   DEFAULT_ITEM_ACCESS,
   isItemBasket,
+  isItemIssuanceArgs,
   isItemReceiveArgs,
   isItemSpendArgs,
   itemViewGranted,
@@ -524,6 +525,31 @@ export function summarizeAction(method: string, args: unknown): {
       summary: description,
       amountSats: total > 0 ? total : undefined,
       amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
+      details,
+    }
+  }
+
+  if (method === 'createAction' && isItemIssuanceArgs(method, args)) {
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Mint a collectable'
+    const outputs = Array.isArray(body.outputs) ? body.outputs : []
+    const names = outputs.flatMap((raw) => {
+      if (!raw || typeof raw !== 'object') return []
+      const tags = (raw as { tags?: unknown }).tags
+      if (!Array.isArray(tags)) return []
+      const name = tags.find(
+        (t): t is string => typeof t === 'string' && t.toLowerCase().startsWith('name:'),
+      )
+      return name ? [name.slice('name:'.length)] : []
+    })
+    for (const name of names) details.push(`Item: ${name}`)
+    details.push('Adds a new collectable to your inventory')
+    details.push('Not covered by Pay or Auto-pay')
+    return {
+      title: 'Mint item',
+      summary: description,
       details,
     }
   }

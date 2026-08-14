@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, shell } from 'electron'
+import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -268,12 +268,24 @@ function installAppMenu(): void {
 }
 
 function createWindow(): void {
+  const appearance = durableGet('handcash.appearance')
+  let light = false
+  if (appearance === 'light') light = true
+  else if (appearance === 'dark') light = false
+  else {
+    try {
+      light = nativeTheme.shouldUseDarkColors === false
+    } catch {
+      light = false
+    }
+  }
+
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
     minWidth: 880,
     minHeight: 600,
-    backgroundColor: '#000000',
+    backgroundColor: light ? '#f6f7f6' : '#000000',
     title: 'HandCash',
     icon: getIconPath(),
     show: false,

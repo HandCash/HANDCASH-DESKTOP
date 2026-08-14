@@ -25,6 +25,11 @@
   --dark-green: 143 58% 54%;
   --bg-light: 0 0% 15%;
   --radius: 0.5rem;
+
+  /* Brand neon, independent of --primary. On the light sheet --primary is
+     near-black (as on handcash.io), so anything that must stay green for
+     *meaning* — the page glow, success, the live dot — reads this instead. */
+  --hc-brand: 143 100% 67%;
   --shadow-section: 0 1px 3px rgba(0, 0, 0, 0.25);
   --shadow-section-hover: 0 4px 12px rgba(0, 0, 0, 0.35);
 
@@ -39,14 +44,95 @@
   --hc-accent: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-2: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-dim: var(--colors-aeon-accent-dim, hsl(var(--primary) / 0.14));
+  /* Currency figures. On black the neon accent is the right ink; on the light
+     sheet a mid green reads loud next to black chrome, so it deepens there. */
+  --hc-accent-deep: var(--hc-accent);
   --hc-danger: var(--colors-aeon-danger, hsl(var(--destructive)));
-  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--primary) / 0.18), transparent 55%),
+  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.18), transparent 55%),
     radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.12), transparent 50%),
     var(--hc-bg);
   --hc-font: var(--aeon-font, 'Archivo', ui-sans-serif, system-ui, sans-serif);
   --hc-display: var(--aeon-font-display, 'Syncopate', 'Archivo', ui-sans-serif, sans-serif);
   --hc-radius: var(--aeon-radius, var(--radius));
   --hc-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
+
+  /* Recessed surfaces. Were literal rgba(0,0,0,x) everywhere, which is invisible
+     on a white sheet — inset must darken on black and on paper alike. */
+  --hc-sunken-soft: rgba(0, 0, 0, 0.22);
+  --hc-sunken: rgba(0, 0, 0, 0.28);
+  --hc-sunken-strong: rgba(0, 0, 0, 0.38);
+  --hc-field: color-mix(in srgb, #0a120e 80%, #1a1a1a);
+  --hc-hover: rgba(255, 255, 255, 0.04);
+  --hc-deep: #0a100e;
+
+  /* Status inks. These were literal pastels tuned for black; as *text* they
+     collapse to ~2:1 on paper, so the light sheet re-darkens them. */
+  --hc-warn: #d4a017;
+  --hc-error: #e25555;
+  --hc-down: #ff8e8e;
+  --hc-fail: #f07178;
+  --hc-info: #b7d4ff;
+  --hc-gold: #ffd983;
+  --hc-gold-soft: #ffe3a0;
+  --hc-claimed: #e0b35a;
+}
+
+/* White sheet — HSL product tokens when Settings appearance resolves to light.
+   Aeon --colors-aeon-* come from applyBrandPalette; these keep hsl(var(--*)) paths honest. */
+html[data-aeon-mode='light'] {
+  color-scheme: light;
+
+  /* Neutrals and --primary mirror handcash.io's light :root. On paper the
+     brand's load-bearing colour is black, not green: primary fills (CTA,
+     focus ring, checkbox) are near-black with white text, and green is
+     demoted to an accent. Green keeps only the roles where it carries
+     meaning — see --hc-brand and --hc-accent. */
+  --background: 215 14% 97%;
+  --foreground: 220 12% 22%;
+  --card: 215 12% 99%;
+  --card-foreground: 220 12% 22%;
+  --popover: 215 12% 99%;
+  --popover-foreground: 220 12% 22%;
+  --primary: 0 0% 9%;
+  --primary-foreground: 0 0% 100%;
+  --secondary: 215 14% 93%;
+  --secondary-foreground: 220 12% 22%;
+  --secondary-background: 215 12% 91%;
+  --muted: 215 12% 94%;
+  --muted-foreground: 220 10% 48%;
+  --accent: 215 12% 94%;
+  --accent-foreground: 220 12% 22%;
+  --destructive: 0 84% 60%;
+  --destructive-foreground: 0 0% 100%;
+  --border: 215 14% 88%;
+  --input: 215 14% 88%;
+  --ring: 143 84% 33%;
+  --dark-green: 143 84% 33%;
+  --bg-light: 215 12% 94%;
+  --shadow-section: 0 1px 3px rgba(15, 23, 42, 0.06);
+  --shadow-section-hover: 0 4px 12px rgba(15, 23, 42, 0.08);
+  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.16), transparent 55%),
+    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.06), transparent 50%),
+    var(--hc-bg);
+  --hc-shadow: 0 16px 36px -14px rgba(15, 23, 42, 0.16);
+
+  --hc-sunken-soft: rgba(15, 23, 42, 0.03);
+  --hc-sunken: rgba(15, 23, 42, 0.045);
+  --hc-sunken-strong: rgba(15, 23, 42, 0.07);
+  --hc-field: #ffffff;
+  --hc-hover: rgba(15, 23, 42, 0.05);
+  --hc-deep: #ffffff;
+
+  --hc-accent-deep: #0b4526;
+
+  --hc-warn: #a16207;
+  --hc-error: #b91c1c;
+  --hc-down: #dc2626;
+  --hc-fail: #b91c1c;
+  --hc-info: #1d4ed8;
+  --hc-gold: #a16207;
+  --hc-gold-soft: #92610a;
+  --hc-claimed: #a16207;
 }
 
 * {
@@ -86,6 +172,14 @@ body {
   flex-shrink: 0;
   background: #000;
   box-shadow: 0 0 20px -6px hsl(var(--primary) / 0.45);
+}
+
+/* The mark is a transparent-background glyph. handcash.io sets it on its light
+   sheet with no plate, ring or glow — the black tile only exists to carry the
+   neon on the dark sheet. */
+html[data-aeon-mode='light'] .brand-logo-mark {
+  background: transparent;
+  box-shadow: none;
 }
 
 .brand-mark {
@@ -139,7 +233,7 @@ body {
   border-radius: 3px;
   border: 1px solid hsl(var(--primary) / 0.45);
   background: hsl(var(--primary) / 0.12);
-  color: hsl(var(--primary));
+  color: var(--hc-accent);
   line-height: 1.2;
   text-transform: uppercase;
 }
@@ -153,7 +247,7 @@ body {
   padding: 0 5px;
   border-radius: 3px;
   border: 1px solid hsl(var(--border));
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hc-hover);
   color: var(--hc-muted);
   line-height: 1.35;
   text-transform: uppercase;
@@ -178,7 +272,7 @@ body {
   border-radius: 999px;
   border: 1px solid hsl(var(--border));
   background: hsl(var(--secondary));
-  color: hsl(var(--primary));
+  color: var(--hc-accent);
   /* Shared by button + static pill — never let `font: inherit` wipe these. */
   font-family: inherit;
   font-size: 0.875rem;
@@ -202,15 +296,15 @@ body {
 }
 
 .status-pill[data-tone='warn'] {
-  color: #d4a017;
+  color: var(--hc-warn);
 }
 
 .status-pill[data-tone='error'] {
-  color: #e25555;
+  color: var(--hc-error);
 }
 
 .status-pill[data-tone='busy'] {
-  color: hsl(var(--primary));
+  color: var(--hc-accent);
 }
 
 .status-pill-btn {
@@ -239,12 +333,14 @@ body {
   opacity: 0.9;
 }
 
+/* Live/OK indicator: green is the meaning here, so it does not follow
+   --primary to black on the light sheet. */
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: hsl(var(--primary));
-  box-shadow: 0 0 10px hsl(var(--primary) / 0.8);
+  background: var(--hc-accent);
+  box-shadow: 0 0 10px hsl(var(--hc-brand) / 0.8);
   flex-shrink: 0;
 }
 
@@ -255,7 +351,7 @@ body {
 }
 
 .status-dot[data-tone='warn'] {
-  background: #d4a017;
+  background: var(--hc-warn);
   box-shadow: 0 0 10px rgba(212, 160, 23, 0.55);
 }
 
@@ -481,7 +577,7 @@ body {
   margin-bottom: 14px;
   border-radius: calc(var(--radius) + 2px);
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hc-sunken-strong);
 }
 
 .auth-mode-switch[aria-label='Restore method'] {
@@ -503,7 +599,7 @@ body {
   padding: 10px 12px;
   border-radius: var(--radius);
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--hc-sunken);
 }
 
 .auth-cloud-row strong {
@@ -803,7 +899,7 @@ body {
 }
 
 .balance-usd {
-  color: #ffffff;
+  color: var(--hc-text);
   letter-spacing: 0.01em;
 }
 
@@ -826,7 +922,7 @@ body {
 }
 
 .handle {
-  color: hsl(var(--primary));
+  color: var(--hc-accent);
   font-weight: 700;
   letter-spacing: 0.04em;
 }
@@ -1069,7 +1165,7 @@ body {
   letter-spacing: 0.02em;
   line-height: 1.15;
   white-space: nowrap;
-  color: var(--hc-accent);
+  color: var(--hc-accent-deep);
 }
 
 .wallet-balance .balance-secondary {
@@ -1079,7 +1175,7 @@ body {
   font-weight: 600;
   white-space: nowrap;
   flex-shrink: 0;
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .wallet-hero-topline {
@@ -1162,7 +1258,7 @@ body {
   overflow: hidden;
   box-sizing: border-box;
   border: 1px solid color-mix(in srgb, var(--hc-accent) 35%, transparent);
-  box-shadow: 0 0 0 1px rgba(87, 255, 151, 0.08);
+  box-shadow: 0 0 0 1px hsl(var(--hc-brand) / 0.08);
   animation: rise 280ms cubic-bezier(0.22, 1, 0.36, 1) both;
 }
 
@@ -1344,9 +1440,9 @@ body {
   transform: translateY(0);
 }
 
-/* Bright success — HandCash primary; black type for contrast. */
+/* Bright success — brand green, not --primary; black type for contrast. */
 .bsv-toast-cover[data-tone='success'] {
-  background: color-mix(in srgb, hsl(var(--primary)) 88%, #c8ffe0);
+  background: color-mix(in srgb, hsl(var(--hc-brand)) 88%, #c8ffe0);
   color: #0a0a0a;
 }
 
@@ -1540,7 +1636,7 @@ body {
 }
 
 .bsv-spark-down {
-  color: #ff8e8e;
+  color: var(--hc-down);
 }
 
 .bsv-change.is-up {
@@ -1548,7 +1644,7 @@ body {
 }
 
 .bsv-change.is-down {
-  color: #ff8e8e;
+  color: var(--hc-down);
 }
 
 .bsv-about {
@@ -1948,7 +2044,7 @@ button.wallet-detail-value.is-copied {
   font-family: var(--hc-display);
   font-size: 1.2rem;
   letter-spacing: 0.04em;
-  color: var(--hc-accent);
+  color: var(--hc-accent-deep);
 }
 
 .action-amount-bsv {
@@ -1961,8 +2057,8 @@ button.wallet-detail-value.is-copied {
   margin: 10px 0 8px;
   padding: 10px 12px 12px;
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.04);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hc-hover);
+  border: 1px solid var(--hc-border);
   display: grid;
   gap: 14px;
 }
@@ -1992,9 +2088,11 @@ button.wallet-detail-value.is-copied {
   color: var(--hc-accent);
 }
 
+/* Wraps because this panel also renders in the narrow dashboard side column,
+   where a single nowrap row clipped the trailing "hours". */
 .auto-pay-params {
   display: flex;
-  flex-wrap: nowrap;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   padding: 2px 0 2px 28px;
@@ -2004,14 +2102,16 @@ button.wallet-detail-value.is-copied {
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 8px 12px;
+  min-width: 0;
+  padding: 8px 10px;
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--hc-sunken);
+  border: 1px solid var(--hc-border);
 }
 
 .auto-pay-field input {
   width: 3.25rem;
+  min-width: 0;
   border: none;
   background: transparent;
   color: var(--hc-text);
@@ -2023,8 +2123,22 @@ button.wallet-detail-value.is-copied {
   line-height: 1.2;
 }
 
+/* Native steppers cost ~16px each and pushed the row over the column width;
+   the fields stay keyboard- and scroll-steppable without them. */
+.auto-pay-field input[type='number'] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+
+.auto-pay-field input[type='number']::-webkit-outer-spin-button,
+.auto-pay-field input[type='number']::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
+
 .auto-pay-field-hours input {
-  width: 2.75rem;
+  width: 2.5rem;
   text-align: center;
 }
 
@@ -2040,6 +2154,15 @@ button.wallet-detail-value.is-copied {
 .auto-pay-sep {
   padding: 0;
   flex-shrink: 0;
+}
+
+/* Keeps the value and its unit together so a wrap breaks after "every"
+   rather than orphaning "hours" onto its own line. */
+.auto-pay-unit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
 }
 
 .app-avatar {
@@ -2379,7 +2502,7 @@ button.wallet-detail-value.is-copied {
   appearance: none;
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hc-sunken-soft);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -2447,7 +2570,7 @@ button.wallet-detail-value.is-copied {
   appearance: none;
   border: 1px solid hsl(var(--border));
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--hc-sunken);
   color: inherit;
   font: inherit;
   text-align: left;
@@ -2486,7 +2609,7 @@ button.wallet-detail-value.is-copied {
   padding: 10px;
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hc-sunken-soft);
 }
 
 .split-backup-item[data-aeon-state='open'] {
@@ -2518,7 +2641,7 @@ button.wallet-detail-value.is-copied {
   display: block;
   padding: 8px;
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hc-sunken-strong);
   font-size: 0.68rem;
   line-height: 1.35;
   word-break: break-all;
@@ -2602,7 +2725,7 @@ button.wallet-detail-value.is-copied {
 .key-slice-item {
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hc-sunken-soft);
   overflow: hidden;
 }
 
@@ -2759,7 +2882,7 @@ button.wallet-detail-value.is-copied {
 .key-slice-static-item {
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hc-sunken-soft);
 }
 
 .key-slice-static-item[data-aeon-state='enrolled'] {
@@ -2892,7 +3015,7 @@ button.wallet-detail-value.is-copied {
   display: block;
   padding: 8px 10px;
   border-top: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--hc-sunken);
   flex-shrink: 0;
   position: sticky;
   bottom: 0;
@@ -2946,7 +3069,7 @@ button.wallet-detail-value.is-copied {
 
 .wallet-nav-tab:hover {
   color: var(--hc-text);
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hc-hover);
 }
 
 .wallet-nav-tab.is-active,
@@ -3134,7 +3257,7 @@ button.identity-qr-copy:focus-visible {
   padding: 0;
   border: 0;
   background: transparent;
-  color: #ffffff;
+  color: var(--hc-text);
   font-size: 1.65rem;
   font-weight: 700;
   letter-spacing: -0.02em;
@@ -3171,7 +3294,7 @@ button.identity-qr-copy:focus-visible {
   margin: 0;
   font-size: 0.95rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--hc-text);
   letter-spacing: 0.02em;
   text-transform: none;
 }
@@ -3183,8 +3306,8 @@ button.identity-qr-copy:focus-visible {
   padding: 12px 14px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.28);
-  color: #ffffff;
+  background: var(--hc-sunken);
+  color: var(--hc-text);
   text-align: left;
   cursor: pointer;
   overflow-wrap: anywhere;
@@ -3433,7 +3556,7 @@ button.identity-qr-copy:focus-visible {
   padding: 7px 11px;
   border-radius: var(--radius);
   border: 1px solid hsl(var(--border));
-  background: color-mix(in srgb, #000 35%, transparent);
+  background: var(--hc-sunken-strong);
   color: var(--hc-muted);
   font: inherit;
   font-size: 0.78rem;
@@ -3530,7 +3653,7 @@ button.history-row-btn {
 }
 
 .history-row:hover {
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hc-hover);
 }
 
 a.history-row-link:hover .history-tx-hint {
@@ -3554,8 +3677,8 @@ a.history-row-link:hover .history-tx-hint {
   border-radius: 12px;
   display: grid;
   place-items: center;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--hc-sunken);
+  border: 1px solid var(--hc-border);
   overflow: hidden;
   color: var(--hc-text);
 }
@@ -4168,23 +4291,23 @@ a.connected-app-host:hover {
 }
 
 .connected-app-usd-primary {
-  color: var(--hc-accent);
+  color: var(--hc-accent-deep);
   font-weight: 700;
   font-size: 0.9rem;
 }
 
 .connected-app-usd[data-currency='bsv'] .connected-app-usd-primary {
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .connected-app-usd-secondary {
-  color: #ffffff;
+  color: var(--hc-text);
   font-weight: 500;
   font-size: 0.78rem;
 }
 
 .connected-app-usd[data-currency='bsv'] .connected-app-usd-secondary {
-  color: var(--hc-accent);
+  color: var(--hc-accent-deep);
 }
 
 .connected-app-usd-label {
@@ -4275,12 +4398,12 @@ a.app-details-host:hover {
 }
 
 .app-money-cell strong {
-  color: var(--hc-accent);
+  color: var(--hc-accent-deep);
   font-size: 0.92rem;
 }
 
 .app-money-cell small {
-  color: #ffffff;
+  color: var(--hc-text);
   font-size: 0.72rem;
   font-weight: 500;
 }
@@ -4409,6 +4532,17 @@ a.app-details-host:hover {
   min-height: 0;
 }
 
+/*
+ * Send needs the same stretch as receive. Without it `.send-panel { height: 100% }`
+ * resolves against an auto-height body, so the panel is sized by whichever stage
+ * is mounted and the whole thing resizes on every edit → confirm → failure step.
+ */
+.nav-child-body:has(.send-panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .receive-panel {
   display: flex;
   flex-direction: column;
@@ -4518,7 +4652,7 @@ a.app-details-host:hover {
   padding: 10px 12px;
   border-radius: 10px;
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.22);
+  background: var(--hc-sunken-soft);
   font-size: 0.78rem;
   line-height: 1.45;
 }
@@ -4623,7 +4757,7 @@ a.app-details-host:hover {
 }
 
 .payment-details-secondary {
-  color: #ffffff;
+  color: var(--hc-text);
   font-size: 0.85rem;
 }
 
@@ -4766,7 +4900,7 @@ a.app-details-host:hover {
   border-radius: var(--hc-radius);
   border: 1px solid color-mix(in srgb, var(--hc-accent) 35%, transparent);
   color: var(--hc-accent);
-  background: rgba(0, 0, 0, 0.25);
+  background: var(--hc-sunken-soft);
   line-height: 1.2;
   font: inherit;
   cursor: pointer;
@@ -4865,7 +4999,7 @@ a.app-details-host:hover {
   margin: 0;
   padding: 8px 10px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hc-sunken-strong);
   border: 1px solid color-mix(in srgb, var(--hc-muted) 28%, transparent);
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
   font-size: 0.9rem;
@@ -4951,7 +5085,7 @@ a.app-details-host:hover {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--hc-sunken-strong);
   color: var(--hc-text);
   font: inherit;
   font-size: 0.85rem;
@@ -4983,7 +5117,7 @@ a.app-details-host:hover {
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--hc-sunken-strong);
   color: var(--hc-text);
   font: inherit;
   font-size: 0.85rem;
@@ -4999,7 +5133,7 @@ a.app-details-host:hover {
 
 .settings-interval-select option {
   background: #0a0a0a;
-  color: #fafafa;
+  color: var(--hc-text);
 }
 
 /* App + update toasts (bottom-end) */
@@ -5138,7 +5272,7 @@ a.app-details-host:hover {
 .settings-success {
   margin: 0;
   font-size: 0.82rem;
-  color: hsl(var(--primary));
+  color: var(--hc-accent);
 }
 
 .field-label-row {
@@ -5182,8 +5316,8 @@ a.app-details-host:hover {
   padding: 10px 12px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.28);
-  color: #ffffff;
+  background: var(--hc-sunken);
+  color: var(--hc-text);
   text-align: left;
 }
 
@@ -5305,7 +5439,7 @@ a.app-details-host:hover {
   padding: 8px 12px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
-  background: color-mix(in srgb, #0a120e 80%, #1a1a1a);
+  background: var(--hc-field);
   color: inherit;
   font: inherit;
   font-size: 0.88rem;
@@ -5348,7 +5482,7 @@ a.app-details-host:hover {
 .friends-add-btn:hover {
   background: color-mix(in srgb, var(--hc-accent) 22%, transparent);
   border-color: color-mix(in srgb, var(--hc-accent) 65%, transparent);
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .add-friend-panel {
@@ -5465,7 +5599,13 @@ a.app-details-host:hover {
   min-height: 0;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  align-items: center;
+  /*
+   * Centre the row as a block, but top-align the two columns inside it.
+   * `align-items: center` re-centred each column on its own, so anything that
+   * changed one column's height visibly slid the other one.
+   */
+  align-content: center;
+  align-items: start;
   gap: 14px 22px;
   width: 100%;
   max-width: 820px;
@@ -5475,14 +5615,21 @@ a.app-details-host:hover {
 }
 
 .send-layout-confirm {
-  align-items: center;
+  align-items: start;
 }
 
 .send-side {
   display: grid;
   gap: 12px;
   min-width: 0;
-  align-content: center;
+  align-content: start;
+  /*
+   * Space the friend suggestions can open into. They sit in document flow (an
+   * overlay would be clipped by the scrolling layout), so without a reservation
+   * they shove the Review / Cancel buttons a couple of hundred pixels down the
+   * moment the field takes focus.
+   */
+  min-height: min(300px, 42vh);
 }
 
 .send-stage-body {
@@ -5539,7 +5686,7 @@ a.app-details-host:hover {
   border: 0;
   border-bottom: 2px solid hsl(var(--border));
   background: transparent;
-  color: #ffffff;
+  color: var(--hc-text);
   font-family: var(--hc-display);
   font-size: clamp(2rem, 6cqi, 3.2rem);
   font-weight: 700;
@@ -5566,9 +5713,18 @@ a.app-details-host:hover {
   text-transform: uppercase;
 }
 
+/* One reserved line under the amount: converted value, or the rate warning. */
+.send-amount-note {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 1.2rem;
+  text-align: center;
+}
+
 .send-amount-secondary {
   margin: 0;
-  color: #ffffff;
+  color: var(--hc-text);
   font-size: 0.88rem;
   font-weight: 600;
 }
@@ -5577,6 +5733,15 @@ a.app-details-host:hover {
   margin: 0;
   color: hsl(var(--destructive, 0 72% 58%));
   font-size: 0.78rem;
+}
+
+/* Reserved line for the resolved recipient (friend name / address). */
+.send-resolved-slot {
+  min-height: 1.15rem;
+}
+
+.send-resolved-slot > * {
+  margin: 0;
 }
 
 .send-available {
@@ -5628,15 +5793,16 @@ a.app-details-host:hover {
   min-width: 148px;
 }
 
-/* Keep suggestions in document flow so actions cannot cover them. */
+/*
+ * Suggestions overlay the column rather than sitting in flow. In flow they were
+ * the single biggest jump on this screen — focusing the field pushed the buttons
+ * down by up to a full list height. `.send-to-field` stacks above `.send-actions`,
+ * so the overlay is on top of the buttons instead of behind them, and `.send-side`
+ * reserves enough height that the scrolling layout does not clip it.
+ */
 .send-friend-suggest.friend-suggest-list {
-  position: relative;
-  top: auto;
-  left: auto;
-  right: auto;
-  z-index: 3;
-  margin-top: 8px;
-  max-height: min(220px, 36vh);
+  z-index: 6;
+  max-height: min(150px, 26vh);
 }
 
 .send-layout-confirm .send-confirm-to,
@@ -5682,7 +5848,7 @@ a.app-details-host:hover {
   font-weight: 700;
   letter-spacing: 0.02em;
   line-height: 1.1;
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .send-confirm-amount span {
@@ -5700,7 +5866,7 @@ a.app-details-host:hover {
 }
 
 .send-confirm-to strong {
-  color: #ffffff;
+  color: var(--hc-text);
   font-weight: 700;
 }
 
@@ -5720,7 +5886,7 @@ a.app-details-host:hover {
   font-weight: 700;
   letter-spacing: 0.1em;
   text-transform: uppercase;
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .send-status-sub {
@@ -5942,7 +6108,7 @@ a.app-details-host:hover {
   height: 120px;
   border-radius: 10px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hc-hover);
   border: 1px solid hsl(var(--border));
 }
 
@@ -6406,7 +6572,7 @@ a.app-details-host:hover {
   height: 56px;
   border-radius: 8px;
   overflow: hidden;
-  background: rgba(255, 255, 255, 0.04);
+  background: var(--hc-hover);
   border: 1px solid hsl(var(--border));
 }
 
@@ -6554,8 +6720,8 @@ a.app-details-host:hover {
   padding: 12px 14px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
-  background: rgba(0, 0, 0, 0.28);
-  color: #ffffff;
+  background: var(--hc-sunken);
+  color: var(--hc-text);
   font-size: 0.85rem;
   word-break: break-all;
 }
@@ -6619,7 +6785,7 @@ a.app-details-host:hover {
   padding: 10px 12px;
   border-radius: var(--hc-radius);
   border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, transparent);
-  background: rgba(0, 0, 0, 0.28);
+  background: var(--hc-sunken);
   display: grid;
   gap: 8px;
 }
@@ -6637,7 +6803,7 @@ a.app-details-host:hover {
   margin: 0;
   font-size: 0.72rem;
   line-height: 1.35;
-  color: #ffffff;
+  color: var(--hc-text);
   overflow-wrap: anywhere;
 }
 
@@ -6666,7 +6832,7 @@ a.app-details-host:hover {
   margin: 0;
   font-size: 0.78rem;
   font-weight: 600;
-  color: #ffffff;
+  color: var(--hc-text);
 }
 
 .statecharts-live-grid dd[data-state='active'] {
@@ -6702,7 +6868,7 @@ a.app-details-host:hover {
   padding: 0.22rem 0.5rem;
   border-radius: 6px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
-  background: rgba(0, 0, 0, 0.35);
+  background: var(--hc-sunken-strong);
   color: var(--hc-muted);
   font: inherit;
   font-size: 0.68rem;
@@ -6936,7 +7102,7 @@ body > div.statechart-mermaid-host {
 }
 
 .statechart-error {
-  color: #f07178;
+  color: var(--hc-fail);
   white-space: pre-wrap;
   font-family: ui-monospace, Menlo, monospace;
   font-size: 0.7rem;
@@ -7227,7 +7393,7 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-bubble.is-request .chat-card-badge {
-  color: #b7d4ff;
+  color: var(--hc-info);
   background: color-mix(in srgb, #7eb8ff 18%, transparent);
 }
 
@@ -7256,7 +7422,7 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-card-status[data-status='failed'] {
-  color: #f07178;
+  color: var(--hc-fail);
   opacity: 1;
 }
 
@@ -7342,12 +7508,12 @@ body > div.statechart-mermaid-host {
 }
 
 .chat-bubble[data-pay-status='failed'] .chat-card-meta {
-  color: #f07178;
+  color: var(--hc-fail);
   opacity: 1;
 }
 
 .chat-card-status[data-status='claimed'] {
-  color: #e0b35a;
+  color: var(--hc-claimed);
   opacity: 0.95;
 }
 
@@ -7356,7 +7522,7 @@ body > div.statechart-mermaid-host {
   max-width: 92%;
   padding: 8px 10px;
   border-radius: 8px;
-  background: color-mix(in srgb, #000 25%, transparent);
+  background: var(--hc-sunken-soft);
 }
 
 .chat-system pre {
@@ -7430,7 +7596,7 @@ body > div.statechart-mermaid-host {
   padding: 4px 6px 4px 4px;
   border-radius: 18px;
   border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 80%, transparent);
-  background: color-mix(in srgb, #0a120e 80%, #1a1a1a);
+  background: var(--hc-field);
 }
 
 .chat-input-bar:focus-within {
@@ -7604,7 +7770,7 @@ body > div.statechart-mermaid-host {
   margin: 0;
   padding: 4px 14px;
   font-size: 0.78rem;
-  color: #f07178;
+  color: var(--hc-fail);
 }
 
 .chat-command-menu {
@@ -7993,7 +8159,7 @@ html.platform-mobile .chat-back-btn {
 }
 
 .chat-bubble.is-tip .chat-card-badge {
-  color: #ffd983;
+  color: var(--hc-gold);
   background: rgba(242, 189, 82, 0.13);
 }
 
@@ -8010,7 +8176,7 @@ html.platform-mobile .chat-back-btn {
   height: 38px;
   flex: 0 0 38px;
   border-radius: 50%;
-  color: #ffe3a0;
+  color: var(--hc-gold-soft);
   background: linear-gradient(145deg, #d79b2e, #8d5c11);
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.35),
@@ -8637,4 +8803,144 @@ html.platform-mobile .chat-shell[data-aeon-state='thread'] .chat-thread {
 html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
   margin: 0;
   padding-inline: 8px;
+}
+
+/* —— Light sheet: surfaces that were authored as literal near-black ——
+   .brand-logo-mark is deliberately absent: it goes fully transparent above. */
+html[data-aeon-mode='light'] .app-avatar,
+html[data-aeon-mode='light'] .bsv-logo-btn.is-classic .bsv-logo-stack {
+  background: hsl(var(--secondary));
+}
+
+html[data-aeon-mode='light'] .settings-interval-select option,
+html[data-aeon-mode='light'] .settings-log-upload-input,
+html[data-aeon-mode='light'] .settings-interval-select {
+  background: var(--hc-field);
+  color: var(--hc-text);
+}
+
+html[data-aeon-mode='light'] .friends-search input,
+html[data-aeon-mode='light'] .chat-search input,
+html[data-aeon-mode='light'] .chat-composer,
+html[data-aeon-mode='light'] .chat-command-menu {
+  background: var(--hc-field);
+  color: var(--hc-text);
+}
+
+html[data-aeon-mode='light'] .statecharts-viewport {
+  background: var(--hc-surface);
+}
+
+html[data-aeon-mode='light'] .statechart-zoom-bar {
+  background: hsl(var(--secondary));
+}
+
+html[data-aeon-mode='light'] .statecharts-nav-btn {
+  background: var(--hc-sunken);
+}
+
+html[data-aeon-mode='light'] .statecharts-nav-btn.is-active {
+  color: #ffffff;
+}
+
+html[data-aeon-mode='light'] .screenshot-toast {
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  box-shadow: var(--shadow-section-hover);
+}
+
+/* Chat keeps its own sheet; give it a paper one instead of a second dark app. */
+html[data-aeon-mode='light'] .chat-shell {
+  --chat-mine: color-mix(in srgb, var(--hc-accent) 14%, #ffffff);
+  --chat-mine-fg: #12271b;
+  --chat-theirs: #eef1f4;
+  --chat-rail: #fafbfc;
+}
+
+html[data-aeon-mode='light'] .chat-thread {
+  background: var(--hc-surface);
+}
+
+html[data-aeon-mode='light'] .chat-sidebar {
+  background: hsl(var(--secondary));
+}
+
+html[data-aeon-mode='light'] .chat-bubble {
+  background: var(--chat-theirs);
+  border-color: hsl(var(--border));
+}
+
+html[data-aeon-mode='light'] .app-toast.aeonToast__root,
+html[data-aeon-mode='light'] .update-toast.aeonToast__root {
+  background: var(--hc-surface);
+  color: var(--hc-text);
+  box-shadow: var(--hc-shadow);
+}
+
+/* —— Light sheet: black takes the roles green holds in the dark theme ——
+   Chrome and data ink go black; green is kept only where it is a *state*
+   (the live dot, success, a downward move's red counterpart). Scoped to the
+   light selector so the dark theme is untouched. */
+
+/* Wordmark glyph is a single-colour PNG; brightness(0) blacks the ink and
+   leaves the alpha cut-out, which is how handcash.io renders it on white. */
+html[data-aeon-mode='light'] .brand-logo-mark {
+  filter: brightness(0);
+}
+
+/* Selected menu item. */
+html[data-aeon-mode='light'] .wallet-nav-tab.is-active,
+html[data-aeon-mode='light'] .wallet-nav-tab[aria-selected='true'],
+html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] {
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 8%, transparent);
+}
+
+/* Price line: an upward move is black data ink, not green. A downward move
+   stays red, so direction is still readable. */
+html[data-aeon-mode='light'] .bsv-spark-up {
+  color: hsl(var(--primary));
+}
+
+/* BETA pill keeps its dark chip on the light sheet: black fill carrying the
+   neon border and type, which the demoted --hc-accent green cannot do here. */
+html[data-aeon-mode='light'] .brand-beta {
+  background: #0a0a0a;
+  border-color: hsl(var(--hc-brand) / 0.55);
+  color: hsl(var(--hc-brand));
+}
+
+/* Payment-request panel. A 35% neon ring plus a neon glow reads as a washed
+   pale edge on white, so the emphasis comes from the deep green at full
+   strength and an ordinary elevation shadow instead of a coloured halo. */
+html[data-aeon-mode='light'] .dashboard-side > .permission-side-panel {
+  border-color: var(--hc-accent-deep);
+  box-shadow: var(--hc-shadow);
+}
+
+html[data-aeon-mode='light'] .dashboard-side > .permission-side-panel .permission-request-actions {
+  border-top-color: var(--hc-border);
+}
+
+/* Amount card. The dark half of its gradient (rgba(0,0,0,.35)) muddies to
+   grey-green on white, so the light sheet tints a pale mint down to the
+   ordinary sunken surface and edges it with the deep green. */
+html[data-aeon-mode='light'] .action-amount {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--hc-accent) 12%, transparent),
+    var(--hc-sunken-soft)
+  );
+  border-color: color-mix(in srgb, var(--hc-accent-deep) 28%, transparent);
+}
+
+/* Grid/list selector: an active view is chrome, not state, so it goes black. */
+html[data-aeon-mode='light'] .collection-view-btn:hover {
+  background: color-mix(in srgb, hsl(var(--primary)) 7%, transparent);
+}
+
+html[data-aeon-mode='light'] .collection-view-btn[data-active],
+html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
 }

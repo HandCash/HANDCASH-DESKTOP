@@ -488,64 +488,47 @@ export async function enrichCreateActionForBsv21Issuer(
     }
   }
 
-  // Funding input for Sigma vin-binding (genesis deploy only).
-  let fundOutpoint: string | null = null
-  let fundTxid = ''
-  let fundVout = 0
-  if (deployIdxs.length > 0) {
-    try {
-      const listed = await active.wallet.listOutputs({
-        basket: 'default',
-        limit: 50,
-      })
-      const fund = (listed.outputs ?? [])
-        .filter((o) => (o.satoshis ?? 0) >= 1 && o.outpoint)
-        .sort((a, b) => (b.satoshis ?? 0) - (a.satoshis ?? 0))[0]
-      if (fund?.outpoint) {
-        fundOutpoint = normalizeDotOutpoint(fund.outpoint)
-        const [txid, voutS] = fundOutpoint.split('.')
-        fundTxid = txid ?? ''
-        fundVout = Number(voutS)
-      }
-    } catch (err) {
-      console.warn('[bsv21-issuer] listOutputs for Sigma fund failed', err)
-    }
-  }
-
-  let inputs = [...(args.inputs ?? [])]
+  const inputs = [...(args.inputs ?? [])]
   let inputBEEF = args.inputBEEF
 
-  if (fundOutpoint && fundTxid && Number.isFinite(fundVout) && deployIdxs.length > 0) {
-    for (const i of deployIdxs) {
-      const out = nextOutputs[i]!
-      if (!out.lockingScript) continue
-      try {
-        nextOutputs[i] = {
-          ...out,
-          lockingScript: sigmaSignDeployLockingScript({
-            lockingScriptHex: out.lockingScript,
-            fundTxid,
-            fundVout,
-            identityKeyHex: active.rootKeyHex,
-          }),
-        }
-      } catch (err) {
-        console.warn('[bsv21-issuer] Sigma sign failed; CI issuer only', err)
-      }
-    }
+  // Sigma binds its signature to the outpoint at a fixed vin, so a genesis
+  // deploy can only be signed against an input we already know.
+  //
+  // We used to invent that input by naming the largest UTXO in basket
+  // `default`. That basket *is* the toolbox's change basket, and storage
+  // refuses an explicit input whose row is change ("inputs[0] must be an
+  // unmanaged input"), so every deploy failed before it reached the network.
+  // Only a caller-supplied unmanaged input — an auth tip, an imported
+  // ordinal — can carry the binding. Without one the deploy still goes out;
+  // issuer attribution falls back to the `issuer:` tag and customInstructions
+  // that every issuance output above already carries.
+  const bindOutpoint = inputs[0] ? normalizeDotOutpoint(inputs[0].outpoint) : ''
+  const [bindTxid = '', bindVoutS = ''] = bindOutpoint.split('.')
+  const bindVout = Number(bindVoutS)
 
-    const already =
-      inputs.length > 0 &&
-      normalizeDotOutpoint(inputs[0]!.outpoint) === fundOutpoint
-    if (!already) {
-      inputs = [
-        {
-          outpoint: fundOutpoint,
-          inputDescription: 'bsv21 issuer Sigma fund',
-          unlockingScriptLength: 108,
-        },
-        ...inputs,
-      ]
+  if (deployIdxs.length > 0) {
+    if (/^[0-9a-f]{64}$/.test(bindTxid) && Number.isInteger(bindVout)) {
+      for (const i of deployIdxs) {
+        const out = nextOutputs[i]!
+        if (!out.lockingScript) continue
+        try {
+          nextOutputs[i] = {
+            ...out,
+            lockingScript: sigmaSignDeployLockingScript({
+              lockingScriptHex: out.lockingScript,
+              fundTxid: bindTxid,
+              fundVout: bindVout,
+              identityKeyHex: active.rootKeyHex,
+            }),
+          }
+        } catch (err) {
+          console.warn('[bsv21-issuer] Sigma sign failed; CI issuer only', err)
+        }
+      }
+    } else {
+      console.info(
+        '[bsv21-issuer] genesis deploy has no unmanaged input to bind Sigma to; issuing with tag/CI issuer only',
+      )
     }
   }
 
