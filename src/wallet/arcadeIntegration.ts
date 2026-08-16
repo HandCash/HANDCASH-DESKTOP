@@ -1,12 +1,11 @@
 /**
- * Complete Arcade (bsv-blockchain/arcade) integration for the BRC wallet.
+ * Arcade (bsv-blockchain/arcade) helpers kept for tests / future Cloud parity.
+ * BRC wallet boot (`session.ts`) broadcasts through Taal/GP ARC, not Arcade.
  *
- * Wires:
+ * Wires (when used):
  * - Shared X-CallbackToken on Services (broadcast) + Monitor (SSE)
  * - EventSource polyfill with header support for /events
  * - SSE / onTransactionStatusChanged → applyDualLayerArc (existing interface)
- *
- * Legacy ARC is not used for BRC wallet broadcasts (Cloud keeps it for free consolidations).
  */
 import { EventSource } from 'eventsource'
 import { parseArcStatus } from './arcStatusMap'

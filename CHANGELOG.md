@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.229] - 2026-08-16
+
+### Changed
+- **BRC wallet broadcast is ARC again**, not Arcade. Sends go Taal ARC → GorillaPool ARC → Bitails → WhatsOnChain. Arcade SSE / callback-token wiring is out of the boot path.
+
 ## [1.2.228] - 2026-08-14
 
 ### Changed

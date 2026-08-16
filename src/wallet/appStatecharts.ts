@@ -531,7 +531,7 @@ const WALLET_IO = `flowchart TB
     JB["JungleBus"]
     GP["GorillaPool ordinals"]
     CT["Chaintracks\\nheaders"]
-    ARC["Broadcast stack\\nArcade · Bitails · WoC"]
+    ARC["Broadcast stack\\nARC · Bitails · WoC"]
   end
 
   subgraph Cloud["BRC-CLOUD"]

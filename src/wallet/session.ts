@@ -3,12 +3,7 @@ import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { installRawTxFallback } from './rawTxFallback'
 import { preferServiceOrder } from './serviceOrder'
-import {
-  fetchArcadeStatusEvents,
-  getOrCreateArcadeCallbackToken,
-  wireArcadeMonitor,
-} from './arcadeIntegration'
-import { SetupClient, Wallet, Services, sdk, arcadeDefaultUrl } from '@bsv/wallet-toolbox-client'
+import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
@@ -22,12 +17,7 @@ export type ActiveWallet = {
   wallet: Wallet
   services: Services
   /** Background proof/header loop — pause during hardened sign to avoid IDB AbortError. */
-  monitor?: {
-    stopTasks?: () => void
-    startTasks?: () => void | Promise<void>
-    /** Pull Arcade SSE catchup (status → dual-layer). */
-    fetchArcadeEvents?: () => Promise<number>
-  }
+  monitor?: { stopTasks?: () => void; startTasks?: () => void | Promise<void> }
   rootKeyHex: string
   identityKey: string
   address: string
@@ -124,9 +114,9 @@ function installHeaderFailover(services: Services, chain: Chain): void {
 }
 
 /**
- * Merkle proofs — Arcade first when configured (it can return proofs for its
- * own broadcasts). Public SPV then prefers Bitails over WhatsOnChain so proofs
- * do not share WoC's rate budget with rawtx / UTXO / FX.
+ * Merkle proofs for BEEF — Bitails before WhatsOnChain.
+ * Public SPV proofs should not share WhatsOnChain's rate budget with
+ * rawtx / UTXO / FX.
  */
 function installMerklePreferBitails(services: Services): void {
   try {
@@ -136,7 +126,6 @@ function installMerklePreferBitails(services: Services): void {
       }
     ).getMerklePathServices
     preferServiceOrder(collection, [
-      'Arcade',
       'Bitails',
       'Taal',
       'GorillaPool',
@@ -148,30 +137,21 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
- * Broadcast: Arcade (Teranode-native) only for BRC wallet.
- * Free consolidations that need legacy ARC live in HandCash Cloud — not here.
- * Keep Bitails / WhatsOnChain as non-ARC fallbacks when Arcade is unavailable.
+ * Broadcast: Taal / GorillaPool ARC first, then public Bitails / WoC.
+ * Arcade stays out of the BRC wallet path (Cloud may still use it).
+ * Soft timeouts must stay long enough for ordinal BEEFs — 2.5s races caused
+ * false failures and delayed paths that returned ghost txids (WoC 404).
  */
-function installPostBeefPreferArcade(services: Services): void {
+function installPostBeefPreferFast(services: Services): void {
   try {
     const collection = (
       services as unknown as {
-        postBeefServices?: {
-          services?: Array<{ name: string }>
-          remove?: (name: string) => void
-          reset?: () => void
-        }
+        postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void }
       }
     ).postBeefServices
-    const arcadeConfigured = Boolean(services.options?.arcadeUrl)
-    if (arcadeConfigured && typeof collection?.remove === 'function') {
-      collection.remove('TaalArcBeef')
-      collection.remove('GorillaPoolArcBeef')
-      collection.reset?.()
-      console.info('[postBeef] Arcade-only broadcaster (legacy ARC removed)')
-    }
     preferServiceOrder(collection, [
-      'ArcadeBeef',
+      'TaalArcBeef',
+      'GorillaPoolArcBeef',
       'Bitails',
       'WhatsOnChain',
     ])
@@ -186,67 +166,8 @@ function installPostBeefPreferArcade(services: Services): void {
       s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 30_000 : 20_000
     }
   } catch (err) {
-    console.warn('[postBeef] could not prefer Arcade', err)
+    console.warn('[postBeef] could not prefer ARC broadcasters', err)
   }
-}
-
-/**
- * SetupClient builds Services without `arcadeUrl`, so the toolbox leaves Arcade
- * opt-in and registers Taal/GP ARC. HandCash BRC wallet uses Arcade only —
- * no legacy ARC fallback (Cloud keeps ARC for free consolidations).
- *
- * Rebuilds Services with Arcade + shared callbackToken, then wires Monitor SSE
- * into applyDualLayerArc (existing confirmation interface).
- */
-function enableArcadeServices(setup: {
-  chain: string
-  services: Services
-  wallet: Wallet
-  storage: { setServices: (v: Services) => void }
-  // Toolbox Monitor — keep loose; we only set known SSE fields + services.
-  monitor?: {
-    services?: Services
-    options?: { callbackToken?: string }
-    stopTasks?: () => void
-    startTasks?: () => void | Promise<void>
-    fetchSSEEvents?: () => Promise<number>
-  }
-}): void {
-  const arcadeUrl = arcadeDefaultUrl(setup.chain as Parameters<typeof arcadeDefaultUrl>[0])
-  if (!arcadeUrl) {
-    console.info(
-      `[arcade] no default Arcade URL for chain=${setup.chain} — skipping Arcade enable`,
-    )
-    return
-  }
-
-  const callbackToken = getOrCreateArcadeCallbackToken()
-  const options = Services.createDefaultOptions(
-    setup.chain as Parameters<typeof Services.createDefaultOptions>[0],
-  )
-  options.arcadeUrl = arcadeUrl
-  options.arcadeConfig = {
-    ...(setup.services.options?.arcadeConfig ?? {}),
-    callbackToken,
-    deploymentId:
-      setup.services.options?.arcadeConfig?.deploymentId
-      ?? setup.services.options?.arcConfig?.deploymentId,
-  }
-  // Do not rely on legacy ARC for BRC wallet broadcasts.
-  options.arcUrl = ''
-  options.arcGorillaPoolUrl = undefined
-  if (setup.services.options?.taalApiKey) {
-    options.taalApiKey = setup.services.options.taalApiKey
-  }
-  const services = new Services(options)
-  setup.services = services
-  ;(setup.wallet as Wallet & { services: Services }).services = services
-  setup.storage.setServices(services)
-  if (setup.monitor) {
-    setup.monitor.services = services
-    wireArcadeMonitor(setup.monitor, callbackToken)
-  }
-  console.info(`[arcade] primary broadcaster ${arcadeUrl} (SSE token wired)`)
 }
 
 /**
@@ -333,14 +254,12 @@ export async function bootWallet(args: {
     databaseName: `handcash-brc100-${args.chain}-${args.handle}`,
   })
 
-  enableArcadeServices(setup as unknown as Parameters<typeof enableArcadeServices>[0])
-
   installFallbackChainTracker(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
   installTipHeaderFailover(setup.services as Services, args.chain)
   installMerklePreferBitails(setup.services as Services)
-  installPostBeefPreferArcade(setup.services as Services)
+  installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
 
   try {
@@ -385,7 +304,6 @@ export async function bootWallet(args: {
       ? {
           stopTasks: () => setup.monitor?.stopTasks?.(),
           startTasks: () => setup.monitor?.startTasks?.(),
-          fetchArcadeEvents: () => fetchArcadeStatusEvents(setup.monitor),
         }
       : undefined,
     rootKeyHex: args.rootKeyHex,
@@ -399,12 +317,7 @@ export async function bootWallet(args: {
 
 /** Prefer toolbox `Wallet.balance()` — localState spendable (managed change), not legacy address UTXOs. See `layers.ts`. */
 export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promise<number> {
-  // Catch up Arcade SSE statuses into dual-layer while the UI is active.
   const session = getActiveWallet()
-  if (session?.monitor?.fetchArcadeEvents) {
-    void session.monitor.fetchArcadeEvents()
-  }
-
   const w = wallet ?? session?.wallet
   if (!w) return 0
   const asToolbox = w as Wallet
