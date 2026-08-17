@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.239] - 2026-08-17
+
+### Fixed
+- **Tiny companion outputs no longer retry their sweep forever.** Some apps park a small second output next to a 1-sat ordinal they send you. Sweeping one output builds a ~193-byte transaction and ARC charges 100 satoshis per 1000 bytes, so anything under 21 sats cannot pay its own fee — there is no transaction that moves it alone. Because a broadcast rejection is deliberately read as transient (an outage must never blacklist a live deposit), each of these was rebuilt, re-signed and re-rejected on every scan. Seven of them was enough to hold legacy ingest past its deadline every pass, which is what made sends queue behind it. The sweep now names an economic floor and holds anything below it, exactly like unrecognized 1-sat dust. Nothing is lost — the outputs stay on the address.
+
 ## [1.2.238] - 2026-08-17
 
 ### Fixed

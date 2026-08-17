@@ -9,6 +9,7 @@ import {
 } from './legacyImportGuard'
 import { buildLegacyInputBeef } from './legacyBeef'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
+import { DUST_LIMIT_SATS } from './protocolValidate'
 
 export type LegacyUtxo = {
   outpoint: string
@@ -474,11 +475,46 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 }
 
 /**
+ * Bytes one legacy P2PKH input adds to a sweep: 32 txid + 4 vout + 1 script
+ * length + 108 unlocking script (the `unlockingScriptLength` declared in
+ * `importP2pkhFunding`) + 4 sequence.
+ */
+const SWEEP_INPUT_BYTES = 149
+/** Version + input/output counts + locktime, plus one P2PKH change output. */
+const SWEEP_OVERHEAD_BYTES = 44
+/** ARC's published `miningFee` (`GET /v1/policy`): 100 satoshis per 1000 bytes. */
+const SWEEP_FEE_SATS_PER_KB = 100
+
+/**
+ * Smallest legacy output worth sweeping.
+ *
+ * The sweep spends one output per transaction (~193 bytes) and ARC charges 100
+ * satoshis per 1000 bytes, so an output owes ~20 satoshis of fee before a single
+ * satoshi can reach change. Below this a sweep is not slow or unlucky — it is
+ * arithmetically impossible, and every broadcaster rejects it.
+ *
+ * That matters because a network rejection is deliberately treated as transient
+ * (an outage must never blacklist a live deposit), so sub-fee outputs were
+ * rebuilt, re-signed and re-rejected on every scan, forever. Third-party apps
+ * park small companion outputs next to 1-sat ordinals, and a handful of those was
+ * enough to hold legacy ingest past its deadline every pass — which in turn made
+ * sends queue behind it.
+ *
+ * Refused outputs stay on the address, exactly like unrecognized 1-sat dust.
+ * Nothing is lost; there is simply no transaction that can move them alone.
+ */
+export const MIN_SWEEPABLE_SATS =
+  Math.ceil(
+    ((SWEEP_INPUT_BYTES + SWEEP_OVERHEAD_BYTES) * SWEEP_FEE_SATS_PER_KB) / 1000,
+  ) + DUST_LIMIT_SATS
+
+/**
  * Import scanned legacy P2PKH UTXOs into BRC-100 managed change.
  * Sweep scanned legacy P2PKH UTXOs into BRC-100 managed change.
  *
  * HARD RULES:
  * - refuses satoshis === 1 (possible ordinals)
+ * - refuses anything under {@link MIN_SWEEPABLE_SATS} (cannot pay its own fee)
  * - same outpoint is never swept twice (durable + in-flight guards)
  */
 /** A legacy UTXO successfully swept into managed change — drives receive activity. */
@@ -499,6 +535,8 @@ export async function importLegacyUtxos(
   failed: number
   errors: string[]
   skippedOneSats: number
+  /** Outputs that cannot fund their own sweep — see {@link MIN_SWEEPABLE_SATS}. */
+  skippedUneconomical: number
   skippedKnown: number
   importedOutpoints: string[]
   importedReceipts: LegacyFundingReceipt[]
@@ -507,11 +545,22 @@ export async function importLegacyUtxos(
   if (!wallet) throw new Error('Wallet locked')
 
   const skippedOneSats = utxos.filter((u) => u.satoshis === 1).length
-  const safe = utxos.filter((u) => u.satoshis > 1)
+  const uneconomical = utxos.filter(
+    (u) => u.satoshis > 1 && u.satoshis < MIN_SWEEPABLE_SATS,
+  )
+  const safe = utxos.filter((u) => u.satoshis >= MIN_SWEEPABLE_SATS)
   const byOutpoint = new Map(safe.map((u) => [u.outpoint.trim().toLowerCase(), u]))
   if (skippedOneSats > 0) {
     console.warn(
       `[legacy] refused to sweep ${skippedOneSats} one-sat outpoint(s) — possible ordinals`,
+    )
+  }
+  if (uneconomical.length > 0) {
+    console.info(
+      `[legacy] holding ${uneconomical.length} output(s) under ${MIN_SWEEPABLE_SATS} sats —` +
+        ` a sweep costs more fee than they carry (${uneconomical
+          .map((u) => `${u.satoshis}sat`)
+          .join(', ')})`,
     )
   }
   if (safe.length === 0) {
@@ -520,6 +569,7 @@ export async function importLegacyUtxos(
       failed: 0,
       errors: [],
       skippedOneSats,
+      skippedUneconomical: uneconomical.length,
       skippedKnown: 0,
       importedOutpoints: [],
       importedReceipts: [],
@@ -538,6 +588,7 @@ export async function importLegacyUtxos(
       failed: 0,
       errors: [],
       skippedOneSats,
+      skippedUneconomical: uneconomical.length,
       skippedKnown,
       importedOutpoints: [],
       importedReceipts: [],
@@ -611,6 +662,7 @@ export async function importLegacyUtxos(
       failed,
       errors,
       skippedOneSats,
+      skippedUneconomical: uneconomical.length,
       skippedKnown,
       importedOutpoints,
       importedReceipts,
