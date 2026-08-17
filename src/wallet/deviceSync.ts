@@ -41,6 +41,7 @@ import {
   closeBackupAttempt,
   openBackupAttempt,
 } from './backupWatchdog'
+import type { HistoryReplicaPriority } from './walletCoordinator'
 
 let historyDirty = false
 let pushTimer: ReturnType<typeof setTimeout> | null = null
@@ -343,9 +344,22 @@ export function markHistoryBackupDirty(): void {
  * Yields to in-flight / queued spends: Argon2 + upload must not sit on the wallet
  * FIFO ahead of createAction (sequential mint hung on "Preparing payment").
  */
-/** Consecutive spend-priority deferrals before the log escalates and names names. */
-const DEFER_STREAK_WARN = 8
+/**
+ * Consecutive spend-priority deferrals before the push stops yielding.
+ *
+ * A spend raises its hold *before* it can acquire the region, so while chain
+ * ingest is slow enough that sends queue for tens of seconds, every wake-up finds
+ * another spend waiting and the balance snapshot never uploads at all. Four
+ * windows of courtesy is generous; after that the export takes its turn and the
+ * coordinator's region exclusion — not this hint — keeps the two apart.
+ */
+const DEFER_STREAK_MAX = 4
 let deferStreak = 0
+
+/** Test-only — reset the deferral budget between cases. */
+export function resetHistoryBackupDeferForTests(): void {
+  deferStreak = 0
+}
 
 export function scheduleHistoryBackupPush(reason = 'dirty'): void {
   if (!getSessionBackupPassword()) {
@@ -363,18 +377,27 @@ export function scheduleHistoryBackupPush(reason = 'dirty'): void {
         const { shouldYieldChainIngestToSpend, describeSpendPriorityHolds } =
           await import('./walletCoordinator')
         if (shouldYieldChainIngestToSpend()) {
-          deferStreak += 1
           const { appendAppLog } = await import('./appLog')
-          // Name the holder: a backup that defers forever means someone never
-          // released spend priority, and the count alone never said who.
+          // Name the holder: a backup that defers means someone else has the
+          // spend region, and the count alone never said who.
           const holders = describeSpendPriorityHolds().join(', ') || 'unknown'
+          if (deferStreak < DEFER_STREAK_MAX) {
+            deferStreak += 1
+            appendAppLog(
+              'info',
+              `[cloud-backup] defer schedule (${reason}) — spend waiting: ${holders}` +
+                ` ×${deferStreak}/${DEFER_STREAK_MAX}`,
+            )
+            scheduleHistoryBackupPush(reason)
+            return
+          }
           appendAppLog(
-            deferStreak >= DEFER_STREAK_WARN ? 'warn' : 'info',
-            `[cloud-backup] defer schedule (${reason}) — spend waiting: ${holders}${
-              deferStreak >= DEFER_STREAK_WARN ? ` ×${deferStreak}` : ''
-            }`,
+            'warn',
+            `[cloud-backup] deferral budget spent (${reason}) ×${deferStreak} —` +
+              ` uploading balance ahead of spend waiting: ${holders}`,
           )
-          scheduleHistoryBackupPush(reason)
+          deferStreak = 0
+          await flushHistoryBackupPush(reason, 'starved')
           return
         }
         deferStreak = 0
@@ -390,10 +413,13 @@ export function scheduleHistoryBackupPush(reason = 'dirty'): void {
   }, pushDebounceMs(reason))
 }
 
-async function flushHistoryBackupPush(reason: string): Promise<void> {
+async function flushHistoryBackupPush(
+  reason: string,
+  priority: HistoryReplicaPriority = 'yieldToSpend',
+): Promise<void> {
   if (pushInFlight) {
     await pushInFlight
-    if (historyDirty) return flushHistoryBackupPush(reason)
+    if (historyDirty) return flushHistoryBackupPush(reason, priority)
     return
   }
   const password = getSessionBackupPassword()
@@ -401,7 +427,11 @@ async function flushHistoryBackupPush(reason: string): Promise<void> {
   historyDirty = false
   pushInFlight = (async () => {
     if (hasDeviceLinkBackupUrl()) {
-      await autoPushHistoryBackupIfConfigured(password, { reason, allowEmptyPull: false })
+      await autoPushHistoryBackupIfConfigured(password, {
+        reason,
+        allowEmptyPull: false,
+        priority,
+      })
       return
     }
     // No cloud URL — still write an immutable local UTXO snapshot. Same Argon2id
@@ -415,7 +445,7 @@ async function flushHistoryBackupPush(reason: string): Promise<void> {
     openBackupAttempt()
     try {
       const { createBrc39BackupBytes } = await import('./historyBackup')
-      await createBrc39BackupBytes(password, { passwordAlreadyVerified: true })
+      await createBrc39BackupBytes(password, { passwordAlreadyVerified: true, priority })
       closeBackupAttempt(true)
     } catch (err) {
       closeBackupAttempt(false)
@@ -450,6 +480,11 @@ export type AutoPushOpts = {
   reason?: string
   /** On unlock: recover empty local from remote before pushing. */
   allowEmptyPull?: boolean
+  /**
+   * `starved` stops yielding the historyReplica region to merely-queued spends.
+   * Only the auto-push sets it, and only after its deferral budget is spent.
+   */
+  priority?: HistoryReplicaPriority
 }
 
 export type AutoSyncResult = {
@@ -596,7 +631,10 @@ export async function autoPushHistoryBackupIfConfigured(
         // repeating the crash.
         openBackupAttempt()
         attemptOpen = true
-        await uploadBrc39Backup(password, { passwordAlreadyVerified: true })
+        await uploadBrc39Backup(password, {
+          passwordAlreadyVerified: true,
+          priority: opts.priority,
+        })
         closeBackupAttempt(true)
         attemptOpen = false
         await uploadFriendsBackup()

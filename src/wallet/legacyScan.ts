@@ -68,12 +68,25 @@ const HOST_COOLDOWN_MS = 45_000
  * cooldowns above exist to survive. A stall is the only case worth paying for.
  */
 const SCAN_HEDGE_MS = 1_200
+/**
+ * WhatsOnChain's free tier allows ~3 requests/second per IP, and its 429 answers
+ * without an `Access-Control-Allow-Origin` header. In the renderer that reaches
+ * us as an opaque `TypeError: Failed to fetch` — indistinguishable from an
+ * outage — so every per-transaction probe reads "unknown", the ingest that
+ * depends on those probes never converges, and it re-asks on the next pass.
+ * Pace the host instead of reading tea leaves from an unlabelled failure.
+ */
+const WOC_MIN_INTERVAL_MS = 350
+/** Once throttled, stop asking outright — Bitails answers the same questions. */
+const WOC_THROTTLE_COOLDOWN_MS = 20_000
 let wocCooldownUntil = 0
+let wocNextSlotAt = 0
 let bitailsCooldownUntil = 0
 
 /** Test-only — clear provider skip windows. */
 export function resetLegacyScanCooldownForTests(): void {
   wocCooldownUntil = 0
+  wocNextSlotAt = 0
   bitailsCooldownUntil = 0
 }
 
@@ -84,6 +97,35 @@ async function fetchWithDeadline(url: string): Promise<Response> {
     return await fetch(url, { signal: controller.signal })
   } finally {
     clearTimeout(timer)
+  }
+}
+
+/**
+ * WhatsOnChain fetch behind the shared rate budget.
+ *
+ * `null` means we never asked — the host is cooling down, or a slot was further
+ * out than a request would have taken. Callers must treat that as "no evidence",
+ * never as a negative answer.
+ */
+async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
+  const now = Date.now()
+  if (now < wocCooldownUntil) return null
+  const wait = Math.max(0, wocNextSlotAt - now)
+  if (wait > SCAN_TIMEOUT_MS) return null
+  wocNextSlotAt = Math.max(now, wocNextSlotAt) + WOC_MIN_INTERVAL_MS
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait))
+  try {
+    const res = await fetchWithDeadline(url)
+    if (res.status === 429) {
+      wocCooldownUntil = Date.now() + WOC_THROTTLE_COOLDOWN_MS
+      console.info('[legacy-scan] WhatsOnChain throttled (429) — pausing probes')
+      return null
+    }
+    return res
+  } catch (err) {
+    // A CORS-less 429 and a dead host look identical here; both earn the pause.
+    wocCooldownUntil = Date.now() + WOC_THROTTLE_COOLDOWN_MS
+    throw err
   }
 }
 
@@ -119,7 +161,8 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
 
   const wocCheck: Promise<boolean | null> = (async () => {
     try {
-      const res = await fetchWithDeadline(`${wocBase(chain)}/tx/hash/${id}`)
+      const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
+      if (!res) return null
       if (res.status === 404) return false
       if (!res.ok) return null
       return true
@@ -195,9 +238,10 @@ export async function spentStatusOfOutpoint(
   }
 
   try {
-    const res = await fetchWithDeadline(
+    const res = await fetchWhatsOnChainPaced(
       `${wocBase(chain)}/tx/${parsed.txid}/${parsed.vout}/spent`,
     )
+    if (!res) return 'unknown'
     if (res.status === 404) return bitailsUnknown ? 'unknown' : 'unspent'
     if (!res.ok) return 'unknown'
     const body = (await res.json()) as { txid?: unknown }
@@ -241,7 +285,8 @@ export async function scanAddressViaWhatsOnChain(
   chain: Chain,
 ): Promise<LegacyScanResult> {
   const url = `${wocBase(chain)}/address/${encodeURIComponent(address)}/unspent`
-  const res = await fetchWithDeadline(url)
+  const res = await fetchWhatsOnChainPaced(url)
+  if (!res) throw new Error('WhatsOnChain unavailable: rate budget exhausted')
   if (!res.ok) {
     throw new Error(`WhatsOnChain ${res.status}: ${await res.text()}`)
   }

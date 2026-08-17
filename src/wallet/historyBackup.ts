@@ -31,7 +31,7 @@ import {
   listLocalBrc39Archive,
   readLocalBrc39Archive,
 } from './brc39LocalArchive'
-import { runHistoryReplica } from './walletCoordinator'
+import { runHistoryReplica, type HistoryReplicaPriority } from './walletCoordinator'
 import {
   isNullMemberRejection,
   repairProvenTxReqHistoryNulls,
@@ -108,6 +108,12 @@ export type CreateBrc39Opts = {
    * high-water. Auto paths never set this.
    */
   force?: boolean
+  /**
+   * `starved` stops yielding the historyReplica region to merely-queued spends.
+   * Set only by the auto-push after its deferral budget is spent — see
+   * {@link HistoryReplicaPriority}.
+   */
+  priority?: HistoryReplicaPriority
 }
 
 export class HistoryThinOverwriteError extends Error {
@@ -195,7 +201,7 @@ export async function createBrc39BackupBytes(
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const json = await runHistoryReplica(() => exportLiveBrc38Json())
+  const json = await runHistoryReplica(() => exportLiveBrc38Json(), opts.priority)
   const out = await encryptLiveDocument(active.rootKeyHex, json)
   await archiveBrc39Locally({
     identityKey: active.identityKey,
@@ -290,7 +296,7 @@ export async function uploadBrc39Backup(
     throw new HistoryThinOverwriteError(msg)
   }
 
-  const json = await runHistoryReplica(() => exportLiveBrc38Json())
+  const json = await runHistoryReplica(() => exportLiveBrc38Json(), opts.priority)
   const bytes = asArrayBufferBytes(await encryptLiveDocument(active.rootKeyHex, json))
   await archiveBrc39Locally({
     identityKey: active.identityKey,

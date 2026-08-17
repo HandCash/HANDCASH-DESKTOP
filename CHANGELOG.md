@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.237] - 2026-08-17
+
+### Fixed
+- **The balance snapshot uploads again after a send.** A send raises spend priority *before* it can acquire the wallet region, so while chain ingest was slow enough that sends queued for tens of seconds, every backup wake-up found another spend waiting and deferred — forever. The post-spend push now gets a bounded courtesy budget (four windows) and then takes its turn; the coordinator's region exclusion, not the deferral hint, keeps the export and the spend apart. Logs name the holder and warn when the budget is spent.
+- **WhatsOnChain throttling no longer stalls chain ingest.** Its free tier is ~3 req/s and its 429 carries no CORS header, so in the renderer the throttle arrived as an opaque `TypeError: Failed to fetch` — indistinguishable from an outage. Every per-transaction probe read "unknown", so sweeps re-ran each pass, legacy ingest hit its 35s soft deadline every cycle, and sends sat behind it. WhatsOnChain calls now share a paced request budget and stop outright for 20s after a throttle, leaving Bitails to answer. "We never asked" stays distinct from "absent" — probes still fail closed.
+
+### Changed
+- The concurrent tip-ingest test gets a realistic timeout instead of flaking near the 5s default under full-suite load.
+
 ## [1.2.236] - 2026-08-17
 
 ### Changed

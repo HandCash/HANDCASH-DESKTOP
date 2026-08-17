@@ -292,29 +292,47 @@ export class HistoryDeferredForSpendError extends Error {
   }
 }
 
+/**
+ * Whether a historyReplica job steps aside for a spend that is merely *queued*.
+ *
+ * `yieldToSpend` is the default courtesy: Argon2id over a ~26MB BRC-38 must not
+ * sit on the FIFO ahead of `createAction`. But the courtesy is unconditional, and
+ * a spend raises its hold before it can acquire the region — so while chain
+ * ingest is slow enough that sends queue for tens of seconds, back-to-back sends
+ * keep the hint true and the balance snapshot never uploads at all.
+ *
+ * `starved` drops the hint for a caller that already waited out its deferral
+ * budget. Region exclusion is owned by the machine either way, so the worst case
+ * is a spend waiting on one export — never a spend running beside one.
+ */
+export type HistoryReplicaPriority = 'yieldToSpend' | 'starved'
+
 /** BRC-39 push/pull/restore — exclusive with chain ingest and spend. */
-export function runHistoryReplica<T>(fn: () => Promise<T>): Promise<T> {
+export function runHistoryReplica<T>(
+  fn: () => Promise<T>,
+  priority: HistoryReplicaPriority = 'yieldToSpend',
+): Promise<T> {
   if (context().recomposeDepth > 0) {
     return fn()
   }
+  const yieldsToSpend = priority === 'yieldToSpend'
+  const spendWantsIn = () => yieldsToSpend && shouldYieldChainIngestToSpend()
   return historyReplicaQueue(async () => {
     // Spends raise priority before enqueueing. Exit without holding history so
     // the waiting spend can acquire as soon as chain/history peers free the machine.
     while (true) {
-      if (shouldYieldChainIngestToSpend()) {
+      if (spendWantsIn()) {
         throw new HistoryDeferredForSpendError()
       }
       if (canBeginHistoryReplica(context())) break
-      await waitFor(
-        () => canBeginHistoryReplica(context()) || shouldYieldChainIngestToSpend(),
-      )
+      await waitFor(() => canBeginHistoryReplica(context()) || spendWantsIn())
     }
-    if (shouldYieldChainIngestToSpend()) {
+    if (spendWantsIn()) {
       throw new HistoryDeferredForSpendError()
     }
     const release = await acquireHistoryReplica()
     try {
-      if (shouldYieldChainIngestToSpend()) {
+      if (spendWantsIn()) {
         throw new HistoryDeferredForSpendError()
       }
       return await fn()

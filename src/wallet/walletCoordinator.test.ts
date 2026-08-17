@@ -204,6 +204,15 @@ describe('walletCoordinator runtime', () => {
     releaseSpendPriority()
   })
 
+  it('runs a starved historyReplica without yielding to a queued spend', async () => {
+    const { runHistoryReplica } = await import('./walletCoordinator')
+    requestSpendPriority('runExclusiveSpend')
+    await expect(runHistoryReplica(async () => 'backed-up', 'starved')).resolves.toBe(
+      'backed-up',
+    )
+    releaseSpendPriority()
+  })
+
   it('lets spend acquire ahead of a waiting historyReplica (per-region queues)', async () => {
     const order: string[] = []
     let releaseChain!: () => void

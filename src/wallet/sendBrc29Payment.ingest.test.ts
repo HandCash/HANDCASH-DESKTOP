@@ -231,7 +231,9 @@ describe('ingestPaymentsFromTipHints', () => {
     // Parallelism under load can peak at 2–3; never serial (1) and never over the cap.
     expect(peak).toBeGreaterThan(1)
     expect(peak).toBeLessThanOrEqual(3)
-  })
+    // Seven tips on real timers, each logging its ingest phases — the default 5s
+    // budget is close enough to the observed runtime to flake under full-suite load.
+  }, 20_000)
 
   it('reports the last known balance and no ghosts on a clean pass', async () => {
     const { ingestPaymentsFromTipHints } = await import('./sendBrc29Payment')

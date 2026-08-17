@@ -71,6 +71,49 @@ describe('txExistsOnChain', () => {
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
   })
 
+  it('treats a WhatsOnChain 429 as no evidence, not absence', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) =>
+        isBitails(url)
+          ? new Response('', { status: 500 })
+          : new Response('', { status: 429 }),
+      ),
+    )
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
+  })
+
+  it('stops asking WhatsOnChain after it throttles us', async () => {
+    const fetchMock = vi.fn(async (url: string) =>
+      isBitails(url)
+        ? new Response('', { status: 500 })
+        : new Response('', { status: 429 }),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await txExistsOnChain(TXID, 'main')
+    await txExistsOnChain('cd'.repeat(32), 'main')
+
+    const wocCalls = fetchMock.mock.calls.filter(([url]) => !isBitails(url))
+    expect(wocCalls).toHaveLength(1)
+  })
+
+  it('keeps a Bitails answer usable while WhatsOnChain is cooling down', async () => {
+    let wocSeen = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (isBitails(url)) return new Response('{}', { status: 200 })
+        wocSeen += 1
+        return new Response('', { status: 429 })
+      }),
+    )
+
+    await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
+    await expect(txExistsOnChain('cd'.repeat(32), 'main')).resolves.toBe(true)
+    expect(wocSeen).toBe(1)
+  })
+
   it('rejects a malformed txid without any network call', async () => {
     const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
