@@ -16,7 +16,7 @@ describe('ensureHandCashServiceDefaults', () => {
     vi.resetModules()
   })
 
-  it('applies HandCash history + trustholders when setup was never chosen', async () => {
+  it('applies HandCash history without trustholders when setup was never chosen', async () => {
     const { ensureHandCashServiceDefaults } = await import('./walletSetupApply')
     const { getWalletConfigPrefs } = await import('./walletConfig')
     const { getHistoryBackupPrefs } = await import('./historyBackupPrefs')
@@ -24,9 +24,9 @@ describe('ensureHandCashServiceDefaults', () => {
     ensureHandCashServiceDefaults()
 
     const cfg = getWalletConfigPrefs()
-    expect(cfg.mode).toBe('recommended')
+    expect(cfg.mode).toBe('history')
     expect(cfg.historyBaseUrl).toMatch(/brc-cloud|handcash/i)
-    expect(cfg.backupServiceUrls.length).toBeGreaterThan(0)
+    expect(cfg.backupServiceUrls).toEqual([])
     expect(getHistoryBackupPrefs().baseUrl).toBe(cfg.historyBaseUrl.replace(/\/+$/, ''))
   })
 
@@ -54,11 +54,28 @@ describe('ensureHandCashServiceDefaults', () => {
     const { applyWalletSetupSelection, ensureHandCashServiceDefaults, handCashHistoryUrl } =
       await import('./walletSetupApply')
     applyWalletSetupSelection('recommended', handCashHistoryUrl())
+    const { getWalletConfigPrefs } = await import('./walletConfig')
+    expect(getWalletConfigPrefs().mode).toBe('history')
+    expect(getWalletConfigPrefs().backupServiceUrls).toEqual([])
     const { setHistoryBackupPrefs, getHistoryBackupPrefs } = await import(
       './historyBackupPrefs'
     )
     setHistoryBackupPrefs({ baseUrl: '' })
     ensureHandCashServiceDefaults()
     expect(getHistoryBackupPrefs().baseUrl).toBe(handCashHistoryUrl())
+  })
+
+  it('lists no trustholder providers while the feature is off', async () => {
+    const { listTrustholderProviders, depositShareToTrustholder } =
+      await import('./trustholderBackup')
+    expect(listTrustholderProviders()).toEqual([])
+    await expect(
+      depositShareToTrustholder({
+        operator: 'handcash',
+        password: 'x',
+        email: 'a@b.c',
+        onOtpNeeded: async () => '000000',
+      }),
+    ).rejects.toThrow(/not available/i)
   })
 })

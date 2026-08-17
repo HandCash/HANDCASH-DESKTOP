@@ -8,6 +8,7 @@ import { revealRootKeyHex } from '../vault'
 import {
   HANDCASH_BACKUP_SERVICE_URL,
   HASTE_BACKUP_SERVICE_URL,
+  TRUSTHOLDERS_ENABLED,
   getWalletConfigPrefs,
   setWalletConfigPrefs,
 } from '../walletConfig'
@@ -39,7 +40,14 @@ export type TrustholderProvider = {
 /** Recommended cloud slots. Local offline is always index 2. */
 export const LOCAL_SHARE_INDEX = 2
 
+function assertTrustholdersEnabled(): void {
+  if (!TRUSTHOLDERS_ENABLED) {
+    throw new Error('Cloud key backup is not available on this build.')
+  }
+}
+
 export function listTrustholderProviders(): TrustholderProvider[] {
+  if (!TRUSTHOLDERS_ENABLED) return []
   const prefs = getWalletConfigPrefs()
   const urls =
     prefs.backupServiceUrls.length >= 2
@@ -140,6 +148,7 @@ export async function depositShareToTrustholder(args: {
   onProgress?: (p: DepositProgress) => void
   onOtpNeeded: (req: DepositOtpRequest) => Promise<string>
 }): Promise<DepositOneResult> {
+  assertTrustholdersEnabled()
   const preferEmail = args.preferEmailOtp !== false
   const email = args.email.trim()
   if (preferEmail && !email.includes('@')) {
@@ -271,6 +280,7 @@ export async function retrieveShareFromTrustholder(args: {
   shareIndex: number
   emailHint?: string
 }> {
+  assertTrustholdersEnabled()
   const preferEmail = args.preferEmailOtp !== false
   const email = args.email.trim()
   if (preferEmail && !email.includes('@')) {
@@ -376,6 +386,7 @@ export async function depositSharesToTrustholders(args: {
   threshold: number
   totalShares: number
 }> {
+  assertTrustholdersEnabled()
   const enrollments: TrustholderEnrollment[] = []
   let localShare = ''
   let integrity = ''

@@ -1,35 +1,18 @@
 /**
  * Builds the input BEEF for a legacy P2PKH sweep.
  *
- * `SetupClient.fundWalletFromP2PKHOutpoints` builds one itself when callers
- * don't supply it, and that builder is why incoming payments stopped arriving.
- * It reads raw transactions from two hardcoded URLs and asks GorillaPool alone
- * for merkle proofs. When a proof comes back empty it walks every parent input
- * instead — so one silent proof miss fans out into a fetch per ancestor per
- * level against the same two hosts it depends on. They rate-limit, the throttled
- * response carries no CORS headers so the browser reports `TypeError: Failed to
- * fetch`, the walk throws, and the throw is not caught per outpoint: it takes
- * the entire scan with it. Every deposit in the batch is lost, including the
- * ones that were fine, and the user sees a payment that simply never arrives.
+ * This is cash, not an item: the address scanner already showed the UTXO
+ * (mempool or mined). Fetch the deposit body and stop. Do not walk parent
+ * ancestry and do not wait for a merkle path — ARC / mempool accept is enough.
  *
- * This builder answers the same question through the toolbox's own service
- * rotation (which knows more than two providers and tracks their health),
- * remembers answers that can never change, spaces requests out, and keeps each
- * outpoint's failure to itself.
+ * The toolbox still calls `Beef.verify` (SPV) inside `createAction`. That is
+ * the wrong gate for this path. {@link withVisibleOnChainBeef} lets the sweep
+ * proceed when the subject tx body is present.
  */
-import { Beef, Transaction, type BEEF, type MerklePath } from '@bsv/sdk'
+import { Beef, Transaction, type BEEF } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
 
 import { appendAppLog } from './appLog'
-
-/**
- * How far back an unproven chain may be walked.
- *
- * Every level without a proof multiplies the request count by the input count,
- * so this is a blast radius limit, not a correctness one. Legitimate unconfirmed
- * chains from legacy wallets are a handful of transactions deep.
- */
-const MAX_DEPTH = 8
 
 /** Total provider requests one build may spend, however many outpoints it covers. */
 const MAX_FETCHES_PER_BUILD = 250
@@ -37,16 +20,14 @@ const MAX_FETCHES_PER_BUILD = 250
 /** Minimum spacing between provider requests — what keeps us under rate limits. */
 const MIN_REQUEST_GAP_MS = 90
 
-/** Raw transactions and proofs are immutable, so a hit is always safe to reuse. */
+/** Raw transactions are immutable, so a hit is always safe to reuse. */
 const MAX_CACHED_TXS = 400
 
 const txCache = new Map<string, Transaction>()
-const proofCache = new Map<string, MerklePath>()
 
 /** Test seam: a fresh build should not inherit a previous test's cache. */
 export function resetLegacyBeefCache(): void {
   txCache.clear()
-  proofCache.clear()
 }
 
 function remember<V>(cache: Map<string, V>, key: string, value: V): void {
@@ -76,8 +57,6 @@ function throttled<T>(fn: () => Promise<T>): Promise<T> {
 type BuildContext = {
   services: Services
   fetches: number
-  /** Transactions known to have no proof yet — negative results expire with the build. */
-  unproven: Set<string>
 }
 
 function spendFetch(ctx: BuildContext, txid: string): void {
@@ -107,73 +86,50 @@ async function loadTx(ctx: BuildContext, txid: string): Promise<Transaction> {
   return tx
 }
 
-async function loadProof(ctx: BuildContext, txid: string): Promise<MerklePath | null> {
-  const cached = proofCache.get(txid)
-  if (cached) return cached
-  if (ctx.unproven.has(txid)) return null
-
-  spendFetch(ctx, txid)
-  try {
-    const { merklePath } = await throttled(() => ctx.services.getMerklePath(txid))
-    if (merklePath != null) {
-      remember(proofCache, txid, merklePath)
-      return merklePath
-    }
-  } catch {
-    // No proof and a proof that couldn't be asked for are the same thing here:
-    // walk the parents. A wrong answer would corrupt the BEEF; no answer won't.
-  }
-  ctx.unproven.add(txid)
-  return null
+function beefHasTxBody(beef: Beef): boolean {
+  return beef.txs.some((t) => t.tx != null && t.isTxidOnly !== true)
 }
 
 /**
- * Collects `txid` and every ancestor needed to prove it, parents before children.
- *
- * Throws if any of them can't be resolved — the caller decides what that costs,
- * which is the whole point: it costs one outpoint, not the batch.
+ * Toolbox `createAction` / `processAction` refuse an unconfirmed P2PKH deposit
+ * because `Beef.verify` wants a merkle chain. Visible-on-chain is the product
+ * gate. The toolbox loads its own `@bsv/sdk` copy, so we also set a process
+ * flag those patched methods honor.
  */
-async function collect(
-  ctx: BuildContext,
-  txid: string,
-  depth: number,
-  out: Map<string, Transaction>,
-): Promise<void> {
-  if (out.has(txid)) return
-
-  const tx = await loadTx(ctx, txid)
-  const proof = await loadProof(ctx, txid)
-  if (proof != null) {
-    tx.merklePath = proof
-    out.set(txid, tx)
-    return
-  }
-
-  if (depth >= MAX_DEPTH) {
-    throw new Error(`unproven ancestry deeper than ${MAX_DEPTH} at ${txid}`)
-  }
-  for (const input of tx.inputs) {
-    if (input.sourceTXID != null) {
-      await collect(ctx, input.sourceTXID, depth + 1, out)
+export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise<T> {
+  const g = globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }
+  g.__HANDCASH_VISIBLE_P2PKH_SWEEP = (g.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) + 1
+  const proto = Beef.prototype
+  const orig = proto.verify
+  proto.verify = async function (this: Beef, chainTracker, allowTxidOnly) {
+    try {
+      if (await orig.call(this, chainTracker, allowTxidOnly)) return true
+    } catch {
+      // A chaintracker miss is not a confirmation wait.
     }
+    return beefHasTxBody(this)
   }
-  out.set(txid, tx)
+  try {
+    return await work()
+  } finally {
+    proto.verify = orig
+    g.__HANDCASH_VISIBLE_P2PKH_SWEEP = Math.max(0, (g.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 1) - 1)
+  }
 }
 
 export type LegacyBeefBuild = {
   /** BEEF covering exactly `ready`. Empty when nothing resolved. */
   beef: BEEF
-  /** Outpoints the BEEF can prove — safe to hand to the sweep. */
+  /** Outpoints whose source tx body was loaded — safe to hand to the sweep. */
   ready: string[]
-  /** Outpoints that could not be proven this time; they stay retryable. */
+  /** Outpoints that could not be loaded this time; they stay retryable. */
   failures: Array<{ outpoint: string; reason: string }>
 }
 
 /**
- * Build a BEEF proving `outpoints`, skipping the ones it can't.
+ * Build a BEEF for `outpoints` from each deposit's raw tx only.
  *
- * Outpoints sharing a transaction are walked once and stand or fall together,
- * because they are the same evidence.
+ * Outpoints sharing a transaction are loaded once and stand or fall together.
  */
 export async function buildLegacyInputBeef(
   services: Services,
@@ -193,27 +149,31 @@ export async function buildLegacyInputBeef(
     else byTxid.set(txid, [outpoint])
   }
 
-  const ctx: BuildContext = { services, fetches: 0, unproven: new Set() }
+  const ctx: BuildContext = { services, fetches: 0 }
   const beef = new Beef()
   const ready: string[] = []
 
   for (const [txid, group] of byTxid) {
-    const collected = new Map<string, Transaction>()
+    const t0 = Date.now()
     try {
-      await collect(ctx, txid, 0, collected)
+      beef.mergeTransaction(await loadTx(ctx, txid))
+      ready.push(...group)
+      console.info(
+        `[legacy-beef] ${txid.slice(0, 12)}… via=tip fetches=${ctx.fetches} ${Date.now() - t0}ms`,
+      )
     } catch (err) {
       const reason = err instanceof Error ? err.message : String(err)
       for (const outpoint of group) failures.push({ outpoint, reason })
-      continue
+      console.info(
+        `[legacy-beef] ${txid.slice(0, 12)}… via=tip FAIL ${Date.now() - t0}ms ${reason}`,
+      )
     }
-    for (const tx of collected.values()) beef.mergeTransaction(tx)
-    ready.push(...group)
   }
 
   if (failures.length > 0) {
     appendAppLog(
       'warn',
-      `[legacy-beef] ${failures.length} outpoint(s) unprovable this pass: ${failures[0].reason}`,
+      `[legacy-beef] ${failures.length} outpoint(s) unreadable this pass: ${failures[0].reason}`,
     )
   }
 

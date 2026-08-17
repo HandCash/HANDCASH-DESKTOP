@@ -2,8 +2,9 @@
  * Shared post-create / post-restore wallet setup prefs.
  * Keep AuthScreen and WalletSetupConfigPanel on the same apply path.
  *
- * HandCash cloud (BRC-CLOUD) is the default for history + trustholders unless
- * the user explicitly chooses "no backup" or a custom history host.
+ * HandCash cloud (BRC-CLOUD) is the default for history unless the user
+ * explicitly chooses "no backup" or a custom history host. Trustholders are
+ * not applied while `TRUSTHOLDERS_ENABLED` is off.
  */
 import { getHistoryBackupPrefs, setHistoryBackupPrefs } from './historyBackupPrefs'
 import {
@@ -29,7 +30,8 @@ export function applyWalletSetupSelection(
   const url = historyUrl.trim() || (selected === 'none' ? '' : handCashHistoryUrl())
   if (selected === 'recommended') {
     if (!BACKUP_SERVICES_LIVE) {
-      throw new Error('Recommended backup is not available yet.')
+      applyWalletSetupSelection('history', url)
+      return
     }
     setWalletConfigPrefs({
       mode: 'recommended',
@@ -69,8 +71,9 @@ export function applyDefaultRestoreWalletSetup(): void {
 }
 
 /**
- * Fill HandCash history / trustholder URLs when the user never opted out.
+ * Fill HandCash history when the user never opted out.
  * No-op for explicit "no backup". Heals older installs that left URLs blank.
+ * Does not enroll trustholders while they are disabled.
  */
 export function ensureHandCashServiceDefaults(): void {
   const cfg = getWalletConfigPrefs()

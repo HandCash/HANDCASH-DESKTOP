@@ -21,6 +21,7 @@ import {
   clearInboundReceivePending,
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
+import { withVisibleOnChainBeef } from './legacyBeef'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import {
   beginPendingSend,
@@ -636,23 +637,25 @@ async function internalizeBrc29PaymentOnce(opts: {
       await broadcastAtomicBeef(id, atomic)
     }
 
-    await active.wallet.internalizeAction({
-      tx: atomic,
-      description: 'BRC-29 payment received',
-      labels: ['brc29'],
-      outputs: [
-        {
-          outputIndex,
-          protocol: 'wallet payment',
-          paymentRemittance: {
-            derivationPrefix: prefix,
-            derivationSuffix: suffix,
-            senderIdentityKey: sender,
+    await withVisibleOnChainBeef(() =>
+      active.wallet.internalizeAction({
+        tx: atomic,
+        description: 'BRC-29 payment received',
+        labels: ['brc29'],
+        outputs: [
+          {
+            outputIndex,
+            protocol: 'wallet payment',
+            paymentRemittance: {
+              derivationPrefix: prefix,
+              derivationSuffix: suffix,
+              senderIdentityKey: sender,
+            },
           },
-        },
-      ],
-      seekPermission: false,
-    })
+        ],
+        seekPermission: false,
+      }),
+    )
 
     const satoshis =
       typeof opts.satoshis === 'number' && opts.satoshis > 0

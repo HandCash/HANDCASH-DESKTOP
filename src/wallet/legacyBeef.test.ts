@@ -2,7 +2,7 @@ import { Beef, MerklePath, P2PKH, PrivateKey, Transaction, UnlockingScript } fro
 import type { Services } from '@bsv/wallet-toolbox-client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-import { buildLegacyInputBeef, resetLegacyBeefCache } from './legacyBeef'
+import { buildLegacyInputBeef, resetLegacyBeefCache, withVisibleOnChainBeef } from './legacyBeef'
 
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 
@@ -88,12 +88,11 @@ describe('buildLegacyInputBeef', () => {
     expect(built.ready).toEqual([`${good.id('hex')}.0`])
     expect(built.failures).toHaveLength(1)
     expect(built.failures[0].outpoint).toBe(`${bad.id('hex')}.0`)
-    expect(Beef.fromBinary(built.beef).verifyValid(false).valid).toBe(true)
   })
 
-  it('walks parents only until it finds a proof', async () => {
+  it('does not walk parent ancestry for an unproven tip', async () => {
     const [tip, parent] = buildChain(2)
-    const { services, proofCalls } = makeServices([
+    const { services, proofCalls, rawTxCalls } = makeServices([
       { tx: tip },
       { tx: parent, proof: provenAt(parent, 800_002) },
     ])
@@ -101,9 +100,9 @@ describe('buildLegacyInputBeef', () => {
     const built = await buildLegacyInputBeef(services, [`${tip.id('hex')}.0`])
 
     expect(built.failures).toEqual([])
-    expect(proofCalls).toEqual([tip.id('hex'), parent.id('hex')])
-    // An unconfirmed tip anchored to a proven parent is a complete BEEF.
-    expect(Beef.fromBinary(built.beef).verifyValid(false).valid).toBe(true)
+    expect(built.ready).toEqual([`${tip.id('hex')}.0`])
+    expect(rawTxCalls).toEqual([tip.id('hex')])
+    expect(proofCalls).toEqual([])
   })
 
   it('fetches a shared transaction once', async () => {
@@ -116,16 +115,38 @@ describe('buildLegacyInputBeef', () => {
     expect(rawTxCalls).toEqual([tx.id('hex')])
   })
 
-  it('gives up instead of fanning out down an endless unproven chain', async () => {
-    // Every unproven level multiplies the request count, which is what
-    // rate-limited the providers we need for the deposits themselves.
+  it('keeps a deep unproven deposit spendable with only the tip', async () => {
     const chain = buildChain(12)
-    const { services } = makeServices(chain.map((tx) => ({ tx })))
+    const { services, proofCalls, rawTxCalls } = makeServices(chain.map((tx) => ({ tx })))
 
     const built = await buildLegacyInputBeef(services, [`${chain[0].id('hex')}.0`])
 
-    expect(built.ready).toEqual([])
-    expect(built.failures[0].reason).toMatch(/unproven ancestry deeper than/)
+    expect(built.failures).toEqual([])
+    expect(built.ready).toEqual([`${chain[0].id('hex')}.0`])
+    expect(rawTxCalls).toEqual([chain[0].id('hex')])
+    expect(proofCalls).toEqual([])
+  })
+
+  it('treats a visible unconfirmed deposit body as enough for Beef.verify', async () => {
+    const [tip] = buildChain(3)
+    const beef = new Beef()
+    beef.mergeRawTx(tip.toBinary())
+    const tracker = {
+      isValidRootForHeight: async () => false,
+      currentHeight: async () => 1,
+    }
+    expect(await beef.verify(tracker, true)).toBe(false)
+    const ok = await withVisibleOnChainBeef(() => beef.verify(tracker, true))
+    expect(ok).toBe(true)
+    expect(await beef.verify(tracker, true)).toBe(false)
+  })
+
+  it('sets a process flag the toolbox patches honor', async () => {
+    expect(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0).toBe(0)
+    await withVisibleOnChainBeef(async () => {
+      expect((globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }).__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(1)
+    })
+    expect((globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }).__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(0)
   })
 
   it('reports a malformed outpoint without asking the network', async () => {

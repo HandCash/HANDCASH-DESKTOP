@@ -234,6 +234,10 @@ export function getActiveWallet(): ActiveWallet | null {
   return active
 }
 
+export function setActiveWallet(next: ActiveWallet | null): void {
+  active = next
+}
+
 export function clearActiveWallet(): void {
   active = null
   clearSessionBackupPassword()

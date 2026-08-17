@@ -1,12 +1,13 @@
 /**
  * Wallet configuration chosen at setup (and editable later in Settings).
- * Recommended (HC + Haste BRC-232) is on when BRC-CLOUD is reachable.
+ * History backup on BRC-CLOUD is the default. BRC-232 trustholders stay off
+ * until explicitly re-enabled (`VITE_TRUSTHOLDERS_ENABLED=true`).
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 const KEY = 'handcash.brc100.walletConfig.v1'
 
-/** Public BRC-CLOUD origin (handles, history, BRC-232 trustholders). */
+/** Public BRC-CLOUD origin (handles, history). */
 export const DEFAULT_BRC_CLOUD_BASE_URL =
   (typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_BRC_CLOUD_BASE_URL === 'string' &&
@@ -14,14 +15,23 @@ export const DEFAULT_BRC_CLOUD_BASE_URL =
   'https://brc-cloud.bcryderman.workers.dev'
 
 /**
- * Recommended backup is live by default. Set VITE_BACKUP_SERVICES_LIVE=false
- * to gray it out (e.g. offline / local-only builds).
+ * BRC-232 trustholder deposit / retrieve. Off unless
+ * `VITE_TRUSTHOLDERS_ENABLED=true`.
+ */
+export const TRUSTHOLDERS_ENABLED =
+  typeof import.meta !== 'undefined' &&
+  import.meta.env?.VITE_TRUSTHOLDERS_ENABLED === 'true'
+
+/**
+ * Recommended (HC + Haste key shares) only when trustholders are on.
+ * Set `VITE_BACKUP_SERVICES_LIVE=false` to force it off even then.
  */
 export const BACKUP_SERVICES_LIVE =
-  typeof import.meta !== 'undefined' &&
-  import.meta.env?.VITE_BACKUP_SERVICES_LIVE === 'false'
-    ? false
-    : true
+  TRUSTHOLDERS_ENABLED &&
+  !(
+    typeof import.meta !== 'undefined' &&
+    import.meta.env?.VITE_BACKUP_SERVICES_LIVE === 'false'
+  )
 
 export const DEFAULT_METANET_HANDLES_BASE_URL =
   (typeof import.meta !== 'undefined' &&
@@ -137,20 +147,10 @@ export type WalletConfigOption = {
 }
 
 export function listWalletConfigOptions(): WalletConfigOption[] {
-  return [
-    {
-      id: 'recommended',
-      title: 'Recommended',
-      description:
-        'HandCash history plus key shares at HandCash and Haste (BRC-232). Best recovery if you lose this device.',
-      disabled: !BACKUP_SERVICES_LIVE,
-      disabledReason: BACKUP_SERVICES_LIVE
-        ? undefined
-        : 'Backup services are not live yet — coming soon.',
-    },
+  const options: WalletConfigOption[] = [
     {
       id: 'history',
-      title: 'Advanced — history backup only',
+      title: BACKUP_SERVICES_LIVE ? 'Advanced — history backup only' : 'History backup',
       description:
         'HandCash history, friends, and spend locks across devices. Keys stay only on your devices (phrase / slices).',
       disabled: false,
@@ -163,5 +163,16 @@ export function listWalletConfigOptions(): WalletConfigOption[] {
       warning:
         'No remote recovery or device parity. Losing this device without an offline backup means losing access.',
     },
+  ]
+  if (!BACKUP_SERVICES_LIVE) return options
+  return [
+    {
+      id: 'recommended',
+      title: 'Recommended',
+      description:
+        'HandCash history plus key shares at HandCash and Haste (BRC-232). Best recovery if you lose this device.',
+      disabled: false,
+    },
+    ...options,
   ]
 }

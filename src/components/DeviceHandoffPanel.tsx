@@ -22,16 +22,13 @@ export function DeviceHandoffPanel() {
       data-aeon-scope="device-handoff"
     >
       <p className="settings-hint">
-        On the new device choose <strong>Restore → Cloud</strong> and pull slices from HandCash /
-        Haste (same deposit email), or paste your offline slice — any two restore the same identity
-        and BSV pot. Phrase and pasted Shares still work. To keep history and friends aligned, set
-        the <strong>same History backup URL</strong> on each install.
+        On the new device choose <strong>Restore → Phrase</strong> or <strong>Shares</strong>. Same
+        phrase or any two BRC-140 slices restore the same identity and BSV pot. To keep history and
+        friends aligned, set the <strong>same History backup URL</strong> on each install.
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
-        <li>
-          On the new device: Restore → Cloud (trustholders) or Phrase / Shares.
-        </li>
+        <li>On the new device: Restore → Phrase / Shares / emergency key.</li>
         <li>Confirm the identical History backup URL on both.</li>
         <li>
           On one device show the link QR; on the other tap <strong>Scan to link</strong> (or use
@@ -42,17 +39,7 @@ export function DeviceHandoffPanel() {
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('trustholder-backup')
-          }}
-        >
-          Cloud key backup
-        </button>
-        <button type="button" className="btn btn-ghost" onClick={openKeys}>
+        <button type="button" className="btn btn-primary" onClick={openKeys}>
           {hasPhrase ? 'Open key slices (or phrase)' : 'Open key slices'}
         </button>
         <button
@@ -72,8 +59,8 @@ export function DeviceHandoffPanel() {
       <PairDevicePanel />
 
       <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-39']}>
-        Phrase, Cloud key backup (trustholders), and key slices recover identity. Shared history
-        backup URL keeps device state aligned after you sync.
+        Phrase and key slices recover identity. Shared history backup URL keeps device state aligned
+        after you sync.
       </SettingsFeatureAbout>
     </div>
   )

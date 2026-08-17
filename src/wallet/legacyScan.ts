@@ -1,5 +1,5 @@
-import { P2PKH, PrivateKey } from '@bsv/sdk'
-import { SetupClient, type Services } from '@bsv/wallet-toolbox-client'
+import { P2PKH } from '@bsv/sdk'
+import type { Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import {
@@ -8,6 +8,7 @@ import {
   releaseLegacyImport,
 } from './legacyImportGuard'
 import { buildLegacyInputBeef } from './legacyBeef'
+import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 
 export type LegacyUtxo = {
   outpoint: string
@@ -266,7 +267,7 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 
 /**
  * Import scanned legacy P2PKH UTXOs into BRC-100 managed change.
- * Uses SetupClient.fundWalletFromP2PKHOutpoints (builds BEEF + sweeps).
+ * Sweep scanned legacy P2PKH UTXOs into BRC-100 managed change.
  *
  * HARD RULES:
  * - refuses satoshis === 1 (possible ordinals)
@@ -336,28 +337,21 @@ export async function importLegacyUtxos(
   }
 
   try {
-    const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(wallet.rootKeyHex))
-    // Supply the BEEF rather than letting the toolbox build it. Its builder
-    // throws the first time any ancestor lookup fails and the throw is outside
-    // the per-outpoint try, so one unlucky deposit discards the whole scan.
-    // See `legacyBeef.ts`.
+    // Supply the deposit bodies rather than letting the toolbox walk merkle
+    // ancestry. Visible-on-chain (unconfirmed included) is enough for cash.
+    // The sweep is not a receive until ARC accepts it.
     const built = await buildLegacyInputBeef(wallet.services, outpoints)
     const results =
       built.ready.length > 0
-        ? await SetupClient.fundWalletFromP2PKHOutpoints(
-            wallet.wallet,
-            built.ready,
-            p2pkhKey,
-            built.beef,
-          )
+        ? await sweepVisibleP2pkhOutpoints(wallet, built.ready, built.beef)
         : []
-    // Unprovable outpoints are reported as ordinary failures so they fall
+    // Unreadable outpoints are reported as ordinary failures so they fall
     // through to `releaseLegacyImport` below and are retried on the next scan.
     results.push(
       ...built.failures.map((f) => ({
         outpoint: f.outpoint,
         success: false,
-        error: `could not prove outpoint: ${f.reason}`,
+        error: `could not load outpoint: ${f.reason}`,
       })),
     )
 

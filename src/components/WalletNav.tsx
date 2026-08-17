@@ -64,6 +64,7 @@ import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
+import { TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
 import { getCollectable } from '../wallet/collectables'
 import { getFungible, getCachedFungibles } from '../wallet/fungibles'
 import {
@@ -370,14 +371,19 @@ export function WalletNav({
               {child.type === 'setting' &&
                 (child.settingId === 'backup' ||
                   child.settingId === 'backup-phrase' ||
-                  child.settingId === 'split-backup') && <WalletBackupPanel />}
+                  child.settingId === 'split-backup' ||
+                  (!TRUSTHOLDERS_ENABLED && child.settingId === 'trustholder-backup')) && (
+                <WalletBackupPanel />
+              )}
               {child.type === 'setting' && child.settingId === 'device-handoff' && (
                 <DeviceHandoffPanel />
               )}
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'trustholder-backup' && (
+              {TRUSTHOLDERS_ENABLED &&
+                child.type === 'setting' &&
+                child.settingId === 'trustholder-backup' && (
                 <TrustholderBackupPanel />
               )}
               {child.type === 'setting' && child.settingId === 'logs' && <LogViewerPanel />}

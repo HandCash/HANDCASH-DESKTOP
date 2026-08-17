@@ -11,6 +11,7 @@ import {
   resolveHistoryBackupBaseUrl,
 } from '../../wallet/historyBackupPrefs'
 import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
+import { TRUSTHOLDERS_ENABLED } from '../../wallet/walletConfig'
 import type { SettingId } from '../../wallet/navStore'
 
 export type SettingRowStatus = {
@@ -71,7 +72,7 @@ export function statusForSetting(id: SettingId): SettingRowStatus | null {
     case 'backup':
       return keysStatus()
     case 'trustholder-backup':
-      return trustholderStatus()
+      return TRUSTHOLDERS_ENABLED ? trustholderStatus() : keysStatus()
     case 'history-backup':
       return historyStatus()
     case 'device-handoff':

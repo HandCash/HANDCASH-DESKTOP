@@ -52,8 +52,8 @@ export function WalletSetupConfigPanel({ onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="wallet-setup-config">
       <h2>Wallet configuration</h2>
       <p className="auth-lede">
-        HandCash cloud is used for history and recovery unless you choose otherwise.
-        Signing always stays on this device.
+        HandCash cloud is used for history across devices unless you choose otherwise.
+        Signing and key backup stay on this device (phrase or slices).
       </p>
 
       <div className="wallet-setup-options" role="radiogroup" aria-label="Wallet configuration">

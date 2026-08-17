@@ -680,34 +680,32 @@ export function Dashboard({
               actions="inline"
             />
           </section>
+        ) : sideBusy ? (
+          <section
+            className="panel permission-side-panel permission-side-panel--processing"
+            aria-label="Processing payment"
+            aria-busy="true"
+          >
+            {/*
+              Mirrors the send panel's old status stage. The panel now hands
+              a send off and closes, so this column is the live view of one
+              in flight — same as a permission request, not stacked on
+              Recent activity. The Activity tab still shows the Sending… row.
+            */}
+            <div className="send-spinner" aria-hidden />
+            <p className="send-status-title">
+              {paymentProgress.label || 'Sending…'}
+            </p>
+            <p className="send-status-sub">
+              {paymentProgress.detail ||
+                (lastApproved
+                  ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
+                  : 'Broadcasting the approved payment.')}
+            </p>
+          </section>
         ) : (
           <>
-            {sideBusy ? (
-              <section
-                className="panel permission-side-panel permission-side-panel--processing"
-                aria-label="Processing payment"
-                aria-busy="true"
-              >
-                {/*
-                  Mirrors the send panel's old status stage. The panel now hands
-                  a send off and closes, so this is the live view of one in
-                  flight and has to carry the same spinner and copy.
-                */}
-                <div className="send-spinner" aria-hidden />
-                <p className="send-status-title">
-                  {paymentProgress.label || 'Sending…'}
-                </p>
-                <p className="send-status-sub">
-                  {paymentProgress.detail ||
-                    (lastApproved
-                      ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
-                      : 'Broadcasting the approved payment.')}
-                </p>
-              </section>
-            ) : (
-              <WhatIsBsvPanel />
-            )}
-            {/* Keep Activity visible during send so the Sending… row stays on screen. */}
+            <WhatIsBsvPanel />
             <RecentActivityPanel chain={profile.chain} />
           </>
         )}

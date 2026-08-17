@@ -217,26 +217,11 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Prefer cloud key backup when you can. Otherwise save any two of three offline slices — email
-        is the easiest local option.
+        Save any two of three offline slices — email is the easiest local option — or keep a recovery
+        phrase.
       </p>
 
-      <button
-        type="button"
-        className="backup-choice"
-        data-aeon-state="idle"
-        onClick={() => {
-          playWalletSound('soft')
-          openSetting('trustholder-backup')
-        }}
-      >
-        <span className="backup-choice-title">Cloud key backup</span>
-        <span className="backup-choice-desc">
-          Recommended · independent providers (HandCash, Haste)
-        </span>
-      </button>
-
-      <div className="actions backup-alternate-actions" aria-label="Other recovery formats">
+      <div className="actions backup-alternate-actions" aria-label="Recovery formats">
         <button
           type="button"
           className={kind === 'split' ? 'btn btn-primary' : 'btn btn-ghost'}

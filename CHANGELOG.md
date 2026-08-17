@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.230] - 2026-08-17
+
+### Fixed
+- **Incoming BSV is credited when it is visible on-chain**, without waiting for Arcade SEEN, merkle proofs, or walking deposit ancestry. Plain P2PKH cash is not an NFT: Refresh loads the deposit, sweeps into BRC change, and only counts it after ARC accepts the sweep (so a local-only sweep cannot look already spent).
+- **BRC-29 receive no longer rejects unconfirmed payments** (`internalizeAction beef is invalid`). Same visible-on-chain gate as cash.
+
+### Changed
+- **The sending column occupies the side** while a payment is in flight, instead of stacking the spinner above Recent activity. Activity still shows the Sending… row.
+- **Cloud key backup (BRC-232 trustholders) is off** unless `VITE_TRUSTHOLDERS_ENABLED=true`. Phrase, BRC-140 slices, and history backup stay.
+
 ## [1.2.229] - 2026-08-16
 
 ### Changed

@@ -20,6 +20,21 @@ index 463e3a2..07b10d4 100644
          });
      }
      async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/signer/methods/internalizeAction.js b/node_modules/@bsv/wallet-toolbox-client/out/src/signer/methods/internalizeAction.js
+index 4ea76a8..fc60744 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/signer/methods/internalizeAction.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/signer/methods/internalizeAction.js
+@@ -93,7 +93,9 @@ async function internalizeAction(wallet, auth, args) {
+         const ab = sdk_1.Beef.fromBinary(vargs.tx);
+         // TODO: Add support for known txids...which would speed up processing by avoiding a network call,
+         // unless a local chaintracker is used.
+-        const txValid = await ab.verify(await wallet.getServices().getChainTracker(), false);
++        const skipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 ||
++            (Array.isArray(vargs.labels) && vargs.labels.includes('brc29'));
++        const txValid = skipMerkle || await ab.verify(await wallet.getServices().getChainTracker(), false);
+         if (!txValid || !ab.atomicTxid) {
+             console.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);
+             throw new WERR_errors_1.WERR_INVALID_PARAMETER('tx', 'valid AtomicBEEF');
 diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
 index cd5d6d7..d50806a 100644
 --- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/StorageIdb.js
@@ -63,4 +78,64 @@ index cd5d6d7..d50806a 100644
 +            }
              throw err;
          }
+     }
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/actionBatchValidation.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/actionBatchValidation.js
+index 9a30ee5..9da229e 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/actionBatchValidation.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/actionBatchValidation.js
+@@ -303,7 +303,9 @@ async function validateManifestActions(storage, batch, manifest) {
+     for (const { action } of actions)
+         (0, completeSignedTransaction_1.verifyUnlockScripts)(action.txid, beef);
+     if (!(await beef.verify(await storage.getServices().getChainTracker(), true))) {
+-        throw new WERR_errors_1.WERR_INVALID_PARAMETER('manifest', 'valid dependency graph');
++        if (!((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0)) {
++            throw new WERR_errors_1.WERR_INVALID_PARAMETER('manifest', 'valid dependency graph');
++        }
+     }
+     return { actions, dependencyBeef };
+ }
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/createAction.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/createAction.js
+index 9949c85..19ce05b 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/createAction.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/createAction.js
+@@ -473,7 +473,9 @@ async function validateRequiredInputs(storage, userId, vargs) {
+     }
+     await validateBeefTxidOnlyEntries(beef, inputsByTxid, trustSelf, storage);
+     await ensureBeefContainsAllInputTxids(beef, inputsByTxid, localKnownInputTxids, trustSelf, storage);
+-    if (!(await beef.verify(await storage.getServices().getChainTracker(), true))) {
++    const skipMerkleForVisibleP2pkh = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 ||
++        (Array.isArray(vargs.labels) && vargs.labels.includes('p2pkh-funding'));
++    if (!skipMerkleForVisibleP2pkh && !(await beef.verify(await storage.getServices().getChainTracker(), true))) {
+         console.log(`verifyInputBeef failed, inputBEEF failed to verify.\n${beef.toLogString()}\n`);
+         throw new WERR_errors_1.WERR_INVALID_PARAMETER('inputBEEF', 'valid Beef when factoring options.trustSelf');
+     }
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/internalizeAction.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/internalizeAction.js
+index 6a70185..654ddb1 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/internalizeAction.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/internalizeAction.js
+@@ -336,7 +336,9 @@ class InternalizeActionContext {
+      */
+     async validateAtomicBeef(atomicBeef) {
+         const ab = atomicBeef instanceof Uint8Array ? sdk_1.Beef.fromBinaryView(atomicBeef) : sdk_1.Beef.fromBinary(atomicBeef);
+-        const txValid = await ab.verify(await this.storage.getServices().getChainTracker(), false);
++        const skipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 ||
++            (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes('brc29'));
++        const txValid = skipMerkle || await ab.verify(await this.storage.getServices().getChainTracker(), false);
+         if (!txValid || !ab.atomicTxid)
+             throw new WERR_errors_1.WERR_INVALID_PARAMETER('tx', 'valid AtomicBEEF');
+         const txid = ab.atomicTxid;
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/processAction.js b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/processAction.js
+index c9a94cb..7f1b9b3 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/processAction.js
++++ b/node_modules/@bsv/wallet-toolbox-client/out/src/storage/methods/processAction.js
+@@ -73,6 +73,10 @@ async function verifyMergedBeef(storage, r, readyToSendReqs, logger) {
+         return;
+     const beefIsValid = await r.beef.verify(await storage.getServices().getChainTracker());
+     if (!beefIsValid) {
++        if ((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0) {
++            logger?.log('visible unconfirmed P2PKH — posting without merkle');
++            return;
++        }
+         logger?.error(`VERIFY FALSE BEEF: ${r.beef.toLogString()}`);
+         throw new WERR_errors_1.WERR_INTERNAL('merged Beef failed validation.');
      }

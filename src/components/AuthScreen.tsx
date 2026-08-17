@@ -20,7 +20,7 @@ import {
   subscribeUnlockNudge,
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
-import { getWalletConfigPrefs } from '../wallet/walletConfig'
+import { getWalletConfigPrefs, TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
 import {
   applyDefaultRestoreWalletSetup,
   ensureHandCashServiceDefaults,
@@ -54,7 +54,7 @@ type FormMode = 'create' | 'unlock' | RestoreMethod
 
 const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
-  { id: 'cloud', label: 'Cloud' },
+  ...(TRUSTHOLDERS_ENABLED ? [{ id: 'cloud' as const, label: 'Cloud' }] : []),
   { id: 'shares', label: 'Shares' },
   { id: 'key', label: 'Key' },
 ]
@@ -472,7 +472,7 @@ export function AuthScreen({
           : formMode === 'key'
             ? 'Paste your emergency root key (64 hex chars), then set a password for this device.'
             : formMode === 'create'
-              ? 'Your keys stay on this device. Back up later with Cloud key backup, a phrase, or BRC-140 slices.'
+              ? 'Your keys stay on this device. Back up later with a recovery phrase or BRC-140 slices.'
               : 'Enter your password to unlock.'
 
   const submitting = snapshot.matches('submitting')
@@ -565,8 +565,8 @@ export function AuthScreen({
         ) : null}
         {recoveryOnly ? (
           <p className="auth-unlock-nudge" role="status">
-            Unlock keys are missing. Restore with Cloud key backup, a recovery phrase, BRC-140
-            shares, or an emergency key — creating a new wallet is blocked.
+            Unlock keys are missing. Restore with a recovery phrase, BRC-140 shares, or an emergency
+            key — creating a new wallet is blocked.
           </p>
         ) : null}
       </div>

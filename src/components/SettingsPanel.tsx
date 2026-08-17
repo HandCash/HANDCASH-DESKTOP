@@ -20,6 +20,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
+import { TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
 import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
 
 type SettingItem = {
@@ -37,11 +38,6 @@ const SETTING_GROUPS: SettingGroup[] = [
   {
     title: 'Security',
     items: [
-      {
-        id: 'trustholder-backup',
-        label: 'Cloud key backup',
-        description: 'Independent providers · recommend two',
-      },
       {
         id: 'backup',
         label: 'Key slices',
@@ -126,7 +122,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
-  if (id === 'trustholder-backup') return 'Cloud key backup'
+  if (id === 'trustholder-backup') return TRUSTHOLDERS_ENABLED ? 'Cloud key backup' : 'Key slices'
   if (id === 'device-handoff') return 'Use on another device'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {

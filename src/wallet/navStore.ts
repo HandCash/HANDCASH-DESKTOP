@@ -1,5 +1,6 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
+import { TRUSTHOLDERS_ENABLED } from './walletConfig'
 
 export type NavSection =
   | 'activity'
@@ -160,6 +161,7 @@ export function openFungibleDetails(tokenId: string) {
 
 function resolveSettingId(settingId: SettingId): SettingId {
   if (settingId === 'backup-phrase' || settingId === 'split-backup') return 'backup'
+  if (settingId === 'trustholder-backup' && !TRUSTHOLDERS_ENABLED) return 'backup'
   return settingId
 }
 

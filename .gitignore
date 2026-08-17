@@ -13,3 +13,6 @@ out/
 /httpServer.js
 /main.js
 /preload.js
+.live-wallets.json
+.live-idb.json
+
