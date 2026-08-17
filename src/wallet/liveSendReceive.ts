@@ -120,39 +120,41 @@ export async function runLiveSendReceive(opts?: {
   let alice: ActiveWallet | undefined
   let bob: ActiveWallet | undefined
   try {
-  alice = await phase(originMs, log, phases, 'boot-alice', () =>
-    bootWallet({
-      rootKeyHex: keys.alice.rootKeyHex,
-      handle: keys.alice.handle,
-      chain: keys.chain,
-    }),
-  )
-  bob = await phase(originMs, log, phases, 'boot-bob', () =>
-    bootWallet({
-      rootKeyHex: keys.bob.rootKeyHex,
-      handle: keys.bob.handle,
-      chain: keys.chain,
-    }),
-  )
-  setActiveWallet(alice)
-  liveLog(
-    originMs,
-    log,
-    `alice address=${alice.address} identity=${alice.identityKey.slice(0, 16)}…`,
-  )
+    const aliceWallet = await phase(originMs, log, phases, 'boot-alice', () =>
+      bootWallet({
+        rootKeyHex: keys.alice.rootKeyHex,
+        handle: keys.alice.handle,
+        chain: keys.chain,
+      }),
+    )
+    const bobWallet = await phase(originMs, log, phases, 'boot-bob', () =>
+      bootWallet({
+        rootKeyHex: keys.bob.rootKeyHex,
+        handle: keys.bob.handle,
+        chain: keys.chain,
+      }),
+    )
+    alice = aliceWallet
+    bob = bobWallet
+    setActiveWallet(aliceWallet)
+    liveLog(
+      originMs,
+      log,
+      `alice address=${aliceWallet.address} identity=${aliceWallet.identityKey.slice(0, 16)}…`,
+    )
 
   const refreshAsDashboard = async () => {
-    setActiveWallet(alice)
+    setActiveWallet(aliceWallet)
     const sats = await refreshFromChain({
       forceReview: true,
       announceReceive: false,
     })
-    const spendableNow = sats ?? (await fetchBalanceSats(alice.wallet).catch(() => 0))
+    const spendableNow = sats ?? (await fetchBalanceSats(aliceWallet.wallet).catch(() => 0))
     liveLog(originMs, log, `refreshFromChain spendable=${spendableNow}`)
     return spendableNow
   }
 
-  let spendable = await fetchBalanceSats(alice.wallet).catch(() => 0)
+  let spendable = await fetchBalanceSats(aliceWallet.wallet).catch(() => 0)
   if (spendable >= need) {
     liveLog(originMs, log, `alice already funded from disk (${spendable} sats)`)
   }
@@ -173,22 +175,22 @@ export async function runLiveSendReceive(opts?: {
         await sleep(Math.min(8_000, Math.max(1_000, left)))
       }
       throw new Error(
-        `After Refresh, Alice spendable is ${spendable} (need ${need}). Send ≥${need} sats to ${alice.address}`,
+        `After Refresh, Alice spendable is ${spendable} (need ${need}). Send ≥${need} sats to ${aliceWallet.address}`,
       )
     })
   }
 
-  const aliceBefore = await fetchBalanceSats(alice.wallet)
+  const aliceBefore = await fetchBalanceSats(aliceWallet.wallet)
   liveLog(originMs, log, `alice spendable ${aliceBefore} sats`)
 
   const rounds: LiveSendReceiveResult['rounds'] = []
   for (let i = 0; i < env.rounds; i += 1) {
     const label = env.rounds > 1 ? `round-${i + 1}` : 'send'
-    setActiveWallet(alice)
+    setActiveWallet(aliceWallet)
     const sendStarted = nowMs()
     const sent = await phase(originMs, log, phases, `${label}-broadcast`, () =>
       sendBrc29ToIdentityKey({
-        payeeIdentityKey: bob.identityKey,
+        payeeIdentityKey: bobWallet.identityKey,
         satoshis: env.sats,
         description: 'headless live-tx',
       }),
@@ -200,13 +202,13 @@ export async function runLiveSendReceive(opts?: {
       `${label} txid=${sent.txid} peerDelivered=${String(sent.peerDelivered)} self=${String(sent.selfReceived)}`,
     )
 
-    setActiveWallet(bob)
+    setActiveWallet(bobWallet)
     const ingestStarted = nowMs()
     const received = await phase(originMs, log, phases, `${label}-ingest`, () =>
       ingestPaymentsFromTipHints([
         {
           txid: sent.txid,
-          senderIdentityKey: alice.identityKey,
+          senderIdentityKey: aliceWallet.identityKey,
           satoshis: env.sats,
           brc29: sent.remittance,
           tx: sent.atomicBeef,
@@ -226,10 +228,10 @@ export async function runLiveSendReceive(opts?: {
     }
   }
 
-  setActiveWallet(alice)
-  const aliceBalanceAfter = await fetchBalanceSats(alice.wallet)
-  setActiveWallet(bob)
-  const bobBalanceAfter = await fetchBalanceSats(bob.wallet)
+  setActiveWallet(aliceWallet)
+  const aliceBalanceAfter = await fetchBalanceSats(aliceWallet.wallet)
+  setActiveWallet(bobWallet)
+  const bobBalanceAfter = await fetchBalanceSats(bobWallet.wallet)
 
   liveLog(
     originMs,
@@ -242,9 +244,9 @@ export async function runLiveSendReceive(opts?: {
   return {
     rounds,
     phases,
-    aliceAddress: alice.address,
-    aliceIdentityKey: alice.identityKey,
-    bobIdentityKey: bob.identityKey,
+    aliceAddress: aliceWallet.address,
+    aliceIdentityKey: aliceWallet.identityKey,
+    bobIdentityKey: bobWallet.identityKey,
     aliceBalanceAfter,
     bobBalanceAfter,
   }

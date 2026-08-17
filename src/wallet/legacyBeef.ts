@@ -14,6 +14,11 @@ import type { Services } from '@bsv/wallet-toolbox-client'
 
 import { appendAppLog } from './appLog'
 
+declare global {
+  // Toolbox patches read this from a different @bsv/sdk copy than this module.
+  var __HANDCASH_VISIBLE_P2PKH_SWEEP: number | undefined
+}
+
 /** Total provider requests one build may spend, however many outpoints it covers. */
 const MAX_FETCHES_PER_BUILD = 250
 
@@ -97,8 +102,7 @@ function beefHasTxBody(beef: Beef): boolean {
  * flag those patched methods honor.
  */
 export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise<T> {
-  const g = globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }
-  g.__HANDCASH_VISIBLE_P2PKH_SWEEP = (g.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) + 1
+  globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) + 1
   const proto = Beef.prototype
   const orig = proto.verify
   proto.verify = async function (this: Beef, chainTracker, allowTxidOnly) {
@@ -113,7 +117,10 @@ export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise
     return await work()
   } finally {
     proto.verify = orig
-    g.__HANDCASH_VISIBLE_P2PKH_SWEEP = Math.max(0, (g.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 1) - 1)
+    globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP = Math.max(
+      0,
+      (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 1) - 1,
+    )
   }
 }
 

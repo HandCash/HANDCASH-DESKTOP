@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.231] - 2026-08-17
+
+### Fixed
+- **Desktop installer CI compiles again.** 1.2.230 failed `tsc` on the live send harness and a `globalThis` flag in tests; same wallet as 1.2.230.
+
 ## [1.2.230] - 2026-08-17
 
 ### Fixed

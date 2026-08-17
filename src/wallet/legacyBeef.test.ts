@@ -144,9 +144,9 @@ describe('buildLegacyInputBeef', () => {
   it('sets a process flag the toolbox patches honor', async () => {
     expect(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0).toBe(0)
     await withVisibleOnChainBeef(async () => {
-      expect((globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }).__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(1)
+      expect(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(1)
     })
-    expect((globalThis as { __HANDCASH_VISIBLE_P2PKH_SWEEP?: number }).__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(0)
+    expect(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP).toBe(0)
   })
 
   it('reports a malformed outpoint without asking the network', async () => {
