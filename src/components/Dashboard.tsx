@@ -339,10 +339,11 @@ export function Dashboard({
     }
 
     /**
-     * After a DM tip/pay notify: poll the address until funding lands or we
-     * give up (~12s). One shot is not enough when the indexer lags the box.
+     * After a DM tip/pay notify: SPV-chase the tipped txids first, then a few
+     * funding-only address scans if the indexer still lags (~6s). Full Refresh
+     * (ordinals + audit) is not needed to credit a payment.
      */
-    const chasePaymentIngest = async (_paymentTxids: string[]) => {
+    const chasePaymentIngest = async (paymentTxids: string[]) => {
       const { fetchBalanceSats } = await import('../wallet/session')
       let before = 0
       try {
@@ -351,7 +352,33 @@ export function Dashboard({
       } catch {
         /* ignore */
       }
-      for (let attempt = 0; attempt < 8; attempt++) {
+
+      const tipIds = [
+        ...new Set(
+          paymentTxids
+            .map((t) => t.trim().toLowerCase())
+            .filter((t) => /^[0-9a-f]{64}$/.test(t)),
+        ),
+      ]
+      if (tipIds.length > 0) {
+        try {
+          const { ingestPaymentsFromTipHints } = await import(
+            '../wallet/sendBrc29Payment'
+          )
+          const spv = await ingestPaymentsFromTipHints(tipIds)
+          if (cancelled) return
+          if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
+          if (spv.imported > 0) return
+          if (spv.balanceSats != null && spv.balanceSats > before) return
+        } catch (err) {
+          console.warn(
+            '[dashboard] chase SPV ingest failed',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+      }
+
+      for (let attempt = 0; attempt < 3; attempt++) {
         if (cancelled) return
         if (hasPendingPermissionPrompt() || shouldYieldChainIngestToSpend()) {
           await new Promise((r) => window.setTimeout(r, 750))
@@ -363,7 +390,11 @@ export function Dashboard({
         if (cancelled) return
         tickInFlight = true
         try {
-          const sats = await refreshFromChain({ forceReview: true })
+          const sats = await refreshFromChain({
+            fundingOnly: true,
+            audit: false,
+            announceReceive: true,
+          })
           if (cancelled) return
           if (sats != null) onRefreshBalance(sats)
           if (sats != null && sats > before) return
@@ -378,7 +409,7 @@ export function Dashboard({
           /* ignore */
         }
         if (after > before) return
-        if (attempt < 7) {
+        if (attempt < 2) {
           await new Promise((r) => window.setTimeout(r, 1_500))
         }
       }

@@ -61,6 +61,13 @@ function bitailsBase(chain: Chain): string | null {
 const SCAN_TIMEOUT_MS = 7_000
 /** Don't pay another 7s abort on every poll after a host just failed. */
 const HOST_COOLDOWN_MS = 45_000
+/**
+ * How long the preferred host gets alone before the next one is started
+ * alongside it. Running every host up front would answer faster, but it also
+ * doubles the request volume on hosts that throttle us — which is what the
+ * cooldowns above exist to survive. A stall is the only case worth paying for.
+ */
+const SCAN_HEDGE_MS = 1_200
 let wocCooldownUntil = 0
 let bitailsCooldownUntil = 0
 
@@ -87,31 +94,45 @@ async function fetchWithDeadline(url: string): Promise<Response> {
  * address scan that still lists the input as unspent is stale, and sweeping
  * again would double-spend it. Silence from the provider is not evidence, so an
  * error answers null and the mark stands.
+ *
+ * Bitails + WhatsOnChain run in parallel — any definitive hit wins; a miss
+ * only sticks when no provider affirmed presence.
  */
 export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
 
   const bitails = bitailsBase(chain)
-  if (bitails) {
-    try {
-      const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-      if (res.status === 404) return false
-      if (res.ok) return true
-    } catch (err) {
-      console.warn('[legacy-scan] Bitails tx lookup failed', err)
-    }
-  }
+  const bitailsCheck: Promise<boolean | null> = bitails
+    ? (async () => {
+        try {
+          const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
+          if (res.status === 404) return false
+          if (res.ok) return true
+          return null
+        } catch (err) {
+          console.warn('[legacy-scan] Bitails tx lookup failed', err)
+          return null
+        }
+      })()
+    : Promise.resolve(null)
 
-  try {
-    const res = await fetchWithDeadline(`${wocBase(chain)}/tx/hash/${id}`)
-    if (res.status === 404) return false
-    if (!res.ok) return null
-    return true
-  } catch (err) {
-    console.warn('[legacy-scan] WhatsOnChain tx lookup failed', err)
-    return null
-  }
+  const wocCheck: Promise<boolean | null> = (async () => {
+    try {
+      const res = await fetchWithDeadline(`${wocBase(chain)}/tx/hash/${id}`)
+      if (res.status === 404) return false
+      if (!res.ok) return null
+      return true
+    } catch (err) {
+      console.warn('[legacy-scan] WhatsOnChain tx lookup failed', err)
+      return null
+    }
+  })()
+
+  const [b, w] = await Promise.all([bitailsCheck, wocCheck])
+  if (b === true || w === true) return true
+  if (b === false || w === false) return false
+  return null
 }
 
 export type OutpointSpentStatus = 'spent' | 'unspent' | 'unknown'
@@ -260,65 +281,137 @@ export async function scanAddressViaServices(
   return { address, chain, sats, utxos, source: 'services' }
 }
 
-/** Prefer Bitails (independent budget); WhatsOnChain then toolbox Services. */
+/**
+ * First success wins, with hosts started `staggerMs` apart.
+ *
+ * The old shape was strictly serial, so a host that accepted the socket and went
+ * quiet cost its full deadline before the next one was even asked. A host that
+ * fails outright promotes its successor immediately; a host that is merely slow
+ * keeps running while the next one starts beside it.
+ */
+async function firstSuccessStaggered<T>(
+  starters: ReadonlyArray<() => Promise<T>>,
+  staggerMs: number,
+): Promise<T> {
+  if (starters.length === 0) throw new Error('No UTXO scan provider available')
+  if (starters.length === 1) return starters[0]!()
+
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+    let launched = 0
+    let failures = 0
+    let lastError: unknown
+    const timers: Array<ReturnType<typeof setTimeout>> = []
+
+    const settle = (apply: () => void): void => {
+      if (settled) return
+      settled = true
+      for (const t of timers) clearTimeout(t)
+      apply()
+    }
+
+    const launchNext = (): void => {
+      if (settled || launched >= starters.length) return
+      const starter = starters[launched++]!
+      const isLast = launched >= starters.length
+      if (!isLast) timers.push(setTimeout(launchNext, staggerMs))
+
+      starter().then(
+        (value) => settle(() => resolve(value)),
+        (err) => {
+          lastError = err
+          failures += 1
+          if (failures >= starters.length) {
+            settle(() => reject(lastError))
+            return
+          }
+          // Don't wait out the stagger behind a host that already gave up.
+          launchNext()
+        },
+      )
+    }
+
+    launchNext()
+  })
+}
+
+/** WhatsOnChain occasionally omits sat amounts; borrow them from services. */
+async function enrichZeroSatRows(
+  woc: LegacyScanResult,
+  wallet: ActiveWallet,
+): Promise<LegacyScanResult> {
+  if (!woc.utxos.some((u) => !(u.satoshis > 0)) || !wallet.services) return woc
+  try {
+    const viaServices = await scanAddressViaServices(
+      wallet.services,
+      wallet.address,
+      wallet.chain,
+    )
+    const byOp = new Map(viaServices.utxos.map((u) => [u.outpoint.toLowerCase(), u]))
+    const merged = woc.utxos.map((u) => {
+      if (u.satoshis > 0) return u
+      const alt = byOp.get(u.outpoint.toLowerCase())
+      return alt && alt.satoshis > 0 ? { ...u, satoshis: alt.satoshis } : u
+    })
+    const sats = merged.reduce((s, u) => s + u.satoshis, 0)
+    return { ...woc, utxos: merged, sats }
+  } catch {
+    return woc
+  }
+}
+
+/**
+ * Prefer Bitails (independent budget); WhatsOnChain then toolbox Services.
+ *
+ * Hosts are staggered rather than raced outright: the common case stays a single
+ * request, and only a stalled host costs a second one.
+ */
 export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<LegacyScanResult> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
 
-  let lastError: unknown
+  const now = Date.now()
+  const starters: Array<() => Promise<LegacyScanResult>> = []
 
-  if (bitailsBase(wallet.chain) && Date.now() >= bitailsCooldownUntil) {
-    try {
-      const bitails = await scanAddressViaBitails(wallet.address, wallet.chain)
-      bitailsCooldownUntil = 0
-      return bitails
-    } catch (err) {
-      lastError = err
-      bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-      console.warn('[legacy-scan] Bitails failed, trying WhatsOnChain', err)
-    }
-  } else if (bitailsBase(wallet.chain)) {
-    console.info('[legacy-scan] skipping Bitails (recently failed)')
-  }
-
-  if (Date.now() < wocCooldownUntil) {
-    console.info('[legacy-scan] skipping WhatsOnChain (recently failed)')
-  } else {
-    try {
-      const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
-      wocCooldownUntil = 0
-      // Enrich zero-sat rows from services if WoC omitted values (rare).
-      if (woc.utxos.some((u) => !(u.satoshis > 0)) && wallet.services) {
+  if (bitailsBase(wallet.chain)) {
+    if (now >= bitailsCooldownUntil) {
+      starters.push(async () => {
         try {
-          const viaServices = await scanAddressViaServices(
-            wallet.services,
-            wallet.address,
-            wallet.chain,
-          )
-          const byOp = new Map(viaServices.utxos.map((u) => [u.outpoint.toLowerCase(), u]))
-          const merged = woc.utxos.map((u) => {
-            if (u.satoshis > 0) return u
-            const alt = byOp.get(u.outpoint.toLowerCase())
-            return alt && alt.satoshis > 0 ? { ...u, satoshis: alt.satoshis } : u
-          })
-          const sats = merged.reduce((s, u) => s + u.satoshis, 0)
-          return { ...woc, utxos: merged, sats }
-        } catch {
-          /* keep WoC */
+          const result = await scanAddressViaBitails(wallet.address, wallet.chain)
+          bitailsCooldownUntil = 0
+          return result
+        } catch (err) {
+          bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          console.warn('[legacy-scan] Bitails failed', err)
+          throw err
         }
-      }
-      return woc
-    } catch (err) {
-      lastError = err
-      wocCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-      console.warn('[legacy-scan] WhatsOnChain failed, trying services', err)
+      })
+    } else {
+      console.info('[legacy-scan] skipping Bitails (recently failed)')
     }
   }
 
-  try {
-    if (wallet.services) {
+  if (now >= wocCooldownUntil) {
+    starters.push(async () => {
+      try {
+        const woc = await scanAddressViaWhatsOnChain(wallet.address, wallet.chain)
+        wocCooldownUntil = 0
+        return await enrichZeroSatRows(woc, wallet)
+      } catch (err) {
+        wocCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+        console.warn('[legacy-scan] WhatsOnChain failed', err)
+        throw err
+      }
+    })
+  } else {
+    console.info('[legacy-scan] skipping WhatsOnChain (recently failed)')
+  }
+
+  const services = wallet.services
+  if (services) {
+    starters.push(async () => {
       const viaServices = await scanAddressViaServices(
-        wallet.services,
+        services,
         wallet.address,
         wallet.chain,
       )
@@ -329,15 +422,10 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
         )
       }
       return viaServices
-    }
-  } catch (err) {
-    console.warn('[legacy-scan] services failed', err)
-    if (lastError) throw lastError
-    throw err
+    })
   }
 
-  if (lastError) throw lastError
-  throw new Error('No UTXO scan provider available')
+  return firstSuccessStaggered(starters, SCAN_HEDGE_MS)
 }
 
 /**

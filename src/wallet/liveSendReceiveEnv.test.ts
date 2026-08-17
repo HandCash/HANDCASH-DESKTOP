@@ -31,7 +31,18 @@ describe('parseLiveTxEnv', () => {
     })
     expect(env.enabled).toBe(true)
     expect(env.printOnly).toBe(false)
+    expect(env.pingpong).toBe(false)
     expect(minDepositSats(env)).toBe(11_000)
+  })
+
+  it('enables pingpong from HANDCASH_LIVE_PINGPONG', () => {
+    const env = parseLiveTxEnv({
+      HANDCASH_LIVE_TX: '1',
+      HANDCASH_LIVE_PINGPONG: '1',
+      HANDCASH_LIVE_ROUNDS: '10',
+    })
+    expect(env.pingpong).toBe(true)
+    expect(env.rounds).toBe(10)
   })
 })
 

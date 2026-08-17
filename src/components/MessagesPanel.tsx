@@ -803,7 +803,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     if (parseHandleInput(target) || target.startsWith('$') || target.startsWith('@')) {
       try {
         const resolved = await resolveHandle(
-          /^[$@]/.test(target) ? target : `$${target}`,
+          /^(?:@\$|[$@])/.test(target) ? target : `$${target}`,
         )
         appendMessage(activePeerId || activeFriend!.id, {
           direction: 'system',
@@ -1369,7 +1369,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
             <CommandConfirmPrompt
               open={Boolean(confirmCmd)}
               verb={confirmCmd?.verb ?? 'pay'}
-              recipient={`$${activeFriend.label.replace(/^[$@]/, '')}@handcash.io`}
+              recipient={`@${activeFriend.label.replace(/^@\$|^[$@]/, '')}@handcash.io`}
               amountLabel={confirmCmd?.amountLabel ?? ''}
               satsLabel={confirmCmd?.satsLabel}
               effect={`Send ${confirmCmd?.amountLabel ?? 'this amount'} to ${activeFriend.label}. This moves value and cannot be undone.`}

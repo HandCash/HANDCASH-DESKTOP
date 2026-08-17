@@ -27,8 +27,8 @@ import {
   claimCloudHandlePayload,
   clearClaimedCloudHandlePayload,
   getClaimedCloudHandleVerified,
-  isHandleClaimMethod,
   isHandleClaimOrigin,
+  isHandleClaimWriteMethod,
 } from './handleClaim'
 import {
   getLegacyAddressPayload,
@@ -568,16 +568,27 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
   }
 
-  if (
-    (isMigrationMethod(method) || isHandleClaimMethod(method)) &&
-    !(isMigrationOrigin(originator) || isHandleClaimOrigin(originator))
-  ) {
+  if (isMigrationMethod(method) && !isMigrationOrigin(originator)) {
     return {
       status: 403,
       body: JSON.stringify({
         status: 'error',
         code: 'MIGRATION_ORIGIN_DENIED',
-        description: 'Migration and handle-claim methods are only available to HandCash web hosts.',
+        description: 'Migration methods are only available to HandCash web hosts.',
+      }),
+    }
+  }
+
+  // Mint / clear stay HandCash-hosted. Read (`getClaimedCloudHandle`) is open to
+  // any authenticated app — Free Radio already proved the identity key and needs
+  // the bound handle without a username field that only localhost would allow.
+  if (isHandleClaimWriteMethod(method) && !isHandleClaimOrigin(originator)) {
+    return {
+      status: 403,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'MIGRATION_ORIGIN_DENIED',
+        description: 'Handle claim is only available to HandCash web hosts.',
       }),
     }
   }

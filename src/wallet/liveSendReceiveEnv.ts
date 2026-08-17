@@ -22,6 +22,8 @@ export type LiveTxEnv = {
   printOnly: boolean
   sats: number
   rounds: number
+  /** When true, each round is Alice→Bob then Bob→Alice. */
+  pingpong: boolean
   waitMs: number
   feeBufferSats: number
 }
@@ -40,6 +42,8 @@ export function parseLiveTxEnv(
   const enabled = printOnly || flag === '1' || flag === 'true'
   const sats = Math.max(546, Math.trunc(Number(env.HANDCASH_LIVE_SATS) || 2_000))
   const rounds = Math.max(1, Math.trunc(Number(env.HANDCASH_LIVE_ROUNDS) || 1))
+  const pingpongFlag = (env.HANDCASH_LIVE_PINGPONG ?? '').trim().toLowerCase()
+  const pingpong = pingpongFlag === '1' || pingpongFlag === 'true'
   const waitMs = Math.max(
     5_000,
     Math.trunc(Number(env.HANDCASH_LIVE_WAIT_MS) || 20 * 60_000),
@@ -48,10 +52,11 @@ export function parseLiveTxEnv(
     1_000,
     Math.trunc(Number(env.HANDCASH_LIVE_FEE_BUFFER) || 5_000),
   )
-  return { enabled, printOnly, sats, rounds, waitMs, feeBufferSats }
+  return { enabled, printOnly, sats, rounds, pingpong, waitMs, feeBufferSats }
 }
 
 export function minDepositSats(env: LiveTxEnv): number {
+  // Alice funds every outbound A→B hop; Bob is funded by the first hop in pingpong.
   return env.sats * env.rounds + env.feeBufferSats
 }
 

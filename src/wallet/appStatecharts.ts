@@ -662,8 +662,9 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
 
 /** Receive / Refresh pipeline. */
 const CHAIN_INGEST_CHART = `flowchart TB
-  START([refreshFromChain]) --> RECON[reconcile pending sends\\ndual-layer Tx/UTXO]
-  RECON --> SCAN[legacy address UTXO scan\\nBitails → WoC]
+  START([refreshFromChain]) --> PRE[pending sends + abort reserved]
+  PRE --> MAINT[parallel maintenance\\ndual-layer · ghost-heal\\nactivity prune · restore]
+  MAINT --> SCAN[legacy address UTXO scan\\nBitails ∥ WoC → services]
   SCAN --> CLASS[classifyLegacyUtxos]
   CLASS --> FUND[funding → importLegacyUtxos]
   CLASS --> TIPS[1sat tips → importOneSatOrdinals]

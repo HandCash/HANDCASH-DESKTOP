@@ -11,6 +11,19 @@ const mockSetSyncHealth = vi.fn()
 const mockReconcilePendingSends = vi.fn()
 const mockGetActiveWallet = vi.fn()
 
+// Pre-scan maintenance — independent of each other, run as one parallel batch.
+const mockReconcileDualLayerState = vi.fn(async () => ({
+  checked: 0,
+  mined: 0,
+  failed: 0,
+  orphaned: 0,
+}))
+const mockHealGhostSentItems = vi.fn(async (): Promise<string[]> => [])
+const mockPruneMissingOnChainActivity = vi.fn(async () => 0)
+const mockExpireStaleInboundPending = vi.fn(() => 0)
+const mockRehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
+const mockRestoreLiveSpendableOutputs = vi.fn(async () => 0)
+
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
   fetchBalanceSats: (...args: unknown[]) => mockFetchBalanceSats(...args),
@@ -19,6 +32,46 @@ vi.mock('./session', () => ({
 vi.mock('./legacyScan', () => ({
   scanLegacyAddress: (...args: unknown[]) => mockScanLegacyAddress(...args),
   importLegacyUtxos: (...args: unknown[]) => mockImportLegacyUtxos(...args),
+  txExistsOnChain: vi.fn(async () => null),
+}))
+
+vi.mock('./txReconcile', () => ({
+  reconcileDualLayerState: () => mockReconcileDualLayerState(),
+}))
+
+vi.mock('./sentItemGuard', () => ({
+  healGhostSentItems: (...args: unknown[]) => mockHealGhostSentItems(...(args as [])),
+}))
+
+vi.mock('./appActivity', () => ({
+  pruneMissingOnChainActivity: (...args: unknown[]) =>
+    mockPruneMissingOnChainActivity(...(args as [])),
+  expireStaleInboundPending: () => mockExpireStaleInboundPending(),
+  // Also used by the real ingestLegacyAddress receipt writers below.
+  hasActivityItemOutpoint: () => false,
+  hasSettledActivityItemOutpoint: () => false,
+  hasSettledActivityTxid: () => false,
+  recordAppActivity: vi.fn(),
+  upsertAppActivity: vi.fn(),
+  formatActivityTokenAmt: (amt: string) => amt,
+  WALLET_ACTIVITY_ORIGIN: 'wallet',
+}))
+
+vi.mock('./staleOutputRelease', () => ({
+  rehideInputsOfLiveLocalTxs: () => mockRehideInputsOfLiveLocalTxs(),
+  restoreLiveSpendableOutputs: () => mockRestoreLiveSpendableOutputs(),
+  isUndefinedPartialFilterError: (err: unknown) =>
+    /undefined.*filter|partial\.basket/i.test(
+      err instanceof Error ? err.message : String(err),
+    ),
+}))
+
+vi.mock('./oneSatImportGuard', () => ({
+  forgetOneSatImported: vi.fn(),
+}))
+
+vi.mock('./actionReview', () => ({
+  abortReservedActionBatches: vi.fn(async () => undefined),
 }))
 
 vi.mock('./oneSatImport', () => ({
@@ -58,9 +111,136 @@ vi.mock('./historyBackupPrefs', () => ({
   resolveHistoryBackupBaseUrl: () => null,
 }))
 
+/** Reset the maintenance batch to a quiet, successful default. */
+function resetMaintenanceMocks(): void {
+  mockReconcileDualLayerState.mockReset()
+  mockHealGhostSentItems.mockReset()
+  mockPruneMissingOnChainActivity.mockReset()
+  mockExpireStaleInboundPending.mockReset()
+  mockRehideInputsOfLiveLocalTxs.mockReset()
+  mockRestoreLiveSpendableOutputs.mockReset()
+
+  mockReconcileDualLayerState.mockResolvedValue({
+    checked: 0,
+    mined: 0,
+    failed: 0,
+    orphaned: 0,
+  })
+  mockHealGhostSentItems.mockResolvedValue([])
+  mockPruneMissingOnChainActivity.mockResolvedValue(0)
+  mockExpireStaleInboundPending.mockReturnValue(0)
+  mockRehideInputsOfLiveLocalTxs.mockResolvedValue(undefined)
+  mockRestoreLiveSpendableOutputs.mockResolvedValue(0)
+}
+
+describe('refreshFromChain pre-scan maintenance', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    resetMaintenanceMocks()
+    mockReviewSpendableOutputs.mockReset()
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
+    mockFetchBalanceSats.mockReset()
+    mockFetchBalanceSats.mockResolvedValue(1000)
+    mockScanLegacyAddress.mockReset()
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main',
+      sats: 0,
+      utxos: [],
+      source: 'whatsonchain',
+    })
+    mockClassifyLegacyUtxos.mockReset()
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [],
+      oneSats: [],
+      bsv21: [],
+      heldOneSats: [],
+      pendingTips: [],
+    })
+    mockSetSyncHealth.mockReset()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: { reviewSpendableOutputs: mockReviewSpendableOutputs },
+    })
+  })
+
+  it('runs every maintenance step before the address scan', async () => {
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ announceReceive: false })
+
+    expect(mockReconcileDualLayerState).toHaveBeenCalledTimes(1)
+    expect(mockHealGhostSentItems).toHaveBeenCalledTimes(1)
+    expect(mockExpireStaleInboundPending).toHaveBeenCalledTimes(1)
+    expect(mockPruneMissingOnChainActivity).toHaveBeenCalledTimes(1)
+    expect(mockRehideInputsOfLiveLocalTxs).toHaveBeenCalledTimes(1)
+    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
+    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+  })
+
+  it('overlaps the independent steps instead of paying for each in turn', async () => {
+    let inFlight = 0
+    let peak = 0
+    const slow = async <T,>(value: T): Promise<T> => {
+      inFlight += 1
+      peak = Math.max(peak, inFlight)
+      await new Promise((r) => setTimeout(r, 20))
+      inFlight -= 1
+      return value
+    }
+    mockReconcileDualLayerState.mockImplementation(() =>
+      slow({ checked: 0, mined: 0, failed: 0, orphaned: 0 }),
+    )
+    mockHealGhostSentItems.mockImplementation(() => slow([]))
+    mockPruneMissingOnChainActivity.mockImplementation(() => slow(0))
+    mockRehideInputsOfLiveLocalTxs.mockImplementation(() => slow(undefined))
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ announceReceive: false })
+
+    expect(peak).toBeGreaterThan(1)
+  })
+
+  it('still scans when one maintenance step throws', async () => {
+    mockReconcileDualLayerState.mockRejectedValue(new Error('reconcile exploded'))
+
+    const { refreshFromChain } = await import('./chainIngest')
+    const sats = await refreshFromChain({ announceReceive: false })
+
+    expect(sats).toBe(1000)
+    // A failure must stay isolated — the rest of the batch and the scan still run.
+    expect(mockHealGhostSentItems).toHaveBeenCalledTimes(1)
+    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
+    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+  })
+
+  it('survives every maintenance step failing at once', async () => {
+    mockReconcileDualLayerState.mockRejectedValue(new Error('a'))
+    mockHealGhostSentItems.mockRejectedValue(new Error('b'))
+    mockPruneMissingOnChainActivity.mockRejectedValue(new Error('c'))
+    mockRehideInputsOfLiveLocalTxs.mockRejectedValue(new Error('d'))
+
+    const { refreshFromChain } = await import('./chainIngest')
+
+    await expect(refreshFromChain({ announceReceive: false })).resolves.toBe(1000)
+    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+  })
+
+  it('forgets healed tips so they can be re-imported', async () => {
+    mockHealGhostSentItems.mockResolvedValue(['aa.0', 'bb.1'])
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ announceReceive: false })
+
+    const { forgetOneSatImported } = await import('./oneSatImportGuard')
+    expect(forgetOneSatImported).toHaveBeenCalledWith(['aa.0', 'bb.1'])
+  })
+})
+
 describe('refreshFromChain spendable review', () => {
   beforeEach(() => {
     vi.resetModules()
+    resetMaintenanceMocks()
     mockReviewSpendableOutputs.mockReset()
     mockFetchBalanceSats.mockReset()
     mockScanLegacyAddress.mockReset()

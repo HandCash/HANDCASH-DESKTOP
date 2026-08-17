@@ -136,6 +136,8 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
       })
     }
 
+    // Prefer our SPV hosts, then the hex WoC endpoint we registered, then the
+    // toolbox's default WhatsOnChain provider (binary).
     preferServiceOrder(
       collection,
       extras.map((s) => s.name).concat(['WhatsOnChain']),

@@ -35,13 +35,14 @@ afterEach(() => {
 })
 
 describe('installRawTxFallback', () => {
-  it('prefers Bitails and JungleBus ahead of WhatsOnChain', () => {
+  it('registers SPV hosts ahead of both WhatsOnChain endpoints', () => {
     const services = fakeServices()
     installRawTxFallback(services as never, 'main')
 
     expect(services.getRawTxServices.services.map((s) => s.name)).toEqual([
       'BitailsRawTx',
       'JungleBusRawTx',
+      'WhatsOnChainRawTxHex',
       'WhatsOnChain',
     ])
   })
@@ -125,6 +126,6 @@ describe('installRawTxFallback', () => {
     installRawTxFallback(services as never, 'main')
     installRawTxFallback(services as never, 'main')
 
-    expect(services.getRawTxServices.services).toHaveLength(3)
+    expect(services.getRawTxServices.services).toHaveLength(4)
   })
 })

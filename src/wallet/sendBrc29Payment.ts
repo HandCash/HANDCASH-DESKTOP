@@ -98,14 +98,31 @@ async function fetchAtomicBeefFromUrl(url: string): Promise<number[] | undefined
 export async function broadcastAtomicBeef(
   txid: string,
   atomic: number[],
+  opts?: { skipIfOnChain?: boolean },
 ): Promise<boolean> {
   const id = txid.trim().toLowerCase()
   const active = getActiveWallet()
   if (!active || !/^[0-9a-f]{64}$/.test(id) || !atomic.length) return false
+  const t0 = Date.now()
+  const mark = (phase: string) => {
+    console.info(`[brc29-ingest ${id.slice(0, 12)}…] +${Date.now() - t0}ms ${phase}`)
+  }
   try {
+    // BRC-29 sender already broadcast — optional existence check saves a full
+    // multi-provider postBeef RTT. Item peerDeliver must not use this (payee
+    // is often the first broadcaster; the check would only add latency).
+    if (opts?.skipIfOnChain) {
+      const { txExistsOnChain } = await import('./legacyScan')
+      const onChain = await txExistsOnChain(id, active.chain)
+      mark(`exists=${String(onChain)}`)
+      if (onChain === true) return true
+    }
+
     const { summarizePostBeef } = await import('./postBeefResult')
     const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
-    return summarizePostBeef(results as never).accepted
+    const accepted = summarizePostBeef(results as never).accepted
+    mark(`postBeef accepted=${String(accepted)}`)
+    return accepted
   } catch (err) {
     console.warn(
       '[brc29] postBeef failed',
@@ -630,7 +647,14 @@ async function internalizeBrc29PaymentOnce(opts: {
     return { accepted: false, satoshis: 0, balanceSats: null, reason: 'locked' }
   }
 
-    markInboundPaymentStatus(id, 'Receiving')
+  const ingestStarted = Date.now()
+  const markIngest = (phase: string) => {
+    console.info(
+      `[brc29-ingest ${id.slice(0, 12)}…] +${Date.now() - ingestStarted}ms ${phase}`,
+    )
+  }
+
+  markInboundPaymentStatus(id, 'Receiving')
   noteInboundReceivePending({
     txid: id,
     sats: typeof opts.satoshis === 'number' ? opts.satoshis : undefined,
@@ -647,31 +671,71 @@ async function internalizeBrc29PaymentOnce(opts: {
         allowUnprovenRawTx: true,
       })
       atomic = Array.from(beef.toBinaryAtomic(id))
+      markIngest(`beef bytes=${atomic.length}`)
+    } else {
+      markIngest(`beef inline bytes=${atomic.length}`)
     }
 
     if (atomic.length > 0) {
-      await broadcastAtomicBeef(id, atomic)
-    }
-
-    await withVisibleOnChainBeef(() =>
-      active.wallet.internalizeAction({
-        tx: atomic,
-        description: 'BRC-29 payment received',
-        labels: ['brc29'],
-        outputs: [
-          {
-            outputIndex,
-            protocol: 'wallet payment',
-            paymentRemittance: {
-              derivationPrefix: prefix,
-              derivationSuffix: suffix,
-              senderIdentityKey: sender,
+      // BRC-29 sender already broadcast — overlap confirm with internalize.
+      let existsMs = 0
+      let internalizeMs = 0
+      const broadcastP = (async () => {
+        const t0 = Date.now()
+        const ok = await broadcastAtomicBeef(id, atomic!, { skipIfOnChain: true })
+        existsMs = Date.now() - t0
+        return ok
+      })()
+      const internalizeP = (async () => {
+        const t0 = Date.now()
+        await withVisibleOnChainBeef(() =>
+          active.wallet.internalizeAction({
+            tx: atomic!,
+            description: 'BRC-29 payment received',
+            labels: ['brc29'],
+            outputs: [
+              {
+                outputIndex,
+                protocol: 'wallet payment',
+                paymentRemittance: {
+                  derivationPrefix: prefix,
+                  derivationSuffix: suffix,
+                  senderIdentityKey: sender,
+                },
+              },
+            ],
+            seekPermission: false,
+          }),
+        )
+        internalizeMs = Date.now() - t0
+      })()
+      await Promise.all([broadcastP, internalizeP])
+      markIngest(
+        `parallel exists/postBeef=${existsMs}ms internalize=${internalizeMs}ms`,
+      )
+    } else {
+      const t0 = Date.now()
+      await withVisibleOnChainBeef(() =>
+        active.wallet.internalizeAction({
+          tx: atomic,
+          description: 'BRC-29 payment received',
+          labels: ['brc29'],
+          outputs: [
+            {
+              outputIndex,
+              protocol: 'wallet payment',
+              paymentRemittance: {
+                derivationPrefix: prefix,
+                derivationSuffix: suffix,
+                senderIdentityKey: sender,
+              },
             },
-          },
-        ],
-        seekPermission: false,
-      }),
-    )
+          ],
+          seekPermission: false,
+        }),
+      )
+      markIngest(`internalize-only ${Date.now() - t0}ms`)
+    }
 
     const satoshis =
       typeof opts.satoshis === 'number' && opts.satoshis > 0
@@ -683,7 +747,9 @@ async function internalizeBrc29PaymentOnce(opts: {
     }
 
     scheduleHistoryBackupPush('internalizeAction')
+    const balanceStarted = Date.now()
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    markIngest(`balance ${Date.now() - balanceStarted}ms`)
 
     markInboundPaymentStatus(id, 'Received')
     if (opts.announce !== false) {
@@ -694,6 +760,7 @@ async function internalizeBrc29PaymentOnce(opts: {
       toastSuccess('Payment received', amountLabel)
     }
     setSyncHealth({ phase: 'ok', message: null })
+    markIngest('done')
     return { accepted: true, satoshis, balanceSats }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
@@ -786,6 +853,8 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
 /**
  * Chase tip/pay hints: BRC-29 remittance first, legacy address-P2PKH SPV second.
  * Ghost txids (confirmed 404 with no BEEF left) are returned so the inbox can ACK.
+ *
+ * Independent tips run with bounded concurrency — wall-clock ≈ batches, not N×RTT.
  */
 export async function ingestPaymentsFromTipHints(
   hints: Array<string | PaymentTipHint>,
@@ -842,14 +911,13 @@ export async function ingestPaymentsFromTipHints(
     })
   }
 
-  let imported = 0
-  const importedTxids: string[] = []
-  const ghostTxids: string[] = []
-  let balanceSats: number | null = null
   // Soft-latch AtomicBEEF is expensive; do not hammer indexer 15×2s per tip poll.
   const ingestAttempts = 2
   const ingestDelayMs = 4_000
+  /** Concurrent tip internalizations — BEEF + postBeef are heavy. */
+  const TIP_INGEST_CONCURRENCY = 3
 
+  const ghostTxids: string[] = []
   const markGhostIfMissing = async (
     txid: string,
     hadLocalBeef: boolean,
@@ -875,10 +943,18 @@ export async function ingestPaymentsFromTipHints(
     }
   }
 
-  for (const hint of unique.values()) {
+  const { mapPool } = await import('./asyncPool')
+  const hintList = [...unique.values()]
+
+  const outcomes = await mapPool(hintList, TIP_INGEST_CONCURRENCY, async (hint) => {
+    let importedTxid: string | null = null
+    let balanceSats: number | null = null
+
     if (hint.item) {
       const { isAtomicBeefInBackoff } = await import('./beefCache')
-      if (isAtomicBeefInBackoff(hint.txid)) continue
+      if (isAtomicBeefInBackoff(hint.txid)) {
+        return { importedTxid, balanceSats }
+      }
       const { internalizePeerItemSettle } = await import('./ingestItemSettle')
       let atomic = hint.tx
       if ((!atomic || !atomic.length) && hint.beefUrl) {
@@ -895,8 +971,7 @@ export async function ingestPaymentsFromTipHints(
           name: hint.itemName,
         })
         if (result.accepted) {
-          imported += 1
-          importedTxids.push(hint.txid)
+          importedTxid = hint.txid
           accepted = true
           break
         }
@@ -905,7 +980,7 @@ export async function ingestPaymentsFromTipHints(
         }
       }
       if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
-      continue
+      return { importedTxid, balanceSats }
     }
 
     if (
@@ -933,8 +1008,7 @@ export async function ingestPaymentsFromTipHints(
         })
         if (result.balanceSats != null) balanceSats = result.balanceSats
         if (result.accepted) {
-          imported += 1
-          importedTxids.push(hint.txid)
+          importedTxid = hint.txid
           accepted = true
           break
         }
@@ -943,7 +1017,7 @@ export async function ingestPaymentsFromTipHints(
         }
       }
       if (!accepted) await markGhostIfMissing(hint.txid, hadLocalBeef)
-      continue
+      return { importedTxid, balanceSats }
     }
 
     // Legacy: tip without remittance — identity-address SPV sweep.
@@ -953,11 +1027,7 @@ export async function ingestPaymentsFromTipHints(
       const result = await ingestPaymentByTxid(hint.txid)
       if (result.balanceSats != null) balanceSats = result.balanceSats
       if (result.imported > 0 || result.reason === 'already-imported') {
-        imported += Math.max(
-          result.imported,
-          result.reason === 'already-imported' ? 1 : 0,
-        )
-        importedTxids.push(hint.txid)
+        importedTxid = hint.txid
         accepted = true
         break
       }
@@ -966,7 +1036,20 @@ export async function ingestPaymentsFromTipHints(
       }
     }
     if (!accepted) await markGhostIfMissing(hint.txid, false)
+    return { importedTxid, balanceSats }
+  })
+
+  const importedTxids: string[] = []
+  let balanceSats: number | null = null
+  for (const o of outcomes) {
+    if (o.importedTxid) importedTxids.push(o.importedTxid)
+    if (o.balanceSats != null) balanceSats = o.balanceSats
   }
 
-  return { imported, importedTxids, ghostTxids, balanceSats }
+  return {
+    imported: importedTxids.length,
+    importedTxids,
+    ghostTxids,
+    balanceSats,
+  }
 }

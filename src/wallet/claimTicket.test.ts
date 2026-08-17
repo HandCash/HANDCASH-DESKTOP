@@ -50,9 +50,14 @@ describe('claimTicket', () => {
   })
 })
 
-describe('parseHandleInput $ preference', () => {
-  it('parses HandCash $ forms', () => {
+describe('parseHandleInput at-dollar preference', () => {
+  it('parses HandCash @$ / $ forms', () => {
+    expect(parseHandleInput('@$alice')).toEqual({ handle: 'alice', domain: null })
     expect(parseHandleInput('$alice')).toEqual({ handle: 'alice', domain: null })
+    expect(parseHandleInput('@$alice@handcash.io')).toEqual({
+      handle: 'alice',
+      domain: 'handcash.io',
+    })
     expect(parseHandleInput('$alice@handcash.io')).toEqual({
       handle: 'alice',
       domain: 'handcash.io',

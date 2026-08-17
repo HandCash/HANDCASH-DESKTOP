@@ -1,9 +1,10 @@
 /**
  * BRC-169 handle resolve client → BRC-CLOUD.
  *
- * Input accepts HandCash `$handle` / `$handle@domain` and BRC-169 `@handle` /
- * `@handle@domain` (plus bare paymail-shaped `handle@domain`). Display for
- * HandCash prefers `$`.
+ * Input accepts HandCash `$handle`, BRC-169 `@handle` / `@handle@domain`,
+ * legacy `@$handle` / `@$handle@domain`, plus bare paymail-shaped
+ * `handle@domain`. Short display is `$handle`; fully-qualified display is
+ * `@handle@domain` (no `$`).
  */
 import { DEFAULT_METANET_HANDLES_BASE_URL } from './walletConfig'
 import { formatHandCashHandle } from './handleFormat'
@@ -22,18 +23,21 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/** Parse $handle, @handle, $handle@domain, @handle@domain, handle@domain, or bare handle. */
+/**
+ * Parse @$handle, $handle, @handle, @$handle@domain, $handle@domain,
+ * @handle@domain, handle@domain, or bare handle.
+ */
 export function parseHandleInput(raw: string): { handle: string; domain: string | null } | null {
   const t = raw.trim()
   if (!t) return null
 
-  // $alice@handcash.io or @alice@handcash.io
+  // @$alice@handcash.io, $alice@handcash.io, or @alice@handcash.io
   let m =
-    /^[$@]([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
+    /^(?:@\$|[$@])([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])@([a-z0-9.-]+\.[a-z]{2,})$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: m[2]!.toLowerCase() }
 
-  // $alice or @alice
-  m = /^[$@]([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])$/i.exec(t)
+  // @$alice, $alice, or @alice
+  m = /^(?:@\$|[$@])([a-z0-9][a-z0-9._-]{0,62}[a-z0-9])$/i.exec(t)
   if (m) return { handle: m[1]!.toLowerCase(), domain: null }
 
   // alice@handcash.io (paymail-shaped → handle grammar)
@@ -92,6 +96,74 @@ export async function resolveHandle(
     display: formatHandCashHandle(data.handle, data.domain, { fullyQualified: true }),
     messagebox,
   }
+}
+
+/**
+ * Reverse lookup — identity key → claimed handle(s).
+ *
+ * Not in BRC-169 proper (spec is handle→key only). HandCash hosts it on
+ * resolve `?identityKey=` and search `?q=<identityKey>` so apps that already
+ * hold a proven key (Free Radio) can learn the bound handle silently.
+ */
+export async function resolveHandleByIdentityKey(
+  identityKey: string,
+  baseUrl = DEFAULT_METANET_HANDLES_BASE_URL,
+): Promise<ResolvedHandle[]> {
+  const key = identityKey.trim().toLowerCase()
+  if (!/^(02|03)[0-9a-f]{64}$/.test(key)) {
+    throw new Error('Not an identity key')
+  }
+  const base = normalizeBase(baseUrl)
+  if (!base) throw new Error('Handle resolve host not configured')
+
+  const url = `${base}/.well-known/metanet-handles/resolve?identityKey=${encodeURIComponent(key)}`
+  const res = await fetch(url, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    cache: 'no-store',
+  })
+  if (res.status === 404) return []
+  if (!res.ok) {
+    const detail = (await res.text().catch(() => '')).slice(0, 120)
+    throw new Error(`Handle reverse resolve failed (${res.status})${detail ? `: ${detail}` : ''}`)
+  }
+  const data = (await res.json()) as {
+    handle?: string
+    domain?: string
+    identityKey?: string
+    certificate?: unknown
+    messagebox?: string | null
+    handles?: Array<{
+      handle?: string
+      domain?: string
+      identityKey?: string
+      certificate?: unknown
+      messagebox?: string | null
+    }>
+  }
+
+  const rows = Array.isArray(data.handles)
+    ? data.handles
+    : data.handle
+      ? [data]
+      : []
+
+  return rows
+    .filter((r) => r.handle && r.identityKey && r.domain)
+    .map((r) => {
+      const messagebox =
+        typeof r.messagebox === 'string' && r.messagebox.trim()
+          ? r.messagebox.trim().replace(/\/+$/, '')
+          : null
+      return {
+        handle: r.handle!,
+        domain: r.domain!,
+        identityKey: r.identityKey!.toLowerCase(),
+        certificate: r.certificate,
+        display: formatHandCashHandle(r.handle!, r.domain!, { fullyQualified: true }),
+        messagebox,
+      }
+    })
 }
 
 export async function claimHandle(args: {

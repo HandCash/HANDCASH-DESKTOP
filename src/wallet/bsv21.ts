@@ -111,7 +111,7 @@ export type FungibleToken = {
   cosign?: Bsv21Cosign
   /** Issuer identity pubkey when known (from remittance / Sigma). */
   issuer?: string
-  /** Display handle when resolved (e.g. this wallet's @$handle). */
+  /** Display handle when resolved (e.g. this wallet's $handle). */
   issuerHandle?: string
   /** Issuer claimed and Sigma address matched (not full vin proof). */
   issuerAttested?: boolean

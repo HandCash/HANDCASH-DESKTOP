@@ -28,6 +28,7 @@ import {
   releaseOneSatImport,
 } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
+import { mapPool } from './asyncPool'
 import {
   getResolvedInscription,
   rememberResolvedInscription,
@@ -382,27 +383,6 @@ const VIN_PROBE_LIMIT = 4
 export const MAX_UNKNOWN_RESOLVES_PER_PASS = 6
 /** Concurrent tip internalizations — BEEF + AtomicBEEF are heavy. */
 export const IMPORT_TX_CONCURRENCY = 3
-
-async function mapPool<T, R>(
-  items: readonly T[],
-  concurrency: number,
-  fn: (item: T, index: number) => Promise<R>,
-): Promise<R[]> {
-  if (items.length === 0) return []
-  const results: R[] = new Array(items.length)
-  let next = 0
-  const workers = Math.min(Math.max(1, concurrency), items.length)
-  await Promise.all(
-    Array.from({ length: workers }, async () => {
-      for (;;) {
-        const i = next++
-        if (i >= items.length) return
-        results[i] = await fn(items[i]!, i)
-      }
-    }),
-  )
-  return results
-}
 
 /**
  * A mined transaction body never changes, so fetching one twice is pure latency.

@@ -1,28 +1,30 @@
 /**
  * HandCash handle presentation.
  *
- * BRC-169's formal grammar uses `@handle@domain`. HandCash's product form is
- * `$handle` (and `$handle@domain` when the ecosystem must be shown). Both are
- * accepted on input; HandCash surfaces prefer `$`.
+ * BRC-169's formal grammar is `@handle@domain`. HandCash's short product form
+ * is `$handle` (dollar sigil, no `@`). Fully-qualified / email-shaped forms use
+ * the BRC-169 `@handle@domain` grammar (at, no `$`). Input still accepts
+ * `$handle`, `@handle`, `@$handle`, and bare / paymail-shaped forms.
  */
 
 export function normalizeHandleName(raw: string): string {
   return raw
     .trim()
+    .replace(/^@\$/, '')
     .replace(/^\$/, '')
     .replace(/^@/, '')
     .toLowerCase()
 }
 
-/** Local HandCash form: `$alice`. */
+/** Short HandCash form: `$alice` (never email-shaped). */
 export function formatDollarHandle(raw: string): string {
   const h = normalizeHandleName(raw)
   return h ? `$${h}` : ''
 }
 
 /**
- * Prefer `$alice` inside HandCash; `$alice@domain` when the ecosystem is foreign
- * or the caller asks for the fully-qualified form.
+ * Prefer the short `$alice` inside HandCash. Fully-qualified / foreign-domain
+ * forms use BRC-169 email grammar: `@alice@domain` (at, no `$`).
  */
 export function formatHandCashHandle(
   handle: string,
@@ -34,7 +36,7 @@ export function formatHandCashHandle(
   const home = (opts.homeDomain || 'handcash.io').toLowerCase()
   const d = domain?.trim().toLowerCase() || null
   if (opts.fullyQualified || (d && d !== home)) {
-    return `$${h}@${d || home}`
+    return `@${h}@${d || home}`
   }
   return `$${h}`
 }

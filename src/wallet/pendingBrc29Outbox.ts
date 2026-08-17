@@ -4,9 +4,12 @@
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import type { Brc29Remittance } from './sendBrc29Payment'
+import { mapPool } from './asyncPool'
 
 const KEY = 'handcash.brc29.pendingOutbox.v1'
 const MAX_ATTEMPTS = 20
+/** Concurrent remittance retries — BEEF fetch + box POST are independent per row. */
+const OUTBOX_FLUSH_CONCURRENCY = 3
 
 export type PendingBrc29Remit = {
   payeeIdentityKey: string
@@ -56,13 +59,12 @@ export async function flushPendingBrc29Outbox(args: {
 }): Promise<number> {
   const rows = load()
   if (rows.length === 0) return 0
-  let delivered = 0
-  const keep: PendingBrc29Remit[] = []
   const { notifyPeerBrc29Payment } = await import('./messageTransport')
   const { getActiveWallet } = await import('./session')
   const { getBeefForTxidCached } = await import('./beefCache')
   const active = getActiveWallet()
-  for (const row of rows) {
+
+  const outcomes = await mapPool(rows, OUTBOX_FLUSH_CONCURRENCY, async (row) => {
     try {
       let atomicBeef: number[] | undefined
       if (active) {
@@ -91,8 +93,7 @@ export async function flushPendingBrc29Outbox(args: {
         amountLabel: row.amountLabel,
       })
       if (result.delivered === 'cloud') {
-        delivered += 1
-        continue
+        return { delivered: true as const }
       }
     } catch (err) {
       console.warn(
@@ -102,7 +103,20 @@ export async function flushPendingBrc29Outbox(args: {
       )
     }
     const attempts = (row.attempts ?? 0) + 1
-    if (attempts < MAX_ATTEMPTS) keep.push({ ...row, attempts })
+    if (attempts < MAX_ATTEMPTS) {
+      return { delivered: false as const, keep: { ...row, attempts } }
+    }
+    return { delivered: false as const }
+  })
+
+  let delivered = 0
+  const keep: PendingBrc29Remit[] = []
+  for (const o of outcomes) {
+    if (o.delivered) {
+      delivered += 1
+      continue
+    }
+    if ('keep' in o && o.keep) keep.push(o.keep)
   }
   save(keep)
   return delivered

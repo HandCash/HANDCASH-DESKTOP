@@ -6,8 +6,8 @@
  *
  * Pipeline:
  * 1. reconcile interrupted pending sends + abort reserved batches
- * 1b. yield to a waiting spend before dual-layer / restore / ordinal work
- * 1c. dual-layer Tx/UTXO reconcile + prune Activity txs missing on-chain
+ * 1b. yield to a waiting spend before maintenance / ordinal work
+ * 1c. parallel dual-layer / ghost-heal / activity prune / spendable restore
  * 2. scan legacy receive P2PKH → classify → import (`ingestLegacyAddress.ts`)
  * 3. audit spendable outputs — report only, never write off (`auditSpendableOutputs`)
  * 4. refresh spendable balance
@@ -29,6 +29,7 @@ import { type MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
 import { yieldToUi } from './yieldToUi'
+import type { Chain } from './vault'
 
 export { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
 export type { LegacyAddressIngestResult, LegacyAddressIngestOptions } from './ingestLegacyAddress'
@@ -253,91 +254,10 @@ export async function refreshFromChainExclusive(
     })
   }
 
-  try {
-    const { reconcileDualLayerState } = await import('./txReconcile')
-    const dual = await reconcileDualLayerState()
-    if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
-      console.info('[chain-ingest] dual-layer reconcile', dual)
-    }
-  } catch (err) {
-    console.warn('[chain-ingest] dual-layer reconcile skipped', err)
-  }
-
-  if (shouldYieldChainIngestToSpend()) {
-    return finishEarlyForSpend(active, {
-      heldCount: 0,
-      pendingTips: 0,
-      importedFunding: 0,
-      importedItems: 0,
-      scannedTxids: [],
-    })
-  }
-
-  try {
-    const { healGhostSentItems } = await import('./sentItemGuard')
-    const { txExistsOnChain } = await import('./legacyScan')
-    const { forgetOneSatImported } = await import('./oneSatImportGuard')
-    const healed = await healGhostSentItems(active.chain, txExistsOnChain)
-    if (healed.length > 0) {
-      forgetOneSatImported(healed)
-      console.info(
-        `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
-        healed,
-      )
-    }
-  } catch (err) {
-    console.warn('[chain-ingest] ghost-sent heal skipped', err)
-  }
-
-  if (shouldYieldChainIngestToSpend()) {
-    return finishEarlyForSpend(active, {
-      heldCount: 0,
-      pendingTips: 0,
-      importedFunding: 0,
-      importedItems: 0,
-      scannedTxids: [],
-    })
-  }
-
-  try {
-    const { pruneMissingOnChainActivity, expireStaleInboundPending } =
-      await import('./appActivity')
-    const { txExistsOnChain } = await import('./legacyScan')
-    const expired = expireStaleInboundPending()
-    if (expired > 0) {
-      console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
-    }
-    const pruned = await pruneMissingOnChainActivity(active.chain, txExistsOnChain)
-    if (pruned > 0) {
-      console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
-    }
-  } catch (err) {
-    console.warn('[chain-ingest] activity ghost prune skipped', err)
-  }
-
-  if (shouldYieldChainIngestToSpend()) {
-    return finishEarlyForSpend(active, {
-      heldCount: 0,
-      pendingTips: 0,
-      importedFunding: 0,
-      importedItems: 0,
-      scannedTxids: [],
-    })
-  }
-
-  try {
-    const { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs } =
-      await import('./staleOutputRelease')
-    await rehideInputsOfLiveLocalTxs()
-    const restored = await restoreLiveSpendableOutputs()
-    if (restored > 0) {
-      console.info(
-        `[chain-ingest] restored ${restored} live change output(s) that were falsely marked unspendable`,
-      )
-    }
-  } catch (err) {
-    console.warn('[chain-ingest] spendable restore skipped', err)
-  }
+  // Independent maintenance — run together so wall-clock ≈ slowest step, not sum.
+  // Yield checkpoints stay around the batch (not between each) so a waiting
+  // spend still interrupts before the address scan.
+  await runChainMaintenance(active.chain)
 
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
@@ -574,5 +494,78 @@ async function finishEarlyForSpend(
     importedFunding: partial.importedFunding,
     importedItems: partial.importedItems,
     scannedTxids: partial.scannedTxids,
+  }
+}
+
+/**
+ * Pre-scan maintenance that does not depend on each other — parallelized so
+ * Refresh wall-clock is max(step) instead of sum(step). Failures stay isolated.
+ */
+async function runChainMaintenance(chain: Chain): Promise<void> {
+  const [
+    { reconcileDualLayerState },
+    { healGhostSentItems },
+    { pruneMissingOnChainActivity, expireStaleInboundPending },
+    { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs },
+    { txExistsOnChain },
+    { forgetOneSatImported },
+  ] = await Promise.all([
+    import('./txReconcile'),
+    import('./sentItemGuard'),
+    import('./appActivity'),
+    import('./staleOutputRelease'),
+    import('./legacyScan'),
+    import('./oneSatImportGuard'),
+  ])
+
+  const results = await Promise.allSettled([
+    (async () => {
+      const dual = await reconcileDualLayerState()
+      if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
+        console.info('[chain-ingest] dual-layer reconcile', dual)
+      }
+    })(),
+    (async () => {
+      const healed = await healGhostSentItems(chain, txExistsOnChain)
+      if (healed.length > 0) {
+        forgetOneSatImported(healed)
+        console.info(
+          `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
+          healed,
+        )
+      }
+    })(),
+    (async () => {
+      const expired = expireStaleInboundPending()
+      if (expired > 0) {
+        console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
+      }
+      const pruned = await pruneMissingOnChainActivity(chain, txExistsOnChain)
+      if (pruned > 0) {
+        console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
+      }
+    })(),
+    (async () => {
+      await rehideInputsOfLiveLocalTxs()
+      const restored = await restoreLiveSpendableOutputs()
+      if (restored > 0) {
+        console.info(
+          `[chain-ingest] restored ${restored} live change output(s) that were falsely marked unspendable`,
+        )
+      }
+    })(),
+  ])
+
+  const labels = [
+    'dual-layer reconcile',
+    'ghost-sent heal',
+    'activity ghost prune',
+    'spendable restore',
+  ]
+  for (let i = 0; i < results.length; i++) {
+    const r = results[i]
+    if (r?.status === 'rejected') {
+      console.warn(`[chain-ingest] ${labels[i]} skipped`, r.reason)
+    }
   }
 }

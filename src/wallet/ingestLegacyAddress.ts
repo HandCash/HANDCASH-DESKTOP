@@ -85,19 +85,25 @@ async function retryableStuckSweeps(
   utxos: Array<{ outpoint: string }>,
   chain: Chain,
 ): Promise<string[]> {
-  const retryable: string[] = []
-  for (const u of utxos) {
-    const op = u.outpoint.trim().toLowerCase()
-    if (!op || !legacySweepRetryEligible(op)) continue
+  const candidates = utxos
+    .map((u) => u.outpoint.trim().toLowerCase())
+    .filter((op) => {
+      if (!op || !legacySweepRetryEligible(op)) return false
+      // No recorded sweep txid means no evidence either way. The original version
+      // of this heal treated that as retryable, and re-sweeping on a hunch is what
+      // booked one deposit three times. Absent proof, the mark stands.
+      return !!legacySweepRecord(op)?.txid
+    })
+  if (candidates.length === 0) return []
+
+  const { mapPool } = await import('./asyncPool')
+  const flags = await mapPool(candidates, 4, async (op) => {
     const txid = legacySweepRecord(op)?.txid
-    // No recorded sweep txid means no evidence either way. The original version
-    // of this heal treated that as retryable, and re-sweeping on a hunch is what
-    // booked one deposit three times. Absent proof, the mark stands.
-    if (!txid) continue
-    if ((await txExistsOnChain(txid, chain)) !== false) continue
-    retryable.push(op)
-  }
-  return retryable
+    if (!txid) return null
+    if ((await txExistsOnChain(txid, chain)) !== false) return null
+    return op
+  })
+  return flags.filter((op): op is string => !!op)
 }
 
 /** Activity rows for newly swept funding — one per incoming payment txid. */

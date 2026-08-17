@@ -141,6 +141,8 @@ export async function internalizePeerItemSettle(opts: {
   }
 
   try {
+    // Payee is the intended broadcaster on peerDeliver — confirm network first.
+    // Do not existence-check first: that adds RTT on the common payee-first path.
     await broadcastAtomicBeef(id, atomic)
     rememberBeefTree(atomic, id)
 
@@ -199,12 +201,12 @@ export async function internalizePeerItemSettle(opts: {
     })
     announceItemsReceived([tipOp])
     scheduleHistoryBackupPush('internalizeAction')
-    try {
-      const { listCollectables } = await import('./collectables')
-      await listCollectables(active)
-    } catch {
-      /* paint on next poll */
-    }
+    // Paint off the ingest critical path — listOutputs(1sat) can take seconds.
+    void import('./collectables')
+      .then(({ listCollectables }) => listCollectables(active))
+      .catch(() => {
+        /* paint on next poll */
+      })
     return { accepted: true, outpoints: allOps }
   } catch (err) {
     if (alreadyInternalizedError(err)) {

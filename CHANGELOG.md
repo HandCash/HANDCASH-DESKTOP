@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.236] - 2026-08-17
+
+### Changed
+- **Ingest and broadcast paths run cooler.** Chain maintenance steps overlap; tip ingest / outbox flush / stuck-sweep checks use a shared bounded pool; address scans hedge providers instead of hammering them all at once; payment chase prefers tip re-ingest over repeated full refreshes; BRC-29 payee ingest overlaps on-chain confirm with `internalizeAction` and skips a redundant `postBeef` when the tip is already mined.
+- **Handle display:** short form stays `$handle`; fully-qualified / email form is BRC-169 `@handle@domain` (no `$`). Input still accepts `$`, `@`, and `@$`.
+- **BRC-169 for apps like Free Radio:** any authenticated BRC-100 app can read `getClaimedCloudHandle`; claim stores the registry certificate for `listCertificates`; reverse lookup by identity key on BRC-CLOUD resolve/search.
+- **Live send harness** supports Alice↔Bob pingpong (`HANDCASH_LIVE_PINGPONG`) with bottleneck summaries; BRC-29 ingest logs existence-probe / internalize / balance phase timings.
+
+### Fixed
+- Stale raw-tx provider list and activity-item view identity tests; legacy-scan fixtures; chain-ingest mocks.
+
 ## [1.2.235] - 2026-08-17
 
 ### Fixed

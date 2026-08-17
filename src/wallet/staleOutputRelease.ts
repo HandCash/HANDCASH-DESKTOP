@@ -429,7 +429,9 @@ export async function rehideInputsOfLiveLocalTxs(): Promise<number> {
 }
 
 async function loadUnspendableChange(
-  storage: { findOutputs: (args: unknown) => Promise<unknown[] | undefined> },
+  // Method syntax on purpose: the toolbox signature is narrower than `unknown`,
+  // and only a bivariant position accepts it.
+  storage: { findOutputs(args: unknown): Promise<unknown[] | undefined> },
 ): Promise<unknown[]> {
   try {
     const change = await storage.findOutputs({

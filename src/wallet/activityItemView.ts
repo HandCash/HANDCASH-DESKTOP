@@ -74,18 +74,38 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   // which is the only trace of it left in this wallet.
   const resolved = getResolvedInscription(outpoint)
   const usable = resolved && !isThinResolution(resolved) ? resolved : null
+  const previousOrigin = item.origin ? asOrigin(item.origin) : null
   const origin =
     getProvenVerdict(outpoint)?.origin ??
     (usable ? asOrigin(usable.origin) : null) ??
-    (item.origin ? asOrigin(item.origin) : null)
+    previousOrigin
   if (!origin) return item
+
+  const chain = getActiveWallet()?.chain ?? 'main'
+  const name = usable?.name?.trim() || item.name
+  // When origin was repaired, drop a URL that still pointed at the wrong tip.
+  const imageUrl =
+    (previousOrigin && previousOrigin !== asOrigin(origin)
+      ? contentUrlForOrigin(origin, chain)
+      : null) ||
+    item.imageUrl ||
+    contentUrlForOrigin(origin, chain)
+  const app = usable?.app?.trim() || undefined
+
+  if (
+    name === item.name &&
+    asOrigin(origin) === previousOrigin &&
+    imageUrl === item.imageUrl &&
+    (!app || app === item.app)
+  ) {
+    return item
+  }
+
   return {
     ...item,
-    name: usable?.name?.trim() || item.name,
+    name,
     origin,
-    imageUrl:
-      item.imageUrl ||
-      contentUrlForOrigin(origin, getActiveWallet()?.chain ?? 'main'),
-    ...(usable?.app ? { app: usable.app } : {}),
+    imageUrl,
+    ...(app ? { app } : {}),
   }
 }
