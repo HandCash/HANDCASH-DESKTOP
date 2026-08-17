@@ -678,6 +678,11 @@ const CHAIN_INGEST_CHART = `flowchart TB
   FT --> AUDIT
   AUDIT --> BAL[balance refresh + toast]
   BAL --> END([ok])
+  END -.-> CONS["maybeConsolidateChange\\n(off ingest lock)"]
+  CONS --> PLAN{planChangeConsolidation}
+  PLAN -->|fragments < floor| CSKIP[skip — pool left as-is]
+  PLAN -->|below fee floor| CSKIP
+  PLAN -->|consolidate| CSELF["runExclusiveSpend\\nself-payment maxPossibleSatoshis\\n→ one managed-change UTXO"]
 `
 
 /**

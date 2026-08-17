@@ -59,6 +59,14 @@
  *   Never treat HTTP 200 / postBeef accept as mined. Activity never drops a signed send
  *   until every one of its inputs is spent on chain — clearing history is not a
  *   cancel, and it keeps that tx's change.
+ * - **Change consolidation** → `changeConsolidationPath` (tagged-union decision) +
+ *   `consolidateChange`. Many small BRC-29 receives fragment the managed-change
+ *   pool and slow `createAction` coin selection. A rate-limited background pass
+ *   collapses spendable change into one UTXO via a self-payment using the toolbox
+ *   `maxPossibleSatoshis` output (same primitive as `Wallet.sweepTo`, aimed at
+ *   self). It runs in the exclusive spend region so it never races a send, yields
+ *   when a spend is waiting, and only ever selects change — assets (`1sat`,
+ *   `bsv21`) live in their own baskets and are never touched.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */
@@ -118,6 +126,8 @@ export const WALLET_LAYER_MODULES = {
     'ingestLegacyAddress.ts',
     'legacyScan.ts',
     'legacySweepPath.ts',
+    'changeConsolidationPath.ts',
+    'consolidateChange.ts',
     'oneSatImport.ts',
     'asyncPool.ts',
     'legacyImportGuard.ts',

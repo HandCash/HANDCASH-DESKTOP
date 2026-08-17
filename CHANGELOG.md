@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.241] - 2026-08-17
+
+### Added
+- **Background change consolidation keeps signing fast on a fragmented wallet.** Many small BRC-29 receives leave the wallet with a large pool of little change outputs, and `createAction` coin selection walks that pool on every send. A rate-limited background pass now collapses the whole spendable change pool into a single managed-change UTXO with one self-payment, using the toolbox `maxPossibleSatoshis` "largest fundable amount" output — the same primitive the toolbox's own `sweepTo` uses, aimed at our own identity. The decision is an explicit tagged union (`changeConsolidationPath.ts`): it only fires when the pool is genuinely fragmented (≥ 30 spendable change outputs) and comfortably above the fee, and it holds otherwise. It runs in the exclusive spend region so it can never race a user send, yields when a spend is already waiting or a recompose owns the session, and only ever selects change — assets (`1sat`, `bsv21`) live in their own baskets and are never touched. Fully fail-closed and silent (no Activity row for money that never left the wallet).
+
 ## [1.2.240] - 2026-08-17
 
 ### Fixed

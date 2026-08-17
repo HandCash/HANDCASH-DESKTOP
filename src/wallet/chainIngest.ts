@@ -81,7 +81,22 @@ export type SpendableReviewResult = {
 
 /** Serialize all chain-ingest work (Refresh, migrate refresh, nested yield). */
 export async function refreshFromChain(opts?: ChainIngestOptions): Promise<number | null> {
-  return runChainIngest(async () => (await refreshFromChainExclusive(opts)).balanceSats)
+  const balanceSats = await runChainIngest(
+    async () => (await refreshFromChainExclusive(opts)).balanceSats,
+  )
+  // Off the ingest lock (consolidation acquires the exclusive spend region, which
+  // is exclusive with chain ingest). Fire-and-forget and fully gated — it only
+  // fires when the change pool is genuinely fragmented and no spend is waiting.
+  // Never on a funding-only yield pass; that pass exists precisely to free the
+  // FIFO for a send.
+  if (opts?.fundingOnly !== true) {
+    void import('./consolidateChange')
+      .then(({ maybeConsolidateChange }) => maybeConsolidateChange())
+      .catch((err) => {
+        console.warn('[chain-ingest] change consolidation skipped', err)
+      })
+  }
+  return balanceSats
 }
 
 /**

@@ -139,7 +139,7 @@ export async function broadcastAtomicBeef(
  * Confirm with postBeef before Activity / remittance — otherwise mobile shows
  * "sent" for a doubleSpend that never exists on chain (payee never receives).
  */
-async function ensurePaymentBroadcasted(
+export async function ensurePaymentBroadcasted(
   txid: string,
   atomic: number[] | undefined,
 ): Promise<void> {
@@ -179,7 +179,7 @@ async function ensurePaymentBroadcasted(
   throw new Error(formatPostBeefFailure(summary))
 }
 
-function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
+export function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
   if (!result || typeof result !== 'object') return undefined
   const raw = (result as { tx?: unknown }).tx
   if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
