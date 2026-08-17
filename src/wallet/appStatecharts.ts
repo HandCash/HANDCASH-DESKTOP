@@ -641,21 +641,21 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
   MINED --> REORG_ORPHANED : reorg
   REORG_ORPHANED --> SEEN_IN_MEMPOOL : re-announced
   REORG_ORPHANED --> FAILED_REJECTED : gone
-  FAILED_REJECTED --> [*] : spent / available
-  MINED --> [*] : spent
+  FAILED_REJECTED --> [*] : spentBy set / spendable
+  MINED --> [*] : spendable false + spentBy
 
   note right of DRAFT
-    UTXO: available
+    BRC-38 spendable true
     no mutation until VALIDATING ok
   end note
   note right of BROADCASTING
-    UTXO: selected
+    lockOwnerId reserved
     owned cash = spendable
     + live unconfirmed change
   end note
   note right of MINED
-    overlay spent stays hidden
-    (not deleted)
+    spendable false + spentBy
+    (toolbox row kept)
     hard finality = BUMP + headers
   end note
 `

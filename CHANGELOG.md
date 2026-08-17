@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.234] - 2026-08-17
+
+### Changed
+- **UTXO hide/reserve overlay uses BRC-38 `spendable` / `spentBy`** instead of Cloud `available` / `selected` / `spent` / `quarantine`. In-flight sends still reserve with `lockOwnerId` (wallet-local). Refresh will not re-offer a coin with `spentBy` set.
+
 ## [1.2.233] - 2026-08-17
 
 ### Fixed

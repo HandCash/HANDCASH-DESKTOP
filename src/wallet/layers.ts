@@ -52,9 +52,9 @@
  * - **Dual-layer confirmation** → `txLifecycle` / `utxoLockManager` /
  *   `dualLayerSend` / `txReconcile`. Optimistic soft-locks + ARC status sit
  *   beside settle-path machines; hard finality is MINED only after SPV-verified
- *   BUMP. Overlay statuses match Cloud (`available` / `selected` / `spent` /
- *   `quarantine`) so coins are hidden without deleting toolbox rows. Never treat
- *   HTTP 200 / postBeef accept as mined. Activity never drops a signed send
+ *   BUMP. Overlay uses BRC-38 `spendable` / `spentBy` so coins are hidden
+ *   without deleting toolbox rows (`lockOwnerId` is a local send reservation).
+ *   Never treat HTTP 200 / postBeef accept as mined. Activity never drops a signed send
  *   until every one of its inputs is spent on chain — clearing history is not a
  *   cancel, and it keeps that tx's change.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.

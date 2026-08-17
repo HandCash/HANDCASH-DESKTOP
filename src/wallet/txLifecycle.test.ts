@@ -37,7 +37,7 @@ import {
   softLockInputs,
   softLockedSatsTotal,
 } from './utxoLockManager'
-import { canTransitionUtxo, coerceUtxoStatus } from './utxoLifecycle'
+import { canMarkSpendable, coerceUtxoLock, isConsumed, isReserved } from './utxoLifecycle'
 
 describe('txLifecycle transitions', () => {
   it('allows DRAFT → VALIDATING → BROADCASTING → SEEN_IN_MEMPOOL → MINED', () => {
@@ -65,21 +65,39 @@ describe('txLifecycle transitions', () => {
   })
 })
 
-describe('utxoLifecycle transitions', () => {
-  it('soft-lock → available / spent / quarantine', () => {
-    expect(canTransitionUtxo('available', 'selected')).toBe(true)
-    expect(canTransitionUtxo('selected', 'available')).toBe(true)
-    expect(canTransitionUtxo('selected', 'spent')).toBe(true)
-    expect(canTransitionUtxo('available', 'spent')).toBe(true)
-    expect(canTransitionUtxo('spent', 'available')).toBe(false)
+describe('utxoLifecycle (BRC-38 overlay)', () => {
+  it('consumed coins cannot become spendable', () => {
+    const available = coerceUtxoLock({
+      outpoint: 'aa'.repeat(32) + '.0',
+      spendable: true,
+      spentBy: null,
+    })!
+    const reserved = coerceUtxoLock({
+      outpoint: 'aa'.repeat(32) + '.1',
+      spendable: true,
+      spentBy: null,
+      lockOwnerId: 'tx-1',
+    })!
+    const spent = coerceUtxoLock({
+      outpoint: 'aa'.repeat(32) + '.2',
+      spendable: false,
+      spentBy: '',
+    })!
+    expect(canMarkSpendable(available)).toBe(true)
+    expect(canMarkSpendable(reserved)).toBe(true)
+    expect(isReserved(reserved)).toBe(true)
+    expect(canMarkSpendable(spent)).toBe(false)
+    expect(isConsumed(spent)).toBe(true)
   })
 
-  it('maps Cloud names and legacy overlay JSON', () => {
-    expect(coerceUtxoStatus('available')).toBe('available')
-    expect(coerceUtxoStatus('UNSPENT')).toBe('available')
-    expect(coerceUtxoStatus('SOFT_LOCKED_PENDING')).toBe('selected')
-    expect(coerceUtxoStatus('SPENT_CONFIRMED')).toBe('spent')
-    expect(coerceUtxoStatus('FROZEN_ERROR')).toBe('quarantine')
+  it('maps Cloud overlay JSON onto BRC-38 spendable / spentBy', () => {
+    const op = 'bb'.repeat(32) + '.0'
+    expect(coerceUtxoLock({ outpoint: op, status: 'available' })?.spendable).toBe(true)
+    expect(coerceUtxoLock({ outpoint: op, status: 'UNSPENT' })?.spendable).toBe(true)
+    expect(coerceUtxoLock({ outpoint: op, status: 'SOFT_LOCKED_PENDING', lockOwnerId: 'x' })?.lockOwnerId).toBe('x')
+    expect(isConsumed(coerceUtxoLock({ outpoint: op, status: 'SPENT_CONFIRMED' })!)).toBe(true)
+    expect(coerceUtxoLock({ outpoint: op, status: 'FROZEN_ERROR' })?.spendable).toBe(false)
+    expect(coerceUtxoLock({ outpoint: op, status: 'FROZEN_ERROR' })?.spentBy).toBe(null)
   })
 })
 
@@ -158,7 +176,8 @@ describe('utxoLockManager + dualLayerSend', () => {
 
     expect(rollbackLocks('tx-1')).toBe(1)
     expect(softLockedSatsTotal()).toBe(0)
-    expect(listUtxoLocks()[0]?.status).toBe('available')
+    expect(listUtxoLocks()[0]?.spendable).toBe(true)
+    expect(listUtxoLocks()[0]?.lockOwnerId).toBeNull()
   })
 
   it('beginDualLayerSend validates before lock and fails closed', () => {
@@ -201,11 +220,9 @@ describe('utxoLockManager + dualLayerSend', () => {
     expect(getTxRecord(id)?.status).toBe('SEEN_IN_MEMPOOL')
 
     markTxMined(id, 900_000)
-    confirmSpentLocks(id)
+    confirmSpentLocks(id, txid)
     expect(getTxRecord(id)?.status).toBe('MINED')
-    expect(listUtxoLocks().find((l) => l.lockOwnerId === id)?.status).toBe(
-      'spent',
-    )
+    expect(listUtxoLocks().find((l) => l.spentBy != null)?.spentBy).toBe(txid)
   })
 
   it('postBeef double-spend hides inputs as spent', () => {
@@ -228,8 +245,8 @@ describe('utxoLockManager + dualLayerSend', () => {
     expect(getTxRecord(start.record.id)?.status).toBe('FAILED_REJECTED')
     expect(softLockedSatsTotal()).toBe(0)
     expect(
-      listUtxoLocks().find((l) => l.outpoint === 'dd'.repeat(32) + '_0')?.status,
-    ).toBe('spent')
+      listUtxoLocks().find((l) => l.outpoint === 'dd'.repeat(32) + '_0')?.spentBy,
+    ).not.toBeNull()
   })
 
   it('failDualLayerSend rolls back', () => {
@@ -246,11 +263,11 @@ describe('utxoLockManager + dualLayerSend', () => {
 
   it('hides a spent coin without deleting it', () => {
     const op = 'ff'.repeat(32) + '_3'
-    hideUtxo(op, 'spent', { satoshis: 42 })
-    expect(listUtxoLocks().some((l) => l.outpoint === op && l.status === 'spent')).toBe(
+    hideUtxo(op, { spentBy: '', satoshis: 42 })
+    expect(listUtxoLocks().some((l) => l.outpoint === op && l.spentBy != null)).toBe(
       true,
     )
-    expect(creditUtxo(op)?.status).toBe('spent')
+    expect(creditUtxo(op)?.spentBy).not.toBeNull()
   })
 })
 

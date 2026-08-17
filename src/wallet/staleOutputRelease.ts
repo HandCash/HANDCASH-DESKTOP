@@ -167,7 +167,7 @@ export async function hideSpentOutpoints(outpoints: string[]): Promise<number> {
   const unique = [...new Set(outpoints.map((o) => o.trim()).filter(Boolean))]
   if (unique.length === 0) return 0
   for (const op of unique) {
-    hideUtxo(op, 'spent', { diagnostic: 'already-spent' })
+    hideUtxo(op, { spentBy: '', diagnostic: 'already-spent' })
   }
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
@@ -350,7 +350,7 @@ export async function sealLocalSpendChange(): Promise<void> {
  * Re-enable outputs that were written off (`spendable: false`) but are still
  * this wallet's to spend.
  *
- * Overlay `spent` / `quarantine` / `selected` coins stay hidden. A live
+ * Overlay consumed (`spentBy`) / unspendable / reserved coins stay hidden. A live
  * local spend's inputs stay unspendable even when the indexer still lists
  * them as UTXOs. Change from that same tx comes back even when `isUtxo` is
  * false.

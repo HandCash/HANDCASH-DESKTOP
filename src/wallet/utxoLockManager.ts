@@ -1,19 +1,21 @@
 /**
- * Optimistic UTXO overlay (Cloud `spentStatus` names).
+ * Optimistic UTXO overlay (BRC-38 `spendable` / `spentBy`).
  *
- * On send: `selected` → deduct from optimistic balance.
- * On hard failure that did not spend: roll back to `available`.
- * On broadcast accept / already-spent: `spent` (hidden, row kept).
- * On ambiguous error: `quarantine` (hidden until thaw).
+ * On send: reserve (`lockOwnerId`) → deduct from optimistic balance.
+ * On hard failure that did not spend: clear reservation (`spendable: true`).
+ * On broadcast accept / already-spent: `spendable: false` + `spentBy`.
+ * On ambiguous error: `spendable: false` with no `spentBy` (hidden until thaw).
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
-  canTransitionUtxo,
-  coerceUtxoStatus,
+  canMarkSpendable,
+  coerceUtxoLock,
+  isConsumed,
   isHiddenFromSpend,
+  isReserved,
+  isUnspendable,
   makeUtxoLock,
   type UtxoLockRecord,
-  type UtxoStatus,
 } from './utxoLifecycle'
 import { normalizeOutpointKey } from './txLifecycle'
 
@@ -34,7 +36,7 @@ function load(): Map<string, UtxoLockRecord> {
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return cache
     for (const row of parsed) {
-      const rec = coerce(row)
+      const rec = coerceUtxoLock(row)
       if (rec) cache.set(rec.outpoint, rec)
     }
   } catch {
@@ -43,125 +45,91 @@ function load(): Map<string, UtxoLockRecord> {
   return cache
 }
 
-function coerce(row: unknown): UtxoLockRecord | null {
-  if (!row || typeof row !== 'object') return null
-  const r = row as Record<string, unknown>
-  if (typeof r.outpoint !== 'string') return null
-  const status = coerceUtxoStatus(r.status)
-  if (!status) return null
-  return {
-    outpoint: normalizeOutpointKey(r.outpoint),
-    status,
-    lockOwnerId: typeof r.lockOwnerId === 'string' ? r.lockOwnerId : null,
-    satoshis: Math.max(0, Math.trunc(Number(r.satoshis) || 0)),
-    diagnostic: typeof r.diagnostic === 'string' ? r.diagnostic : null,
-    lockedAt: typeof r.lockedAt === 'number' ? r.lockedAt : Date.now(),
-    updatedAt: typeof r.updatedAt === 'number' ? r.updatedAt : Date.now(),
-  }
-}
-
 function persist(): void {
   const map = load()
   const rows = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt)
-  // Cap only by dropping oldest *spent* overlay rows. Toolbox still has them;
+  // Cap only by dropping oldest consumed overlay rows. Toolbox still has them;
   // we never delete a coin, only forget the hide hint after the cap.
   while (rows.length > MAX_ENTRIES) {
     const drop = rows.pop()
-    if (drop && drop.status === 'spent') map.delete(drop.outpoint)
+    if (drop && isConsumed(drop)) map.delete(drop.outpoint)
     else if (drop) break
   }
   durableSetItem(KEY, JSON.stringify([...map.values()]))
   for (const listener of listeners) listener([...map.values()])
 }
 
-function setStatus(
-  outpoint: string,
-  to: UtxoStatus,
-  patch?: Partial<Pick<UtxoLockRecord, 'lockOwnerId' | 'diagnostic' | 'satoshis'>>,
-): UtxoLockRecord | null {
+function put(rec: UtxoLockRecord): UtxoLockRecord {
   const map = load()
-  const key = normalizeOutpointKey(outpoint)
-  const cur = map.get(key)
-  if (!cur) return null
-  if (!canTransitionUtxo(cur.status, to)) {
-    console.warn('[utxo-lock] illegal transition', cur.status, '→', to, key)
-    return null
-  }
-  const next: UtxoLockRecord = {
-    ...cur,
-    ...patch,
-    status: to,
-    updatedAt: Date.now(),
-  }
-  map.set(key, next)
+  map.set(rec.outpoint, rec)
   persist()
-  return next
+  return rec
 }
 
 /**
- * Upsert overlay status. `spent` / `quarantine` always succeed (hide without
- * deleting). `available` will not unhide a `spent` coin.
+ * Upsert overlay. Consumed (`spentBy` set) cannot become spendable and
+ * cannot have `spentBy` cleared.
  */
-export function upsertUtxoStatus(
+export function upsertUtxoLock(
   outpoint: string,
-  to: UtxoStatus,
-  patch?: Partial<Pick<UtxoLockRecord, 'lockOwnerId' | 'diagnostic' | 'satoshis'>>,
+  patch: Partial<Pick<UtxoLockRecord, 'spendable' | 'spentBy' | 'lockOwnerId' | 'diagnostic' | 'satoshis'>>,
 ): UtxoLockRecord {
   const map = load()
   const key = normalizeOutpointKey(outpoint)
   const cur = map.get(key)
   const now = Date.now()
-  if (!cur) {
-    const rec: UtxoLockRecord = {
-      outpoint: key,
-      status: to,
-      lockOwnerId: patch?.lockOwnerId ?? null,
-      satoshis: Math.max(0, Math.trunc(Number(patch?.satoshis) || 0)),
-      diagnostic: patch?.diagnostic ?? null,
-      lockedAt: now,
-      updatedAt: now,
-    }
-    map.set(key, rec)
-    persist()
-    return rec
-  }
-  if (to === 'available' && cur.status === 'spent') return cur
-  if (to !== cur.status && !canTransitionUtxo(cur.status, to) && to !== 'spent') {
-    console.warn('[utxo-lock] illegal transition', cur.status, '→', to, key)
+  if (cur && isConsumed(cur) && (patch.spendable === true || patch.spentBy === null)) {
     return cur
   }
-  const next: UtxoLockRecord = {
-    ...cur,
-    ...patch,
-    status: to,
+  const nextSpentBy = patch.spentBy !== undefined ? patch.spentBy : cur?.spentBy ?? null
+
+  const rec: UtxoLockRecord = {
+    outpoint: key,
+    spendable: nextSpentBy != null ? false : asBool(patch.spendable, cur?.spendable ?? true),
+    spentBy: nextSpentBy,
+    lockOwnerId: nextSpentBy != null ? null : patch.lockOwnerId !== undefined ? patch.lockOwnerId : cur?.lockOwnerId ?? null,
+    satoshis: Math.max(0, Math.trunc(Number(patch.satoshis ?? cur?.satoshis) || 0)),
+    diagnostic: patch.diagnostic !== undefined ? patch.diagnostic : cur?.diagnostic ?? null,
+    lockedAt: cur?.lockedAt ?? now,
     updatedAt: now,
   }
-  map.set(key, next)
-  persist()
-  return next
+  return put(rec)
 }
 
-/** Hide a coin (`spent` or `quarantine`) without deleting the toolbox row. */
+function asBool(v: boolean | undefined, fallback: boolean): boolean {
+  return typeof v === 'boolean' ? v : fallback
+}
+
+/** Hide a coin without deleting the toolbox row (BRC-38 `spendable: false`). */
 export function hideUtxo(
   outpoint: string,
-  as: 'spent' | 'quarantine',
-  opts?: { satoshis?: number; diagnostic?: string },
+  opts?: {
+    /** BRC-38 spender txid when known. Pass `''` when spent by an unknown tx. Omit to freeze (thawable). */
+    spentBy?: string | null
+    satoshis?: number
+    diagnostic?: string
+  },
 ): UtxoLockRecord {
-  return upsertUtxoStatus(outpoint, as, {
+  const consumed = opts?.spentBy !== undefined && opts.spentBy !== null
+  return upsertUtxoLock(outpoint, {
+    spendable: false,
+    spentBy: consumed ? (opts?.spentBy ?? '') : null,
     lockOwnerId: null,
     satoshis: opts?.satoshis,
     diagnostic: opts?.diagnostic ?? null,
   })
 }
 
-/** Re-offer a quarantined coin. Spent coins stay hidden. */
+/** Re-offer an unspendable coin. Consumed coins stay hidden. */
 export function creditUtxo(
   outpoint: string,
   opts?: { satoshis?: number },
 ): UtxoLockRecord | null {
   const cur = getUtxoLock(outpoint)
-  if (cur?.status === 'spent') return cur
-  return upsertUtxoStatus(outpoint, 'available', {
+  if (cur && isConsumed(cur)) return cur
+  return upsertUtxoLock(outpoint, {
+    spendable: true,
+    spentBy: null,
     lockOwnerId: null,
     diagnostic: null,
     satoshis: opts?.satoshis,
@@ -179,7 +147,7 @@ export function getUtxoLock(outpoint: string): UtxoLockRecord | null {
 /** Restore / Pay must not resurrect hidden or in-flight coins. */
 export function isUtxoBlockedFromRestore(outpoint: string): boolean {
   const rec = getUtxoLock(outpoint)
-  return rec ? isHiddenFromSpend(rec.status) : false
+  return rec ? isHiddenFromSpend(rec) : false
 }
 
 export function subscribeUtxoLocks(listener: Listener): () => void {
@@ -190,7 +158,7 @@ export function subscribeUtxoLocks(listener: Listener): () => void {
   }
 }
 
-/** Soft-lock inputs for a draft tx. Fails closed if any input already locked/spent. */
+/** Reserve inputs for a draft tx. Fails closed if any input already reserved/spent. */
 export function softLockInputs(args: {
   lockOwnerId: string
   inputs: Array<{ outpoint: string; satoshis: number }>
@@ -201,17 +169,14 @@ export function softLockInputs(args: {
     const key = normalizeOutpointKey(input.outpoint)
     const existing = map.get(key)
     if (existing) {
-      if (
-        existing.status === 'selected' &&
-        existing.lockOwnerId !== args.lockOwnerId
-      ) {
-        return { ok: false, reason: `UTXO already soft-locked: ${key}` }
+      if (isReserved(existing) && existing.lockOwnerId !== args.lockOwnerId) {
+        return { ok: false, reason: `UTXO already reserved: ${key}` }
       }
-      if (existing.status === 'spent') {
+      if (isConsumed(existing)) {
         return { ok: false, reason: `UTXO already spent: ${key}` }
       }
-      if (existing.status === 'quarantine') {
-        return { ok: false, reason: `UTXO frozen: ${key}` }
+      if (isUnspendable(existing)) {
+        return { ok: false, reason: `UTXO not spendable: ${key}` }
       }
     }
     prepared.push(
@@ -230,15 +195,16 @@ export function softLockInputs(args: {
   return { ok: true, locks: prepared }
 }
 
-/** Roll back `selected` locks owned by this draft (REJECTED / validation fail). */
+/** Roll back reservations owned by this draft (REJECTED / validation fail). */
 export function rollbackLocks(lockOwnerId: string): number {
   const map = load()
   let n = 0
   for (const [key, rec] of map) {
-    if (rec.lockOwnerId === lockOwnerId && rec.status === 'selected') {
+    if (isReserved(rec) && rec.lockOwnerId === lockOwnerId) {
       map.set(key, {
         ...rec,
-        status: 'available',
+        spendable: true,
+        spentBy: null,
         lockOwnerId: null,
         diagnostic: null,
         updatedAt: Date.now(),
@@ -250,20 +216,21 @@ export function rollbackLocks(lockOwnerId: string): number {
   return n
 }
 
-/** Hide this draft's inputs as `spent` after mempool accept or already-spent. */
-export function confirmSpentLocks(lockOwnerId: string): number {
+/** Hide this draft's inputs as consumed after mempool accept or already-spent. */
+export function confirmSpentLocks(lockOwnerId: string, spentBy?: string | null): number {
   const map = load()
   let n = 0
+  const spender = spentBy ?? ''
   for (const [key, rec] of map) {
-    if (rec.lockOwnerId === lockOwnerId && rec.status === 'selected') {
-      if (!canTransitionUtxo(rec.status, 'spent')) continue
-      map.set(key, {
-        ...rec,
-        status: 'spent',
-        updatedAt: Date.now(),
-      })
-      n += 1
-    }
+    if (!isReserved(rec) || rec.lockOwnerId !== lockOwnerId) continue
+    map.set(key, {
+      ...rec,
+      spendable: false,
+      spentBy: spender,
+      lockOwnerId: null,
+      updatedAt: Date.now(),
+    })
+    n += 1
   }
   if (n > 0) persist()
   return n
@@ -271,27 +238,32 @@ export function confirmSpentLocks(lockOwnerId: string): number {
 
 /** Freeze a UTXO after an ambiguous error — reconcile may thaw. */
 export function freezeUtxo(outpoint: string, diagnostic: string): UtxoLockRecord {
-  return hideUtxo(outpoint, 'quarantine', { diagnostic })
+  return hideUtxo(outpoint, { diagnostic })
 }
 
 export function thawUtxo(outpoint: string): UtxoLockRecord | null {
   const cur = getUtxoLock(outpoint)
-  if (cur?.status === 'spent') return cur
-  return setStatus(outpoint, 'available', { diagnostic: null, lockOwnerId: null })
-    ?? creditUtxo(outpoint)
+  if (cur && isConsumed(cur)) return cur
+  if (cur && !canMarkSpendable(cur)) return cur
+  return upsertUtxoLock(outpoint, {
+    spendable: true,
+    spentBy: null,
+    diagnostic: null,
+    lockOwnerId: null,
+  })
 }
 
-/** Soft-locked sats subtracted from optimistic balance view. */
+/** Reserved sats subtracted from optimistic balance view. */
 export function softLockedSatsTotal(): number {
   let sum = 0
   for (const rec of load().values()) {
-    if (rec.status === 'selected') sum += rec.satoshis
+    if (isReserved(rec)) sum += rec.satoshis
   }
   return sum
 }
 
 /**
- * Optimistic spendable = toolbox spendable − soft-locked.
+ * Optimistic spendable = toolbox spendable − reserved.
  * Never uses floats; both sides are integer sats.
  */
 export function optimisticSpendableSats(toolboxSpendableSats: number): number {

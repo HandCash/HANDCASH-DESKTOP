@@ -226,7 +226,7 @@ describe('restoreLiveSpendableOutputs', () => {
       },
     ])
     isUtxo.mockResolvedValue(true)
-    hideUtxo(`${txid}.0`, 'spent')
+    hideUtxo(`${txid}.0`, { spentBy: '' })
 
     await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
     expect(updateOutput).not.toHaveBeenCalled()

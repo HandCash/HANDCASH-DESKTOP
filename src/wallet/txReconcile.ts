@@ -15,6 +15,7 @@ import { listPendingConfirmation,
   transitionTx,
 } from './txStore'
 import { listUtxoLocks, rollbackLocks, thawUtxo } from './utxoLockManager'
+import { isUnspendable } from './utxoLifecycle'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 export type TxReconcileResult = {
@@ -94,7 +95,7 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
 
   // Thaw frozen UTXOs after 24h with no owner (reconcile may re-lock later).
   for (const lock of listUtxoLocks()) {
-    if (lock.status !== 'quarantine') continue
+    if (!isUnspendable(lock)) continue
     if (Date.now() - lock.updatedAt < 24 * 60 * 60_000) continue
     thawUtxo(lock.outpoint)
     result.thawed += 1

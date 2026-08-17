@@ -103,7 +103,7 @@ export function applyDualLayerArc(id: string, arc: ArcStatus | string): TxRecord
     next?.status === 'MINED' ||
     policy.shouldConfirmSpent
   ) {
-    confirmSpentLocks(id)
+    confirmSpentLocks(id, next?.txid ?? '')
   }
   if (policy.shouldRollbackLocks) {
     rollbackLocks(id)
@@ -117,7 +117,7 @@ export function failDualLayerSend(
   detail?: string | null,
   opts?: { hideInputs?: boolean },
 ): TxRecord | null {
-  if (opts?.hideInputs) confirmSpentLocks(id)
+  if (opts?.hideInputs) confirmSpentLocks(id, getTxRecord(id)?.txid ?? '')
   else rollbackLocks(id)
   return markTxFailed(id, code, detail)
 }
@@ -144,7 +144,7 @@ export async function tryFinalizeDualLayerTx(id: string): Promise<TxRecord | nul
   const proof = await verifyBumpFinality(rec.txid)
   if (proof.ok) {
     const mined = markTxMined(id, proof.height)
-    confirmSpentLocks(id)
+    confirmSpentLocks(id, rec.txid)
     return mined
   }
   if (proof.reason === 'invalid') {
