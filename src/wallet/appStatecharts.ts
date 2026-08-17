@@ -366,6 +366,10 @@ const ACTIVITY = `stateDiagram-v2
   feed : Feed
   filtersOpen : Filters
   paymentDetails : Payment
+  note right of paymentDetails
+    Clear a signed send only
+    when every input is spent
+  end note
 `
 
 const IDENTITY = `stateDiagram-v2
@@ -844,7 +848,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'activityFeed',
     label: 'Activity',
-    caption: 'activity — feed, filters, payment details',
+    caption: 'activity — feed, filters; clear signed sends only if inputs spent',
     source: ACTIVITY,
   },
   {

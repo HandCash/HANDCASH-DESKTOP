@@ -35,13 +35,17 @@ import {
   runExclusiveSpend,
 } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
+import {
+  isAlreadySpentInputError,
+  releaseThenRestoreStaleOutputs,
+} from './staleOutputRelease'
 import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
 import { validateIdentityKey, normalizeIdentityKey } from './friends'
 import { chooseBrc29SettlePath } from './brc29SettlePath'
+import { releaseStuckNosends, sendWithHasFailure } from './actionReview'
 import {
   brc29SendMachine,
   mustBrc29DeliverToPeer,
@@ -152,7 +156,7 @@ async function ensurePaymentBroadcasted(
   if (summary.accepted) return
   console.warn('[brc29] broadcast not accepted', id, summary.detail)
   if (summary.doubleSpend || summary.missingInputs) {
-    await releaseStaleSpendableOutputs()
+    await releaseThenRestoreStaleOutputs()
   }
   throw new Error(formatPostBeefFailure(summary))
 }
@@ -247,11 +251,13 @@ export async function sendBrc29ToIdentityKey(opts: {
           satoshis,
           settlePath,
         })
-        const { releaseStuckNosends, sendWithHasFailure } = await import(
-          './actionReview'
-        )
+        const sendStarted = Date.now()
+        const mark = (phase: string) => {
+          console.info(`[brc29] +${Date.now() - sendStarted}ms ${phase}`)
+        }
         await releaseStuckNosends(active)
         await prepareSpendHeal(satoshis)
+        mark('ready')
         chart.send({ type: 'READY' })
 
         noteOutboundSendPending({
@@ -262,8 +268,10 @@ export async function sendBrc29ToIdentityKey(opts: {
         })
 
         try {
-          const derivationPrefix = await createNonce(active.wallet, 'self')
-          const derivationSuffix = await createNonce(active.wallet, 'self')
+          const [derivationPrefix, derivationSuffix] = await Promise.all([
+            createNonce(active.wallet, 'self'),
+            createNonce(active.wallet, 'self'),
+          ])
           const keyID = `${derivationPrefix} ${derivationSuffix}`
           const { publicKey } = await active.wallet.getPublicKey({
             protocolID: BRC29_PROTOCOL_ID,
@@ -349,8 +357,10 @@ export async function sendBrc29ToIdentityKey(opts: {
             )
           }
           const txid = realTxid
+          mark(`createAction ${txid.slice(0, 12)}…`)
           setPaymentProgress('broadcasting', 'Confirming payment on the network')
           await ensurePaymentBroadcasted(txid, atomicBeef)
+          mark('broadcast')
           chart.send({ type: 'BROADCASTED', txid })
 
           completePendingSend(pending.id, txid)
@@ -482,7 +492,7 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
         } catch (err) {
           clearPendingSend(pending.id)
-          if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+          if (isAlreadySpentInputError(err)) await releaseThenRestoreStaleOutputs()
           const {
             isReviewActionsError,
             isIteratorCrashError,
@@ -495,7 +505,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             // spent. Never releaseSpendable here (that wrote off ~$0.10 of live
             // coins on failed Mobile→Desktop retries).
             if (isAlreadySpentInputError(err)) {
-              await releaseStaleSpendableOutputs()
+              await releaseThenRestoreStaleOutputs()
             }
             const message = formatReviewActionsError(err)
             console.warn('[brc29] send failed', message, err)

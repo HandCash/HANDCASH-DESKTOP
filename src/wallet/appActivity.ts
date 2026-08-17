@@ -821,9 +821,10 @@ export function removeActivityById(id: string): boolean {
 /**
  * How many failed send rows are in local history right now.
  *
- * `keep` protects rows the caller must not delete — see
- * {@link removeFailedActivity} — so the count always matches what a bulk clear
- * would actually remove.
+ * `keep` excludes rows from the count — same predicate shape as
+ * {@link removeFailedActivity}. Bulk clear still re-checks signed rows on
+ * chain: a live send whose inputs are unspent is not removed even if it was
+ * counted here.
  */
 export function countFailedActivity(
   keep?: (entry: ActivityEntry) => boolean,
@@ -834,15 +835,19 @@ export function countFailedActivity(
   )
 }
 
+/** Failed send rows currently in Activity, in store order. */
+export function listFailedActivity(): ActivityEntry[] {
+  return readAll().filter((e) => e.status === 'failed')
+}
+
 /**
  * Drop failed send rows in one write, minus anything `keep` protects.
  *
- * Most failed rows are local-only bookkeeping — the transaction never landed —
- * so removing them cancels nothing on-chain. The exception is an item transfer
- * the payee can still broadcast, which callers exclude via `keep`: that row is
- * the sender's only record of an item that has already left. Local reservation
- * repair is the caller's job (see `clearSpendAttempt`); this only edits the
- * history list. Returns how many rows were removed.
+ * Most failed rows are local-only bookkeeping — unsigned attempts never bound
+ * coins to a signed transaction. A signed send is only safe to drop once its
+ * inputs are already spent on chain; callers exclude live ones via `keep`.
+ * Local reservation repair is the caller's job (see `clearSpendAttempt`); this
+ * only edits the history list. Returns how many rows were removed.
  */
 export function removeFailedActivity(
   keep?: (entry: ActivityEntry) => boolean,

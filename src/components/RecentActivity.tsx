@@ -540,10 +540,9 @@ export function ActivityFeed({
     filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
     filters.origin !== DEFAULT_PAYMENT_FILTERS.origin
 
-  // Count from the store, not the capped feed — the button must reflect the true
-  // backlog even when more failed rows exist than are rendered. Transfers the
-  // recipient can still broadcast are excluded: the bulk clear leaves them, so
-  // counting them would promise rows the button will not remove.
+  // Count from the store, not the capped feed. Transfers the recipient can
+  // still broadcast are excluded. Signed sends whose inputs are still unspent
+  // stay in the count; the confirm copy and bulk clear keep them until spent.
   const failedCount = useMemo(
     () =>
       showFilters
@@ -558,7 +557,7 @@ export function ActivityFeed({
     const confirmed = window.confirm(
       `Clear ${failedCount} failed send${
         failedCount === 1 ? '' : 's'
-      } from Activity? These never left this wallet, so this cancels nothing on chain.`,
+      } from Activity? Unsigned failed sends are removed. A signed send stays until every one of its inputs is already spent on chain — this does not cancel a live transaction.`,
     )
     if (!confirmed) return
     setClearingFailed(true)
@@ -567,7 +566,9 @@ export function ActivityFeed({
       toastSuccess(
         'Cleared failed sends',
         `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.${
-          kept > 0 ? ` Kept ${kept} the recipient can still broadcast.` : ''
+          kept > 0
+            ? ` Kept ${kept} still live (coins unspent, or the recipient can still broadcast).`
+            : ''
         }`,
       )
     } catch (err) {

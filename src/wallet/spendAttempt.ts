@@ -3,14 +3,18 @@
  *
  * A chain 404 alone never authorizes another spend. Retry is offered only when
  * the wallet can prove the original funds are still spendable, and the exact
- * recipient data was persisted with the attempt. Everything else is offered as
- * a clear: drop the dead row and release the local reservations it left behind,
- * which is what used to surface as "a previous failed send is blocking this
- * payment".
+ * recipient data was persisted with the attempt.
+ *
+ * Clearing is not a cancel. A signed transaction stays in Activity until every
+ * one of its inputs is already spent on chain. Dropping the row earlier, then
+ * repairing local spend state, is how a later resync can lose the coins that
+ * transaction still holds. Unsigned attempts (no txid) never bound those coins.
  */
+import { Transaction } from '@bsv/sdk'
 import {
   countFailedActivity,
   isFailedActivity,
+  listFailedActivity,
   removeActivityById,
   removeFailedActivity,
   type ActivityEntry,
@@ -19,10 +23,15 @@ import {
 import { isCollectableOutpointSpendable, sendCollectable } from './collectables'
 import { counterpartyMaySettle } from './sentItemGuard'
 import { getBeefForTxidCached } from './beefCache'
-import { txExistsOnChain } from './legacyScan'
+import {
+  parseOutpoint,
+  spentStatusOfOutpoint,
+  txExistsOnChain,
+} from './legacyScan'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { getActiveWallet } from './session'
 import { itemSendMachine, maySenderBroadcast } from './itemSendMachine'
+import { getTxByTxid } from './txStore'
 import type { Chain } from './vault'
 import { createActor } from 'xstate'
 
@@ -36,6 +45,11 @@ export type SpendAttemptFate =
         | 'statusUnknown'
         | 'missingRetryDetails'
         | 'sourceNotSpendable'
+        /**
+         * Every input of this signed send is already spent on chain. The row
+         * is history only — clearing it does not undo the spend.
+         */
+        | 'inputsSpent'
         /**
          * The transfer left this wallet and the payee may still broadcast it.
          * Neither retry nor clear is safe: retry would race a live transaction,
@@ -63,11 +77,13 @@ export type SpendAttemptFate =
       action: 'rebroadcast' | 'recreateItem' | 'reopenPayment'
       retry: ActivityRetry
       message: string
-      mayClear: true
+      mayClear: boolean
     }
 
 const ITEM_METHOD = 'send-collectable'
 const BSV_METHOD = 'send'
+const INPUTS_STILL_LIVE =
+  'This transaction cannot be cleared while its inputs are still unspent.'
 
 /**
  * How long a broadcast row is left alone before a chain 404 counts as trouble.
@@ -115,6 +131,91 @@ function hasTxid(entry: ActivityEntry): boolean {
   return Boolean(entry.txid && /^[0-9a-f]{64}$/i.test(entry.txid))
 }
 
+type SignedInputsFate = 'unsigned' | 'spent' | 'unspent' | 'unknown'
+
+function inputOutpointsFromRaw(raw: number[]): string[] {
+  try {
+    const tx = Transaction.fromBinary(raw)
+    const out: string[] = []
+    for (const input of tx.inputs) {
+      const prev = (
+        input.sourceTXID ??
+        input.sourceTransaction?.id('hex') ??
+        ''
+      ).toLowerCase()
+      const vout = input.sourceOutputIndex
+      if (!/^[0-9a-f]{64}$/.test(prev) || !Number.isInteger(vout) || vout < 0) {
+        continue
+      }
+      out.push(`${prev}.${vout}`)
+    }
+    return out
+  } catch {
+    return []
+  }
+}
+
+async function loadLocalRawTx(txid: string): Promise<number[] | null> {
+  const storage = getActiveWallet()?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return null
+  try {
+    const found = await storage.runAsStorageProvider(
+      async (sp: {
+        getProvenOrRawTx?: (id: string) => Promise<{ rawTx?: number[] } | undefined>
+      }) => {
+        if (typeof sp.getProvenOrRawTx !== 'function') return undefined
+        return sp.getProvenOrRawTx(txid)
+      },
+    )
+    const raw = found?.rawTx
+    if (Array.isArray(raw) && raw.length > 0) return raw
+  } catch (err) {
+    console.warn('[spend-attempt] local raw tx lookup skipped', err)
+  }
+  return null
+}
+
+async function loadSignedInputOutpoints(txid: string): Promise<string[]> {
+  const raw = await loadLocalRawTx(txid)
+  if (raw?.length) {
+    const fromRaw = inputOutpointsFromRaw(raw)
+    if (fromRaw.length > 0) return fromRaw
+  }
+  const stored = getTxByTxid(txid)?.inputOutpoints ?? []
+  const dotted: string[] = []
+  for (const key of stored) {
+    const parsed = parseOutpoint(key)
+    if (parsed) dotted.push(`${parsed.txid}.${parsed.vout}`)
+  }
+  return dotted
+}
+
+/**
+ * Spend status of every input on a signed attempt.
+ *
+ * Clear is allowed only for `unsigned` (nothing was signed) or `spent` (the
+ * coins already moved). `unspent` and `unknown` keep the row — the latter is
+ * how a missing body or indexer silence fails closed.
+ */
+async function signedTxInputsFate(
+  entry: ActivityEntry,
+  chain: Chain,
+): Promise<SignedInputsFate> {
+  if (!hasTxid(entry)) return 'unsigned'
+  const outpoints = await loadSignedInputOutpoints(entry.txid!)
+  if (outpoints.length === 0) return 'unknown'
+  const statuses = await Promise.all(
+    outpoints.map((outpoint) => spentStatusOfOutpoint(outpoint, chain)),
+  )
+  if (statuses.some((s) => s === 'unknown')) return 'unknown'
+  if (statuses.some((s) => s === 'unspent')) return 'unspent'
+  return 'spent'
+}
+
+function mayClearSignedInputs(fate: SignedInputsFate): boolean {
+  return fate === 'unsigned' || fate === 'spent'
+}
+
 export async function resolveSpendAttemptFate(
   entry: ActivityEntry,
   chain: Chain,
@@ -133,7 +234,9 @@ export async function resolveSpendAttemptFate(
   }
 
   if (hasTxid(entry)) {
-    const onChain = await txExistsOnChain(entry.txid!, chain).catch(() => null)
+    const onChain = await Promise.resolve(
+      txExistsOnChain(entry.txid!, chain),
+    ).catch(() => null)
     if (onChain === true) return { kind: 'confirmed' }
     if (onChain === null) {
       return {
@@ -146,6 +249,17 @@ export async function resolveSpendAttemptFate(
     }
   }
 
+  const inputsFate = await signedTxInputsFate(entry, chain)
+  if (inputsFate === 'spent') {
+    return {
+      kind: 'refuse',
+      reason: 'inputsSpent',
+      message:
+        'The coins this send used are already spent on chain. You can drop the history row — that does not undo the spend.',
+      mayClear: true,
+    }
+  }
+
   const retry = entry.retry
   if (!retry) {
     return {
@@ -154,7 +268,7 @@ export async function resolveSpendAttemptFate(
       message: isFailedActivity(entry)
         ? 'This send failed and cannot be retried — its original recipient details were not saved.'
         : 'This send did not confirm and cannot be retried — its original recipient details were not saved.',
-      mayClear: true,
+      mayClear: mayClearSignedInputs(inputsFate),
     }
   }
 
@@ -164,15 +278,15 @@ export async function resolveSpendAttemptFate(
       action: 'reopenPayment',
       retry,
       message: hasTxid(entry)
-        ? 'This payment never landed on chain. You can send it again from the Send screen, or clear it.'
+        ? 'This payment never landed on chain. You can send it again from the Send screen.'
         : 'This payment failed before it reached the network. You can send it again from the Send screen, or clear it.',
-      mayClear: true,
+      mayClear: mayClearSignedInputs(inputsFate),
     }
   }
 
-  const spendable = await isCollectableOutpointSpendable(retry.outpoint).catch(
-    () => null,
-  )
+  const spendable = await Promise.resolve(
+    isCollectableOutpointSpendable(retry.outpoint),
+  ).catch(() => null)
   if (spendable === null) {
     return {
       kind: 'refuse',
@@ -188,7 +302,7 @@ export async function resolveSpendAttemptFate(
       reason: 'sourceNotSpendable',
       message:
         'This send cannot be retried — the original item output is no longer spendable in this wallet.',
-      mayClear: true,
+      mayClear: mayClearSignedInputs(inputsFate),
     }
   }
 
@@ -199,7 +313,7 @@ export async function resolveSpendAttemptFate(
     message: hasTxid(entry)
       ? 'This send did not confirm. The item is still unspent, so the signed transfer can be broadcast again.'
       : 'This send failed before it produced a transaction. The item is still spendable and can be retried.',
-    mayClear: true,
+    mayClear: mayClearSignedInputs(inputsFate),
   }
 }
 
@@ -285,13 +399,18 @@ export async function retrySpendAttempt(
   return { kind: 'rebroadcasted', txid }
 }
 
+function fateAllowsClear(fate: SpendAttemptFate): boolean {
+  return (
+    (fate.kind === 'retry' || fate.kind === 'refuse') && fate.mayClear === true
+  )
+}
+
 /**
- * Drop a dead attempt: release the local reservations it left on our outputs,
- * then remove the row. Repair runs first so clearing a payment actually unblocks
- * the next send rather than only hiding the evidence.
+ * Drop a dead attempt from Activity.
  *
- * Refuses while the payee could still broadcast the transfer — the row is then
- * the sender's only record of an item that has already left the wallet.
+ * Unsigned rows (no txid) may also release local reservations they left on our
+ * outputs. A signed row is only removed once every input is spent on chain, and
+ * never runs that repair — the spend already happened.
  */
 export async function clearSpendAttempt(
   entry: ActivityEntry,
@@ -301,7 +420,17 @@ export async function clearSpendAttempt(
       'The recipient can still broadcast this transfer, so it cannot be cleared yet.',
     )
   }
-  await releaseLocalSpendReservations()
+  const chain = getActiveWallet()?.chain
+  if (!chain) {
+    throw new Error('Wallet is not unlocked.')
+  }
+  const fate = await resolveSpendAttemptFate(entry, chain)
+  if (!fateAllowsClear(fate)) {
+    throw new Error(
+      fate.kind === 'refuse' ? fate.message : INPUTS_STILL_LIVE,
+    )
+  }
+  if (!hasTxid(entry)) await releaseLocalSpendReservations()
   return { removed: removeActivityById(entry.id) }
 }
 
@@ -320,21 +449,40 @@ export async function releaseSpendAttemptFunds(): Promise<void> {
 /**
  * Clear failed sends from history in one pass.
  *
- * Repair runs once — not once per row — then failed rows are dropped, except
- * item transfers the payee can still broadcast. Everything removed is local-only
- * bookkeeping, so this cancels nothing on chain. Returns how many rows were
- * removed and how many were kept back, so the caller can report both.
+ * Unsigned rows may repair local reservations first. Signed rows are dropped
+ * only when every input is already spent on chain, and never through that
+ * repair. Item transfers the payee can still broadcast are kept. Returns how
+ * many rows were removed and how many were kept back.
  */
 export async function clearAllFailedSpends(): Promise<{
   removed: number
   kept: number
 }> {
   const now = Date.now()
-  const keep = (entry: ActivityEntry) => isCounterpartySettlePending(entry, now)
+  const chain = getActiveWallet()?.chain
   const failed = countFailedActivity()
-  await releaseLocalSpendReservations()
-  const removed = removeFailedActivity(keep)
-  // Repair can settle rows between the two reads, so never report a negative.
+  const keepIds = new Set<string>()
+  let unsignedToClear = false
+
+  for (const row of listFailedActivity()) {
+    if (isCounterpartySettlePending(row, now)) {
+      keepIds.add(row.id)
+      continue
+    }
+    if (!hasTxid(row)) {
+      unsignedToClear = true
+      continue
+    }
+    if (!chain) {
+      keepIds.add(row.id)
+      continue
+    }
+    const inputsFate = await signedTxInputsFate(row, chain)
+    if (inputsFate !== 'spent') keepIds.add(row.id)
+  }
+
+  if (unsignedToClear) await releaseLocalSpendReservations()
+  const removed = removeFailedActivity((entry) => keepIds.has(entry.id))
   return { removed, kept: Math.max(0, failed - removed) }
 }
 

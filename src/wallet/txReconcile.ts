@@ -8,14 +8,14 @@
 import { tryFinalizeDualLayerTx } from './dualLayerSend'
 import { txExistsOnChain } from './legacyScan'
 import { getActiveWallet } from './session'
-import {
-  listPendingConfirmation,
+import { listPendingConfirmation,
   listTxRecords,
   markTxFailed,
   markTxReorgOrphaned,
   transitionTx,
 } from './txStore'
 import { listUtxoLocks, rollbackLocks, thawUtxo } from './utxoLockManager'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 export type TxReconcileResult = {
   checked: number
@@ -46,6 +46,7 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
 
   const pending = listPendingConfirmation()
   for (const rec of pending) {
+    if (shouldYieldChainIngestToSpend()) break
     result.checked += 1
     if (!rec.txid) {
       // Broadcasting without txid for > 10 minutes → fail + unlock.

@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.232] - 2026-08-17
+
+### Fixed
+- **Clearing a send from Activity no longer cancels a live transaction.** A signed send stays until every one of its inputs is spent on chain. Dropping the row earlier, then repairing local spend state, is how a later Refresh could lose those coins. Unsigned failed sends (never signed) can still be cleared. Signed rows whose coins already moved can be dropped as history only — that does not undo the spend.
+- **Follow-up sends after an already-spent broadcast no longer restore dead inputs** as spendable, and they keep this wallet's unconfirmed change. Outputs whose `spentBy` transaction is still live locally are left alone.
+- **Send no longer waits ~15s repairing failed spends before createAction.** Stuck noSends/batches abort on the hot path; the full failed-spend repair and change-script sweep run on crash recovery instead. Refresh yields to a waiting spend instead of holding the lock through ghost-heal / prune / restore.
+
+### Changed
+- Bulk "Clear failed" keeps signed sends whose inputs are still unspent (or unknown) and reports what it kept. Confirmation copy matches: this does not cancel a live transaction.
+
 ## [1.2.231] - 2026-08-17
 
 ### Fixed

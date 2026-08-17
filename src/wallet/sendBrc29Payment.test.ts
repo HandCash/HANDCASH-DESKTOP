@@ -103,6 +103,9 @@ vi.mock('./pendingSend', () => ({
 vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   releaseStaleSpendableOutputs: async () => {},
+  releaseThenRestoreStaleOutputs: async () => {},
+  restoreLiveSpendableOutputs: async () => 0,
+  sealLocalSpendChange: async () => {},
 }))
 vi.mock('./actionReview', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./actionReview')>()

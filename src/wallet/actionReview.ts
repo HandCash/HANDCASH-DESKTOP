@@ -30,6 +30,11 @@ export function isReservedActionBatchError(err: unknown): boolean {
 /**
  * Abort leftover `noSend` actions (from older HandCash settle paths) and
  * reserved batches so the next createAction is not a double-spend.
+ *
+ * Intentionally **not** `repairFailedSpendState` / a full change-script sweep —
+ * those page every historical output and ran ~15s on the send button. Poison
+ * rows still recover via {@link recoverFromReviewActions} after a failed
+ * createAction.
  */
 export async function releaseStuckNosends(
   active?: ActiveWallet | null,
@@ -46,7 +51,6 @@ export async function releaseStuckNosends(
   } catch {
     /* unused funding reservations only */
   }
-  await repairFailedSpendState(active ?? getActiveWallet())
 }
 
 /**

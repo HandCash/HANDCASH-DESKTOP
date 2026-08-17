@@ -285,6 +285,16 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] ghost-sent heal skipped', err)
   }
 
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
+  }
+
   try {
     const { pruneMissingOnChainActivity, expireStaleInboundPending } =
       await import('./appActivity')
@@ -299,6 +309,16 @@ export async function refreshFromChainExclusive(
     }
   } catch (err) {
     console.warn('[chain-ingest] activity ghost prune skipped', err)
+  }
+
+  if (shouldYieldChainIngestToSpend()) {
+    return finishEarlyForSpend(active, {
+      heldCount: 0,
+      pendingTips: 0,
+      importedFunding: 0,
+      importedItems: 0,
+      scannedTxids: [],
+    })
   }
 
   try {

@@ -14,7 +14,34 @@
  */
 import { getActiveWallet } from './session'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
-import { hasLockingScript, type ChangeRow } from './changeScriptFate'
+import {
+  classifyChangeScript,
+  hasLockingScript,
+  sweepChangeScripts,
+  type ChangeRow,
+} from './changeScriptFate'
+
+/** Toolbox statuses that mean this wallet already committed the tx locally. */
+const LIVE_LOCAL_TX = new Set([
+  'sending',
+  'unproven',
+  'completed',
+  'nosend',
+  'nonfinal',
+  'unfail',
+])
+
+type TxStatusRow = { status?: string; rawTx?: number[] }
+
+function positiveId(value: unknown): number | null {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : null
+}
+
+/** True when a local transaction is still this wallet's spend — not failed/abandoned. */
+export function isLiveLocalTxStatus(status: unknown): boolean {
+  return LIVE_LOCAL_TX.has(String(status ?? '').toLowerCase())
+}
 
 /** Cap restore work so a huge dead set cannot stall unlock/refresh. */
 const RESTORE_MAX = 200
@@ -84,10 +111,83 @@ export async function releaseStaleSpendableOutputs(): Promise<number> {
   }
 }
 
+/** Write off indexer-stale inputs, then put our unconfirmed change back. */
+export async function releaseThenRestoreStaleOutputs(): Promise<void> {
+  await releaseStaleSpendableOutputs()
+  await restoreLiveSpendableOutputs()
+}
+
+type StorageProvider = {
+  updateOutput: (outputId: number, update: Record<string, unknown>) => Promise<unknown>
+  findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
+  getProvenOrRawTx?: (txid: string) => Promise<{ rawTx?: number[] } | undefined>
+}
+
+async function loadTxRow(
+  sp: StorageProvider,
+  transactionId: number,
+  cache: Map<number, TxStatusRow | null>,
+): Promise<TxStatusRow | null> {
+  if (cache.has(transactionId)) return cache.get(transactionId) ?? null
+  if (typeof sp.findTransactions !== 'function') {
+    cache.set(transactionId, null)
+    return null
+  }
+  try {
+    const rows = await sp.findTransactions({
+      partial: { transactionId },
+      noRawTx: true,
+      paged: { limit: 1, offset: 0 },
+    })
+    const row = Array.isArray(rows) && rows[0] ? rows[0] : null
+    cache.set(transactionId, row)
+    return row
+  } catch (err) {
+    console.warn('[stale-output] tx lookup skipped', transactionId, err)
+    cache.set(transactionId, null)
+    return null
+  }
+}
+
+async function healLockingScript(
+  sp: StorageProvider,
+  output: ChangeRow,
+): Promise<number[] | null> {
+  if (hasLockingScript(output)) return null
+  const txid = String(output.txid ?? '').trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(txid) || typeof sp.getProvenOrRawTx !== 'function') {
+    return null
+  }
+  try {
+    const local = await sp.getProvenOrRawTx(txid)
+    const fate = classifyChangeScript(output, local?.rawTx?.length ? local.rawTx : null)
+    return fate.kind === 'heal' ? fate.lockingScript : null
+  } catch (err) {
+    console.warn('[stale-output] change script heal skipped', txid.slice(0, 12), err)
+    return null
+  }
+}
+
+/**
+ * After createAction the inputs are this wallet's spent coins and the change is
+ * already in storage. Rebuild locking scripts from the local raw tx so the next
+ * send can select that change before any indexer has seen the payment.
+ */
+export async function sealLocalSpendChange(): Promise<void> {
+  await sweepChangeScripts({ fromChain: false })
+}
+
 /**
  * Re-enable outputs that were written off (`spendable: false`) but are still
- * unspent on-chain. Used after a bad bulk release (iterator-crash recovery)
- * so balance matches reality again.
+ * this wallet's to spend.
+ *
+ * Local spends win over the indexer: a sending/unproven/completed tx that
+ * consumed an input must not have that input restored just because the
+ * network has not seen the spend yet. Change from that same local tx must
+ * come back even when `isUtxo` is still false.
+ *
+ * Indexer `isUtxo` is only for coins with no live local spend attached —
+ * typically a bad bulk release of a confirmed UTXO.
  *
  * @returns how many outputs were restored.
  */
@@ -97,7 +197,7 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
   const storage = active.wallet.storage
   const services = active.services
   if (!storage || typeof storage.findOutputs !== 'function') return 0
-  if (!services || typeof services.isUtxo !== 'function') return 0
+  if (typeof storage.runAsStorageProvider !== 'function') return 0
 
   try {
     const dead = await storage.findOutputs({ partial: { spendable: false } })
@@ -105,31 +205,54 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
 
     let restored = 0
     let unscripted = 0
-    for (const output of dead.slice(0, RESTORE_MAX)) {
+    let keptSpent = 0
+    const txCache = new Map<number, TxStatusRow | null>()
+
+    for (const raw of dead.slice(0, RESTORE_MAX)) {
       if (shouldYieldChainIngestToSpend()) {
         console.info(
           `[stale-output] restore yielded to spend after ${restored} restore(s)`,
         )
         break
       }
-      const outputId = Number((output as { outputId?: number }).outputId)
-      if (!Number.isFinite(outputId) || outputId <= 0) continue
-      // `services.isUtxo` hashes the locking script, so a row without one can
-      // only ever throw here. `changeScriptFate` owns rebuilding those.
-      if (!hasLockingScript(output as ChangeRow)) {
-        unscripted += 1
-        continue
-      }
+      const output = raw as ChangeRow & { transactionId?: number; spentBy?: number }
+      const outputId = positiveId(output.outputId)
+      if (outputId == null) continue
+
       try {
-        const stillUtxo = await services.isUtxo(output as never)
-        if (stillUtxo !== true) continue
-        await storage.runAsStorageProvider(async (sp) => {
-          await sp.updateOutput(outputId, {
-            spendable: true,
-            spentBy: undefined,
-          })
+        const restoredThis = await storage.runAsStorageProvider(async (activeSp) => {
+          const sp = activeSp as unknown as StorageProvider
+        const spentBy = positiveId(output.spentBy)
+        if (spentBy != null) {
+          const spender = await loadTxRow(sp, spentBy, txCache)
+          if (isLiveLocalTxStatus(spender?.status)) return 'spent'
+        }
+
+        const creatorId = positiveId(output.transactionId)
+        const creator = creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
+        const localChange = isLiveLocalTxStatus(creator?.status) && spentBy == null
+
+        const healed = await healLockingScript(sp, output)
+        const scripted = healed != null || hasLockingScript(output)
+        if (!scripted) return 'unscripted'
+
+        if (!localChange) {
+          if (!services || typeof services.isUtxo !== 'function') return 'skip'
+          const stillUtxo = await services.isUtxo(output as never)
+          if (stillUtxo !== true) return 'skip'
+        }
+
+        await sp.updateOutput(outputId, {
+          spendable: true,
+          spentBy: undefined,
+          ...(healed != null ? { lockingScript: healed } : {}),
         })
-        restored += 1
+        return 'restored'
+      })
+
+      if (restoredThis === 'restored') restored += 1
+      else if (restoredThis === 'unscripted') unscripted += 1
+      else if (restoredThis === 'spent') keptSpent += 1
       } catch (err) {
         console.warn(
           '[stale-output] restore skipped',
@@ -142,6 +265,11 @@ export async function restoreLiveSpendableOutputs(): Promise<number> {
     if (restored > 0) {
       console.info(
         `[stale-output] restored ${restored} live output(s) previously marked unspendable`,
+      )
+    }
+    if (keptSpent > 0) {
+      console.info(
+        `[stale-output] left ${keptSpent} locally-spent input(s) unspendable (network lag)`,
       )
     }
     if (unscripted > 0) {

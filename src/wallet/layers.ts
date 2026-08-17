@@ -50,7 +50,9 @@
  * - **Dual-layer confirmation** → `txLifecycle` / `utxoLockManager` /
  *   `dualLayerSend` / `txReconcile`. Optimistic soft-locks + ARC status sit
  *   beside settle-path machines; hard finality is MINED only after SPV-verified
- *   BUMP. Never treat HTTP 200 / postBeef accept as mined.
+ *   BUMP. Never treat HTTP 200 / postBeef accept as mined. Activity never drops
+ *   a signed send until every one of its inputs is spent on chain — clearing
+ *   history is not a cancel.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
  */

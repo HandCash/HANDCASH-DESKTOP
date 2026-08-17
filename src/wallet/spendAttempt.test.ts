@@ -1,8 +1,10 @@
+import { P2PKH, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ActivityEntry } from './appActivity'
 
 const mocks = vi.hoisted(() => ({
   txExistsOnChain: vi.fn(),
+  spentStatusOfOutpoint: vi.fn(),
   isCollectableOutpointSpendable: vi.fn(),
   sendCollectable: vi.fn(),
   getBeefForTxidCached: vi.fn(),
@@ -10,16 +12,21 @@ const mocks = vi.hoisted(() => ({
   removeActivityById: vi.fn(),
   removeFailedActivity: vi.fn(),
   countFailedActivity: vi.fn(),
+  listFailedActivity: vi.fn(),
   repairFailedSpendState: vi.fn(),
   counterpartyMaySettle: vi.fn(),
+  getProvenOrRawTx: vi.fn(),
+  getTxByTxid: vi.fn(),
 }))
 
 vi.mock('./sentItemGuard', () => ({
   counterpartyMaySettle: mocks.counterpartyMaySettle,
 }))
 
-vi.mock('./legacyScan', () => ({
+vi.mock('./legacyScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./legacyScan')>()),
   txExistsOnChain: mocks.txExistsOnChain,
+  spentStatusOfOutpoint: mocks.spentStatusOfOutpoint,
 }))
 
 vi.mock('./collectables', () => ({
@@ -35,8 +42,21 @@ vi.mock('./sendBrc29Payment', () => ({
   broadcastAtomicBeef: mocks.broadcastAtomicBeef,
 }))
 
+vi.mock('./txStore', () => ({
+  getTxByTxid: mocks.getTxByTxid,
+}))
+
 vi.mock('./session', () => ({
-  getActiveWallet: () => ({ chain: 'main' }),
+  getActiveWallet: () => ({
+    chain: 'main',
+    wallet: {
+      storage: {
+        runAsStorageProvider: async <T>(
+          fn: (sp: { getProvenOrRawTx: typeof mocks.getProvenOrRawTx }) => Promise<T>,
+        ) => fn({ getProvenOrRawTx: mocks.getProvenOrRawTx }),
+      },
+    },
+  }),
 }))
 
 vi.mock('./actionReview', () => ({
@@ -48,6 +68,7 @@ vi.mock('./appActivity', async (importOriginal) => ({
   removeActivityById: mocks.removeActivityById,
   removeFailedActivity: mocks.removeFailedActivity,
   countFailedActivity: mocks.countFailedActivity,
+  listFailedActivity: mocks.listFailedActivity,
 }))
 
 import {
@@ -58,7 +79,23 @@ import {
 } from './spendAttempt'
 
 const TX = 'a'.repeat(64)
-const OUTPOINT = `${'b'.repeat(64)}.0`
+const PREV = 'b'.repeat(64)
+const OUTPOINT = `${PREV}.0`
+
+function spendTxRaw(prevTxid = PREV, prevVout = 0): number[] {
+  const tx = new Transaction()
+  tx.addInput({
+    sourceTXID: prevTxid,
+    sourceOutputIndex: prevVout,
+    unlockingScript: new UnlockingScript([]),
+    sequence: 0xffffffff,
+  })
+  tx.addOutput({
+    satoshis: 1000,
+    lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()),
+  })
+  return tx.toBinary()
+}
 
 function itemAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
   return {
@@ -101,7 +138,12 @@ beforeEach(() => {
   mocks.removeActivityById.mockReturnValue(true)
   mocks.removeFailedActivity.mockReturnValue(0)
   mocks.countFailedActivity.mockReturnValue(0)
+  mocks.listFailedActivity.mockReturnValue([])
   mocks.counterpartyMaySettle.mockReturnValue(false)
+  mocks.getProvenOrRawTx.mockResolvedValue(undefined)
+  mocks.getTxByTxid.mockReturnValue(null)
+  mocks.spentStatusOfOutpoint.mockResolvedValue('unknown')
+  mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
 })
 
 describe('resolveSpendAttemptFate — items', () => {
@@ -126,7 +168,7 @@ describe('resolveSpendAttemptFate — items', () => {
     expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
   })
 
-  it('allows retry only when the original item output is spendable', async () => {
+  it('allows retry only when the original item output is spendable, and never clear while inputs live', async () => {
     mocks.txExistsOnChain.mockResolvedValue(false)
     mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
 
@@ -136,10 +178,25 @@ describe('resolveSpendAttemptFate — items', () => {
       kind: 'retry',
       action: 'rebroadcast',
       retry: { outpoint: OUTPOINT, toAddress: '1recipient' },
+      mayClear: false,
     })
   })
 
-  it('explains why a spent or missing original output cannot be retried', async () => {
+  it('lets an unsigned item attempt be cleared when the source is gone', async () => {
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(false)
+
+    const fate = await resolveSpendAttemptFate(
+      itemAttempt({ txid: undefined, status: 'failed' }),
+      'main',
+    )
+    expect(fate).toMatchObject({
+      kind: 'refuse',
+      reason: 'sourceNotSpendable',
+      mayClear: true,
+    })
+  })
+
+  it('refuses clear of a signed 404 while inputs cannot be proven spent', async () => {
     mocks.txExistsOnChain.mockResolvedValue(false)
     mocks.isCollectableOutpointSpendable.mockResolvedValue(false)
 
@@ -147,8 +204,21 @@ describe('resolveSpendAttemptFate — items', () => {
     expect(fate).toMatchObject({
       kind: 'refuse',
       reason: 'sourceNotSpendable',
+      mayClear: false,
+    })
+  })
+
+  it('clears a signed send once every input is spent on chain', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+
+    await expect(resolveSpendAttemptFate(itemAttempt(), 'main')).resolves.toMatchObject({
+      kind: 'refuse',
+      reason: 'inputsSpent',
       mayClear: true,
     })
+    expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
   })
 
   it('rebroadcasts the original signed BEEF instead of creating a double spend', async () => {
@@ -211,7 +281,7 @@ describe('resolveSpendAttemptFate — payments', () => {
     expect(mocks.broadcastAtomicBeef).not.toHaveBeenCalled()
   })
 
-  it('still allows clearing a legacy payment row with no saved recipient', async () => {
+  it('still allows clearing a legacy unsigned payment row with no saved recipient', async () => {
     const fate = await resolveSpendAttemptFate(
       paymentAttempt({ retry: undefined }),
       'main',
@@ -220,6 +290,36 @@ describe('resolveSpendAttemptFate — payments', () => {
     expect(fate).toMatchObject({
       kind: 'refuse',
       reason: 'missingRetryDetails',
+      mayClear: true,
+    })
+  })
+
+  it('does not let a signed 404 payment be cleared while its inputs are live', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+
+    const fate = await resolveSpendAttemptFate(
+      paymentAttempt({ txid: TX, at: Date.now() - 3 * 60_000 }),
+      'main',
+    )
+    expect(fate).toMatchObject({
+      kind: 'retry',
+      action: 'reopenPayment',
+      mayClear: false,
+    })
+  })
+
+  it('history-only clears a signed payment once its inputs are spent', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+
+    await expect(
+      resolveSpendAttemptFate(paymentAttempt({ txid: TX, at: Date.now() - 3 * 60_000 }), 'main'),
+    ).resolves.toMatchObject({
+      kind: 'refuse',
+      reason: 'inputsSpent',
       mayClear: true,
     })
   })
@@ -240,7 +340,6 @@ describe('a transfer the recipient can still settle', () => {
       mayClear: false,
       mayReleaseFunds: true,
     })
-    // Classifying must not even reach the chain or spendability probes.
     expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
     expect(mocks.isCollectableOutpointSpendable).not.toHaveBeenCalled()
   })
@@ -276,7 +375,7 @@ describe('a transfer the recipient can still settle', () => {
 })
 
 describe('clearSpendAttempt', () => {
-  it('releases local spend reservations before removing the row', async () => {
+  it('releases local spend reservations before removing an unsigned row', async () => {
     const order: string[] = []
     mocks.repairFailedSpendState.mockImplementation(async () => {
       order.push('repair')
@@ -293,19 +392,53 @@ describe('clearSpendAttempt', () => {
     expect(order).toEqual(['repair', 'remove'])
   })
 
-  it('still removes the row when the local repair throws', async () => {
+  it('still removes an unsigned row when the local repair throws', async () => {
     mocks.repairFailedSpendState.mockRejectedValue(new Error('storage locked'))
 
-    await expect(clearSpendAttempt(itemAttempt())).resolves.toEqual({
+    await expect(
+      clearSpendAttempt(itemAttempt({ txid: undefined, status: 'failed' })),
+    ).resolves.toEqual({
       removed: true,
     })
+    expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
+  })
+
+  it('does not clear or repair a signed send whose inputs are still unspent', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+
+    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).rejects.toThrow(
+      /cannot be cleared while its inputs are still unspent/i,
+    )
+    expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
+    expect(mocks.removeActivityById).not.toHaveBeenCalled()
+  })
+
+  it('drops the history row of a signed send after its inputs are spent, without repair', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('spent')
+
+    await expect(clearSpendAttempt(itemAttempt({ status: 'failed' }))).resolves.toEqual({
+      removed: true,
+    })
+    expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
     expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
   })
 })
 
 describe('clearAllFailedSpends', () => {
-  it('repairs local reservations once, then drops every failed row', async () => {
+  it('repairs local reservations once, then drops unsigned failed rows', async () => {
     mocks.countFailedActivity.mockReturnValue(5)
+    mocks.listFailedActivity.mockReturnValue([
+      paymentAttempt({ id: 'u1' }),
+      paymentAttempt({ id: 'u2' }),
+      paymentAttempt({ id: 'u3' }),
+      paymentAttempt({ id: 'u4' }),
+      paymentAttempt({ id: 'u5' }),
+    ])
     mocks.removeFailedActivity.mockReturnValue(5)
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
@@ -317,9 +450,14 @@ describe('clearAllFailedSpends', () => {
     expect(mocks.removeActivityById).not.toHaveBeenCalled()
   })
 
-  it('clears the backlog even when the repair throws', async () => {
+  it('clears the unsigned backlog even when the repair throws', async () => {
     mocks.repairFailedSpendState.mockRejectedValue(new Error('storage locked'))
     mocks.countFailedActivity.mockReturnValue(3)
+    mocks.listFailedActivity.mockReturnValue([
+      paymentAttempt({ id: 'u1' }),
+      paymentAttempt({ id: 'u2' }),
+      paymentAttempt({ id: 'u3' }),
+    ])
     mocks.removeFailedActivity.mockReturnValue(3)
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
@@ -330,23 +468,50 @@ describe('clearAllFailedSpends', () => {
 
   it('keeps back rows the recipient can still broadcast, and reports them', async () => {
     mocks.countFailedActivity.mockReturnValue(4)
+    mocks.listFailedActivity.mockReturnValue([
+      paymentAttempt({ id: 'u1' }),
+      paymentAttempt({ id: 'u2' }),
+      paymentAttempt({ id: 'u3' }),
+      itemAttempt({ id: 'item', status: 'failed' }),
+    ])
+    mocks.counterpartyMaySettle.mockImplementation(
+      (outpoint: string) => outpoint === OUTPOINT,
+    )
     mocks.removeFailedActivity.mockReturnValue(3)
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 3,
       kept: 1,
     })
-    // The predicate is what protects them — a bulk clear must not pass none.
     expect(mocks.removeFailedActivity).toHaveBeenCalledWith(expect.any(Function))
   })
 
   it('never reports a negative backlog when repair settles rows mid-clear', async () => {
     mocks.countFailedActivity.mockReturnValue(0)
+    mocks.listFailedActivity.mockReturnValue([])
     mocks.removeFailedActivity.mockReturnValue(2)
 
     await expect(clearAllFailedSpends()).resolves.toEqual({
       removed: 2,
       kept: 0,
     })
+    expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
+  })
+
+  it('keeps a signed failed send whose inputs are still unspent, and skips repair for that alone', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mocks.countFailedActivity.mockReturnValue(1)
+    mocks.listFailedActivity.mockReturnValue([
+      paymentAttempt({ id: 'signed', txid: TX, at: Date.now() - 3 * 60_000 }),
+    ])
+    mocks.removeFailedActivity.mockReturnValue(0)
+
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 0,
+      kept: 1,
+    })
+    expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
   })
 })

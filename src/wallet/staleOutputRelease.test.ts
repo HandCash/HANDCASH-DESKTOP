@@ -7,8 +7,13 @@ vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
 }))
 
-const { isAlreadySpentInputError, isNoLongerSpendableError, releaseStaleSpendableOutputs, restoreLiveSpendableOutputs } =
-  await import('./staleOutputRelease')
+const {
+  isAlreadySpentInputError,
+  isNoLongerSpendableError,
+  isLiveLocalTxStatus,
+  releaseStaleSpendableOutputs,
+  restoreLiveSpendableOutputs,
+} = await import('./staleOutputRelease')
 
 describe('isAlreadySpentInputError', () => {
   it('accepts the rejections that prove an input is spent or gone', () => {
@@ -97,15 +102,30 @@ describe('releaseStaleSpendableOutputs', () => {
   })
 })
 
+describe('isLiveLocalTxStatus', () => {
+  it('treats sending / unproven / completed as a committed local spend', () => {
+    expect(isLiveLocalTxStatus('sending')).toBe(true)
+    expect(isLiveLocalTxStatus('unproven')).toBe(true)
+    expect(isLiveLocalTxStatus('completed')).toBe(true)
+    expect(isLiveLocalTxStatus('failed')).toBe(false)
+    expect(isLiveLocalTxStatus('unsigned')).toBe(false)
+  })
+})
+
 describe('restoreLiveSpendableOutputs', () => {
   const findOutputs = vi.fn()
   const updateOutput = vi.fn()
   const isUtxo = vi.fn()
+  const findTransactions = vi.fn()
+  const getProvenOrRawTx = vi.fn()
 
   beforeEach(() => {
     findOutputs.mockReset()
     updateOutput.mockReset()
     isUtxo.mockReset()
+    findTransactions.mockReset()
+    getProvenOrRawTx.mockReset()
+    findTransactions.mockResolvedValue([])
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
@@ -113,8 +133,13 @@ describe('restoreLiveSpendableOutputs', () => {
       wallet: {
         storage: {
           findOutputs,
-          runAsStorageProvider: async (fn: (sp: { updateOutput: typeof updateOutput }) => Promise<void>) =>
-            fn({ updateOutput }),
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findTransactions: typeof findTransactions
+              getProvenOrRawTx: typeof getProvenOrRawTx
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findTransactions, getProvenOrRawTx }),
         },
       },
     })
@@ -132,6 +157,38 @@ describe('restoreLiveSpendableOutputs', () => {
       spendable: true,
       spentBy: undefined,
     })
+  })
+
+  it('does not resurrect an input spent by a local sending/unproven tx', async () => {
+    findOutputs.mockResolvedValue([
+      { outputId: 1, spendable: false, spentBy: 9, lockingScript: [118, 169] },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'sending' }])
+    isUtxo.mockResolvedValue(true)
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(isUtxo).not.toHaveBeenCalled()
+  })
+
+  it('restores change from a local unproven spend even when the indexer has not seen it', async () => {
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 2,
+        transactionId: 9,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+    isUtxo.mockResolvedValue(false)
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(2, {
+      spendable: true,
+      spentBy: undefined,
+    })
+    expect(isUtxo).not.toHaveBeenCalled()
   })
 
   it('skips rows with no locking script instead of asking isUtxo', async () => {

@@ -23,7 +23,10 @@ import {
   refreshSpendableBalance,
 } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { isAlreadySpentInputError, releaseStaleSpendableOutputs } from './staleOutputRelease'
+import {
+  isAlreadySpentInputError,
+  releaseThenRestoreStaleOutputs,
+} from './staleOutputRelease'
 import {
   clearPaymentProgress,
   setPaymentProgress,
@@ -209,7 +212,7 @@ export async function sendSatsToAddress(opts: {
               noteDualLayerPostBeef(dualId, summary)
               if (!summary.accepted) {
                 if (summary.doubleSpend || summary.missingInputs) {
-                  await releaseStaleSpendableOutputs()
+                  await releaseThenRestoreStaleOutputs()
                 }
                 throw new Error(formatPostBeefFailure(summary))
               }
@@ -262,7 +265,7 @@ export async function sendSatsToAddress(opts: {
               'UNKNOWN',
               err instanceof Error ? err.message : String(err),
             )
-            if (isAlreadySpentInputError(err)) await releaseStaleSpendableOutputs()
+            if (isAlreadySpentInputError(err)) await releaseThenRestoreStaleOutputs()
             const {
               isReviewActionsError,
               isIteratorCrashError,
@@ -274,7 +277,7 @@ export async function sendSatsToAddress(opts: {
               // Iterator crashes are local toolbox poison — not proof UTXOs are
               // spent. Never bulk-release spendable outputs on that path.
               if (isAlreadySpentInputError(err)) {
-                await releaseStaleSpendableOutputs()
+                await releaseThenRestoreStaleOutputs()
               }
               const message = formatReviewActionsError(err)
               console.warn('[send] failed', message, err)

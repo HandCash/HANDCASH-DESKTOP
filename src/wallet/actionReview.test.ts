@@ -23,6 +23,8 @@ vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
     wallet: {
+      listNoSendActions: async () => ({ totalActions: 0, actions: [] }),
+      actionBatch: { abort: async () => false },
       storage: {
         runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
           fn({
@@ -122,7 +124,16 @@ describe('actionReview', () => {
     expect(r.failedTxs).toBe(1)
     expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
     expect(reviewStatus).toHaveBeenCalled()
-    expect(r.quarantined).toBe(1)
+    expect(r.quarantined).toBe(1    )
     expect(sweepChangeScripts).toHaveBeenCalled()
+  })
+
+  it('releaseStuckNosends does not sweep change or reviewStatus on the send button', async () => {
+    const { releaseStuckNosends } = await import('./actionReview')
+    sweepChangeScripts.mockClear()
+    reviewStatus.mockClear()
+    await releaseStuckNosends()
+    expect(sweepChangeScripts).not.toHaveBeenCalled()
+    expect(reviewStatus).not.toHaveBeenCalled()
   })
 })

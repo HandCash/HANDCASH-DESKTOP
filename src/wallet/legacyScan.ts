@@ -114,6 +114,81 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   }
 }
 
+export type OutpointSpentStatus = 'spent' | 'unspent' | 'unknown'
+
+/** `txid.vout` or `txid_vout` → parts, or null when the key is not an outpoint. */
+export function parseOutpoint(outpoint: string): { txid: string; vout: number } | null {
+  const m = outpoint.trim().match(/^([0-9a-f]{64})[._](\d+)$/i)
+  if (!m) return null
+  const txid = m[1]
+  const vout = m[2]
+  if (!txid || vout === undefined) return null
+  return { txid: txid.toLowerCase(), vout: Number(vout) }
+}
+
+/**
+ * Bitails `/tx/{txid}/output/{n}/status`. `unknown` means spent *or* never
+ * seen — that is not proof the coins moved, so the caller must fail closed.
+ */
+export function classifyBitailsUtxoStatus(body: {
+  status?: unknown
+  spent?: unknown
+}): OutpointSpentStatus {
+  const status = String(body.status ?? '').toLowerCase()
+  if (status === 'unknown' || status === 'not found') return 'unknown'
+  if (body.spent === true) return 'spent'
+  if (body.spent === false) return 'unspent'
+  return 'unknown'
+}
+
+/**
+ * Whether `outpoint` is spent on chain (mempool or mined).
+ *
+ * Spent is only returned from a positive indexer answer. Everything else —
+ * including Bitails `unknown` and provider silence — is not proof, so it is
+ * `unspent` (404 on a known host) or `unknown` (fail closed).
+ */
+export async function spentStatusOfOutpoint(
+  outpoint: string,
+  chain: Chain,
+): Promise<OutpointSpentStatus> {
+  const parsed = parseOutpoint(outpoint)
+  if (!parsed) return 'unknown'
+
+  let bitailsUnknown = false
+  const bitails = bitailsBase(chain)
+  if (bitails) {
+    try {
+      const res = await fetchWithDeadline(
+        `${bitails}/tx/${parsed.txid}/output/${parsed.vout}/status`,
+      )
+      if (res.ok) {
+        const body = (await res.json()) as { status?: unknown; spent?: unknown }
+        const classified = classifyBitailsUtxoStatus(body)
+        if (classified !== 'unknown') return classified
+        bitailsUnknown = true
+      }
+    } catch (err) {
+      console.warn('[legacy-scan] Bitails utxo status failed', err)
+    }
+  }
+
+  try {
+    const res = await fetchWithDeadline(
+      `${wocBase(chain)}/tx/${parsed.txid}/${parsed.vout}/spent`,
+    )
+    if (res.status === 404) return bitailsUnknown ? 'unknown' : 'unspent'
+    if (!res.ok) return 'unknown'
+    const body = (await res.json()) as { txid?: unknown }
+    const spendTxid = String(body.txid ?? '').toLowerCase()
+    if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
+    return 'unknown'
+  } catch (err) {
+    console.warn('[legacy-scan] WhatsOnChain spent lookup failed', err)
+    return 'unknown'
+  }
+}
+
 /** Scan a legacy P2PKH address for UTXOs via Bitails (SPV-forward primary). */
 export async function scanAddressViaBitails(
   address: string,

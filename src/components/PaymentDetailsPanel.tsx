@@ -321,7 +321,9 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const clearAttempt = async () => {
     if (!entry || clearing) return
     const confirmed = window.confirm(
-      'Clear this send from Activity? This releases the local reservations it left behind. It does not cancel a transfer already delivered to the recipient.',
+      entry.txid
+        ? 'Remove this send from Activity? Its coins are already spent on chain, so this only deletes the history row — it does not undo the payment.'
+        : 'Clear this failed send from Activity? It never produced a signed transaction, so this only drops the row and releases local reservations.',
     )
     if (!confirmed) return
     setClearing(true)
