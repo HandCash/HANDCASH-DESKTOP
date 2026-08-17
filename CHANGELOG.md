@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.235] - 2026-08-17
+
+### Fixed
+- **Pay no longer jumps up after Refresh by resurrecting spent coins.** Restore used to trust indexer `isUtxo`, which still says yes while a spend is catching up — that flipped consumed inputs back to spendable, inflated the hero number, and hung the next send on already-spent coins. Refresh now re-hides inputs of this wallet's live local txs and only restores that tx's change. Checking the Send balance no longer pages the whole spent set.
+
 ## [1.2.234] - 2026-08-17
 
 ### Changed

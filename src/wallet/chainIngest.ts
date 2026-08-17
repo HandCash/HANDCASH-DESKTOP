@@ -135,6 +135,10 @@ function maybeReceiveChime(): void {
 export async function auditSpendableOutputs(force = false): Promise<SpendableReviewResult> {
   const active = getActiveWallet()
   if (!active) return { suspect: 0, skipped: true }
+  if (shouldYieldChainIngestToSpend()) return { suspect: 0, skipped: true }
+  if (typeof document !== 'undefined' && document.hidden) {
+    return { suspect: 0, skipped: true }
+  }
 
   const now = Date.now()
   if (!force && now - lastSpendableReviewAt < reviewThrottleMs()) {
@@ -322,11 +326,13 @@ export async function refreshFromChainExclusive(
   }
 
   try {
-    const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
+    const { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs } =
+      await import('./staleOutputRelease')
+    await rehideInputsOfLiveLocalTxs()
     const restored = await restoreLiveSpendableOutputs()
     if (restored > 0) {
       console.info(
-        `[chain-ingest] restored ${restored} live output(s) that were falsely marked unspendable`,
+        `[chain-ingest] restored ${restored} live change output(s) that were falsely marked unspendable`,
       )
     }
   } catch (err) {

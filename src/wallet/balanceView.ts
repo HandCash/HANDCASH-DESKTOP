@@ -126,13 +126,21 @@ export async function unconfirmedChangeSats(): Promise<number> {
           findOutputs?: (args: unknown) => Promise<unknown[] | undefined>
         }
         if (typeof sp.findOutputs !== 'function') return []
-        return sp.findOutputs({
-          partial: { spendable: false },
-          paged: { limit: PAGE, offset: page * PAGE },
-        })
+        try {
+          return await sp.findOutputs({
+            partial: { spendable: false, change: true },
+            paged: { limit: PAGE, offset: page * PAGE },
+          })
+        } catch {
+          return sp.findOutputs({
+            partial: { spendable: false },
+            paged: { limit: PAGE, offset: page * PAGE },
+          })
+        }
       })) as Array<OwnedCashRow & { transactionId?: number }> | undefined
       if (!batch?.length) break
       for (const row of batch) {
+        if (row.change !== true) continue
         const creator = await liveness(positiveId(row.transactionId))
         const spender = await liveness(positiveId(row.spentBy))
         const fate = classifyOwnedCash(row, creator, spender)

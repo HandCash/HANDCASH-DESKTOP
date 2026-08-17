@@ -24,6 +24,7 @@ const {
   restoreLiveSpendableOutputs,
   keepChangeOfSignedTx,
   hideSpentOutpoints,
+  rehideInputsOfLiveLocalTxs,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, __resetUtxoLocksForTests } = await import('./utxoLockManager')
@@ -160,18 +161,16 @@ describe('restoreLiveSpendableOutputs', () => {
     })
   })
 
-  it('re-enables outputs that are still UTXOs on-chain', async () => {
+  it('does not resurrect outputs just because the indexer still lists them', async () => {
     findOutputs.mockResolvedValue([
       { outputId: 1, spendable: false, lockingScript: [118, 169] },
       { outputId: 2, spendable: false, lockingScript: [118, 169] },
     ])
-    isUtxo.mockResolvedValueOnce(true).mockResolvedValueOnce(false)
+    isUtxo.mockResolvedValue(true)
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
-    expect(updateOutput).toHaveBeenCalledWith(1, {
-      spendable: true,
-      spentBy: undefined,
-    })
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(isUtxo).not.toHaveBeenCalled()
   })
 
   it('does not resurrect an input spent by a local sending/unproven tx', async () => {
@@ -191,6 +190,7 @@ describe('restoreLiveSpendableOutputs', () => {
       {
         outputId: 2,
         transactionId: 9,
+        change: true,
         spendable: false,
         lockingScript: [118, 169],
       },
@@ -201,7 +201,6 @@ describe('restoreLiveSpendableOutputs', () => {
     await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(2, {
       spendable: true,
-      spentBy: undefined,
     })
     expect(isUtxo).not.toHaveBeenCalled()
   })
@@ -337,5 +336,60 @@ describe('hideSpentOutpoints', () => {
 
     await expect(hideSpentOutpoints([`${txid}.1`])).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(3, { spendable: false })
+  })
+})
+
+describe('rehideInputsOfLiveLocalTxs', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const findTransactions = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    findTransactions.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          findOutputs,
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findOutputs, findTransactions }),
+        },
+      },
+    })
+  })
+
+  it('marks inputs of a completed local spend unspendable again', async () => {
+    const { P2PKH, PrivateKey, Transaction, UnlockingScript } = await import('@bsv/sdk')
+    const prevTxid = '11'.repeat(32)
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTXID: prevTxid,
+      sourceOutputIndex: 1,
+      unlockingScript: new UnlockingScript([]),
+      sequence: 0xffffffff,
+    })
+    tx.addOutput({
+      satoshis: 1000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()),
+    })
+    findTransactions.mockResolvedValue([
+      { status: 'completed', txid: '22'.repeat(32), rawTx: tx.toBinary() },
+    ])
+    findOutputs.mockResolvedValue([
+      { outputId: 4, txid: prevTxid, vout: 1, satoshis: 5000, spendable: true },
+    ])
+
+    await expect(rehideInputsOfLiveLocalTxs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(4, { spendable: false })
   })
 })

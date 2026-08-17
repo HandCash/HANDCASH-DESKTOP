@@ -42,7 +42,7 @@ const LIVE_LOCAL_TX = new Set([
   'unfail',
 ])
 
-type TxStatusRow = { status?: string; rawTx?: number[] }
+type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
 
 function positiveId(value: unknown): number | null {
   const n = Number(value)
@@ -346,35 +346,139 @@ export async function sealLocalSpendChange(): Promise<void> {
   await sweepChangeScripts({ fromChain: false })
 }
 
+const REHIDE_TX_LIMIT = 40
+
+function txidFromRow(row: { txid?: unknown }): string | null {
+  const txid = String(row.txid ?? '')
+    .trim()
+    .toLowerCase()
+  return /^[0-9a-f]{64}$/.test(txid) ? txid : null
+}
+
 /**
- * Re-enable outputs that were written off (`spendable: false`) but are still
- * this wallet's to spend.
+ * Hide inputs of this wallet's live local spends. Restore used to trust
+ * indexer `isUtxo` and flip spent coins back to spendable (and clear
+ * `spentBy`) — that inflated Pay and made the next send hang on dead coins.
+ */
+export async function rehideInputsOfLiveLocalTxs(): Promise<number> {
+  if (shouldYieldChainIngestToSpend()) return 0
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!storage || typeof storage.runAsStorageProvider !== 'function') return 0
+
+  const inputs = new Set<string>()
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return
+      let rows: TxStatusRow[] = []
+      try {
+        rows =
+          (await sp.findTransactions({
+            partial: {},
+            status: [...LIVE_LOCAL_TX],
+            noRawTx: false,
+            paged: { limit: REHIDE_TX_LIMIT, offset: 0 },
+          })) ?? []
+      } catch (err) {
+        if (!isUndefinedPartialFilterError(err)) {
+          console.warn('[stale-output] live-tx list skipped', err)
+        }
+        for (const status of LIVE_LOCAL_TX) {
+          if (shouldYieldChainIngestToSpend()) return
+          try {
+            const batch = await sp.findTransactions({
+              partial: { status },
+              noRawTx: false,
+              paged: { limit: 15, offset: 0 },
+            })
+            if (Array.isArray(batch)) rows.push(...batch)
+          } catch (inner) {
+            console.warn('[stale-output] live-tx list skipped', status, inner)
+          }
+        }
+      }
+      for (const row of rows.slice(0, REHIDE_TX_LIMIT)) {
+        if (shouldYieldChainIngestToSpend()) return
+        let raw = Array.isArray(row.rawTx) && row.rawTx.length > 0 ? row.rawTx : null
+        const txid = txidFromRow(row)
+        if (!raw && txid && typeof sp.getProvenOrRawTx === 'function') {
+          try {
+            const found = await sp.getProvenOrRawTx(txid)
+            raw = Array.isArray(found?.rawTx) && found.rawTx.length > 0 ? found.rawTx : null
+          } catch {
+            raw = null
+          }
+        }
+        if (!raw) continue
+        for (const op of inputOutpointsFromRawTx(raw)) inputs.add(op)
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] rehide live inputs skipped', err)
+    return 0
+  }
+  if (inputs.size === 0) return 0
+  const hidden = await hideSpentOutpoints([...inputs])
+  if (hidden > 0) {
+    console.info(
+      `[stale-output] rehid ${hidden} input(s) of live local spends so they stay unspendable`,
+    )
+  }
+  return hidden
+}
+
+async function loadUnspendableChange(
+  storage: { findOutputs: (args: unknown) => Promise<unknown[] | undefined> },
+): Promise<unknown[]> {
+  try {
+    const change = await storage.findOutputs({
+      partial: { spendable: false, change: true },
+      paged: { limit: RESTORE_MAX, offset: 0 },
+    })
+    if (Array.isArray(change)) return change
+  } catch (err) {
+    if (!isUndefinedPartialFilterError(err)) {
+      console.warn('[stale-output] change-row lookup skipped', err)
+    }
+  }
+  try {
+    const dead = await storage.findOutputs({
+      partial: { spendable: false },
+      paged: { limit: RESTORE_MAX, offset: 0 },
+    })
+    return Array.isArray(dead) ? dead : []
+  } catch (err) {
+    console.warn('[stale-output] unspendable lookup skipped', err)
+    return []
+  }
+}
+
+/**
+ * Re-enable change of a live local tx that was left `spendable: false`.
  *
- * Overlay consumed (`spentBy`) / unspendable / reserved coins stay hidden. A live
- * local spend's inputs stay unspendable even when the indexer still lists
- * them as UTXOs. Change from that same tx comes back even when `isUtxo` is
- * false.
- *
- * Indexer `isUtxo` is only for coins with no overlay hide and no live local
- * spend — typically a bad bulk release of a confirmed UTXO. After
- * already-spent, pass `onlyLiveChange` so indexer-lagged inputs are not
- * resurrected.
+ * Never asks the indexer `isUtxo`. Indexer lag after a spend answers `true`
+ * for coins this wallet already consumed, and restoring those inflated Pay
+ * and poisoned the next createAction. Overlay-hidden and locally-spent
+ * inputs stay hidden. `onlyLiveChange` is kept for callers; it is always
+ * the behaviour now.
  *
  * @returns how many outputs were restored.
  */
 export async function restoreLiveSpendableOutputs(opts?: {
   onlyLiveChange?: boolean
 }): Promise<number> {
+  void opts
+  if (shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   if (!active) return 0
   const storage = active.wallet.storage
-  const services = active.services
   if (!storage || typeof storage.findOutputs !== 'function') return 0
   if (typeof storage.runAsStorageProvider !== 'function') return 0
 
   try {
-    const dead = await storage.findOutputs({ partial: { spendable: false } })
-    if (!dead?.length) return 0
+    const dead = await loadUnspendableChange(storage)
+    if (!dead.length) return 0
 
     let restored = 0
     let unscripted = 0
@@ -393,6 +497,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
         spentBy?: number
         outputIndex?: number
         basket?: string
+        change?: boolean
       }
       const outputId = positiveId(output.outputId)
       if (outputId == null) continue
@@ -413,22 +518,19 @@ export async function restoreLiveSpendableOutputs(opts?: {
 
         const creatorId = positiveId(output.transactionId)
         const creator = creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
-        const localChange = isLiveLocalTxStatus(creator?.status) && spentBy == null
+        const localChange =
+          output.change === true &&
+          isLiveLocalTxStatus(creator?.status) &&
+          spentBy == null
 
         const healed = await healLockingScript(sp, output)
         const scripted = healed != null || hasLockingScript(output)
         if (!scripted) return 'unscripted'
 
-        if (!localChange) {
-          if (opts?.onlyLiveChange) return 'skip'
-          if (!services || typeof services.isUtxo !== 'function') return 'skip'
-          const stillUtxo = await services.isUtxo(output as never)
-          if (stillUtxo !== true) return 'skip'
-        }
+        if (!localChange) return 'skip'
 
         await sp.updateOutput(outputId, {
           spendable: true,
-          spentBy: undefined,
           ...(healed != null ? { lockingScript: healed } : {}),
         })
         return 'restored'
@@ -448,7 +550,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
 
     if (restored > 0) {
       console.info(
-        `[stale-output] restored ${restored} live output(s) previously marked unspendable`,
+        `[stale-output] restored ${restored} live change output(s) previously marked unspendable`,
       )
     }
     if (keptSpent > 0) {

@@ -281,7 +281,7 @@ export async function recoverFromReviewActions(args: {
     const rebuilt = await sweepChangeScripts({ active, fromChain: true })
     if (rebuilt.healed > 0) {
       const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
-      await restoreLiveSpendableOutputs()
+      await restoreLiveSpendableOutputs({ onlyLiveChange: true })
     }
   }
 

@@ -1,5 +1,13 @@
-import { describe, expect, it } from 'vitest'
-import { classifyOwnedCash, txLivenessFromStatus } from './balanceView'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mockGetActiveWallet = vi.fn()
+
+vi.mock('./session', () => ({
+  getActiveWallet: () => mockGetActiveWallet(),
+}))
+
+const { classifyOwnedCash, txLivenessFromStatus, unconfirmedChangeSats } =
+  await import('./balanceView')
 
 describe('txLivenessFromStatus', () => {
   it('treats sending / unproven / completed as live', () => {
@@ -107,5 +115,51 @@ describe('owned cash while sending', () => {
       0,
     )
     expect(owned).toBe(58_990)
+  })
+})
+
+describe('unconfirmedChangeSats', () => {
+  const findOutputs = vi.fn()
+  const findTransactions = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    findTransactions.mockReset()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+            }) => Promise<unknown>,
+          ) => fn({ findOutputs, findTransactions }),
+        },
+      },
+    })
+  })
+
+  it('credits change of a live send without paging the spent graveyard', async () => {
+    findOutputs.mockResolvedValue([
+      { satoshis: 9_000, change: true, spendable: false, transactionId: 9 },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(9_000)
+    expect(findOutputs).toHaveBeenCalledWith({
+      partial: { spendable: false, change: true },
+      paged: { limit: 200, offset: 0 },
+    })
+  })
+
+  it('skips unspendable inputs that are not change', async () => {
+    findOutputs.mockResolvedValue([
+      { satoshis: 50_000, change: false, spendable: false, transactionId: 9 },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
+    expect(findTransactions).not.toHaveBeenCalled()
   })
 })
