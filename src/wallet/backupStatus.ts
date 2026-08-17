@@ -8,7 +8,7 @@ export type BackupStep = 'keys' | 'history'
 type Listener = () => void
 const listeners = new Set<Listener>()
 
-/** Session evidence before confirm is allowed (not durable — must re-prove). */
+/** Session confirmations before final backup confirm is allowed (not durable). */
 let keysHandoffs = 0
 /** Distinct BRC-140 slice indices handed off this session (split backup). */
 const keysHandoffSliceIndices = new Set<number>()
@@ -41,8 +41,9 @@ export function getMissingBackupStep(): BackupStep | null {
 }
 
 /**
- * Record a real handoff (email / copy / save) of key material.
- * For split backup pass the slice index so progress tracks distinct slices.
+ * Record explicit user confirmation that key material was saved.
+ * Handoff actions must not call this automatically. For split backup, pass the
+ * slice index so progress tracks two separately confirmed slices.
  */
 export function noteKeysBackupHandoff(sliceIndex?: number): void {
   if (sliceIndex === undefined || sliceIndex < 0) {

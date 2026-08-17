@@ -16,6 +16,7 @@ import {
   shareDownloadFilename,
   type Brc140ShareSet,
 } from '../wallet/brc140Backup'
+import { shareKeySlice } from '../wallet/keySliceShare'
 import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
@@ -158,7 +159,28 @@ export function WalletBackupPanel() {
     if (!shareSet?.shares[index]) return
     const share = shareSet.shares[index]!
     try {
-      if (method === 'email') {
+      if (method === 'share') {
+        const outcome = await shareKeySlice({
+          share,
+          index,
+          total: shareSet.totalShares,
+          integrity: shareSet.integrity,
+        })
+        if (outcome === 'cancelled') return
+        if (outcome === 'unavailable') {
+          await emailShareToSelf(
+            share,
+            index,
+            shareSet.totalShares,
+            shareSet.integrity,
+            destination,
+          )
+          toastSuccess('Opened email', 'This device has no native share sheet.')
+        } else {
+          playWalletSound('soft')
+          toastSuccess('Share sheet opened', 'Choose an account or app you control.')
+        }
+      } else if (method === 'email') {
         await emailShareToSelf(
           share,
           index,
@@ -180,11 +202,16 @@ export function WalletBackupPanel() {
         playWalletSound('soft')
         toastSuccess('Slice saved', destination)
       }
-      noteKeysBackupHandoff(index)
     } catch (err) {
       playWalletSound('error')
       toastError('Couldn’t save slice', err instanceof Error ? err.message : undefined)
     }
+  }
+
+  const confirmSliceSaved = (index: number) => {
+    noteKeysBackupHandoff(index)
+    playWalletSound('soft')
+    toastSuccess(`Slice ${index + 1} confirmed`, 'Keep it separate from your other slice.')
   }
 
   const copySingle = async (text: string, label: string) => {
@@ -198,7 +225,7 @@ export function WalletBackupPanel() {
       toastError(
         'Backup not complete',
         kind === 'split'
-          ? 'Hand off at least two different slices (email, copy, or save file).'
+          ? 'Share or save two different slices, then confirm each one.'
           : 'Copy your secret first.',
       )
       playWalletSound('deny')
@@ -217,8 +244,8 @@ export function WalletBackupPanel() {
       data-aeon-state={revealed ? 'revealed' : 'idle'}
     >
       <p className="settings-hint">
-        Save any two of three offline slices — email is the easiest local option — or keep a recovery
-        phrase.
+        Share any two of three slices to separate accounts or apps you control. HandCash does not
+        receive them.
       </p>
 
       <div className="actions backup-alternate-actions" aria-label="Recovery formats">
@@ -355,6 +382,7 @@ export function WalletBackupPanel() {
             integrity={shareSet.integrity}
             savedIndices={splitProgress.savedIndices}
             onHandoff={handoff}
+            onConfirmSaved={confirmSliceSaved}
             onRotateShares={() => setRotatePromptOpen(true)}
             rotateBusy={busy}
           />
@@ -429,7 +457,8 @@ export function WalletBackupPanel() {
       </Prompt.Root>
 
       <SettingsFeatureAbout tags={['BRC-140', 'BRC-75']}>
-        Any two slices restore the wallet. Keep them in separate accounts or places.
+        Any two slices restore the wallet. Use Share to put them in separate accounts or apps; no
+        HandCash server is involved.
       </SettingsFeatureAbout>
     </div>
   )

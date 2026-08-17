@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.242] - 2026-08-17
+
+### Changed
+- **Key-slice backup uses the device Share sheet.** Each BRC-140 slice opens the OS share surface so the user can put it in Drive, email, a password manager, or another app they control — HandCash is not a destination and does not receive the slice. Desktop falls back to email when Web Share is unavailable; Mobile uses a native Android chooser.
+- **Backup completion requires an explicit “I saved this slice” confirmation.** Sharing, copying, or downloading alone never marks a slice done. The final keys-backup confirm stays locked until two distinct slices are manually confirmed. Hosted trustholders stay behind the existing feature flag and remain hidden.
+
 ## [1.2.241] - 2026-08-17
 
 ### Added

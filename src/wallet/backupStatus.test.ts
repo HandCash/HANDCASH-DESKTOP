@@ -34,7 +34,7 @@ describe('backupStatus evidence gates', () => {
     clearBackupConfirmed()
   })
 
-  it('requires handoffs before keys confirm (split needs 2 distinct slices)', () => {
+  it('requires two distinct manual slice confirmations before keys confirm', () => {
     expect(canConfirmKeysBackup('split')).toBe(false)
     expect(markKeysBackupConfirmed('split')).toBe(false)
 

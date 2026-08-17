@@ -158,6 +158,12 @@ interface HandCashBridge {
   brc39ArchiveRoot?: () => Promise<string>
   clipboardWrite?: (text: string) => Promise<void>
   clipboardWriteImage?: (payload: { mime: string; base64: string }) => Promise<void>
+  shareText?: (payload: {
+    title: string
+    text: string
+  }) => Promise<
+    { ok: true; canceled?: boolean } | { ok: false; error: string }
+  >
   saveImageFile?: (payload: {
     filename: string
     mime: string

@@ -1,6 +1,6 @@
 import { Accordion, ListRow, Progress } from '@aeon-ui/react'
 
-export type SliceHandoffMethod = 'email' | 'copy' | 'download'
+export type SliceHandoffMethod = 'share' | 'email' | 'copy' | 'download'
 
 export type KeySliceListProps = {
   shares: readonly string[]
@@ -14,14 +14,16 @@ export type KeySliceListProps = {
     method: SliceHandoffMethod,
     destination: string,
   ) => void | Promise<void>
+  /** Explicit user attestation; handoff actions never mark a slice saved. */
+  onConfirmSaved: (index: number) => void
   /** Regenerate a new share set (invalidates previous slices). */
   onRotateShares?: () => void | Promise<void>
   rotateBusy?: boolean
 }
 
 /**
- * Simple BRC-140 slice manager. Email is the primary handoff; copy and file
- * remain available without asking the user to design a storage plan.
+ * Simple BRC-140 slice manager. The OS share sheet is the primary handoff;
+ * copy and file remain available as universal fallbacks.
  */
 export function KeySliceList({
   shares,
@@ -30,6 +32,7 @@ export function KeySliceList({
   savedIndices,
   destinations = [],
   onHandoff,
+  onConfirmSaved,
   onRotateShares,
   rotateBusy = false,
 }: KeySliceListProps) {
@@ -52,8 +55,8 @@ export function KeySliceList({
         <div className="key-slice-progress-meta">
           <span className="key-slice-progress-label">
             {complete
-              ? `Ready — ${savedCount} of ${total} slices handed off`
-              : `${savedCount} of ${threshold} required slices handed off`}
+              ? `Ready — ${savedCount} of ${total} slices confirmed saved`
+              : `${savedCount} of ${threshold} required slices confirmed saved`}
           </span>
           <span className="key-slice-progress-count mono">
             {savedCount}/{threshold}
@@ -97,9 +100,9 @@ export function KeySliceList({
                     <span
                       className="key-slice-status"
                       data-aeon-state={saved ? 'saved' : 'pending'}
-                      aria-label={saved ? 'Handed off' : 'Not handed off yet'}
+                      aria-label={saved ? 'Confirmed saved' : 'Not confirmed saved yet'}
                     >
-                      {saved ? 'Done' : 'Open'}
+                      {saved ? 'Confirmed' : 'Open'}
                     </span>
                   </ListRow.Trailing>
                   <Accordion.ItemIndicator aria-hidden />
@@ -111,9 +114,9 @@ export function KeySliceList({
                   <button
                     type="button"
                     className="btn btn-primary"
-                    onClick={() => void onHandoff(index, 'email', destination)}
+                    onClick={() => void onHandoff(index, 'share', destination)}
                   >
-                    Email this slice
+                    Share this slice
                   </button>
                   <button
                     type="button"
@@ -128,6 +131,16 @@ export function KeySliceList({
                     onClick={() => void onHandoff(index, 'download', destination)}
                   >
                     Save file
+                  </button>
+                </div>
+                <div className="actions split-backup-item-actions">
+                  <button
+                    type="button"
+                    className={saved ? 'btn btn-ghost' : 'btn btn-primary'}
+                    disabled={saved}
+                    onClick={() => onConfirmSaved(index)}
+                  >
+                    {saved ? 'Saved — confirmed' : 'I saved this slice'}
                   </button>
                 </div>
               </Accordion.ItemContent>
