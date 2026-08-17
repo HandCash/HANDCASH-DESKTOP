@@ -26,6 +26,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
+  sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -188,6 +189,9 @@ export async function sendSatsToAddress(opts: {
                   : undefined
             if (atomic?.length && active.services?.postBeef) {
               signedAtomic = atomic
+              // Retire the consumed coins before the next send can pick them —
+              // chain-ingest's rehide pass defers while a spend is queued.
+              await sealSpentInputsOfSignedTx(realTxid, atomic)
               setPaymentProgress('broadcasting', 'Confirming payment on the network')
               const { summarizePostBeef, formatPostBeefFailure } = await import(
                 './postBeefResult'

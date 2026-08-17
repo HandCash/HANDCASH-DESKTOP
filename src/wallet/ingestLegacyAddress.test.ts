@@ -74,6 +74,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
       oneSats: [],
       bsv21: [],
       heldOneSats: [],
+      heldUneconomical: [],
       pendingTips: [],
     })
   })
@@ -292,6 +293,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
         },
       ],
       heldOneSats: [],
+      heldUneconomical: [],
       pendingTips: [],
     })
     mockImportLegacyUtxos.mockResolvedValue({

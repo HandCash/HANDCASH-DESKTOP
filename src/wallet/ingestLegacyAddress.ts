@@ -269,12 +269,10 @@ export async function ingestLegacyAddressUtxos(
     return emptyIngest(scan)
   }
 
-  const { funding, oneSats, bsv21, heldOneSats, pendingTips } = await classifyLegacyUtxos(
-    scan.utxos,
-    active.chain,
-    opts.knownItems ?? [],
-    { fundingOnly },
-  )
+  const { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips } =
+    await classifyLegacyUtxos(scan.utxos, active.chain, opts.knownItems ?? [], {
+      fundingOnly,
+    })
 
   const newOneSatCandidates = oneSats.filter((i) => {
     const fresh = filterNewOneSatOutpoints([i.outpoint])
@@ -289,15 +287,21 @@ export async function ingestLegacyAddressUtxos(
         (pendingTips.length > 0 ? ` (${pendingTips.length} awaiting origin)` : ''),
     )
   }
+  if (heldUneconomical.length > 0) {
+    console.info(
+      `[chain-ingest] holding ${heldUneconomical.length} uneconomical out(s) — not a sweep path`,
+    )
+  }
   if (newBsv21.length > 0) {
     console.info(
       `[chain-ingest] routing ${newBsv21.length} BSV-21 tip(s) to basket bsv21 (Collect tokens)`,
     )
   }
 
-  // An address holding only ordinals classifies no funding, and that is correct —
-  // only UTXOs that landed in no bucket at all are worth a warning. Cloud items
-  // can name their outpoint in underscore form, so compare on a normal key.
+  // An address holding only ordinals / dust classifies no funding, and that is
+  // correct — only UTXOs that landed in no bucket at all are worth a warning.
+  // Cloud items can name their outpoint in underscore form, so compare on a
+  // normal key.
   const outpointKey = (outpoint: string): string =>
     outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
   const accounted = new Set<string>([
@@ -305,6 +309,7 @@ export async function ingestLegacyAddressUtxos(
     ...oneSats.map((i) => outpointKey(i.outpoint)),
     ...bsv21.map((i) => outpointKey(i.outpoint)),
     ...heldOneSats.map((u) => outpointKey(u.outpoint)),
+    ...heldUneconomical.map((u) => outpointKey(u.outpoint)),
   ])
   const unclassified = scan.utxos.filter((u) => !accounted.has(outpointKey(u.outpoint)))
   if (unclassified.length > 0) {

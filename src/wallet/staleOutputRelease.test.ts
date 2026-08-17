@@ -25,6 +25,7 @@ const {
   keepChangeOfSignedTx,
   hideSpentOutpoints,
   rehideInputsOfLiveLocalTxs,
+  sealSpentInputsOfSignedTx,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, __resetUtxoLocksForTests } = await import('./utxoLockManager')
@@ -407,5 +408,86 @@ describe('rehideInputsOfLiveLocalTxs', () => {
 
     await expect(rehideInputsOfLiveLocalTxs()).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(4, { spendable: false })
+  })
+})
+
+/**
+ * Back-to-back sends: the rehide pass above defers while a spend is queued, so
+ * the spend path has to retire its own inputs or the next createAction picks a
+ * coin that is already gone and every broadcaster rejects the double spend.
+ */
+describe('sealSpentInputsOfSignedTx', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          findOutputs,
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findOutputs }),
+        },
+      },
+    })
+  })
+
+  async function signedTx(prevTxid: string, vout: number) {
+    const { P2PKH, PrivateKey, Transaction, UnlockingScript } = await import('@bsv/sdk')
+    const tx = new Transaction()
+    tx.addInput({
+      sourceTXID: prevTxid,
+      sourceOutputIndex: vout,
+      unlockingScript: new UnlockingScript([]),
+      sequence: 0xffffffff,
+    })
+    tx.addOutput({
+      satoshis: 1000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()),
+    })
+    return tx
+  }
+
+  it('hides the coin a signed spend consumed so the next send cannot reselect it', async () => {
+    const prevTxid = '33'.repeat(32)
+    const tx = await signedTx(prevTxid, 1)
+    findOutputs.mockResolvedValue([
+      { outputId: 7, txid: prevTxid, vout: 1, satoshis: 5000, spendable: true },
+    ])
+
+    await expect(
+      sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary()),
+    ).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(7, { spendable: false })
+  })
+
+  it('does nothing without a usable txid', async () => {
+    await expect(sealSpentInputsOfSignedTx(undefined, [1, 2, 3])).resolves.toBe(0)
+    await expect(sealSpentInputsOfSignedTx('not-a-txid', [1, 2, 3])).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('leaves the row alone when the transaction names no inputs', async () => {
+    const { P2PKH, PrivateKey, Transaction } = await import('@bsv/sdk')
+    const tx = new Transaction()
+    tx.addOutput({
+      satoshis: 1000,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toAddress()),
+    })
+
+    await expect(
+      sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary()),
+    ).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 })

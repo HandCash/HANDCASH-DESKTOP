@@ -11,6 +11,7 @@ import {
   noteInboundReceivePending,
 } from './appActivity'
 import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
+import { isSweepableFunding } from './legacySweepPath'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { fetchBalanceSats, getActiveWallet } from './session'
 import { setSyncHealth } from './walletHealth'
@@ -82,7 +83,8 @@ export async function ingestPaymentByTxid(
       const out = tx.outputs[vout]
       if (!out) continue
       const sats = Number(out.satoshis ?? 0)
-      if (!(sats > 1)) continue
+      // Same chooser as classifyLegacyUtxos — never a bare `sats > 1` test.
+      if (!isSweepableFunding({ satoshis: sats })) continue
       const lockHex = out.lockingScript?.toHex?.() ?? ''
       if (!scriptPaysAddress(lockHex, active.address)) continue
       funding.push({

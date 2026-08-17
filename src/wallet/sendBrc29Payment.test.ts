@@ -107,6 +107,7 @@ vi.mock('./staleOutputRelease', () => ({
   onAlreadySpentSend: async () => {},
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
+  sealSpentInputsOfSignedTx: async () => 0,
 }))
 vi.mock('./actionReview', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./actionReview')>()

@@ -28,18 +28,39 @@ export function runExclusiveSpend<T>(
  */
 export function invalidateFundingHealCache(): void {}
 
-/** Local toolbox spendable sats — no network refresh. */
+/** Local toolbox spendable sats — no network refresh, no unconfirmed credit. */
 export async function refreshSpendableBalance(): Promise<number> {
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
-  return fetchBalanceSats(active.wallet)
+  return fetchBalanceSats(active.wallet, { creditUnconfirmed: false })
 }
 
-/** Ensure local spendable covers `satoshis`. */
+/**
+ * Ensure local spendable covers `satoshis`.
+ *
+ * Confirmed toolbox balance is checked first. The unconfirmed-change scan only
+ * runs when that is short — a phone with hundreds of unspendable rows was
+ * paying that cost on every Send even when confirmed coins already covered the
+ * payment.
+ */
 export async function assertSendableBalance(satoshis: number): Promise<number> {
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
-  const available = await refreshSpendableBalance()
+  assertOnlineForPayment()
+  const active = getActiveWallet()
+  if (!active) throw new Error('Wallet locked')
+
+  const confirmed = await fetchBalanceSats(active.wallet, { creditUnconfirmed: false })
+  if (satoshis <= confirmed) return confirmed
+
+  let credit = 0
+  try {
+    const { unconfirmedChangeSats } = await import('./balanceView')
+    credit = await unconfirmedChangeSats({ needAtLeast: satoshis - confirmed })
+  } catch (err) {
+    console.warn('[spend-guard] unconfirmed change credit skipped', err)
+  }
+  const available = confirmed + credit
   if (satoshis > available) {
     throw new Error(
       `Insufficient balance (${available} sats available, need ${satoshis}).`,

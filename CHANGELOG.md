@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.240] - 2026-08-17
+
+### Fixed
+- **Send no longer scans the unspendable graveyard when confirmed coins already cover the payment.** The pre-`createAction` gate used to credit unconfirmed change on every Send — on a phone carrying hundreds of unspendable rows that was most of the wait before signing, even when toolbox `balance()` already had enough. Confirmed spendable is checked first; the graveyard scan only runs for the shortfall, stops once that shortfall is covered, and runs in one IndexedDB session instead of one per page.
+- **BRC-29 key derivation overlaps the send prep.** The payment's two nonces and payee `getPublicKey` read only the root key and counterparty, so they now run concurrently with the nosend release and balance check rather than strictly after them. A new `keys ready` timing mark makes the derivation cost visible on the next log.
+- **Legacy sweep is now an explicit tagged path.** `chooseLegacySweepPath` (`legacySweepPath.ts`) is the only decision that may admit an address UTXO into `importLegacyUtxos` — same pattern as `TipKind` / `SendPath` / `ItemSettlePath`. Classification puts sub-fee companion dust in `heldUneconomical` (never `funding`); payment-by-txid uses the same chooser; the sweep fail-closes again if anything else is passed in. A bare `satoshis > 1` test is forbidden so a future change cannot accidentally sweep assets or latch-style companions.
+- **Back-to-back sends no longer reselect a just-spent coin.** The pass that marked consumed inputs unspendable (`rehideInputsOfLiveLocalTxs`) is chain-ingest maintenance and returns early while a spend is queued — exactly the state a burst of sends holds. A spend now seals its own inputs immediately after `createAction`, on both the BRC-29 and plain BSV paths, so the next send cannot pick them.
+
 ## [1.2.239] - 2026-08-17
 
 ### Fixed

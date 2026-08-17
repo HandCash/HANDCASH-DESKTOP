@@ -105,22 +105,21 @@ describe('classifyLegacyUtxos', () => {
     )
 
     expect(fetchMock).not.toHaveBeenCalled()
-    expect(result.funding.map((u) => u.outpoint)).toEqual([
-      `${TXID_F}.1`,
-      `${TXID_F}.2`,
-    ])
+    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_F}.2`])
+    expect(result.heldUneconomical.map((u) => u.outpoint)).toEqual([`${TXID_F}.1`])
     expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_F}.0`])
     expect(result.oneSats).toEqual([])
     vi.unstubAllGlobals()
   })
 
-  it('sweeps a 2-sat out as funding (no latch reservation)', async () => {
+  it('holds a 2-sat companion as uneconomical — never funding', async () => {
     const TXID_E = 'e'.repeat(64)
     const result = await classifyLegacyUtxos([utxo(`${TXID_E}.1`, 2)], 'main')
 
     expect(result.oneSats).toEqual([])
     expect(result.pendingTips).toEqual([])
-    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_E}.1`])
+    expect(result.funding).toEqual([])
+    expect(result.heldUneconomical.map((u) => u.outpoint)).toEqual([`${TXID_E}.1`])
   })
 
   const P2PKH_HEX = '76a914' + '11'.repeat(20) + '88ac'
@@ -268,7 +267,7 @@ describe('classifyLegacyUtxos', () => {
     expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID_B}.1`])
   })
 
-  it('sweeps a 2-sat out while keeping a cloud-named 1-sat as an item', async () => {
+  it('holds a 2-sat companion while keeping a cloud-named 1-sat as an item', async () => {
     const TXID = 'c'.repeat(64)
     const result = await classifyLegacyUtxos(
       [
@@ -280,7 +279,8 @@ describe('classifyLegacyUtxos', () => {
     )
 
     expect(result.oneSats.map((i) => i.outpoint)).toEqual([`${TXID}.0`])
-    expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID}.1`])
+    expect(result.funding).toEqual([])
+    expect(result.heldUneconomical.map((u) => u.outpoint)).toEqual([`${TXID}.1`])
   })
 
   it('never sweeps unresolvable one-sat outputs', async () => {

@@ -323,8 +323,15 @@ export async function bootWallet(args: {
  * Displayed owned cash. Toolbox `balance()` is only the spendable set; in-flight
  * change of a live local send is credited on top so Sending does not drop by
  * payment + change. See `balanceView.ts`.
+ *
+ * `creditUnconfirmed` defaults to true (hero / Activity). The send gate passes
+ * `false` when it only needs confirmed spendable — scanning the unspendable
+ * graveyard is then wasted IndexedDB work on every tap of Send.
  */
-export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promise<number> {
+export async function fetchBalanceSats(
+  wallet?: Wallet | WalletInterface,
+  opts?: { creditUnconfirmed?: boolean },
+): Promise<number> {
   const session = getActiveWallet()
   const w = wallet ?? session?.wallet
   if (!w) return 0
@@ -389,6 +396,8 @@ export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promi
       console.warn('[balance] listOutputs default failed', err)
     }
   }
+
+  if (opts?.creditUnconfirmed === false) return spendable
 
   try {
     const { unconfirmedChangeSats } = await import('./balanceView')

@@ -117,6 +117,7 @@ export const WALLET_LAYER_MODULES = {
     'chainIngest.ts',
     'ingestLegacyAddress.ts',
     'legacyScan.ts',
+    'legacySweepPath.ts',
     'oneSatImport.ts',
     'asyncPool.ts',
     'legacyImportGuard.ts',

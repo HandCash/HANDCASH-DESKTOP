@@ -160,6 +160,46 @@ export async function releaseThenRestoreStaleOutputs(): Promise<void> {
 }
 
 /**
+ * Mark the inputs a just-signed spend consumed as unspendable, immediately.
+ *
+ * `createAction` returns a signed transaction whose inputs are gone, but the
+ * toolbox rows can still read `spendable: true`. The pass that repaired that —
+ * {@link rehideInputsOfLiveLocalTxs} — is chain-ingest maintenance and returns
+ * early while a spend is queued, which is exactly the state a burst of sends
+ * holds. So back-to-back sends could re-select a coin the previous send had
+ * already spent: every broadcaster rejected the second transaction as a double
+ * spend and the send failed "Already spent".
+ *
+ * This runs on the spend path and is deliberately *not* gated on
+ * `shouldYieldChainIngestToSpend()` — it is the spend's own bookkeeping, not
+ * maintenance that may defer. Rows are hidden, never deleted, so a transaction
+ * that ultimately fails can still have its change and inputs recovered.
+ */
+export async function sealSpentInputsOfSignedTx(
+  txid: string | undefined,
+  atomic: number[] | undefined,
+): Promise<number> {
+  const id = txid?.trim().toLowerCase()
+  if (!id || !/^[0-9a-f]{64}$/.test(id)) return 0
+
+  let inputs: string[] = []
+  if (atomic?.length) inputs = inputOutpointsFromAtomicBeef(atomic, id)
+  if (inputs.length === 0) {
+    const raw = await loadLocalRawTx(id)
+    if (raw?.length) inputs = inputOutpointsFromRawTx(raw)
+  }
+  if (inputs.length === 0) return 0
+
+  const hidden = await hideSpentOutpoints(inputs)
+  if (hidden > 0) {
+    console.info(
+      `[stale-output] sealed ${hidden} input(s) spent by ${id.slice(0, 12)} — next send cannot reselect them`,
+    )
+  }
+  return hidden
+}
+
+/**
  * Hide these outpoints as `spent` and mark toolbox rows unspendable. The
  * storage row stays — Pay / restore skip `spent` overlay status.
  */

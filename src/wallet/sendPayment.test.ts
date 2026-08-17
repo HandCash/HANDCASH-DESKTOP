@@ -66,6 +66,7 @@ vi.mock('./staleOutputRelease', () => ({
   onAlreadySpentSend: async () => {},
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
+  sealSpentInputsOfSignedTx: async () => 0,
 }))
 vi.mock('./friends', () => ({
   resolvePaymentRecipient: async (to: string) => to,

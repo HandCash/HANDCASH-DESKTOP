@@ -670,6 +670,7 @@ const CHAIN_INGEST_CHART = `flowchart TB
   CLASS --> TIPS[1sat tips → importOneSatOrdinals]
   CLASS --> FT[bsv21 tokens]
   CLASS --> HOLD[held unrecognized 1-sat\\nnever sweep]
+  CLASS --> DUST[heldUneconomical\\nbelow sweep floor\\nnever sweep]
   TIPS --> PAINT[listCollectables paint]
   PAINT --> AUTH[authenticity / genesis\\nbudgeted background]
   FUND --> AUDIT[spendable audit report-only]

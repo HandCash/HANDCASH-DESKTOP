@@ -163,7 +163,7 @@ describe('unconfirmedChangeSats', () => {
     expect(findTransactions).not.toHaveBeenCalled()
   })
 
-  it('resolves a page of tx livenesses in one storage session, not two per row', async () => {
+  it('resolves outputs and tx livenesses in one storage session', async () => {
     findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
       args.paged.offset > 0
         ? []
@@ -180,8 +180,8 @@ describe('unconfirmedChangeSats', () => {
 
     await expect(unconfirmedChangeSats()).resolves.toBe(6_000)
 
-    // One session for the page of outputs, one for all six tx ids it needs.
-    expect(runAsStorageProvider).toHaveBeenCalledTimes(2)
+    // One session for the whole scan — pages and liveness share it.
+    expect(runAsStorageProvider).toHaveBeenCalledTimes(1)
     expect(findTransactions).toHaveBeenCalledTimes(6)
   })
 
@@ -200,7 +200,7 @@ describe('unconfirmedChangeSats', () => {
     expect(findTransactions).toHaveBeenCalledTimes(1)
   })
 
-  it('does not credit change when the liveness batch fails', async () => {
+  it('does not credit change when the liveness lookup fails', async () => {
     findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
       args.paged.offset > 0
         ? []
@@ -209,5 +209,25 @@ describe('unconfirmedChangeSats', () => {
     findTransactions.mockRejectedValue(new Error('idb closed'))
 
     await expect(unconfirmedChangeSats()).resolves.toBe(0)
+  })
+
+  it('stops once needAtLeast is covered instead of scanning the whole graveyard', async () => {
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) => {
+      if (args.paged.offset === 0) {
+        return [
+          { satoshis: 4_000, change: true, spendable: false, transactionId: 1 },
+          { satoshis: 5_000, change: true, spendable: false, transactionId: 2 },
+        ]
+      }
+      return [
+        { satoshis: 50_000, change: true, spendable: false, transactionId: 3 },
+      ]
+    })
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+
+    await expect(unconfirmedChangeSats({ needAtLeast: 4_000 })).resolves.toBe(4_000)
+    // First row already covers the shortfall — never ask for page 1 or tx 2/3.
+    expect(findOutputs).toHaveBeenCalledTimes(1)
+    expect(findTransactions).toHaveBeenCalledTimes(1)
   })
 })

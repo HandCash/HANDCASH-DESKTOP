@@ -155,6 +155,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
       oneSats: [],
       bsv21: [],
       heldOneSats: [],
+      heldUneconomical: [],
       pendingTips: [],
     })
     mockSetSyncHealth.mockReset()
@@ -271,6 +272,7 @@ describe('refreshFromChain spendable review', () => {
       oneSats: [],
       bsv21: [],
       heldOneSats: [],
+      heldUneconomical: [],
       pendingTips: [],
     })
   })
@@ -430,6 +432,7 @@ describe('refreshFromChain spendable review', () => {
       oneSats: [],
       bsv21: [],
       heldOneSats: [],
+      heldUneconomical: [],
       pendingTips: [],
     })
     const guard = await import('./legacyImportGuard')

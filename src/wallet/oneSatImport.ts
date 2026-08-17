@@ -15,6 +15,7 @@ import type { ActiveWallet } from './session'
 import { getActiveWallet } from './session'
 import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'
+import { chooseLegacySweepPath } from './legacySweepPath'
 import {
   buildInternalizeCustomInstructions,
   rebuildProvenanceV2FromBeef,
@@ -70,7 +71,10 @@ export type OneSatImportResult = {
 }
 
 export type ClassifiedLegacyUtxos = {
-  /** satoshis > 1 — safe to fund-sweep */
+  /**
+   * Sweepable cash only — {@link chooseLegacySweepPath} returned `sweep`.
+   * Never includes 1-sat tips, BSV-21, or sub-fee companion dust.
+   */
   funding: LegacyUtxo[]
   /** Confirmed ordinals — internalize to basket `1sat` */
   oneSats: MigrationItem[]
@@ -78,6 +82,11 @@ export type ClassifiedLegacyUtxos = {
   bsv21: Bsv21ImportItem[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
+  /**
+   * satoshis > 1 but below the sweep floor — companion / latch-style dust.
+   * Stays on the address; never enters `importLegacyUtxos`.
+   */
+  heldUneconomical: LegacyUtxo[]
   /**
    * Subset of {@link heldOneSats} known to be an ordinal tip still waiting on an
    * origin — worth telling the user about, because to them the transfer has
@@ -832,11 +841,13 @@ async function probeOrdinalTransfer(
 }
 
 /**
- * Split scanned UTXOs.
- * - funding: satoshis > 1 — safe to fund-sweep
+ * Split scanned UTXOs. Sweep eligibility is {@link chooseLegacySweepPath} only —
+ * never a bare `satoshis > 1` test.
+ * - funding: sweep path — safe to `importLegacyUtxos`
  * - oneSats: cloud-known or GorillaPool-confirmed NFT inscriptions (exactly 1 sat)
  * - bsv21: confirmed BSV-21 fungible tips — basket `bsv21` under Collect
  * - heldOneSats: every other 1-sat — MUST NOT be swept
+ * - heldUneconomical: >1 sat but below the sweep floor — MUST NOT be swept
  */
 export async function classifyLegacyUtxos(
   utxos: LegacyUtxo[],
@@ -844,9 +855,9 @@ export async function classifyLegacyUtxos(
   knownItems: MigrationItem[] = [],
   opts: {
     /**
-     * Skip every indexer round trip used to name a tip. Funding is decided from
-     * the satoshi value alone, so a send can still tell what it may spend
-     * without waiting on ordinal lookups it will never use.
+     * Skip every indexer round trip used to name a tip. Funding is decided by
+     * {@link chooseLegacySweepPath} alone, so a send can still tell what it may
+     * spend without waiting on ordinal lookups it will never use.
      */
     fundingOnly?: boolean
   } = {},
@@ -887,6 +898,7 @@ export async function classifyLegacyUtxos(
 
   const funding: LegacyUtxo[] = []
   const heldOneSats: LegacyUtxo[] = []
+  const heldUneconomical: LegacyUtxo[] = []
   const pendingTips: LegacyUtxo[] = []
 
   // Identifying one unknown dust output costs a backwards walk — a request per
@@ -903,7 +915,8 @@ export async function classifyLegacyUtxos(
     // GorillaPool only when we have no local claim (knownItems / cloud migrate).
     // A tip already internalized with remittance never reaches this path again;
     // unknown dust is walked once and then backed off via inscriptionCache.
-    if (u.satoshis === 1) {
+    const sweepPath = chooseLegacySweepPath(u)
+    if (sweepPath.path === 'hold' && sweepPath.reason === 'oneSat') {
       // A send never spends a tip, so it does not need one identified. Hold it
       // and move on rather than paying for an indexer walk mid-payment.
       if (opts.fundingOnly) {
@@ -995,13 +1008,17 @@ export async function classifyLegacyUtxos(
       continue
     }
 
-    if (u.satoshis > 1) {
+    if (sweepPath.path === 'sweep') {
       funding.push(u)
+      continue
     }
-    // satoshis === 0 or weird values: ignore (do not sweep)
+    if (sweepPath.path === 'hold' && sweepPath.reason === 'uneconomical') {
+      heldUneconomical.push(u)
+    }
+    // nonPositive / weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats, bsv21, heldOneSats, pendingTips }
+  return { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */

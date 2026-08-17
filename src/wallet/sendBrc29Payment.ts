@@ -38,6 +38,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
+  sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -272,10 +273,42 @@ export async function sendBrc29ToIdentityKey(opts: {
         const mark = (phase: string) => {
           console.info(`[brc29] +${Date.now() - sendStarted}ms ${phase}`)
         }
+        // BRC-29 key derivation reads only the root key + counterparty — never
+        // the UTXO set or action-batch reservations — so start it now and let it
+        // overlap the nosend + balance prep instead of paying both serially.
+        // Guarded so an early rejection cannot escape as an unhandled rejection
+        // before it is awaited below.
+        let keyMaterialErr: unknown = null
+        const keyMaterialP = (async () => {
+          const [derivationPrefix, derivationSuffix] = await Promise.all([
+            createNonce(active.wallet, 'self'),
+            createNonce(active.wallet, 'self'),
+          ])
+          const keyID = `${derivationPrefix} ${derivationSuffix}`
+          const { publicKey } = await active.wallet.getPublicKey({
+            protocolID: BRC29_PROTOCOL_ID,
+            keyID,
+            counterparty: payee,
+          })
+          if (typeof publicKey !== 'string' || !publicKey.trim()) {
+            throw new Error('Failed to derive payee public key for BRC-29 payment')
+          }
+          const address = PublicKey.fromString(publicKey).toAddress(
+            active.chain === 'main' ? 'mainnet' : 'testnet',
+          )
+          const lockingScript = new P2PKH().lock(address).toHex()
+          return { derivationPrefix, derivationSuffix, lockingScript }
+        })().catch((err) => {
+          keyMaterialErr = err
+          return null
+        })
+
         await releaseStuckNosends(active)
         mark('nosends released')
         // Sequential on purpose: aborting stuck batches frees reserved outputs,
         // so a balance read beside it could under-report and refuse a valid send.
+        // Confirmed toolbox balance is checked first; the unconfirmed-change
+        // graveyard scan only runs when that is short.
         await prepareSpendHeal(satoshis)
         mark('ready')
         chart.send({ type: 'READY' })
@@ -290,24 +323,12 @@ export async function sendBrc29ToIdentityKey(opts: {
         let signedTxid: string | undefined
         let signedAtomic: number[] | undefined
         try {
-          const [derivationPrefix, derivationSuffix] = await Promise.all([
-            createNonce(active.wallet, 'self'),
-            createNonce(active.wallet, 'self'),
-          ])
-          const keyID = `${derivationPrefix} ${derivationSuffix}`
-          const { publicKey } = await active.wallet.getPublicKey({
-            protocolID: BRC29_PROTOCOL_ID,
-            keyID,
-            counterparty: payee,
-          })
-          if (typeof publicKey !== 'string' || !publicKey.trim()) {
-            throw new Error('Failed to derive payee public key for BRC-29 payment')
+          const keyMaterial = await keyMaterialP
+          if (!keyMaterial) {
+            throw keyMaterialErr ?? new Error('Failed to derive BRC-29 keys')
           }
-
-          const address = PublicKey.fromString(publicKey).toAddress(
-            active.chain === 'main' ? 'mainnet' : 'testnet',
-          )
-          const lockingScript = new P2PKH().lock(address).toHex()
+          const { derivationPrefix, derivationSuffix, lockingScript } = keyMaterial
+          mark('keys ready')
           const remittance: Brc29Remittance = {
             derivationPrefix,
             derivationSuffix,
@@ -382,6 +403,12 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
           const txid = realTxid
           mark(`createAction ${txid.slice(0, 12)}…`)
+          // Retire the coins this transaction just consumed before the next send
+          // can pick them. Chain-ingest's rehide pass yields while a spend is
+          // queued, so a burst of sends would otherwise reselect a spent input
+          // and get rejected as a double spend.
+          await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          mark('inputs sealed')
           setPaymentProgress('broadcasting', 'Confirming payment on the network')
           await ensurePaymentBroadcasted(txid, atomicBeef)
           mark('broadcast')

@@ -33,7 +33,7 @@ describe('ingestPaymentByTxid', () => {
     mockGetBeef.mockReset()
   })
 
-  it('sweeps our P2PKH funding outs from BEEF and skips 1-sat dust', async () => {
+  it('sweeps our P2PKH funding outs from BEEF and skips 1-sat + uneconomical dust', async () => {
     const root = PrivateKey.fromRandom()
     const address = root.toPublicKey().toAddress('mainnet')
     const other = PrivateKey.fromRandom().toPublicKey().toAddress('mainnet')
@@ -42,7 +42,7 @@ describe('ingestPaymentByTxid', () => {
     tx.addOutput({ satoshis: 5_000, lockingScript: new P2PKH().lock(address) })
     tx.addOutput({ satoshis: 1, lockingScript: new P2PKH().lock(address) })
     tx.addOutput({ satoshis: 2_000, lockingScript: new P2PKH().lock(other) })
-    // 2-sat out to us: post BRC-156 purge this is plain funding, not latch dust.
+    // Companion-style 2-sat: heldUneconomical, not funding (chooseLegacySweepPath).
     tx.addOutput({ satoshis: 2, lockingScript: new P2PKH().lock(address) })
     const txid = tx.id('hex')
 
@@ -50,15 +50,15 @@ describe('ingestPaymentByTxid', () => {
     beef.mergeRawTx(tx.toBinary())
     mockGetBeef.mockResolvedValue(beef)
     mockImportLegacyUtxos.mockResolvedValue({
-      imported: 2,
+      imported: 1,
       failed: 0,
       errors: [],
       skippedOneSats: 0,
+      skippedUneconomical: 0,
       skippedKnown: 0,
-      importedOutpoints: [`${txid}.0`, `${txid}.3`],
+      importedOutpoints: [`${txid}.0`],
       importedReceipts: [
         { outpoint: `${txid}.0`, satoshis: 5_000, receiveTxid: txid },
-        { outpoint: `${txid}.3`, satoshis: 2, receiveTxid: txid },
       ],
     })
 
@@ -79,13 +79,15 @@ describe('ingestPaymentByTxid', () => {
     const { ingestPaymentByTxid } = await import('./ingestPaymentByTxid')
     const result = await ingestPaymentByTxid(txid)
 
-    expect(result.imported).toBe(2)
-    expect(result.satoshis).toBe(5_002)
+    expect(result.imported).toBe(1)
+    expect(result.satoshis).toBe(5_000)
     expect(mockImportLegacyUtxos).toHaveBeenCalledTimes(1)
-    const [utxos] = mockImportLegacyUtxos.mock.calls[0] as [Array<{ outpoint: string; satoshis: number }>]
-    expect(utxos.map((u) => u.outpoint)).toEqual([`${txid}.0`, `${txid}.3`])
-    // 1-sat dust is never swept; everything else that pays us is funding.
-    expect(utxos.every((u) => u.satoshis > 1)).toBe(true)
+    const [utxos] = mockImportLegacyUtxos.mock.calls[0] as [
+      Array<{ outpoint: string; satoshis: number }>,
+    ]
+    expect(utxos.map((u) => u.outpoint)).toEqual([`${txid}.0`])
+    // Only the sweep path reaches import — never 1-sat or sub-floor companions.
+    expect(utxos.every((u) => u.satoshis >= 21)).toBe(true)
     expect(mockGetBeef).toHaveBeenCalledWith(
       expect.anything(),
       txid,
