@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.233] - 2026-08-17
+
+### Fixed
+- **Clearing an "already spent" send keeps its change.** Dropping a signed Activity row whose inputs moved on chain now credits that tx's change instead of leaving it unspendable after an indexer 404.
+- **Already-spent broadcasts hide those inputs without deleting them**, and no longer bulk-restore indexer-lagged coins as spendable (the path that recycled dead UTXOs into the next send). Overlay statuses match Cloud: `available` / `selected` / `spent` / `quarantine`.
+- **The Pay balance no longer drops by payment plus change while Sending.** Displayed owned cash is spendable outputs plus unconfirmed change of a live local tx.
+
+### Changed
+- Failed Activity rows use a short label (`Already spent`, `Timed out`, `No network`) instead of the broadcaster dump.
+
+
 ## [1.2.232] - 2026-08-17
 
 ### Fixed

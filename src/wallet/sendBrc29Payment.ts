@@ -37,7 +37,7 @@ import {
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
-  releaseThenRestoreStaleOutputs,
+  onAlreadySpentSend,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -156,7 +156,7 @@ async function ensurePaymentBroadcasted(
   if (summary.accepted) return
   console.warn('[brc29] broadcast not accepted', id, summary.detail)
   if (summary.doubleSpend || summary.missingInputs) {
-    await releaseThenRestoreStaleOutputs()
+    await onAlreadySpentSend({ txid: id, atomic })
   }
   throw new Error(formatPostBeefFailure(summary))
 }
@@ -267,6 +267,8 @@ export async function sendBrc29ToIdentityKey(opts: {
           friendLabel: opts.friendLabel ?? null,
         })
 
+        let signedTxid: string | undefined
+        let signedAtomic: number[] | undefined
         try {
           const [derivationPrefix, derivationSuffix] = await Promise.all([
             createNonce(active.wallet, 'self'),
@@ -336,6 +338,8 @@ export async function sendBrc29ToIdentityKey(opts: {
 
           const realTxid = (result as { txid?: string })?.txid
           const atomicBeef = atomicBeefFromCreateAction(result)
+          signedTxid = realTxid
+          signedAtomic = atomicBeef
           const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
             .sendWithResults
           if (sendWithHasFailure(sendWith) || !realTxid) {
@@ -492,7 +496,9 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
         } catch (err) {
           clearPendingSend(pending.id)
-          if (isAlreadySpentInputError(err)) await releaseThenRestoreStaleOutputs()
+          if (isAlreadySpentInputError(err)) {
+            await onAlreadySpentSend({ txid: signedTxid, atomic: signedAtomic })
+          }
           const {
             isReviewActionsError,
             isIteratorCrashError,
@@ -505,7 +511,7 @@ export async function sendBrc29ToIdentityKey(opts: {
             // spent. Never releaseSpendable here (that wrote off ~$0.10 of live
             // coins on failed Mobile→Desktop retries).
             if (isAlreadySpentInputError(err)) {
-              await releaseThenRestoreStaleOutputs()
+              await onAlreadySpentSend({ txid: signedTxid, atomic: signedAtomic })
             }
             const message = formatReviewActionsError(err)
             console.warn('[brc29] send failed', message, err)

@@ -29,13 +29,15 @@ import { __resetTxStoreForTests, getTxRecord, markTxMined } from './txStore'
 import {
   __resetUtxoLocksForTests,
   confirmSpentLocks,
+  creditUtxo,
+  hideUtxo,
   listUtxoLocks,
   optimisticSpendableSats,
   rollbackLocks,
   softLockInputs,
   softLockedSatsTotal,
 } from './utxoLockManager'
-import { canTransitionUtxo } from './utxoLifecycle'
+import { canTransitionUtxo, coerceUtxoStatus } from './utxoLifecycle'
 
 describe('txLifecycle transitions', () => {
   it('allows DRAFT → VALIDATING → BROADCASTING → SEEN_IN_MEMPOOL → MINED', () => {
@@ -64,11 +66,20 @@ describe('txLifecycle transitions', () => {
 })
 
 describe('utxoLifecycle transitions', () => {
-  it('soft-lock → unspent / spent / frozen', () => {
-    expect(canTransitionUtxo('UNSPENT', 'SOFT_LOCKED_PENDING')).toBe(true)
-    expect(canTransitionUtxo('SOFT_LOCKED_PENDING', 'UNSPENT')).toBe(true)
-    expect(canTransitionUtxo('SOFT_LOCKED_PENDING', 'SPENT_CONFIRMED')).toBe(true)
-    expect(canTransitionUtxo('SPENT_CONFIRMED', 'UNSPENT')).toBe(false)
+  it('soft-lock → available / spent / quarantine', () => {
+    expect(canTransitionUtxo('available', 'selected')).toBe(true)
+    expect(canTransitionUtxo('selected', 'available')).toBe(true)
+    expect(canTransitionUtxo('selected', 'spent')).toBe(true)
+    expect(canTransitionUtxo('available', 'spent')).toBe(true)
+    expect(canTransitionUtxo('spent', 'available')).toBe(false)
+  })
+
+  it('maps Cloud names and legacy overlay JSON', () => {
+    expect(coerceUtxoStatus('available')).toBe('available')
+    expect(coerceUtxoStatus('UNSPENT')).toBe('available')
+    expect(coerceUtxoStatus('SOFT_LOCKED_PENDING')).toBe('selected')
+    expect(coerceUtxoStatus('SPENT_CONFIRMED')).toBe('spent')
+    expect(coerceUtxoStatus('FROZEN_ERROR')).toBe('quarantine')
   })
 })
 
@@ -121,10 +132,11 @@ describe('arcStatusMap', () => {
     ).toBe('SEEN_ON_NETWORK')
   })
 
-  it('double-spend policy rolls back + releases stale', () => {
+  it('double-spend policy hides inputs, does not unlock them', () => {
     const h = handleArcRejection('DOUBLE_SPEND_ATTEMPTED')
-    expect(h.shouldRollbackLocks).toBe(true)
-    expect(h.shouldReleaseStaleOutputs).toBe(true)
+    expect(h.shouldRollbackLocks).toBe(false)
+    expect(h.shouldConfirmSpent).toBe(true)
+    expect(h.shouldReleaseStaleOutputs).toBe(false)
   })
 })
 
@@ -146,7 +158,7 @@ describe('utxoLockManager + dualLayerSend', () => {
 
     expect(rollbackLocks('tx-1')).toBe(1)
     expect(softLockedSatsTotal()).toBe(0)
-    expect(listUtxoLocks()[0]?.status).toBe('UNSPENT')
+    expect(listUtxoLocks()[0]?.status).toBe('available')
   })
 
   it('beginDualLayerSend validates before lock and fails closed', () => {
@@ -192,11 +204,11 @@ describe('utxoLockManager + dualLayerSend', () => {
     confirmSpentLocks(id)
     expect(getTxRecord(id)?.status).toBe('MINED')
     expect(listUtxoLocks().find((l) => l.lockOwnerId === id)?.status).toBe(
-      'SPENT_CONFIRMED',
+      'spent',
     )
   })
 
-  it('postBeef double-spend fails and rolls locks', () => {
+  it('postBeef double-spend hides inputs as spent', () => {
     const start = beginDualLayerSend({
       satoshis: 50,
       availableSats: 500,
@@ -215,6 +227,9 @@ describe('utxoLockManager + dualLayerSend', () => {
     })
     expect(getTxRecord(start.record.id)?.status).toBe('FAILED_REJECTED')
     expect(softLockedSatsTotal()).toBe(0)
+    expect(
+      listUtxoLocks().find((l) => l.outpoint === 'dd'.repeat(32) + '_0')?.status,
+    ).toBe('spent')
   })
 
   it('failDualLayerSend rolls back', () => {
@@ -225,8 +240,17 @@ describe('utxoLockManager + dualLayerSend', () => {
     })
     expect(start.ok).toBe(true)
     if (!start.ok) return
-    failDualLayerSend(start.record.id, 'ARC_REJECTED', 'nope')
+    expect(failDualLayerSend(start.record.id, 'ARC_REJECTED', 'nope'))
     expect(softLockedSatsTotal()).toBe(0)
+  })
+
+  it('hides a spent coin without deleting it', () => {
+    const op = 'ff'.repeat(32) + '_3'
+    hideUtxo(op, 'spent', { satoshis: 42 })
+    expect(listUtxoLocks().some((l) => l.outpoint === op && l.status === 'spent')).toBe(
+      true,
+    )
+    expect(creditUtxo(op)?.status).toBe('spent')
   })
 })
 

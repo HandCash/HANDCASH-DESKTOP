@@ -25,7 +25,7 @@ import {
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
-  releaseThenRestoreStaleOutputs,
+  onAlreadySpentSend,
 } from './staleOutputRelease'
 import {
   clearPaymentProgress,
@@ -110,6 +110,8 @@ export async function sendSatsToAddress(opts: {
 
           chart.send({ type: 'READY' })
 
+          let signedTxid: string | undefined
+          let signedAtomic: number[] | undefined
           try {
             const lockingScript = new P2PKH().lock(to).toHex()
             setPaymentProgress(
@@ -151,6 +153,7 @@ export async function sendSatsToAddress(opts: {
             }
 
             const realTxid = (result as { txid?: string })?.txid
+            signedTxid = realTxid
             const txid = realTxid ?? `local-${Date.now().toString(16)}`
             if (realTxid) noteDualLayerTxid(dualId, realTxid)
             const sendWith = (result as { sendWithResults?: Array<{ status?: string }> })
@@ -184,6 +187,7 @@ export async function sendSatsToAddress(opts: {
                   ? Array.from(rawTx)
                   : undefined
             if (atomic?.length && active.services?.postBeef) {
+              signedAtomic = atomic
               setPaymentProgress('broadcasting', 'Confirming payment on the network')
               const { summarizePostBeef, formatPostBeefFailure } = await import(
                 './postBeefResult'
@@ -212,7 +216,16 @@ export async function sendSatsToAddress(opts: {
               noteDualLayerPostBeef(dualId, summary)
               if (!summary.accepted) {
                 if (summary.doubleSpend || summary.missingInputs) {
-                  await releaseThenRestoreStaleOutputs()
+                  failDualLayerSend(
+                    dualId,
+                    'UNKNOWN',
+                    formatPostBeefFailure(summary),
+                    { hideInputs: true },
+                  )
+                  await onAlreadySpentSend({
+                    txid: realTxid,
+                    atomic,
+                  })
                 }
                 throw new Error(formatPostBeefFailure(summary))
               }
@@ -264,8 +277,11 @@ export async function sendSatsToAddress(opts: {
               dualId,
               'UNKNOWN',
               err instanceof Error ? err.message : String(err),
+              { hideInputs: isAlreadySpentInputError(err) },
             )
-            if (isAlreadySpentInputError(err)) await releaseThenRestoreStaleOutputs()
+            if (isAlreadySpentInputError(err)) {
+              await onAlreadySpentSend({ txid: signedTxid, atomic: signedAtomic })
+            }
             const {
               isReviewActionsError,
               isIteratorCrashError,
@@ -277,7 +293,7 @@ export async function sendSatsToAddress(opts: {
               // Iterator crashes are local toolbox poison — not proof UTXOs are
               // spent. Never bulk-release spendable outputs on that path.
               if (isAlreadySpentInputError(err)) {
-                await releaseThenRestoreStaleOutputs()
+                await onAlreadySpentSend({ txid: signedTxid, atomic: signedAtomic })
               }
               const message = formatReviewActionsError(err)
               console.warn('[send] failed', message, err)

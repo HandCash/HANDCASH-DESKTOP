@@ -25,7 +25,7 @@ import {
   isTokenActivity,
   isPendingActivity,
   isFailedActivity,
-  activityFailureReason,
+  activityFailureLabel,
   countFailedActivity,
   listRecentActivity,
   subscribeAppActivity,
@@ -186,7 +186,7 @@ function HistoryRow({
   const minted = isMintTokenActivity(entry)
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
-  const failureReason = failed ? activityFailureReason(entry) : null
+  const failureReason = failed ? activityFailureLabel(entry) : null
   const inventoryProven = Boolean(
     entry.item?.outpoint &&
       getCachedCollectables().some(

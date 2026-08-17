@@ -263,10 +263,33 @@ export function isFailedActivity(entry: ActivityEntry): boolean {
   return entry.status === 'failed'
 }
 
-/** Reason to show on a failed row — never blank once a row is failed. */
+/** Short label for a failed Activity row. Long why stays in details storage. */
+export function compactFailureLabel(reason: string | undefined | null): string {
+  const raw = (reason ?? '').replace(/\s+/g, ' ').trim()
+  if (!raw) return 'Send failed'
+  if (/already spent|doublespend|double spend|missing.?input|mempool-conflict|competing/i.test(raw)) {
+    return 'Already spent'
+  }
+  if (/timed? ?out|never confirmed|stopped hearing/i.test(raw)) return 'Timed out'
+  if (/unreachable|no network|connection|service error|fetch failed/i.test(raw)) {
+    return 'No network'
+  }
+  if (/not iterable|locking script|missing script/i.test(raw)) return 'Missing script'
+  if (/broadcast failed|not accepted|rejected|not sent/i.test(raw)) return 'Not sent'
+  const first = raw.split(/[.(—–]/)[0]!.trim()
+  return first.length > 28 ? `${first.slice(0, 27)}…` : first || 'Send failed'
+}
+
+/** Reason stored on a failed row — never blank once a row is failed. */
 export function activityFailureReason(entry: ActivityEntry): string | null {
   if (entry.status !== 'failed') return null
   return entry.failureReason?.trim() || 'Send failed'
+}
+
+/** Compact subtitle for the Activity feed. */
+export function activityFailureLabel(entry: ActivityEntry): string | null {
+  if (entry.status !== 'failed') return null
+  return compactFailureLabel(entry.failureReason)
 }
 
 /** True if we already logged a collectable receive/send for this tip outpoint. */
@@ -780,8 +803,7 @@ export function expireStaleOutboundPending(
     return {
       ...e,
       status: 'failed' as const,
-      failureReason:
-        'Send never confirmed — the wallet stopped hearing back. Refresh, then try again.',
+      failureReason: 'Timed out',
       note: name ? `${name} was not sent` : 'Payment was not sent',
     }
   })

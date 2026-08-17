@@ -144,7 +144,7 @@ import {
 } from './durableStorage'
 import {
   isAlreadySpentInputError,
-  releaseStaleSpendableOutputs,
+  hideSpentOutpoints,
 } from './staleOutputRelease'
 import type { Chain } from './vault'
 
@@ -1779,10 +1779,11 @@ function formatSendError(err: unknown): Error {
         'Can’t find the transaction that holds this item yet. Wait a moment after receiving it, then Send again.',
       )
     }
-    if (/is not iterable/i.test(msg) || /doublespend/i.test(msg)) {
-      return new Error(
-        'A previous failed send is blocking this payment. Cleared local conflicts — try Send again.',
-      )
+    if (/is not iterable/i.test(msg)) {
+      return new Error('Missing script')
+    }
+    if (/doublespend/i.test(msg)) {
+      return new Error('Already spent')
     }
     return err
   }
@@ -2513,8 +2514,7 @@ export async function sendCollectable(args: {
               formatReviewActionsError,
               recoverFromReviewActions,
             } = await import('./actionReview')
-            if (isAlreadySpentInputError(err))
-              await releaseStaleSpendableOutputs()
+            if (isAlreadySpentInputError(err)) await hideSpentOutpoints(spendOutpoints)
             await recoverFromReviewActions({
               err,
               reference,
@@ -2728,7 +2728,7 @@ export async function sendCollectable(args: {
                 itemChart.stop()
                 return failSend(
                   new Error(
-                    'Broadcast failed — could not confirm with the network',
+                    'Not sent',
                   ),
                 )
               } else {
@@ -2747,7 +2747,7 @@ export async function sendCollectable(args: {
                 itemChart.stop()
                 return failSend(
                   new Error(
-                    'Broadcast failed — could not confirm with the network',
+                    'Not sent',
                   ),
                 )
               }

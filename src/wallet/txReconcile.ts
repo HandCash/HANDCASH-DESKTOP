@@ -94,7 +94,7 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
 
   // Thaw frozen UTXOs after 24h with no owner (reconcile may re-lock later).
   for (const lock of listUtxoLocks()) {
-    if (lock.status !== 'FROZEN_ERROR') continue
+    if (lock.status !== 'quarantine') continue
     if (Date.now() - lock.updatedAt < 24 * 60 * 60_000) continue
     thawUtxo(lock.outpoint)
     result.thawed += 1

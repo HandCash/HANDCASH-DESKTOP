@@ -38,7 +38,7 @@ describe('postBeefResult', () => {
     expect(s.accepted).toBe(false)
     expect(s.missingInputs).toBe(true)
     expect(s.doubleSpend).toBe(true)
-    expect(formatPostBeefFailure(s)).toMatch(/already spent/i)
+    expect(formatPostBeefFailure(s)).toBe('Already spent')
   })
 
   it('does not throw when postBeef returns nothing', () => {

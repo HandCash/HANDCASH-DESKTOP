@@ -86,13 +86,13 @@ describe('actionReview', () => {
     expect(isReviewActionsError(new Error('network down'))).toBe(false)
   })
 
-  it('formats doubleSpend as a retry hint', () => {
+  it('formats doubleSpend as already spent', () => {
     expect(
       formatReviewActionsError({
         reviewActionResults: [{ status: 'doubleSpend', competingTxs: ['aa'] }],
         sendWithResults: [{ status: 'failed' }],
       }),
-    ).toMatch(/previous failed send/i)
+    ).toBe('Already spent')
   })
 
   it('flags failed sendWith rows', () => {
@@ -105,18 +105,18 @@ describe('actionReview', () => {
     const message = formatReviewActionsError(
       new Error('undefined is not iterable (cannot read property Symbol(Symbol.iterator))'),
     )
-    expect(message).toMatch(/locking script/i)
-    expect(message).not.toMatch(/previous failed send/i)
+    expect(message).toBe('Missing script')
+    expect(message).not.toMatch(/already spent/i)
   })
 
-  it('still reports a real double-spend as a blocking previous send', () => {
+  it('still reports a real double-spend as already spent', () => {
     expect(
       formatReviewActionsError(
         Object.assign(new Error('review required'), {
           reviewActionResults: [{ status: 'doubleSpend' }],
         }),
       ),
-    ).toMatch(/previous failed send/i)
+    ).toBe('Already spent')
   })
 
   it('repairFailedSpendState fails abandoned txs, reviews status, sweeps change scripts', async () => {

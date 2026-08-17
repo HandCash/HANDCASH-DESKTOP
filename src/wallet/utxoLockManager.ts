@@ -1,13 +1,16 @@
 /**
- * Optimistic UTXO soft-lock manager.
+ * Optimistic UTXO overlay (Cloud `spentStatus` names).
  *
- * On send: soft-lock inputs → deduct from optimistic balance view.
- * On hard failure: roll back to UNSPENT.
- * On SPV-mined: promote to SPENT_CONFIRMED.
+ * On send: `selected` → deduct from optimistic balance.
+ * On hard failure that did not spend: roll back to `available`.
+ * On broadcast accept / already-spent: `spent` (hidden, row kept).
+ * On ambiguous error: `quarantine` (hidden until thaw).
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   canTransitionUtxo,
+  coerceUtxoStatus,
+  isHiddenFromSpend,
   makeUtxoLock,
   type UtxoLockRecord,
   type UtxoStatus,
@@ -44,15 +47,8 @@ function coerce(row: unknown): UtxoLockRecord | null {
   if (!row || typeof row !== 'object') return null
   const r = row as Record<string, unknown>
   if (typeof r.outpoint !== 'string') return null
-  const status = r.status as UtxoStatus
-  if (
-    status !== 'UNSPENT' &&
-    status !== 'SOFT_LOCKED_PENDING' &&
-    status !== 'SPENT_CONFIRMED' &&
-    status !== 'FROZEN_ERROR'
-  ) {
-    return null
-  }
+  const status = coerceUtxoStatus(r.status)
+  if (!status) return null
   return {
     outpoint: normalizeOutpointKey(r.outpoint),
     status,
@@ -67,9 +63,11 @@ function coerce(row: unknown): UtxoLockRecord | null {
 function persist(): void {
   const map = load()
   const rows = [...map.values()].sort((a, b) => b.updatedAt - a.updatedAt)
+  // Cap only by dropping oldest *spent* overlay rows. Toolbox still has them;
+  // we never delete a coin, only forget the hide hint after the cap.
   while (rows.length > MAX_ENTRIES) {
     const drop = rows.pop()
-    if (drop && drop.status === 'SPENT_CONFIRMED') map.delete(drop.outpoint)
+    if (drop && drop.status === 'spent') map.delete(drop.outpoint)
     else if (drop) break
   }
   durableSetItem(KEY, JSON.stringify([...map.values()]))
@@ -100,12 +98,88 @@ function setStatus(
   return next
 }
 
+/**
+ * Upsert overlay status. `spent` / `quarantine` always succeed (hide without
+ * deleting). `available` will not unhide a `spent` coin.
+ */
+export function upsertUtxoStatus(
+  outpoint: string,
+  to: UtxoStatus,
+  patch?: Partial<Pick<UtxoLockRecord, 'lockOwnerId' | 'diagnostic' | 'satoshis'>>,
+): UtxoLockRecord {
+  const map = load()
+  const key = normalizeOutpointKey(outpoint)
+  const cur = map.get(key)
+  const now = Date.now()
+  if (!cur) {
+    const rec: UtxoLockRecord = {
+      outpoint: key,
+      status: to,
+      lockOwnerId: patch?.lockOwnerId ?? null,
+      satoshis: Math.max(0, Math.trunc(Number(patch?.satoshis) || 0)),
+      diagnostic: patch?.diagnostic ?? null,
+      lockedAt: now,
+      updatedAt: now,
+    }
+    map.set(key, rec)
+    persist()
+    return rec
+  }
+  if (to === 'available' && cur.status === 'spent') return cur
+  if (to !== cur.status && !canTransitionUtxo(cur.status, to) && to !== 'spent') {
+    console.warn('[utxo-lock] illegal transition', cur.status, '→', to, key)
+    return cur
+  }
+  const next: UtxoLockRecord = {
+    ...cur,
+    ...patch,
+    status: to,
+    updatedAt: now,
+  }
+  map.set(key, next)
+  persist()
+  return next
+}
+
+/** Hide a coin (`spent` or `quarantine`) without deleting the toolbox row. */
+export function hideUtxo(
+  outpoint: string,
+  as: 'spent' | 'quarantine',
+  opts?: { satoshis?: number; diagnostic?: string },
+): UtxoLockRecord {
+  return upsertUtxoStatus(outpoint, as, {
+    lockOwnerId: null,
+    satoshis: opts?.satoshis,
+    diagnostic: opts?.diagnostic ?? null,
+  })
+}
+
+/** Re-offer a quarantined coin. Spent coins stay hidden. */
+export function creditUtxo(
+  outpoint: string,
+  opts?: { satoshis?: number },
+): UtxoLockRecord | null {
+  const cur = getUtxoLock(outpoint)
+  if (cur?.status === 'spent') return cur
+  return upsertUtxoStatus(outpoint, 'available', {
+    lockOwnerId: null,
+    diagnostic: null,
+    satoshis: opts?.satoshis,
+  })
+}
+
 export function listUtxoLocks(): UtxoLockRecord[] {
   return [...load().values()]
 }
 
 export function getUtxoLock(outpoint: string): UtxoLockRecord | null {
   return load().get(normalizeOutpointKey(outpoint)) ?? null
+}
+
+/** Restore / Pay must not resurrect hidden or in-flight coins. */
+export function isUtxoBlockedFromRestore(outpoint: string): boolean {
+  const rec = getUtxoLock(outpoint)
+  return rec ? isHiddenFromSpend(rec.status) : false
 }
 
 export function subscribeUtxoLocks(listener: Listener): () => void {
@@ -128,15 +202,15 @@ export function softLockInputs(args: {
     const existing = map.get(key)
     if (existing) {
       if (
-        existing.status === 'SOFT_LOCKED_PENDING' &&
+        existing.status === 'selected' &&
         existing.lockOwnerId !== args.lockOwnerId
       ) {
         return { ok: false, reason: `UTXO already soft-locked: ${key}` }
       }
-      if (existing.status === 'SPENT_CONFIRMED') {
+      if (existing.status === 'spent') {
         return { ok: false, reason: `UTXO already spent: ${key}` }
       }
-      if (existing.status === 'FROZEN_ERROR') {
+      if (existing.status === 'quarantine') {
         return { ok: false, reason: `UTXO frozen: ${key}` }
       }
     }
@@ -156,15 +230,15 @@ export function softLockInputs(args: {
   return { ok: true, locks: prepared }
 }
 
-/** Roll back soft-locks owned by this draft (REJECTED / validation fail). */
+/** Roll back `selected` locks owned by this draft (REJECTED / validation fail). */
 export function rollbackLocks(lockOwnerId: string): number {
   const map = load()
   let n = 0
   for (const [key, rec] of map) {
-    if (rec.lockOwnerId === lockOwnerId && rec.status === 'SOFT_LOCKED_PENDING') {
+    if (rec.lockOwnerId === lockOwnerId && rec.status === 'selected') {
       map.set(key, {
         ...rec,
-        status: 'UNSPENT',
+        status: 'available',
         lockOwnerId: null,
         diagnostic: null,
         updatedAt: Date.now(),
@@ -176,16 +250,16 @@ export function rollbackLocks(lockOwnerId: string): number {
   return n
 }
 
-/** Promote soft-locks to confirmed spent after SPV-mined. */
+/** Hide this draft's inputs as `spent` after mempool accept or already-spent. */
 export function confirmSpentLocks(lockOwnerId: string): number {
   const map = load()
   let n = 0
   for (const [key, rec] of map) {
-    if (rec.lockOwnerId === lockOwnerId && rec.status === 'SOFT_LOCKED_PENDING') {
-      if (!canTransitionUtxo(rec.status, 'SPENT_CONFIRMED')) continue
+    if (rec.lockOwnerId === lockOwnerId && rec.status === 'selected') {
+      if (!canTransitionUtxo(rec.status, 'spent')) continue
       map.set(key, {
         ...rec,
-        status: 'SPENT_CONFIRMED',
+        status: 'spent',
         updatedAt: Date.now(),
       })
       n += 1
@@ -196,37 +270,22 @@ export function confirmSpentLocks(lockOwnerId: string): number {
 }
 
 /** Freeze a UTXO after an ambiguous error — reconcile may thaw. */
-export function freezeUtxo(outpoint: string, diagnostic: string): UtxoLockRecord | null {
-  const map = load()
-  const key = normalizeOutpointKey(outpoint)
-  const cur = map.get(key)
-  if (!cur) {
-    const now = Date.now()
-    const rec: UtxoLockRecord = {
-      outpoint: key,
-      status: 'FROZEN_ERROR',
-      lockOwnerId: null,
-      satoshis: 0,
-      diagnostic,
-      lockedAt: now,
-      updatedAt: now,
-    }
-    map.set(key, rec)
-    persist()
-    return rec
-  }
-  return setStatus(key, 'FROZEN_ERROR', { diagnostic, lockOwnerId: null })
+export function freezeUtxo(outpoint: string, diagnostic: string): UtxoLockRecord {
+  return hideUtxo(outpoint, 'quarantine', { diagnostic })
 }
 
 export function thawUtxo(outpoint: string): UtxoLockRecord | null {
-  return setStatus(outpoint, 'UNSPENT', { diagnostic: null, lockOwnerId: null })
+  const cur = getUtxoLock(outpoint)
+  if (cur?.status === 'spent') return cur
+  return setStatus(outpoint, 'available', { diagnostic: null, lockOwnerId: null })
+    ?? creditUtxo(outpoint)
 }
 
 /** Soft-locked sats subtracted from optimistic balance view. */
 export function softLockedSatsTotal(): number {
   let sum = 0
   for (const rec of load().values()) {
-    if (rec.status === 'SOFT_LOCKED_PENDING') sum += rec.satoshis
+    if (rec.status === 'selected') sum += rec.satoshis
   }
   return sum
 }

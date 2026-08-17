@@ -104,6 +104,7 @@ vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   releaseStaleSpendableOutputs: async () => {},
   releaseThenRestoreStaleOutputs: async () => {},
+  onAlreadySpentSend: async () => {},
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
 }))

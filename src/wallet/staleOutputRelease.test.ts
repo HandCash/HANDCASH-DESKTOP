@@ -2,9 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mockReviewSpendableOutputs = vi.fn()
 const mockGetActiveWallet = vi.fn()
+const overlayStore = new Map<string, string>()
 
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
+}))
+
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => overlayStore.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    overlayStore.set(key, value)
+    return true
+  },
 }))
 
 const {
@@ -13,7 +22,11 @@ const {
   isLiveLocalTxStatus,
   releaseStaleSpendableOutputs,
   restoreLiveSpendableOutputs,
+  keepChangeOfSignedTx,
+  hideSpentOutpoints,
 } = await import('./staleOutputRelease')
+
+const { hideUtxo, __resetUtxoLocksForTests } = await import('./utxoLockManager')
 
 describe('isAlreadySpentInputError', () => {
   it('accepts the rejections that prove an input is spent or gone', () => {
@@ -126,6 +139,8 @@ describe('restoreLiveSpendableOutputs', () => {
     findTransactions.mockReset()
     getProvenOrRawTx.mockReset()
     findTransactions.mockResolvedValue([])
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
@@ -199,8 +214,128 @@ describe('restoreLiveSpendableOutputs', () => {
     expect(updateOutput).not.toHaveBeenCalled()
   })
 
+  it('does not restore overlay-spent coins even when the indexer still lists them', async () => {
+    const txid = 'ab'.repeat(32)
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 1,
+        txid,
+        vout: 0,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+    isUtxo.mockResolvedValue(true)
+    hideUtxo(`${txid}.0`, 'spent')
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(isUtxo).not.toHaveBeenCalled()
+  })
+
+  it('after already-spent restores only live local change, not indexer UTXOs', async () => {
+    findOutputs.mockResolvedValue([
+      { outputId: 1, spendable: false, lockingScript: [118, 169] },
+    ])
+    isUtxo.mockResolvedValue(true)
+
+    await expect(restoreLiveSpendableOutputs({ onlyLiveChange: true })).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
+
   it('does nothing without an unlocked wallet', async () => {
     mockGetActiveWallet.mockReturnValue(null)
     await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+  })
+})
+
+describe('keepChangeOfSignedTx', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          findOutputs,
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              getProvenOrRawTx: () => Promise<undefined>
+            }) => Promise<unknown>,
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              getProvenOrRawTx: async () => undefined,
+            }),
+        },
+      },
+    })
+  })
+
+  it('makes this tx change spendable without deleting the row', async () => {
+    const txid = 'cd'.repeat(32)
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 9,
+        txid,
+        vout: 1,
+        change: true,
+        satoshis: 5000,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+
+    await expect(keepChangeOfSignedTx(txid)).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(9, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
+})
+
+describe('hideSpentOutpoints', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          findOutputs,
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findOutputs }),
+        },
+      },
+    })
+  })
+
+  it('marks toolbox rows unspendable and overlays them as spent', async () => {
+    const txid = 'ee'.repeat(32)
+    findOutputs.mockResolvedValue([
+      { outputId: 3, txid, vout: 1, satoshis: 100, spendable: true },
+    ])
+
+    await expect(hideSpentOutpoints([`${txid}.1`])).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(3, { spendable: false })
   })
 })

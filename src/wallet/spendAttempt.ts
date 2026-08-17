@@ -10,7 +10,7 @@
  * repairing local spend state, is how a later resync can lose the coins that
  * transaction still holds. Unsigned attempts (no txid) never bound those coins.
  */
-import { Transaction } from '@bsv/sdk'
+import { inputOutpointsFromRawTx } from './txOutpoints'
 import {
   countFailedActivity,
   isFailedActivity,
@@ -133,28 +133,6 @@ function hasTxid(entry: ActivityEntry): boolean {
 
 type SignedInputsFate = 'unsigned' | 'spent' | 'unspent' | 'unknown'
 
-function inputOutpointsFromRaw(raw: number[]): string[] {
-  try {
-    const tx = Transaction.fromBinary(raw)
-    const out: string[] = []
-    for (const input of tx.inputs) {
-      const prev = (
-        input.sourceTXID ??
-        input.sourceTransaction?.id('hex') ??
-        ''
-      ).toLowerCase()
-      const vout = input.sourceOutputIndex
-      if (!/^[0-9a-f]{64}$/.test(prev) || !Number.isInteger(vout) || vout < 0) {
-        continue
-      }
-      out.push(`${prev}.${vout}`)
-    }
-    return out
-  } catch {
-    return []
-  }
-}
-
 async function loadLocalRawTx(txid: string): Promise<number[] | null> {
   const storage = getActiveWallet()?.wallet?.storage
   if (!storage?.runAsStorageProvider) return null
@@ -178,7 +156,7 @@ async function loadLocalRawTx(txid: string): Promise<number[] | null> {
 async function loadSignedInputOutpoints(txid: string): Promise<string[]> {
   const raw = await loadLocalRawTx(txid)
   if (raw?.length) {
-    const fromRaw = inputOutpointsFromRaw(raw)
+    const fromRaw = inputOutpointsFromRawTx(raw)
     if (fromRaw.length > 0) return fromRaw
   }
   const stored = getTxByTxid(txid)?.inputOutpoints ?? []
@@ -409,8 +387,9 @@ function fateAllowsClear(fate: SpendAttemptFate): boolean {
  * Drop a dead attempt from Activity.
  *
  * Unsigned rows (no txid) may also release local reservations they left on our
- * outputs. A signed row is only removed once every input is spent on chain, and
- * never runs that repair — the spend already happened.
+ * outputs. A signed row is only removed once every input is spent on chain.
+ * Clearing that row keeps its change spendable and hides the spent inputs —
+ * it does not undo the spend and does not run unsigned-tx repair.
  */
 export async function clearSpendAttempt(
   entry: ActivityEntry,
@@ -431,6 +410,14 @@ export async function clearSpendAttempt(
     )
   }
   if (!hasTxid(entry)) await releaseLocalSpendReservations()
+  else {
+    const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
+      './staleOutputRelease'
+    )
+    const inputs = await loadSignedInputOutpoints(entry.txid!)
+    if (inputs.length > 0) await hideSpentOutpoints(inputs)
+    await keepChangeOfSignedTx(entry.txid!)
+  }
   return { removed: removeActivityById(entry.id) }
 }
 
@@ -464,6 +451,8 @@ export async function clearAllFailedSpends(): Promise<{
   const keepIds = new Set<string>()
   let unsignedToClear = false
 
+  const toKeepChange: string[] = []
+
   for (const row of listFailedActivity()) {
     if (isCounterpartySettlePending(row, now)) {
       keepIds.add(row.id)
@@ -479,9 +468,20 @@ export async function clearAllFailedSpends(): Promise<{
     }
     const inputsFate = await signedTxInputsFate(row, chain)
     if (inputsFate !== 'spent') keepIds.add(row.id)
+    else toKeepChange.push(row.txid!)
   }
 
   if (unsignedToClear) await releaseLocalSpendReservations()
+  if (toKeepChange.length > 0) {
+    const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
+      './staleOutputRelease'
+    )
+    for (const txid of toKeepChange) {
+      const inputs = await loadSignedInputOutpoints(txid)
+      if (inputs.length > 0) await hideSpentOutpoints(inputs)
+      await keepChangeOfSignedTx(txid)
+    }
+  }
   const removed = removeFailedActivity((entry) => keepIds.has(entry.id))
   return { removed, kept: Math.max(0, failed - removed) }
 }

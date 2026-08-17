@@ -319,55 +319,84 @@ export async function bootWallet(args: {
   return active
 }
 
-/** Prefer toolbox `Wallet.balance()` — localState spendable (managed change), not legacy address UTXOs. See `layers.ts`. */
+/**
+ * Displayed owned cash. Toolbox `balance()` is only the spendable set; in-flight
+ * change of a live local send is credited on top so Sending does not drop by
+ * payment + change. See `balanceView.ts`.
+ */
 export async function fetchBalanceSats(wallet?: Wallet | WalletInterface): Promise<number> {
   const session = getActiveWallet()
   const w = wallet ?? session?.wallet
   if (!w) return 0
+  let spendable = 0
+  let haveSpendable = false
   const asToolbox = w as Wallet
   if (typeof asToolbox.balance === 'function') {
     try {
       const sats = await asToolbox.balance()
-      if (Number.isFinite(sats)) return Math.max(0, Math.trunc(sats))
+      if (Number.isFinite(sats)) {
+        spendable = Math.max(0, Math.trunc(sats))
+        haveSpendable = true
+      }
     } catch (err) {
       console.warn('[balance] Wallet.balance() failed', err)
     }
   }
 
-  try {
-    const result = await w.listOutputs({
-      basket: specOpWalletBalance,
-      limit: 1,
-    })
-    if (Number.isFinite(result.totalOutputs)) return Math.max(0, Math.trunc(result.totalOutputs))
-  } catch (err) {
-    console.warn('[balance] specOpWalletBalance failed', err)
+  if (!haveSpendable) {
+    try {
+      const result = await w.listOutputs({
+        basket: specOpWalletBalance,
+        limit: 1,
+      })
+      if (Number.isFinite(result.totalOutputs)) {
+        spendable = Math.max(0, Math.trunc(result.totalOutputs))
+        haveSpendable = true
+      }
+    } catch (err) {
+      console.warn('[balance] specOpWalletBalance failed', err)
+    }
   }
 
   // BRC-112: `balance <basket>` returns satoshi sum in totalOutputs.
-  try {
-    const result = await w.listOutputs({
-      basket: BALANCE_DEFAULT_BASKET,
-      limit: 1,
-    })
-    if (Number.isFinite(result.totalOutputs)) return Math.max(0, Math.trunc(result.totalOutputs))
-  } catch (err) {
-    console.warn('[balance] BRC-112 balance default failed', err)
+  if (!haveSpendable) {
+    try {
+      const result = await w.listOutputs({
+        basket: BALANCE_DEFAULT_BASKET,
+        limit: 1,
+      })
+      if (Number.isFinite(result.totalOutputs)) {
+        spendable = Math.max(0, Math.trunc(result.totalOutputs))
+        haveSpendable = true
+      }
+    } catch (err) {
+      console.warn('[balance] BRC-112 balance default failed', err)
+    }
+  }
+
+  if (!haveSpendable) {
+    try {
+      const outputs = await w.listOutputs({
+        basket: 'default',
+        limit: 1000,
+      })
+      const sum = (outputs.outputs ?? []).reduce((s, o) => s + (o.satoshis ?? 0), 0)
+      if (sum > 0) spendable = sum
+      else if (Number.isFinite(outputs.totalOutputs)) {
+        spendable = Math.max(0, Math.trunc(outputs.totalOutputs))
+      }
+    } catch (err) {
+      console.warn('[balance] listOutputs default failed', err)
+    }
   }
 
   try {
-    const outputs = await w.listOutputs({
-      basket: 'default',
-      limit: 1000,
-    })
-    const sum = (outputs.outputs ?? []).reduce((s, o) => s + (o.satoshis ?? 0), 0)
-    if (sum > 0) return sum
-    if (Number.isFinite(outputs.totalOutputs)) return Math.max(0, Math.trunc(outputs.totalOutputs))
-    return sum
+    const { unconfirmedChangeSats } = await import('./balanceView')
+    spendable += await unconfirmedChangeSats()
   } catch (err) {
-    console.warn('[balance] listOutputs default failed', err)
-    return 0
+    console.warn('[balance] unconfirmed change credit skipped', err)
   }
+  return spendable
 }
 
 /** Below this, amounts display as sats; at/above, as BSV. */

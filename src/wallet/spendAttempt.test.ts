@@ -17,6 +17,8 @@ const mocks = vi.hoisted(() => ({
   counterpartyMaySettle: vi.fn(),
   getProvenOrRawTx: vi.fn(),
   getTxByTxid: vi.fn(),
+  keepChangeOfSignedTx: vi.fn(),
+  hideSpentOutpoints: vi.fn(),
 }))
 
 vi.mock('./sentItemGuard', () => ({
@@ -44,6 +46,11 @@ vi.mock('./sendBrc29Payment', () => ({
 
 vi.mock('./txStore', () => ({
   getTxByTxid: mocks.getTxByTxid,
+}))
+
+vi.mock('./staleOutputRelease', () => ({
+  keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
+  hideSpentOutpoints: mocks.hideSpentOutpoints,
 }))
 
 vi.mock('./session', () => ({
@@ -144,6 +151,8 @@ beforeEach(() => {
   mocks.getTxByTxid.mockReturnValue(null)
   mocks.spentStatusOfOutpoint.mockResolvedValue('unknown')
   mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+  mocks.keepChangeOfSignedTx.mockResolvedValue(0)
+  mocks.hideSpentOutpoints.mockResolvedValue(0)
 })
 
 describe('resolveSpendAttemptFate — items', () => {
@@ -425,6 +434,8 @@ describe('clearSpendAttempt', () => {
       removed: true,
     })
     expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(itemAttempt().txid)
+    expect(mocks.hideSpentOutpoints).toHaveBeenCalled()
     expect(mocks.removeActivityById).toHaveBeenCalledWith('attempt')
   })
 })

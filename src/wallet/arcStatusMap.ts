@@ -47,6 +47,8 @@ export function arcStatusFromPostBeef(summary: PostBeefSummary): ArcStatus {
 export type ArcRejectionHandler = {
   status: ArcStatus
   shouldRollbackLocks: boolean
+  /** Hide inputs as `spent` rather than unlocking them. */
+  shouldConfirmSpent: boolean
   shouldReleaseStaleOutputs: boolean
 }
 
@@ -57,18 +59,23 @@ export function handleArcRejection(status: ArcStatus): ArcRejectionHandler {
       return {
         status,
         shouldRollbackLocks: true,
+        shouldConfirmSpent: false,
         shouldReleaseStaleOutputs: false,
       }
     case 'DOUBLE_SPEND_ATTEMPTED':
       return {
         status,
-        shouldRollbackLocks: true,
-        shouldReleaseStaleOutputs: true,
+        shouldRollbackLocks: false,
+        shouldConfirmSpent: true,
+        // Inputs of *this* spend are hidden via confirmSpent / hideSpentOutpoints,
+        // not a bulk review that writes off unconfirmed change.
+        shouldReleaseStaleOutputs: false,
       }
     default:
       return {
         status,
         shouldRollbackLocks: false,
+        shouldConfirmSpent: false,
         shouldReleaseStaleOutputs: false,
       }
   }

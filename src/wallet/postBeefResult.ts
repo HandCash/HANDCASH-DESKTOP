@@ -96,11 +96,7 @@ export function summarizePostBeef(
 }
 
 export function formatPostBeefFailure(summary: PostBeefSummary): string {
-  if (summary.missingInputs || summary.doubleSpend) {
-    return 'This item looks already spent on-chain. Refreshing inventory — pick it again if it still appears.'
-  }
-  if (summary.serviceOnlyErrors) {
-    return `Broadcast services were unreachable (${summary.detail}). Check connection and try again.`
-  }
-  return `Broadcast failed — not accepted by the network (${summary.detail})`
+  if (summary.missingInputs || summary.doubleSpend) return 'Already spent'
+  if (summary.serviceOnlyErrors) return 'No network'
+  return 'Not sent'
 }

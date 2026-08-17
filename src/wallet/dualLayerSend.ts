@@ -98,6 +98,13 @@ export function applyDualLayerArc(id: string, arc: ArcStatus | string): TxRecord
   const status = typeof arc === 'string' ? parseArcStatus(arc) ?? (arc as ArcStatus) : arc
   const policy = handleArcRejection(status)
   const next = applyArcStatus(id, status)
+  if (
+    next?.status === 'SEEN_IN_MEMPOOL' ||
+    next?.status === 'MINED' ||
+    policy.shouldConfirmSpent
+  ) {
+    confirmSpentLocks(id)
+  }
   if (policy.shouldRollbackLocks) {
     rollbackLocks(id)
   }
@@ -108,8 +115,10 @@ export function failDualLayerSend(
   id: string,
   code: TxDiagnosticCode,
   detail?: string | null,
+  opts?: { hideInputs?: boolean },
 ): TxRecord | null {
-  rollbackLocks(id)
+  if (opts?.hideInputs) confirmSpentLocks(id)
+  else rollbackLocks(id)
   return markTxFailed(id, code, detail)
 }
 

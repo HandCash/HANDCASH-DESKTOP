@@ -227,22 +227,22 @@ export function formatReviewActionsError(err: unknown): string {
   // script (`asString(undefined)`). Reporting it as a conflict hid the real
   // cause for several releases — name it.
   if (msg.includes('is not iterable')) {
-    return 'A saved coin was missing its locking script. Rebuilt what we could — try Send again.'
+    return 'Missing script'
   }
   if (
     statuses.some((s) => s.includes('doublespend')) ||
     msg.includes('doublespend') ||
     msg.includes('double spend')
   ) {
-    return 'A previous failed send is blocking this payment. Cleared local conflicts — try Send again.'
+    return 'Already spent'
   }
   if (statuses.some((s) => s.includes('service') || s === 'error')) {
-    return 'Broadcast service error — check connection and try again.'
+    return 'No network'
   }
   if (statuses.some((s) => s.includes('invalid'))) {
-    return 'The network rejected this transaction. Try again or Refresh first.'
+    return 'Not sent'
   }
-  return 'Send did not confirm on the network. Try again after Refresh.'
+  return 'Not sent'
 }
 
 /**

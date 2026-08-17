@@ -27,6 +27,7 @@ import {
   failOutboundSendPending,
   isFailedActivity,
   activityFailureReason,
+  activityFailureLabel,
   expireStaleInboundPending,
   expireStaleOutboundPending,
   pruneMissingOnChainActivity,
@@ -410,7 +411,8 @@ describe('inbound receive activity', () => {
     expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
     const row = listRecentActivity(10)[0]!
     expect(isFailedActivity(row)).toBe(true)
-    expect(activityFailureReason(row)).toMatch(/never confirmed/i)
+    expect(activityFailureReason(row)).toBe('Timed out')
+    expect(activityFailureLabel(row)).toBe('Timed out')
     expect(activityEntryTitle(row)).toBe('Send failed')
   })
 
@@ -429,6 +431,7 @@ describe('inbound receive activity', () => {
     const row = listRecentActivity(10)[0]!
     expect(isFailedActivity(row)).toBe(true)
     expect(activityFailureReason(row)).toBe('undefined is not iterable')
+    expect(activityFailureLabel(row)).toBe('Missing script')
     expect(row.sats).toBe(500)
     // A second fail on an already-failed row is a no-op.
     expect(

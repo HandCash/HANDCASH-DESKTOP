@@ -1,23 +1,39 @@
 /**
- * UTXO lifecycle for the optimistic layer.
+ * UTXO overlay — same four statuses as HandCash Cloud `spentStatus`.
  *
- * Soft-locks happen *before* ARC dispatch so the UI balance can deduct
- * immediately. Hard failures roll locks back to UNSPENT. Confirmed spends
- * move to SPENT_CONFIRMED. FROZEN_ERROR is fail-closed until thaw / reconcile.
+ * Toolbox rows stay in storage. We hide a coin by changing status (and
+ * `spendable: false`), never by deleting it. Restore / Pay only see
+ * `available`.
+ *
+ * Durable JSON may still hold the pre-1.2.233 names; {@link coerceUtxoStatus}
+ * maps those on read.
  */
 
 import { normalizeOutpointKey } from './txLifecycle'
 
-export type UtxoStatus =
-  | 'UNSPENT'
-  | 'SOFT_LOCKED_PENDING'
-  | 'SPENT_CONFIRMED'
-  | 'FROZEN_ERROR'
+/** Cloud `spentStatus.status` names. */
+export type UtxoStatus = 'available' | 'selected' | 'spent' | 'quarantine'
+
+const LEGACY_STATUS: Record<string, UtxoStatus> = {
+  UNSPENT: 'available',
+  SOFT_LOCKED_PENDING: 'selected',
+  SPENT_CONFIRMED: 'spent',
+  FROZEN_ERROR: 'quarantine',
+  available: 'available',
+  selected: 'selected',
+  spent: 'spent',
+  quarantine: 'quarantine',
+}
+
+export function coerceUtxoStatus(raw: unknown): UtxoStatus | null {
+  if (typeof raw !== 'string') return null
+  return LEGACY_STATUS[raw] ?? null
+}
 
 export type UtxoLockRecord = {
   outpoint: string
   status: UtxoStatus
-  /** Tx draft / pending id that holds the soft-lock. */
+  /** Tx draft / pending id that holds the `selected` reservation. */
   lockOwnerId: string | null
   satoshis: number
   diagnostic: string | null
@@ -26,10 +42,10 @@ export type UtxoLockRecord = {
 }
 
 const UTXO_FORWARD: Readonly<Record<UtxoStatus, ReadonlySet<UtxoStatus>>> = {
-  UNSPENT: new Set(['SOFT_LOCKED_PENDING', 'FROZEN_ERROR']),
-  SOFT_LOCKED_PENDING: new Set(['UNSPENT', 'SPENT_CONFIRMED', 'FROZEN_ERROR']),
-  SPENT_CONFIRMED: new Set([]),
-  FROZEN_ERROR: new Set(['UNSPENT', 'SOFT_LOCKED_PENDING']),
+  available: new Set(['selected', 'quarantine', 'spent']),
+  selected: new Set(['available', 'spent', 'quarantine']),
+  spent: new Set([]),
+  quarantine: new Set(['available', 'selected', 'spent']),
 }
 
 export function canTransitionUtxo(from: UtxoStatus, to: UtxoStatus): boolean {
@@ -38,11 +54,16 @@ export function canTransitionUtxo(from: UtxoStatus, to: UtxoStatus): boolean {
 }
 
 export function isSoftLocked(status: UtxoStatus): boolean {
-  return status === 'SOFT_LOCKED_PENDING'
+  return status === 'selected'
+}
+
+/** True when Pay must not offer this coin. */
+export function isHiddenFromSpend(status: UtxoStatus): boolean {
+  return status === 'spent' || status === 'quarantine' || status === 'selected'
 }
 
 export function countsTowardSpendable(status: UtxoStatus): boolean {
-  return status === 'UNSPENT'
+  return status === 'available'
 }
 
 export function makeUtxoLock(args: {
@@ -54,7 +75,7 @@ export function makeUtxoLock(args: {
   const now = args.now ?? Date.now()
   return {
     outpoint: normalizeOutpointKey(args.outpoint),
-    status: 'SOFT_LOCKED_PENDING',
+    status: 'selected',
     lockOwnerId: args.lockOwnerId,
     satoshis: Math.max(0, Math.trunc(args.satoshis)),
     diagnostic: null,

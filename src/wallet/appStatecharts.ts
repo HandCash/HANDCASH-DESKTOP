@@ -641,19 +641,21 @@ const TX_UTXO_LIFECYCLE = `stateDiagram-v2
   MINED --> REORG_ORPHANED : reorg
   REORG_ORPHANED --> SEEN_IN_MEMPOOL : re-announced
   REORG_ORPHANED --> FAILED_REJECTED : gone
-  FAILED_REJECTED --> [*] : rollback soft-locks
-  MINED --> [*] : SPENT_CONFIRMED
+  FAILED_REJECTED --> [*] : spent / available
+  MINED --> [*] : spent
 
   note right of DRAFT
-    UTXO: UNSPENT
+    UTXO: available
     no mutation until VALIDATING ok
   end note
   note right of BROADCASTING
-    UTXO: SOFT_LOCKED_PENDING
-    optimistic balance deduct
+    UTXO: selected
+    owned cash = spendable
+    + live unconfirmed change
   end note
   note right of MINED
-    ARC MINED alone is not enough
+    overlay spent stays hidden
+    (not deleted)
     hard finality = BUMP + headers
   end note
 `
