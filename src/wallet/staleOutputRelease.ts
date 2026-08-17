@@ -487,68 +487,75 @@ export async function restoreLiveSpendableOutputs(opts?: {
     let keptSpent = 0
     const txCache = new Map<number, TxStatusRow | null>()
 
-    for (const raw of dead.slice(0, RESTORE_MAX)) {
-      if (shouldYieldChainIngestToSpend()) {
-        console.info(
-          `[stale-output] restore yielded to spend after ${restored} restore(s)`,
-        )
-        break
-      }
-      const output = raw as ChangeRow & {
-        transactionId?: number
-        spentBy?: number
-        outputIndex?: number
-        basket?: string
-        change?: boolean
-      }
-      const outputId = positiveId(output.outputId)
-      if (outputId == null) continue
-      const overlayKey = outpointFromOutput(output)
-      if (overlayKey && isUtxoBlockedFromRestore(overlayKey)) {
-        keptSpent += 1
-        continue
-      }
+    // One storage session for the whole sweep. Re-entering the provider per
+    // output cost a session apiece — on a phone carrying a few hundred
+    // unspendable rows that was seconds of IndexedDB churn on the UI thread,
+    // paid on every refresh and after every send.
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
 
-      try {
-        const restoredThis = await storage.runAsStorageProvider(async (activeSp) => {
-          const sp = activeSp as unknown as LocalStorage
-        const spentBy = positiveId(output.spentBy)
-        if (spentBy != null) {
-          const spender = await loadTxRow(sp, spentBy, txCache)
-          if (isLiveLocalTxStatus(spender?.status)) return 'spent'
+      for (const raw of dead.slice(0, RESTORE_MAX)) {
+        if (shouldYieldChainIngestToSpend()) {
+          console.info(
+            `[stale-output] restore yielded to spend after ${restored} restore(s)`,
+          )
+          break
+        }
+        const output = raw as ChangeRow & {
+          transactionId?: number
+          spentBy?: number
+          outputIndex?: number
+          basket?: string
+          change?: boolean
+        }
+        const outputId = positiveId(output.outputId)
+        if (outputId == null) continue
+        const overlayKey = outpointFromOutput(output)
+        if (overlayKey && isUtxoBlockedFromRestore(overlayKey)) {
+          keptSpent += 1
+          continue
         }
 
-        const creatorId = positiveId(output.transactionId)
-        const creator = creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
-        const localChange =
-          output.change === true &&
-          isLiveLocalTxStatus(creator?.status) &&
-          spentBy == null
+        try {
+          const spentBy = positiveId(output.spentBy)
+          if (spentBy != null) {
+            const spender = await loadTxRow(sp, spentBy, txCache)
+            if (isLiveLocalTxStatus(spender?.status)) {
+              keptSpent += 1
+              continue
+            }
+          }
 
-        const healed = await healLockingScript(sp, output)
-        const scripted = healed != null || hasLockingScript(output)
-        if (!scripted) return 'unscripted'
+          const creatorId = positiveId(output.transactionId)
+          const creator =
+            creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
+          const localChange =
+            output.change === true &&
+            isLiveLocalTxStatus(creator?.status) &&
+            spentBy == null
 
-        if (!localChange) return 'skip'
+          const healed = await healLockingScript(sp, output)
+          if (healed == null && !hasLockingScript(output)) {
+            unscripted += 1
+            continue
+          }
 
-        await sp.updateOutput(outputId, {
-          spendable: true,
-          ...(healed != null ? { lockingScript: healed } : {}),
-        })
-        return 'restored'
-      })
+          if (!localChange) continue
 
-      if (restoredThis === 'restored') restored += 1
-      else if (restoredThis === 'unscripted') unscripted += 1
-      else if (restoredThis === 'spent') keptSpent += 1
-      } catch (err) {
-        console.warn(
-          '[stale-output] restore skipped',
-          outputId,
-          err instanceof Error ? err.message : String(err),
-        )
+          await sp.updateOutput(outputId, {
+            spendable: true,
+            ...(healed != null ? { lockingScript: healed } : {}),
+          })
+          restored += 1
+        } catch (err) {
+          console.warn(
+            '[stale-output] restore skipped',
+            outputId,
+            err instanceof Error ? err.message : String(err),
+          )
+        }
       }
-    }
+    })
 
     if (restored > 0) {
       console.info(

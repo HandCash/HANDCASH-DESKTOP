@@ -132,6 +132,15 @@ describe('restoreLiveSpendableOutputs', () => {
   const isUtxo = vi.fn()
   const findTransactions = vi.fn()
   const getProvenOrRawTx = vi.fn()
+  const runAsStorageProvider = vi.fn(
+    async (
+      fn: (sp: {
+        updateOutput: typeof updateOutput
+        findTransactions: typeof findTransactions
+        getProvenOrRawTx: typeof getProvenOrRawTx
+      }) => Promise<unknown>,
+    ) => fn({ updateOutput, findTransactions, getProvenOrRawTx }),
+  )
 
   beforeEach(() => {
     findOutputs.mockReset()
@@ -139,6 +148,7 @@ describe('restoreLiveSpendableOutputs', () => {
     isUtxo.mockReset()
     findTransactions.mockReset()
     getProvenOrRawTx.mockReset()
+    runAsStorageProvider.mockClear()
     findTransactions.mockResolvedValue([])
     overlayStore.clear()
     __resetUtxoLocksForTests()
@@ -146,18 +156,7 @@ describe('restoreLiveSpendableOutputs', () => {
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
       services: { isUtxo },
-      wallet: {
-        storage: {
-          findOutputs,
-          runAsStorageProvider: async (
-            fn: (sp: {
-              updateOutput: typeof updateOutput
-              findTransactions: typeof findTransactions
-              getProvenOrRawTx: typeof getProvenOrRawTx
-            }) => Promise<unknown>,
-          ) => fn({ updateOutput, findTransactions, getProvenOrRawTx }),
-        },
-      },
+      wallet: { storage: { findOutputs, runAsStorageProvider } },
     })
   })
 
@@ -240,6 +239,23 @@ describe('restoreLiveSpendableOutputs', () => {
 
     await expect(restoreLiveSpendableOutputs({ onlyLiveChange: true })).resolves.toBe(0)
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('sweeps a large unspendable set in one storage session', async () => {
+    findOutputs.mockResolvedValue(
+      Array.from({ length: 60 }, (_, i) => ({
+        outputId: i + 1,
+        transactionId: 9,
+        change: true,
+        spendable: false,
+        lockingScript: [118, 169],
+      })),
+    )
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(60)
+    // Re-entering the provider per row is what made this seconds long on a phone.
+    expect(runAsStorageProvider).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing without an unlocked wallet', async () => {

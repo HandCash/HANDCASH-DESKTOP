@@ -81,6 +81,53 @@ function positiveId(value: unknown): number | null {
   return Number.isFinite(n) && n > 0 ? n : null
 }
 
+type LivenessStorage = {
+  runAsStorageProvider: <T>(fn: (sp: unknown) => Promise<T>) => Promise<T>
+}
+
+/**
+ * Resolve every tx id a page needs inside **one** storage session.
+ *
+ * Each `runAsStorageProvider` acquires a storage session, and this loop used to
+ * take two of them per output row — hundreds of sequential IndexedDB round trips
+ * on the UI thread, which is where a phone spent ~6s before `createAction` on
+ * every send. The queries themselves are cheap; entering the provider is not.
+ */
+async function cacheLivenessOf(
+  storage: LivenessStorage,
+  txIds: Iterable<number>,
+  cache: Map<number, TxLiveness>,
+): Promise<void> {
+  const missing = [...new Set(txIds)].filter((id) => !cache.has(id))
+  if (missing.length === 0) return
+  try {
+    const statuses = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as {
+        findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
+      }
+      if (typeof sp.findTransactions !== 'function') return null
+      const out = new Map<number, unknown>()
+      for (const id of missing) {
+        const rows = await sp.findTransactions({
+          partial: { transactionId: id },
+          noRawTx: true,
+          paged: { limit: 1, offset: 0 },
+        })
+        out.set(id, rows?.[0]?.status)
+      }
+      return out
+    })
+    for (const id of missing) {
+      cache.set(id, statuses ? txLivenessFromStatus(statuses.get(id)) : 'none')
+    }
+  } catch (err) {
+    console.warn('[balance-view] tx liveness batch skipped', err)
+    // Unknown status is not evidence the tx is live, and `none` is what a single
+    // failed lookup already resolved to.
+    for (const id of missing) cache.set(id, 'none')
+  }
+}
+
 /**
  * Change of live local txs that toolbox `balance()` does not yet count
  * (`spendable: false`). Inputs of those txs are excluded via `spentLive`.
@@ -93,32 +140,8 @@ export async function unconfirmedChangeSats(): Promise<number> {
   try {
     let extra = 0
     const txCache = new Map<number, TxLiveness>()
-
-    const liveness = async (txId: number | null): Promise<TxLiveness> => {
-      if (txId == null) return 'none'
-      const cached = txCache.get(txId)
-      if (cached) return cached
-      let next: TxLiveness = 'none'
-      try {
-        const rows = (await storage.runAsStorageProvider(async (activeSp) => {
-          const sp = activeSp as {
-            findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
-          }
-          if (typeof sp.findTransactions !== 'function') return []
-          return sp.findTransactions({
-            partial: { transactionId: txId },
-            noRawTx: true,
-            paged: { limit: 1, offset: 0 },
-          })
-        })) as TxStatusRow[] | undefined
-        next = txLivenessFromStatus(rows?.[0]?.status)
-      } catch (err) {
-        console.warn('[balance-view] tx lookup skipped', txId, err)
-        next = 'none'
-      }
-      txCache.set(txId, next)
-      return next
-    }
+    const liveness = (txId: number | null): TxLiveness =>
+      txId == null ? 'none' : txCache.get(txId) ?? 'none'
 
     for (let page = 0; page < MAX_PAGES; page += 1) {
       const batch = (await storage.runAsStorageProvider(async (activeSp) => {
@@ -139,11 +162,23 @@ export async function unconfirmedChangeSats(): Promise<number> {
         }
       })) as Array<OwnedCashRow & { transactionId?: number }> | undefined
       if (!batch?.length) break
-      for (const row of batch) {
-        if (row.change !== true) continue
-        const creator = await liveness(positiveId(row.transactionId))
-        const spender = await liveness(positiveId(row.spentBy))
-        const fate = classifyOwnedCash(row, creator, spender)
+
+      const changeRows = batch.filter((row) => row.change === true)
+      const needed: number[] = []
+      for (const row of changeRows) {
+        const creator = positiveId(row.transactionId)
+        const spender = positiveId(row.spentBy)
+        if (creator != null) needed.push(creator)
+        if (spender != null) needed.push(spender)
+      }
+      await cacheLivenessOf(storage as LivenessStorage, needed, txCache)
+
+      for (const row of changeRows) {
+        const fate = classifyOwnedCash(
+          row,
+          liveness(positiveId(row.transactionId)),
+          liveness(positiveId(row.spentBy)),
+        )
         if (fate.kind === 'count' && fate.as === 'unconfirmedChange') {
           extra += fate.satoshis
         }

@@ -273,6 +273,9 @@ export async function sendBrc29ToIdentityKey(opts: {
           console.info(`[brc29] +${Date.now() - sendStarted}ms ${phase}`)
         }
         await releaseStuckNosends(active)
+        mark('nosends released')
+        // Sequential on purpose: aborting stuck batches frees reserved outputs,
+        // so a balance read beside it could under-report and refuse a valid send.
         await prepareSpendHeal(satoshis)
         mark('ready')
         chart.send({ type: 'READY' })

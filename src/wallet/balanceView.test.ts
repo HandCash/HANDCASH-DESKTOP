@@ -121,22 +121,22 @@ describe('owned cash while sending', () => {
 describe('unconfirmedChangeSats', () => {
   const findOutputs = vi.fn()
   const findTransactions = vi.fn()
+  const runAsStorageProvider = vi.fn(
+    async (
+      fn: (sp: {
+        findOutputs: typeof findOutputs
+        findTransactions: typeof findTransactions
+      }) => Promise<unknown>,
+    ) => fn({ findOutputs, findTransactions }),
+  )
 
   beforeEach(() => {
     findOutputs.mockReset()
     findTransactions.mockReset()
+    runAsStorageProvider.mockClear()
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
-      wallet: {
-        storage: {
-          runAsStorageProvider: async (
-            fn: (sp: {
-              findOutputs: typeof findOutputs
-              findTransactions: typeof findTransactions
-            }) => Promise<unknown>,
-          ) => fn({ findOutputs, findTransactions }),
-        },
-      },
+      wallet: { storage: { runAsStorageProvider } },
     })
   })
 
@@ -161,5 +161,53 @@ describe('unconfirmedChangeSats', () => {
 
     await expect(unconfirmedChangeSats()).resolves.toBe(0)
     expect(findTransactions).not.toHaveBeenCalled()
+  })
+
+  it('resolves a page of tx livenesses in one storage session, not two per row', async () => {
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
+      args.paged.offset > 0
+        ? []
+        : [
+            { satoshis: 1_000, change: true, spendable: false, transactionId: 1, spentBy: 11 },
+            { satoshis: 2_000, change: true, spendable: false, transactionId: 2, spentBy: 12 },
+            { satoshis: 3_000, change: true, spendable: false, transactionId: 3, spentBy: 13 },
+          ],
+    )
+    findTransactions.mockImplementation(
+      async (args: { partial: { transactionId: number } }) =>
+        args.partial.transactionId > 10 ? [{ status: 'failed' }] : [{ status: 'unproven' }],
+    )
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(6_000)
+
+    // One session for the page of outputs, one for all six tx ids it needs.
+    expect(runAsStorageProvider).toHaveBeenCalledTimes(2)
+    expect(findTransactions).toHaveBeenCalledTimes(6)
+  })
+
+  it('asks once per distinct tx id across pages', async () => {
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
+      args.paged.offset > 0
+        ? []
+        : [
+            { satoshis: 1_000, change: true, spendable: false, transactionId: 4 },
+            { satoshis: 2_000, change: true, spendable: false, transactionId: 4 },
+          ],
+    )
+    findTransactions.mockResolvedValue([{ status: 'unproven' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(3_000)
+    expect(findTransactions).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not credit change when the liveness batch fails', async () => {
+    findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
+      args.paged.offset > 0
+        ? []
+        : [{ satoshis: 9_000, change: true, spendable: false, transactionId: 5 }],
+    )
+    findTransactions.mockRejectedValue(new Error('idb closed'))
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
   })
 })

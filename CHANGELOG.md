@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.238] - 2026-08-17
+
+### Fixed
+- **Signing is much faster on phones.** Two hot loops opened a fresh IndexedDB storage session *per row* instead of one for the batch, and entering the provider — not the queries — was the cost. The phone log showed 6.5s between tapping Send and `createAction`, on a wallet carrying ~190 unspendable rows.
+  - The unconfirmed-change credit behind every balance read took two sessions per output row to check transaction liveness; it now resolves a whole page of transaction ids in one session, and asks once per distinct id.
+  - The stale-output restore sweep took a session per output; the whole sweep now runs in one, keeping its yield-to-spend check.
+- Send now logs `nosends released` alongside `ready`, so the pre-`createAction` cost is attributable instead of a single opaque number.
+
 ## [1.2.237] - 2026-08-17
 
 ### Fixed
