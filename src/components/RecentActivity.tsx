@@ -201,26 +201,34 @@ function HistoryRow({
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
+  // A pending spend the wallet cannot price yet has no transaction built —
+  // it is still clearing approval. Say so, rather than signing an empty amount
+  // or falling through to the no-rate dash, which read as a stray "—".
+  const approving = spent && showPending && entry.sats <= 0
   const amountLabel = event
     ? eventAmountLabel(entry)
     : token
       ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
       : item
         ? shown?.name || 'Collectable'
-        : showPending && entry.sats <= 0
-          ? '…'
-          : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+        : approving
+          ? 'Approving'
+          : showPending && entry.sats <= 0
+            ? '…'
+            : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
     ? amountLabel
     : token
       ? amountLabel
       : item
         ? 'Item'
-        : currency === 'usd' && usdPerBsv == null
-          ? '—'
-          : spent
-            ? `−${amountLabel}`
-            : `+${amountLabel}`
+        : approving
+          ? amountLabel
+          : currency === 'usd' && usdPerBsv == null
+            ? '—'
+            : spent
+              ? `−${amountLabel}`
+              : `+${amountLabel}`
   const subtitle = failed && failureReason
     ? failureReason
     : event
@@ -332,7 +340,7 @@ function HistoryRow({
         <div className="history-amount-block">
           <span
             className={
-              event || item || failed
+              event || item || failed || approving
                 ? 'history-amount history-amount-item'
                 : 'history-amount'
             }

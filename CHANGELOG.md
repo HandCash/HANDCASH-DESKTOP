@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.251] - 2026-08-18
+
+### Fixed
+- **An app's spend shows "Approving" in Activity instead of a bare dash.** The row for an app spend request is created the moment you approve, before any transaction exists, so it carries no amount — and the amount column tested for a missing USD rate before it tested for that, printing `—` (or `−…`). An unpriced pending spend now reads "Approving" and sets as a word rather than a number. Real sends are unaffected: they file a pending row with actual satoshis, which retires the placeholder.
+
 ## [1.2.250] - 2026-08-18
 
 ### Fixed
