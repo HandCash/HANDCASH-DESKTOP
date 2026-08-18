@@ -21,6 +21,11 @@ import {
   type ActivityRetry,
 } from './appActivity'
 import { isCollectableOutpointSpendable, sendCollectable } from './collectables'
+import {
+  getCachedFungibles,
+  getFungible,
+} from './fungibles'
+import { sendFungible } from './sendFungible'
 import { counterpartyMaySettle } from './sentItemGuard'
 import { getBeefForTxidCached } from './beefCache'
 import {
@@ -70,7 +75,7 @@ export type SpendAttemptFate =
       kind: 'retry'
       /**
        * `rebroadcast` re-submits the transaction this attempt already signed.
-       * `recreateItem` re-runs a collectable send that died before signing.
+       * `recreateItem` re-runs a collectable / token send that died before signing.
        * `reopenPayment` hands a coin send back to the Send screen — the wallet
        * must never silently re-spend coins on the user's behalf.
        */
@@ -81,32 +86,37 @@ export type SpendAttemptFate =
     }
 
 const ITEM_METHOD = 'send-collectable'
+const TOKEN_METHOD = 'send-token'
 const BSV_METHOD = 'send'
 const INPUTS_STILL_LIVE =
   'This transaction cannot be cleared while its inputs are still unspent.'
 
 /**
  * How long a broadcast row is left alone before a chain 404 counts as trouble.
- * Item sends can be settled by the payee (`peerDeliver`), so their transaction
- * is legitimately absent for far longer than a coin payment's.
+ * Item / token sends can be settled by the payee (`peerDeliver`), so their
+ * transaction is legitimately absent for far longer than a coin payment's.
  */
 const ITEM_UNCONFIRMED_GRACE_MS = 10 * 60_000
 const BSV_UNCONFIRMED_GRACE_MS = 2 * 60_000
+
+function isItemOrTokenMethod(method: string): boolean {
+  return method === ITEM_METHOD || method === TOKEN_METHOD
+}
 
 export function isSpendAttempt(
   entry: ActivityEntry | null,
   now = Date.now(),
 ): boolean {
   if (!entry || entry.kind !== 'spent' || entry.status === 'pending') return false
-  const isItem = entry.method === ITEM_METHOD
-  if (isItem ? !entry.item : entry.method !== BSV_METHOD) return false
+  const isItemLike = isItemOrTokenMethod(entry.method)
+  if (isItemLike ? !entry.item : entry.method !== BSV_METHOD) return false
   if (isFailedActivity(entry)) return true
-  const grace = isItem ? ITEM_UNCONFIRMED_GRACE_MS : BSV_UNCONFIRMED_GRACE_MS
+  const grace = isItemLike ? ITEM_UNCONFIRMED_GRACE_MS : BSV_UNCONFIRMED_GRACE_MS
   return now - entry.at >= grace
 }
 
 /**
- * True when the payee still owns the outcome of this item transfer.
+ * True when the payee still owns the outcome of this item / token transfer.
  *
  * A failed row is not automatically a dead row: on a `peerDeliver` settle the
  * signed transfer is already in the recipient's inbox, so it can land hours
@@ -118,7 +128,7 @@ export function isCounterpartySettlePending(
   entry: ActivityEntry,
   now = Date.now(),
 ): boolean {
-  if (entry.method !== ITEM_METHOD) return false
+  if (!isItemOrTokenMethod(entry.method)) return false
   const outpoint =
     entry.retry?.kind === 'send-collectable'
       ? entry.retry.outpoint
@@ -194,6 +204,27 @@ function mayClearSignedInputs(fate: SignedInputsFate): boolean {
   return fate === 'unsigned' || fate === 'spent'
 }
 
+/** True when the wallet still holds enough of this token to recreate the send. */
+function isTokenSendRetryable(
+  retry: Extract<ActivityRetry, { kind: 'send-token' }>,
+): boolean | null {
+  try {
+    const token =
+      getFungible(retry.tokenId) ??
+      getCachedFungibles().find(
+        (t) => t.tokenId === retry.tokenId || t.tokenIds?.includes(retry.tokenId),
+      )
+    if (!token) return false
+    if (token.spendKind === 'cosigned' || token.spendKind === 'mixed') return false
+    const held = BigInt(token.amt.replace(/\D/g, '') || '0')
+    const need = BigInt(retry.amount.replace(/\D/g, '') || '0')
+    if (need <= 0n) return false
+    return held >= need
+  } catch {
+    return null
+  }
+}
+
 export async function resolveSpendAttemptFate(
   entry: ActivityEntry,
   chain: Chain,
@@ -262,6 +293,37 @@ export async function resolveSpendAttemptFate(
     }
   }
 
+  if (retry.kind === 'send-token') {
+    const spendable = isTokenSendRetryable(retry)
+    if (spendable === null) {
+      return {
+        kind: 'refuse',
+        reason: 'statusUnknown',
+        message:
+          'Token balance could not be checked. Retry stays disabled until the wallet refreshes.',
+        mayClear: false,
+      }
+    }
+    if (!spendable) {
+      return {
+        kind: 'refuse',
+        reason: 'sourceNotSpendable',
+        message:
+          'This send cannot be retried — there is no longer enough of this token spendable in this wallet.',
+        mayClear: mayClearSignedInputs(inputsFate),
+      }
+    }
+    return {
+      kind: 'retry',
+      action: hasTxid(entry) ? 'rebroadcast' : 'recreateItem',
+      retry,
+      message: hasTxid(entry)
+        ? 'This send did not confirm. The token tips are still unspent, so the signed transfer can be broadcast again.'
+        : 'This send failed before it produced a transaction. The token is still spendable and can be retried.',
+      mayClear: mayClearSignedInputs(inputsFate),
+    }
+  }
+
   const spendable = await Promise.resolve(
     isCollectableOutpointSpendable(retry.outpoint),
   ).catch(() => null)
@@ -302,8 +364,8 @@ export type SpendAttemptRetryResult =
 
 /**
  * Retry the transaction this attempt already signed when one exists. A new
- * spend is created only for an item attempt that never produced a txid; coin
- * payments are handed back to the Send screen instead.
+ * spend is created only for an item / token attempt that never produced a
+ * txid; coin payments are handed back to the Send screen instead.
  */
 export async function retrySpendAttempt(
   entry: ActivityEntry,
@@ -324,6 +386,20 @@ export async function retrySpendAttempt(
     }
   }
 
+  if (fate.retry.kind === 'send-token') {
+    if (fate.action === 'recreateItem') {
+      const sent = await sendFungible({
+        tokenId: fate.retry.tokenId,
+        amount: fate.retry.amount,
+        toAddress: fate.retry.toAddress,
+        recipientIdentityKey: fate.retry.recipientIdentityKey,
+        friendLabel: fate.retry.friendLabel,
+      })
+      return { kind: 'recreated', txid: sent.txid }
+    }
+    return rebroadcastSignedTransfer(entry, fate.retry.tokenId)
+  }
+
   if (fate.retry.kind !== 'send-collectable') {
     throw new Error('This send cannot be retried.')
   }
@@ -341,13 +417,20 @@ export async function retrySpendAttempt(
     return { kind: 'recreated', txid: sent.txid }
   }
 
+  return rebroadcastSignedTransfer(entry, fate.retry.outpoint)
+}
+
+async function rebroadcastSignedTransfer(
+  entry: ActivityEntry,
+  chartKey: string,
+): Promise<SpendAttemptRetryResult> {
   const txid = entry.txid?.trim().toLowerCase() ?? ''
   const active = getActiveWallet()
   if (!active || !/^[0-9a-f]{64}$/.test(txid)) {
-    throw new Error('The signed item transfer is no longer available to rebroadcast.')
+    throw new Error('The signed transfer is no longer available to rebroadcast.')
   }
   const chart = createActor(itemSendMachine).start()
-  chart.send({ type: 'RETRY_BROADCAST', outpoint: fate.retry.outpoint, txid })
+  chart.send({ type: 'RETRY_BROADCAST', outpoint: chartKey, txid })
   if (!maySenderBroadcast(chart.getSnapshot())) {
     chart.stop()
     throw new Error('The item send statechart refused this broadcast retry.')

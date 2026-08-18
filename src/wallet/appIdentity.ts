@@ -48,14 +48,15 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
   {
     id: 'items-send',
     label: 'Send items',
-    description: 'Transfer a collectable. Separate from Pay — auto-pay never applies.',
-    allows: ['Send 1Sat ordinals', 'Release item outputs'],
+    description:
+      'Transfer a collectable or fungible token. Separate from Pay — auto-pay never applies.',
+    allows: ['Send 1Sat ordinals', 'Send BSV-21 tokens', 'Release item / token outputs'],
   },
   {
     id: 'items-receive',
     label: 'Receive items',
-    description: 'Accept collectables into your inventory when you approve.',
-    allows: ['Receive 1Sat ordinals'],
+    description: 'Accept collectables and tokens into your inventory when you approve.',
+    allows: ['Receive 1Sat ordinals', 'Receive BSV-21 tokens'],
   },
 ]
 
@@ -181,11 +182,21 @@ export function humanActionCopy(
   if (title === 'Send item' || title === 'Confirm item send' || title === 'Release item') {
     return { eyebrow: 'Item transfer', verb: 'wants to send or release a collectable' }
   }
+  if (
+    title === 'Send token' ||
+    title === 'Confirm token send' ||
+    title === 'Release token'
+  ) {
+    return { eyebrow: 'Token transfer', verb: 'wants to send or release a fungible token' }
+  }
   if (title === 'Mint token') {
     return {
       eyebrow: 'Identity mint',
       verb: 'wants to mint a token backed by your identity',
     }
+  }
+  if (title === 'Receive token') {
+    return { eyebrow: 'Receive token', verb: 'wants to add a fungible token to your inventory' }
   }
   if (title === 'Receive item') {
     return { eyebrow: 'Receive item', verb: 'wants to add a collectable to your inventory' }

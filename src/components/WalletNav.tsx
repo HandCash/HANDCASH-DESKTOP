@@ -25,6 +25,7 @@ import {
   getSettingBackStack,
   openAppDetails,
   openCollectableDetails,
+  openFungibleDetails,
   openNavChild,
   popSettingTo,
   setNavSection,
@@ -42,6 +43,7 @@ import { InventoryPanel } from './InventoryPanel'
 import { CollectableDetailsPanel } from './CollectableDetailsPanel'
 import { FungibleDetailsPanel } from './FungibleDetailsPanel'
 import { SendCollectablePanel } from './SendCollectablePanel'
+import { SendFungiblePanel } from './SendFungiblePanel'
 import { TransactionsPanel } from './RecentActivity'
 import {
   PermissionRequestPanel,
@@ -205,7 +207,7 @@ export function WalletNav({
 
   useEffect(() => {
     const child = nav.child
-    if (!child || child.type !== 'fungible') return
+    if (!child || (child.type !== 'fungible' && child.type !== 'send-fungible')) return
     const cached =
       getFungible(child.tokenId) ??
       getCachedFungibles().find((t) => t.tokenId === child.tokenId)
@@ -276,6 +278,16 @@ export function WalletNav({
         {
           label: collectableLabel,
           onClick: () => openCollectableDetails(child.outpoint),
+        },
+        { label: 'Send' },
+      ]
+    }
+    if (child.type === 'send-fungible') {
+      return [
+        root,
+        {
+          label: fungibleLabel,
+          onClick: () => openFungibleDetails(child.tokenId),
         },
         { label: 'Send' },
       ]
@@ -360,6 +372,14 @@ export function WalletNav({
               {child.type === 'send-collectable' && (
                 <SendCollectablePanel
                   outpoint={child.outpoint}
+                  chain={profile.chain}
+                  onSent={onSent}
+                  onFail={onFail}
+                />
+              )}
+              {child.type === 'send-fungible' && (
+                <SendFungiblePanel
+                  tokenId={child.tokenId}
                   chain={profile.chain}
                   onSent={onSent}
                   onFail={onFail}

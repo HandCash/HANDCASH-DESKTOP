@@ -8,9 +8,9 @@ import {
   type FungibleToken,
 } from '../wallet/fungibles'
 import { shortIssuerLabel } from '../wallet/bsv21'
-import { clearNavChild } from '../wallet/navStore'
+import { clearNavChild, openSendFungible } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { CollectablesIcon, CopyIcon } from './icons'
+import { CollectablesIcon, CopyIcon, SendIcon } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
 
@@ -89,6 +89,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   }
 
   const amount = formatFungibleAmount(token.amt, token.dec)
+  const sendBlocked =
+    token.spendKind === 'cosigned' || token.spendKind === 'mixed'
 
   return (
     <div className="collectable-details" data-aeon-scope="fungible-details">
@@ -168,6 +170,26 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       </dl>
 
       <div className="collectable-details-actions">
+        <button
+          type="button"
+          className="btn btn-primary btn-icon"
+          disabled={sendBlocked}
+          title={
+            sendBlocked
+              ? token.spendKind === 'cosigned'
+                ? 'Cosigner required to send'
+                : 'Mixed plain / cosigned tips'
+              : `Send ${token.sym}`
+          }
+          onClick={() => {
+            if (sendBlocked) return
+            playWalletSound('soft')
+            openSendFungible(token.tokenId)
+          }}
+        >
+          <SendIcon size={14} />
+          Send token
+        </button>
         <button
           type="button"
           className="secondary-btn"

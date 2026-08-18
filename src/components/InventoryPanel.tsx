@@ -26,7 +26,7 @@ import {
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { openCollectableDetails, openSendCollectable, openFungibleDetails } from '../wallet/navStore'
+import { openCollectableDetails, openSendCollectable, openFungibleDetails, openSendFungible } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
@@ -209,10 +209,21 @@ function CollectableListItem({
 }
 
 
-function FungibleCarouselCard({ token }: { token: FungibleToken }) {
+function FungibleCarouselCard({
+  token,
+  sending,
+}: {
+  token: FungibleToken
+  sending: boolean
+}) {
   const amount = formatFungibleAmount(token.amt, token.dec)
+  const sendBlocked =
+    token.spendKind === 'cosigned' || token.spendKind === 'mixed'
   return (
-    <li className="collect-token-card">
+    <li
+      className="collect-token-card"
+      data-sending={sending ? 'true' : undefined}
+    >
       <button
         type="button"
         className="collect-token-card-main"
@@ -231,6 +242,32 @@ function FungibleCarouselCard({ token }: { token: FungibleToken }) {
         </div>
         <strong className="collect-token-card-sym">{token.sym}</strong>
         <span className="collect-token-card-amt">{amount}</span>
+      </button>
+      <button
+        type="button"
+        className="collectable-send-btn"
+        title={
+          sendBlocked
+            ? token.spendKind === 'cosigned'
+              ? 'Cosigner required to send'
+              : 'Mixed plain / cosigned tips'
+            : sending
+              ? `Sending ${token.sym}`
+              : `Send ${token.sym}`
+        }
+        aria-label={
+          sending ? `Sending ${token.sym}` : `Send ${token.sym}`
+        }
+        disabled={sending || sendBlocked}
+        onClick={(e) => {
+          e.stopPropagation()
+          if (sendBlocked) return
+          playWalletSound('soft')
+          openSendFungible(token.tokenId)
+        }}
+      >
+        <SendIcon size={14} />
+        {sending ? 'Sending' : 'Send'}
       </button>
     </li>
   )
@@ -376,7 +413,13 @@ export function InventoryPanel() {
           <div className="collect-token-carousel" role="region" aria-label="Token carousel">
             <ul className="collect-token-carousel-track">
               {tokens.map((token) => (
-                <FungibleCarouselCard key={token.tokenId} token={token} />
+                <FungibleCarouselCard
+                  key={token.tokenId}
+                  token={token}
+                  sending={
+                    sendingOutpoint != null && isOutpointSending(token.outpoint)
+                  }
+                />
               ))}
             </ul>
           </div>

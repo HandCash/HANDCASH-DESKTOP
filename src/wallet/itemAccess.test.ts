@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isBsv21SpendArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemSpendArgs,
@@ -245,6 +246,24 @@ describe('telling an item mint from an item send', () => {
       inputs: [{ outpoint: `${'ab'.repeat(32)}.0`, inputDescription: '1sat tip' }],
     }
     expect(isItemIssuanceArgs('createAction', send)).toBe(false)
+    expect(isItemSpendArgs('createAction', send)).toBe(true)
+  })
+
+  it('recognizes BSV-21 basket transfers as token spends', () => {
+    const send = {
+      description: 'Send TST',
+      labels: ['bsv21', 'handcash-send-token'],
+      inputs: [{ outpoint: `${'ab'.repeat(32)}.0`, inputDescription: 'TST tip' }],
+      outputs: [
+        {
+          lockingScript: '00',
+          satoshis: 1,
+          basket: 'bsv21',
+          tags: ['bsv21', `bsv21:${'ab'.repeat(32)}_0`],
+        },
+      ],
+    }
+    expect(isBsv21SpendArgs('createAction', send)).toBe(true)
     expect(isItemSpendArgs('createAction', send)).toBe(true)
   })
 

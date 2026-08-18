@@ -302,6 +302,95 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   return null
 }
 
+/** True when the basket is the BSV-21 fungible storage basket. */
+export function isBsv21Basket(value: unknown): boolean {
+  return (
+    typeof value === 'string' &&
+    value.trim().toLowerCase() === FUNGIBLE_STORAGE_BASKET
+  )
+}
+
+/**
+ * True when createAction / labels / outputs look like a BSV-21 fungible transfer.
+ * Checked before {@link isItemSpendArgs} so permission copy says "Send token".
+ */
+export function isBsv21SpendArgs(method: string, args: unknown): boolean {
+  if (method === 'relinquishOutput') {
+    return isBsv21Basket(asRecord(args).basket)
+  }
+  if (method !== 'createAction' && method !== 'signAction') return false
+
+  const body = asRecord(args)
+  const labels = Array.isArray(body.labels)
+    ? body.labels.filter((l): l is string => typeof l === 'string')
+    : []
+  if (
+    labels.some(
+      (l) =>
+        /^bsv21$/i.test(l) ||
+        /handcash-send-token|fungible/i.test(l),
+    )
+  ) {
+    return true
+  }
+
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as Record<string, unknown>
+    if (isBsv21Basket(out.basket)) return true
+    const tags = Array.isArray(out.tags)
+      ? out.tags.filter((t): t is string => typeof t === 'string')
+      : []
+    if (tags.some((t) => /^bsv21$/i.test(t) || /^bsv21:/i.test(t))) {
+      return true
+    }
+    if (
+      out.satoshis === 1 &&
+      typeof out.outputDescription === 'string' &&
+      /bsv-?21|fungible|token transfer/i.test(out.outputDescription)
+    ) {
+      return true
+    }
+  }
+
+  const inputs = Array.isArray(body.inputs) ? body.inputs : []
+  for (const raw of inputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const desc = (raw as { inputDescription?: unknown }).inputDescription
+    if (typeof desc === 'string' && /bsv-?21|fungible|token tip/i.test(desc)) {
+      return true
+    }
+  }
+
+  return false
+}
+
+/** Basket insertion of BSV-21 fungibles (receive / import). */
+export function isBsv21ReceiveArgs(method: string, args: unknown): boolean {
+  if (method !== 'internalizeAction') return false
+  const body = asRecord(args)
+  const labels = Array.isArray(body.labels)
+    ? body.labels.filter((l): l is string => typeof l === 'string')
+    : []
+  if (labels.some((l) => /^bsv21$/i.test(l) || /fungible/i.test(l))) {
+    return true
+  }
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as Record<string, unknown>
+    if (out.protocol === 'basket insertion') {
+      const rem =
+        out.insertionRemittance && typeof out.insertionRemittance === 'object'
+          ? (out.insertionRemittance as Record<string, unknown>)
+          : null
+      if (rem && isBsv21Basket(rem.basket)) return true
+    }
+  }
+  return false
+}
+
 /** True when createAction / labels / outputs look like an ordinal / NFT transfer. */
 export function isItemSpendArgs(method: string, args: unknown): boolean {
   if (method === 'relinquishOutput') {

@@ -39,6 +39,7 @@ const MASTER = `stateDiagram-v2
   walletNav --> settingsFlow : Settings
 
   collectablesFlow --> sendCollectable : send item
+  collectablesFlow --> sendFungible : send token
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
@@ -54,6 +55,7 @@ const MASTER = `stateDiagram-v2
   friendsFlow : Friends
   collectablesFlow : Collectables
   sendCollectable : Send item
+  sendFungible : Send token
   connectedApps : Connected apps
   connectPermission : Connect prompt
   actionPermission : Action prompt
@@ -199,12 +201,18 @@ const COLLECTABLES = `stateDiagram-v2
   direction TB
   [*] --> grid
   grid --> details : open item
+  grid --> fungibleDetails : open token
   details --> grid : back
+  fungibleDetails --> grid : back
   details --> sendCollectable : Send
+  fungibleDetails --> sendFungible : Send
   sendCollectable --> details : back / done
+  sendFungible --> fungibleDetails : back / done
   grid : Grid
   details : Details
+  fungibleDetails : Token details
   sendCollectable : Send item
+  sendFungible : Send token
 `
 
 const SEND_COLLECTABLE = `stateDiagram-v2
@@ -216,6 +224,19 @@ const SEND_COLLECTABLE = `stateDiagram-v2
   refusing --> failed
   p2pkhSend --> done : SUCCESS
   p2pkhSend --> failed : FAIL
+  done --> idle : RESET
+  failed --> idle : RESET
+`
+
+const SEND_FUNGIBLE = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> classifying : START with Bsv21SendPath
+  classifying --> plainSend : plain
+  classifying --> refusing : refuse / cosigned
+  refusing --> failed
+  plainSend --> done : SUCCESS
+  plainSend --> failed : FAIL
   done --> idle : RESET
   failed --> idle : RESET
 `
@@ -804,6 +825,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Send item',
     caption: 'collectableSendMachine — classify → p2pkhSend | refuse',
     source: SEND_COLLECTABLE,
+  },
+  {
+    id: 'sendFungible',
+    label: 'Send token',
+    caption: 'bsv21SendMachine — classify → plainSend | refuse (no cosign fallthrough)',
+    source: SEND_FUNGIBLE,
   },
   {
     id: 'sendPath',

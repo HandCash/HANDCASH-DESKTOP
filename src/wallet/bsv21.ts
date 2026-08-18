@@ -73,6 +73,8 @@ export type Bsv21Utxo = {
   issuer?: string
   /** True when Sigma address matched issuer (full vin verify optional). */
   issuerAttested?: boolean
+  /** Locking script hex when listed with `include: locking scripts`. */
+  lockingScript?: string
 }
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
@@ -509,6 +511,7 @@ export function bsv21Tags(args: {
   sym?: string
   cosign?: Bsv21Cosign
   issuer?: string
+  op?: string
 }): string[] {
   const pubkey = args.cosign ? normalizeCosignPubKey(args.cosign.pubkey) : null
   const issuer = normalizeIssuerPubKey(args.issuer)
@@ -517,6 +520,7 @@ export function bsv21Tags(args: {
     'bsv21',
     `bsv21:${tokenId}`,
     `amt:${args.amt}`,
+    ...(args.op ? [`op:${args.op}`] : []),
     ...(args.sym ? [`sym:${args.sym.slice(0, 32).toLowerCase()}`] : []),
     ...(issuer ? [`issuer:${issuer}`] : []),
     ...(pubkey ? [`cosign:${pubkey}`] : []),

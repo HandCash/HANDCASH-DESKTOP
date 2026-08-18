@@ -41,6 +41,14 @@ export type ActivityRetry =
       friendLabel?: string
     }
   | {
+      kind: 'send-token'
+      tokenId: string
+      amount: string
+      toAddress: string
+      recipientIdentityKey?: string
+      friendLabel?: string
+    }
+  | {
       kind: 'send-bsv'
       toAddress: string
       satoshis: number
@@ -181,6 +189,19 @@ function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
     return {
       kind: 'send-collectable',
       outpoint,
+      toAddress,
+      ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
+      ...(friendLabel ? { friendLabel } : {}),
+    }
+  }
+  if (row.kind === 'send-token') {
+    const tokenId = typeof row.tokenId === 'string' ? row.tokenId.trim() : ''
+    const amount = typeof row.amount === 'string' ? row.amount.trim() : ''
+    if (!tokenId || !amount) return undefined
+    return {
+      kind: 'send-token',
+      tokenId,
+      amount,
       toAddress,
       ...(recipientIdentityKey ? { recipientIdentityKey } : {}),
       ...(friendLabel ? { friendLabel } : {}),
@@ -587,25 +608,43 @@ export function noteOutboundSendPending(args: {
     ? `${args.friendLabel.trim()} (${args.to.trim()})`
     : args.to.trim()
   if (args.item) {
-    const name = args.item.name?.trim() || 'Collectable'
+    const isToken = Boolean(args.item.tokenId)
+    const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
+    const qty =
+      isToken && args.item.amt
+        ? formatActivityTokenAmt(args.item.amt, args.item.dec ?? 0)
+        : null
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'spent',
       sats: Math.max(1, Math.trunc(args.sats) || 1),
-      method: 'send-collectable',
-      note: `Sending ${name} to ${recipient}`,
+      method: isToken ? 'send-token' : 'send-collectable',
+      note: qty
+        ? `Sending ${qty} ${name} to ${recipient}`
+        : `Sending ${name} to ${recipient}`,
       status: 'pending',
       pendingId,
       item: args.item,
-      retry: {
-        kind: 'send-collectable',
-        outpoint: args.item.outpoint ?? '',
-        toAddress: args.to,
-        ...(args.recipientIdentityKey
-          ? { recipientIdentityKey: args.recipientIdentityKey }
-          : {}),
-        ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-      },
+      retry: isToken
+        ? {
+            kind: 'send-token',
+            tokenId: args.item.tokenId!,
+            amount: args.item.amt ?? '0',
+            toAddress: args.to,
+            ...(args.recipientIdentityKey
+              ? { recipientIdentityKey: args.recipientIdentityKey }
+              : {}),
+            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+          }
+        : {
+            kind: 'send-collectable',
+            outpoint: args.item.outpoint ?? '',
+            toAddress: args.to,
+            ...(args.recipientIdentityKey
+              ? { recipientIdentityKey: args.recipientIdentityKey }
+              : {}),
+            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+          },
     })
     return
   }
@@ -660,26 +699,44 @@ export function noteOutboundSendComplete(args: {
     ? `${args.friendLabel.trim()} (${args.to.trim()})`
     : args.to.trim()
   if (args.item) {
-    const name = args.item.name?.trim() || 'Collectable'
+    const isToken = Boolean(args.item.tokenId)
+    const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
+    const qty =
+      isToken && args.item.amt
+        ? formatActivityTokenAmt(args.item.amt, args.item.dec ?? 0)
+        : null
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'spent',
       sats: Math.max(1, Math.trunc(args.sats) || 1),
-      method: 'send-collectable',
-      note: `Sent ${name} to ${recipient}`,
+      method: isToken ? 'send-token' : 'send-collectable',
+      note: qty
+        ? `Sent ${qty} ${name} to ${recipient}`
+        : `Sent ${name} to ${recipient}`,
       txid,
       status: 'complete',
       pendingId,
       item: args.item,
-      retry: {
-        kind: 'send-collectable',
-        outpoint: args.item.outpoint ?? '',
-        toAddress: args.to,
-        ...(args.recipientIdentityKey
-          ? { recipientIdentityKey: args.recipientIdentityKey }
-          : {}),
-        ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
-      },
+      retry: isToken
+        ? {
+            kind: 'send-token',
+            tokenId: args.item.tokenId!,
+            amount: args.item.amt ?? '0',
+            toAddress: args.to,
+            ...(args.recipientIdentityKey
+              ? { recipientIdentityKey: args.recipientIdentityKey }
+              : {}),
+            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+          }
+        : {
+            kind: 'send-collectable',
+            outpoint: args.item.outpoint ?? '',
+            toAddress: args.to,
+            ...(args.recipientIdentityKey
+              ? { recipientIdentityKey: args.recipientIdentityKey }
+              : {}),
+            ...(args.friendLabel ? { friendLabel: args.friendLabel } : {}),
+          },
     })
     return
   }

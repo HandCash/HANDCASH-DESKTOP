@@ -5,6 +5,8 @@ import {
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
   DEFAULT_ITEM_ACCESS,
+  isBsv21ReceiveArgs,
+  isBsv21SpendArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemReceiveArgs,
@@ -529,10 +531,13 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'createAction' && isItemIssuanceArgs(method, args)) {
+    const fungible = isBsv21SpendArgs(method, args)
     const description =
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
-        : 'Mint a collectable'
+        : fungible
+          ? 'Mint a token'
+          : 'Mint a collectable'
     const outputs = Array.isArray(body.outputs) ? body.outputs : []
     const names = outputs.flatMap((raw) => {
       if (!raw || typeof raw !== 'object') return []
@@ -544,10 +549,30 @@ export function summarizeAction(method: string, args: unknown): {
       return name ? [name.slice('name:'.length)] : []
     })
     for (const name of names) details.push(`Item: ${name}`)
-    details.push('Adds a new collectable to your inventory')
+    details.push(
+      fungible
+        ? 'Adds a new fungible token to your inventory'
+        : 'Adds a new collectable to your inventory',
+    )
     details.push('Not covered by Pay or Auto-pay')
     return {
-      title: 'Mint item',
+      title: fungible ? 'Mint token' : 'Mint item',
+      summary: description,
+      details,
+    }
+  }
+
+  if (method === 'createAction' && isBsv21SpendArgs(method, args)) {
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Send a token'
+    if (Array.isArray(body.labels) && body.labels.includes('bsv21')) {
+      details.push('Type: BSV-21')
+    }
+    details.push('Not covered by Pay or Auto-pay')
+    return {
+      title: 'Send token',
       summary: description,
       details,
     }
@@ -596,6 +621,14 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'signAction' && isBsv21SpendArgs(method, args)) {
+    return {
+      title: 'Confirm token send',
+      summary: 'Finish signing a fungible token transfer',
+      details: ['Not covered by Pay or Auto-pay'],
+    }
+  }
+
   if (method === 'signAction' && isItemSpendArgs(method, args)) {
     return {
       title: 'Confirm item send',
@@ -609,6 +642,21 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Confirm payment',
       summary: 'Finish signing a payment you already started',
       details: [],
+    }
+  }
+
+  if (method === 'internalizeAction' && isBsv21ReceiveArgs(method, args)) {
+    if (Array.isArray(body.labels) && body.labels.includes('bsv21')) {
+      details.push('Type: BSV-21')
+    }
+    details.push('Adds a fungible token to your inventory')
+    return {
+      title: 'Receive token',
+      summary:
+        typeof body.description === 'string' && body.description.trim()
+          ? body.description.trim()
+          : 'Accept a token into this wallet',
+      details,
     }
   }
 
@@ -632,6 +680,14 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Accept funds',
       summary: 'Add incoming coins to your HandCash wallet',
       details: typeof body.description === 'string' ? [body.description] : [],
+    }
+  }
+
+  if (method === 'relinquishOutput' && isBsv21SpendArgs(method, args)) {
+    return {
+      title: 'Release token',
+      summary: 'Remove a fungible tip from wallet tracking',
+      details: ['Not covered by Pay or Auto-pay'],
     }
   }
 
@@ -687,7 +743,7 @@ function rememberItemActionGrant(
   method: string,
   args: unknown,
 ): void {
-  if (isItemReceiveArgs(method, args)) {
+  if (isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)) {
     patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
   }
 }
@@ -699,8 +755,8 @@ export function requestActionApproval(
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
-  const itemSpend = isItemSpendArgs(method, args)
-  const itemReceive = isItemReceiveArgs(method, args)
+  const itemSpend = isItemSpendArgs(method, args) || isBsv21SpendArgs(method, args)
+  const itemReceive = isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)
   const identityMint = isBsv21IdentityMintArgs(method, args)
 
   // Item send / receive and identity-backed token mints are never covered by

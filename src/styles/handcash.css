@@ -6545,17 +6545,28 @@ a.app-details-host:hover {
 
 .collect-token-card {
   flex: 0 0 auto;
-  width: 96px;
+  width: 104px;
   scroll-snap-align: start;
   border-radius: calc(var(--hc-radius) + 2px);
   border: 1px solid hsl(var(--border));
   background: rgba(255, 255, 255, 0.02);
   overflow: hidden;
+  display: flex;
+  flex-direction: column;
 }
 
 .collect-token-card:hover {
   border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
   background: rgba(87, 255, 151, 0.04);
+}
+
+.collect-token-card[data-sending='true'] {
+  opacity: 0.72;
+}
+
+.collect-token-card .collectable-send-btn {
+  margin: 0 8px 8px;
+  width: calc(100% - 16px);
 }
 
 .collect-token-card-main {

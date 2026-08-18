@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.255] - 2026-08-18
+
+### Added
+
+- **You can send a BSV-21 token from the wallet, the same way you send a collectable.** Tokens were listed under Collect but had no way out: a transfer could only happen through an app on the BRC-100 bridge. Token details and each card in the Collect carousel now open a Send screen with the same recipient grammar as an item send — friend, `$handle`, address, identity key, or a peer-pay URI — plus an amount field that respects the token's decimals and a Max button. The send picks tips largest-first, inscribes the transfer (and any change) as a BSV-21 output rather than a bare P2PKH, and hands the signed transfer to the same settle path items use: an identified peer receives it through their messagebox, a send to yourself settles locally, and a pasted address is broadcast by the sender. Cosigned tips (MNEE-shaped) and unrecognized locks refuse by name instead of quietly falling through to a plain spend, and a balance that mixes plain and cosigned tips says so rather than half-sending.
+
+### Changed
+
+- **An app that moves your tokens now asks to "Send token", not "Send item".** BSV-21 tips live in their own basket, but every permission prompt classified them as collectables, so a fungible transfer, receive, or release was described with item wording. Token spends, signs, receives, and releases are recognized on their own and read as tokens. Like item transfers, none of them are ever covered by Pay or Auto-pay.
+- **A token send that dies is offered the same recovery as an item send.** A `send-token` row in Activity is now a spend attempt: the wallet re-checks whether enough of that token is still spendable before offering anything, rebroadcasts the transfer it already signed when one exists, recreates the send only when nothing was signed, and keeps the row untouched while the recipient can still broadcast it. It also inherits the longer grace period item sends get, so a peer-settled transfer is not called failed while it is still in the recipient's inbox.
+
 ## [1.2.254] - 2026-08-18
 
 ### Fixed

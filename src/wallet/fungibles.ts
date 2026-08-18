@@ -41,6 +41,7 @@ import {
 import { getTokenIconDataUrl } from './tokenIconCache'
 import { cacheTokenIconFromBeef, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
+import { stampBrc164Id } from './itemAccess'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -239,6 +240,7 @@ function parseListedOutput(
     ...(cosign ? { cosign } : {}),
     ...(issuer ? { issuer } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
+    ...(raw.lockingScript ? { lockingScript: raw.lockingScript } : {}),
   }
 }
 
@@ -402,13 +404,52 @@ async function listFungiblesNow(
 }
 
 export function getFungible(tokenId: string): FungibleToken | null {
-  const id = normalizeTokenId(tokenId)
-  if (!id) return null
+  const id = normalizeTokenId(tokenId) ?? tokenId.trim().toLowerCase()
   return (
-    cached.find(
-      (t) => t.tokenId === id || t.tokenIds?.some((x) => normalizeTokenId(x) === id),
-    ) ?? null
+    cached.find((t) => t.tokenId === id || t.tokenIds?.includes(id)) ?? null
   )
+}
+
+/**
+ * Live tips for one or more token ids — used by wallet-native send to pick
+ * inputs. Includes locking scripts so cosign classification can fail closed.
+ */
+export async function listFungibleTips(
+  active: ActiveWallet,
+  opts: { tokenIds: string[] },
+): Promise<Bsv21Utxo[]> {
+  const wanted = new Set(
+    opts.tokenIds
+      .map((id) => normalizeTokenId(id) ?? id.trim().toLowerCase())
+      .filter(Boolean),
+  )
+  if (wanted.size === 0) return []
+  const listed = await active.wallet.listOutputs({
+    basket: BSV21_BASKET,
+    limit: 1000,
+    includeCustomInstructions: true,
+    includeTags: true,
+    include: 'locking scripts',
+    seekPermission: false,
+  })
+  const tips: Bsv21Utxo[] = []
+  for (const row of listed.outputs ?? []) {
+    const tip = parseListedOutput(
+      row as {
+        outpoint?: string
+        satoshis?: number
+        tags?: string[]
+        customInstructions?: string
+        lockingScript?: string
+      },
+      active.identityKey,
+    )
+    if (!tip) continue
+    if (!wanted.has(tip.tokenId)) continue
+    if ((tip.satoshis ?? 1) !== 1) continue
+    tips.push(tip)
+  }
+  return tips
 }
 
 /** Build a display row from an import candidate (before basket read). */
@@ -524,14 +565,17 @@ export async function importBsv21Tokens(
           protocol: 'basket insertion' as const,
           insertionRemittance: {
             basket: BSV21_BASKET,
-            tags: bsv21Tags({
-              tokenId: item.tokenId,
-              amt: item.amt,
-              sym: item.sym,
-              cosign,
-              // Only mirror a known issuer — never invent one on import.
-              issuer: item.issuer,
-            }),
+            tags: stampBrc164Id(
+              bsv21Tags({
+                tokenId: item.tokenId,
+                amt: item.amt,
+                sym: item.sym,
+                cosign,
+                // Only mirror a known issuer — never invent one on import.
+                issuer: item.issuer,
+                op: item.op === 'deploy+mint' ? 'deploy+mint' : 'transfer',
+              }),
+            ),
             customInstructions: buildBsv21CustomInstructions({
               tokenId: item.tokenId,
               amt: item.amt,

@@ -35,7 +35,11 @@ function isBsvPaymentAction(pending: PendingAction): boolean {
     pending.title === 'Send item' ||
     pending.title === 'Confirm item send' ||
     pending.title === 'Release item' ||
-    pending.title === 'Mint token'
+    pending.title === 'Send token' ||
+    pending.title === 'Confirm token send' ||
+    pending.title === 'Release token' ||
+    pending.title === 'Mint token' ||
+    pending.title === 'Mint item'
   ) {
     return false
   }
