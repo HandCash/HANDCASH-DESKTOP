@@ -32,10 +32,12 @@ export type ItemAccess = {
   view: 'none' | 'all' | 'filtered'
   /** Allowed collection ids when view === 'filtered'. */
   collections: string[]
-  /** Allowed creator / app ids when view === 'filtered'. */
+   /** Allowed application ids when view === 'filtered'. */
+   apps: string[]
+   /** Allowed creator ids when view === 'filtered'. */
   creators: string[]
-  /** Allowed inscription origins (`txid_vout`) when view === 'filtered'. */
-  origins: string[]
+   /** Allowed BRC-164 held-row keys when view === 'filtered'. */
+   ids: string[]
   /** May createAction / relinquish that spends an item. */
   canSend: boolean
   /** May internalize into an item basket. */
@@ -45,23 +47,28 @@ export type ItemAccess = {
 export const DEFAULT_ITEM_ACCESS: ItemAccess = {
   view: 'none',
   collections: [],
+   apps: [],
   creators: [],
-  origins: [],
+   ids: [],
   canSend: false,
   canReceive: false,
 }
 
+export type ItemViewScope = 'plain' | 'all' | 'collection' | 'app' | 'creator' | 'id'
+
 export type ItemViewRequest = {
+   scope: ItemViewScope
   collections: string[]
+   apps: string[]
   creators: string[]
-  origins: string[]
-  /** True when the app did not narrow by collection/creator/origin. */
+   ids: string[]
+   /** True for plain `1sat` or `p 1sat all`. */
   wantsAll: boolean
 }
 
 export type PBasket = {
   scheme: string
-  /** Scope token after the scheme (e.g. `*`, `collection:foo`). */
+   /** Scope token after the scheme (e.g. `all`, `collection`). */
   rest: string
 }
 
@@ -97,14 +104,13 @@ export function parsePBasket(basket: unknown): PBasket | null {
   if (!after) return null
   const sp = after.indexOf(' ')
   if (sp < 0) {
-    // `p 1sat` with no scope — treat as all
     if (!after || /\s/.test(after)) return null
-    return { scheme: after, rest: '*' }
+      return { scheme: after, rest: '' }
   }
   const scheme = after.slice(0, sp)
   const rest = after.slice(sp + 1).trim()
   if (!scheme || /\s/.test(scheme)) return null
-  return { scheme, rest: rest || '*' }
+   return { scheme, rest }
 }
 
 /** True when basket is `p …` but not a scheme we implement. */
@@ -126,88 +132,31 @@ export function isItemBasket(basket: unknown): boolean {
   return !!p && p.scheme.toLowerCase() === ITEM_SCHEME
 }
 
-function scopeFromPRest(rest: string): Pick<ItemViewRequest, 'collections' | 'creators' | 'origins' | 'wantsAll'> {
-  const token = rest.trim()
-  if (!token || token === '*') {
-    return { collections: [], creators: [], origins: [], wantsAll: true }
-  }
-  if (token.startsWith('collection:') || token.startsWith('collectionId:')) {
-    const id = token.slice(token.indexOf(':') + 1).trim()
-    return {
-      collections: id ? [id] : [],
-      creators: [],
-      origins: [],
-      wantsAll: !id,
-    }
-  }
-  if (token.startsWith('creator:') || token.startsWith('app:') || token.startsWith('author:')) {
-    const id = token.slice(token.indexOf(':') + 1).trim()
-    return {
-      collections: [],
-      creators: id ? [id] : [],
-      origins: [],
-      wantsAll: !id,
-    }
-  }
-  if (token.startsWith('origin:')) {
-    const id = token.slice('origin:'.length).trim()
-    return {
-      collections: [],
-      creators: [],
-      origins: id ? [id] : [],
-      wantsAll: !id,
-    }
-  }
-  // Unknown scope token — treat as all so the user still sees a clear prompt.
-  return { collections: [], creators: [], origins: [], wantsAll: true }
-}
-
-function tagsForScope(request: ItemViewRequest): string[] {
-  const tags: string[] = []
-  for (const c of request.collections) tags.push(`collection:${c}`)
-  for (const c of request.creators) tags.push(`creator:${c}`)
-  for (const o of request.origins) tags.push(`origin:${o}`)
-  return tags
-}
-
 export function parseItemViewRequest(args: unknown): ItemViewRequest {
   const body = asRecord(args)
   const tags = Array.isArray(body.tags)
     ? body.tags.filter((t): t is string => typeof t === 'string')
     : []
-  const collections = [
-    ...new Set(tagValues(tags, ['collection:', 'collectionId:'])),
-  ]
-  const creators = [
-    ...new Set(tagValues(tags, ['app:', 'creator:', 'author:'])),
-  ]
-  const origins = [...new Set(tagValues(tags, ['origin:']))]
-
   const p = parsePBasket(body.basket)
   if (p && p.scheme.toLowerCase() === ITEM_SCHEME) {
-    const scoped = scopeFromPRest(p.rest)
-    const mergedCollections = [...new Set([...collections, ...scoped.collections])]
-    const mergedCreators = [...new Set([...creators, ...scoped.creators])]
-    const mergedOrigins = [...new Set([...origins, ...scoped.origins])]
-    const wantsAll =
-      scoped.wantsAll &&
-      mergedCollections.length === 0 &&
-      mergedCreators.length === 0 &&
-      mergedOrigins.length === 0
+      const scope = p.rest.toLowerCase() as ItemViewScope
     return {
-      collections: mergedCollections,
-      creators: mergedCreators,
-      origins: mergedOrigins,
-      wantsAll,
+         scope,
+         collections: scope === 'collection' ? [...new Set(tagValues(tags, ['collection:']))] : [],
+         apps: scope === 'app' ? [...new Set(tagValues(tags, ['app:']))] : [],
+         creators: scope === 'creator' ? [...new Set(tagValues(tags, ['creator:']))] : [],
+         ids: scope === 'id' ? [...new Set(tagValues(tags, ['id:']))] : [],
+         wantsAll: scope === 'all',
     }
   }
 
   return {
-    collections,
-    creators,
-    origins,
-    wantsAll:
-      collections.length === 0 && creators.length === 0 && origins.length === 0,
+      scope: 'plain',
+      collections: [],
+      apps: [],
+      creators: [],
+      ids: [],
+      wantsAll: true,
   }
 }
 
@@ -218,6 +167,7 @@ export function parseItemViewRequest(args: unknown): ItemViewRequest {
 export function prepareItemBasketArgs(args: unknown): {
   args: unknown
   error?: { code: string; description: string }
+   itemViewRequest?: ItemViewRequest
 } {
   if (args == null || typeof args !== 'object' || Array.isArray(args)) {
     return { args }
@@ -236,17 +186,43 @@ export function prepareItemBasketArgs(args: unknown): {
 
   const body = { ...(args as Record<string, unknown>) }
   let changed = false
+   let itemViewRequest: ItemViewRequest | undefined
 
   if (typeof body.basket === 'string' && isItemBasket(body.basket)) {
     const p = parsePBasket(body.basket)
     if (p) {
-      const request = parseItemViewRequest(body)
-      const existing = Array.isArray(body.tags)
-        ? body.tags.filter((t): t is string => typeof t === 'string')
-        : []
+         const scope = p.rest.toLowerCase()
+         const allowedScopes = new Set(['all', 'collection', 'app', 'creator', 'id'])
+         if (!allowedScopes.has(scope) || p.rest !== scope) {
+            return {
+               args,
+               error: {
+                  code: 'INVALID_P1SAT_SCOPE',
+                  description: 'Use exactly "p 1sat all|collection|app|creator|id"; filter values belong in tags.',
+               },
+            }
+         }
+         itemViewRequest = parseItemViewRequest(body)
+         const axisValues = {
+            collection: itemViewRequest.collections,
+            app: itemViewRequest.apps,
+            creator: itemViewRequest.creators,
+            id: itemViewRequest.ids,
+         }
+         if (scope !== 'all' && axisValues[scope as keyof typeof axisValues].length === 0) {
+            return {
+               args,
+               error: {
+                  code: 'MISSING_P1SAT_SCOPE_TAG',
+                  description: `Basket "p 1sat ${scope}" requires at least one "${scope}:<value>" tag.`,
+               },
+            }
+         }
       body.basket = ITEM_STORAGE_BASKET
-      body.tags = [...new Set([...existing, ...tagsForScope(request)])]
+         body.includeTags = true
       changed = true
+      } else {
+         itemViewRequest = parseItemViewRequest(body)
     }
   }
 
@@ -273,14 +249,14 @@ export function prepareItemBasketArgs(args: unknown): {
     })
   }
 
-  return { args: changed ? body : args }
+   return { args: changed ? body : args, itemViewRequest }
 }
 
 function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only scheme "1sat" is implemented (use "p 1sat <scope>" or plain "1sat").`
+         return `Unsupported permission basket "${value}". Only scheme "1sat" is implemented.`
     }
     return null
   }
@@ -294,7 +270,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only scheme "1sat" is implemented (use "p 1sat <scope>" or plain "1sat").`
+            return `Unsupported permission basket "${child}". Only scheme "1sat" is implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err
@@ -315,6 +291,9 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
+  if (labels.some((label) => /^p 1sat input id [^\s]+$/.test(label))) {
+    return true
+  }
   if (
     labels.some((l) =>
       /^1sat$/i.test(l) || /collectable|ordinal|nft/i.test(l),
@@ -427,11 +406,14 @@ export function normalizeItemAccess(raw: unknown): ItemAccess {
     collections: Array.isArray(o.collections)
       ? o.collections.filter((c): c is string => typeof c === 'string' && !!c.trim())
       : [],
+    apps: Array.isArray(o.apps)
+      ? o.apps.filter((c): c is string => typeof c === 'string' && !!c.trim())
+      : [],
     creators: Array.isArray(o.creators)
       ? o.creators.filter((c): c is string => typeof c === 'string' && !!c.trim())
       : [],
-    origins: Array.isArray(o.origins)
-      ? o.origins.filter((c): c is string => typeof c === 'string' && !!c.trim())
+    ids: Array.isArray(o.ids)
+      ? o.ids.filter((c): c is string => typeof c === 'string' && !!c.trim())
       : [],
     canSend: !!o.canSend,
     canReceive: !!o.canReceive,
@@ -446,14 +428,16 @@ export function mergeItemViewGrant(
     return { ...current, view: 'all' }
   }
   const collections = [...new Set([...current.collections, ...request.collections])]
+  const apps = [...new Set([...current.apps, ...request.apps])]
   const creators = [...new Set([...current.creators, ...request.creators])]
-  const origins = [...new Set([...current.origins, ...request.origins])]
+  const ids = [...new Set([...current.ids, ...request.ids])]
   return {
     ...current,
     view: 'filtered',
     collections,
+    apps,
     creators,
-    origins,
+    ids,
   }
 }
 
@@ -462,70 +446,64 @@ export function itemViewGranted(access: ItemAccess, request: ItemViewRequest): b
   if (access.view === 'none') return false
   if (access.view === 'all') return true
   if (request.wantsAll) return false
-  const collectionsOk =
-    request.collections.length === 0 ||
-    request.collections.every((c) => access.collections.includes(c))
-  const creatorsOk =
-    request.creators.length === 0 ||
-    request.creators.every((c) => access.creators.includes(c))
-  const originsOk =
-    request.origins.length === 0 ||
-    request.origins.every((o) => access.origins.includes(o))
-  return collectionsOk && creatorsOk && originsOk
+  if (request.scope === 'collection') {
+    return request.collections.every((value) => access.collections.includes(value))
+  }
+  if (request.scope === 'app') {
+    return request.apps.every((value) => access.apps.includes(value))
+  }
+  if (request.scope === 'creator') {
+    return request.creators.every((value) => access.creators.includes(value))
+  }
+  if (request.scope === 'id') {
+    return request.ids.every((value) => access.ids.includes(value))
+  }
+  return false
 }
 
 export function outputMatchesItemAccess(
   access: ItemAccess,
   tags: string[] | undefined,
   customInstructions?: string,
+  request?: ItemViewRequest,
 ): boolean {
-  if (access.view === 'all') return true
   if (access.view === 'none') return false
 
   const tagList = tags ?? []
   let app: string | undefined
+  let creator: string | undefined
   let collectionId: string | undefined
-  let origin: string | undefined
+  let id: string | undefined
   for (const t of tagList) {
-    if (t.startsWith('app:') || t.startsWith('creator:') || t.startsWith('author:')) {
-      app = t.split(':').slice(1).join(':')
-    }
-    if (t.startsWith('collection:') || t.startsWith('collectionId:')) {
-      collectionId = t.split(':').slice(1).join(':')
-    }
-    if (t.startsWith('origin:')) {
-      origin = t.slice('origin:'.length)
-    }
+    if (t.startsWith('app:')) app = t.slice('app:'.length)
+    if (t.startsWith('creator:')) creator = t.slice('creator:'.length)
+    if (t.startsWith('collection:')) collectionId = t.slice('collection:'.length)
+    if (t.startsWith('id:')) id = t.slice('id:'.length)
   }
   // Remittance holds BRC-150 BEEF and can reach ~400k characters, so only pay for
   // the parse when tags left a gap in what this grant is filtered on.
-  const needsCustom = !app || !collectionId || !origin
+  const needsCustom = !app || !creator || !collectionId
   if (customInstructions && needsCustom) {
     try {
       const o = JSON.parse(customInstructions) as Record<string, unknown>
       if (typeof o.app === 'string') app = app ?? o.app
       if (typeof o.collectionId === 'string') collectionId = collectionId ?? o.collectionId
-      if (typeof o.creator === 'string') app = app ?? o.creator
-      if (typeof o.origin === 'string') origin = origin ?? o.origin
+      if (typeof o.creator === 'string') creator = creator ?? o.creator
     } catch {
       // ignore
     }
   }
 
-  const collectionOk =
-    access.collections.length === 0 ||
-    (!!collectionId && access.collections.includes(collectionId))
-  const creatorOk =
-    access.creators.length === 0 || (!!app && access.creators.includes(app))
-  const originOk =
-    access.origins.length === 0 || (!!origin && access.origins.includes(origin))
-
-  const filters: boolean[] = []
-  if (access.collections.length > 0) filters.push(collectionOk)
-  if (access.creators.length > 0) filters.push(creatorOk)
-  if (access.origins.length > 0) filters.push(originOk)
-  if (filters.length === 0) return false
-  return filters.every(Boolean)
+  if (!request || request.wantsAll) return access.view === 'all'
+  if (request.scope === 'collection') {
+    return !!collectionId && request.collections.includes(collectionId)
+  }
+  if (request.scope === 'app') return !!app && request.apps.includes(app)
+  if (request.scope === 'creator') {
+    return !!creator && request.creators.includes(creator)
+  }
+  if (request.scope === 'id') return !!id && request.ids.includes(id)
+  return false
 }
 
 export function itemAccessOriginKey(origin: string | undefined): string {

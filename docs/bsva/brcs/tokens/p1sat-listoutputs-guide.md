@@ -1,166 +1,95 @@
-# Requesting collectables from a HandCash wallet (`p 1sat` guide)
+# Requesting collectables from HandCash (BRC-165)
 
-For app developers (foxplorer, Pixel War, any BRC-100 client). This is the
-**actual `listOutputs` contract** the HandCash wallet honors today — copy the
-snippets verbatim.
+HandCash implements the BRC-165 wire proposed in
+[bsv-blockchain/BRCs#229](https://github.com/bsv-blockchain/BRCs/pull/229).
 
-Companion to [`p1sat-permission-scheme.md`](./p1sat-permission-scheme.md)
-(credits [BRCs PR #200](https://github.com/bsv-blockchain/BRCs/pull/200) as
-source material and documents HandCash deltas) and
-[`PR-200-RESPONSE.md`](./PR-200-RESPONSE.md). Storage and permissions are
-**different layers**: storage basket is always `1sat`; permission scope
-travels as `p 1sat <scope>`.
+Storage and permissions are separate:
 
----
+- Held collectables stay in basket `1sat` (BRC-147).
+- Apps request a permission axis with `p 1sat <scope>`.
+- The requested value is an ordinary tag, never part of the basket name.
 
-## TL;DR
+## View requests
 
-- **Do not invent a basket name.** `basket: "pixel foxes"` is an unknown storage
-  basket and returns **zero** outputs. There is no per-collection basket.
-- **Ask by scope with the `p 1sat …` form.** The wallet shows one permission
-  prompt scoped to what you asked for, then returns only matching items.
-- **Filter by issuer is the reliable primary.** Every collectable the wallet
-  stores is tagged `app:<issuer>`; the wallet maps a `creator:` request onto
-  that tag. Use it.
-
----
-
-## 1. Filter by issuer (recommended)
-
-`<issuerId>` is the issuer / app identifier that minted the item (the value that
-ends up as the `app:` tag on the tip, ≤ 40 chars).
-
-```ts
-const { outputs } = await wallet.listOutputs({
-  basket: 'p 1sat creator:<issuerId>', // aliases also accepted: app:… / author:…
-  include: 'locking scripts',          // or 'entire transactions' for full BEEF
-  limit: 100,
-})
-```
-
-The wallet:
-1. Normalizes `p 1sat …` onto the storage basket `1sat`.
-2. Prompts the user once: "Let <app> view items from <issuerId>".
-3. Returns only outputs whose `app:` tag (or remittance `customInstructions.app`
-   / `.creator`) equals `<issuerId>`.
-
-## 2. Filter by collection
-
-```ts
-const { outputs } = await wallet.listOutputs({
-  basket: 'p 1sat collection:<collectionId>', // alias: collectionId:<id>
-  include: 'locking scripts',
-  limit: 100,
-})
-```
-
-The wallet stamps a `collection:<id>` tag on every tip it imports or sends when
-the collection id is known, and also matches remittance
-`customInstructions.collectionId`.
-
-Caveat for **older** tips: items internalized before collection tagging shipped
-have neither the tag nor the remittance field, so they will not match a
-collection scope until they are re-imported or transferred. Issuer scope (§1)
-covers those, which is why it stays the recommended primary.
-
-## 3. One specific item (origin)
+Full inventory:
 
 ```ts
 await wallet.listOutputs({
-  basket: 'p 1sat origin:<txid>.<vout>',
+  basket: 'p 1sat all',
   include: 'locking scripts',
 })
 ```
 
-## 4. Everything the user owns
+One collection:
 
 ```ts
 await wallet.listOutputs({
-  basket: 'p 1sat *',
+  basket: 'p 1sat collection',
+  tags: ['collection:<collection-id>'],
   include: 'locking scripts',
-  limit: 100,
 })
 ```
 
----
-
-## Scope tokens the wallet parses
-
-| Scope | Meaning | Matches against |
-|-------|---------|-----------------|
-| `*` (or empty) | all collectables | — |
-| `collection:<id>` / `collectionId:<id>` | one collection | `collection:` tag or remittance `collectionId` |
-| `creator:<id>` / `app:<id>` / `author:<id>` | one issuer | `app:` tag or remittance `app` / `creator` |
-| `origin:<txid>.<vout>` | one item | `origin:` tag or remittance `origin` |
-
-Unknown scope tokens fall back to "all" so the user still gets a clear prompt.
-
-## Alternative: plain basket + tags
-
-If your client can't send the `p 1sat` form, you may query the storage basket
-directly and narrow with tags:
+One app:
 
 ```ts
 await wallet.listOutputs({
-  basket: '1sat',
-  tags: ['app:<issuerId>'],   // or ['origin:<txid>.<vout>']
-  tagQueryMode: 'all',
+  basket: 'p 1sat app',
+  tags: ['app:<app-id>'],
+  include: 'locking scripts',
 })
 ```
 
-## What comes back on each output
-
-Tags stored per collectable tip (use these to render / re-filter client-side):
-
-- `ordinal`
-- `origin:<txid>.<vout>`
-- `name:<name>` (≤ 80 chars)
-- `app:<issuer>` (≤ 40 chars, when known)
-- `content:<origin>` (for derivatives, when known)
-
-## Worked example — Pixel Foxes
-
-Issuer (`MAP.app`) is `RareDropper`; collection id is the collection root origin.
-The collection is MAP-declared, so anyone can claim membership — keep the known
-impostor origin filtered client-side.
+One creator:
 
 ```ts
-const COLLECTION_ID =
-  '1611d956f397caa80b56bc148b4bce87b54f39b234aeca4668b4d5a7785eb9fa_0'
-const ISSUER = 'RareDropper'
-const BLOCKED_ORIGINS = new Set([
-  'f427feefc17b0d946425b598dc5c34bc72aa25fd33601620756413b05330c42c_0',
-])
-
-// Issuer scope is the reliable primary; it also matches pre-tagging tips.
-const { outputs } = await wallet.listOutputs({
-  basket: `p 1sat creator:${ISSUER}`,
+await wallet.listOutputs({
+  basket: 'p 1sat creator',
+  tags: ['creator:<creator-id>'],
   include: 'locking scripts',
-  includeTags: true,
-  limit: 100,
-})
-
-const toUnderscore = (op: string) => op.replace(/\.(\d+)$/, '_$1')
-const tagValue = (tags: string[] | undefined, prefix: string) =>
-  tags?.find((t) => t.startsWith(prefix))?.slice(prefix.length) ?? ''
-
-const foxes = outputs.filter((o) => {
-  const origin = toUnderscore(tagValue(o.tags, 'origin:'))
-  if (BLOCKED_ORIGINS.has(origin)) return false
-  const collection = toUnderscore(tagValue(o.tags, 'collection:'))
-  // Tips imported before collection tagging carry no collection tag — issuer
-  // scope already constrained them, so do not drop them for a missing tag.
-  return collection === '' || collection === COLLECTION_ID
 })
 ```
 
-Swap the first call for `basket: \`p 1sat collection:${COLLECTION_ID}\`` when you
-want the wallet to scope the permission prompt to the collection instead of the
-issuer.
+One held row:
 
-## Errors
+```ts
+await wallet.listOutputs({
+  basket: 'p 1sat id',
+  tags: ['id:<brc-164-key>'],
+  include: 'locking scripts',
+})
+```
 
-- Unsupported permission scheme (e.g. `p bsv21 …` where not allowed) → HTTP 400
-  `UNSUPPORTED_P_BASKET`.
-- Unknown storage basket (`pixel foxes`, `my-collection`, …) → `200` with an
-  empty `outputs` array. Not an error — just nothing matched.
+`app:` and `creator:` are distinct. Bare `p 1sat`, unknown scopes, values
+embedded in the basket name, and non-`all` requests without a matching axis
+tag are rejected.
+
+Additional tags may narrow a request, but cannot widen it past the selected
+axis values. HandCash post-filters results to preserve that ceiling even when
+the caller uses `tagQueryMode: "any"`.
+
+## Spend requests
+
+A module-mediated spend names each held row with a BRC-164 key:
+
+```ts
+await wallet.createAction({
+  labels: ['p 1sat input id <brc-164-key>'],
+  // transaction inputs and outputs...
+})
+```
+
+Every collectable spend requires approval for that action. Pay and auto-pay
+permissions never authorize item view or item spend.
+
+## Migration from the earlier HandCash draft
+
+Replace:
+
+- `p 1sat *` → `p 1sat all`
+- `p 1sat collection:<id>` → `p 1sat collection` + `collection:<id>` tag
+- `p 1sat app:<id>` → `p 1sat app` + `app:<id>` tag
+- `p 1sat creator:<id>` → `p 1sat creator` + `creator:<id>` tag
+- `p 1sat origin:<outpoint>` → `p 1sat id` + `id:<key>` tag
+
+No third-party application shipped against the earlier HandCash wire.

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.248] - 2026-08-18
+
+### Changed
+- **P1Sat permissions now match the BRC-165 reference-wallet wire.** Collectables remain in storage basket `1sat`, while apps request `p 1sat all|collection|app|creator|id` and carry scope values in ordinary tags. Invalid or bare scopes fail closed, `app:` and `creator:` are distinct, BRC-164 id lookups stay narrowly filtered, and `p 1sat input id <key>` spends always require per-action approval outside Pay/Auto-pay.
+
 ## [1.2.247] - 2026-08-18
 
 ### Fixed

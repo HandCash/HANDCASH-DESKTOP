@@ -9,7 +9,12 @@ import {
   requestActionApproval,
   requestItemViewApproval,
 } from './permissions'
-import { isItemBasket, isItemSpendArgs, prepareItemBasketArgs } from './itemAccess'
+import {
+  isItemBasket,
+  isItemSpendArgs,
+  prepareItemBasketArgs,
+  type ItemViewRequest,
+} from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN, formatActivityTokenAmt, hasActivityItemOutpoint } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
@@ -517,6 +522,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 
   let args: unknown = undefined
+  let itemViewRequest: ItemViewRequest | undefined
   if (event.body) {
     try {
       args = JSON.parse(event.body)
@@ -539,6 +545,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       }
     }
     args = prepared.args
+    itemViewRequest = prepared.itemViewRequest
   }
 
   const originator = parseOrigin(event.headers)
@@ -639,7 +646,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         ? (args as { basket?: unknown }).basket
         : undefined
     if (isItemBasket(basket)) {
-      const viewDecision = await requestItemViewApproval(originator, args)
+      const viewDecision = await requestItemViewApproval(originator, args, itemViewRequest)
       if (viewDecision !== 'allow') {
         return {
           status: 403,
@@ -743,7 +750,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           ? (args as { basket?: unknown }).basket
           : undefined
       if (isItemBasket(basket)) {
-        result = filterItemOutputsForOrigin(originator, result)
+        result = filterItemOutputsForOrigin(originator, result, itemViewRequest)
       }
     }
 

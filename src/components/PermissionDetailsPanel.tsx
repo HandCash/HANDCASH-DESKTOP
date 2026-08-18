@@ -16,13 +16,15 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
     if (access.view === 'all') return 'Granted: all collections and creators.'
     const bits: string[] = []
     if (access.collections.length) bits.push(`collections ${access.collections.join(', ')}`)
+    if (access.apps.length) bits.push(`apps ${access.apps.join(', ')}`)
     if (access.creators.length) bits.push(`creators ${access.creators.join(', ')}`)
+    if (access.ids.length) bits.push(`${access.ids.length} item id${access.ids.length === 1 ? '' : 's'}`)
     return `Granted (filtered): ${bits.join(' · ') || 'limited'}`
   }
   if (scopeId === 'items-send') {
     return access.canSend
-      ? 'Granted — this app may send collectables you approve.'
-      : 'Not granted yet — approved when the app asks to send an item.'
+      ? 'Used — every collectable send still requires per-action approval.'
+      : 'Not used yet — every collectable send requires per-action approval.'
   }
   if (scopeId === 'items-receive') {
     return access.canReceive

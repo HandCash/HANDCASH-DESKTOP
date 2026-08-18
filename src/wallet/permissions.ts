@@ -811,8 +811,9 @@ function summarizeItemView(request: ItemViewRequest): {
     }
   }
   for (const c of request.collections) details.push(`Collection: ${c}`)
+  for (const a of request.apps) details.push(`App: ${a}`)
   for (const c of request.creators) details.push(`Creator: ${c}`)
-  for (const o of request.origins) details.push(`Origin: ${o}`)
+  for (const id of request.ids) details.push(`Item id: ${id}`)
   return {
     title: 'View items',
     summary: 'See specific collectables in this wallet',
@@ -827,14 +828,21 @@ function summarizeItemView(request: ItemViewRequest): {
 export async function requestItemViewApproval(
   origin: string | undefined,
   args: unknown,
+  preparedRequest?: ItemViewRequest,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
   const body = asRecord(args)
   if (!isItemBasket(body.basket)) return 'allow'
 
-  const request = parseItemViewRequest(args)
+  const request = preparedRequest ?? parseItemViewRequest(args)
   const access = getItemAccess(key)
   if (itemViewGranted(access, request)) return 'allow'
+  // BRC-165 `id` is a narrow row lookup, not inventory access. Record only
+  // this id-scoped grant so response filtering can enforce the same ceiling.
+  if (request.scope === 'id') {
+    patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
+    return 'allow'
+  }
 
   const { title, summary, details } = summarizeItemView(request)
 
@@ -879,16 +887,18 @@ export async function requestItemViewApproval(
 export function filterItemOutputsForOrigin(
   origin: string | undefined,
   result: unknown,
+  request?: ItemViewRequest,
 ): unknown {
   const access = getItemAccess(origin)
-  if (access.view === 'all' || access.view === 'none') return result
+  if (access.view === 'none') return result
+  if (access.view === 'all' && (!request || request.wantsAll)) return result
   if (!result || typeof result !== 'object') return result
   const body = result as { outputs?: unknown[]; totalOutputs?: number }
   if (!Array.isArray(body.outputs)) return result
   const outputs = body.outputs.filter((raw) => {
     if (!raw || typeof raw !== 'object') return false
     const o = raw as { tags?: string[]; customInstructions?: string }
-    return outputMatchesItemAccess(access, o.tags, o.customInstructions)
+    return outputMatchesItemAccess(access, o.tags, o.customInstructions, request)
   })
   return {
     ...body,

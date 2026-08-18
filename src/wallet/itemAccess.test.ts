@@ -15,104 +15,164 @@ import {
 } from './itemAccess'
 
 describe('BRC-99 p 1sat baskets', () => {
-  it('parses scheme and scope', () => {
-    expect(parsePBasket('p 1sat *')).toEqual({ scheme: '1sat', rest: '*' })
-    expect(parsePBasket('p 1sat collection:alpha')).toEqual({
+  it('parses the scheme and fixed scope token', () => {
+    expect(parsePBasket('p 1sat all')).toEqual({ scheme: '1sat', rest: 'all' })
+    expect(parsePBasket('p 1sat collection')).toEqual({
       scheme: '1sat',
-      rest: 'collection:alpha',
+      rest: 'collection',
     })
-    expect(parsePBasket('p 1sat')).toEqual({ scheme: '1sat', rest: '*' })
+    expect(parsePBasket('p 1sat')).toEqual({ scheme: '1sat', rest: '' })
     expect(parsePBasket('1sat')).toBeNull()
   })
 
-  it('treats plain 1sat and p 1sat as item baskets', () => {
+  it('recognizes plain storage and p 1sat permission baskets', () => {
     expect(isItemBasket('1sat')).toBe(true)
-    expect(isItemBasket('p 1sat *')).toBe(true)
-    expect(isItemBasket('p 1sat collection:x')).toBe(true)
+    expect(isItemBasket('p 1sat all')).toBe(true)
+    expect(isItemBasket('p 1sat collection')).toBe(true)
     expect(isItemBasket('default')).toBe(false)
   })
 
   it('rejects unsupported p schemes', () => {
     expect(isUnsupportedPBasket('p dollarToken x')).toBe(true)
-    expect(isUnsupportedPBasket('p 1sat *')).toBe(false)
+    expect(isUnsupportedPBasket('p 1sat all')).toBe(false)
     expect(isUnsupportedPBasket('1sat')).toBe(false)
   })
 
-  it('parses view scope from p basket', () => {
-    expect(parseItemViewRequest({ basket: 'p 1sat *' })).toEqual({
+  it('parses scope values from ordinary tags without merging app and creator', () => {
+    expect(parseItemViewRequest({ basket: 'p 1sat all' })).toEqual({
+      scope: 'all',
       collections: [],
+      apps: [],
       creators: [],
-      origins: [],
+      ids: [],
       wantsAll: true,
     })
-    expect(parseItemViewRequest({ basket: 'p 1sat collection:c1' })).toEqual({
+    expect(parseItemViewRequest({
+      basket: 'p 1sat collection',
+      tags: ['collection:c1'],
+    })).toEqual({
+      scope: 'collection',
       collections: ['c1'],
+      apps: [],
       creators: [],
-      origins: [],
+      ids: [],
       wantsAll: false,
     })
-    expect(parseItemViewRequest({ basket: 'p 1sat creator:handcash' })).toEqual({
+    expect(parseItemViewRequest({
+      basket: 'p 1sat app',
+      tags: ['app:wallet.example', 'creator:alice'],
+    })).toEqual({
+      scope: 'app',
       collections: [],
-      creators: ['handcash'],
-      origins: [],
+      apps: ['wallet.example'],
+      creators: [],
+      ids: [],
       wantsAll: false,
     })
-    expect(
-      parseItemViewRequest({ basket: 'p 1sat origin:ab_0' }),
-    ).toEqual({
+    expect(parseItemViewRequest({
+      basket: 'p 1sat creator',
+      tags: ['app:wallet.example', 'creator:alice'],
+    })).toEqual({
+      scope: 'creator',
       collections: [],
-      creators: [],
-      origins: ['ab_0'],
+      apps: [],
+      creators: ['alice'],
+      ids: [],
       wantsAll: false,
     })
   })
 
-  it('rewrites p basket to storage 1sat and merges tags', () => {
+  it('rewrites p basket to storage 1sat without changing caller tags', () => {
     const prepared = prepareItemBasketArgs({
-      basket: 'p 1sat collection:c1',
-      tags: ['keep'],
+      basket: 'p 1sat collection',
+      tags: ['collection:c1', 'type:image/png'],
     })
     expect(prepared.error).toBeUndefined()
     expect(prepared.args).toEqual({
       basket: '1sat',
-      tags: ['keep', 'collection:c1'],
+      tags: ['collection:c1', 'type:image/png'],
+      includeTags: true,
     })
+    expect(prepared.itemViewRequest?.scope).toBe('collection')
   })
 
-  it('errors on unsupported p baskets', () => {
-    const prepared = prepareItemBasketArgs({ basket: 'p other foo' })
-    expect(prepared.error?.code).toBe('UNSUPPORTED_P_BASKET')
+  it.each([
+    ['p 1sat', [], 'INVALID_P1SAT_SCOPE'],
+    ['p 1sat *', [], 'INVALID_P1SAT_SCOPE'],
+    ['p 1sat collection:c1', [], 'INVALID_P1SAT_SCOPE'],
+    ['p 1sat unknown', [], 'INVALID_P1SAT_SCOPE'],
+    ['p 1sat collection', [], 'MISSING_P1SAT_SCOPE_TAG'],
+    ['p 1sat app', ['creator:alice'], 'MISSING_P1SAT_SCOPE_TAG'],
+  ])('fails closed for invalid request %s', (basket, tags, code) => {
+    expect(prepareItemBasketArgs({ basket, tags }).error?.code).toBe(code)
   })
 
-  it('merges origin grants and filters outputs', () => {
+  it('errors on unsupported p schemes', () => {
+    expect(prepareItemBasketArgs({ basket: 'p other foo' }).error?.code)
+      .toBe('UNSUPPORTED_P_BASKET')
+  })
+
+  it('keeps app and creator grants distinct when filtering outputs', () => {
     const access = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, {
+      scope: 'app',
       collections: [],
+      apps: ['wallet.example'],
       creators: [],
-      origins: ['aa_0'],
+      ids: [],
       wantsAll: false,
     })
     expect(access.view).toBe('filtered')
-    expect(access.origins).toEqual(['aa_0'])
+    expect(access.apps).toEqual(['wallet.example'])
+    expect(access.creators).toEqual([])
     expect(
       itemViewGranted(access, {
+        scope: 'app',
         collections: [],
+        apps: ['wallet.example'],
         creators: [],
-        origins: ['aa_0'],
+        ids: [],
         wantsAll: false,
       }),
     ).toBe(true)
     expect(
-      outputMatchesItemAccess(access, ['origin:aa_0']),
+      outputMatchesItemAccess(access, ['app:wallet.example'], undefined, {
+        scope: 'app',
+        collections: [],
+        apps: ['wallet.example'],
+        creators: [],
+        ids: [],
+        wantsAll: false,
+      }),
     ).toBe(true)
     expect(
-      outputMatchesItemAccess(access, ['origin:bb_0']),
+      outputMatchesItemAccess(access, ['creator:wallet.example'], undefined, {
+        scope: 'app',
+        collections: [],
+        apps: ['wallet.example'],
+        creators: [],
+        ids: [],
+        wantsAll: false,
+      }),
     ).toBe(false)
   })
 
-  it('normalizes missing origins on stored access', () => {
+  it('supports narrow id-scoped grants and response filtering', () => {
+    const request = parseItemViewRequest({
+      basket: 'p 1sat id',
+      tags: ['id:row-1'],
+    })
+    const access = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, request)
+    expect(itemViewGranted(access, request)).toBe(true)
+    expect(outputMatchesItemAccess(access, ['id:row-1'], undefined, request)).toBe(true)
+    expect(outputMatchesItemAccess(access, ['id:row-2'], undefined, request)).toBe(false)
+  })
+
+  it('normalizes new grant axes on existing stored access', () => {
     expect(normalizeItemAccess({ view: 'all', canSend: true })).toMatchObject({
       view: 'all',
-      origins: [],
+      apps: [],
+      creators: [],
+      ids: [],
       canSend: true,
     })
   })
@@ -136,6 +196,13 @@ describe('telling an item mint from an item send', () => {
     expect(isItemIssuanceArgs('createAction', mint)).toBe(true)
     // Still an item action: never covered by Pay or Auto-pay.
     expect(isItemSpendArgs('createAction', mint)).toBe(true)
+  })
+
+  it('recognizes the BRC-165 held-row spend label', () => {
+    expect(isItemSpendArgs('createAction', {
+      labels: ['p 1sat input id row-1'],
+      inputs: [{ outpoint: `${'ab'.repeat(32)}.0` }],
+    })).toBe(true)
   })
 
   it('refuses issuance once a tip is being spent', () => {
