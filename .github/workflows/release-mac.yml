@@ -128,16 +128,20 @@ jobs:
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           shopt -s nullglob
-          files=(release/*.dmg release/*.zip release/*.blockmap release/latest-mac.yml)
-          if [ ${#files[@]} -eq 0 ]; then
+          artifacts=(release/*.dmg release/*.zip release/*.blockmap)
+          metadata=release/latest-mac.yml
+          if [ ${#artifacts[@]} -eq 0 ] || [ ! -f "$metadata" ]; then
             echo "No macOS artifacts found under release/" >&2
             ls -la release/ || true
             exit 1
           fi
-          for f in "${files[@]}"; do
+          for f in "${artifacts[@]}" "$metadata"; do
             name="$(basename "$f")"
             gh release delete-asset "$TAG" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
           done
-          gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber
+          # Publish immutable versioned files first. Channel metadata must become
+          # visible only after every referenced asset is fully available.
+          gh release upload "$TAG" "${artifacts[@]}" --repo "${{ github.repository }}" --clobber
+          gh release upload "$TAG" "$metadata" --repo "${{ github.repository }}" --clobber
           echo "Uploaded to $TAG:"
-          printf '  %s\n' "${files[@]}"
+          printf '  %s\n' "${artifacts[@]}" "$metadata"

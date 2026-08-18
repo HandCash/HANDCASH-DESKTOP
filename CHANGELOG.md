@@ -4,7 +4,8 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **macOS update checks no longer depend on mutable ZIP channel metadata.** BETA builds already install through an architecture-matched DMG, so Mac now discovers that versioned asset directly from GitHub and bypasses electron-updater's stale ZIP cache—the source of false SHA-512 mismatch failures.
+- **Mac release metadata is published last.** CI waits for every referenced DMG, ZIP, and blockmap upload to complete before exposing `latest-mac.yml`.
 
 ## [1.2.242] - 2026-08-17
 

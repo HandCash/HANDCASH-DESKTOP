@@ -8,6 +8,11 @@ import { shell, type BrowserWindow } from 'electron'
 import log from 'electron-log'
 import electronUpdater from 'electron-updater'
 import { durableGet, durableSet } from './durableStore.js'
+import {
+  selectMacUpdateRelease,
+  type GitHubRelease,
+  type MacUpdateRelease,
+} from './macUpdateRelease.js'
 
 const { autoUpdater } = electronUpdater
 
@@ -95,10 +100,62 @@ export function macDmgDownloadUrl(version: string): string {
   return `https://github.com/HandCash/HANDCASH-DESKTOP/releases/download/${tag}/HandCash-${semver}-${arch}-mac.dmg`
 }
 
-async function openMacDmgInstaller(version: string): Promise<void> {
-  const url = macDmgDownloadUrl(version)
+async function openMacDmgInstaller(version: string, downloadUrl?: string): Promise<void> {
+  const url = downloadUrl ?? macDmgDownloadUrl(version)
   log.info('Opening Mac DMG installer (ShipIt skipped)', { version, url })
   await shell.openExternal(url)
+}
+
+async function discoverMacUpdate(): Promise<MacUpdateRelease | null> {
+  const response = await fetch(
+    'https://api.github.com/repos/HandCash/HANDCASH-DESKTOP/releases?per_page=20',
+    {
+      headers: {
+        Accept: 'application/vnd.github+json',
+        'User-Agent': `HandCash-Desktop/${status.currentVersion}`,
+        'X-GitHub-Api-Version': '2022-11-28',
+      },
+      cache: 'no-store',
+    },
+  )
+  if (!response.ok) {
+    throw new Error(`GitHub release check failed (${response.status})`)
+  }
+  const releases = (await response.json()) as GitHubRelease[]
+  const arch = process.arch === 'arm64' ? 'arm64' : 'x64'
+  return selectMacUpdateRelease(releases, status.currentVersion, arch)
+}
+
+async function checkForMacDmgUpdate(shouldOpen: boolean): Promise<void> {
+  const release = await withTimeout(discoverMacUpdate(), CHECK_TIMEOUT_MS, 'Update check')
+  if (!release) {
+    setStatus({
+      phase: 'not-available',
+      availableVersion: null,
+      percent: null,
+      canInstall: false,
+      error: null,
+    })
+    return
+  }
+
+  setStatus({
+    phase: 'available',
+    availableVersion: release.version,
+    percent: null,
+    error: null,
+    canInstall: true,
+  })
+  if (!shouldOpen) return
+
+  await openMacDmgInstaller(release.version, release.dmgUrl)
+  setStatus({
+    phase: 'available',
+    availableVersion: release.version,
+    percent: null,
+    error: MAC_DMG_HINT,
+    canInstall: true,
+  })
 }
 
 function applyModeToUpdater(mode: UpdateMode) {
@@ -354,6 +411,13 @@ export async function checkForUpdates(opts?: {
     const shouldDownload = reason === 'manual' || mode === 'default'
     try {
       setStatus({ phase: 'checking', error: null })
+      if (macShipItUnsafe()) {
+        // Mac BETA installs use the versioned DMG directly. Avoid asking
+        // electron-updater to validate its cached ZIP against mutable channel
+        // metadata; that stale-cache path causes false sha512 mismatches.
+        await checkForMacDmgUpdate(shouldDownload)
+        return status
+      }
       // Always discover first without auto-download so a missing Linux channel
       // (or hung download) cannot pin Settings on “Checking…”.
       autoUpdater.autoDownload = false
@@ -376,37 +440,7 @@ export async function checkForUpdates(opts?: {
         return status
       }
 
-      if (macShipItUnsafe()) {
-        // Never let ShipIt touch /Applications/HandCash.app — open the DMG.
-        const version = result.updateInfo.version
-        setStatus({
-          phase: 'available',
-          availableVersion: version,
-          percent: null,
-          error: null,
-          canInstall: true,
-        })
-        if (shouldDownload) {
-          try {
-            await openMacDmgInstaller(version)
-            setStatus({
-              phase: 'available',
-              availableVersion: version,
-              percent: null,
-              error: MAC_DMG_HINT,
-              canInstall: true,
-            })
-          } catch (err) {
-            log.warn('openMacDmgInstaller failed', err)
-            setStatus({
-              phase: 'error',
-              availableVersion: version,
-              error: err instanceof Error ? err.message : String(err),
-              canInstall: true,
-            })
-          }
-        }
-      } else if (shouldDownload) {
+      if (shouldDownload) {
         setStatus({
           phase: 'downloading',
           availableVersion: result.updateInfo.version,
