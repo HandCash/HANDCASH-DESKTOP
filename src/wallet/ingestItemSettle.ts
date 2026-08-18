@@ -200,13 +200,20 @@ export async function internalizePeerItemSettle(opts: {
       itemOrigin: origin,
       outpoint: tipOp,
     })
-    announceItemsReceived([tipOp])
     scheduleHistoryBackupPush('internalizeAction')
     // Paint off the ingest critical path — listOutputs(1sat) can take seconds.
+    // Seed the card before announcing: announcing an arrival the grid cannot
+    // show yet is what left Collect empty, and spinner-less, while Activity
+    // already had the row. Seeding announces through the collectables cache,
+    // so the trailing call only covers the case where the seed was skipped.
     void import('./collectables')
-      .then(({ listCollectables }) => listCollectables(active))
+      .then(({ noteIngestedItem, listCollectables }) => {
+        noteIngestedItem({ outpoint: tipOp, chain: active.chain, origin, name })
+        announceItemsReceived([tipOp])
+        return listCollectables(active)
+      })
       .catch(() => {
-        /* paint on next poll */
+        announceItemsReceived([tipOp])
       })
     return { accepted: true, outpoints: allOps }
   } catch (err) {

@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.252] - 2026-08-18
+
+### Fixed
+- **A received collectable lands in Collect at the same moment it lands in Activity.** 1.2.250 opened the Activity row at ingest, but ingest announced the arrival before the card existed: `internalizeAction` files the basket row while the list read and the address scan behind it take seconds, so Collect stayed empty — and with no card there was nothing to carry the Verifying… spinner. The tip is now seeded into the collectables cache as soon as it is internalized, which paints the card immediately and routes the arrival through the one place allowed to announce it, so the card, the spinner, and the Activity row all appear together. The following list replaces the seeded row, and a tip that is not ours is dropped by the ownership pass rather than guessed at. A send to your own handle no longer shows the collectable twice while the outgoing tip waits to be reviewed.
+
 ## [1.2.251] - 2026-08-18
 
 ### Fixed

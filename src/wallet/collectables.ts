@@ -699,6 +699,55 @@ function resolveLiveOneSatKeys(
  */
 const firstSeenAt = new Map<string, number>()
 
+/**
+ * Paint a tip the wallet just internalized, before `listOutputs` catches up.
+ *
+ * `internalizeAction` files the basket row, but the list read and the address
+ * scan behind it take seconds; until they land, Activity shows the arrival
+ * against an empty Collect. Seeding the card also routes the arrival through
+ * `setCollectablesCache`, which is the one place allowed to announce it — that
+ * is what starts the Verifying… spinner on both the card and the Activity row.
+ *
+ * The next list replaces this row. A tip that turns out not to be ours is
+ * dropped by the ownership pass then; nothing is guessed at here.
+ */
+export function noteIngestedItem(args: {
+  outpoint: string
+  chain: Chain
+  origin?: string | null
+  name?: string | null
+}): void {
+  const target = normalizeOutpoint(args.outpoint)
+  if (!target || isItemSent(target)) return
+  const key = outpointKey(target)
+  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
+  const origin = args.origin?.trim()
+  const name = args.name?.trim()
+  const tags = [
+    'ordinal',
+    ...(origin ? [`origin:${origin.replace(/_(\d+)$/, '.$1')}`] : []),
+    ...(name ? [`name:${name}`] : []),
+  ]
+  // Judged against the scan that ran before this tip existed, it would look
+  // missing — record when we first held it so ownership grace applies.
+  firstSeenAt.set(key, Date.now())
+  // A send to our own handle leaves the outgoing tip on the list until the next
+  // ownership pass; without this the same collectable shows twice until then.
+  setCollectablesCache(
+    dedupeByOrigin(
+      [
+        toCollectable(
+          { outpoint: target, satoshis: 1, tags },
+          args.chain,
+          getResolvedInscription(target),
+        ),
+        ...cachedCollectables,
+      ],
+      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+    ),
+  )
+}
+
 function isListableItem(o: ItemOutput): boolean {
   // Tips are exactly 1 satoshi. Misfiled funds must not list.
   if ((o.satoshis ?? 1) !== 1) return false
