@@ -1,11 +1,20 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const fetchBalanceSats = vi.fn(
-  async (_wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) => {
+type BalanceRead =
+  | { kind: 'ok'; sats: number }
+  | { kind: 'unavailable'; reason: 'noWallet' | 'storageUnreadable' }
+
+const fetchBalanceRead = vi.fn(
+  async (_wallet?: unknown, opts?: { creditUnconfirmed?: boolean }): Promise<BalanceRead> => {
     void opts
-    return 12_345
+    return { kind: 'ok', sats: 12_345 }
   },
 )
+
+/** Mirror of the old numeric mock so each case reads as a plain balance. */
+function mockConfirmed(sats: number): void {
+  fetchBalanceRead.mockResolvedValue({ kind: 'ok', sats })
+}
 const assertOnlineForPayment = vi.fn(() => undefined)
 const unconfirmedChangeSats = vi.fn(async (_opts?: { needAtLeast?: number }) => 0)
 
@@ -23,8 +32,8 @@ vi.mock('./session', () => ({
     handle: 'test',
     chain: 'main',
   }),
-  fetchBalanceSats: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
-    fetchBalanceSats(wallet, opts),
+  fetchBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
+    fetchBalanceRead(wallet, opts),
 }))
 
 vi.mock('./balanceView', () => ({
@@ -52,14 +61,14 @@ vi.mock('./spendLease', () => ({
 describe('refreshSpendableBalance', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    fetchBalanceSats.mockResolvedValue(12_345)
+    mockConfirmed(12_345)
     unconfirmedChangeSats.mockResolvedValue(0)
   })
 
   it('reads confirmed toolbox balance without the unconfirmed-change scan', async () => {
     const { refreshSpendableBalance } = await import('./spendGuard')
     await expect(refreshSpendableBalance()).resolves.toBe(12_345)
-    expect(fetchBalanceSats).toHaveBeenCalledWith(
+    expect(fetchBalanceRead).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({ creditUnconfirmed: false }),
     )
@@ -68,14 +77,14 @@ describe('refreshSpendableBalance', () => {
   })
 
   it('assertSendableBalance skips the graveyard when confirmed covers the payment', async () => {
-    fetchBalanceSats.mockResolvedValue(10_000)
+    mockConfirmed(10_000)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).resolves.toBe(10_000)
     expect(unconfirmedChangeSats).not.toHaveBeenCalled()
   })
 
   it('assertSendableBalance credits unconfirmed change only for the shortfall', async () => {
-    fetchBalanceSats.mockResolvedValue(100)
+    mockConfirmed(100)
     unconfirmedChangeSats.mockResolvedValue(900)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).resolves.toBe(1_000)
@@ -83,9 +92,25 @@ describe('refreshSpendableBalance', () => {
   })
 
   it('assertSendableBalance refuses when confirmed + credit are still short', async () => {
-    fetchBalanceSats.mockResolvedValue(100)
+    mockConfirmed(100)
     unconfirmedChangeSats.mockResolvedValue(50)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
+  })
+
+  it('never spends against an unreadable balance as if the wallet were empty', async () => {
+    // Under heavy IndexedDB contention every spendable read can fail at once.
+    // Treating that as 0 reported a funded wallet as broke.
+    fetchBalanceRead.mockResolvedValue({
+      kind: 'unavailable',
+      reason: 'storageUnreadable',
+    })
+    const { assertSendableBalance, refreshSpendableBalance } = await import('./spendGuard')
+
+    await expect(assertSendableBalance(500)).rejects.toThrow(/could not be read/)
+    await expect(refreshSpendableBalance()).rejects.toThrow(/could not be read/)
+    // No "insufficient" verdict may be reached from a failed read.
+    await expect(assertSendableBalance(500)).rejects.not.toThrow(/Insufficient balance/)
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
   })
 })

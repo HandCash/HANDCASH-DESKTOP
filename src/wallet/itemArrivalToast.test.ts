@@ -81,6 +81,28 @@ describe('itemArrivalToast', () => {
     expect(String(toastSuccess.mock.calls[0]![1])).toMatch(/verified/i)
   })
 
+  it('opens a pending Activity receive row while the tip is unproven', async () => {
+    const { isItemProven } = await import('./provenCache')
+    vi.mocked(isItemProven).mockReturnValue(false)
+    const { announceItemsReceived, announceItemVerified } = await import(
+      './itemArrivalToast'
+    )
+    const { listRecentActivity } = await import('./appActivity')
+    const txid = 'e'.repeat(64)
+    const op = `${txid}.0`
+
+    announceItemsReceived([op])
+    const pending = listRecentActivity(20).find((r) => r.txid === txid)
+    expect(pending?.status).toBe('pending')
+    expect(pending?.item?.outpoint).toBe(op)
+
+    announceItemVerified(op, 'BRC-150 lineage proven')
+    const settled = listRecentActivity(20).find((r) => r.txid === txid)
+    // Settled rows drop the status field entirely — only pending/failed persist.
+    expect(settled).toBeDefined()
+    expect(settled?.status).toBeUndefined()
+  })
+
   it('does not re-toast receive across sessions for the same outpoint', async () => {
     const op = `${'c'.repeat(64)}.0`
     const first = await import('./itemArrivalToast')

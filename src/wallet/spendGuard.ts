@@ -10,7 +10,7 @@
  */
 import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
@@ -28,12 +28,29 @@ export function runExclusiveSpend<T>(
  */
 export function invalidateFundingHealCache(): void {}
 
+const BALANCE_UNREADABLE =
+  'Wallet storage is busy, so your spendable balance could not be read. Nothing was sent — try again in a moment.'
+
+/**
+ * Confirmed spendable sats, or a refusal.
+ *
+ * An unreadable balance must never be spent against as 0: that reports a funded
+ * wallet as broke and hides a storage problem behind a wrong number.
+ */
+async function readConfirmedSpendable(active: {
+  wallet: Parameters<typeof fetchBalanceRead>[0]
+}): Promise<number> {
+  const read = await fetchBalanceRead(active.wallet, { creditUnconfirmed: false })
+  if (read.kind === 'unavailable') throw new Error(BALANCE_UNREADABLE)
+  return read.sats
+}
+
 /** Local toolbox spendable sats — no network refresh, no unconfirmed credit. */
 export async function refreshSpendableBalance(): Promise<number> {
   assertOnlineForPayment()
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
-  return fetchBalanceSats(active.wallet, { creditUnconfirmed: false })
+  return readConfirmedSpendable(active)
 }
 
 /**
@@ -50,7 +67,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const confirmed = await fetchBalanceSats(active.wallet, { creditUnconfirmed: false })
+  const confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 
   let credit = 0

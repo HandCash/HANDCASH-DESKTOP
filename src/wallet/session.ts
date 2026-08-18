@@ -328,13 +328,36 @@ export async function bootWallet(args: {
  * `false` when it only needs confirmed spendable — scanning the unspendable
  * graveyard is then wasted IndexedDB work on every tap of Send.
  */
-export async function fetchBalanceSats(
+export type BalanceRead =
+  | { kind: 'ok'; sats: number }
+  /**
+   * Every spendable-read strategy failed. This is **not** proof of an empty
+   * wallet — under heavy IndexedDB contention all four can time out at once.
+   * Callers must never render or spend against this as zero.
+   */
+  | { kind: 'unavailable'; reason: 'noWallet' | 'storageUnreadable' }
+
+/**
+ * Last balance actually read from storage, for the hero number only.
+ *
+ * Showing `$0.00` because a read failed is the single most alarming thing a
+ * wallet can do, so a failed read falls back to the last real figure instead
+ * of inventing a zero. Spend gates must not use this — they take the tagged
+ * `fetchBalanceRead` and fail closed.
+ */
+let lastKnownBalanceSats: number | null = null
+
+export function lastKnownBalance(): number | null {
+  return lastKnownBalanceSats
+}
+
+export async function fetchBalanceRead(
   wallet?: Wallet | WalletInterface,
   opts?: { creditUnconfirmed?: boolean },
-): Promise<number> {
+): Promise<BalanceRead> {
   const session = getActiveWallet()
   const w = wallet ?? session?.wallet
-  if (!w) return 0
+  if (!w) return { kind: 'unavailable', reason: 'noWallet' }
   let spendable = 0
   let haveSpendable = false
   const asToolbox = w as Wallet
@@ -397,7 +420,14 @@ export async function fetchBalanceSats(
     }
   }
 
-  if (opts?.creditUnconfirmed === false) return spendable
+  // All four strategies failed. Reporting 0 here is what turned a busy-storage
+  // moment into an empty-looking wallet.
+  if (!haveSpendable) {
+    console.warn('[balance] every spendable read failed — balance unavailable')
+    return { kind: 'unavailable', reason: 'storageUnreadable' }
+  }
+
+  if (opts?.creditUnconfirmed === false) return { kind: 'ok', sats: spendable }
 
   try {
     const { unconfirmedChangeSats } = await import('./balanceView')
@@ -405,7 +435,27 @@ export async function fetchBalanceSats(
   } catch (err) {
     console.warn('[balance] unconfirmed change credit skipped', err)
   }
-  return spendable
+  lastKnownBalanceSats = spendable
+  return { kind: 'ok', sats: spendable }
+}
+
+/**
+ * Displayed balance in satoshis.
+ *
+ * An unreadable balance resolves to the last figure this wallet actually read
+ * rather than 0, so storage contention cannot make a funded wallet look empty.
+ * Confirmed-only reads (spend gates) get 0 instead — those callers must fail
+ * closed, and `spendGuard` uses `fetchBalanceRead` to refuse with a real
+ * reason rather than pretending the wallet is broke.
+ */
+export async function fetchBalanceSats(
+  wallet?: Wallet | WalletInterface,
+  opts?: { creditUnconfirmed?: boolean },
+): Promise<number> {
+  const read = await fetchBalanceRead(wallet, opts)
+  if (read.kind === 'ok') return read.sats
+  if (opts?.creditUnconfirmed === false) return 0
+  return lastKnownBalanceSats ?? 0
 }
 
 /** Below this, amounts display as sats; at/above, as BSV. */

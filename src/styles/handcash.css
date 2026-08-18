@@ -3752,7 +3752,8 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 /* Opposite corner from the send/receive badge. */
-.history-icon-wrap .collectable-verify-mark {
+.history-icon-wrap .collectable-verify-mark,
+.history-icon-wrap .history-pending-mark {
   top: -2px;
   right: -2px;
   bottom: auto;
@@ -6229,7 +6230,8 @@ a.app-details-host:hover {
 }
 
 /* Tiny corner proof mark — spinner → check → gone. */
-.collectable-verify-mark {
+.collectable-verify-mark,
+.history-pending-mark {
   position: absolute;
   right: 3px;
   bottom: 3px;
@@ -6256,7 +6258,8 @@ a.app-details-host:hover {
   height: 13px;
 }
 
-.collectable-verify-mark--busy {
+.collectable-verify-mark--busy,
+.history-pending-mark {
   color: var(--hc-accent, #57ff97);
   border-color: color-mix(in srgb, var(--hc-accent, #57ff97) 55%, hsl(var(--border)));
   background: hsl(var(--background));

@@ -1,0 +1,65 @@
+/**
+ * A wallet must never say "$0.00" because storage was busy. These cover the
+ * read contract: a total read failure is `unavailable`, and the displayed
+ * number falls back to the last figure actually read rather than zero.
+ */
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+vi.mock('./balanceView', () => ({
+  unconfirmedChangeSats: async () => 0,
+}))
+
+const BUSY = new Error('IndexedDB timed out')
+
+/** A wallet whose every balance strategy fails, like a saturated device. */
+function unreadableWallet() {
+  return {
+    balance: async () => {
+      throw BUSY
+    },
+    listOutputs: async () => {
+      throw BUSY
+    },
+  }
+}
+
+function readableWallet(sats: number) {
+  return { balance: async () => sats, listOutputs: async () => ({ outputs: [] }) }
+}
+
+describe('fetchBalanceRead', () => {
+  beforeEach(() => {
+    vi.resetModules()
+  })
+
+  it('reports unavailable instead of zero when every strategy fails', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const read = await fetchBalanceRead(unreadableWallet() as never)
+    expect(read).toEqual({ kind: 'unavailable', reason: 'storageUnreadable' })
+  })
+
+  it('reports a real zero as ok, so an empty wallet still reads as empty', async () => {
+    const { fetchBalanceRead } = await import('./session')
+    const read = await fetchBalanceRead(readableWallet(0) as never)
+    expect(read).toEqual({ kind: 'ok', sats: 0 })
+  })
+
+  it('keeps the last read figure when a later read fails', async () => {
+    const { fetchBalanceRead, fetchBalanceSats, lastKnownBalance } = await import(
+      './session'
+    )
+    await fetchBalanceRead(readableWallet(8_228_900) as never)
+    expect(lastKnownBalance()).toBe(8_228_900)
+
+    // The scary case: storage goes busy and the hero number must not drop to 0.
+    await expect(fetchBalanceSats(unreadableWallet() as never)).resolves.toBe(8_228_900)
+  })
+
+  it('fails closed to zero for confirmed-only reads used by spend gates', async () => {
+    const { fetchBalanceRead, fetchBalanceSats } = await import('./session')
+    await fetchBalanceRead(readableWallet(8_228_900) as never)
+    await expect(
+      fetchBalanceSats(unreadableWallet() as never, { creditUnconfirmed: false }),
+    ).resolves.toBe(0)
+  })
+})

@@ -16,7 +16,10 @@ import {
   clearAwaitingVerification,
   noteAwaitingVerification,
 } from './verificationProgress'
-import { noteInboundReceiveComplete } from './appActivity'
+import {
+  noteInboundReceiveComplete,
+  noteInboundReceivePending,
+} from './appActivity'
 
 const ANNOUNCED_MAX = 500
 const DURABLE_RECEIVE_KEY = 'handcash.items.receiveAnnounced.v1'
@@ -101,11 +104,18 @@ export function announceItemsReceived(outpoints: string[]): void {
     if (!noteItemReceived(op)) continue
     const key = normalize(op)
     fresh.push(key)
+    const txid = key.split('.')[0] ?? ''
     if (isItemProven(op) || verifiedThisSession.has(key)) {
       note(verifiedThisSession, op)
       clearAwaitingVerification(key)
+      // Card landed already proven — settle the Activity row in one step.
+      noteInboundReceiveComplete({ txid, item: true, outpoint: key })
     } else {
       noteAwaitingVerification(key)
+      // Open the receive row now so Activity shows "Verifying…" while BRC-150
+      // settles. announceItemVerified promotes it to complete later; upsert
+      // refuses to take an already-settled row back to pending.
+      noteInboundReceivePending({ txid, item: true, outpoint: key })
     }
   }
   if (fresh.length === 0) return

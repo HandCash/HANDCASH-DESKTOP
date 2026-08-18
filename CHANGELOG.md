@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.250] - 2026-08-18
+
+### Fixed
+- **A balance that could not be read no longer reports itself as zero.** Every spendable-read strategy can time out at once when IndexedDB is saturated, and `fetchBalanceSats` returned `0` for that case — indistinguishable from an empty wallet. A funded wallet then looked broke, and the send gate refused the payment for insufficient funds. The read is now tagged (`ok` / `unavailable`): the hero number falls back to the last figure actually read rather than inventing a zero, and spend gates take the tagged read and refuse with "wallet storage is busy — nothing was sent" instead of a wrong arithmetic error.
+- **A received collectable appears in Activity while it is being verified.** Tips discovered through the collectables cache — a peer-pay receive to your own handle, for one — only opened an Activity row once BRC-150 settled, because the row was created by the verify callback. The row is now opened the moment the card lands and shows "Verifying…", then settles in place when lineage proves; an already-proven arrival still lands settled in one step.
+- **A collectable send shows a spinner in Activity, like a receive does.** Pending sends drew no progress mark at all, so the row looked inert until it settled. The sending mark reuses the receive spinner styling but stays distinct from the verify mark, so an outgoing item is never mislabelled as verified.
+
 ## [1.2.249] - 2026-08-18
 
 ### Fixed

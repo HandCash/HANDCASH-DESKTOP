@@ -235,6 +235,9 @@ function HistoryRow({
   const showVerify = Boolean(
     !spent && !event && !inventoryProven && (showPending || (item && verifying)),
   )
+  // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
+  // never resolve into an authenticity check for the tip it just gave away.
+  const showSending = Boolean(spent && !event && showPending)
   const badgeKind = failed ? 'failed' : minted ? 'mint' : spent ? 'send' : 'receive'
   const badgeLabel = failed ? 'Failed' : minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
@@ -290,6 +293,16 @@ function HistoryRow({
             verifying={showVerify}
             outpoint={entry.item?.outpoint}
           />
+          {showSending ? (
+            <span
+              className="history-pending-mark"
+              aria-live="polite"
+              aria-label="Sending"
+              title="Sending"
+            >
+              <span className="collectable-verify-spinner" aria-hidden />
+            </span>
+          ) : null}
           {!event ? (
             <span
               className={`history-action-badge is-${badgeKind}`}
