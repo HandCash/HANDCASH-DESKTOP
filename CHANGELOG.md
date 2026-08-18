@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.254] - 2026-08-18
+
+### Fixed
+- **A collectable sent to your own handle now stays in Collect instead of vanishing.** A self-send settles on its own `selfReceive` path, not through item ingest, and that path only removed the tip it spent — the replacement tip is a different outpoint the basket has not listed yet, and the live address scan is invalidated by the send itself. Because the grid is rebuilt purely from the basket read, Collect came back one card short until a much later scan. The wallet now carries a tip it minted to itself through each rebuild until the basket returns it, and paints the card and its Verifying… spinner before the list read rather than a second behind it.
+
 ## [1.2.253] - 2026-08-18
 
 ### Fixed

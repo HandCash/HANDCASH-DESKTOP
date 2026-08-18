@@ -386,6 +386,7 @@ export function clearCollectablesCache(): void {
   cachedLiveOneSats = null
   cachedLiveAllOutpoints = null
   firstSeenAt.clear()
+  seededItems.clear()
   durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
 }
@@ -700,16 +701,52 @@ function resolveLiveOneSatKeys(
 const firstSeenAt = new Map<string, number>()
 
 /**
- * Paint a tip the wallet just internalized, before `listOutputs` catches up.
+ * Tips this wallet knows it holds before `listOutputs` will admit it.
  *
- * `internalizeAction` files the basket row, but the list read and the address
- * scan behind it take seconds; until they land, Activity shows the arrival
- * against an empty Collect. Seeding the card also routes the arrival through
- * `setCollectablesCache`, which is the one place allowed to announce it — that
- * is what starts the Verifying… spinner on both the card and the Activity row.
+ * `buildItems` rebuilds the grid purely from the basket read, so seeding a card
+ * into the cache is not enough on its own: the very next list erases it. A tip
+ * created by our own `createAction` is not a guess — we hold it — so it is
+ * carried into each rebuild until the basket returns it and the real row takes
+ * over. Bounded by {@link SEEDED_ITEM_TTL_MS} and dropped the moment the tip is
+ * spent, so a row can never outlive the truth.
+ */
+const seededItems = new Map<string, ItemOutput>()
+
+/** How long a locally seeded tip is carried before the basket must confirm it. */
+const SEEDED_ITEM_TTL_MS = 5 * 60_000
+
+/** Seeded rows the basket has not returned yet, minus anything already spent. */
+function pendingSeededItems(outputs: ItemOutput[], now: number): ItemOutput[] {
+  if (seededItems.size === 0) return []
+  const listed = new Set(outputs.map((o) => outpointKey(o.outpoint)))
+  const pending: ItemOutput[] = []
+  for (const [key, output] of seededItems) {
+    const seenAt = firstSeenAt.get(key) ?? 0
+    if (listed.has(key) || isItemSent(output.outpoint)) {
+      seededItems.delete(key)
+      continue
+    }
+    if (now - seenAt >= SEEDED_ITEM_TTL_MS) {
+      seededItems.delete(key)
+      continue
+    }
+    pending.push(output)
+  }
+  return pending
+}
+
+/**
+ * Paint a tip the wallet just took custody of, before `listOutputs` catches up.
  *
- * The next list replaces this row. A tip that turns out not to be ours is
- * dropped by the ownership pass then; nothing is guessed at here.
+ * Whether it arrived by `internalizeAction` or by a send to our own handle, the
+ * basket read and the address scan behind it take seconds; until they land,
+ * Activity shows the arrival against a Collect grid that is missing the card.
+ * Seeding also routes the arrival through `setCollectablesCache`, which is the
+ * one place allowed to announce it — that is what starts the Verifying… spinner
+ * on both the card and the Activity row.
+ *
+ * A tip that turns out not to be ours is dropped by the ownership pass; nothing
+ * is guessed at here.
  */
 export function noteIngestedItem(args: {
   outpoint: string
@@ -720,7 +757,6 @@ export function noteIngestedItem(args: {
   const target = normalizeOutpoint(args.outpoint)
   if (!target || isItemSent(target)) return
   const key = outpointKey(target)
-  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
   const origin = args.origin?.trim()
   const name = args.name?.trim()
   const tags = [
@@ -728,19 +764,18 @@ export function noteIngestedItem(args: {
     ...(origin ? [`origin:${origin.replace(/_(\d+)$/, '.$1')}`] : []),
     ...(name ? [`name:${name}`] : []),
   ]
+  const output: ItemOutput = { outpoint: target, satoshis: 1, tags }
   // Judged against the scan that ran before this tip existed, it would look
   // missing — record when we first held it so ownership grace applies.
-  firstSeenAt.set(key, Date.now())
+  if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
+  seededItems.set(key, output)
+  if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
   setCollectablesCache(
     dedupeByOrigin(
       [
-        toCollectable(
-          { outpoint: target, satoshis: 1, tags },
-          args.chain,
-          getResolvedInscription(target),
-        ),
+        toCollectable(output, args.chain, getResolvedInscription(target)),
         ...cachedCollectables,
       ],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
@@ -1584,6 +1619,12 @@ async function listCollectablesNow(
     const key = outpointKey(o.outpoint)
     if (!firstSeenAt.has(key)) firstSeenAt.set(key, seenNow)
   }
+
+  // A tip we minted to ourselves is in hand before the basket will list it.
+  // Rebuilding from the read alone is what dropped the card on a send to your
+  // own handle: the spent tip leaves, the replacement is not listed yet, and
+  // Collect comes back one card short until a later scan.
+  outputs = [...outputs, ...pendingSeededItems(outputs, seenNow)]
 
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:
   // keepLive | graceHold | keepCovenant | ghostDrop — only ghostDrop relinquish.
@@ -2483,11 +2524,19 @@ export async function sendCollectable(args: {
             setCollectablesCache(
               cachedCollectables.filter((i) => i.outpoint !== outpoint),
             )
-            scheduleHistoryBackupPush('sendCollectable')
-            await listCollectables(wallet).catch((err) => {
-              console.warn('[collectables] post-send refresh failed', err)
-            })
             if (selfReceive) {
+              // The line above drops the tip we spent; the one we now hold is a
+              // different outpoint the basket has not listed yet, and the live
+              // scan was invalidated a few lines up. Seed it so Collect keeps
+              // the card instead of coming back one short, and announce before
+              // the list read rather than a second behind it, so the card and
+              // its Verifying… spinner appear together.
+              noteIngestedItem({
+                outpoint: newTip,
+                chain: wallet.chain,
+                origin,
+                name,
+              })
               announceItemsReceived([newTip])
               try {
                 playWalletSound('receive')
@@ -2503,6 +2552,10 @@ export async function sendCollectable(args: {
                 // Node tests / no DOM
               }
             }
+            scheduleHistoryBackupPush('sendCollectable')
+            await listCollectables(wallet).catch((err) => {
+              console.warn('[collectables] post-send refresh failed', err)
+            })
             chart.send({ type: 'SUCCESS', txid })
             chart.stop()
             return { txid }
