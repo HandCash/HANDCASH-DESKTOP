@@ -32,14 +32,12 @@ export type ItemAccess = {
   view: 'none' | 'all' | 'filtered'
   /** Allowed collection ids when view === 'filtered'. */
   collections: string[]
-   /** Allowed application ids when view === 'filtered'. */
-   apps: string[]
-   /** Allowed creator ids when view === 'filtered'. */
+  /** Allowed application ids when view === 'filtered'. */
+  apps: string[]
+  /** Allowed creator ids when view === 'filtered'. */
   creators: string[]
-   /** Allowed BRC-164 held-row keys when view === 'filtered'. */
-   ids: string[]
-  /** May createAction / relinquish that spends an item. */
-  canSend: boolean
+  /** Allowed BRC-164 held-row keys when view === 'filtered'. */
+  ids: string[]
   /** May internalize into an item basket. */
   canReceive: boolean
 }
@@ -47,28 +45,27 @@ export type ItemAccess = {
 export const DEFAULT_ITEM_ACCESS: ItemAccess = {
   view: 'none',
   collections: [],
-   apps: [],
+  apps: [],
   creators: [],
-   ids: [],
-  canSend: false,
+  ids: [],
   canReceive: false,
 }
 
 export type ItemViewScope = 'plain' | 'all' | 'collection' | 'app' | 'creator' | 'id'
 
 export type ItemViewRequest = {
-   scope: ItemViewScope
+  scope: ItemViewScope
   collections: string[]
-   apps: string[]
+  apps: string[]
   creators: string[]
-   ids: string[]
-   /** True for plain `1sat` or `p 1sat all`. */
+  ids: string[]
+  /** True for plain `1sat` or `p 1sat all`. */
   wantsAll: boolean
 }
 
 export type PBasket = {
   scheme: string
-   /** Scope token after the scheme (e.g. `all`, `collection`). */
+  /** Scope token after the scheme (e.g. `all`, `collection`). */
   rest: string
 }
 
@@ -77,6 +74,30 @@ function asRecord(args: unknown): Record<string, unknown> {
     return args as Record<string, unknown>
   }
   return {}
+}
+
+/** Stamp a BRC-164 held-row key unless the writer already supplied one. */
+export function stampBrc164Id(tags: unknown): string[] {
+  const current = Array.isArray(tags)
+    ? tags.filter((tag): tag is string => typeof tag === 'string')
+    : []
+  if (current.some((tag) => tag.toLowerCase().startsWith('id:') && tag.length > 3)) {
+    return current
+  }
+  const key = globalThis.crypto.randomUUID().replaceAll('-', '').toLowerCase()
+  return [...current, `id:${key}`]
+}
+
+/** BRC-165 held-row keys named by this action's spend labels. */
+export function p1SatSpendIds(args: unknown): string[] {
+  const labels = asRecord(args).labels
+  if (!Array.isArray(labels)) return []
+  const ids = labels.flatMap((label) => {
+    if (typeof label !== 'string') return []
+    const match = /^p 1sat input id ([^\s]+)$/.exec(label)
+    return match?.[1] ? [match[1].toLowerCase()] : []
+  })
+  return [...new Set(ids)]
 }
 
 function tagValues(tags: string[], prefixes: string[]): string[] {
@@ -110,7 +131,7 @@ export function parsePBasket(basket: unknown): PBasket | null {
   const scheme = after.slice(0, sp)
   const rest = after.slice(sp + 1).trim()
   if (!scheme || /\s/.test(scheme)) return null
-   return { scheme, rest }
+  return { scheme, rest }
 }
 
 /** True when basket is `p …` but not a scheme we implement. */
@@ -230,8 +251,9 @@ export function prepareItemBasketArgs(args: unknown): {
     body.outputs = body.outputs.map((raw) => {
       if (!raw || typeof raw !== 'object') return raw
       const out = { ...(raw as Record<string, unknown>) }
-      if (typeof out.basket === 'string' && isItemBasket(out.basket) && parsePBasket(out.basket)) {
-        out.basket = ITEM_STORAGE_BASKET
+      if (typeof out.basket === 'string' && isItemBasket(out.basket)) {
+        if (parsePBasket(out.basket)) out.basket = ITEM_STORAGE_BASKET
+        out.tags = stampBrc164Id(out.tags)
         changed = true
       }
       if (out.protocol === 'basket insertion') {
@@ -239,8 +261,9 @@ export function prepareItemBasketArgs(args: unknown): {
           out.insertionRemittance && typeof out.insertionRemittance === 'object'
             ? { ...(out.insertionRemittance as Record<string, unknown>) }
             : null
-        if (rem && typeof rem.basket === 'string' && isItemBasket(rem.basket) && parsePBasket(rem.basket)) {
-          rem.basket = ITEM_STORAGE_BASKET
+        if (rem && typeof rem.basket === 'string' && isItemBasket(rem.basket)) {
+          if (parsePBasket(rem.basket)) rem.basket = ITEM_STORAGE_BASKET
+          rem.tags = stampBrc164Id(rem.tags)
           out.insertionRemittance = rem
           changed = true
         }
@@ -249,14 +272,14 @@ export function prepareItemBasketArgs(args: unknown): {
     })
   }
 
-   return { args: changed ? body : args, itemViewRequest }
+  return { args: changed ? body : args, itemViewRequest }
 }
 
 function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-         return `Unsupported permission basket "${value}". Only scheme "1sat" is implemented.`
+      return `Unsupported permission basket "${value}". Only scheme "1sat" is implemented.`
     }
     return null
   }
@@ -270,7 +293,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-            return `Unsupported permission basket "${child}". Only scheme "1sat" is implemented.`
+        return `Unsupported permission basket "${child}". Only scheme "1sat" is implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err
@@ -291,7 +314,7 @@ export function isItemSpendArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
-  if (labels.some((label) => /^p 1sat input id [^\s]+$/.test(label))) {
+  if (p1SatSpendIds(args).length > 0) {
     return true
   }
   if (
@@ -415,7 +438,6 @@ export function normalizeItemAccess(raw: unknown): ItemAccess {
     ids: Array.isArray(o.ids)
       ? o.ids.filter((c): c is string => typeof c === 'string' && !!c.trim())
       : [],
-    canSend: !!o.canSend,
     canReceive: !!o.canReceive,
   }
 }

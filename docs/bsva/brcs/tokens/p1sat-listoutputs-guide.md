@@ -75,12 +75,14 @@ A module-mediated spend names each held row with a BRC-164 key:
 ```ts
 await wallet.createAction({
   labels: ['p 1sat input id <brc-164-key>'],
-  // transaction inputs and outputs...
+  inputs: [{ outpoint: '<the row carrying id:<brc-164-key>>', /* unlock data */ }],
+  // transaction outputs...
 })
 ```
 
-Every collectable spend requires approval for that action. Pay and auto-pay
-permissions never authorize item view or item spend.
+The label must resolve to exactly one held row, and that row must be an explicit
+input in the action. Every collectable spend requires approval for that action.
+Pay and auto-pay permissions never authorize item view or item spend.
 
 ## Migration from the earlier HandCash draft
 

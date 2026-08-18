@@ -30,6 +30,7 @@ import {
 } from './oneSatImportGuard'
 import { yieldToUi } from './yieldToUi'
 import { mapPool } from './asyncPool'
+import { stampBrc164Id } from './itemAccess'
 import {
   getResolvedInscription,
   rememberResolvedInscription,
@@ -1091,7 +1092,7 @@ export async function importOneSatOrdinals(
           protocol: 'basket insertion' as const,
           insertionRemittance: {
             basket: '1sat',
-            tags: [
+            tags: stampBrc164Id([
               'ordinal',
               `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
               ...(item.name ? [`name:${item.name.slice(0, 80)}`] : []),
@@ -1099,7 +1100,7 @@ export async function importOneSatOrdinals(
               ...(item.collectionId
                 ? [`collection:${item.collectionId.slice(0, 80)}`]
                 : []),
-            ],
+            ]),
             customInstructions: buildInternalizeCustomInstructions({
               origin,
               name: item.name ?? 'Collectable',

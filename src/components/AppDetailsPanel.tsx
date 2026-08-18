@@ -122,7 +122,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
                   scope.id === 'items-view'
                     ? itemAccess.view !== 'none'
                     : scope.id === 'items-send'
-                      ? itemAccess.canSend
+                      ? true
                       : scope.id === 'items-receive'
                         ? itemAccess.canReceive
                         : true

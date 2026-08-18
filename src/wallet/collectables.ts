@@ -39,6 +39,7 @@ import { isBsv21Mime } from './bsv21'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
+import { stampBrc164Id } from './itemAccess'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
   clearAwaitingVerification,
@@ -2283,7 +2284,7 @@ export async function sendCollectable(args: {
             }
           }
 
-          const tags = [
+          const tags = stampBrc164Id([
             'ordinal',
             `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
             `name:${name.slice(0, 80)}`,
@@ -2294,7 +2295,7 @@ export async function sendCollectable(args: {
             ...(content
               ? [`content:${content.replace(/_(\d+)$/, '.$1')}`]
               : []),
-          ]
+          ])
 
           const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
           const [tipBeefBin, live] = await Promise.all([

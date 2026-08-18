@@ -22,6 +22,7 @@ import { announceItemsReceived } from './itemArrivalToast'
 import { noteInboundReceiveComplete, noteInboundReceivePending, clearInboundReceivePending } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
+import { stampBrc164Id } from './itemAccess'
 
 export type IngestItemSettleResult = {
   accepted: boolean
@@ -160,12 +161,12 @@ export async function internalizePeerItemSettle(opts: {
         protocol: 'basket insertion',
         insertionRemittance: {
           basket: '1sat',
-          tags: [
+          tags: stampBrc164Id([
             'ordinal',
             `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
             ...(name ? [`name:${name.slice(0, 80)}`] : []),
             ...(app ? [`app:${app.slice(0, 40)}`] : []),
-          ],
+          ]),
           customInstructions: buildInternalizeCustomInstructions({
             origin,
             name,

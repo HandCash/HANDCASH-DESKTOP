@@ -687,10 +687,6 @@ function rememberItemActionGrant(
   method: string,
   args: unknown,
 ): void {
-  if (isItemSpendArgs(method, args)) {
-    patchItemAccess(origin, (cur) => ({ ...cur, canSend: true }))
-    return
-  }
   if (isItemReceiveArgs(method, args)) {
     patchItemAccess(origin, (cur) => ({ ...cur, canReceive: true }))
   }

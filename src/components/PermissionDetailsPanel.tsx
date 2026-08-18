@@ -22,9 +22,7 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
     return `Granted (filtered): ${bits.join(' · ') || 'limited'}`
   }
   if (scopeId === 'items-send') {
-    return access.canSend
-      ? 'Used — every collectable send still requires per-action approval.'
-      : 'Not used yet — every collectable send requires per-action approval.'
+    return 'Every collectable send requires per-action approval.'
   }
   if (scopeId === 'items-receive') {
     return access.canReceive

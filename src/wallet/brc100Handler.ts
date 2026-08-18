@@ -12,6 +12,7 @@ import {
 import {
   isItemBasket,
   isItemSpendArgs,
+  p1SatSpendIds,
   prepareItemBasketArgs,
   type ItemViewRequest,
 } from './itemAccess'
@@ -82,6 +83,52 @@ function parseOrigin(headers: Record<string, string>): string | undefined {
 
 function methodFromPath(path: string): string {
   return path.replace(/^\//, '').split('?')[0] || ''
+}
+
+function normalizeOutpoint(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+  return /^[0-9a-f]{64}\.\d+$/.test(normalized) ? normalized : null
+}
+
+/**
+ * Bind every BRC-165 id label to exactly one held `1sat` row and to an input
+ * in this action. This prevents a label approval from authorizing a different
+ * spend set than the row the user saw.
+ */
+async function verifyP1SatSpendLabels(
+  wallet: WalletInterface,
+  args: unknown,
+): Promise<void> {
+  const ids = p1SatSpendIds(args)
+  if (ids.length === 0) return
+  const body = args && typeof args === 'object' && !Array.isArray(args)
+    ? (args as { inputs?: unknown[] })
+    : {}
+  const actionInputs = new Set(
+    (body.inputs ?? []).flatMap((raw) => {
+      if (!raw || typeof raw !== 'object') return []
+      const outpoint = normalizeOutpoint((raw as { outpoint?: unknown }).outpoint)
+      return outpoint ? [outpoint] : []
+    }),
+  )
+  for (const id of ids) {
+    const listed = await wallet.listOutputs({
+      basket: '1sat',
+      tags: [`id:${id}`],
+      tagQueryMode: 'all',
+      limit: 2,
+      includeTags: true,
+      seekPermission: false,
+    })
+    if (listed.outputs.length !== 1) {
+      throw new Error(`BRC-165 item id "${id}" does not resolve to exactly one held row`)
+    }
+    const heldOutpoint = normalizeOutpoint(listed.outputs[0]?.outpoint)
+    if (!heldOutpoint || !actionInputs.has(heldOutpoint)) {
+      throw new Error(`BRC-165 item id "${id}" is not an input in this action`)
+    }
+  }
 }
 
 /** Cache image-inscription outputs we just authored (BSV-21 ticker icons). */
@@ -601,6 +648,20 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 
   if (isActionMethod(method)) {
+    if (method === 'createAction' && p1SatSpendIds(args).length > 0) {
+      try {
+        await verifyP1SatSpendLabels(active.wallet, args)
+      } catch (err) {
+        return {
+          status: 400,
+          body: JSON.stringify({
+            status: 'error',
+            code: 'INVALID_P1SAT_SPEND',
+            description: err instanceof Error ? err.message : String(err),
+          }),
+        }
+      }
+    }
     if (method === 'createAction' || method === 'signAction') {
       try {
         assertOnlineForPayment()

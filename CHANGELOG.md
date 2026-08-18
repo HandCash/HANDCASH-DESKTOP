@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.249] - 2026-08-18
+
+### Fixed
+- **Complete the BRC-165 held-row contract.** HandCash now stamps BRC-164 `id:` keys when collectables enter custody, resolves every `p 1sat input id <key>` label to exactly one held row and action input, removes the obsolete standing send grant, and advertises BRC-164/165 scopes through bridge capabilities.
+
 ## [1.2.248] - 2026-08-18
 
 ### Changed

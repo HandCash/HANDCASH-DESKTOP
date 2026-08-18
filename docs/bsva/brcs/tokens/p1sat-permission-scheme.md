@@ -37,8 +37,10 @@ The shared Desktop/Mobile wallet core:
 4. Stores collection/app/creator/id-scoped view grants independently.
 5. Auto-allows only the narrow `id:<key>` lookup and records that id-scoped
    ceiling for response filtering.
-6. Classifies `p 1sat input id <key>` as an item spend, which always bypasses
-   pay/auto-pay and reaches per-action approval.
+6. Stamps a BRC-164 `id:` key when a tip enters custody.
+7. Resolves every `p 1sat input id <key>` label to exactly one held row and
+   requires that row to be an explicit action input before per-action approval.
+8. Advertises BRC-164/165 scopes and spend labels in bridge capabilities.
 
 See [`p1sat-listoutputs-guide.md`](./p1sat-listoutputs-guide.md) for app-facing
 examples.

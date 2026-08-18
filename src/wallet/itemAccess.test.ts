@@ -10,7 +10,9 @@ import {
   outputMatchesItemAccess,
   parseItemViewRequest,
   parsePBasket,
+  p1SatSpendIds,
   prepareItemBasketArgs,
+  stampBrc164Id,
   DEFAULT_ITEM_ACCESS,
 } from './itemAccess'
 
@@ -173,8 +175,38 @@ describe('BRC-99 p 1sat baskets', () => {
       apps: [],
       creators: [],
       ids: [],
-      canSend: true,
     })
+  })
+
+  it('stamps a stable BRC-164 id without replacing a writer-supplied key', () => {
+    const stamped = stampBrc164Id(['ordinal'])
+    expect(stamped).toHaveLength(2)
+    expect(stamped[1]).toMatch(/^id:[0-9a-f]{32}$/)
+    expect(stampBrc164Id(['ordinal', 'id:held-row'])).toEqual([
+      'ordinal',
+      'id:held-row',
+    ])
+  })
+
+  it('stamps item outputs and basket insertion remittances', () => {
+    const prepared = prepareItemBasketArgs({
+      outputs: [
+        { basket: '1sat', tags: ['ordinal'] },
+        {
+          protocol: 'basket insertion',
+          insertionRemittance: { basket: '1sat', tags: ['ordinal'] },
+        },
+      ],
+    })
+    const outputs = (prepared.args as { outputs: Array<Record<string, unknown>> }).outputs
+    expect(outputs[0]?.tags).toEqual([
+      'ordinal',
+      expect.stringMatching(/^id:[0-9a-f]{32}$/),
+    ])
+    expect((outputs[1]?.insertionRemittance as { tags: string[] }).tags).toEqual([
+      'ordinal',
+      expect.stringMatching(/^id:[0-9a-f]{32}$/),
+    ])
   })
 })
 
@@ -199,10 +231,12 @@ describe('telling an item mint from an item send', () => {
   })
 
   it('recognizes the BRC-165 held-row spend label', () => {
-    expect(isItemSpendArgs('createAction', {
+    const args = {
       labels: ['p 1sat input id row-1'],
       inputs: [{ outpoint: `${'ab'.repeat(32)}.0` }],
-    })).toBe(true)
+    }
+    expect(p1SatSpendIds(args)).toEqual(['row-1'])
+    expect(isItemSpendArgs('createAction', args)).toBe(true)
   })
 
   it('refuses issuance once a tip is being spent', () => {
