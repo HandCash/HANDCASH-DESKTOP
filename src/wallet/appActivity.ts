@@ -524,23 +524,47 @@ export function noteInboundReceivePending(args: {
   itemName?: string
   itemOrigin?: string
   outpoint?: string
+  token?: {
+    tokenId: string
+    amount: string
+    sym: string
+    dec: number
+    icon?: string
+  }
 }): void {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
   if (isGhostTxSuppressed(txid)) return
   if (args.item) {
-    const name = args.itemName?.trim() || 'Collectable'
-    const origin = args.itemOrigin?.trim() || `${txid}_0`
+    const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
+    const origin =
+      args.token?.tokenId?.trim() ||
+      args.itemOrigin?.trim() ||
+      `${txid}_0`
     const outpoint = args.outpoint?.trim() || `${txid}.0`
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: 1,
-      method: 'receive-collectable',
-      note: `Received ${name}`,
+      method: args.token ? 'receive-token' : 'receive-collectable',
+      note: args.token
+        ? `Receiving ${formatActivityTokenAmt(args.token.amount, args.token.dec)} ${name}`
+        : `Received ${name}`,
       txid,
       status: 'pending',
-      item: { name, origin, outpoint },
+      item: {
+        name,
+        origin,
+        outpoint,
+        ...(args.token
+          ? {
+              tokenId: args.token.tokenId,
+              amt: args.token.amount,
+              dec: args.token.dec,
+              ...(args.token.icon ? { icon: args.token.icon } : {}),
+            }
+          : {}),
+      },
     })
     return
   }
@@ -563,22 +587,46 @@ export function noteInboundReceiveComplete(args: {
   itemName?: string
   itemOrigin?: string
   outpoint?: string
+  token?: {
+    tokenId: string
+    amount: string
+    sym: string
+    dec: number
+    icon?: string
+  }
 }): void {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
   if (args.item) {
-    const name = args.itemName?.trim() || 'Collectable'
-    const origin = args.itemOrigin?.trim() || `${txid}_0`
+    const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
+    const origin =
+      args.token?.tokenId?.trim() ||
+      args.itemOrigin?.trim() ||
+      `${txid}_0`
     const outpoint = args.outpoint?.trim() || `${txid}.0`
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
       sats: 1,
-      method: 'receive-collectable',
-      note: `Received ${name}`,
+      method: args.token ? 'receive-token' : 'receive-collectable',
+      note: args.token
+        ? `Received ${formatActivityTokenAmt(args.token.amount, args.token.dec)} ${name}`
+        : `Received ${name}`,
       txid,
       status: 'complete',
-      item: { name, origin, outpoint },
+      item: {
+        name,
+        origin,
+        outpoint,
+        ...(args.token
+          ? {
+              tokenId: args.token.tokenId,
+              amt: args.token.amount,
+              dec: args.token.dec,
+              ...(args.token.icon ? { icon: args.token.icon } : {}),
+            }
+          : {}),
+      },
     })
     return
   }

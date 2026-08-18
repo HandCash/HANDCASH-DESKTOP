@@ -19,6 +19,35 @@ describe('message transport envelopes', () => {
     expect(decodeMessageBody('hello')).toEqual({ kind: 'text', text: 'hello' })
   })
 
+  it('round-trips tagged BSV-21 settle metadata', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const decoded = decodeMessageBody(
+      encodeMessageBody({
+        kind: 'tip',
+        text: 'Sent you TST',
+        meta: {
+          txid: 'cd'.repeat(32),
+          item: true,
+          asset: {
+            kind: 'fungible',
+            tokenId,
+            amount: '125',
+            sym: 'TST',
+            dec: 2,
+          },
+        },
+      }),
+    )
+    expect(decoded.meta?.item).toBe(true)
+    expect(decoded.meta?.asset).toEqual({
+      kind: 'fungible',
+      tokenId,
+      amount: '125',
+      sym: 'TST',
+      dec: 2,
+    })
+  })
+
   it('round-trips a sub-cent tip as a semantic card', () => {
     const decoded = decodeMessageBody(
       encodeMessageBody({

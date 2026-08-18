@@ -19,6 +19,8 @@ const mocks = vi.hoisted(() => ({
   getTxByTxid: vi.fn(),
   keepChangeOfSignedTx: vi.fn(),
   hideSpentOutpoints: vi.fn(),
+  getFungible: vi.fn(),
+  sendFungible: vi.fn(),
 }))
 
 vi.mock('./sentItemGuard', () => ({
@@ -34,6 +36,15 @@ vi.mock('./legacyScan', async (importOriginal) => ({
 vi.mock('./collectables', () => ({
   isCollectableOutpointSpendable: mocks.isCollectableOutpointSpendable,
   sendCollectable: mocks.sendCollectable,
+}))
+
+vi.mock('./fungibles', () => ({
+  getFungible: mocks.getFungible,
+  getCachedFungibles: () => [],
+}))
+
+vi.mock('./sendFungible', () => ({
+  sendFungible: mocks.sendFungible,
 }))
 
 vi.mock('./beefCache', () => ({
@@ -134,6 +145,35 @@ function paymentAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
   }
 }
 
+function tokenAttempt(partial: Partial<ActivityEntry> = {}): ActivityEntry {
+  const tokenId = `${'c'.repeat(64)}_0`
+  return {
+    id: 'token-attempt',
+    origin: 'handcash',
+    kind: 'spent',
+    sats: 1,
+    at: Date.now() - 60 * 60_000,
+    method: 'send-token',
+    status: 'failed',
+    failureReason: 'Delivery failed',
+    item: {
+      name: 'TST',
+      origin: tokenId,
+      tokenId,
+      amt: '25',
+      dec: 0,
+      outpoint: OUTPOINT,
+    },
+    retry: {
+      kind: 'send-token',
+      tokenId,
+      amount: '25',
+      toAddress: '1recipient',
+    },
+    ...partial,
+  }
+}
+
 beforeEach(() => {
   for (const mock of Object.values(mocks)) mock.mockReset()
   mocks.repairFailedSpendState.mockResolvedValue({
@@ -153,6 +193,53 @@ beforeEach(() => {
   mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
   mocks.keepChangeOfSignedTx.mockResolvedValue(0)
   mocks.hideSpentOutpoints.mockResolvedValue(0)
+  mocks.getFungible.mockReturnValue({
+    tokenId: `${'c'.repeat(64)}_0`,
+    sym: 'TST',
+    amt: '100',
+    dec: 0,
+    utxoCount: 1,
+    outpoint: OUTPOINT,
+    spendKind: 'plain',
+  })
+  mocks.sendFungible.mockResolvedValue({ txid: TX })
+})
+
+describe('resolveSpendAttemptFate — tokens', () => {
+  it('blocks retry while the peer can still settle', async () => {
+    mocks.counterpartyMaySettle.mockReturnValue(true)
+    await expect(
+      resolveSpendAttemptFate(tokenAttempt(), 'main'),
+    ).resolves.toMatchObject({
+      kind: 'refuse',
+      reason: 'counterpartyMaySettle',
+      mayClear: false,
+    })
+    expect(mocks.counterpartyMaySettle).toHaveBeenCalledWith(
+      OUTPOINT,
+      expect.any(Number),
+    )
+  })
+
+  it('recreates only an unsigned token attempt with enough live balance', async () => {
+    const entry = tokenAttempt({ txid: undefined })
+    await expect(resolveSpendAttemptFate(entry, 'main')).resolves.toMatchObject({
+      kind: 'retry',
+      action: 'recreateItem',
+      retry: { kind: 'send-token' },
+    })
+    await expect(retrySpendAttempt(entry, 'main')).resolves.toEqual({
+      kind: 'recreated',
+      txid: TX,
+    })
+    expect(mocks.sendFungible).toHaveBeenCalledWith({
+      tokenId: `${'c'.repeat(64)}_0`,
+      amount: '25',
+      toAddress: '1recipient',
+      recipientIdentityKey: undefined,
+      friendLabel: undefined,
+    })
+  })
 })
 
 describe('resolveSpendAttemptFate — items', () => {

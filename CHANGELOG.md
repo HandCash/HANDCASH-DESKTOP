@@ -2,9 +2,11 @@
 
 ## [1.2.256] - 2026-08-18
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **BSV-21 peer sends now settle as tokens end to end.** The first token release reused the item messagebox card without identifying the asset, so the recipient routed the Atomic BEEF through collectable ingest and filed the output in `1sat`. The wire remittance now carries a tagged fungible payload, the payee validates the exact BSV-21 output from Atomic BEEF, broadcasts on the shared `peerDeliver` path, and internalizes it directly into `bsv21` with matching tags and custom instructions.
+- **Token sends now obey the complete item send grammar instead of only its happy path.** Every selected input lock is recovered from BEEF and classified before the parent chart starts; missing, foreign, mixed, and cosigned locks fail closed by name. A signable `createAction` result follows the same explicit `signAction` edge as collectables, every settle must reach `done`, and sender broadcast remains impossible until peer delivery succeeds or takes the named fallback.
+- **Spent token inputs and outbound remittance tips no longer return to the sender's balance.** The finish path records who may settle, keeps the original spent tip on Activity retries, hides pending spent rows, relinquishes the recipient output when it is not a self-send, and blocks retry or clear while the recipient can still broadcast.
 
 ## [1.2.255] - 2026-08-18
 

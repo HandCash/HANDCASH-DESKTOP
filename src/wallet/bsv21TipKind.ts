@@ -98,16 +98,31 @@ export function classifyBsv21TipKind(args: {
   }
 
   const hex = normalizeLockingScriptHex(args.lockingScript)
-  if (!hex) {
-    // No script and no cosign claim — treat as plain for list/import; spend
-    // paths that need a lock MUST re-resolve script before signing.
-    return { kind: 'plain' }
-  }
+  if (!hex) return { kind: 'unknown' }
 
   // Bare / inscribed P2PKH ending in CHECKSIG (not CHECKSIGVERIFY+cosign).
   if (/76a914[0-9a-f]{40}88ac$/i.test(hex)) return { kind: 'plain' }
 
   return { kind: 'unknown' }
+}
+
+/**
+ * Classify every input in one fungible send before the parent chart starts.
+ * A batch cannot partially fall through: mixed plain/cosigned tips refuse as a
+ * named path, and any unknown lock fails closed.
+ */
+export function chooseBsv21BatchSendPath(
+  tips: Bsv21TipKind[],
+): Bsv21SendPath {
+  if (tips.length === 0) return { path: 'refuse', reason: 'no_tips' }
+  if (tips.some((tip) => tip.kind === 'unknown')) {
+    return { path: 'refuse', reason: 'unknown_lock' }
+  }
+  const plain = tips.some((tip) => tip.kind === 'plain')
+  const cosigned = tips.some((tip) => tip.kind === 'cosigned')
+  if (plain && cosigned) return { path: 'refuse', reason: 'mixed_tips' }
+  if (cosigned) return { path: 'refuse', reason: 'cosigner_required' }
+  return { path: 'plain' }
 }
 
 function mergeCosign(base: Bsv21Cosign, claim?: Bsv21Cosign | null): Bsv21Cosign {

@@ -102,6 +102,7 @@ export const WALLET_LAYER_MODULES = {
     'spendAttempt.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
+    'ingestFungibleSettle.ts',
     'bsvSendMachine.ts',
     'brc29SettlePath.ts',
     'brc29SendMachine.ts',

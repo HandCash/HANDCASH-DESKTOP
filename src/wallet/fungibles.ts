@@ -42,6 +42,7 @@ import { getTokenIconDataUrl } from './tokenIconCache'
 import { cacheTokenIconFromBeef, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
+import { isItemSent } from './sentItemGuard'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -301,6 +302,7 @@ async function listFungiblesNow(
         customInstructions?: string
         lockingScript?: string
       }
+      if (raw.outpoint && isItemSent(raw.outpoint)) continue
       const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
       let loose: {
         op?: string
@@ -434,6 +436,8 @@ export async function listFungibleTips(
   })
   const tips: Bsv21Utxo[] = []
   for (const row of listed.outputs ?? []) {
+    const outpoint = (row as { outpoint?: string }).outpoint
+    if (outpoint && isItemSent(outpoint)) continue
     const tip = parseListedOutput(
       row as {
         outpoint?: string

@@ -37,6 +37,19 @@ export type ChatAttachment = {
   expiresAt?: number
 }
 
+/** Asset carried by an item-settle message. Absent means legacy collectable. */
+export type ItemTransferAsset =
+  | { kind: 'collectable' }
+  | {
+      kind: 'fungible'
+      tokenId: string
+      amount: string
+      sym: string
+      dec: number
+      icon?: string
+      issuer?: string
+    }
+
 export type ChatMessage = {
   id: string
   peerId: string
@@ -71,8 +84,10 @@ export type ChatMessage = {
       derivationSuffix: string
       outputIndex?: number
     }
-    /** Soft-latch item settle — Atomic BEEF on the attachment; payee broadcasts. */
+    /** Item/token settle — Atomic BEEF rides inline; payee broadcasts. */
     item?: boolean
+    /** Tagged asset grammar; absent on older collectable messages. */
+    asset?: ItemTransferAsset
   }
 }
 

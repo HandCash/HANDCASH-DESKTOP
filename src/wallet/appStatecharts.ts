@@ -241,6 +241,19 @@ const SEND_FUNGIBLE = `stateDiagram-v2
   failed --> idle : RESET
 `
 
+const BSV21_SEND_PATH = `stateDiagram-v2
+  direction TB
+  [*] --> classifySelectedTips
+  classifySelectedTips --> plain : every selected lock is device P2PKH
+  classifySelectedTips --> mixed : plain + cosigned
+  classifySelectedTips --> cosigned : every selected lock needs cosigner
+  classifySelectedTips --> unknown : missing / unrecognized / not ours
+  plain --> plainSend
+  mixed --> refuse : mixed_tips
+  cosigned --> refuse : cosigner_required
+  unknown --> refuse : unknown_lock
+`
+
 const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   direction TB
   [*] --> tipKind
@@ -829,8 +842,16 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'sendFungible',
     label: 'Send token',
-    caption: 'bsv21SendMachine — classify → plainSend | refuse (no cosign fallthrough)',
+    caption:
+      'bsv21SendMachine parent — plainSend invokes shared itemSendMachine settle',
     source: SEND_FUNGIBLE,
+  },
+  {
+    id: 'bsv21SendPath',
+    label: 'Token send path',
+    caption:
+      'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
+    source: BSV21_SEND_PATH,
   },
   {
     id: 'sendPath',

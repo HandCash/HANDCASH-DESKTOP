@@ -19,7 +19,12 @@ import {
 import { normalizeIssuerPubKey } from './bsv21Issuer'
 
 export type { Bsv21Cosign }
-export { classifyBsv21TipKind, chooseBsv21SendPath, detectCosignFromLockingScript } from './bsv21TipKind'
+export {
+  chooseBsv21BatchSendPath,
+  classifyBsv21TipKind,
+  chooseBsv21SendPath,
+  detectCosignFromLockingScript,
+} from './bsv21TipKind'
 export {
   issuerFromRemittance,
   issuerFromSigmaLockingScript,

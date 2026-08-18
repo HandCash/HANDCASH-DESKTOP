@@ -262,6 +262,41 @@ describe('inbound receive activity', () => {
     ).toBe(true)
   })
 
+  it('promotes a fungible settle as receive-token with token metadata', () => {
+    const token = {
+      tokenId: `${'ab'.repeat(32)}_0`,
+      amount: '125',
+      sym: 'TST',
+      dec: 2,
+    }
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: token.sym,
+      token,
+    })
+    noteInboundReceiveComplete({
+      txid: TX,
+      item: true,
+      itemName: token.sym,
+      outpoint: `${TX}.0`,
+      token,
+    })
+    const rows = listRecentActivity(10).filter((e) => e.txid === TX)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      method: 'receive-token',
+      note: 'Received 1.25 TST',
+      status: undefined,
+      item: {
+        tokenId: token.tokenId,
+        amt: '125',
+        dec: 2,
+        outpoint: `${TX}.0`,
+      },
+    })
+  })
+
   it('does not take a settled receive back to verifying', () => {
     noteInboundReceiveComplete({ txid: TX, sats: 9 })
     noteInboundReceivePending({ txid: TX, sats: 9 })

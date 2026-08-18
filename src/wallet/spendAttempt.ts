@@ -397,7 +397,13 @@ export async function retrySpendAttempt(
       })
       return { kind: 'recreated', txid: sent.txid }
     }
-    return rebroadcastSignedTransfer(entry, fate.retry.tokenId)
+    const spentTip = entry.item?.outpoint?.trim()
+    if (!spentTip) {
+      throw new Error(
+        'The token input for this signed transfer is no longer available.',
+      )
+    }
+    return rebroadcastSignedTransfer(entry, spentTip)
   }
 
   if (fate.retry.kind !== 'send-collectable') {

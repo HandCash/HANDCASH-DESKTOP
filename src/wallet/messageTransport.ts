@@ -23,6 +23,7 @@ import {
   appendMessage,
   type ChatAttachment,
   type ChatMessage,
+  type ItemTransferAsset,
   type MessageKind,
 } from './messageStore'
 import { rememberBeefBinary } from './beefCache'
@@ -121,8 +122,10 @@ type WireMessage = {
     attachment?: ChatAttachment
     /** BRC-29 remittance — peer tip/pay-sent only. */
     brc29?: WireBrc29
-    /** Soft-latch item settle (Atomic BEEF on attachment or beefB64). */
+    /** Item/token settle (Atomic BEEF on attachment or beefB64). */
     item?: boolean
+    /** Tagged asset grammar; absent means legacy collectable. */
+    asset?: ItemTransferAsset
     /** Atomic BEEF as standard base64 when it fits in the 16KB sendMessage cap. */
     beefB64?: string
   }
@@ -216,6 +219,9 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       attachment: message.meta?.attachment,
       brc29: validBrc29(message.meta?.brc29) ? message.meta.brc29 : undefined,
       item: message.meta?.item === true ? true : undefined,
+      asset: validItemTransferAsset(message.meta?.asset)
+        ? message.meta.asset
+        : undefined,
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
@@ -233,6 +239,26 @@ function validAttachment(value: unknown): value is ChatAttachment {
     file.size <= MAX_CHAT_FILE_BYTES &&
     typeof file.url === 'string' &&
     isMessageboxFileUrl(file.url)
+  )
+}
+
+function validItemTransferAsset(value: unknown): value is ItemTransferAsset {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false
+  const asset = value as Partial<ItemTransferAsset>
+  if (asset.kind === 'collectable') return true
+  if (asset.kind !== 'fungible') return false
+  return (
+    typeof asset.tokenId === 'string' &&
+    /^[0-9a-f]{64}[._]\d+$/i.test(asset.tokenId.trim()) &&
+    typeof asset.amount === 'string' &&
+    /^\d+$/.test(asset.amount.trim()) &&
+    BigInt(asset.amount.trim()) > 0n &&
+    typeof asset.sym === 'string' &&
+    asset.sym.trim().length > 0 &&
+    typeof asset.dec === 'number' &&
+    Number.isInteger(asset.dec) &&
+    asset.dec >= 0 &&
+    asset.dec <= 18
   )
 }
 
@@ -290,6 +316,9 @@ export function decodeMessageBody(body: string): {
             }
           : undefined,
         item: parsed.meta?.item === true ? true : undefined,
+        asset: validItemTransferAsset(parsed.meta?.asset)
+          ? parsed.meta.asset
+          : undefined,
         beefB64:
           typeof parsed.meta?.beefB64 === 'string' && parsed.meta.beefB64.trim()
             ? parsed.meta.beefB64.trim()
@@ -458,6 +487,7 @@ export type InboundPaymentHint = {
   tx?: number[]
   item?: boolean
   itemName?: string
+  asset?: ItemTransferAsset
 }
 
 export async function pollInboundTipHints(args: {
@@ -545,6 +575,10 @@ export async function pollInboundTipHints(args: {
           sats: decoded.meta?.sats,
           item,
           itemName,
+          token:
+            decoded.meta?.asset?.kind === 'fungible'
+              ? decoded.meta.asset
+              : undefined,
         })
         paymentTxids.push(txid)
         paymentHints.push({
@@ -557,6 +591,7 @@ export async function pollInboundTipHints(args: {
           tx: decodeBeefB64(decoded.meta?.beefB64),
           item,
           itemName,
+          asset: decoded.meta?.asset,
         })
         // Do not ACK until ingest succeeds — otherwise remittance is deleted
         // before Desktop can internalize.
@@ -581,7 +616,7 @@ export async function pollInboundTipHints(args: {
 }
 
 /**
- * Deliver a signed soft-latch item to the peer (tip card ± inline Atomic BEEF).
+ * Deliver a signed collectable or fungible tip to the peer (card ± Atomic BEEF).
  * `/files` is not used — Android WebView cannot POST binary reliably.
  * If BEEF does not fit in sendMessage, payee SPV-fetches after sender broadcast.
  */
@@ -593,6 +628,7 @@ export async function notifyPeerItemIncoming(args: {
   messagebox?: string | null
   txid: string
   itemName: string
+  asset?: ItemTransferAsset
   atomicBeef?: number[]
 }): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
@@ -610,6 +646,7 @@ export async function notifyPeerItemIncoming(args: {
         status: 'Incoming',
         memo: name,
         item: true,
+        asset: args.asset ?? { kind: 'collectable' },
       },
     }),
     args.atomicBeef,

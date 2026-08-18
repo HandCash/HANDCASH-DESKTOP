@@ -62,6 +62,7 @@ import {
   listThreads,
   updateMessage,
 } from './messageStore'
+import type { ItemTransferAsset } from './messageStore'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
@@ -863,10 +864,12 @@ export type PaymentTipHint = {
   /** Messagebox file URL for the signed Atomic BEEF (payee broadcasts). */
   beefUrl?: string
   tx?: number[]
-  /** Soft-latch item settle — not a BSV payment. */
+  /** Item/token settle — not a BSV payment. */
   item?: boolean
   /** Collectable name from the tip card memo, when known. */
   itemName?: string
+  /** Tagged asset grammar; absent means legacy collectable. */
+  asset?: ItemTransferAsset
 }
 
 /** Inbound chat cards still waiting to be internalized (inbox may already be ACKed). */
@@ -887,6 +890,7 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
         brc29: msg.meta?.brc29,
         item: isItem || undefined,
         itemName: msg.meta?.memo?.trim() || undefined,
+        asset: msg.meta?.asset,
       })
     }
   }
@@ -926,6 +930,7 @@ export async function ingestPaymentsFromTipHints(
       tx: h.tx,
       item: h.item === true || undefined,
       itemName: h.itemName?.trim() || undefined,
+      asset: h.asset,
     })
   }
 
@@ -937,6 +942,7 @@ export async function ingestPaymentsFromTipHints(
       !prev ||
       (h.brc29 && !prev.brc29) ||
       (h.item && !prev.item) ||
+      (h.asset && !prev.asset) ||
       (h.itemName && !prev.itemName) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
@@ -951,10 +957,11 @@ export async function ingestPaymentsFromTipHints(
       sats: hint.satoshis,
       item: hint.item,
       itemName: hint.itemName,
+      token: hint.asset?.kind === 'fungible' ? hint.asset : undefined,
     })
   }
 
-  // Soft-latch AtomicBEEF is expensive; do not hammer indexer 15×2s per tip poll.
+  // Item/token AtomicBEEF is expensive; keep retries bounded per tip poll.
   const ingestAttempts = 2
   const ingestDelayMs = 4_000
   /** Concurrent tip internalizations — BEEF + postBeef are heavy. */
@@ -998,7 +1005,6 @@ export async function ingestPaymentsFromTipHints(
       if (isAtomicBeefInBackoff(hint.txid)) {
         return { importedTxid, balanceSats }
       }
-      const { internalizePeerItemSettle } = await import('./ingestItemSettle')
       let atomic = hint.tx
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
@@ -1007,12 +1013,27 @@ export async function ingestPaymentsFromTipHints(
       let accepted = false
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
         if (attempt > 0 && isAtomicBeefInBackoff(hint.txid)) break
-        const result = await internalizePeerItemSettle({
-          txid: hint.txid,
-          tx: attempt === 0 ? atomic : undefined,
-          beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-          name: hint.itemName,
-        })
+        const asset = hint.asset
+        const result =
+          asset?.kind === 'fungible'
+            ? await import('./ingestFungibleSettle').then(
+                ({ internalizePeerFungibleSettle }) =>
+                  internalizePeerFungibleSettle({
+                    txid: hint.txid,
+                    tx: attempt === 0 ? atomic : undefined,
+                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+                    token: asset,
+                  }),
+              )
+            : await import('./ingestItemSettle').then(
+                ({ internalizePeerItemSettle }) =>
+                  internalizePeerItemSettle({
+                    txid: hint.txid,
+                    tx: attempt === 0 ? atomic : undefined,
+                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+                    name: hint.itemName,
+                  }),
+              )
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  chooseBsv21BatchSendPath,
   chooseBsv21SendPath,
   classifyBsv21TipKind,
   detectCosignFromLockingScript,
@@ -59,6 +60,28 @@ describe('bsv21TipKind cosign', () => {
   it('plain tip sends on plain path', () => {
     expect(chooseBsv21SendPath(classifyBsv21TipKind({ lockingScript: PLAIN_P2PKH }))).toEqual({
       path: 'plain',
+    })
+  })
+
+  it('treats a missing locking script as unknown, never plain', () => {
+    expect(classifyBsv21TipKind({})).toEqual({ kind: 'unknown' })
+    expect(chooseBsv21SendPath(classifyBsv21TipKind({}))).toEqual({
+      path: 'refuse',
+      reason: 'unknown_lock',
+    })
+  })
+
+  it('classifies a whole input batch before sending', () => {
+    const plain = classifyBsv21TipKind({ lockingScript: PLAIN_P2PKH })
+    const cosigned = classifyBsv21TipKind({ lockingScript: COSIGNED_SUFFIX })
+    expect(chooseBsv21BatchSendPath([plain])).toEqual({ path: 'plain' })
+    expect(chooseBsv21BatchSendPath([plain, cosigned])).toEqual({
+      path: 'refuse',
+      reason: 'mixed_tips',
+    })
+    expect(chooseBsv21BatchSendPath([{ kind: 'unknown' }, plain])).toEqual({
+      path: 'refuse',
+      reason: 'unknown_lock',
     })
   })
 

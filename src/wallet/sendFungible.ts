@@ -5,13 +5,19 @@
  * settles via the same peerDeliver / selfReceive / externalBroadcast path as
  * items, and refuses cosigned / unknown locks without a cosigner client.
  */
-import { Beef } from '@bsv/sdk'
+import {
+  Beef,
+  PrivateKey,
+  type SignableTransaction,
+  type Transaction,
+} from '@bsv/sdk'
+import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { createActor } from 'xstate'
 import {
   buildBsv21CustomInstructions,
   BSV21_BASKET,
   bsv21Tags,
-  chooseBsv21SendPath,
+  chooseBsv21BatchSendPath,
   classifyBsv21TipKind,
   formatFungibleAmount,
   normalizeTokenId,
@@ -26,7 +32,7 @@ import {
   noteOutboundSendPending,
   type ActivityItem,
 } from './appActivity'
-import { rememberBeefTree } from './beefCache'
+import { getBeefForTxidCached, rememberBeefTree } from './beefCache'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import {
@@ -42,7 +48,11 @@ import {
   maySenderBroadcast,
   mustDeliverToPeer,
 } from './itemSendMachine'
-import { chooseItemSettlePath, type ItemSettlePath } from './itemSettlePath'
+import {
+  chooseItemSettlePath,
+  isPeerDeliverSettle,
+  type ItemSettlePath,
+} from './itemSettlePath'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
@@ -54,6 +64,10 @@ import {
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { runExclusiveSpend } from './spendGuard'
+import {
+  markItemsSent,
+  type SentItemSettle,
+} from './sentItemGuard'
 
 function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   if (!result || typeof result !== 'object') return undefined
@@ -68,6 +82,114 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
 function wireOutpoint(op: string): string {
   const t = op.trim().toLowerCase()
   return t.includes('.') ? t : t.replace(/_(\d+)$/, '.$1')
+}
+
+async function signPlainFungibleTransfer(args: {
+  wallet: ActiveWallet
+  signable: SignableTransaction
+  outpoints: string[]
+}): Promise<{ txid: string; atomicBeef: number[] }> {
+  const targets = new Set(args.outpoints.map(wireOutpoint))
+  rememberBeefTree(
+    Array.isArray(args.signable.tx)
+      ? args.signable.tx
+      : Array.from(args.signable.tx),
+  )
+  const beef = Beef.fromBinary(args.signable.tx)
+  let unsigned: Transaction | undefined
+  const vins: number[] = []
+  for (const btx of beef.txs ?? []) {
+    if (!btx.tx) continue
+    for (let i = 0; i < btx.tx.inputs.length; i++) {
+      const input = btx.tx.inputs[i]
+      const key = `${String(input?.sourceTXID).toLowerCase()}.${
+        input?.sourceOutputIndex
+      }`
+      if (targets.has(key)) {
+        unsigned = btx.tx
+        vins.push(i)
+      }
+    }
+    if (unsigned && vins.length === targets.size) break
+  }
+  if (!unsigned || vins.length !== targets.size) {
+    throw new Error('Token inputs are missing from the signable transaction')
+  }
+
+  const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
+  const spends: Record<number, { unlockingScript: string }> = {}
+  for (const vin of vins) {
+    const input = unsigned.inputs[vin]!
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    if (!input.sourceTransaction && input.sourceTXID) {
+      const extra = await getBeefForTxidCached(
+        args.wallet,
+        String(input.sourceTXID),
+      )
+      beef.mergeBeef(extra.toBinary())
+      input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
+    }
+    const source = input.sourceTransaction?.outputs[input.sourceOutputIndex]
+    const satoshis = source?.satoshis
+    if (typeof satoshis !== 'number') {
+      throw new Error('Token input is missing its source transaction')
+    }
+    input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+      rootKey,
+      satoshis,
+    )
+  }
+  await unsigned.sign()
+  for (const vin of vins) {
+    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Could not sign the token transfer')
+    spends[vin] = { unlockingScript }
+  }
+
+  let signed
+  try {
+    signed = await args.wallet.wallet.signAction({
+      reference: args.signable.reference,
+      spends,
+      options: { noSend: true },
+    })
+  } catch (err) {
+    const {
+      isReviewActionsError,
+      formatReviewActionsError,
+      recoverFromReviewActions,
+    } = await import('./actionReview')
+    if (isReviewActionsError(err)) {
+      await recoverFromReviewActions({
+        err,
+        reference: args.signable.reference,
+        tipOutpoints: [...args.outpoints],
+        active: args.wallet,
+      })
+      throw new Error(formatReviewActionsError(err))
+    }
+    throw err
+  }
+
+  const txid =
+    typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
+  if (!txid) throw new Error('Token transfer returned no txid')
+  let atomicBeef = atomicBeefFromWalletResult(signed)
+  if (!atomicBeef?.length) {
+    const wrap = new Beef()
+    wrap.mergeBeef(args.signable.tx)
+    wrap.mergeTransaction(unsigned)
+    wrap.atomicTxid = undefined
+    try {
+      atomicBeef = wrap.toBinaryAtomic(txid)
+    } catch {
+      atomicBeef = wrap.toBinary()
+    }
+  }
+  if (!atomicBeef?.length) {
+    throw new Error('Token transfer returned no signed BEEF')
+  }
+  return { txid, atomicBeef }
 }
 
 function parseDisplayAmount(raw: string, dec: number): bigint {
@@ -243,45 +365,65 @@ export async function sendFungible(args: {
         )
         const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
 
-        if (token.spendKind === 'mixed') {
-          return failSend(new Error(refuseReasonMessage('mixed_tips')))
-        }
-
         const tips = await listFungibleTips(wallet, {
           tokenIds: token.tokenIds ?? [token.tokenId],
         })
         if (tips.length === 0) throw new Error('No spendable tips for this token')
 
-        for (const tip of tips) {
-          const kind = classifyBsv21TipKind({
-            lockingScript: tip.lockingScript,
-            cosignClaim: tip.cosign ?? null,
-          })
-          const path = chooseBsv21SendPath(kind)
-          if (path.path !== 'plain') {
-            return failSend(
-              new Error(
-                refuseReasonMessage(
-                  path.path === 'refuse' ? path.reason : 'cosigner_required',
-                ),
-              ),
-            )
-          }
-        }
-
         const need = BigInt(unitsStr)
         const { selected, selectedSum } = selectFungibleTips(tips, need)
         const changeAmt = selectedSum - need
+        const tipKinds = await Promise.all(
+          selected.map(async (tip) => {
+            let lockingScript = tip.lockingScript
+            if (!lockingScript) {
+              const [sourceTxid, voutRaw] = wireOutpoint(tip.outpoint).split('.')
+              const vout = Number(voutRaw)
+              if (sourceTxid && Number.isInteger(vout) && vout >= 0) {
+                try {
+                  const beef = await getBeefForTxidCached(wallet, sourceTxid)
+                  lockingScript =
+                    beef.findTxid(sourceTxid)?.tx?.outputs[
+                      vout
+                    ]?.lockingScript?.toHex()
+                } catch (err) {
+                  console.warn(
+                    '[fungibles] tip locking-script hydrate failed',
+                    tip.outpoint,
+                    err,
+                  )
+                }
+              }
+            }
+            const kind = classifyBsv21TipKind({
+              lockingScript,
+              cosignClaim: tip.cosign ?? null,
+            })
+            if (
+              kind.kind === 'plain' &&
+              (!lockingScript ||
+                !scriptPaysAddress(lockingScript, wallet!.address))
+            ) {
+              return { kind: 'unknown' } as const
+            }
+            return kind
+          }),
+        )
+        const sendPath = chooseBsv21BatchSendPath(tipKinds)
 
         const chart = createActor(bsv21SendMachine).start()
         chart.send({
           type: 'START',
           tokenId: token.tokenId,
-          sendPath: { path: 'plain' },
+          sendPath,
         })
         if (!chart.getSnapshot().matches('plainSend')) {
+          const reason =
+            chart.getSnapshot().context.error ??
+            (sendPath.path === 'refuse' ? sendPath.reason : 'cosigner_required')
           chart.stop()
-          return failSend(new Error('bsv21SendMachine did not enter plainSend'))
+          console.warn('[fungibles] send path refused', reason)
+          return failSend(new Error(refuseReasonMessage(reason)))
         }
 
         const transferBuilt = buildBsv21TransferLockingScript({
@@ -395,6 +537,8 @@ export async function sendFungible(args: {
         console.info('[fungibles] createAction start')
 
         let result: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
+        let txid = ''
+        let atomicBeef: number[] | undefined
         let attemptedBatchAbort = false
         for (;;) {
           try {
@@ -427,19 +571,67 @@ export async function sendFungible(args: {
             chart.stop()
             return failSend(err)
           }
+          const signable = result.signableTransaction
+          const signableBeef = signable?.tx
+          rememberBeefTree(
+            atomicBeefFromWalletResult(result) ??
+              (signableBeef
+                ? Array.from(signableBeef as number[] | Uint8Array)
+                : undefined),
+            typeof result.txid === 'string' ? result.txid : undefined,
+          )
+          itemChart.send({ type: 'CREATED', txid: result.txid })
+          txid = (result.txid ?? '').trim().toLowerCase()
+          if (txid) {
+            atomicBeef = atomicBeefFromWalletResult(result)
+            break
+          }
+          if (!signable) {
+            itemChart.send({
+              type: 'FAIL',
+              error: 'Send completed without txid',
+            })
+            itemChart.stop()
+            chart.stop()
+            return failSend(new Error('Send completed without txid'))
+          }
+          const definiteSignable = signable as SignableTransaction
+          if (!itemChart.getSnapshot().matches('signing')) {
+            itemChart.stop()
+            chart.stop()
+            return failSend(
+              new Error('itemSendMachine did not enter signing'),
+            )
+          }
+          try {
+            setPaymentProgress(
+              'signing',
+              `Signing ${token!.sym} for the recipient`,
+              token!.outpoint,
+            )
+            const signed = await signPlainFungibleTransfer({
+              wallet: wallet!,
+              signable: definiteSignable,
+              outpoints: selected.map((tip) => tip.outpoint),
+            })
+            txid = signed.txid
+            atomicBeef = signed.atomicBeef
+            itemChart.send({ type: 'SIGNED', txid })
+            break
+          } catch (err) {
+            const errorMessage = String(
+              (err as { message?: unknown } | null)?.message ?? err,
+            )
+            itemChart.send({
+              type: 'FAIL',
+              error: errorMessage,
+            })
+            itemChart.stop()
+            chart.stop()
+            return failSend(err)
+          }
         }
 
-        rememberBeefTree(
-          atomicBeefFromWalletResult(result) ??
-            (result.signableTransaction?.tx
-              ? Array.from(result.signableTransaction.tx)
-              : undefined),
-          typeof result.txid === 'string' ? result.txid : undefined,
-        )
-        itemChart.send({ type: 'CREATED', txid: result.txid })
-
-        const txid = (result.txid ?? '').trim().toLowerCase()
-        let atomicBeef = atomicBeefFromWalletResult(result)
         if (!txid) {
           itemChart.stop()
           chart.stop()
@@ -494,6 +686,15 @@ export async function sendFungible(args: {
               messagebox: friend?.messagebox,
               txid,
               itemName: token.sym,
+              asset: {
+                kind: 'fungible',
+                tokenId: token.tokenId,
+                amount: unitsStr,
+                sym: token.sym,
+                dec: token.dec,
+                ...(token.icon ? { icon: token.icon } : {}),
+                ...(token.issuer ? { issuer: token.issuer } : {}),
+              },
               atomicBeef,
             })
             console.info(
@@ -561,6 +762,12 @@ export async function sendFungible(args: {
           return failSend(err)
         }
 
+        if (!itemChart.getSnapshot().matches('done')) {
+          itemChart.stop()
+          chart.stop()
+          return failSend(new Error('itemSendMachine did not reach done'))
+        }
+
         completePendingSend(outboundPending.id, txid)
         noteOutboundSendComplete({
           pendingId: outboundPending.id,
@@ -569,13 +776,31 @@ export async function sendFungible(args: {
           to: args.toAddress,
           friendLabel: args.friendLabel ?? null,
           recipientIdentityKey: args.recipientIdentityKey ?? null,
-          item: { ...activityItem, outpoint: `${txid}.0` },
+          item: { ...activityItem, outpoint: selected[0]!.outpoint },
         })
         clearPendingSend(outboundPending.id)
 
+        const selfReceive = settlePath.settle === 'selfReceive'
+        const settle: SentItemSettle = isPeerDeliverSettle(settlePath)
+          ? 'peerDeliver'
+          : 'senderBroadcast'
+        const recipientTip = `${txid}.0`
+        markItemsSent([
+          ...selected.map((tip) => ({
+            outpoint: tip.outpoint,
+            txid,
+            settle,
+          })),
+          ...(!selfReceive
+            ? [{ outpoint: recipientTip, txid, settle }]
+            : []),
+        ])
         await relinquishTips(
           wallet,
-          selected.map((t) => t.outpoint),
+          [
+            ...selected.map((tip) => tip.outpoint),
+            ...(!selfReceive ? [recipientTip] : []),
+          ],
         )
         scheduleHistoryBackupPush('sendFungible')
         void listFungibles(wallet).catch((err) => {
