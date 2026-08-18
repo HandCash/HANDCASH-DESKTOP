@@ -8825,7 +8825,10 @@ html[data-aeon-mode='light'] .settings-interval-select {
 html[data-aeon-mode='light'] .friends-search input,
 html[data-aeon-mode='light'] .chat-search input,
 html[data-aeon-mode='light'] .chat-composer,
-html[data-aeon-mode='light'] .chat-command-menu {
+html[data-aeon-mode='light'] .chat-command-menu,
+/* The friend suggestion overlay (Send + Send collectable) hardcodes a near-black
+   sheet, so on paper it stayed dark while its type inherited dark ink. */
+html[data-aeon-mode='light'] .friend-suggest-list {
   background: var(--hc-field);
   color: var(--hc-text);
 }

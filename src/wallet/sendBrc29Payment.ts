@@ -29,6 +29,10 @@ import {
   completePendingSend,
 } from './pendingSend'
 import { fetchBalanceSats, getActiveWallet } from './session'
+import {
+  describeInsufficientFunds,
+  isInsufficientFundsError,
+} from './insufficientFunds'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   prepareSpendHeal,
@@ -562,6 +566,15 @@ export async function sendBrc29ToIdentityKey(opts: {
             }
             const message = formatReviewActionsError(err)
             console.warn('[brc29] send failed', message, err)
+            chart.send({ type: 'FAIL', error: message })
+            throw new Error(message)
+          }
+          if (isInsufficientFundsError(err)) {
+            const message = await describeInsufficientFunds(
+              active.wallet,
+              satoshis,
+            )
+            console.warn('[brc29] insufficient funds', message, err)
             chart.send({ type: 'FAIL', error: message })
             throw new Error(message)
           }

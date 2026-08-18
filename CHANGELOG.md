@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.247] - 2026-08-18
+
+### Fixed
+- **Friend and handle sends now get the confirming-funds message too.** 1.2.246 translated the raw insufficient-funds refusal on the plain-address path only, so a send to a friend, `$handle`, or identity key — which routes through BRC-29 peer pay — still showed the toolbox's `N more satoshis are needed` arithmetic. The wording now lives in one `insufficientFunds` module shared by both coin paths, so every payment reports the same spendable-vs-confirming split. The shared helper also refuses to say "still confirming" unless the confirming balance actually closes the gap, so it can never tell a genuinely short wallet to wait forever.
+- **The friend suggestion dropdown is readable in light mode.** `.friend-suggest-list` (Send and Send collectable) hardcoded a near-black sheet that never flipped with the theme, so on the light sheet it rendered as a dark box with dark inherited text. It now uses the same light-mode surface tokens as the chat command menu; the dark theme is unchanged.
+
 ## [1.2.246] - 2026-08-18
 
 ### Fixed
