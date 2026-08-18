@@ -99,10 +99,11 @@ Fungibles use storage basket **`bsv21`** (separate profile), not `p 1sat bsv21` 
 
 **HandCash:** `id:` MAY be used as a held-row list key (BRC-164). It MUST NOT be required to recognize, prove, internalize, or list tips. Spend targeting by outpoint / origin remains valid.
 
-### 5. Co-authorship and soft-latch nits (from the PR review)
+### 5. Co-authorship
 
 - Confirm before listing HandCash on 303 if that draft is revived.
-- Soft-latch, if cited: **BRC-156** (official `wallet/0153` is Action References) — and BRC-156 was later withdrawn on our side; item authenticity remains BRC-150 only.
+- BRC-156 was withdrawn and is not part of the scheme. Item authenticity
+  remains BRC-150 v2 only.
 
 ---
 

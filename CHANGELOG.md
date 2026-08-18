@@ -1,6 +1,12 @@
 # Changelog
 
-## [1.2.244] - 2026-08-18
+## [1.2.245] - 2026-08-18
+
+### Fixed
+- **Failed bridge calls now record why they failed.** The bridge logged only `status=400`, so an uploaded support log could show that a `signAction` or `internalizeAction` was rejected without naming the reason — the wallet's `code` / `description` never left the renderer. Non-2xx replies now log a bounded one-line summary (whitespace collapsed, truncated at 300 characters) so a BEEF-sized payload cannot flood the log while the actual refusal stays diagnosable.
+
+### Changed
+- **Withdrawn BRC-156 / soft-latch vocabulary is gone from app-facing discovery.** `/health` and `/manifest.json` advertised `1sat-latch`, `latchedSend`, and provenance `v3` for a standard that was cancelled. App capabilities now come from a single `oneSatAppCapabilities` constant that exposes only BRC-147, BRC-150, basket `1sat`, and BRC-150 `v2` provenance, with a test asserting no latch vocabulary can reappear on the wire. Token docs were updated to match: item identity and authenticity are the BRC-150 offline tip→origin proof, with no on-chain latch companion.
 
 ### Fixed
 - **App permission rows fit Recent activity again.** The stored note prefixed “Approved” onto an action title that already led with a verb, while the row’s right column said “Allowed” — three ways of saying the same thing. The note now names only what was requested (“Approve payment”), and the verdict column keeps Allowed / Denied. Long app origins truncate with an ellipsis instead of pushing the row wide; the full host stays available on hover.

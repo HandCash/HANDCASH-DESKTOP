@@ -5,6 +5,7 @@ import https, { type Server } from 'node:https'
 import log from 'electron-log'
 import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
 import { type BridgeWindowSource } from './bridgeWindow.js'
+import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
 
 type HttpRequestEvent = {
   method: string
@@ -47,6 +48,40 @@ function failAllPendingRequests(reason: string): void {
     pending.reject(error)
   }
   pendingRequests.clear()
+}
+
+/**
+ * Turn a renderer error body into a one-line, bounded log summary. Prefers the
+ * wallet's `code` / `description`, falls back to raw text, and never emits more
+ * than a few hundred chars so a BEEF-sized payload can't flood support logs.
+ */
+function summarizeErrorBody(body: string): string {
+  const raw = typeof body === 'string' ? body : ''
+  if (!raw) return '(empty body)'
+  try {
+    const parsed = JSON.parse(raw) as {
+      code?: unknown
+      description?: unknown
+      message?: unknown
+    }
+    const code = typeof parsed.code === 'string' ? parsed.code : undefined
+    const description =
+      typeof parsed.description === 'string'
+        ? parsed.description
+        : typeof parsed.message === 'string'
+          ? parsed.message
+          : undefined
+    const parts = [code, description].filter(Boolean) as string[]
+    if (parts.length > 0) return truncateForLog(parts.join(': '))
+  } catch {
+    // Not JSON — fall through to the raw text.
+  }
+  return truncateForLog(raw)
+}
+
+function truncateForLog(text: string): string {
+  const flattened = text.replace(/\s+/g, ' ').trim()
+  return flattened.length > 300 ? `${flattened.slice(0, 300)}…` : flattened
 }
 
 function setCorsHeaders(res: Response): void {
@@ -123,12 +158,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
           icon: 'https://localhost:2121/favicon.ico',
           publicKey: '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798',
         },
-        oneSat: {
-          brcs: ['147', '150'],
-          baskets: ['1sat', '1sat-latch'],
-          latchedSend: true,
-          provenanceVerify: ['v2', 'v3'],
-        },
+        oneSat: ONE_SAT_APP_CAPABILITIES,
       },
     })
   })
@@ -140,12 +170,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       ok: true,
       service: 'handcash-brc100',
       bridge: 'http',
-      oneSat: {
-        brcs: ['147', '150'],
-        baskets: ['1sat', '1sat-latch'],
-        latchedSend: true,
-        provenanceVerify: ['v2', 'v3'],
-      },
+      oneSat: ONE_SAT_APP_CAPABILITIES,
     })
   })
 
@@ -229,6 +254,14 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       target.webContents.send('http-request', requestEvent)
       const httpResponse = await responsePromise
       log.info(`[HTTP] ← renderer request_id=${request_id} status=${httpResponse.status}`)
+      // A bare status hides why a tx failed. Surface the wallet's reason
+      // (code/description) on non-2xx so remote support logs are diagnosable,
+      // truncated so a large BEEF/error payload never floods the log.
+      if (httpResponse.status >= 400) {
+        log.warn(
+          `[HTTP] ← renderer request_id=${request_id} ${req.method} ${req.path} error: ${summarizeErrorBody(httpResponse.body)}`,
+        )
+      }
 
       if (!canWriteResponse(res)) return
       setCorsHeaders(res)

@@ -15,20 +15,21 @@ Counterparty can obtain **value or facts addressed to them** without a third par
 
 | Grade | Meaning | Examples |
 |-------|---------|----------|
-| **A — Chain custody** | Facts on a tx found via payee address/key | P2PKH sats; soft-latch tip + 2-sat latch + OP_RETURN latch state |
+| **A — Chain custody** | Facts on a tx found via payee address/key | P2PKH BSV and 1Sat item tips |
 | **B — Identity relay** | Store-and-forward to identityKey; operator must not decide meaning | BRC-33 messagebox (any host) |
 | **C — Convenience oracle** | Display / resolve helpers; not custody authority | GorillaPool `/content`; handle resolve host |
 
 Device peer `:3340` and BRC-39 are **same-identity** sync — not counterparty P2P.
 
-### Remittance vs latch state (do not conflate)
+### Remittance
 
 | Term | Spec | Travels to counterparty? |
 |------|------|---------------------------|
 | **BRC-150 remittance** | `customInstructions.provenance` + `beefB64` | **No** — BRC-100 local basket metadata; cannot ride a P2PKH lock |
-| **Soft-latch state** (legacy `BRC156` marker) | `OP_FALSE OP_RETURN BRC156 <json>` on settle | **Yes** — P2P item identity (origin, name, app, mime, tip ref); BRC-156 withdrawn |
 
-Soft-latch exists so **item naming/discovery does not need an indexer**. Sender still builds remittance locally; receiver rebuilds authenticity from chain BEEF later. GorillaPool after origin is known is **media CDN (grade C)**, not tip discovery.
+Item identity and authenticity use the BRC-150 offline tip→origin proof. There
+is no on-chain latch companion. GorillaPool after origin is known is **media
+CDN (grade C)**, not the custody or authenticity authority.
 
 ### Messagebox
 
@@ -42,13 +43,13 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 
 | Concern | Today | Target |
 |---------|-------|--------|
-| BSV / soft-latch custody + latch identity | Grade A | Keep |
-| Solo / unlatched 1-sat identity | Often grade C | Prefer latch on all HandCash sends; solo remains legacy |
-| BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B) — not required for soft-latch identity |
+| BSV / item-tip custody | Grade A P2PKH | Keep |
+| Item identity / authenticity | BRC-150 v2 offline tip→origin proof | Keep; fail closed when proof cannot be verified |
+| BRC-150 remittance to peer | Local only | Optional later: Outpoint BEEF / messagebox envelope (B); never gate chain custody on delivery |
 | Chat delivery | Hardcoded BRC-CLOUD box; plaintext + `handcash-message:` cards; no BRC-31 auth; custom `/files` | Resolve recipient **messagebox URL**; BRC-33-shaped client; BRC-CLOUD remains default fallback host |
 | Chat encryption | Plain body | Move toward BRC-169 encrypted envelope content |
 | Pay-into-messagebox (BRC-29 remittance) | **Used for HandCash peers** — tip / pay-sent / Send-to-friend | `brc29SendMachine`: `createAction` broadcasts immediately (toolbox/Babbage). Remittance ± inline `beefB64` on `sendMessage` (not `/files`). Inbox miss → outbox retry, not a second tx. Inbox not ACKed until ingest. |
-| Soft-latch item send | Sender `postBeef` then tip-hint txid | Same P2P settle as BRC-29: `ItemSettlePath` + `noSend` to peer, then silent sender `postBeef`. Required sender broadcast only if inbox unreachable (`DELIVER_FAILED`) or self/external. |
+| Item send | Plain P2PKH tip + local BRC-150 provenance | `ItemSettlePath` owns who broadcasts; no latch output or fallback path |
 | Plain identity-address P2PKH | Pasted address / external wallet only | Address-index scan + `fundWalletFromP2PKHOutpoints` fallback (grade C) |
 | Inscription media | GP `/content/<origin>` | Keep as C; optional “fetch origin tx + parse” path when offline to GP |
 
