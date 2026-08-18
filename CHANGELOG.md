@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.253] - 2026-08-18
+
+### Fixed
+- **A collectable sent to your own handle now paints and spins like any other receive.** 1.2.252 seeded the card and started the Verifying… spinner on the fresh-internalize path, but a send to yourself takes a different branch: `createAction` files the tip before the messagebox copy arrives, so that receive lands as "already internalized" and skipped straight to settling the Activity row — no seeded card, no spinner. Both ingest branches now share one paint step, so a self-send shows the card, the Activity row, and the spinner together, exactly like a receive from someone else.
+
 ## [1.2.252] - 2026-08-18
 
 ### Fixed

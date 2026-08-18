@@ -141,6 +141,42 @@ export async function internalizePeerItemSettle(opts: {
     return { accepted: true, outpoints: allOps, reason: 'already-imported' }
   }
 
+  // Card + Activity row + Verifying… spinner for a freshly held tip. Runs from
+  // both the fresh-internalize path and the already-internalized path a send to
+  // your own handle hits: createAction files the tip before the messagebox copy
+  // arrives, so that receive lands here as "already internalized" and must still
+  // paint and spin exactly like any other receive.
+  const paintReceivedTip = (): void => {
+    rememberResolvedInscription(tipOp, {
+      origin,
+      name,
+      ...(app ? { app } : {}),
+      traits: [],
+      extras: [],
+    })
+    noteInboundReceiveComplete({
+      txid: id,
+      item: true,
+      itemName: name,
+      itemOrigin: origin,
+      outpoint: tipOp,
+    })
+    // Paint off the ingest critical path — listOutputs(1sat) can take seconds.
+    // Seed the card before announcing: announcing an arrival the grid cannot
+    // show yet is what left Collect empty, and spinner-less, while Activity
+    // already had the row. Seeding announces through the collectables cache, so
+    // the trailing call only covers the case where the seed was skipped.
+    void import('./collectables')
+      .then(({ noteIngestedItem, listCollectables }) => {
+        noteIngestedItem({ outpoint: tipOp, chain: active.chain, origin, name })
+        announceItemsReceived([tipOp])
+        return listCollectables(active)
+      })
+      .catch(() => {
+        announceItemsReceived([tipOp])
+      })
+  }
+
   try {
     // Payee is the intended broadcaster on peerDeliver — confirm network first.
     // Do not existence-check first: that adds RTT on the common payee-first path.
@@ -185,47 +221,14 @@ export async function internalizePeerItemSettle(opts: {
     })
 
     markOneSatImported(allOps)
-    rememberResolvedInscription(tipOp, {
-      origin,
-      name,
-      ...(app ? { app } : {}),
-      traits: [],
-      extras: [],
-    })
     rememberBeefTree(atomic, id)
-    noteInboundReceiveComplete({
-      txid: id,
-      item: true,
-      itemName: name,
-      itemOrigin: origin,
-      outpoint: tipOp,
-    })
     scheduleHistoryBackupPush('internalizeAction')
-    // Paint off the ingest critical path — listOutputs(1sat) can take seconds.
-    // Seed the card before announcing: announcing an arrival the grid cannot
-    // show yet is what left Collect empty, and spinner-less, while Activity
-    // already had the row. Seeding announces through the collectables cache,
-    // so the trailing call only covers the case where the seed was skipped.
-    void import('./collectables')
-      .then(({ noteIngestedItem, listCollectables }) => {
-        noteIngestedItem({ outpoint: tipOp, chain: active.chain, origin, name })
-        announceItemsReceived([tipOp])
-        return listCollectables(active)
-      })
-      .catch(() => {
-        announceItemsReceived([tipOp])
-      })
+    paintReceivedTip()
     return { accepted: true, outpoints: allOps }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
       markOneSatImported(allOps)
-      noteInboundReceiveComplete({
-        txid: id,
-        item: true,
-        itemName: name,
-        itemOrigin: origin,
-        outpoint: tipOp,
-      })
+      paintReceivedTip()
       return { accepted: true, outpoints: allOps, reason: 'already-imported' }
     }
     markOneSatImportFailed(allOps)
