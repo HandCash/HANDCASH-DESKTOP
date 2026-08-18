@@ -83,6 +83,32 @@ export function normalizeAppHost(origin: string | undefined): string {
   return raw.replace(/^www\./, '')
 }
 
+/**
+ * Suffixes where the app owns a subdomain rather than the registrable domain, so
+ * the leftmost label names the app: brc-cloud.bcryderman.workers.dev is BRC
+ * Cloud, not "Workers".
+ */
+const APP_SUBDOMAIN_SUFFIXES = [
+  'workers.dev',
+  'pages.dev',
+  'github.io',
+  'vercel.app',
+  'netlify.app',
+  'fly.dev',
+  'onrender.com',
+  'herokuapp.com',
+]
+
+const NAME_ACRONYMS = new Set(['brc', 'bsv', 'bsva', 'nft', 'api', 'ai', 'dao', 'p2p'])
+
+function titleCaseLabel(label: string): string {
+  return label
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((w) => (NAME_ACRONYMS.has(w) ? w.toUpperCase() : w.charAt(0).toUpperCase() + w.slice(1)))
+    .join(' ')
+}
+
 /** Turn a host into a readable app name: market.handcash.io → Market */
 export function appDisplayName(origin: string | undefined): string {
   const host = normalizeAppHost(origin)
@@ -93,6 +119,12 @@ export function appDisplayName(origin: string | undefined): string {
   if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash'
   if (base === 'market.handcash.io' || base === 'preprod-market.handcash.io') {
     return 'HandCash'
+  }
+
+  const hosted = APP_SUBDOMAIN_SUFFIXES.find((suffix) => base.endsWith(`.${suffix}`))
+  if (hosted) {
+    const own = base.slice(0, -(hosted.length + 1)).split('.')[0]
+    if (own) return titleCaseLabel(own)
   }
 
   const parts = base.split('.').filter(Boolean)
@@ -107,11 +139,7 @@ export function appDisplayName(origin: string | undefined): string {
     label = parts[parts.length - 2] ?? label
   }
 
-  return label
-    .split(/[-_]/)
-    .filter(Boolean)
-    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
-    .join(' ')
+  return titleCaseLabel(label)
 }
 
 export function appHomepage(origin: string | undefined): string | null {

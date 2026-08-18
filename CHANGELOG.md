@@ -2,9 +2,9 @@
 
 ## [1.2.244] - 2026-08-18
 
-### Changed
-
-- Patch release (every push must ship a new version).
+### Fixed
+- **App permission rows fit Recent activity again.** The stored note prefixed “Approved” onto an action title that already led with a verb, while the row’s right column said “Allowed” — three ways of saying the same thing. The note now names only what was requested (“Approve payment”), and the verdict column keeps Allowed / Denied. Long app origins truncate with an ellipsis instead of pushing the row wide; the full host stays available on hover.
+- **Apps hosted on a shared domain are named correctly.** `brc-cloud.bcryderman.workers.dev` displayed as “Workers” in connect prompts, activity, and app details because the name came from the second-to-last host label. Hosts such as `workers.dev`, `pages.dev`, `github.io`, `vercel.app`, and `netlify.app` are now named by the app’s own subdomain (“BRC Cloud”).
 
 ## [1.2.243] - 2026-08-18
 

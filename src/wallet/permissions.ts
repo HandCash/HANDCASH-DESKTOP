@@ -416,13 +416,12 @@ export function resolvePermission(id: number, decision: PermissionDecision): voi
       })
       return
     }
+    // The row already carries the verdict (Allowed / Denied) and the origin, so
+    // the note names only what was requested.
     recordWalletEvent({
       origin: prompt.origin,
       method: decision === 'allow' ? 'approve' : 'deny',
-      note:
-        decision === 'allow'
-          ? `Approved ${prompt.title}`
-          : `Declined ${prompt.title}`,
+      note: prompt.title,
     })
   })
   resolve(decision)

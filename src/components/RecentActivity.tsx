@@ -310,7 +310,11 @@ function HistoryRow({
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>
-          {subtitle ? <span className="history-when">{subtitle}</span> : null}
+          {subtitle ? (
+            <span className="history-when" title={subtitle}>
+              {subtitle}
+            </span>
+          ) : null}
         </div>
         <div className="history-amount-block">
           <span

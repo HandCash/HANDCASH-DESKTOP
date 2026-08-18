@@ -3848,6 +3848,9 @@ button.payment-details-item-thumb-btn:hover {
   color: var(--hc-muted);
   font-size: 0.72rem;
   white-space: nowrap;
+  /* App origins can be long (…workers.dev); truncate instead of pushing the row. */
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .history-amount-block {
