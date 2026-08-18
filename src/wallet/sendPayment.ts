@@ -47,6 +47,45 @@ export type SendSatsResult = {
   balanceSats: number
 }
 
+function isInsufficientFundsError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false
+  const name = err.name || ''
+  const msg = err.message || ''
+  return (
+    name.includes('INSUFFICIENT_FUNDS') ||
+    /insufficient.?funds/i.test(msg) ||
+    /more satoshis are needed/i.test(msg)
+  )
+}
+
+/**
+ * The send gate credits unconfirmed change so the hero balance is honest, but
+ * `createAction` can only spend confirmed `spendable: true` coins. When a send
+ * dies on insufficient funds, tell the user which case they are in — genuinely
+ * short, or waiting on their own change to confirm — instead of surfacing the
+ * toolbox's raw "N more satoshis are needed" line.
+ */
+async function describeInsufficientFunds(
+  wallet: Parameters<typeof fetchBalanceSats>[0],
+  satoshis: number,
+): Promise<string> {
+  const confirmed = await fetchBalanceSats(wallet, {
+    creditUnconfirmed: false,
+  }).catch(() => 0)
+  let confirming = 0
+  try {
+    const { unconfirmedChangeSats } = await import('./balanceView')
+    confirming = await unconfirmedChangeSats()
+  } catch {
+    // Best-effort; fall back to the confirmed-only message.
+  }
+  const bsv = (sats: number) => (sats / 1e8).toFixed(8).replace(/0+$/, '').replace(/\.$/, '')
+  if (confirming > 0 && confirmed + confirming >= satoshis) {
+    return `Your funds are still confirming. ${bsv(confirmed)} BSV is spendable now and ${bsv(confirming)} BSV is waiting for confirmation. Try again once it clears.`
+  }
+  return `Not enough spendable BSV: ${bsv(confirmed)} spendable now, need ${bsv(satoshis)} plus network fee.`
+}
+
 export { assertSendableBalance, refreshSpendableBalance }
 
 /** Broadcast a P2PKH payment from the active wallet. */
@@ -301,6 +340,15 @@ export async function sendSatsToAddress(opts: {
               }
               const message = formatReviewActionsError(err)
               console.warn('[send] failed', message, err)
+              chart.send({ type: 'FAIL', error: message })
+              throw new Error(message)
+            }
+            if (isInsufficientFundsError(err)) {
+              const message = await describeInsufficientFunds(
+                active.wallet,
+                satoshis,
+              )
+              console.warn('[send] insufficient funds', message, err)
               chart.send({ type: 'FAIL', error: message })
               throw new Error(message)
             }

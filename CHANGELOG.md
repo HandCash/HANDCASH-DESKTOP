@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.246] - 2026-08-18
+
+### Fixed
+- **Sends now say "still confirming" instead of a raw insufficient-funds line.** The displayed balance credits unconfirmed change of your own live sends, and the send gate credited it too — but `createAction` can only spend confirmed `spendable: true` coins. After rapid back-to-back sends, almost the whole balance can be unconfirmed change while the wallet is still syncing, so the gate green-lit the send and the toolbox then threw `N more satoshis are needed`. A coin send that fails on insufficient funds now reports the honest split ("X BSV spendable now, Y BSV waiting for confirmation — try again once it clears") when confirmed is short but confirming covers it, and a plain "not enough spendable BSV" otherwise. Coin selection is untouched; this only rewrites the failure message.
+
 ## [1.2.245] - 2026-08-18
 
 ### Fixed
