@@ -14,6 +14,8 @@ import { unlockVault } from './vault'
 import { getActiveWallet } from './session'
 
 const STORE_KEY = 'handcash.brc100.deviceKeyBackups.v1'
+/** Local attestation that we sealed+handed our spare to this peer (they can recover us). */
+const GIVEN_KEY = 'handcash.brc100.deviceKeySparesGiven.v1'
 const DEVICE_ID_KEY = 'handcash.brc100.deviceId.v1'
 
 export type DeviceKeyBackupPackage = {
@@ -29,6 +31,21 @@ export type DeviceKeyBackupPackage = {
   ciphertextB64: string
 }
 
+export type SpareGivenRecord = {
+  peerDeviceId: string
+  peerIdentityKey: string
+  givenAt: number
+}
+
+/** Both legs of a mutual spare exchange for one peer. */
+export type MutualSpareStatus = {
+  /** We store their sealed spare → we can recover them. */
+  holdTheirs: boolean
+  /** We sealed our spare to them → they can recover us (local attestation). */
+  gaveMine: boolean
+  complete: boolean
+}
+
 type CustodySecret = {
   v: 1
   rootKeyHex: string
@@ -38,6 +55,7 @@ type CustodySecret = {
 }
 
 type StoreMap = Record<string, DeviceKeyBackupPackage>
+type GivenMap = Record<string, SpareGivenRecord>
 
 type BackupListener = () => void
 const listeners = new Set<BackupListener>()
@@ -68,6 +86,23 @@ function readStore(): StoreMap {
 
 function writeStore(map: StoreMap) {
   durableSetItem(STORE_KEY, JSON.stringify(map))
+  notify()
+}
+
+function readGiven(): GivenMap {
+  try {
+    const raw = durableGetItem(GIVEN_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as GivenMap
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return parsed
+  } catch {
+    return {}
+  }
+}
+
+function writeGiven(map: GivenMap) {
+  durableSetItem(GIVEN_KEY, JSON.stringify(map))
   notify()
 }
 
@@ -102,11 +137,46 @@ export function hasDeviceKeyBackup(peerDeviceId: string): boolean {
   return Boolean(readStore()[peerDeviceId])
 }
 
+export function hasSpareGivenToPeer(peerDeviceId: string): boolean {
+  return Boolean(readGiven()[peerDeviceId])
+}
+
+export function getMutualSpareStatus(peerDeviceId: string): MutualSpareStatus {
+  const holdTheirs = hasDeviceKeyBackup(peerDeviceId)
+  const gaveMine = hasSpareGivenToPeer(peerDeviceId)
+  return { holdTheirs, gaveMine, complete: holdTheirs && gaveMine }
+}
+
+/** Record that we sealed our spare for this peer (they still must import it). */
+export function markSpareGivenToPeer(peerDeviceId: string, peerIdentityKey: string): void {
+  const id = peerDeviceId.trim()
+  const ik = peerIdentityKey.trim()
+  if (!id || !isPubkey(ik)) return
+  const map = readGiven()
+  map[id] = { peerDeviceId: id, peerIdentityKey: ik, givenAt: Date.now() }
+  writeGiven(map)
+}
+
 export function removeDeviceKeyBackup(peerDeviceId: string): void {
   const map = readStore()
-  if (!(peerDeviceId in map)) return
-  delete map[peerDeviceId]
-  writeStore(map)
+  const given = readGiven()
+  let changed = false
+  if (peerDeviceId in map) {
+    delete map[peerDeviceId]
+    writeStore(map)
+    changed = true
+  }
+  if (peerDeviceId in given) {
+    delete given[peerDeviceId]
+    writeGiven(given)
+    changed = true
+  }
+  if (!changed) return
+}
+
+/** Clear both legs when unlinking a peer. */
+export function clearSpareExchangeForPeer(peerDeviceId: string): void {
+  removeDeviceKeyBackup(peerDeviceId)
 }
 
 export function tryParseDeviceKeyBackupPackage(raw: string): DeviceKeyBackupPackage | null {
@@ -173,10 +243,13 @@ export function deviceKeyBackupToQrText(pkg: DeviceKeyBackupPackage): string {
 export async function createSealedBackupForPeer(args: {
   password: string
   peerIdentityKey: string
+  peerDeviceId: string
   label?: string
 }): Promise<DeviceKeyBackupPackage> {
   const peerIk = args.peerIdentityKey.trim()
+  const peerDeviceId = args.peerDeviceId.trim()
   if (!isPubkey(peerIk)) throw new Error('Peer identity key is invalid')
+  if (!peerDeviceId) throw new Error('Peer device id is required')
 
   const unlocked = await unlockVault(args.password)
   const active = getActiveWallet()
@@ -203,7 +276,7 @@ export async function createSealedBackupForPeer(args: {
     recipient,
   )
 
-  return {
+  const pkg: DeviceKeyBackupPackage = {
     v: 1,
     kind: 'handcash-device-key-backup',
     fromDeviceId: localDeviceId(),
@@ -214,6 +287,9 @@ export async function createSealedBackupForPeer(args: {
     sealedAt: Date.now(),
     ciphertextB64: Utils.toBase64(cipher),
   }
+  // Mutual exchange: mark our outbound leg. Import marks the inbound leg.
+  markSpareGivenToPeer(peerDeviceId, peerIk)
+  return pkg
 }
 
 /** Store a peer's sealed spare on this device (cold). */

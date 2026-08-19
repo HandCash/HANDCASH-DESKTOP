@@ -14,13 +14,13 @@ import {
 import { verifyAndEnrichPair } from '../wallet/devicePeer'
 import { pollDeviceMeshOnce } from '../wallet/deviceMesh'
 import {
+  clearSpareExchangeForPeer,
   createSealedBackupForPeer,
   deviceKeyBackupToQrText,
   getDeviceKeyBackup,
-  hasDeviceKeyBackup,
+  getMutualSpareStatus,
   importSealedDeviceKeyBackup,
   openStoredDeviceKeyBackup,
-  removeDeviceKeyBackup,
   subscribeDeviceKeyBackups,
   tryParseDeviceKeyBackupPackage,
   type OpenedDeviceKeyBackup,
@@ -196,6 +196,7 @@ export function PairDevicePanel() {
       const pkg = await createSealedBackupForPeer({
         password,
         peerIdentityKey: peer.identityKey,
+        peerDeviceId: peer.deviceId,
         label: listDeviceWallets().find((w) => w.isLocal)?.label,
       })
       const text = deviceKeyBackupToQrText(pkg)
@@ -258,7 +259,7 @@ export function PairDevicePanel() {
 
   const hint = useMemo(() => {
     if (step === 'exchange') {
-      return 'Each device seals its own keys to the other (cold spare). Neither can spend the other’s coins until you explicitly recover.'
+      return 'Both directions: (1) create your sealed spare for them to scan, (2) scan theirs into this device. Either alone is not enough if you lose the other phone.'
     }
     if (step === 'recover') {
       return 'Opens the sealed spare for the lost device. Restore that phrase on a new install — this device keeps its own wallet.'
@@ -393,16 +394,20 @@ export function PairDevicePanel() {
   }
 
   if (step === 'exchange' && exchangePeer) {
+    const mutual = getMutualSpareStatus(exchangePeer.deviceId)
     return (
       <div className="pair-device-block" data-aeon-scope="pair-device" data-aeon-state="exchange">
         <h3 className="settings-row-label" style={{ marginTop: 8 }}>
-          Exchange sealed spares
+          Exchange sealed spares (both ways)
         </h3>
         <p className="settings-hint">{hint}</p>
         <p className="settings-row-desc" style={{ marginTop: 8 }}>
           Linked: <strong>{exchangePeer.label}</strong>
-          {hasDeviceKeyBackup(exchangePeer.deviceId) ? ' · their spare stored here' : ''}
         </p>
+        <ul className="settings-hint" style={{ marginTop: 8, paddingLeft: '1.25rem' }}>
+          <li>{mutual.gaveMine ? '✓' : '○'} My spare ready for them (they can recover me)</li>
+          <li>{mutual.holdTheirs ? '✓' : '○'} Their spare stored here (I can recover them)</li>
+        </ul>
 
         <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
           <label htmlFor="seal-password">Unlock password (seal your spare)</label>
@@ -421,7 +426,7 @@ export function PairDevicePanel() {
             disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
             onClick={() => void makeSpareForPeer(exchangePeer)}
           >
-            {busy ? 'Sealing…' : 'Create my sealed spare'}
+            {busy ? 'Sealing…' : mutual.gaveMine ? 'Recreate my sealed spare' : '1 · Create my sealed spare'}
           </button>
         </div>
 
@@ -456,7 +461,7 @@ export function PairDevicePanel() {
         ) : null}
 
         <div className="field" data-aeon-part="field" style={{ marginTop: 16 }}>
-          <label htmlFor="spare-paste">Import their sealed spare</label>
+          <label htmlFor="spare-paste">2 · Import their sealed spare</label>
           <textarea
             id="spare-paste"
             rows={3}
@@ -491,22 +496,30 @@ export function PairDevicePanel() {
         <div className="actions" style={{ marginTop: 16 }}>
           <button
             type="button"
-            className="btn btn-ghost"
+            className={mutual.complete ? 'btn btn-primary' : 'btn btn-ghost'}
             onClick={() => {
+              if (!mutual.complete) {
+                playWalletSound('error')
+                toastError(
+                  'Both ways required',
+                  !mutual.gaveMine && !mutual.holdTheirs
+                    ? 'Create your spare and import theirs.'
+                    : !mutual.gaveMine
+                      ? 'Still need to create your sealed spare for them.'
+                      : 'Still need to import their sealed spare.',
+                )
+                return
+              }
               setStep('link')
               setExchangePeer(null)
               setSpareQrUrl(null)
               setSpareText('')
               setPassword('')
-              toastSuccess(
-                'Link saved',
-                hasDeviceKeyBackup(exchangePeer.deviceId)
-                  ? 'Identity linked · sealed spare stored'
-                  : 'Identity linked — add a sealed spare anytime from the list below',
-              )
+              toastSuccess('Mutual spares ready', 'Each device can recover the other.')
+              playWalletSound('success')
             }}
           >
-            Done
+            {mutual.complete ? 'Done — both ways set' : 'Done (needs both ways)'}
           </button>
         </div>
       </div>
@@ -598,13 +611,18 @@ export function PairDevicePanel() {
           <h3 className="settings-row-label">Linked devices</h3>
           <ul className="settings-hint" style={{ paddingLeft: '1.25rem', marginTop: 8 }}>
             {peers.map((p) => {
-              const spare = hasDeviceKeyBackup(p.deviceId)
+              const mutual = getMutualSpareStatus(p.deviceId)
               const same = localIk ? isSameIdentityPeer(p, localIk) : false
               return (
                 <li key={p.deviceId} style={{ marginBottom: 12 }}>
                   <strong>{p.label}</strong>
-                  {same ? ' · same keys' : ' · linked identity'}
-                  {spare ? ' · sealed spare here' : same ? '' : ' · no spare yet'}
+                  {same
+                    ? ' · same keys'
+                    : mutual.complete
+                      ? ' · mutual spares ready'
+                      : mutual.holdTheirs || mutual.gaveMine
+                        ? ' · spare exchange incomplete'
+                        : ' · linked · no spares yet'}
                   <div className="actions" style={{ marginTop: 6 }}>
                     {!same ? (
                       <button
@@ -619,10 +637,10 @@ export function PairDevicePanel() {
                           setStep('exchange')
                         }}
                       >
-                        {spare ? 'Update spare' : 'Exchange spare'}
+                        {mutual.complete ? 'Refresh spares' : 'Exchange spares'}
                       </button>
                     ) : null}
-                    {spare ? (
+                    {mutual.holdTheirs ? (
                       <button
                         type="button"
                         className="btn btn-ghost"
@@ -643,7 +661,7 @@ export function PairDevicePanel() {
                       onClick={() => {
                         playWalletSound('soft')
                         removePeerDevice(p.deviceId)
-                        removeDeviceKeyBackup(p.deviceId)
+                        clearSpareExchangeForPeer(p.deviceId)
                         toastSuccess('Removed', p.label)
                       }}
                     >

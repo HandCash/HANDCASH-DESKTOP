@@ -12,8 +12,9 @@
 
 1. Create/restore a **separate** wallet on each device (own phrase).
 2. Settings → **Use on another device** → show link QR on A; **Scan to link** on B (or Dashboard Scan).
-3. **Exchange sealed spares** (unlock password seals your keys to their identity pubkey).
-4. Confirm Settings status: linked · sealed spares ready.
+3. **Exchange sealed spares both ways** (each seals to the other’s identity pubkey; wizard
+   requires both legs before Done).
+4. Confirm Settings status: linked · mutual spares ready.
 5. Optional: still confirm **Key slices / phrase** offline for each device.
 6. Optional: History backup URL for each identity’s own recovery — independent URLs are fine.
 

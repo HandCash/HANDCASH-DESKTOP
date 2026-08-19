@@ -147,6 +147,7 @@ export const WALLET_LAYER_MODULES = {
     'deviceSync.ts',
     'deviceWallets.ts',
     'deviceKeyBackup.ts',
+    'phraseSweep.ts',
     'cloudBackupHealth.ts',
     'historyEmptyGuard.ts',
     'recompose.ts',

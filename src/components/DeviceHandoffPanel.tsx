@@ -24,9 +24,9 @@ export function DeviceHandoffPanel() {
     >
       <p className="settings-hint">
         Two installs can be <strong>linked identities</strong> with different keys. Each device
-        spends only its own coins. Optionally exchange a <strong>sealed spare</strong> of the other
-        device’s keys (cold — not used for day-to-day spend). Lose a phone → Recover on the survivor
-        → restore that phrase on a new device.
+        spends only its own coins. Exchange <strong>sealed spares both ways</strong> (cold — not
+        used for day-to-day spend). Lose a phone → Recover on the survivor → restore that phrase on
+        a new device.
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
@@ -36,7 +36,8 @@ export function DeviceHandoffPanel() {
           Scan).
         </li>
         <li>
-          Exchange sealed spares (password seals your keys to their identity pubkey).
+          Exchange sealed spares (password seals your keys to their identity pubkey —
+          do this <strong>both ways</strong>).
         </li>
         <li>
           Optional: still back up <strong>key slices / phrase</strong> offline for each device.

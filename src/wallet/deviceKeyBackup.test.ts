@@ -80,10 +80,18 @@ describe('deviceKeyBackup', () => {
       const pkg = await createSealedBackupForPeer({
         password: 'password12',
         peerIdentityKey: bob.toPublicKey().toString(),
+        peerDeviceId: 'bob-device',
         label: 'This Mac',
       })
       expect(pkg.forIdentityKey).toBe(bob.toPublicKey().toString())
       expect(pkg.fromIdentityKey).toBe(alice.toPublicKey().toString())
+
+      const { getMutualSpareStatus } = await import('./deviceKeyBackup')
+      expect(getMutualSpareStatus('bob-device')).toEqual({
+        holdTheirs: false,
+        gaveMine: true,
+        complete: false,
+      })
 
       const text = deviceKeyBackupToQrText(pkg)
       expect(parseDeviceKeyBackupPackage(text).fromDeviceId).toBe('alice-device')
@@ -91,6 +99,11 @@ describe('deviceKeyBackup', () => {
       asBob()
       const stored = importSealedDeviceKeyBackup(text)
       expect(stored.fromLabel).toBe('This Mac')
+      expect(getMutualSpareStatus('alice-device')).toEqual({
+        holdTheirs: true,
+        gaveMine: false,
+        complete: false,
+      })
 
       const opened = await openStoredDeviceKeyBackup({
         peerDeviceId: 'alice-device',
@@ -110,6 +123,7 @@ describe('deviceKeyBackup', () => {
     const pkg = await createSealedBackupForPeer({
       password: 'password12',
       peerIdentityKey: bob.toPublicKey().toString(),
+      peerDeviceId: 'bob-device',
     })
     expect(() => importSealedDeviceKeyBackup(JSON.stringify(pkg))).toThrow(/different identity/i)
   })

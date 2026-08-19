@@ -146,8 +146,11 @@ export async function sweepVisibleP2pkhOutpoints(
   wallet: ActiveWallet,
   outpoints: string[],
   inputBeef: BEEF,
+  /** Spend key for the P2PKH tips — defaults to this wallet's root. */
+  spendKeyHex?: string,
 ): Promise<P2pkhSweepResult[]> {
-  const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(wallet.rootKeyHex))
+  const keyHex = (spendKeyHex ?? wallet.rootKeyHex).trim()
+  const p2pkhKey = SetupClient.getKeyPair(PrivateKey.fromHex(keyHex))
   const depositBeef = Beef.fromBinary(inputBeef)
   return withVisibleOnChainBeef(async () => {
     const results: P2pkhSweepResult[] = []

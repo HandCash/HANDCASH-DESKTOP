@@ -505,6 +505,7 @@ export type LegacyFundingReceipt = {
 export async function importLegacyUtxos(
   utxos: LegacyUtxo[],
   active?: ActiveWallet | null,
+  opts?: { spendKeyHex?: string },
 ): Promise<{
   imported: number
   failed: number
@@ -582,7 +583,12 @@ export async function importLegacyUtxos(
     const built = await buildLegacyInputBeef(wallet.services, outpoints)
     const results =
       built.ready.length > 0
-        ? await sweepVisibleP2pkhOutpoints(wallet, built.ready, built.beef)
+        ? await sweepVisibleP2pkhOutpoints(
+            wallet,
+            built.ready,
+            built.beef,
+            opts?.spendKeyHex,
+          )
         : []
     // Unreadable outpoints are reported as ordinary failures so they fall
     // through to `releaseLegacyImport` below and are retried on the next scan.

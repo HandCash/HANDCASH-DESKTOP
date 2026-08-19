@@ -12,7 +12,7 @@ import {
 } from '../../wallet/historyBackupPrefs'
 import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
 import { listDeviceWallets } from '../../wallet/deviceWallets'
-import { hasDeviceKeyBackup } from '../../wallet/deviceKeyBackup'
+import { getMutualSpareStatus } from '../../wallet/deviceKeyBackup'
 import { TRUSTHOLDERS_ENABLED } from '../../wallet/walletConfig'
 import type { SettingId } from '../../wallet/navStore'
 
@@ -62,23 +62,33 @@ export function historyStatus(): SettingRowStatus {
 export function deviceHandoffStatus(): SettingRowStatus {
   const peers = listDeviceWallets().filter((w) => !w.isLocal)
   if (peers.length === 0) {
-    return { text: 'Link identities · sealed spare keys', tone: 'muted' }
+    return { text: 'Link identities · mutual sealed spares', tone: 'muted' }
   }
-  const withSpare = peers.filter((p) => hasDeviceKeyBackup(p.deviceId)).length
-  if (withSpare === peers.length) {
+  const mutualOk = peers.filter((p) => getMutualSpareStatus(p.deviceId).complete).length
+  if (mutualOk === peers.length) {
     return {
-      text: `${peers.length} linked · sealed spares ready`,
+      text: `${peers.length} linked · mutual spares ready`,
       tone: 'ok',
     }
   }
-  if (withSpare > 0) {
+  if (mutualOk > 0) {
     return {
-      text: `${peers.length} linked · ${withSpare} with spare`,
+      text: `${peers.length} linked · ${mutualOk} mutual`,
+      tone: 'warn',
+    }
+  }
+  const partial = peers.filter((p) => {
+    const s = getMutualSpareStatus(p.deviceId)
+    return s.holdTheirs || s.gaveMine
+  }).length
+  if (partial > 0) {
+    return {
+      text: `${peers.length} linked · finish both-way spares`,
       tone: 'warn',
     }
   }
   return {
-    text: `${peers.length} linked · add sealed spares`,
+    text: `${peers.length} linked · exchange spares both ways`,
     tone: 'warn',
   }
 }

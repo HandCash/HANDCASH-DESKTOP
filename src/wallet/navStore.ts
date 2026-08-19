@@ -18,6 +18,7 @@ export type SettingId =
   | 'trustholder-backup'
   | 'device-handoff'
   | 'history-backup'
+  | 'import-phrase'
   | 'wipe-wallet'
   | 'about-handcash'
   | 'statecharts'

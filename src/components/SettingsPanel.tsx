@@ -55,6 +55,11 @@ const SETTING_GROUPS: SettingGroup[] = [
         description: 'Link identities · sealed spare keys',
       },
       {
+        id: 'import-phrase',
+        label: 'Import phrase',
+        description: 'Sweep another 12-word wallet into this one',
+      },
+      {
         id: 'change-password',
         label: 'Password',
         description: '',
@@ -125,6 +130,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'trustholder-backup') return TRUSTHOLDERS_ENABLED ? 'Cloud key backup' : 'Key slices'
   if (id === 'device-handoff') return 'Use on another device'
+  if (id === 'import-phrase') return 'Import phrase'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)

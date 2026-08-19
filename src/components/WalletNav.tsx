@@ -60,6 +60,7 @@ import { StatechartsPanel } from './StatechartsPanel'
 import { ChangePasswordPanel } from './ChangePasswordPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
+import { ImportPhrasePanel } from './ImportPhrasePanel'
 import { HistoryBackupPanel } from './HistoryBackupPanel'
 import { TrustholderBackupPanel } from './TrustholderBackupPanel'
 import { LogViewerPanel } from './LogViewerPanel'
@@ -397,6 +398,9 @@ export function WalletNav({
               )}
               {child.type === 'setting' && child.settingId === 'device-handoff' && (
                 <DeviceHandoffPanel />
+              )}
+              {child.type === 'setting' && child.settingId === 'import-phrase' && (
+                <ImportPhrasePanel />
               )}
               {child.type === 'setting' && child.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
