@@ -2,6 +2,7 @@ import type { Friend } from './friends'
 import {
   DEVICE_PEER_PORT,
   assertPairBackupUrlCompatible,
+  getOrCreateDeviceId,
   type DevicePairPayload,
   parsePairPayload,
 } from './deviceWallets'
@@ -77,26 +78,38 @@ export async function fetchDevicePeerSnapshot(
   return data
 }
 
-/** Verify peer matches identity + shared backup URL. LAN health is optional. */
+/**
+ * Verify pair QR and enrich with optional LAN health.
+ * v3: linked identities (keys may differ). v2: same identity + History URL.
+ */
 export async function verifyAndEnrichPair(
   raw: string,
   localIdentityKey: string,
-): Promise<DevicePairPayload & { online: boolean }> {
+): Promise<DevicePairPayload & { online: boolean; address?: string }> {
   const payload = parsePairPayload(raw)
-  if (payload.identityKey !== localIdentityKey) {
-    throw new Error('That device is a different HandCash identity')
+  if (payload.deviceId === getOrCreateDeviceId()) {
+    throw new Error('Cannot pair this device with itself')
   }
-  assertPairBackupUrlCompatible(payload.backupBaseUrl)
+
+  if (payload.v === 2) {
+    if (payload.identityKey !== localIdentityKey) {
+      throw new Error(
+        'That QR is a legacy same-key link for a different identity. Ask them for a fresh link QR.',
+      )
+    }
+    assertPairBackupUrlCompatible(payload.backupBaseUrl)
+  }
 
   if (!payload.peerBaseUrl) {
     return { ...payload, online: false }
   }
+
   const health = await probeDevicePeer(payload.peerBaseUrl)
   if (!health) {
     return { ...payload, online: false }
   }
-  if (health.identityKey !== localIdentityKey) {
-    throw new Error('Peer identity does not match')
+  if (health.identityKey !== payload.identityKey) {
+    throw new Error('Peer identity does not match pair code')
   }
   if (health.deviceId !== payload.deviceId) {
     throw new Error('Peer device id does not match pair code')

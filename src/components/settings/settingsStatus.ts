@@ -11,6 +11,8 @@ import {
   resolveHistoryBackupBaseUrl,
 } from '../../wallet/historyBackupPrefs'
 import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
+import { listDeviceWallets } from '../../wallet/deviceWallets'
+import { hasDeviceKeyBackup } from '../../wallet/deviceKeyBackup'
 import { TRUSTHOLDERS_ENABLED } from '../../wallet/walletConfig'
 import type { SettingId } from '../../wallet/navStore'
 
@@ -58,12 +60,26 @@ export function historyStatus(): SettingRowStatus {
 }
 
 export function deviceHandoffStatus(): SettingRowStatus {
-  const url = resolveHistoryBackupBaseUrl()
-  if (!url) return { text: 'Needs HandCash history first', tone: 'warn' }
-  const handCash = url.replace(/\/+$/, '') === handCashHistoryUrl()
+  const peers = listDeviceWallets().filter((w) => !w.isLocal)
+  if (peers.length === 0) {
+    return { text: 'Link identities · sealed spare keys', tone: 'muted' }
+  }
+  const withSpare = peers.filter((p) => hasDeviceKeyBackup(p.deviceId)).length
+  if (withSpare === peers.length) {
+    return {
+      text: `${peers.length} linked · sealed spares ready`,
+      tone: 'ok',
+    }
+  }
+  if (withSpare > 0) {
+    return {
+      text: `${peers.length} linked · ${withSpare} with spare`,
+      tone: 'warn',
+    }
+  }
   return {
-    text: handCash ? 'Same identity + HandCash history' : 'Same identity + custom history host',
-    tone: 'muted',
+    text: `${peers.length} linked · add sealed spares`,
+    tone: 'warn',
   }
 }
 

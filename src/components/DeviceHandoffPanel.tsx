@@ -5,7 +5,8 @@ import { PairDevicePanel } from './PairDevicePanel'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 /**
- * Same identity → one pot; shared history URL for multi-device parity.
+ * Multi-device: link identities + sealed mutual key backups.
+ * Each device keeps its own spend keys; the other holds a cold spare.
  */
 export function DeviceHandoffPanel() {
   const meta = readVaultMeta()
@@ -22,20 +23,24 @@ export function DeviceHandoffPanel() {
       data-aeon-scope="device-handoff"
     >
       <p className="settings-hint">
-        On the new device choose <strong>Restore → Phrase</strong> or <strong>Shares</strong>. Same
-        phrase or any two BRC-140 slices restore the same identity and BSV pot. To keep history and
-        friends aligned, set the <strong>same History backup URL</strong> on each install.
+        Two installs can be <strong>linked identities</strong> with different keys. Each device
+        spends only its own coins. Optionally exchange a <strong>sealed spare</strong> of the other
+        device’s keys (cold — not used for day-to-day spend). Lose a phone → Recover on the survivor
+        → restore that phrase on a new device.
       </p>
 
       <ol className="settings-hint" style={{ marginTop: 12, paddingLeft: '1.25rem' }}>
-        <li>On the new device: Restore → Phrase / Shares / emergency key.</li>
-        <li>Confirm the identical History backup URL on both.</li>
+        <li>On each device create or restore its own wallet (own phrase).</li>
         <li>
-          On one device show the link QR; on the other tap <strong>Scan to link</strong> (or use
-          Dashboard Scan).
+          Show the link QR on one; on the other tap <strong>Scan to link</strong> (or Dashboard
+          Scan).
         </li>
-        <li>Tap Sync via backup URL so history + friends merge (same wallet keys).</li>
-        <li>Spends reconcile against the chain automatically. Offline payments are not supported.</li>
+        <li>
+          Exchange sealed spares (password seals your keys to their identity pubkey).
+        </li>
+        <li>
+          Optional: still back up <strong>key slices / phrase</strong> offline for each device.
+        </li>
       </ol>
 
       <div className="actions" style={{ marginTop: 16 }}>
@@ -58,9 +63,9 @@ export function DeviceHandoffPanel() {
 
       <PairDevicePanel />
 
-      <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-39']}>
-        Phrase and key slices recover identity. Shared history backup URL keeps device state aligned
-        after you sync.
+      <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-78']}>
+        Identity link and sealed spare are separate contracts. History backup is optional recovery
+        of this device’s local state — not required to link.
       </SettingsFeatureAbout>
     </div>
   )

@@ -3,6 +3,7 @@ import QRCode from 'qrcode'
 import { getActiveWallet } from '../wallet/session'
 import {
   buildPairPayload,
+  isSameIdentityPeer,
   listDeviceWallets,
   pairPayloadToQrText,
   removePeerDevice,
@@ -13,22 +14,18 @@ import {
 import { verifyAndEnrichPair } from '../wallet/devicePeer'
 import { pollDeviceMeshOnce } from '../wallet/deviceMesh'
 import {
-  hasDeviceLinkBackupUrl,
-  syncDevicesViaBackupUrl,
-} from '../wallet/deviceSync'
-import { recomposeWallet } from '../wallet/recompose'
-import {
-  getHistoryBackupPrefs,
-  resolveHistoryBackupBaseUrl,
-  setHistoryBackupPrefs,
-} from '../wallet/historyBackupPrefs'
-import {
-  HANDCASH_HISTORY_HOST_LABEL,
-  ensureHandCashServiceDefaults,
-  handCashHistoryUrl,
-} from '../wallet/walletSetupApply'
+  createSealedBackupForPeer,
+  deviceKeyBackupToQrText,
+  getDeviceKeyBackup,
+  hasDeviceKeyBackup,
+  importSealedDeviceKeyBackup,
+  openStoredDeviceKeyBackup,
+  removeDeviceKeyBackup,
+  subscribeDeviceKeyBackups,
+  tryParseDeviceKeyBackupPackage,
+  type OpenedDeviceKeyBackup,
+} from '../wallet/deviceKeyBackup'
 import { takePendingPairScan } from '../wallet/pendingPairScan'
-import { openSetting } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
@@ -37,41 +34,39 @@ import { DeferredImage } from './DeferredImage'
 import { QrScanner } from './QrScanner'
 import { SkeletonQr } from './Skeleton'
 
-/**
- * Link devices: same identity + same BRC-39 backup URL (required).
- * Show QR on one device, Scan to link (or paste) on the other, then Sync.
- */
-function initialPairBackupUrl(): string {
-  try {
-    ensureHandCashServiceDefaults()
-  } catch {
-    /* ignore */
-  }
-  return resolveHistoryBackupBaseUrl()
-}
+type WizardStep = 'link' | 'exchange' | 'recover'
 
+/**
+ * Link identities (keys may differ) + exchange sealed mutual key backups.
+ * History URL sync is not part of this flow.
+ */
 export function PairDevicePanel() {
-  const [backupUrl, setBackupUrl] = useState(initialPairBackupUrl)
-  const [urlDraft, setUrlDraft] = useState(backupUrl)
-  const [customHost, setCustomHost] = useState(() => {
-    const url = resolveHistoryBackupBaseUrl()
-    return Boolean(url) && url.replace(/\/+$/, '') !== handCashHistoryUrl()
-  })
-  const [password, setPassword] = useState('')
+  const [step, setStep] = useState<WizardStep>('link')
   const [qrUrl, setQrUrl] = useState<string | null>(null)
   const [pairText, setPairText] = useState('')
   const [paste, setPaste] = useState('')
   const [busy, setBusy] = useState(false)
   const [scanning, setScanning] = useState(false)
+  const [password, setPassword] = useState('')
+  const [spareQrUrl, setSpareQrUrl] = useState<string | null>(null)
+  const [spareText, setSpareText] = useState('')
+  const [exchangePeer, setExchangePeer] = useState<DeviceWallet | null>(null)
+  const [recoverPeerId, setRecoverPeerId] = useState<string | null>(null)
+  const [opened, setOpened] = useState<OpenedDeviceKeyBackup | null>(null)
   const [peers, setPeers] = useState<DeviceWallet[]>(() =>
     listDeviceWallets().filter((w) => !w.isLocal),
   )
+  const [, setBackupTick] = useState(0)
 
   useEffect(() => subscribeDeviceWallets((all) => setPeers(all.filter((w) => !w.isLocal))), [])
+  useEffect(() => subscribeDeviceKeyBackups(() => setBackupTick((n) => n + 1)), [])
+
+  const active = getActiveWallet()
+  const localIk = active?.identityKey ?? ''
 
   const refreshQr = async () => {
-    const active = getActiveWallet()
-    if (!active || !hasDeviceLinkBackupUrl()) {
+    const wallet = getActiveWallet()
+    if (!wallet) {
       setPairText('')
       setQrUrl(null)
       return
@@ -79,8 +74,8 @@ export function PairDevicePanel() {
     const status = await window.handcash?.getBridgeStatus?.()
     const lan = status?.devicePeerLanUrls?.[0] ?? null
     const payload = buildPairPayload({
-      identityKey: active.identityKey,
-      backupBaseUrl: resolveHistoryBackupBaseUrl(),
+      identityKey: wallet.identityKey,
+      address: wallet.address,
       peerBaseUrl: lan,
       platform: window.handcash?.platform,
     })
@@ -109,40 +104,68 @@ export function PairDevicePanel() {
     return () => {
       cancelled = true
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [backupUrl])
+  }, [])
 
   const linkFromRaw = async (raw: string, opts?: { fromScan?: boolean }) => {
-    const active = getActiveWallet()
-    if (!active) {
+    const wallet = getActiveWallet()
+    if (!wallet) {
       toastError('Locked', 'Unlock this wallet first.')
       return false
     }
-    if (!hasDeviceLinkBackupUrl()) {
-      toastError('Backup URL required', 'Set the same History URL on both devices first.')
-      return false
-    }
     if (busy) return false
+
+    const asBackup = tryParseDeviceKeyBackupPackage(raw)
+    if (asBackup) {
+      setBusy(true)
+      try {
+        const pkg = importSealedDeviceKeyBackup(raw)
+        toastSuccess('Sealed spare stored', pkg.fromLabel)
+        playWalletSound('success')
+        setPaste('')
+        setScanning(false)
+        setStep('link')
+        return true
+      } catch (err) {
+        playWalletSound('error')
+        toastError('Import failed', err instanceof Error ? err.message : String(err))
+        return false
+      } finally {
+        setBusy(false)
+      }
+    }
+
     setBusy(true)
     playWalletSound('soft')
     try {
-      const enriched = await verifyAndEnrichPair(raw, active.identityKey)
-      upsertPeerDevice({
+      const enriched = await verifyAndEnrichPair(raw, wallet.identityKey)
+      const peer = upsertPeerDevice({
         deviceId: enriched.deviceId,
         label: enriched.label,
         platform: enriched.platform,
         peerBaseUrl: enriched.peerBaseUrl ?? null,
         identityKey: enriched.identityKey,
+        address: enriched.v === 3 ? enriched.address : null,
         lastSeenAt: Date.now(),
         online: enriched.online,
       })
       void pollDeviceMeshOnce()
       setPaste('')
       setScanning(false)
-      toastSuccess(
-        opts?.fromScan ? 'Scanned & linked' : 'Device linked',
-        'Enter your unlock password below and tap Sync.',
-      )
+      const sameIk = peer.identityKey.toLowerCase() === wallet.identityKey.toLowerCase()
+      if (sameIk) {
+        toastSuccess(
+          opts?.fromScan ? 'Scanned & linked' : 'Device linked',
+          'Same keys on both devices — sealed spare not needed.',
+        )
+        setStep('link')
+      } else {
+        setExchangePeer(peer)
+        setStep('exchange')
+        toastSuccess(
+          opts?.fromScan ? 'Identities linked' : 'Identities linked',
+          'Next: exchange sealed spare keys.',
+        )
+      }
       playWalletSound('success')
       return true
     } catch (err) {
@@ -154,7 +177,6 @@ export function PairDevicePanel() {
     }
   }
 
-  // Dashboard Scan → device-handoff handoff of a pending pair QR.
   useEffect(() => {
     const pending = takePendingPairScan()
     if (!pending) return
@@ -163,56 +185,86 @@ export function PairDevicePanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const saveUrl = () => {
-    const next = setHistoryBackupPrefs({ baseUrl: urlDraft })
-    setBackupUrl(next.baseUrl)
-    playWalletSound('soft')
-    toastSuccess(next.baseUrl ? 'Backup URL saved' : 'Backup URL cleared')
-  }
-
-  const runSync = async () => {
+  const makeSpareForPeer = async (peer: DeviceWallet) => {
     if (password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
-      toastError('Password required', 'Confirm your unlock password on this device to sync.')
+      toastError('Password required', 'Confirm your unlock password to seal a spare.')
       return
     }
     setBusy(true)
     playWalletSound('soft')
     try {
-      const result = await syncDevicesViaBackupUrl(password)
-      const recomposed = await recomposeWallet({
+      const pkg = await createSealedBackupForPeer({
         password,
-        history: 'skip',
-        reason: 'pair-sync',
+        peerIdentityKey: peer.identityKey,
+        label: listDeviceWallets().find((w) => w.isLocal)?.label,
       })
-      const parts = [
-        result.pulled
-          ? result.brc39
-            ? `history ${result.brc39.inserts + result.brc39.updates} changes`
-            : 'history pulled'
-          : result.skippedPullReason
-            ? `kept local history (${result.skippedPullReason})`
-            : 'kept local history',
-        result.friendsMerged ? `${result.friendsMerged} friends added` : null,
-        result.activityMerged ? `${result.activityMerged} activity rows` : null,
-        result.uploaded ? 'uploaded' : null,
-        recomposed.spendableSats != null ? `chain ${recomposed.spendableSats} sats` : null,
-      ].filter(Boolean)
-      toastSuccess('Devices synced', parts.join(' · '))
+      const text = deviceKeyBackupToQrText(pkg)
+      setSpareText(text)
+      const dataUrl = await QRCode.toDataURL(text, {
+        width: 220,
+        margin: 2,
+        color: { dark: '#000000', light: '#FFFFFF' },
+        errorCorrectionLevel: 'M',
+      })
+      setSpareQrUrl(dataUrl)
+      toastSuccess('Spare sealed', 'Show this QR on the other device to import.')
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
-      toastError('Sync failed', err instanceof Error ? err.message : String(err))
+      toastError('Seal failed', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const importSpare = async () => {
+    if (!paste.trim()) return
+    setBusy(true)
+    try {
+      const pkg = importSealedDeviceKeyBackup(paste)
+      setPaste('')
+      toastSuccess('Sealed spare stored', `${pkg.fromLabel} · cold only`)
+      playWalletSound('success')
+    } catch (err) {
+      playWalletSound('error')
+      toastError('Import failed', err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const runRecover = async () => {
+    if (!recoverPeerId) return
+    if (password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
+      toastError('Password required', 'Unlock password opens the sealed spare.')
+      return
+    }
+    setBusy(true)
+    try {
+      const result = await openStoredDeviceKeyBackup({
+        peerDeviceId: recoverPeerId,
+        password,
+      })
+      setOpened(result)
+      playWalletSound('success')
+      toastSuccess('Spare opened', 'Copy the phrase onto a new device — do not spend from both.')
+    } catch (err) {
+      playWalletSound('error')
+      toastError('Recover failed', err instanceof Error ? err.message : String(err))
     } finally {
       setBusy(false)
     }
   }
 
   const hint = useMemo(() => {
-    if (!backupUrl) {
-      return 'HandCash history is required to link devices. Choose a custom host only if both devices use the same one.'
+    if (step === 'exchange') {
+      return 'Each device seals its own keys to the other (cold spare). Neither can spend the other’s coins until you explicitly recover.'
     }
-    return 'Show this QR on one device. On the other, tap Scan to link — then Sync (same wallet keys; history is sealed to the key).'
-  }, [backupUrl])
+    if (step === 'recover') {
+      return 'Opens the sealed spare for the lost device. Restore that phrase on a new install — this device keeps its own wallet.'
+    }
+    return 'Show this QR on one device. On the other, Scan to link identities. Different keys are fine — then exchange sealed spares.'
+  }, [step])
 
   if (scanning) {
     return (
@@ -221,7 +273,7 @@ export function PairDevicePanel() {
           Scan to link
         </h3>
         <QrScanner
-          hint="Point at the other device’s HandCash link QR"
+          hint="Point at the other device’s link QR or sealed-spare QR"
           onCancel={() => {
             playWalletSound('soft')
             setScanning(false)
@@ -234,204 +286,373 @@ export function PairDevicePanel() {
     )
   }
 
-  return (
-    <div className="pair-device-block" data-aeon-scope="pair-device">
-      <h3 className="settings-row-label" style={{ marginTop: 8 }}>
-        Link devices (scan QR)
-      </h3>
-      <p className="settings-hint">{hint}</p>
-
-      {!customHost ? (
-        <p className="settings-row-desc" style={{ marginTop: 12 }}>
-          {backupUrl ? (
-            <>
-              History host: <strong>{HANDCASH_HISTORY_HOST_LABEL}</strong>
-            </>
-          ) : (
-            <>No history host yet. HandCash is applied unless you chose no backup at setup.</>
-          )}
-        </p>
-      ) : (
-        <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
-          <label htmlFor="device-backup-url">Custom history host</label>
-          <input
-            id="device-backup-url"
-            type="url"
-            placeholder={handCashHistoryUrl()}
-            value={urlDraft}
-            onChange={(e) => setUrlDraft(e.target.value)}
-            autoComplete="off"
-          />
-        </div>
-      )}
-      <label className="wallet-setup-option" style={{ marginTop: 8 }}>
-        <input
-          type="checkbox"
-          checked={customHost}
-          onChange={(e) => {
-            const on = e.target.checked
-            setCustomHost(on)
-            if (!on) {
-              setUrlDraft(handCashHistoryUrl())
-              const next = setHistoryBackupPrefs({ baseUrl: handCashHistoryUrl() })
-              setBackupUrl(next.baseUrl)
-            }
-          }}
-        />
-        <span className="wallet-setup-option-body">
-          <strong>Use a custom history host</strong>
-          <span>Both devices must use the exact same URL.</span>
-        </span>
-      </label>
-      <div className="actions" style={{ marginTop: 8 }}>
-        {customHost ? (
-          <button type="button" className="btn btn-primary" onClick={saveUrl}>
-            Save URL
-          </button>
-        ) : null}
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            playWalletSound('soft')
-            openSetting('history-backup')
-          }}
-        >
-          History settings
-        </button>
-      </div>
-
-      {!backupUrl ? (
-        <p className="settings-row-desc" style={{ marginTop: 12 }}>
-          Save a history host before pairing. Both devices must use the same one.
-        </p>
-      ) : (
-        <>
-          <div className="identity-layout link-device-qr" style={{ marginTop: 16 }}>
-            <div className="identity-qr">
-              <p className="settings-row-desc" style={{ marginBottom: 8 }}>
-                This device’s link QR
-              </p>
-              {qrUrl ? (
-                <DeferredImage
-                  src={qrUrl}
-                  alt="Device link QR"
-                  width={180}
-                  height={180}
-                  skeletonWidth={180}
-                  skeletonHeight={180}
-                  skeletonRadius={4}
-                  skeletonClassName="skeleton-qr"
-                />
-              ) : (
-                <SkeletonQr size={180} />
-              )}
-              <div className="actions" style={{ marginTop: 8 }}>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={!pairText}
-                  onClick={() => void copyText(pairText, { label: 'pair code' })}
-                >
-                  Copy pair code
-                </button>
-              </div>
+  if (step === 'recover' && recoverPeerId) {
+    const peer = peers.find((p) => p.deviceId === recoverPeerId)
+    const stored = getDeviceKeyBackup(recoverPeerId)
+    return (
+      <div className="pair-device-block" data-aeon-scope="pair-device" data-aeon-state="recover">
+        <h3 className="settings-row-label" style={{ marginTop: 8 }}>
+          Recover {peer?.label ?? stored?.fromLabel ?? 'device'}
+        </h3>
+        <p className="settings-hint">{hint}</p>
+        {!opened ? (
+          <>
+            <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
+              <label htmlFor="recover-password">Unlock password (this device)</label>
+              <input
+                id="recover-password"
+                type="password"
+                autoComplete="current-password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
             </div>
-
-            <div className="identity-info">
-              <p className="settings-row-desc" style={{ marginBottom: 8 }}>
-                Other device
-              </p>
-              <div className="actions" style={{ marginBottom: 12 }}>
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={busy}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    setScanning(true)
-                  }}
-                >
-                  Scan to link
-                </button>
-              </div>
-              <div className="field" data-aeon-part="field">
-                <label htmlFor="pair-paste">Or paste their pair code</label>
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+                onClick={() => void runRecover()}
+              >
+                {busy ? 'Opening…' : 'Open sealed spare'}
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setStep('link')
+                  setRecoverPeerId(null)
+                  setOpened(null)
+                  setPassword('')
+                }}
+              >
+                Back
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="settings-row-desc" style={{ marginTop: 12 }}>
+              Identity {opened.identityKey.slice(0, 12)}… · {opened.address}
+            </p>
+            {opened.mnemonic ? (
+              <div className="field" data-aeon-part="field" style={{ marginTop: 8 }}>
+                <label htmlFor="recover-phrase">Recovery phrase</label>
                 <textarea
-                  id="pair-paste"
-                  rows={4}
-                  value={paste}
-                  placeholder='{"v":2,"backupBaseUrl":"https://…","identityKey":"…"}'
-                  onChange={(e) => setPaste(e.target.value)}
-                  autoComplete="off"
+                  id="recover-phrase"
+                  rows={3}
+                  readOnly
+                  value={opened.mnemonic}
                   spellCheck={false}
                 />
               </div>
+            ) : (
+              <div className="field" data-aeon-part="field" style={{ marginTop: 8 }}>
+                <label htmlFor="recover-root">Emergency key</label>
+                <textarea
+                  id="recover-root"
+                  rows={3}
+                  readOnly
+                  value={opened.rootKeyHex}
+                  spellCheck={false}
+                />
+              </div>
+            )}
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() =>
+                  void copyText(opened.mnemonic ?? opened.rootKeyHex, {
+                    label: opened.mnemonic ? 'recovery phrase' : 'emergency key',
+                  })
+                }
+              >
+                Copy
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => {
+                  setOpened(null)
+                  setPassword('')
+                  setStep('link')
+                  setRecoverPeerId(null)
+                }}
+              >
+                Done
+              </button>
+            </div>
+            <p className="settings-row-desc" style={{ marginTop: 8 }}>
+              On a new device: Restore → Phrase (or emergency key). Then unlink the lost device here.
+            </p>
+          </>
+        )}
+      </div>
+    )
+  }
+
+  if (step === 'exchange' && exchangePeer) {
+    return (
+      <div className="pair-device-block" data-aeon-scope="pair-device" data-aeon-state="exchange">
+        <h3 className="settings-row-label" style={{ marginTop: 8 }}>
+          Exchange sealed spares
+        </h3>
+        <p className="settings-hint">{hint}</p>
+        <p className="settings-row-desc" style={{ marginTop: 8 }}>
+          Linked: <strong>{exchangePeer.label}</strong>
+          {hasDeviceKeyBackup(exchangePeer.deviceId) ? ' · their spare stored here' : ''}
+        </p>
+
+        <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
+          <label htmlFor="seal-password">Unlock password (seal your spare)</label>
+          <input
+            id="seal-password"
+            type="password"
+            autoComplete="current-password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+          />
+        </div>
+        <div className="actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+            onClick={() => void makeSpareForPeer(exchangePeer)}
+          >
+            {busy ? 'Sealing…' : 'Create my sealed spare'}
+          </button>
+        </div>
+
+        {spareQrUrl ? (
+          <div className="identity-layout link-device-qr" style={{ marginTop: 16 }}>
+            <div className="identity-qr">
+              <p className="settings-row-desc" style={{ marginBottom: 8 }}>
+                Their device scans this
+              </p>
+              <DeferredImage
+                src={spareQrUrl}
+                alt="Sealed spare QR"
+                width={180}
+                height={180}
+                skeletonWidth={180}
+                skeletonHeight={180}
+                skeletonRadius={4}
+                skeletonClassName="skeleton-qr"
+              />
               <div className="actions" style={{ marginTop: 8 }}>
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={busy || !paste.trim()}
-                  onClick={() => void linkFromRaw(paste)}
+                  disabled={!spareText}
+                  onClick={() => void copyText(spareText, { label: 'sealed spare' })}
                 >
-                  {busy ? 'Linking…' : 'Link from paste'}
+                  Copy spare code
                 </button>
               </div>
             </div>
           </div>
+        ) : null}
 
-          <div className="field" data-aeon-part="field" style={{ marginTop: 16 }}>
-            <label htmlFor="device-sync-password">Unlock password (this device)</label>
-            <input
-              id="device-sync-password"
-              type="password"
-              autoComplete="current-password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
+        <div className="field" data-aeon-part="field" style={{ marginTop: 16 }}>
+          <label htmlFor="spare-paste">Import their sealed spare</label>
+          <textarea
+            id="spare-paste"
+            rows={3}
+            value={paste}
+            placeholder="Paste their sealed spare JSON, or Scan"
+            onChange={(e) => setPaste(e.target.value)}
+            autoComplete="off"
+            spellCheck={false}
+          />
+        </div>
+        <div className="actions" style={{ marginTop: 8 }}>
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => {
+              playWalletSound('soft')
+              setScanning(true)
+            }}
+          >
+            Scan their spare
+          </button>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            disabled={busy || !paste.trim()}
+            onClick={() => void importSpare()}
+          >
+            Import from paste
+          </button>
+        </div>
+        <div className="actions" style={{ marginTop: 16 }}>
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => {
+              setStep('link')
+              setExchangePeer(null)
+              setSpareQrUrl(null)
+              setSpareText('')
+              setPassword('')
+              toastSuccess(
+                'Link saved',
+                hasDeviceKeyBackup(exchangePeer.deviceId)
+                  ? 'Identity linked · sealed spare stored'
+                  : 'Identity linked — add a sealed spare anytime from the list below',
+              )
+            }}
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    )
+  }
+
+  return (
+    <div className="pair-device-block" data-aeon-scope="pair-device">
+      <h3 className="settings-row-label" style={{ marginTop: 8 }}>
+        Link another device
+      </h3>
+      <p className="settings-hint">{hint}</p>
+
+      <div className="identity-layout link-device-qr" style={{ marginTop: 16 }}>
+        <div className="identity-qr">
+          <p className="settings-row-desc" style={{ marginBottom: 8 }}>
+            This device’s link QR
+          </p>
+          {qrUrl ? (
+            <DeferredImage
+              src={qrUrl}
+              alt="Device link QR"
+              width={180}
+              height={180}
+              skeletonWidth={180}
+              skeletonHeight={180}
+              skeletonRadius={4}
+              skeletonClassName="skeleton-qr"
+            />
+          ) : (
+            <SkeletonQr size={180} />
+          )}
+          <div className="actions" style={{ marginTop: 8 }}>
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!pairText}
+              onClick={() => void copyText(pairText, { label: 'pair code' })}
+            >
+              Copy pair code
+            </button>
+          </div>
+        </div>
+
+        <div className="identity-info">
+          <p className="settings-row-desc" style={{ marginBottom: 8 }}>
+            Other device
+          </p>
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => {
+                playWalletSound('soft')
+                setScanning(true)
+              }}
+            >
+              Scan to link
+            </button>
+          </div>
+          <div className="field" data-aeon-part="field">
+            <label htmlFor="pair-paste">Or paste their pair / spare code</label>
+            <textarea
+              id="pair-paste"
+              rows={4}
+              value={paste}
+              placeholder='{"v":3,"identityKey":"…","address":"…"}'
+              onChange={(e) => setPaste(e.target.value)}
+              autoComplete="off"
+              spellCheck={false}
             />
           </div>
           <div className="actions" style={{ marginTop: 8 }}>
             <button
               type="button"
-              className="btn btn-primary"
-              disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
-              onClick={() => void runSync()}
+              className="btn btn-ghost"
+              disabled={busy || !paste.trim()}
+              onClick={() => void linkFromRaw(paste)}
             >
-              {busy ? 'Syncing…' : 'Sync via backup URL'}
+              {busy ? 'Working…' : 'Link / import'}
             </button>
           </div>
-          <p className="settings-row-desc" style={{ marginTop: 8 }}>
-            Pulls history only if the cloud copy is newer than this device, then uploads. Last upload:{' '}
-            {getHistoryBackupPrefs().lastUploadedAt
-              ? new Date(getHistoryBackupPrefs().lastUploadedAt!).toLocaleString()
-              : 'never'}
-            .
-          </p>
-        </>
-      )}
+        </div>
+      </div>
 
       {peers.length > 0 ? (
         <div style={{ marginTop: 20 }}>
           <h3 className="settings-row-label">Linked devices</h3>
           <ul className="settings-hint" style={{ paddingLeft: '1.25rem', marginTop: 8 }}>
-            {peers.map((p) => (
-              <li key={p.deviceId} style={{ marginBottom: 8 }}>
-                {p.label}
-                {p.online ? ' · LAN online' : ''}
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  style={{ marginLeft: 8 }}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    removePeerDevice(p.deviceId)
-                    toastSuccess('Removed', p.label)
-                  }}
-                >
-                  Remove
-                </button>
-              </li>
-            ))}
+            {peers.map((p) => {
+              const spare = hasDeviceKeyBackup(p.deviceId)
+              const same = localIk ? isSameIdentityPeer(p, localIk) : false
+              return (
+                <li key={p.deviceId} style={{ marginBottom: 12 }}>
+                  <strong>{p.label}</strong>
+                  {same ? ' · same keys' : ' · linked identity'}
+                  {spare ? ' · sealed spare here' : same ? '' : ' · no spare yet'}
+                  <div className="actions" style={{ marginTop: 6 }}>
+                    {!same ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          playWalletSound('soft')
+                          setExchangePeer(p)
+                          setSpareQrUrl(null)
+                          setSpareText('')
+                          setPassword('')
+                          setStep('exchange')
+                        }}
+                      >
+                        {spare ? 'Update spare' : 'Exchange spare'}
+                      </button>
+                    ) : null}
+                    {spare ? (
+                      <button
+                        type="button"
+                        className="btn btn-ghost"
+                        onClick={() => {
+                          playWalletSound('soft')
+                          setRecoverPeerId(p.deviceId)
+                          setOpened(null)
+                          setPassword('')
+                          setStep('recover')
+                        }}
+                      >
+                        Recover
+                      </button>
+                    ) : null}
+                    <button
+                      type="button"
+                      className="btn btn-ghost"
+                      onClick={() => {
+                        playWalletSound('soft')
+                        removePeerDevice(p.deviceId)
+                        removeDeviceKeyBackup(p.deviceId)
+                        toastSuccess('Removed', p.label)
+                      }}
+                    >
+                      Unlink
+                    </button>
+                  </div>
+                </li>
+              )
+            })}
           </ul>
         </div>
       ) : null}

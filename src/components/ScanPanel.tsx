@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { clearNavChild, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
+import { tryParseDeviceKeyBackupPackage } from '../wallet/deviceKeyBackup'
 import { setPendingPairScan } from '../wallet/pendingPairScan'
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { claimBrc29SettlementUri } from '../wallet/sendBrc29Payment'
@@ -110,10 +111,15 @@ export function ScanPanel() {
             return
           }
 
-          if (tryParsePairPayload(trimmed)) {
+          const pair = tryParsePairPayload(trimmed)
+          const spare = tryParseDeviceKeyBackupPackage(trimmed)
+          if (pair || spare) {
             setPendingPairScan(trimmed)
             playWalletSound('soft')
-            toastSuccess('Device link QR', 'Confirming on Use on another device…')
+            toastSuccess(
+              spare ? 'Sealed spare QR' : 'Device link QR',
+              'Confirming on Use on another device…',
+            )
             openSetting('device-handoff')
             return
           }

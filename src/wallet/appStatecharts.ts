@@ -43,6 +43,7 @@ const MASTER = `stateDiagram-v2
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
+  settingsFlow --> deviceLink : link devices
   settingsFlow --> aboutHandCash : about
   settingsFlow --> wipeWallet : wipe
   aboutHandCash --> statecharts : view charts
@@ -65,6 +66,7 @@ const MASTER = `stateDiagram-v2
   changePassword : Change password
   backupKeys : Keys backup
   historyBackup : History backup
+  deviceLink : Link · sealed spares
   aboutHandCash : About HandCash
   statecharts : Statecharts
   wipeWallet : Wipe wallet
@@ -431,7 +433,9 @@ const SETTINGS = `stateDiagram-v2
   backupKeys --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
   deviceHandoff --> historyBackup : open history
+  deviceHandoff --> linkDevices : pair wizard
   deviceHandoff --> settingsHome : back
+  linkDevices --> deviceHandoff : done
   historyBackup --> settingsHome : back
   historyBackup --> deviceHandoff : back
   historyBackup --> backupKeys : back
@@ -444,10 +448,29 @@ const SETTINGS = `stateDiagram-v2
   changePassword : Password
   backupKeys : Keys
   deviceHandoff : Use on another device
+  linkDevices : Link · sealed spares
   historyBackup : History
   wipeWallet : Wipe
   aboutHandCash : About HandCash
   statecharts : Statecharts
+`
+
+const DEVICE_LINK = `stateDiagram-v2
+  direction TB
+  [*] --> link
+  link --> exchange : identities linked\\n(different keys)
+  link --> link : same keys\\n(skip spare)
+  exchange --> link : done / back
+  link --> recover : open sealed spare
+  recover --> link : done / back
+  link --> scanning : scan QR
+  scanning --> link : pair or spare imported
+  scanning --> exchange : pair then exchange
+
+  link : Show link QR / scan
+  exchange : Seal spare to peer pubkey
+  recover : Decrypt spare → copy phrase
+  scanning : Camera
 `
 
 const CHANGE_PASSWORD = `stateDiagram-v2
@@ -919,6 +942,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'Settings',
     caption: 'settings — keys, history, about, nested panels',
     source: SETTINGS,
+  },
+  {
+    id: 'deviceLink',
+    label: 'Link devices',
+    caption: 'deviceLink — identity link · sealed spare · recover',
+    source: DEVICE_LINK,
   },
   {
     id: 'changePassword',

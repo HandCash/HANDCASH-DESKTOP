@@ -1,10 +1,12 @@
 /**
- * Same identity installs: roster + QR pair.
- * Linking requires the same BRC-39 backup base URL on both devices (deviceSync).
- * Optional LAN peerBaseUrl is only for live peek — not how parity syncs.
+ * Linked devices roster + pair QR.
+ *
+ * v3: different identity keys may link (identity link ≠ shared spend key).
+ * Sealed mutual key backups are a separate contract (`deviceKeyBackup.ts`).
+ * History URL sync remains optional for same-identity installs only.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { assertDeviceLinkBackupUrl, backupUrlsMatch } from './deviceSync'
+import { backupUrlsMatch } from './deviceSync'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 
 const DEVICE_ID_KEY = 'handcash.brc100.deviceId.v1'
@@ -18,25 +20,41 @@ export type DeviceWallet = {
   deviceId: string
   label: string
   platform: string
-  /** Optional LAN peek URL; parity sync uses backupBaseUrl, not this. */
+  /** Optional LAN peek URL; not required for identity link. */
   peerBaseUrl: string | null
   isLocal: boolean
   identityKey: string
+  /** Receive / identity address when known (pair v3). */
+  address: string | null
   lastSeenAt: number | null
   online: boolean
+  /** When this peer was identity-linked on this install. */
+  linkedAt: number | null
 }
 
-export type DevicePairPayload = {
+/** Legacy same-identity + History URL pair. */
+export type DevicePairPayloadV2 = {
   v: 2
   identityKey: string
   deviceId: string
   label: string
   platform: string
-  /** Shared History / BRC-39 base URL — required to link */
   backupBaseUrl: string
-  /** Optional LAN device-peer for live peek */
   peerBaseUrl?: string | null
 }
+
+/** Cross-identity (or same) link — no History URL required. */
+export type DevicePairPayloadV3 = {
+  v: 3
+  identityKey: string
+  address: string
+  deviceId: string
+  label: string
+  platform: string
+  peerBaseUrl?: string | null
+}
+
+export type DevicePairPayload = DevicePairPayloadV2 | DevicePairPayloadV3
 
 type RosterListener = (wallets: DeviceWallet[]) => void
 type SelectionListener = (deviceId: string) => void
@@ -73,19 +91,54 @@ function defaultLabel(platform: string): string {
   return 'This device'
 }
 
+function normalizeWallet(raw: Partial<DeviceWallet> & {
+  deviceId: string
+  label: string
+  identityKey: string
+}): DeviceWallet {
+  return {
+    deviceId: raw.deviceId,
+    label: raw.label,
+    platform: typeof raw.platform === 'string' ? raw.platform : 'unknown',
+    peerBaseUrl: typeof raw.peerBaseUrl === 'string' ? raw.peerBaseUrl : null,
+    isLocal: Boolean(raw.isLocal),
+    identityKey: raw.identityKey,
+    address: typeof raw.address === 'string' && raw.address.trim() ? raw.address.trim() : null,
+    lastSeenAt: typeof raw.lastSeenAt === 'number' ? raw.lastSeenAt : null,
+    online: Boolean(raw.online),
+    linkedAt: typeof raw.linkedAt === 'number' ? raw.linkedAt : null,
+  }
+}
+
 function readRoster(): DeviceWallet[] {
   try {
     const raw = durableGetItem(ROSTER_KEY)
     if (!raw) return []
-    const parsed = JSON.parse(raw) as DeviceWallet[]
+    const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
-    return parsed.filter(
-      (w) =>
-        w &&
-        typeof w.deviceId === 'string' &&
-        typeof w.label === 'string' &&
-        typeof w.identityKey === 'string',
-    )
+    return parsed
+      .filter(
+        (w): w is Record<string, unknown> =>
+          Boolean(w) &&
+          typeof w === 'object' &&
+          typeof (w as DeviceWallet).deviceId === 'string' &&
+          typeof (w as DeviceWallet).label === 'string' &&
+          typeof (w as DeviceWallet).identityKey === 'string',
+      )
+      .map((w) =>
+        normalizeWallet({
+          deviceId: w.deviceId as string,
+          label: w.label as string,
+          identityKey: w.identityKey as string,
+          platform: w.platform as string | undefined,
+          peerBaseUrl: w.peerBaseUrl as string | null | undefined,
+          isLocal: w.isLocal as boolean | undefined,
+          address: w.address as string | null | undefined,
+          lastSeenAt: w.lastSeenAt as number | null | undefined,
+          online: w.online as boolean | undefined,
+          linkedAt: w.linkedAt as number | null | undefined,
+        }),
+      )
   } catch {
     return []
   }
@@ -141,6 +194,7 @@ export function subscribeSelectedDevice(listener: SelectionListener): () => void
 /** Ensure this install is on the roster for the unlocked identity. */
 export function enrollLocalDevice(args: {
   identityKey: string
+  address?: string | null
   platform?: string
   peerBaseUrl?: string | null
   label?: string
@@ -151,10 +205,8 @@ export function enrollLocalDevice(args: {
     window.handcash?.platform ??
     (typeof navigator !== 'undefined' ? navigator.platform : 'web')
   const label = args.label?.trim() || defaultLabel(platform)
-  const roster = readRoster().filter(
-    (w) => w.identityKey === args.identityKey || w.isLocal,
-  )
-  const withoutLocal = roster.filter((w) => !w.isLocal && w.identityKey === args.identityKey)
+  const previous = readRoster()
+  const peers = previous.filter((w) => !w.isLocal && w.deviceId !== deviceId)
   const local: DeviceWallet = {
     deviceId,
     label,
@@ -162,31 +214,40 @@ export function enrollLocalDevice(args: {
     peerBaseUrl: args.peerBaseUrl ?? null,
     isLocal: true,
     identityKey: args.identityKey,
+    address: args.address?.trim() || null,
     lastSeenAt: Date.now(),
     online: true,
+    linkedAt: null,
   }
-  writeRoster([local, ...withoutLocal.filter((w) => w.deviceId !== deviceId)])
+  writeRoster([local, ...peers])
   if (!durableGetItem(SELECTED_KEY)) {
     durableSetItem(SELECTED_KEY, deviceId)
   }
   return local
 }
 
-export function upsertPeerDevice(peer: Omit<DeviceWallet, 'isLocal' | 'online'> & {
-  online?: boolean
-}): DeviceWallet {
+export function upsertPeerDevice(
+  peer: Omit<DeviceWallet, 'isLocal' | 'online' | 'linkedAt' | 'address'> & {
+    online?: boolean
+    linkedAt?: number | null
+    address?: string | null
+  },
+): DeviceWallet {
   const local = readRoster().find((w) => w.isLocal)
-  if (local && peer.identityKey !== local.identityKey) {
-    throw new Error('Peer identity does not match this wallet')
-  }
   if (peer.deviceId === local?.deviceId) {
     throw new Error('Cannot pair this device with itself')
   }
   const entry: DeviceWallet = {
-    ...peer,
+    deviceId: peer.deviceId,
+    label: peer.label,
+    platform: peer.platform,
+    peerBaseUrl: peer.peerBaseUrl ?? null,
     isLocal: false,
-    online: peer.online ?? false,
+    identityKey: peer.identityKey,
+    address: peer.address?.trim() || null,
     lastSeenAt: peer.lastSeenAt ?? Date.now(),
+    online: peer.online ?? false,
+    linkedAt: peer.linkedAt ?? Date.now(),
   }
   const rest = readRoster().filter((w) => w.deviceId !== entry.deviceId)
   writeRoster([...rest, entry])
@@ -204,7 +265,9 @@ export function removePeerDevice(deviceId: string): void {
 
 export function patchDeviceWallet(
   deviceId: string,
-  patch: Partial<Pick<DeviceWallet, 'online' | 'lastSeenAt' | 'peerBaseUrl' | 'label'>>,
+  patch: Partial<
+    Pick<DeviceWallet, 'online' | 'lastSeenAt' | 'peerBaseUrl' | 'label' | 'address'>
+  >,
 ): void {
   const roster = readRoster()
   const idx = roster.findIndex((w) => w.deviceId === deviceId)
@@ -213,18 +276,41 @@ export function patchDeviceWallet(
   writeRoster(roster)
 }
 
+/** Build a v3 link QR (preferred). */
 export function buildPairPayload(args: {
   identityKey: string
-  backupBaseUrl?: string
+  address: string
   peerBaseUrl?: string | null
   label?: string
   platform?: string
-}): DevicePairPayload {
-  const platform =
-    args.platform ?? window.handcash?.platform ?? 'web'
-  const backupBaseUrl = normalizePairBackupUrl(
-    args.backupBaseUrl ?? assertDeviceLinkBackupUrl(),
-  )
+}): DevicePairPayloadV3 {
+  const platform = args.platform ?? window.handcash?.platform ?? 'web'
+  const peer =
+    typeof args.peerBaseUrl === 'string' && args.peerBaseUrl.trim()
+      ? args.peerBaseUrl.replace(/\/+$/, '')
+      : null
+  const address = args.address.trim()
+  if (!address) throw new Error('Pair payload missing address')
+  return {
+    v: 3,
+    identityKey: args.identityKey.trim(),
+    address,
+    deviceId: getOrCreateDeviceId(),
+    label: args.label?.trim() || defaultLabel(platform),
+    platform,
+    peerBaseUrl: peer,
+  }
+}
+
+/** @deprecated Legacy History-URL pair — kept for old QR codes. */
+export function buildLegacyPairPayload(args: {
+  identityKey: string
+  backupBaseUrl: string
+  peerBaseUrl?: string | null
+  label?: string
+  platform?: string
+}): DevicePairPayloadV2 {
+  const platform = args.platform ?? window.handcash?.platform ?? 'web'
   const peer =
     typeof args.peerBaseUrl === 'string' && args.peerBaseUrl.trim()
       ? args.peerBaseUrl.replace(/\/+$/, '')
@@ -235,7 +321,7 @@ export function buildPairPayload(args: {
     deviceId: getOrCreateDeviceId(),
     label: args.label?.trim() || defaultLabel(platform),
     platform,
-    backupBaseUrl,
+    backupBaseUrl: normalizePairBackupUrl(args.backupBaseUrl),
     peerBaseUrl: peer,
   }
 }
@@ -246,6 +332,10 @@ function normalizePairBackupUrl(raw: string): string {
     throw new Error('Backup URL must be http(s)')
   }
   return base
+}
+
+function isPubkey(s: string): boolean {
+  return /^(02|03)[0-9a-fA-F]{64}$/.test(s)
 }
 
 export function parsePairPayload(raw: string): DevicePairPayload {
@@ -260,27 +350,42 @@ export function parsePairPayload(raw: string): DevicePairPayload {
     throw new Error('Invalid pair payload')
   }
   const o = parsed as Record<string, unknown>
-  if (o.v !== 2 && o.v !== 1) throw new Error('Unsupported pair payload version')
-  if (typeof o.identityKey !== 'string' || !/^(02|03)[0-9a-fA-F]{64}$/.test(o.identityKey)) {
+  if (o.v !== 3 && o.v !== 2 && o.v !== 1) throw new Error('Unsupported pair payload version')
+  if (typeof o.identityKey !== 'string' || !isPubkey(o.identityKey)) {
     throw new Error('Pair payload identity key is invalid')
   }
   if (typeof o.deviceId !== 'string' || !o.deviceId.trim()) {
     throw new Error('Pair payload missing deviceId')
   }
 
-  let backupBaseUrl: string
-  if (typeof o.backupBaseUrl === 'string' && o.backupBaseUrl.trim()) {
-    backupBaseUrl = normalizePairBackupUrl(o.backupBaseUrl)
-  } else if (o.v === 1) {
-    throw new Error('This pair code is outdated — both devices need a History backup URL')
-  } else {
-    throw new Error('Pair payload missing backup URL')
-  }
-
   const peerBaseUrl =
     typeof o.peerBaseUrl === 'string' && /^https?:\/\//i.test(o.peerBaseUrl)
       ? o.peerBaseUrl.replace(/\/+$/, '')
       : null
+
+  if (o.v === 3) {
+    if (typeof o.address !== 'string' || !o.address.trim()) {
+      throw new Error('Pair payload missing address')
+    }
+    return {
+      v: 3,
+      identityKey: o.identityKey,
+      address: o.address.trim(),
+      deviceId: o.deviceId.trim(),
+      label: typeof o.label === 'string' && o.label.trim() ? o.label.trim() : 'Device',
+      platform: typeof o.platform === 'string' ? o.platform : 'unknown',
+      peerBaseUrl,
+    }
+  }
+
+  let backupBaseUrl: string
+  if (typeof o.backupBaseUrl === 'string' && o.backupBaseUrl.trim()) {
+    backupBaseUrl = normalizePairBackupUrl(o.backupBaseUrl)
+  } else if (o.v === 1) {
+    throw new Error('This pair code is outdated — ask the other device to show a fresh link QR')
+  } else {
+    throw new Error('Pair payload missing backup URL')
+  }
 
   return {
     v: 2,
@@ -297,6 +402,7 @@ export function parsePairPayload(raw: string): DevicePairPayload {
 export function tryParsePairPayload(raw: string): DevicePairPayload | null {
   const text = raw.trim()
   if (!text.startsWith('{') || !text.includes('"identityKey"')) return null
+  if (text.includes('handcash-device-key-backup')) return null
   try {
     return parsePairPayload(text)
   } catch {
@@ -308,7 +414,7 @@ export function pairPayloadToQrText(payload: DevicePairPayload): string {
   return JSON.stringify(payload)
 }
 
-/** Local backup URL must match the peer’s before linking. */
+/** Legacy: local History URL must match the peer’s before v2 linking. */
 export function assertPairBackupUrlCompatible(peerBackupBaseUrl: string): void {
   const local = resolveHistoryBackupBaseUrl()
   if (!local) {
@@ -317,4 +423,8 @@ export function assertPairBackupUrlCompatible(peerBackupBaseUrl: string): void {
   if (!backupUrlsMatch(local, peerBackupBaseUrl)) {
     throw new Error('Backup URLs do not match — both devices must use the same History URL')
   }
+}
+
+export function isSameIdentityPeer(peer: DeviceWallet, localIdentityKey: string): boolean {
+  return peer.identityKey.toLowerCase() === localIdentityKey.toLowerCase()
 }

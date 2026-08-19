@@ -1,29 +1,39 @@
-# Manual checklist — identity + multi-device (BRC-39 URL)
+# Manual checklist — linked devices + sealed spares
 
-**Restore** = **BRC-75** / **BRC-140** → same identity → **one BSV pot**.
+**Two models (do not mix in your head):**
 
-**Link devices** = both must set the **same History backup base URL** (**BRC-39**). Pair QR embeds that URL; mismatch is rejected. Sync = pull/push `wallet.brc39` + `friends.json` at that host. Same unlock password on both devices (encrypts BRC-39).
+| Path | What it is |
+|------|------------|
+| **Linked identities** | Different (or same) keys on two installs. Link via QR. Each device spends **only its own** coins. |
+| **Sealed spare** | Cold EncryptedMessage of the other device’s custody secret (BRC-78). Not used for day-to-day spend. |
+| **History backup URL** | Optional BRC-39 replica of **this** identity’s localState. Required only for legacy same-key Sync / spend-lease — **not** required to link. |
 
-## Identity on a second device
+## Preferred: two devices, two keys
 
-1. Phrase/shares → restore on the other install.
-2. Confirm identity key matches.
-3. Set **identical** History backup URL on both (History or Use on another device).
-4. Link via QR / paste.
-5. **Sync via backup URL** (password) on each side as needed.
-6. Refresh to reconcile spends vs chain.
+1. Create/restore a **separate** wallet on each device (own phrase).
+2. Settings → **Use on another device** → show link QR on A; **Scan to link** on B (or Dashboard Scan).
+3. **Exchange sealed spares** (unlock password seals your keys to their identity pubkey).
+4. Confirm Settings status: linked · sealed spares ready.
+5. Optional: still confirm **Key slices / phrase** offline for each device.
+6. Optional: History backup URL for each identity’s own recovery — independent URLs are fine.
 
-## Spend heal
+## Lose a device
 
-1. Send from A → Sync and/or Refresh on B.
-2. Expect local history/friends from the shared URL; UTXO truth still verified on-chain.
+1. On the survivor: linked list → **Recover** → unlock → copy phrase / emergency key.
+2. On a **new** install: Restore → Phrase (or emergency key).
+3. **Unlink** the lost device on the survivor; re-exchange spares with the replacement.
+
+## Legacy: same phrase on two installs
+
+1. Phrase/shares → same identity → **one BSV pot** on both.
+2. Set the **same** History backup URL if you want Sync + spend-lease.
+3. Link still works (v3 QR); sealed spare is skipped (same keys).
+4. UTXO truth is still the chain; Refresh after the other device spends.
 
 ## Boundaries
 
-- No link without a shared backup URL.
-- **No offline payments** — spends require network (hard rule with or without parity). Stale local outs + another device = double-spend risk.
-- **Spend path** — force chain heal + balance check before Send (Review/Confirm), auto-pay/`createAction`, and collectable sends; spends are serialized locally.
-- **Cross-device spend lease** — when a backup URL is set, `spend-lease.json` on that host gives one device a short exclusive send window (cloud-style reservation). Other device sees “X is sending…”.
-- **Unlock / online** — force spendable review so other-device spends drop immediately.
-- BRC-232 share vaults are key recovery only — not this sync path.
-- LAN peer (port 3340) is optional live peek; parity is the backup URL.
+- Identity link and sealed spare are **separate** contracts (wizard couples them; revoke can differ).
+- Sealed spare never enters the hot spend path until explicit Recover.
+- **No offline payments** (hard rule).
+- LAN peer (:3340) is optional same-identity peek only — not how linked different-key devices sync.
+- BRC-232 / key slices remain offline key recovery — orthogonal to sealed spares.

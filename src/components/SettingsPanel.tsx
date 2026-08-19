@@ -20,6 +20,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
+import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import { TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
 import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
 
@@ -51,7 +52,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'device-handoff',
         label: 'Use on another device',
-        description: 'Same identity + History URL',
+        description: 'Link identities · sealed spare keys',
       },
       {
         id: 'change-password',
@@ -168,9 +169,11 @@ export function SettingsPanel() {
     const bump = () => setStatusTick((n) => n + 1)
     const unsubBackup = subscribeBackupConfirmed(bump)
     const unsubDevices = subscribeDeviceWallets(() => bump())
+    const unsubSpares = subscribeDeviceKeyBackups(() => bump())
     return () => {
       unsubBackup()
       unsubDevices()
+      unsubSpares()
     }
   }, [])
 

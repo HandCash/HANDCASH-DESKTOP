@@ -1,6 +1,6 @@
 /**
  * Poll paired same-identity peers: friends merge + local-item snapshots.
- * BSV pot is shared (BRC-75); mesh is not a second wallet.
+ * Cross-identity linked devices skip LAN mesh (separate pots; no shared spend).
  */
 import { mergeFriends } from './friends'
 import {
@@ -49,8 +49,10 @@ export async function enrollLocalFromBridge(identityKey: string): Promise<Device
     (status?.devicePeerPort
       ? `http://127.0.0.1:${status.devicePeerPort}`
       : null)
+  const active = getActiveWallet()
   return enrollLocalDevice({
     identityKey,
+    address: active?.address ?? null,
     platform: window.handcash?.platform,
     peerBaseUrl,
   })
@@ -90,7 +92,11 @@ export async function pollDeviceMeshOnce(): Promise<void> {
   polling = true
   try {
     await enrollLocalFromBridge(active.identityKey)
-    const peers = listDeviceWallets().filter((w) => !w.isLocal)
+    const peers = listDeviceWallets().filter(
+      (w) =>
+        !w.isLocal &&
+        w.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
+    )
     await Promise.all(peers.map((p) => refreshPeer(p, active.identityKey)))
   } finally {
     polling = false

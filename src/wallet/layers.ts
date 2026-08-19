@@ -19,6 +19,8 @@
  * Glossary:
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Does not pull BRC-39.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
+ * - **Linked devices** → identity link + sealed mutual key backups (`deviceWallets` /
+ *   `deviceKeyBackup`). Different keys OK; cold spare only — not a shared spend pot.
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.
@@ -143,6 +145,8 @@ export const WALLET_LAYER_MODULES = {
     'historyBackup.ts',
     'walletSetupApply.ts',
     'deviceSync.ts',
+    'deviceWallets.ts',
+    'deviceKeyBackup.ts',
     'cloudBackupHealth.ts',
     'historyEmptyGuard.ts',
     'recompose.ts',

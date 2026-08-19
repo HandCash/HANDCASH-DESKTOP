@@ -46,6 +46,7 @@ export async function handleDevicePeerRequest(
     const platform = window.handcash?.platform ?? 'web'
     const local = enrollLocalDevice({
       identityKey: active.identityKey,
+      address: active.address,
       platform,
     })
     return {
@@ -87,6 +88,7 @@ export async function handleDevicePeerRequest(
     const platform = window.handcash?.platform ?? 'web'
     const local = enrollLocalDevice({
       identityKey: active.identityKey,
+      address: active.address,
       platform,
     })
     const [balanceSats, collectables] = await Promise.all([
@@ -126,6 +128,7 @@ export async function handleDevicePeerRequest(
       const peerBaseUrl = status?.devicePeerLanUrls?.[0] ?? null
       const payload = buildPairPayload({
         identityKey: active.identityKey,
+        address: active.address,
         peerBaseUrl,
         platform: window.handcash?.platform,
       })
@@ -135,7 +138,7 @@ export async function handleDevicePeerRequest(
         status: 400,
         body: JSON.stringify({
           status: 'error',
-          code: 'BACKUP_URL_REQUIRED',
+          code: 'PAIR_INFO_FAILED',
           description: err instanceof Error ? err.message : String(err),
         }),
       }

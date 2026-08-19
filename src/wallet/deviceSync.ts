@@ -1,6 +1,7 @@
 /**
  * Multi-device **historyReplica** via shared BRC-39 backup URL (+ friends sidecar).
- * Same base URL on both installs is required to link devices.
+ * Optional for single-device recovery / same-identity installs — not required to
+ * link different-key devices (`deviceWallets` / `deviceKeyBackup`).
  *
  * This layer replicas `localState` (toolbox IndexedDB). It is not chainIngest —
  * Refresh cannot substitute for a missing BRC-39. See `layers.ts`.
@@ -99,7 +100,7 @@ export function hasDeviceLinkBackupUrl(): boolean {
 export function assertDeviceLinkBackupUrl(): string {
   const base = resolveHistoryBackupBaseUrl()
   if (!base) {
-    throw new Error('Set the same History backup URL on both devices to link them')
+    throw new Error('Set a History backup URL first')
   }
   return base
 }
