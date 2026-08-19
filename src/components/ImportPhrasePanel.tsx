@@ -31,6 +31,8 @@ export function ImportPhrasePanel() {
   const [fundingResult, setFundingResult] = useState<string | null>(null)
   const [itemProgress, setItemProgress] = useState<string | null>(null)
   const [migrateItems, setMigrateItems] = useState(true)
+  /** Addresses whose collectables this run will move. */
+  const [itemBranches, setItemBranches] = useState<string[]>([])
   const abortRef = useRef(false)
 
   useEffect(() => {
@@ -59,6 +61,14 @@ export function ImportPhrasePanel() {
       await unlockVault(password)
       const next = await previewPhraseSweep(phrase, passphrase)
       setPreview(next)
+      // Start a very large branch switched off. Destination change pays a fee
+      // per collectable, so a capped count can outrun the balance and take
+      // hours — that is a decision to make deliberately, not a default.
+      setItemBranches(
+        next.hits
+          .filter((h) => h.itemCountAtLeast > 0 && !h.itemCountCapped)
+          .map((h) => h.candidate.address),
+      )
       setPhase('preview')
       setStatus('')
       playWalletSound('success')
@@ -117,7 +127,9 @@ export function ImportPhrasePanel() {
       setFundingResult(fundMsg)
       toastSuccess('BSV sweep', fundMsg)
 
-      const itemHits = preview.hits.filter((h) => h.itemCountAtLeast > 0)
+      const itemHits = preview.hits.filter(
+        (h) => h.itemCountAtLeast > 0 && itemBranches.includes(h.candidate.address),
+      )
       if (migrateItems && itemHits.length > 0 && !abortRef.current) {
         setStatus(
           preview.itemCountCapped
@@ -125,8 +137,9 @@ export function ImportPhrasePanel() {
             : `Moving ${preview.itemCountAtLeast} collectables…`,
         )
         let movedRunning = 0
+        let outOfFunds = false
         for (const hit of itemHits) {
-          if (abortRef.current) break
+          if (abortRef.current || outOfFunds) break
           let guard = 0
           // A collection-wide fault (unreadable tips, rejected broadcasts) fails
           // every item identically. Grinding through thousands of them just to
@@ -146,6 +159,15 @@ export function ImportPhrasePanel() {
             )
             if (batch.done) {
               movedRunning += batch.moved
+              break
+            }
+            if (batch.stopped === 'funds') {
+              movedRunning += batch.moved
+              toastError(
+                'Out of spendable BSV',
+                `Moved ${movedRunning.toLocaleString()} collectable${movedRunning === 1 ? '' : 's'} before the wallet ran low. Add funds and run Import phrase again — it resumes where this stopped.`,
+              )
+              outOfFunds = true
               break
             }
             // Paging past outputs that are not collectables is progress, not a
@@ -302,6 +324,48 @@ export function ImportPhrasePanel() {
                   </span>
                 </span>
               </label>
+              {migrateItems && preview.hits.some((h) => h.itemCountAtLeast > 0) ? (
+                <div style={{ marginTop: 8, paddingLeft: 4 }}>
+                  <p className="settings-row-desc" style={{ marginBottom: 6 }}>
+                    Move collectables from:
+                  </p>
+                  {preview.hits
+                    .filter((hit) => hit.itemCountAtLeast > 0)
+                    .map((hit) => (
+                      <label
+                        key={hit.candidate.address}
+                        className="wallet-setup-option"
+                        style={{ marginTop: 4 }}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={itemBranches.includes(hit.candidate.address)}
+                          onChange={(e) =>
+                            setItemBranches((prev) =>
+                              e.target.checked
+                                ? [...prev, hit.candidate.address]
+                                : prev.filter((a) => a !== hit.candidate.address),
+                            )
+                          }
+                        />
+                        <span className="wallet-setup-option-body">
+                          <strong>
+                            {hit.candidate.label} ·{' '}
+                            {hit.itemCountCapped
+                              ? `${hit.itemCountAtLeast.toLocaleString()}+`
+                              : hit.itemCountAtLeast.toLocaleString()}{' '}
+                            item{hit.itemCountAtLeast === 1 ? '' : 's'}
+                          </strong>
+                          <span>
+                            {hit.itemCountCapped
+                              ? 'Very large — off by default. Each collectable costs a fee and takes about a second, so this can run for hours and stop when the balance runs low.'
+                              : 'Small enough to finish in one run.'}
+                          </span>
+                        </span>
+                      </label>
+                    ))}
+                </div>
+              ) : null}
               <div className="actions" style={{ marginTop: 12 }}>
                 <button
                   type="button"

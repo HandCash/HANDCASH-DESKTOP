@@ -43,6 +43,7 @@ import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { summarizePostBeef } from './postBeefResult'
+import { isInsufficientFundsError } from './insufficientFunds'
 import { refreshFromChain } from './chainIngest'
 
 const ITEM_CURSOR_KEY = 'handcash.brc100.phraseSweepItemCursor.v1'
@@ -184,9 +185,21 @@ export type PhraseFundingSweepResult = {
   alreadySwept: number
 }
 
+/**
+ * Why a run ended before the collection did.
+ *
+ * `funds` is not a failure of any particular tip: destination change pays the
+ * fee for every migrate, so a large collection can simply exhaust the wallet
+ * mid-run. Counting that as a failed item would blame the tip and keep grinding
+ * through the remainder, each one failing the same way.
+ */
+export type PhraseItemStopReason = 'funds'
+
 export type PhraseItemMigrateProgress = {
   moved: number
   failed: number
+  /** Set when the run ended early for a reason of its own. Cursor is kept. */
+  stopped: PhraseItemStopReason | null
   /**
    * Outputs the indexer listed for the address that are not migratable tips —
    * cash outputs, and tips this phrase key cannot unlock.
@@ -581,6 +594,7 @@ export async function migratePhraseItemsBatch(args: {
     return {
       moved: cursor.moved,
       failed: cursor.failed,
+      stopped: null,
       skipped: cursor.skipped ?? 0,
       scanned: cursor.offset,
       done: true,
@@ -599,12 +613,15 @@ export async function migratePhraseItemsBatch(args: {
   const destLock = new P2PKH().lock(active.address).toHex()
   const movedItems: MigratedItemReceipt[] = []
 
+  let stopped: PhraseItemStopReason | null = null
+  let consumed = 0
   for (const item of slice) {
     await yieldToUi()
     try {
       const outcome = await runExclusiveSpend(async () =>
         migrateOneOrdinal(active, spendKey, destLock, item),
       )
+      consumed += 1
       if (outcome.kind === 'skipped') {
         skipped += 1
         continue
@@ -616,6 +633,18 @@ export async function migratePhraseItemsBatch(args: {
         sweepTxid: outcome.txid,
       })
     } catch (err) {
+      // Out of money is a property of the wallet, not of this tip. Leave the
+      // cursor on it so a later, funded run picks up exactly where this stopped.
+      if (isInsufficientFundsError(err)) {
+        stopped = 'funds'
+        lastError = err instanceof Error ? err.message : String(err)
+        appendAppLog(
+          'warn',
+          `[phrase-sweep] stopping: not enough spendable BSV to keep migrating (moved ${cursor.moved + moved} so far)`,
+        )
+        break
+      }
+      consumed += 1
       failed += 1
       lastError = err instanceof Error ? err.message : String(err)
       console.warn('[phrase-sweep] item migrate failed', item.outpoint, lastError)
@@ -631,12 +660,13 @@ export async function migratePhraseItemsBatch(args: {
 
   const next: ItemCursor = {
     ...cursor,
-    offset: cursor.offset + slice.length,
+    offset: cursor.offset + consumed,
     moved: cursor.moved + moved,
     failed: cursor.failed + failed,
     skipped: (cursor.skipped ?? 0) + skipped,
   }
-  const done = page.rawCount < GP_PAGE && slice.length >= page.rows.length
+  const done =
+    !stopped && page.rawCount < GP_PAGE && consumed >= page.rows.length
   if (done) writeItemCursor(null)
   else writeItemCursor(next)
 
@@ -652,6 +682,7 @@ export async function migratePhraseItemsBatch(args: {
   return {
     moved: next.moved,
     failed: next.failed,
+    stopped,
     skipped: next.skipped ?? 0,
     scanned: next.offset,
     done,

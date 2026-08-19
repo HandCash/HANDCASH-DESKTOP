@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.261] - 2026-08-19
+
+### Added
+
+- **Collectables are now migrated per derivation branch, chosen deliberately.** A phrase can hold hundreds of thousands of tips on one branch and a handful on another. Each branch is listed with its count and its own checkbox; a branch too large to count exactly starts switched off, because destination change pays a fee per collectable and such a run can take hours and outlast the balance. Small branches stay on so a phrase can be verified cheaply first.
+
+### Fixed
+
+- **Running out of BSV part-way through a large migration now stops the run instead of failing every remaining tip.** A shortfall is a property of the wallet, not of the collectable being moved, so it ends the run under its own name, reports how many were moved, and leaves the resume cursor on the tip it did not reach — adding funds and running again continues from there.
+
 ## [1.2.260] - 2026-08-19
 
 ### Fixed
