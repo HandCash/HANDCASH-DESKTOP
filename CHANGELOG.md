@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.264] - 2026-08-19
+
+### Fixed
+
+- **Green reads as green in Settings on the light theme.** `--hc-success` was never actually defined, so every "saved / confirmed / one-way" status fell back to the dark sheet's neon mint — 1.27:1 on white, effectively invisible. It is now a token: the neon on black, and the brand hue at L26% on paper (5.6:1). Two rules that lifted their green *toward white* now mix toward the sheet's own ink instead, which is the right direction on both sheets.
+- **Settings greens are deep on the light sheet.** The palette accent (L33%, 3.5:1) is fine on a dashboard tile but pale under the dense small type in Settings, so the accent is re-pointed for that subtree only — every label, status, inline link and tag deepens at once and matches the success ink beside it.
+
 ## [1.2.263] - 2026-08-19
 
 ### Changed

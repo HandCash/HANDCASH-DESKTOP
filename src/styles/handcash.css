@@ -30,6 +30,9 @@
      near-black (as on handcash.io), so anything that must stay green for
      *meaning* — the page glow, success, the live dot — reads this instead. */
   --hc-brand: 143 100% 67%;
+  /* "This is done / saved / healthy" ink. Neon on black; the light sheet
+     redefines it deep, because every rule below reads it as foreground. */
+  --hc-success: hsl(var(--hc-brand));
   --shadow-section: 0 1px 3px rgba(0, 0, 0, 0.25);
   --shadow-section-hover: 0 4px 12px rgba(0, 0, 0, 0.35);
 
@@ -124,6 +127,11 @@ html[data-aeon-mode='light'] {
   --hc-deep: #ffffff;
 
   --hc-accent-deep: #0b4526;
+
+  /* Success is read as foreground (settings statuses, saved slices, banners).
+     The neon is ~1.4:1 on this sheet, so it deepens to the brand hue at L26%
+     — still HandCash green, legible as small type on paper. */
+  --hc-success: hsl(143 78% 26%);
 
   --hc-warn: #a16207;
   --hc-error: #b91c1c;
@@ -2712,8 +2720,8 @@ button.wallet-detail-value.is-copied {
 .key-slice-list[data-aeon-state='complete'] .key-slice-progress-range {
   background: linear-gradient(
     90deg,
-    color-mix(in srgb, var(--hc-success, #57ff97) 75%, var(--hc-accent)),
-    var(--hc-success, #57ff97)
+    color-mix(in srgb, var(--hc-success) 75%, var(--hc-accent)),
+    var(--hc-success)
   );
 }
 
@@ -2730,7 +2738,7 @@ button.wallet-detail-value.is-copied {
 }
 
 .key-slice-item[data-aeon-state='saved'] {
-  border-color: color-mix(in srgb, var(--hc-success, #57ff97) 35%, hsl(var(--border)));
+  border-color: color-mix(in srgb, var(--hc-success) 35%, hsl(var(--border)));
 }
 
 .key-slice-trigger {
@@ -2808,14 +2816,16 @@ button.wallet-detail-value.is-copied {
   color: var(--hc-muted);
 }
 
+/* Mix toward the sheet's own ink, never toward white: on paper a lift toward
+   white is exactly the wrong direction for a green that must stay readable. */
 .key-slice-status[data-aeon-state='saved'],
 .key-slice-status[data-aeon-state='enrolled'] {
-  color: color-mix(in srgb, var(--hc-success, #57ff97) 85%, white);
-  background: color-mix(in srgb, var(--hc-success, #57ff97) 12%, transparent);
+  color: color-mix(in srgb, var(--hc-success) 85%, var(--hc-text));
+  background: color-mix(in srgb, var(--hc-success) 12%, transparent);
 }
 
 .key-slice-status[data-aeon-state='ready'] {
-  color: color-mix(in srgb, var(--hc-accent) 85%, white);
+  color: color-mix(in srgb, var(--hc-accent) 85%, var(--hc-text));
   background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
 }
 
@@ -2886,7 +2896,7 @@ button.wallet-detail-value.is-copied {
 }
 
 .key-slice-static-item[data-aeon-state='enrolled'] {
-  border-color: color-mix(in srgb, var(--hc-success, #57ff97) 35%, hsl(var(--border)));
+  border-color: color-mix(in srgb, var(--hc-success) 35%, hsl(var(--border)));
 }
 
 .split-backup-shares {
@@ -4967,7 +4977,7 @@ a.app-details-host:hover {
 }
 
 .settings-row-desc[data-aeon-state='ok'] {
-  color: color-mix(in srgb, var(--hc-success, #57ff97) 78%, var(--hc-muted));
+  color: color-mix(in srgb, var(--hc-success) 78%, var(--hc-muted));
 }
 
 .settings-row-desc[data-aeon-state='warn'] {
@@ -9206,6 +9216,16 @@ html[data-aeon-mode='light'] .action-amount {
     var(--hc-sunken-soft)
   );
   border-color: color-mix(in srgb, var(--hc-accent-deep) 28%, transparent);
+}
+
+/* Settings on paper. The sheet's mid green (L33%) is fine on a dashboard tile
+   but settings is dense small type — labels, statuses, inline links, spec tags —
+   where it reads pale and washed. Re-point the accent for this subtree only, so
+   every green inside settings deepens at once instead of rule by rule, and
+   matches the success ink used by the same rows. */
+html[data-aeon-mode='light'] .settings-scroll {
+  --hc-accent: hsl(143 78% 26%);
+  --hc-accent-2: hsl(143 78% 26%);
 }
 
 /* Grid/list selector: an active view is chrome, not state, so it goes black. */
