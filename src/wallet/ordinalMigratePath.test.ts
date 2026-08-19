@@ -8,10 +8,31 @@ import { chooseOrdinalMigratePath } from './ordinalMigratePath'
 const OURS = '76a914aabbccddeeff00112233445566778899aabbccdd88ac'
 const THEIRS = '76a914ffffffffffffffffffffffffffffffffffffffff88ac'
 
+/**
+ * A real tip from the phrase we were handed: bare P2PKH followed by an
+ * `OP_RETURN` Sigma signature. Requiring the lock to *equal* a bare P2PKH
+ * refused every one of these.
+ */
+const SIGMA_TIP = `${OURS}6a0553494758`
+/** 1Sat inscription envelope ahead of the P2PKH. */
+const INSCRIBED_TIP = `0063036f726451${OURS}`
+
 describe('chooseOrdinalMigratePath', () => {
   it('migrates a 1-sat tip locked to the phrase key', () => {
     expect(
       chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: OURS }, OURS),
+    ).toEqual({ path: 'migrate', satoshis: 1 })
+  })
+
+  it('migrates a tip whose P2PKH carries a Sigma signature', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: SIGMA_TIP }, OURS),
+    ).toEqual({ path: 'migrate', satoshis: 1 })
+  })
+
+  it('migrates a tip whose inscription envelope precedes the P2PKH', () => {
+    expect(
+      chooseOrdinalMigratePath({ satoshis: 1, lockingScriptHex: INSCRIBED_TIP }, OURS),
     ).toEqual({ path: 'migrate', satoshis: 1 })
   })
 

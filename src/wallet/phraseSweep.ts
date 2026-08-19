@@ -7,7 +7,7 @@
  * 3. Optionally migrate 1-sat ordinals in small batches (resumable). Huge
  *    collections (e.g. 100k+) take a long time — progress is explicit.
  */
-import { Beef, P2PKH, PrivateKey, type BEEF } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, type BEEF, type LockingScript } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   keyFromMnemonicHdPath,
@@ -42,7 +42,6 @@ import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { summarizePostBeef } from './postBeefResult'
 import { refreshFromChain } from './chainIngest'
 
@@ -683,13 +682,13 @@ async function migrateOneOrdinal(
   // Decide from the source transaction, not the indexer listing: it returns the
   // address's cash outputs too, and signing those as 1-sat tips fails closed.
   const sourceOut = Beef.fromBinary(built.beef).findTxid(txid)?.tx?.outputs[vout]
-  const expectedLock = new P2PKH().lock(spendKey.toAddress()).toHex()
+  const sourceLock = sourceOut?.lockingScript ?? null
   const eligibility = chooseOrdinalMigratePath(
     {
       satoshis: sourceOut?.satoshis ?? null,
-      lockingScriptHex: sourceOut?.lockingScript?.toHex() ?? null,
+      lockingScriptHex: sourceLock?.toHex() ?? null,
     },
-    expectedLock,
+    new P2PKH().lock(spendKey.toAddress()).toHex(),
   )
   if (eligibility.path === 'skip') {
     appendAppLog(
@@ -721,6 +720,7 @@ async function migrateOneOrdinal(
       txid,
       inputBeef: built.beef,
       satoshis: eligibility.satoshis,
+      sourceLock: sourceLock!,
     }),
   )
   return { kind: 'moved', txid: sweepTxid }
@@ -737,8 +737,10 @@ async function buildAndPostItemMigrate(args: {
   inputBeef: BEEF
   /** Real value of the source output — the sighash amount must match exactly. */
   satoshis: number
+  /** Real locking script of the tip — the sighash scriptCode must match it. */
+  sourceLock: LockingScript
 }): Promise<string> {
-  const { active, spendKey, destLockHex, item, origin, customInstructions, txid } = args
+  const { active, destLockHex, item, origin, customInstructions } = args
 
   const car = await active.wallet.createAction({
     inputBEEF: args.inputBeef,
@@ -768,6 +770,44 @@ async function buildAndPostItemMigrate(args: {
     },
   })
 
+  const reference = car.signableTransaction?.reference
+  try {
+    return await signAndPostItemMigrate(args, car)
+  } catch (err) {
+    // An unsigned action keeps its reserved inputs and still lists its `1sat`
+    // output, so a failed migrate showed up in Collect as a real collectable —
+    // complete with the provenance we attached — until background review failed
+    // the transaction and took it away again. Nothing was ever on chain, so
+    // there is no broadcast to race: releasing it here is the only correct end.
+    if (reference) {
+      try {
+        await args.active.wallet.abortAction({ reference })
+      } catch (abortErr) {
+        appendAppLog(
+          'warn',
+          `[phrase-sweep] could not abort failed migrate ${args.item.outpoint}: ${
+            abortErr instanceof Error ? abortErr.message : String(abortErr)
+          }`,
+        )
+      }
+    }
+    throw err
+  }
+}
+
+async function signAndPostItemMigrate(
+  args: {
+    active: ActiveWallet
+    spendKey: PrivateKey
+    item: { outpoint: string }
+    txid: string
+    inputBeef: BEEF
+    satoshis: number
+    sourceLock: LockingScript
+  },
+  car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
+): Promise<string> {
+  const { active, spendKey, item, txid } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
   if (car.signableTransaction) {
@@ -794,9 +834,16 @@ async function buildAndPostItemMigrate(args: {
     if (unsignedTx == null || inputIndex < 0) {
       throw new Error('Could not find ordinal input to sign')
     }
-    unsignedTx.inputs[inputIndex]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+    // Ordinal tips are P2PKH ‖ inscription ‖ Sigma, so the sighash scriptCode
+    // must be the *whole* locking script. SetupClient.getUnlockP2PKH hashes a
+    // bare P2PKH, which is why every inscribed tip failed CHECKSIG with "the
+    // top stack element must be truthy" while plain-P2PKH funding swept fine.
+    unsignedTx.inputs[inputIndex]!.unlockingScriptTemplate = new P2PKH().unlock(
       spendKey,
+      'all',
+      false,
       args.satoshis,
+      args.sourceLock,
     )
     await unsignedTx.sign()
     const unlockingScript = unsignedTx.inputs[inputIndex]!.unlockingScript!.toHex()

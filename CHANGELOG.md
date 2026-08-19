@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.260] - 2026-08-19
+
+### Fixed
+
+- **Collectables can now actually be migrated from an imported phrase.** Every tip failed CHECKSIG with "the top stack element must be truthy" because the sighash was built over a bare P2PKH, while a real tip's locking script is P2PKH followed by an inscription envelope or an `OP_RETURN` Sigma signature. The whole locking script is now used as the sighash scriptCode, the same way BSV-21 auth tips are already signed. Plain-P2PKH funding was unaffected, which is why cash swept while items never did.
+- **A failed migrate no longer leaves a collectable in Collect that later vanishes.** The unsigned action kept its reserved inputs and still listed its `1sat` output — with the provenance attached, so it appeared as a verified item — until background review failed the transaction and removed it. Nothing had ever been broadcast, so the action is now aborted at the point of failure.
+- **Tips carrying a Sigma signature or inscription envelope are no longer mistaken for foreign locks.** Eligibility requires the key's P2PKH to be present in the locking script rather than to be the entire script, so only genuinely unspendable tips (listed or covenant) are refused.
+
 ## [1.2.259] - 2026-08-19
 
 ### Fixed

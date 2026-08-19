@@ -35,25 +35,29 @@ export type OrdinalSourceOutput = {
 /**
  * Decide once, from the source transaction itself rather than the indexer.
  *
- * `expectedLockHex` is the P2PKH lock of the key that will sign, so a mismatch
- * means this wallet cannot unlock the tip no matter how many times it retries.
+ * `expectedP2pkhHex` is the bare P2PKH lock of the key that will sign. A tip is
+ * almost never *only* that: real ordinals append an inscription envelope, and
+ * Yours tips append an `OP_RETURN` Sigma signature, so the P2PKH occurs as a
+ * fragment of a longer script. Requiring equality here would refuse every real
+ * collectable, so the test is containment — a tip whose script does not carry
+ * our key's P2PKH at all cannot be unlocked by this key however often it is
+ * retried, and is refused by name instead.
  */
 export function chooseOrdinalMigratePath(
   output: OrdinalSourceOutput | null | undefined,
-  expectedLockHex: string,
+  expectedP2pkhHex: string,
 ): OrdinalMigratePath {
   if (!output) return { path: 'skip', reason: 'unreadable' }
 
   const satoshis = Number(output.satoshis ?? 0)
   const lock = (output.lockingScriptHex ?? '').trim().toLowerCase()
-  if (!lock) return { path: 'skip', reason: 'unreadable' }
+  const expected = expectedP2pkhHex.trim().toLowerCase()
+  if (!lock || !expected) return { path: 'skip', reason: 'unreadable' }
   if (!Number.isFinite(satoshis) || satoshis <= 0) {
     return { path: 'skip', reason: 'unreadable' }
   }
   if (satoshis !== 1) return { path: 'skip', reason: 'notOneSat' }
-  if (lock !== expectedLockHex.trim().toLowerCase()) {
-    return { path: 'skip', reason: 'foreignLock' }
-  }
+  if (!lock.includes(expected)) return { path: 'skip', reason: 'foreignLock' }
   return { path: 'migrate', satoshis }
 }
 
