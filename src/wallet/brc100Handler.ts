@@ -52,6 +52,7 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
+import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 type HttpRequestEvent = {
   method: string
   path: string
@@ -644,6 +645,23 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         code: 'MIGRATION_ORIGIN_DENIED',
         description: 'Handle claim is only available to HandCash web hosts.',
       }),
+    }
+  }
+
+  if (method === 'createSignature') {
+    const proof = validateWalletIdentityProofRequest(
+      args,
+      normalizeOrigin(originator),
+    )
+    if (proof.kind === 'invalid') {
+      return {
+        status: 400,
+        body: JSON.stringify({
+          status: 'error',
+          code: 'INVALID_IDENTITY_PROOF',
+          description: proof.reason,
+        }),
+      }
     }
   }
 

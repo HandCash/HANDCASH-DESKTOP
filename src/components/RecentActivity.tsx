@@ -9,6 +9,7 @@ import {
   MintIcon,
   ReceiveIcon,
   SendIcon,
+  WarningIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
@@ -22,6 +23,7 @@ import {
   isEventActivity,
   isItemActivity,
   isMintTokenActivity,
+  isBurnActivity,
   isTokenActivity,
   isPendingActivity,
   isFailedActivity,
@@ -184,6 +186,7 @@ function HistoryRow({
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
   const minted = isMintTokenActivity(entry)
+  const burned = isBurnActivity(entry)
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
   const failureReason = failed ? activityFailureLabel(entry) : null
@@ -197,7 +200,7 @@ function HistoryRow({
       ),
   )
   const showPending = pending && (spent || !inventoryProven)
-  const pendingLabel = spent ? 'Sending…' : 'Verifying…'
+  const pendingLabel = burned ? 'Burning…' : spent ? 'Sending…' : 'Verifying…'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -246,8 +249,8 @@ function HistoryRow({
   // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
   // never resolve into an authenticity check for the tip it just gave away.
   const showSending = Boolean(spent && !event && showPending)
-  const badgeKind = failed ? 'failed' : minted ? 'mint' : spent ? 'send' : 'receive'
-  const badgeLabel = failed ? 'Failed' : minted ? 'Mint' : spent ? 'Send' : 'Receive'
+  const badgeKind = failed ? 'failed' : burned ? 'burn' : minted ? 'mint' : spent ? 'send' : 'receive'
+  const badgeLabel = failed ? 'Failed' : burned ? 'Burn' : minted ? 'Mint' : spent ? 'Send' : 'Receive'
 
   return (
     <li
@@ -319,6 +322,8 @@ function HistoryRow({
             >
               {failed ? (
                 <span aria-hidden>!</span>
+              ) : burned ? (
+                <WarningIcon size={8} />
               ) : minted ? (
                 <MintIcon size={8} />
               ) : spent ? (

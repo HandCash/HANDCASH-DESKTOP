@@ -1,5 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMachine } from '@xstate/react'
 import { MetricStrip } from '@aeon-ui/ui'
+import { assetBurnUiMachine } from '../machines/assetBurnUiMachine'
+import { burnOneSat } from '../wallet/burn'
+import { estimateBurnEconomics } from '../wallet/burnEconomics'
 import { copyText } from '../wallet/clipboard'
 import {
   copyCollectableImage,
@@ -27,11 +31,12 @@ import {
 } from '../wallet/paymentProgress'
 import { openSendCollectable, clearNavChild } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { toastError } from '../wallet/toast'
-import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon } from './icons'
+import { toastError, toastSuccess } from '../wallet/toast'
+import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon, WarningIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { EmptyState } from './EmptyState'
+import { BurnAssetPrompt } from './BurnAssetPrompt'
 
 type Props = {
   outpoint: string
@@ -129,6 +134,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
   const [abandoning, setAbandoning] = useState(false)
   const [imageBusy, setImageBusy] = useState<'copy' | 'save' | null>(null)
+  const [burnSnapshot, burnEvent] = useMachine(assetBurnUiMachine)
   const mediaRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => subscribeVerificationProgress(setVerification), [])
@@ -263,12 +269,53 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       })
   }
 
+  const confirmBurn = () => {
+    if (sending || item.covenantLocked || burnSnapshot.matches('burning')) return
+    burnEvent({ type: 'CONFIRM' })
+    void burnOneSat([item.outpoint])
+      .then((result) => {
+        burnEvent({
+          type: 'SUCCESS',
+          txid: result.txid,
+          recoveredSatoshis: result.recoveredSatoshis,
+        })
+        toastSuccess(
+          'Collectable burned',
+          `${result.recoveredSatoshis.toLocaleString()} physical sat${
+            result.recoveredSatoshis === 1 ? '' : 's'
+          } recovered into Pay${
+            result.feeSatoshis != null
+              ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
+              : ' before fees.'
+          }`,
+        )
+        clearNavChild()
+      })
+      .catch((err) => {
+        const error = err instanceof Error ? err.message : String(err)
+        burnEvent({ type: 'FAIL', error })
+        toastError('Burn failed', error)
+      })
+  }
+
   const authenticity = authenticityView(item, verification)
+  const burnEconomics = estimateBurnEconomics({
+    inputCount: 1,
+    protocolOutputCount: 0,
+    recoveryOutput: true,
+  })
 
   return (
     <div
       className="nav-child-panel collectable-details"
       data-aeon-scope="collectable-details"
+      data-aeon-state={
+        burnSnapshot.matches('closed')
+          ? sending
+            ? 'sending'
+            : 'ready'
+          : String(burnSnapshot.value)
+      }
       data-sending={sending ? 'true' : undefined}
     >
       <div className="collectable-details-hero">
@@ -325,16 +372,27 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 {abandoning ? 'Removing…' : 'Remove from wallet'}
               </button>
             ) : (
-              <button
-                type="button"
-                className="btn btn-primary btn-icon"
-                onClick={startSend}
-                disabled={sending}
-                aria-busy={sending || undefined}
-              >
-                <SendIcon size={14} />
-                {sending ? 'Sending…' : 'Send item'}
-              </button>
+              <>
+                <button
+                  type="button"
+                  className="btn btn-primary btn-icon"
+                  onClick={startSend}
+                  disabled={sending || burnSnapshot.matches('burning')}
+                  aria-busy={sending || undefined}
+                >
+                  <SendIcon size={14} />
+                  {sending ? 'Sending…' : 'Send item'}
+                </button>
+                <button
+                  type="button"
+                  className="btn btn-ghost btn-icon asset-burn-trigger"
+                  onClick={() => burnEvent({ type: 'OPEN' })}
+                  disabled={sending || burnSnapshot.matches('burning')}
+                >
+                  <WarningIcon size={14} />
+                  Burn item
+                </button>
+              </>
             )}
             {item.imageUrl ? (
               <>
@@ -386,6 +444,22 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           onCopy={() => void copy('outpoint', item.outpoint)}
         />
       </dl>
+      <BurnAssetPrompt
+        open={
+          burnSnapshot.matches('confirming') ||
+          burnSnapshot.matches('burning') ||
+          burnSnapshot.matches('failed')
+        }
+        assetName={item.name}
+        amountLabel="this collectable"
+        grossSats={burnEconomics.grossAssetSats}
+        protocolOutputSats={burnEconomics.protocolOutputSats}
+        estimatedFeeSats={burnEconomics.estimatedFeeSats}
+        busy={burnSnapshot.matches('burning')}
+        error={burnSnapshot.context.error}
+        onCancel={() => burnEvent({ type: 'CANCEL' })}
+        onConfirm={confirmBurn}
+      />
     </div>
   )
 }

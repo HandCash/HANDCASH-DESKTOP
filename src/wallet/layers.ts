@@ -71,6 +71,12 @@
  *   `bsv21`) live in their own baskets and are never touched.
  * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
  *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
+ * - **Asset burn** → `burnPlan` + `burnMachine` + `burn`.
+ *   This is an explicit, irreversible spend — never local abandon and never a
+ *   send/sweep fallback. A BSV-21 burn writes the canonical burn record; a 1Sat
+ *   burn packs the selected tips into a multi-sat self-payment and ends every
+ *   BRC-150 origin. Only the resulting self BRC-29 wallet-payment internalize
+ *   may move recovered physical sats into managed change / `balanceView`.
  */
 
 import { fetchBalanceSats, getActiveWallet } from './session'
@@ -96,6 +102,10 @@ export const WALLET_LAYER_MODULES = {
     'bsv21Inscribe.ts',
     'bsv21SendMachine.ts',
     'sendFungible.ts',
+    'burnPlan.ts',
+    'burnMachine.ts',
+    'burn.ts',
+    'burnEconomics.ts',
     'brc100Handler.ts',
     'oneSatProvenance.ts',
     'authenticityMachine.ts',

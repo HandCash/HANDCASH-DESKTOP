@@ -123,6 +123,13 @@ After a site connects via `waitForAuthentication`, HandCash migrate hosts (`hand
 
 Product page: `https://handcash.io/migrate` (items-market).
 
+### Wallet-to-app identity proof
+
+Connected apps can request an origin-bound, short-lived identity proof using
+the standard BRC-100 `getPublicKey` and `createSignature` methods. The canonical
+challenge format, replay rules, and TypeScript examples are documented in
+[`docs/wallet-to-app-identity-proof.md`](docs/wallet-to-app-identity-proof.md).
+
 ## Notes
 
 - Official HandCash Desktop product (`HandCash/HANDCASH-DESKTOP`).

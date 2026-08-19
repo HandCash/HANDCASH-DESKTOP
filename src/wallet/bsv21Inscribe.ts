@@ -95,3 +95,29 @@ export function buildBsv21TransferLockingScript(args: {
     json,
   }
 }
+
+/** Canonical BSV-21 burn inscription. A burn output carries no token balance. */
+export function buildBsv21BurnLockingScript(args: {
+  address: string
+  tokenId: string
+  amt: string
+}): { lockingScript: string; json: Record<string, string> } {
+  const id = normalizeTokenId(args.tokenId)
+  if (!id) throw new Error('Invalid token id')
+  if (!/^\d+$/.test(args.amt.trim()) || BigInt(args.amt.trim()) <= 0n) {
+    throw new Error('Burn amount must be positive')
+  }
+  const json = {
+    p: BSV21_PROTOCOL,
+    op: 'burn',
+    id,
+    amt: BigInt(args.amt.trim()).toString(),
+  }
+  return {
+    lockingScript: inscribedBsv21OutputHex({
+      address: args.address,
+      body: encoder.encode(JSON.stringify(json)),
+    }),
+    json,
+  }
+}

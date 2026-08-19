@@ -12,8 +12,9 @@ export const CONNECT_SCOPES: AppPermissionScope[] = [
   {
     id: 'public-profile',
     label: 'Public profile',
-    description: 'Read your public identity key. Cannot unlock or spend.',
-    allows: ['Identity key', 'Public recognition in the app'],
+    description:
+      'Read your public identity key and request an origin-bound proof. Proofs require separate approval.',
+    allows: ['Identity key', 'Public recognition in the app', 'Short-lived identity proof requests'],
   },
   {
     id: 'pay',
@@ -214,6 +215,12 @@ export function humanActionCopy(
     case 'decrypt':
       return { eyebrow: 'Decrypt', verb: 'wants to decrypt data with your keys' }
     case 'createSignature':
+      if (title === 'Prove wallet identity') {
+        return {
+          eyebrow: 'Identity proof',
+          verb: 'wants proof that this wallet approved its challenge',
+        }
+      }
       return { eyebrow: 'Signature', verb: 'wants a signature from your wallet' }
     case 'revealCounterpartyKeyLinkage':
     case 'revealSpecificKeyLinkage':

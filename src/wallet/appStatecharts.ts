@@ -208,13 +208,29 @@ const COLLECTABLES = `stateDiagram-v2
   fungibleDetails --> grid : back
   details --> sendCollectable : Send
   fungibleDetails --> sendFungible : Send
+  details --> burnConfirm : OPEN item burn
+  fungibleDetails --> burnConfirm : OPEN token burn
   sendCollectable --> details : back / done
   sendFungible --> fungibleDetails : back / done
+  burnConfirm --> details : CANCEL item burn
+  burnConfirm --> fungibleDetails : CANCEL token burn
+  burnConfirm --> burning : CONFIRM
+  burning --> burnDone : SUCCESS
+  burning --> burnFailed : FAIL
+  burnFailed --> burning : CONFIRM retry
+  burnFailed --> details : CANCEL item burn
+  burnFailed --> fungibleDetails : CANCEL token burn
+  burnDone --> grid : item inventory refresh
+  burnDone --> fungibleDetails : token inventory refresh
   grid : Grid
   details : Details
   fungibleDetails : Token details
   sendCollectable : Send item
   sendFungible : Send token
+  burnConfirm : Irreversible economics preview
+  burning : Burn on chain
+  burnFailed : Failure and named reason
+  burnDone : Burn activity recorded
 `
 
 const SEND_COLLECTABLE = `stateDiagram-v2
@@ -254,6 +270,32 @@ const BSV21_SEND_PATH = `stateDiagram-v2
   mixed --> refuse : mixed_tips
   cosigned --> refuse : cosigner_required
   unknown --> refuse : unknown_lock
+`
+
+const ASSET_BURN = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> planning : START with BurnPlan
+  planning --> building : burnBsv21 / burnOneSat
+  planning --> failed : named refuse
+  building --> signing : BUILT
+  signing --> broadcasting : SIGNED
+  broadcasting --> internalizing : BROADCASTED
+  internalizing --> refreshing : INTERNALIZED
+  refreshing --> done : REFRESHED
+  building --> failed : FAIL / abort unsigned action
+  signing --> failed : FAIL / abort unsigned action
+  broadcasting --> failed : FAIL
+  internalizing --> failed : FAIL
+  refreshing --> failed : FAIL
+  done --> idle : RESET
+  failed --> idle : RESET
+  note right of internalizing
+    Burn is irreversible.
+    BRC-150 never crosses an item burn.
+    Physical sats enter Pay only through
+    self BRC-29 wallet-payment internalize.
+  end note
 `
 
 const COLLECTABLE_SEND_PATH = `stateDiagram-v2
@@ -896,6 +938,13 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
     source: BSV21_SEND_PATH,
+  },
+  {
+    id: 'assetBurn',
+    label: 'Asset burn',
+    caption:
+      'burnMachine — explicit BSV-21 / 1Sat burn → managed Pay recovery | named refuse',
+    source: ASSET_BURN,
   },
   {
     id: 'sendPath',

@@ -521,6 +521,27 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                 <dd>{entry.note}</dd>
               </>
             ) : null}
+            {entry.burn ? (
+              <>
+                <dt>Destroyed</dt>
+                <dd>
+                  {entry.burn.destroyedAmount}{' '}
+                  {entry.burn.asset === 'bsv21' ? shownItem?.name ?? 'token units' : 'items'}
+                </dd>
+                {entry.burn.recoveredSatoshis != null ? (
+                  <>
+                    <dt>Recovered to Pay</dt>
+                    <dd>{entry.burn.recoveredSatoshis.toLocaleString()} sats</dd>
+                  </>
+                ) : null}
+                {entry.burn.feeSatoshis != null ? (
+                  <>
+                    <dt>Network fee</dt>
+                    <dd>{entry.burn.feeSatoshis.toLocaleString()} sats</dd>
+                  </>
+                ) : null}
+              </>
+            ) : null}
             {entry.txid ? (
               <>
                 <dt>Txid</dt>

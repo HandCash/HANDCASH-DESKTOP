@@ -570,4 +570,26 @@ describe('inbound receive activity', () => {
     expect(removeActivityForTxids([TX])).toBe(1)
     expect(listRecentActivity(10)).toHaveLength(0)
   })
+
+  it('labels irreversible burns as burns rather than sends', () => {
+    const burn: ActivityEntry = {
+      id: 'burn-1',
+      origin: 'handcash',
+      kind: 'spent',
+      sats: 1,
+      at: Date.now(),
+      method: 'burn-token',
+      status: 'complete',
+      item: {
+        name: 'CHIPS',
+        origin: `${TX}_0`,
+        tokenId: `${TX}_0`,
+        amt: '25',
+        dec: 0,
+      },
+    }
+    expect(activityEntryTitle(burn)).toBe('Burned 25 CHIPS')
+    expect(activityEntryTitle({ ...burn, status: 'pending' })).toBe('Burning CHIPS…')
+    expect(activityEntryTitle({ ...burn, status: 'failed' })).toBe('CHIPS not burned')
+  })
 })

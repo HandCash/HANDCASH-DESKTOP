@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.262] - 2026-08-19
+
+### Added
+
+- **A token now has a real detail page.** Ticker, balance, raw units, decimals, held output count, representative outpoint, every deploy id behind a merged balance, icon inscription, issuer, and cosigner terms are all shown, alongside the transactions for that token only. Issuer attestation is labelled as what it actually is — a Sigma (BRC-77) address match on deploy — rather than presented as proof of supply, which no wallet can verify.
+- **Tokens and collectables can be burned, ending them on chain.** A burn is planned once as an explicit path and refuses by name for cosigned, mixed, covenant-locked, unknown, or foreign locks; it never falls through to a send, a sweep, or a local abandon. A BSV-21 burn writes the canonical `op: "burn"` record and returns token change when the amount is partial. An item burn spends its 1-sat tips into a single multi-sat output, which is what actually terminates each origin, and that output is internalized as ordinary managed change so the recovered satoshis become spendable Pay balance.
+- **The burn prompt shows the economics before anything is destroyed.** Asset satoshis selected, satoshis consumed by protocol outputs, cash recovered, the estimated network fee, and the net effect on Pay are all named — small burns normally cost more in fees than they return, and the prompt says so instead of implying a profit. Completed and failed burns keep their own Activity rows with the destroyed amount, recovered satoshis, fee, and txid.
+- **An app can ask this wallet to prove which identity it controls.** The proof uses only existing BRC-100 methods (`waitForAuthentication`, `getPublicKey`, `createSignature`) over a short-lived challenge bound to the requesting origin, and the wallet refuses a challenge that is cross-origin, expired, pre-hashed, weakly random, or not canonically serialized. The approval prompt states the app's purpose and that signing cannot spend. Apps discover the recipe from `/manifest.json`; the format and verification rules are documented in `docs/wallet-to-app-identity-proof.md`. This is not Sigma — Sigma remains the token issuer attestation.
+
 ## [1.2.261] - 2026-08-19
 
 ### Added

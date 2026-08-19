@@ -25,6 +25,7 @@ import {
 } from './bsv21Issuer'
 import { formatBsvSignificant } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import { walletIdentityProofPurpose } from './walletIdentityProof'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -255,7 +256,10 @@ export function isActionMethod(method: string): boolean {
 
 /** Identity / ownership proofs that often follow a Connect authorize. */
 export function isIdentityProofMethod(method: string): boolean {
-  return method === 'createSignature' || method === 'proveCertificate'
+  // Generic signatures are not automatically identity proofs and must never
+  // inherit a method-wide grant. The advertised identity recipe gets an
+  // explicit, purpose-bearing approval for every challenge.
+  return method === 'proveCertificate'
 }
 
 const FRESH_CONNECT_MS = 20_000
@@ -716,6 +720,17 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'createSignature') {
+    const purpose = walletIdentityProofPurpose(args)
+    if (purpose) {
+      return {
+        title: 'Prove wallet identity',
+        summary: purpose,
+        details: [
+          'Signs a short-lived challenge bound to this app',
+          'Does not authorize a payment or reveal private keys',
+        ],
+      }
+    }
     return {
       title: 'Sign with wallet',
       summary: 'Create a signature proving you control this wallet',
@@ -781,8 +796,10 @@ export function requestActionApproval(
     return Promise.resolve('allow')
   }
 
-  // Coalesce concurrent identical action prompts (apps often fire createSignature twice).
+  // Coalesce method-identical prompts, except signatures: two signature payloads
+  // are distinct security decisions even when an app submits them concurrently.
   if (
+    method !== 'createSignature' &&
     current?.request.kind === 'action' &&
     current.request.origin === key &&
     current.request.method === method
@@ -807,6 +824,7 @@ export function requestActionApproval(
 
   const queued = queue.find(
     (item) =>
+      method !== 'createSignature' &&
       item.request.kind === 'action' &&
       item.request.origin === key &&
       item.request.method === method,

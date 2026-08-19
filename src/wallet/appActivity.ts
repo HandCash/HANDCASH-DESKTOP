@@ -75,6 +75,15 @@ export type ActivityEntry = {
   failureReason?: string
   /** Present only when the original action can be reconstructed safely. */
   retry?: ActivityRetry
+  /** Irreversible asset destruction economics (not a send/payment). */
+  burn?: ActivityBurn
+}
+
+export type ActivityBurn = {
+  asset: 'bsv21' | '1sat'
+  destroyedAmount: string
+  recoveredSatoshis?: number
+  feeSatoshis?: number
 }
 
 /** Keeps stored reasons short enough that one row cannot bloat history. */
@@ -421,6 +430,7 @@ export function upsertAppActivity(args: {
   pendingId?: string
   failureReason?: string
   retry?: ActivityRetry
+  burn?: ActivityBurn
 }): void {
   const sats = Math.max(0, Math.trunc(args.sats))
   const item = normalizeActivityItem(args.item)
@@ -487,6 +497,7 @@ export function upsertAppActivity(args: {
         ? { failureReason: nextFailureReason }
         : { failureReason: undefined }),
       ...(nextRetry ? { retry: nextRetry } : { retry: undefined }),
+      ...(args.burn || prev.burn ? { burn: args.burn ?? prev.burn } : {}),
     }
     writeAll(entries)
     return
@@ -512,6 +523,7 @@ export function upsertAppActivity(args: {
       ...(normalizeActivityRetry(args.retry)
         ? { retry: normalizeActivityRetry(args.retry) }
         : {}),
+      ...(args.burn ? { burn: args.burn } : {}),
     },
   ])
 }
@@ -1204,6 +1216,11 @@ export function isMintTokenActivity(entry: ActivityEntry): boolean {
   return isTokenActivity(entry) && /\bmint\b/i.test(entry.note ?? '')
 }
 
+/** True only for irreversible on-chain asset destruction. */
+export function isBurnActivity(entry: ActivityEntry): boolean {
+  return entry.method === 'burn-token' || entry.method === 'burn-collectable'
+}
+
 /**
  * Format BSV-21 integer `amt` with deploy decimals for activity rows.
  * Kept local so appActivity does not import the full fungibles stack.
@@ -1358,10 +1375,16 @@ export function activityEntryKey(entry: ActivityEntry): string {
 /** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.status === 'failed') {
+    if (isBurnActivity(entry)) {
+      return entry.item?.name ? `${entry.item.name} not burned` : 'Burn failed'
+    }
     if (entry.item?.name) return `${entry.item.name} not sent`
     return 'Send failed'
   }
   if (entry.status === 'pending' && entry.kind === 'spent') {
+    if (isBurnActivity(entry)) {
+      return entry.item?.name ? `Burning ${entry.item.name}…` : 'Burning…'
+    }
     if (entry.item?.name) return `Sending ${entry.item.name}…`
     return 'Sending…'
   }
@@ -1377,6 +1400,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     const qty = activityTokenQuantity(entry.item)
     const withQty = qty ? `${qty} ${name}` : name
     if (isMintTokenActivity(entry)) return `Minted ${withQty}`
+    if (isBurnActivity(entry)) return `Burned ${withQty}`
     if (entry.kind === 'spent' || entry.method === 'send-token') {
       return `Sent ${withQty}`
     }
@@ -1384,6 +1408,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   }
   if (entry.item?.name) {
     const name = entry.item.name
+    if (isBurnActivity(entry)) return `Burned ${name}`
     if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
       return entry.kind === 'spent' ? `Sent ${name}` : `Received ${name}`
     }
