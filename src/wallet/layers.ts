@@ -19,8 +19,9 @@
  * Glossary:
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Does not pull BRC-39.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
- * - **Linked devices** → identity link + sealed mutual key backups (`deviceWallets` /
- *   `deviceKeyBackup`). Different keys OK; cold spare only — not a shared spend pot.
+ * - **Device backup link** → known recovery peer + optional one-way sealed recovery
+ *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
+ *   reciprocal recovery is refused so compromise of one device does not expose both wallets.
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.
  * - **Legacy address** → receive P2PKH UTXOs not yet swept into managed change.
  * - **Managed change / P2P outs** → live only in `localState` until exported via BRC-39.

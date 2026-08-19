@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.263] - 2026-08-19
+
+### Changed
+
+- **Large collections migrate far faster.** Collectables from an imported phrase now share a transaction — up to 25 tips per broadcast instead of one each — and the source transactions for a page are fetched in parallel rather than one after another. Bundling is an explicit decision: a rejected bundle is halved by name (`bundleRejected`) and retried down to single tips, so one unspendable tip cannot stall a run and no item ever travels a protocol path other than the one it was planned for.
+- **The wallet no longer re-reads the chain after every few items.** Chain ingest walks the whole wallet, so running it per batch made each later batch slower — exactly the crawl a hundred-thousand-item import hits. Migrated tips are already in the local `1sat` basket, so the chain check now runs once when a run ends, including when it is paused or stops for funds. Progress shows a live items-per-minute rate.
+- **Device backup is one screen at a time.** The panel is a projection of `deviceBackupMachine`: a device list, then one device, where you choose a single recovery direction — protect this wallet there, or protect that wallet here. QR codes stay hidden until asked for, each device reads as one line naming its direction, and Recover and Remove live on the device instead of in a row of buttons.
+- **Settings says less.** Ledes on History backup, Import phrase and trustholder deposits are one line each, with protocol detail left in the About footer where it belongs. Row statuses are short and honest: `Not backed up`, `2 devices · one-way`, `Both directions — unsafe`.
+
 ## [1.2.262] - 2026-08-19
 
 ### Added

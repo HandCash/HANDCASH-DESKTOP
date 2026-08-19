@@ -38,6 +38,11 @@ import {
   describeOrdinalMigrateSkip,
   type OrdinalMigrateSkipReason,
 } from './ordinalMigratePath'
+import {
+  MAX_ITEMS_PER_MIGRATE_TX,
+  chooseItemMigrateUnit,
+  splitItemMigrateBundle,
+} from './itemMigrateBundle'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -559,6 +564,10 @@ function asBytes(tx: unknown): number[] {
 export async function migratePhraseItemsBatch(args: {
   candidate: PhraseCandidate
   batchSize?: number
+  /** Tips per transaction. Fewer round trips per item is the whole speed-up. */
+  itemsPerTx?: number
+  /** Chain ingest is for the end of a run, not for every batch. */
+  refreshAfter?: boolean
 }): Promise<PhraseItemMigrateProgress> {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock this wallet first')
@@ -567,7 +576,11 @@ export async function migratePhraseItemsBatch(args: {
     throw new Error('That phrase is already this wallet')
   }
 
-  const batchSize = Math.max(1, Math.min(args.batchSize ?? 5, 20))
+  const batchSize = Math.max(1, Math.min(args.batchSize ?? GP_PAGE, GP_PAGE))
+  const itemsPerTx = Math.max(
+    1,
+    Math.min(args.itemsPerTx ?? MAX_ITEMS_PER_MIGRATE_TX, MAX_ITEMS_PER_MIGRATE_TX),
+  )
   let cursor = readItemCursor()
   if (
     !cursor ||
@@ -602,8 +615,9 @@ export async function migratePhraseItemsBatch(args: {
     }
   }
 
-  // Consume raw indexer rows in order so the cursor stays exact; eligibility is
-  // decided per row from the source transaction inside migrateOneOrdinal.
+  // Consume raw indexer rows in order so the cursor stays exact. Eligibility is
+  // decided per row from its source transaction, and the eligible ones travel in
+  // shared transactions — the cursor still advances over a prefix of the page.
   const slice = page.rows.slice(0, batchSize)
   let moved = 0
   let failed = 0
@@ -611,43 +625,87 @@ export async function migratePhraseItemsBatch(args: {
   let lastError: string | null = null
   const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
   const destLock = new P2PKH().lock(active.address).toHex()
+  const spendLockHex = new P2PKH().lock(spendKey.toAddress()).toHex()
   const movedItems: MigratedItemReceipt[] = []
+
+  const built = await buildLegacyInputBeef(
+    active.services,
+    slice.map((row) => row.outpoint),
+    { concurrency: 8 },
+  )
+  const sourceBeef = built.beef.length > 0 ? Beef.fromBinary(built.beef) : null
+
+  // Page order, with eligible runs grouped into one transaction each.
+  const units: Array<
+    | { kind: 'skip'; reason: OrdinalMigrateSkipReason }
+    | { kind: 'unreadable'; outpoint: string; reason: string }
+    | { kind: 'move'; items: PendingItemMigrate[] }
+  > = []
+  for (const row of slice) {
+    const plan = planOrdinalMigrate(sourceBeef, row, spendLockHex)
+    if (plan.kind === 'skip') {
+      units.push({ kind: 'skip', reason: plan.reason })
+      continue
+    }
+    if (plan.kind === 'unreadable') {
+      units.push({
+        kind: 'unreadable',
+        outpoint: row.outpoint,
+        reason:
+          built.failures.find((f) => f.outpoint === row.outpoint)?.reason ??
+          'source output could not be read',
+      })
+      continue
+    }
+    const tail = units[units.length - 1]
+    if (tail?.kind === 'move' && tail.items.length < itemsPerTx) tail.items.push(plan.item)
+    else units.push({ kind: 'move', items: [plan.item] })
+  }
 
   let stopped: PhraseItemStopReason | null = null
   let consumed = 0
-  for (const item of slice) {
-    await yieldToUi()
-    try {
-      const outcome = await runExclusiveSpend(async () =>
-        migrateOneOrdinal(active, spendKey, destLock, item),
-      )
+  for (const unit of units) {
+    if (unit.kind === 'skip') {
       consumed += 1
-      if (outcome.kind === 'skipped') {
-        skipped += 1
-        continue
-      }
-      moved += 1
-      movedItems.push({
-        outpoint: item.outpoint,
-        origin: item.origin,
-        sweepTxid: outcome.txid,
-      })
-    } catch (err) {
-      // Out of money is a property of the wallet, not of this tip. Leave the
-      // cursor on it so a later, funded run picks up exactly where this stopped.
-      if (isInsufficientFundsError(err)) {
-        stopped = 'funds'
-        lastError = err instanceof Error ? err.message : String(err)
-        appendAppLog(
-          'warn',
-          `[phrase-sweep] stopping: not enough spendable BSV to keep migrating (moved ${cursor.moved + moved} so far)`,
-        )
-        break
-      }
+      skipped += 1
+      appendAppLog(
+        'info',
+        `[phrase-sweep] skip: ${describeOrdinalMigrateSkip(unit.reason)}`,
+      )
+      continue
+    }
+    if (unit.kind === 'unreadable') {
+      // Unreadable is a fetch fault, not a decision about the tip: it must count
+      // as a failure so a collection-wide outage ends the run instead of paging.
       consumed += 1
       failed += 1
-      lastError = err instanceof Error ? err.message : String(err)
-      console.warn('[phrase-sweep] item migrate failed', item.outpoint, lastError)
+      lastError = unit.reason
+      console.warn('[phrase-sweep] tip unreadable', unit.outpoint, unit.reason)
+      continue
+    }
+    await yieldToUi()
+    const outcome = await migrateOrdinalUnit({
+      active,
+      spendKey,
+      destLockHex: destLock,
+      inputBeef: built.beef,
+      items: unit.items,
+      itemsPerTx,
+    })
+    consumed += outcome.resolved
+    moved += outcome.moved.length
+    failed += outcome.failed
+    movedItems.push(...outcome.moved)
+    if (outcome.lastError) lastError = outcome.lastError
+    if (outcome.stopped === 'funds') {
+      // Out of money is a property of the wallet, not of a tip. Leave the cursor
+      // on the first unresolved row so a funded run resumes exactly here.
+      stopped = 'funds'
+      appendAppLog(
+        'warn',
+        `[phrase-sweep] stopping: not enough spendable BSV to keep migrating (moved ${cursor.moved + moved} so far)`,
+      )
+      break
     }
   }
 
@@ -655,6 +713,12 @@ export async function migratePhraseItemsBatch(args: {
     appendAppLog(
       'info',
       `[phrase-sweep] skipped ${skipped} non-collectable output(s) on ${args.candidate.address}`,
+    )
+  }
+  if (moved > 0) {
+    appendAppLog(
+      'info',
+      `[phrase-sweep] moved ${moved} collectable(s) in ${units.filter((u) => u.kind === 'move').length} transaction(s)`,
     )
   }
 
@@ -670,14 +734,11 @@ export async function migratePhraseItemsBatch(args: {
   if (done) writeItemCursor(null)
   else writeItemCursor(next)
 
-  if (moved > 0) {
-    recordMigratedItemActivity(movedItems, active.chain)
-    try {
-      await refreshFromChain({ forceReview: true, announceReceive: true })
-    } catch (err) {
-      console.warn('[phrase-sweep] post-migrate refresh failed', err)
-    }
-  }
+  if (moved > 0) recordMigratedItemActivity(movedItems, active.chain)
+  // Chain ingest walks the whole wallet and gets slower as items land, so a
+  // refresh per batch is what made a large collection crawl. Callers refresh
+  // when a run ends; the migrated outputs are already in the local basket.
+  if (args.refreshAfter && moved > 0) await refreshAfterPhraseItemMigrate()
 
   return {
     moved: next.moved,
@@ -690,113 +751,200 @@ export async function migratePhraseItemsBatch(args: {
   }
 }
 
-type MigrateOutcome =
-  | { kind: 'moved'; txid: string }
-  | { kind: 'skipped'; reason: OrdinalMigrateSkipReason }
-
-async function migrateOneOrdinal(
-  active: ActiveWallet,
-  spendKey: PrivateKey,
-  destLockHex: string,
-  item: { outpoint: string; origin?: string; name?: string },
-): Promise<MigrateOutcome> {
-  const [txidPart, voutPart] = item.outpoint.split('.')
-  const txid = (txidPart ?? '').toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) throw new Error('Bad outpoint')
-  const vout = Number(voutPart)
-
-  const built = await buildLegacyInputBeef(active.services, [item.outpoint])
-  if (built.ready.length === 0 || built.beef.length === 0) {
-    throw new Error(built.failures[0]?.reason ?? 'Could not load tip BEEF')
-  }
-
-  // Decide from the source transaction, not the indexer listing: it returns the
-  // address's cash outputs too, and signing those as 1-sat tips fails closed.
-  const sourceOut = Beef.fromBinary(built.beef).findTxid(txid)?.tx?.outputs[vout]
-  const sourceLock = sourceOut?.lockingScript ?? null
-  const eligibility = chooseOrdinalMigratePath(
-    {
-      satoshis: sourceOut?.satoshis ?? null,
-      lockingScriptHex: sourceLock?.toHex() ?? null,
-    },
-    new P2PKH().lock(spendKey.toAddress()).toHex(),
-  )
-  if (eligibility.path === 'skip') {
-    appendAppLog(
-      'info',
-      `[phrase-sweep] skip ${item.outpoint}: ${describeOrdinalMigrateSkip(eligibility.reason)}`,
-    )
-    return { kind: 'skipped', reason: eligibility.reason }
-  }
-
-  const origin = (item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')
-  const customInstructions = buildInternalizeCustomInstructions({
-    origin,
-    name: (item.name ?? 'Collectable').slice(0, 40),
-  })
-
-  // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
-  // verification rejects that outright ("inputBEEF must be valid Beef when
-  // factoring options.trustSelf"), which failed every item migrate. The funding
-  // sweep already treats visible-on-chain as sufficient for a P2PKH tip; an
-  // ordinal tip is the same claim, so it runs under the same relaxation.
-  const sweepTxid = await withVisibleOnChainBeef(async () =>
-    buildAndPostItemMigrate({
-      active,
-      spendKey,
-      destLockHex,
-      item,
-      origin,
-      customInstructions,
-      txid,
-      inputBeef: built.beef,
-      satoshis: eligibility.satoshis,
-      sourceLock: sourceLock!,
-    }),
-  )
-  return { kind: 'moved', txid: sweepTxid }
-}
-
-async function buildAndPostItemMigrate(args: {
-  active: ActiveWallet
-  spendKey: PrivateKey
-  destLockHex: string
-  item: { outpoint: string }
+/** One tip that passed eligibility, with everything signing needs. */
+type PendingItemMigrate = {
+  outpoint: string
+  txid: string
+  vout: number
   origin: string
   customInstructions: string
-  txid: string
-  inputBeef: BEEF
   /** Real value of the source output — the sighash amount must match exactly. */
   satoshis: number
   /** Real locking script of the tip — the sighash scriptCode must match it. */
   sourceLock: LockingScript
+}
+
+type ItemMigratePlan =
+  | { kind: 'move'; item: PendingItemMigrate }
+  | { kind: 'skip'; reason: OrdinalMigrateSkipReason }
+  | { kind: 'unreadable' }
+
+/**
+ * Decide one indexer row from its source transaction, not from the listing:
+ * the listing returns the address's cash outputs too, and signing those as
+ * 1-sat tips fails closed.
+ */
+function planOrdinalMigrate(
+  sourceBeef: Beef | null,
+  row: { outpoint: string; origin?: string; name?: string },
+  spendLockHex: string,
+): ItemMigratePlan {
+  const [txidPart, voutPart] = row.outpoint.split('.')
+  const txid = (txidPart ?? '').toLowerCase()
+  const vout = Number(voutPart)
+  if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(vout) || vout < 0) {
+    return { kind: 'unreadable' }
+  }
+  const sourceOut = sourceBeef?.findTxid(txid)?.tx?.outputs[vout] ?? null
+  if (!sourceOut) return { kind: 'unreadable' }
+
+  const sourceLock = sourceOut.lockingScript ?? null
+  const eligibility = chooseOrdinalMigratePath(
+    { satoshis: sourceOut.satoshis ?? null, lockingScriptHex: sourceLock?.toHex() ?? null },
+    spendLockHex,
+  )
+  if (eligibility.path === 'skip') return { kind: 'skip', reason: eligibility.reason }
+
+  const origin = (row.origin ?? row.outpoint).replace(/_(\d+)$/, '.$1')
+  return {
+    kind: 'move',
+    item: {
+      outpoint: row.outpoint,
+      txid,
+      vout,
+      origin,
+      customInstructions: buildInternalizeCustomInstructions({
+        origin,
+        name: (row.name ?? 'Collectable').slice(0, 40),
+      }),
+      satoshis: eligibility.satoshis,
+      sourceLock: sourceLock!,
+    },
+  }
+}
+
+type UnitOutcome = {
+  moved: MigratedItemReceipt[]
+  failed: number
+  /** Rows this unit settled, whether moved or failed — the cursor prefix. */
+  resolved: number
+  stopped: PhraseItemStopReason | null
+  lastError: string | null
+}
+
+/**
+ * Send one planned group as a single transaction. A rejected bundle is split by
+ * name and retried as smaller bundles down to singles; every attempt is the
+ * same P2PKH item-migrate path, never another protocol.
+ */
+async function migrateOrdinalUnit(args: {
+  active: ActiveWallet
+  spendKey: PrivateKey
+  destLockHex: string
+  inputBeef: BEEF
+  items: PendingItemMigrate[]
+  itemsPerTx: number
+}): Promise<UnitOutcome> {
+  const out: UnitOutcome = {
+    moved: [],
+    failed: 0,
+    resolved: 0,
+    stopped: null,
+    lastError: null,
+  }
+  let pending = args.items.slice()
+  let perTx = args.itemsPerTx
+
+  while (pending.length > 0) {
+    const unit = chooseItemMigrateUnit(pending, perTx)
+    if (unit.kind === 'refuse') break
+    const group = unit.kind === 'bundle' ? unit.items : [unit.item]
+    try {
+      const txid = await runExclusiveSpend(async () =>
+        // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
+        // verification rejects that outright ("inputBEEF must be valid Beef when
+        // factoring options.trustSelf"), which failed every item migrate. The
+        // funding sweep already treats visible-on-chain as sufficient for a
+        // P2PKH tip; an ordinal tip is the same claim, same relaxation.
+        withVisibleOnChainBeef(async () =>
+          buildAndPostItemMigrate({
+            active: args.active,
+            spendKey: args.spendKey,
+            destLockHex: args.destLockHex,
+            inputBeef: args.inputBeef,
+            items: group,
+          }),
+        ),
+      )
+      for (const item of group) {
+        out.moved.push({ outpoint: item.outpoint, origin: item.origin, sweepTxid: txid })
+      }
+      out.resolved += group.length
+      pending = pending.slice(group.length)
+      perTx = args.itemsPerTx
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      if (isInsufficientFundsError(err)) {
+        out.stopped = 'funds'
+        out.lastError = reason
+        return out
+      }
+      if (group.length > 1) {
+        // The rejection does not name which tip is at fault, so halve the group
+        // and try again; `pending` is untouched because the group is its prefix.
+        const [left] = splitItemMigrateBundle(group)
+        perTx = Math.max(1, left.length)
+        appendAppLog(
+          'info',
+          `[phrase-sweep] bundleRejected: ${group.length} tips → retrying ${perTx} (${reason})`,
+        )
+        continue
+      }
+      out.failed += 1
+      out.resolved += 1
+      out.lastError = reason
+      console.warn('[phrase-sweep] item migrate failed', group[0]!.outpoint, reason)
+      pending = pending.slice(1)
+      perTx = args.itemsPerTx
+    }
+  }
+  return out
+}
+
+/** Chain ingest for the end of a migrate run. */
+export async function refreshAfterPhraseItemMigrate(): Promise<void> {
+  try {
+    await refreshFromChain({ forceReview: true, announceReceive: true })
+  } catch (err) {
+    console.warn('[phrase-sweep] post-migrate refresh failed', err)
+  }
+}
+
+/** Build, sign and broadcast one transaction carrying `items` tips. */
+async function buildAndPostItemMigrate(args: {
+  active: ActiveWallet
+  spendKey: PrivateKey
+  destLockHex: string
+  inputBeef: BEEF
+  items: PendingItemMigrate[]
 }): Promise<string> {
-  const { active, destLockHex, item, origin, customInstructions } = args
+  const { active, destLockHex, items } = args
+  const first = items[0]!
 
   const car = await active.wallet.createAction({
     inputBEEF: args.inputBeef,
-    inputs: [
-      {
-        outpoint: item.outpoint,
-        unlockingScriptLength: 108,
-        inputDescription: 'migrate ordinal from phrase',
-      },
-    ],
-    outputs: [
-      {
-        lockingScript: destLockHex,
-        satoshis: 1,
-        outputDescription: 'Migrated collectable',
-        basket: '1sat',
-        tags: ['ordinal', 'phrase-migrate', `origin:${origin.replace(/_(\d+)$/, '.$1')}`],
-        customInstructions,
-      },
-    ],
+    inputs: items.map((item) => ({
+      outpoint: item.outpoint,
+      unlockingScriptLength: 108,
+      inputDescription: 'migrate ordinal from phrase',
+    })),
+    outputs: items.map((item) => ({
+      lockingScript: destLockHex,
+      satoshis: 1,
+      outputDescription: 'Migrated collectable',
+      basket: '1sat',
+      tags: ['ordinal', 'phrase-migrate', `origin:${item.origin.replace(/_(\d+)$/, '.$1')}`],
+      customInstructions: item.customInstructions,
+    })),
     labels: ['1sat', 'phrase-migrate'],
-    description: `Migrate ordinal ${item.outpoint.slice(0, 18)}…`,
+    description:
+      items.length === 1
+        ? `Migrate ordinal ${first.outpoint.slice(0, 18)}…`
+        : `Migrate ${items.length} ordinals from phrase`,
     options: {
       trustSelf: 'known',
       signAndProcess: false,
+      // Outputs carry per-item provenance, so their order must survive.
       randomizeOutputs: false,
     },
   })
@@ -806,9 +954,9 @@ async function buildAndPostItemMigrate(args: {
     return await signAndPostItemMigrate(args, car)
   } catch (err) {
     // An unsigned action keeps its reserved inputs and still lists its `1sat`
-    // output, so a failed migrate showed up in Collect as a real collectable —
+    // outputs, so a failed migrate showed up in Collect as real collectables —
     // complete with the provenance we attached — until background review failed
-    // the transaction and took it away again. Nothing was ever on chain, so
+    // the transaction and took them away again. Nothing was ever on chain, so
     // there is no broadcast to race: releasing it here is the only correct end.
     if (reference) {
       try {
@@ -816,7 +964,7 @@ async function buildAndPostItemMigrate(args: {
       } catch (abortErr) {
         appendAppLog(
           'warn',
-          `[phrase-sweep] could not abort failed migrate ${args.item.outpoint}: ${
+          `[phrase-sweep] could not abort failed migrate of ${items.length} tip(s): ${
             abortErr instanceof Error ? abortErr.message : String(abortErr)
           }`,
         )
@@ -830,57 +978,57 @@ async function signAndPostItemMigrate(
   args: {
     active: ActiveWallet
     spendKey: PrivateKey
-    item: { outpoint: string }
-    txid: string
     inputBeef: BEEF
-    satoshis: number
-    sourceLock: LockingScript
+    items: PendingItemMigrate[]
   },
   car: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>,
 ): Promise<string> {
-  const { active, spendKey, item, txid } = args
+  const { active, spendKey, items } = args
   let sweepTxid = (car.txid ?? '').toLowerCase()
   let sweepAtomic = asBytes(car.tx)
   if (car.signableTransaction) {
     const stBeef = Beef.fromBinary(asBytes(car.signableTransaction.tx))
+    const wanted = new Map(items.map((item) => [`${item.txid}.${item.vout}`, item]))
     let unsignedTx
-    let inputIndex = -1
-    const sourceTxid = txid
-    const vout = Number(item.outpoint.split('.')[1])
+    const inputIndexes = new Map<number, PendingItemMigrate>()
     for (const stbtx of stBeef.txs) {
       if (stbtx.tx == null) continue
       for (let i = 0; i < stbtx.tx.inputs.length; i++) {
         const inp = stbtx.tx.inputs[i]
-        if (
-          String(inp.sourceTXID).toLowerCase() === sourceTxid &&
-          inp.sourceOutputIndex === vout
-        ) {
-          unsignedTx = stbtx.tx
-          inputIndex = i
-          break
-        }
+        const key = `${String(inp.sourceTXID).toLowerCase()}.${inp.sourceOutputIndex}`
+        const item = wanted.get(key)
+        if (!item) continue
+        unsignedTx = stbtx.tx
+        inputIndexes.set(i, item)
       }
       if (unsignedTx != null) break
     }
-    if (unsignedTx == null || inputIndex < 0) {
-      throw new Error('Could not find ordinal input to sign')
+    if (unsignedTx == null || inputIndexes.size !== items.length) {
+      throw new Error('Could not find every ordinal input to sign')
     }
     // Ordinal tips are P2PKH ‖ inscription ‖ Sigma, so the sighash scriptCode
     // must be the *whole* locking script. SetupClient.getUnlockP2PKH hashes a
     // bare P2PKH, which is why every inscribed tip failed CHECKSIG with "the
     // top stack element must be truthy" while plain-P2PKH funding swept fine.
-    unsignedTx.inputs[inputIndex]!.unlockingScriptTemplate = new P2PKH().unlock(
-      spendKey,
-      'all',
-      false,
-      args.satoshis,
-      args.sourceLock,
-    )
+    for (const [index, item] of inputIndexes) {
+      unsignedTx.inputs[index]!.unlockingScriptTemplate = new P2PKH().unlock(
+        spendKey,
+        'all',
+        false,
+        item.satoshis,
+        item.sourceLock,
+      )
+    }
     await unsignedTx.sign()
-    const unlockingScript = unsignedTx.inputs[inputIndex]!.unlockingScript!.toHex()
+    const spends: Record<number, { unlockingScript: string }> = {}
+    for (const index of inputIndexes.keys()) {
+      spends[index] = {
+        unlockingScript: unsignedTx.inputs[index]!.unlockingScript!.toHex(),
+      }
+    }
     const sar = await active.wallet.signAction({
       reference: car.signableTransaction.reference,
-      spends: { [inputIndex]: { unlockingScript } },
+      spends,
     })
     sweepTxid = (sar.txid ?? '').toLowerCase()
     sweepAtomic = asBytes(sar.tx)

@@ -80,7 +80,8 @@ export async function fetchDevicePeerSnapshot(
 
 /**
  * Verify pair QR and enrich with optional LAN health.
- * v3: linked identities (keys may differ). v2: same identity + History URL.
+ * This is only for same-identity devices. Different identities use the
+ * recovery-only path and never enter LAN/history synchronization.
  */
 export async function verifyAndEnrichPair(
   raw: string,
@@ -90,13 +91,13 @@ export async function verifyAndEnrichPair(
   if (payload.deviceId === getOrCreateDeviceId()) {
     throw new Error('Cannot pair this device with itself')
   }
+  if (payload.identityKey !== localIdentityKey) {
+    throw new Error(
+      'Different wallet identities cannot be linked; use the one-way backup flow instead',
+    )
+  }
 
   if (payload.v === 2) {
-    if (payload.identityKey !== localIdentityKey) {
-      throw new Error(
-        'That QR is a legacy same-key link for a different identity. Ask them for a fresh link QR.',
-      )
-    }
     assertPairBackupUrlCompatible(payload.backupBaseUrl)
   }
 

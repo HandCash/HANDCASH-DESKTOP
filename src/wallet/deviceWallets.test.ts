@@ -10,7 +10,7 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
-describe('deviceWallets pair + linked identities', () => {
+describe('deviceWallets backup links', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
@@ -72,7 +72,7 @@ describe('deviceWallets pair + linked identities', () => {
     }
   })
 
-  it('routes a cross-identity legacy QR to backup-only fallback', async () => {
+  it('routes a cross-identity legacy QR to backup-only', async () => {
     const { choosePairAcceptancePath } = await import('./deviceWallets')
     const localIk =
       '02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -91,10 +91,10 @@ describe('deviceWallets pair + linked identities', () => {
         localIk,
         'local',
       ),
-    ).toEqual({ path: 'backup-only', reason: 'legacy-cross-identity' })
+    ).toEqual({ path: 'backup-only', reason: 'cross-identity' })
   })
 
-  it('still identity-links v3 QRs with different keys', async () => {
+  it('routes a cross-identity v3 QR to backup-only', async () => {
     const { choosePairAcceptancePath } = await import('./deviceWallets')
     const localIk =
       '02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
@@ -113,7 +113,7 @@ describe('deviceWallets pair + linked identities', () => {
         localIk,
         'local',
       ),
-    ).toEqual({ path: 'identity-link' })
+    ).toEqual({ path: 'backup-only', reason: 'cross-identity' })
   })
 
   it('tryParsePairPayload accepts v3 and rejects junk / sealed-backup blobs', async () => {
@@ -152,7 +152,7 @@ describe('deviceWallets pair + linked identities', () => {
     expect(() => assertPairBackupUrlCompatible('https://b.example')).toThrow(/do not match/i)
   })
 
-  it('enrolls local and links peers with different identity keys', async () => {
+  it('enrolls local and keeps different-identity peers backup-only', async () => {
     const {
       enrollLocalDevice,
       upsertPeerDevice,
@@ -187,8 +187,9 @@ describe('deviceWallets pair + linked identities', () => {
     const roster = listDeviceWallets()
     expect(roster).toHaveLength(2)
     expect(roster.find((w) => w.deviceId === 'peer-1')?.identityKey).toBe(peerIk)
+    expect(roster.find((w) => w.deviceId === 'peer-1')?.linkMode).toBe('backup-only')
     selectDeviceWallet('peer-1')
-    expect(getSelectedDeviceId()).toBe('peer-1')
+    expect(getSelectedDeviceId()).toBe(local.deviceId)
     selectDeviceWallet(local.deviceId)
     expect(getSelectedDeviceId()).toBe(local.deviceId)
   })
@@ -217,33 +218,32 @@ describe('deviceWallets pair + linked identities', () => {
   })
 })
 
-describe('verifyAndEnrichPair linked identities', () => {
+describe('verifyAndEnrichPair payload verification', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
     vi.unstubAllGlobals()
   })
 
-  it('accepts v3 pair for a different identity', async () => {
+  it('refuses v3 same-wallet verification for a different identity', async () => {
     const { verifyAndEnrichPair } = await import('./devicePeer')
     const local =
       '02dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd'
     const other =
       '02eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee'
-    const result = await verifyAndEnrichPair(
-      JSON.stringify({
-        v: 3,
-        identityKey: other,
-        address: '1OtherAddressxxxxxxxxxxxxxxxxx',
-        deviceId: 'peer-x',
-        label: 'Other',
-        platform: 'darwin',
-      }),
-      local,
-    )
-    expect(result.v).toBe(3)
-    expect(result.identityKey).toBe(other)
-    expect(result.online).toBe(false)
+    await expect(
+      verifyAndEnrichPair(
+        JSON.stringify({
+          v: 3,
+          identityKey: other,
+          address: '1OtherAddressxxxxxxxxxxxxxxxxx',
+          deviceId: 'peer-x',
+          label: 'Other',
+          platform: 'darwin',
+        }),
+        local,
+      ),
+    ).rejects.toThrow(/cannot be linked|backup flow/i)
   })
 
   it('rejects legacy v2 when identity differs', async () => {
@@ -268,7 +268,7 @@ describe('verifyAndEnrichPair linked identities', () => {
         }),
         local,
       ),
-    ).rejects.toThrow(/legacy same-key|different identity/i)
+    ).rejects.toThrow(/different wallet identities|backup flow/i)
   })
 
   it('rejects legacy v2 backup URL mismatch', async () => {

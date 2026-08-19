@@ -5,6 +5,7 @@ import {
   migratePhraseItemsBatch,
   peekPhraseItemMigrateCursor,
   previewPhraseSweep,
+  refreshAfterPhraseItemMigrate,
   sweepPhraseFunding,
   validatePhraseInput,
   type PhraseSweepPreview,
@@ -137,7 +138,14 @@ export function ImportPhrasePanel() {
             : `Moving ${preview.itemCountAtLeast} collectables…`,
         )
         let movedRunning = 0
+        let movedTotal = 0
         let outOfFunds = false
+        const startedAt = Date.now()
+        const rate = (moved: number) => {
+          const minutes = (Date.now() - startedAt) / 60_000
+          if (minutes < 0.25 || moved === 0) return ''
+          return ` · ${Math.round(moved / minutes).toLocaleString()}/min`
+        }
         for (const hit of itemHits) {
           if (abortRef.current || outOfFunds) break
           let guard = 0
@@ -151,11 +159,13 @@ export function ImportPhrasePanel() {
             guard += 1
             const batch = await migratePhraseItemsBatch({
               candidate: hit.candidate,
-              batchSize: 5,
+              batchSize: 50,
+              itemsPerTx: 25,
             })
+            movedTotal = movedRunning + batch.moved
             const skippedNote = batch.skipped > 0 ? ` · ${batch.skipped} skipped` : ''
             setItemProgress(
-              `${movedRunning + batch.moved} moved · ${batch.failed} failed${skippedNote} · scanned ${batch.scanned}${batch.done ? ' · done' : ''}`,
+              `${movedRunning + batch.moved} moved · ${batch.failed} failed${skippedNote} · scanned ${batch.scanned}${rate(movedRunning + batch.moved)}${batch.done ? ' · done' : ''}`,
             )
             if (batch.done) {
               movedRunning += batch.moved
@@ -183,8 +193,15 @@ export function ImportPhrasePanel() {
               )
               break
             }
-            setStatus(`Moving collectables… ${movedRunning + batch.moved} so far`)
+            setStatus(
+              `Moving collectables… ${(movedRunning + batch.moved).toLocaleString()} so far${rate(movedRunning + batch.moved)}`,
+            )
           }
+        }
+        // Chain ingest once per run: per batch it slowed every later batch down.
+        if (movedTotal > 0) {
+          setStatus('Checking the chain…')
+          await refreshAfterPhraseItemMigrate()
         }
       }
 
@@ -208,10 +225,7 @@ export function ImportPhrasePanel() {
       data-aeon-state={phase}
     >
       <p className="settings-hint">
-        Paste a <strong>12- or 24-word</strong> recovery phrase from another wallet (e.g. Yours).
-        BSV is swept into <em>this</em> HandCash identity. Collectables move in small batches —
-        huge collections (hundreds of thousands) will take a long time and need fee sats on this
-        wallet.
+        Move BSV and collectables from another wallet’s 12- or 24-word phrase into this one.
       </p>
 
       {phase === 'enter' || phase === 'preview' ? (
@@ -277,7 +291,7 @@ export function ImportPhrasePanel() {
                   <strong>Same as this wallet</strong> — nothing to sweep.
                 </>
               ) : (
-                'No BSV or collectables found on the derivations we checked (Yours, RelayX, Twetch, BRC-75, HD master).'
+                'Nothing found on the paths we check.'
               )}
             </p>
           ) : (
@@ -318,10 +332,7 @@ export function ImportPhrasePanel() {
                 />
                 <span className="wallet-setup-option-body">
                   <strong>Also move collectables</strong>
-                  <span>
-                    After BSV. Large sets run in batches — leave the app open. This wallet pays
-                    fees.
-                  </span>
+                  <span>Runs after BSV, in batches. This wallet pays the fees.</span>
                 </span>
               </label>
               {migrateItems && preview.hits.some((h) => h.itemCountAtLeast > 0) ? (
@@ -358,8 +369,8 @@ export function ImportPhrasePanel() {
                           </strong>
                           <span>
                             {hit.itemCountCapped
-                              ? 'Very large — off by default. Each collectable costs a fee and takes about a second, so this can run for hours and stop when the balance runs low.'
-                              : 'Small enough to finish in one run.'}
+                              ? 'Off by default — hours of fees, and it stops when funds run low.'
+                              : 'Finishes in one run.'}
                           </span>
                         </span>
                       </label>

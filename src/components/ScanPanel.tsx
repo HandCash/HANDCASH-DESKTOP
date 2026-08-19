@@ -23,7 +23,7 @@ type PendingScan = {
 }
 
 /**
- * Dashboard scan — device-link QR → Use on another device;
+ * Dashboard scan — backup-link QR → Device backup;
  * else choose Add friend (identity keys) or Send.
  */
 export function ScanPanel() {
@@ -98,7 +98,7 @@ export function ScanPanel() {
   return (
     <div className="nav-child-panel scan-panel" data-aeon-scope="scan">
       <QrScanner
-        hint="Point at a device-link, PeerPay, remittance, identity, or address QR"
+        hint="Point at a backup-link, PeerPay, remittance, identity, or address QR"
         onCancel={() => {
           playWalletSound('soft')
           clearNavChild()
@@ -117,8 +117,8 @@ export function ScanPanel() {
             setPendingPairScan(trimmed)
             playWalletSound('soft')
             toastSuccess(
-              spare ? 'Sealed spare QR' : 'Device link QR',
-              'Confirming on Use on another device…',
+              spare ? 'Sealed recovery QR' : 'Backup link QR',
+              'Confirming in Device backup…',
             )
             openSetting('device-handoff')
             return

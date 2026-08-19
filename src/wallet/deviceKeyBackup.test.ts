@@ -86,11 +86,12 @@ describe('deviceKeyBackup', () => {
       expect(pkg.forIdentityKey).toBe(bob.toPublicKey().toString())
       expect(pkg.fromIdentityKey).toBe(alice.toPublicKey().toString())
 
-      const { getMutualSpareStatus } = await import('./deviceKeyBackup')
-      expect(getMutualSpareStatus('bob-device')).toEqual({
-        holdTheirs: false,
-        gaveMine: true,
-        complete: false,
+      const { getDeviceBackupRoleStatus } = await import('./deviceKeyBackup')
+      expect(getDeviceBackupRoleStatus('bob-device')).toEqual({
+        protectsPeer: false,
+        recoveryCopyReceivedFromPeer: false,
+        recoveryCopyIssuedToPeer: true,
+        direction: 'this-wallet-to-peer',
       })
 
       const text = deviceKeyBackupToQrText(pkg)
@@ -99,10 +100,11 @@ describe('deviceKeyBackup', () => {
       asBob()
       const stored = importSealedDeviceKeyBackup(text)
       expect(stored.fromLabel).toBe('This Mac')
-      expect(getMutualSpareStatus('alice-device')).toEqual({
-        holdTheirs: true,
-        gaveMine: false,
-        complete: false,
+      expect(getDeviceBackupRoleStatus('alice-device')).toEqual({
+        protectsPeer: true,
+        recoveryCopyReceivedFromPeer: true,
+        recoveryCopyIssuedToPeer: false,
+        direction: 'peer-wallet-to-this-device',
       })
 
       const opened = await openStoredDeviceKeyBackup({
@@ -126,5 +128,31 @@ describe('deviceKeyBackup', () => {
       peerDeviceId: 'bob-device',
     })
     expect(() => importSealedDeviceKeyBackup(JSON.stringify(pkg))).toThrow(/different identity/i)
+  })
+
+  it('refuses a reciprocal recovery copy', async () => {
+    const {
+      createSealedBackupForPeer,
+      clearSpareExchangeForPeer,
+      deviceKeyBackupToQrText,
+      importSealedDeviceKeyBackup,
+    } = await import('./deviceKeyBackup')
+    const aliceForBob = await createSealedBackupForPeer({
+      password: 'password12',
+      peerIdentityKey: bob.toPublicKey().toString(),
+      peerDeviceId: 'bob-device',
+    })
+
+    asBob()
+    importSealedDeviceKeyBackup(deviceKeyBackupToQrText(aliceForBob))
+    clearSpareExchangeForPeer('alice-device')
+
+    await expect(
+      createSealedBackupForPeer({
+        password: 'password12',
+        peerIdentityKey: alice.toPublicKey().toString(),
+        peerDeviceId: 'alice-device',
+      }),
+    ).rejects.toThrow(/reciprocal device backups are refused/i)
   })
 })

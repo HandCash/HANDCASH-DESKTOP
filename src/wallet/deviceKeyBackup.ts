@@ -1,5 +1,5 @@
 /**
- * Sealed mutual device-key backups (cold only).
+ * Directional sealed device-key backups (cold only).
  *
  * Each linked peer can hold an EncryptedMessage (BRC-78) of this device's
  * custody secret, sealed to the peer's identity pubkey. Day-to-day spend never
@@ -16,6 +16,8 @@ import { getActiveWallet } from './session'
 const STORE_KEY = 'handcash.brc100.deviceKeyBackups.v1'
 /** Local attestation that we sealed+handed our spare to this peer (they can recover us). */
 const GIVEN_KEY = 'handcash.brc100.deviceKeySparesGiven.v1'
+/** Safety tombstone: this device has received a recovery copy from this peer. */
+const RECEIVED_KEY = 'handcash.brc100.deviceKeySparesReceived.v1'
 const DEVICE_ID_KEY = 'handcash.brc100.deviceId.v1'
 
 export type DeviceKeyBackupPackage = {
@@ -37,13 +39,18 @@ export type SpareGivenRecord = {
   givenAt: number
 }
 
-/** Both legs of a mutual spare exchange for one peer. */
-export type MutualSpareStatus = {
-  /** We store their sealed spare → we can recover them. */
-  holdTheirs: boolean
-  /** We sealed our spare to them → they can recover us (local attestation). */
-  gaveMine: boolean
-  complete: boolean
+export type DeviceBackupRoleStatus = {
+  /** This device stores the peer wallet's sealed recovery copy. */
+  protectsPeer: boolean
+  /** This direction was selected, even if the local copy was later deleted. */
+  recoveryCopyReceivedFromPeer: boolean
+  /** A sealed recovery copy of this wallet was issued to the peer. */
+  recoveryCopyIssuedToPeer: boolean
+  direction:
+    | 'none'
+    | 'this-wallet-to-peer'
+    | 'peer-wallet-to-this-device'
+    | 'reciprocal'
 }
 
 type CustodySecret = {
@@ -56,6 +63,7 @@ type CustodySecret = {
 
 type StoreMap = Record<string, DeviceKeyBackupPackage>
 type GivenMap = Record<string, SpareGivenRecord>
+type ReceivedMap = Record<string, { peerDeviceId: string; receivedAt: number }>
 
 type BackupListener = () => void
 const listeners = new Set<BackupListener>()
@@ -106,6 +114,26 @@ function writeGiven(map: GivenMap) {
   notify()
 }
 
+function readReceived(): ReceivedMap {
+  try {
+    const raw = durableGetItem(RECEIVED_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as ReceivedMap
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
+    return parsed
+  } catch {
+    return {}
+  }
+}
+
+function markRecoveryCopyReceived(peerDeviceId: string): void {
+  const id = peerDeviceId.trim()
+  if (!id) return
+  const map = readReceived()
+  map[id] = { peerDeviceId: id, receivedAt: Date.now() }
+  durableSetItem(RECEIVED_KEY, JSON.stringify(map))
+}
+
 function localDeviceId(): string {
   const existing = durableGetItem(DEVICE_ID_KEY)?.trim()
   if (existing) return existing
@@ -141,10 +169,24 @@ export function hasSpareGivenToPeer(peerDeviceId: string): boolean {
   return Boolean(readGiven()[peerDeviceId])
 }
 
-export function getMutualSpareStatus(peerDeviceId: string): MutualSpareStatus {
-  const holdTheirs = hasDeviceKeyBackup(peerDeviceId)
-  const gaveMine = hasSpareGivenToPeer(peerDeviceId)
-  return { holdTheirs, gaveMine, complete: holdTheirs && gaveMine }
+export function getDeviceBackupRoleStatus(peerDeviceId: string): DeviceBackupRoleStatus {
+  const protectsPeer = hasDeviceKeyBackup(peerDeviceId)
+  const recoveryCopyReceivedFromPeer = protectsPeer || Boolean(readReceived()[peerDeviceId])
+  const recoveryCopyIssuedToPeer = hasSpareGivenToPeer(peerDeviceId)
+  const direction =
+    recoveryCopyReceivedFromPeer && recoveryCopyIssuedToPeer
+      ? 'reciprocal'
+      : recoveryCopyReceivedFromPeer
+        ? 'peer-wallet-to-this-device'
+        : recoveryCopyIssuedToPeer
+          ? 'this-wallet-to-peer'
+          : 'none'
+  return {
+    protectsPeer,
+    recoveryCopyReceivedFromPeer,
+    recoveryCopyIssuedToPeer,
+    direction,
+  }
 }
 
 /** Record that we sealed our spare for this peer (they still must import it). */
@@ -159,23 +201,21 @@ export function markSpareGivenToPeer(peerDeviceId: string, peerIdentityKey: stri
 
 export function removeDeviceKeyBackup(peerDeviceId: string): void {
   const map = readStore()
-  const given = readGiven()
-  let changed = false
   if (peerDeviceId in map) {
     delete map[peerDeviceId]
     writeStore(map)
-    changed = true
   }
-  if (peerDeviceId in given) {
-    delete given[peerDeviceId]
-    writeGiven(given)
-    changed = true
-  }
-  if (!changed) return
 }
 
-/** Clear both legs when unlinking a peer. */
+/**
+ * Delete the recovery copy held on this device when unlinking.
+ *
+ * A copy may have been duplicated after it was shown or imported, so the
+ * selected direction is deliberately retained as a safety tombstone.
+ * Re-linking the same device must not make the reverse direction look safe.
+ */
 export function clearSpareExchangeForPeer(peerDeviceId: string): void {
+  if (hasDeviceKeyBackup(peerDeviceId)) markRecoveryCopyReceived(peerDeviceId)
   removeDeviceKeyBackup(peerDeviceId)
 }
 
@@ -260,6 +300,11 @@ export async function createSealedBackupForPeer(args: {
   if (peerIk.toLowerCase() === active.identityKey.toLowerCase()) {
     throw new Error('Cannot seal a spare key to this same identity')
   }
+  if (hasDeviceKeyBackup(peerDeviceId) || readReceived()[peerDeviceId]) {
+    throw new Error(
+      'This device already protects that peer wallet. Reciprocal device backups are refused; remove the existing backup relationship before choosing the opposite direction.',
+    )
+  }
 
   const secret: CustodySecret = {
     v: 1,
@@ -287,7 +332,7 @@ export async function createSealedBackupForPeer(args: {
     sealedAt: Date.now(),
     ciphertextB64: Utils.toBase64(cipher),
   }
-  // Mutual exchange: mark our outbound leg. Import marks the inbound leg.
+  // This relationship is intentionally one-way. Import refuses the opposite leg.
   markSpareGivenToPeer(peerDeviceId, peerIk)
   return pkg
 }
@@ -307,10 +352,16 @@ export function importSealedDeviceKeyBackup(raw: string): DeviceKeyBackupPackage
   if (pkg.fromDeviceId === localDeviceId()) {
     throw new Error('Cannot import a sealed spare from this device')
   }
+  if (hasSpareGivenToPeer(pkg.fromDeviceId)) {
+    throw new Error(
+      'That peer already holds a recovery copy of this wallet. Reciprocal device backups are refused; remove the existing backup relationship before choosing the opposite direction.',
+    )
+  }
 
   const map = readStore()
   map[pkg.fromDeviceId] = pkg
   writeStore(map)
+  markRecoveryCopyReceived(pkg.fromDeviceId)
   return pkg
 }
 

@@ -1,5 +1,5 @@
 /**
- * One-shot pending device-pair QR from Dashboard Scan → Use on another device.
+ * One-shot pending backup-link QR from Dashboard Scan → Device backup.
  */
 let pendingPairRaw: string | null = null
 

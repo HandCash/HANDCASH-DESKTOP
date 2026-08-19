@@ -168,9 +168,7 @@ export function TrustholderBackupPanel() {
       data-aeon-state={busyId ? 'busy' : localShare ? 'local-share' : 'idle'}
     >
       <p className="settings-hint">
-        Each trustholder is independent. Enter your email, deposit one provider at a time — the
-        verification code stays in this app (no browser redirect). Recommend HandCash and Haste plus
-        an offline slice.
+        Deposit one slice per provider. Two of three recover this wallet, so keep one offline.
       </p>
 
       {!password ? (
@@ -196,8 +194,7 @@ export function TrustholderBackupPanel() {
             />
           </div>
           <p className="settings-row-desc">
-            First deposit registers this email with the provider. You’ll get one code by email —
-            enter it here.
+            The provider emails a code — enter it here, not in a browser.
           </p>
           {progress ? (
             <p className="settings-row-desc" data-aeon-part="deposit-progress" role="status">

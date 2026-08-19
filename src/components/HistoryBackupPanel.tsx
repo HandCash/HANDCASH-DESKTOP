@@ -219,12 +219,7 @@ export function HistoryBackupPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="history-backup">
       <p className="settings-hint">
-        Shared history backup on <strong>HandCash</strong> unless you set a custom host. The same
-        host on every device is <strong>required</strong> to link installs (Settings → Use on
-        another device). Every export also writes a{' '}
-        <strong>write-once</strong> UTXO snapshot on this device (never overwritten). Restore
-        recomposes from history then checks the chain; chain ingest alone cannot rebuild P2P /
-        managed-change state.
+        Refresh reads the chain; only this backup restores payments you sent and received directly.
       </p>
 
       <HistoryBackupUrlField
@@ -257,13 +252,13 @@ export function HistoryBackupPanel() {
         <ConfirmPasswordGate
           id="history-backup-password"
           title="Confirm it’s you"
-          lede="Confirm your unlock password to export or replace history on this device. History backups are sealed to your wallet key."
+          lede="Your password unlocks export and restore. Backups are sealed to your wallet key."
           actionLabel="Unlock history actions"
           onVerified={(pw) => setPassword(pw)}
         />
       ) : (
         <div className="settings-form settings-form-compact">
-          <p className="settings-row-desc">Unlocked for this session — export or restore below.</p>
+          <p className="settings-row-desc">Unlocked for this session.</p>
           <div className="actions">
             <button
               type="button"
@@ -287,7 +282,7 @@ export function HistoryBackupPanel() {
               type="button"
               className="btn btn-ghost"
               disabled={busy !== null || !effectiveUrl}
-              title="Operator force — may overwrite a richer cloud copy. Auto-sync never does that without a spend."
+              title="May overwrite a fuller cloud copy"
               onClick={() => void runUpload()}
             >
               {busy === 'upload' ? 'Uploading…' : 'Upload to URL'}
@@ -311,10 +306,9 @@ export function HistoryBackupPanel() {
 
           {localSnaps.length > 0 ? (
             <div className="settings-form settings-form-compact" style={{ marginTop: 12 }}>
-              <p className="settings-row-label">On-device UTXO snapshots (immutable)</p>
+              <p className="settings-row-label">On-device snapshots</p>
               <p className="settings-row-desc">
-                Write-once copies under this install. Survives cloud overwrite and factory reset
-                of IndexedDB. Newest first — restore merges into the live wallet.
+                Never overwritten. Newest first; restore merges into this wallet.
               </p>
               <ul className="settings-list" style={{ margin: '8px 0 0', padding: 0, listStyle: 'none' }}>
                 {localSnaps.slice(0, 8).map((snap) => (
@@ -346,8 +340,7 @@ export function HistoryBackupPanel() {
             </div>
           ) : (
             <p className="settings-row-desc" style={{ marginTop: 8 }}>
-              No local UTXO snapshots yet — download or upload once, or spend so an automatic
-              snapshot is written.
+              No snapshots yet — export once, or spend to write one automatically.
             </p>
           )}
 
@@ -378,9 +371,9 @@ export function HistoryBackupPanel() {
       </div>
 
       <SettingsFeatureAbout tags={['BRC-39']}>
-        Encrypted wallet history blob (outs, labels, baskets). Cloud keeps one mutable object per
-        identity for multi-device parity. This device also keeps write-once UTXO snapshots under
-        userData so a bad cloud PUT or empty IndexedDB cannot erase the only copy.
+        An encrypted copy of this wallet’s outputs, labels and baskets — on HandCash unless you set
+        another host. Each export also writes a snapshot here that nothing later overwrites, so a
+        bad upload or an emptied database cannot leave you without a copy.
       </SettingsFeatureAbout>
     </div>
   )

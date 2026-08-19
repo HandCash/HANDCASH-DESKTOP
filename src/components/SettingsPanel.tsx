@@ -42,7 +42,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'backup',
         label: 'Key slices',
-        description: '2-of-3 · email · offline copies',
+        description: 'Any two of three recover this wallet',
       },
       {
         id: 'history-backup',
@@ -51,13 +51,13 @@ const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'device-handoff',
-        label: 'Use on another device',
-        description: 'Link identities · sealed spare keys',
+        label: 'Device backup',
+        description: 'One-way sealed recovery',
       },
       {
         id: 'import-phrase',
         label: 'Import phrase',
-        description: 'Sweep another 12-word wallet into this one',
+        description: 'Move another wallet in here',
       },
       {
         id: 'change-password',
@@ -129,7 +129,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'trustholder-backup') return TRUSTHOLDERS_ENABLED ? 'Cloud key backup' : 'Key slices'
-  if (id === 'device-handoff') return 'Use on another device'
+  if (id === 'device-handoff') return 'Device backup'
   if (id === 'import-phrase') return 'Import phrase'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {

@@ -12,7 +12,7 @@ import {
 } from '../../wallet/historyBackupPrefs'
 import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
 import { listDeviceWallets } from '../../wallet/deviceWallets'
-import { getMutualSpareStatus } from '../../wallet/deviceKeyBackup'
+import { getDeviceBackupRoleStatus } from '../../wallet/deviceKeyBackup'
 import { TRUSTHOLDERS_ENABLED } from '../../wallet/walletConfig'
 import type { SettingId } from '../../wallet/navStore'
 
@@ -32,12 +32,12 @@ export function trustholderStatus(): SettingRowStatus {
     const label = enrollments[0]!.operator === 'haste' ? 'Haste' : 'HandCash'
     return { text: `${label} enrolled · add another anytime`, tone: 'ok' }
   }
-  return { text: 'Independent providers · recommend two', tone: 'muted' }
+  return { text: 'Recommend two providers', tone: 'muted' }
 }
 
 export function keysStatus(): SettingRowStatus {
   if (isKeysBackupConfirmed()) return { text: 'Confirmed on this device', tone: 'ok' }
-  return { text: 'Phrase or slices · offline', tone: 'warn' }
+  return { text: 'Not backed up', tone: 'warn' }
 }
 
 export function historyStatus(): SettingRowStatus {
@@ -53,47 +53,23 @@ export function historyStatus(): SettingRowStatus {
       tone: 'muted',
     }
   }
-  return {
-    text: 'Not synced · inactive',
-    tone: 'muted',
-  }
+  return { text: 'Not backed up', tone: 'warn' }
 }
 
 export function deviceHandoffStatus(): SettingRowStatus {
   const peers = listDeviceWallets().filter((w) => !w.isLocal)
   if (peers.length === 0) {
-    return { text: 'Link identities · mutual sealed spares', tone: 'muted' }
+    return { text: 'Not set up', tone: 'muted' }
   }
-  const mutualOk = peers.filter((p) => getMutualSpareStatus(p.deviceId).complete).length
-  const backupOnly = peers.filter((p) => p.linkMode === 'backup-only').length
-  const deviceLabel =
-    backupOnly === peers.length ? 'backup-only' : backupOnly > 0 ? 'linked / backup' : 'linked'
-  if (mutualOk === peers.length) {
-    return {
-      text: `${peers.length} ${deviceLabel} · mutual spares ready`,
-      tone: 'ok',
-    }
+  const label = peers.length === 1 ? '1 device' : `${peers.length} devices`
+  const roles = peers.map((role) => getDeviceBackupRoleStatus(role.deviceId))
+  if (roles.some((role) => role.direction === 'reciprocal')) {
+    return { text: 'Both directions — unsafe', tone: 'warn' }
   }
-  if (mutualOk > 0) {
-    return {
-      text: `${peers.length} ${deviceLabel} · ${mutualOk} mutual`,
-      tone: 'warn',
-    }
-  }
-  const partial = peers.filter((p) => {
-    const s = getMutualSpareStatus(p.deviceId)
-    return s.holdTheirs || s.gaveMine
-  }).length
-  if (partial > 0) {
-    return {
-      text: `${peers.length} ${deviceLabel} · finish both-way spares`,
-      tone: 'warn',
-    }
-  }
-  return {
-    text: `${peers.length} ${deviceLabel} · exchange spares both ways`,
-    tone: 'warn',
-  }
+  const withCopy = roles.filter((role) => role.direction !== 'none').length
+  if (withCopy === 0) return { text: `${label} · no copy yet`, tone: 'muted' }
+  if (withCopy === peers.length) return { text: `${label} · one-way`, tone: 'ok' }
+  return { text: `${label} · ${withCopy} protected`, tone: 'muted' }
 }
 
 export function statusForSetting(id: SettingId): SettingRowStatus | null {

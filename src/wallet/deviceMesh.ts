@@ -1,6 +1,6 @@
 /**
  * Poll paired same-identity peers: friends merge + local-item snapshots.
- * Cross-identity linked devices skip LAN mesh (separate pots; no shared spend).
+ * Recovery-only peers skip LAN mesh (different identities; no shared state).
  */
 import { mergeFriends } from './friends'
 import {

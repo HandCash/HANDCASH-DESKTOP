@@ -137,10 +137,13 @@ export type LegacyBeefBuild = {
  * Build a BEEF for `outpoints` from each deposit's raw tx only.
  *
  * Outpoints sharing a transaction are loaded once and stand or fall together.
+ * `concurrency` fetches several source transactions at a time — a collection
+ * migrate is otherwise dominated by one serial round trip per tip.
  */
 export async function buildLegacyInputBeef(
   services: Services,
   outpoints: string[],
+  options?: { concurrency?: number },
 ): Promise<LegacyBeefBuild> {
   const failures: Array<{ outpoint: string; reason: string }> = []
   const byTxid = new Map<string, string[]>()
@@ -159,23 +162,34 @@ export async function buildLegacyInputBeef(
   const ctx: BuildContext = { services, fetches: 0 }
   const beef = new Beef()
   const ready: string[] = []
+  const groups = [...byTxid.entries()]
+  const lanes = Math.max(1, Math.min(Math.floor(options?.concurrency ?? 1), 12))
 
-  for (const [txid, group] of byTxid) {
-    const t0 = Date.now()
-    try {
-      beef.mergeTransaction(await loadTx(ctx, txid))
-      ready.push(...group)
-      console.info(
-        `[legacy-beef] ${txid.slice(0, 12)}… via=tip fetches=${ctx.fetches} ${Date.now() - t0}ms`,
-      )
-    } catch (err) {
-      const reason = err instanceof Error ? err.message : String(err)
-      for (const outpoint of group) failures.push({ outpoint, reason })
-      console.info(
-        `[legacy-beef] ${txid.slice(0, 12)}… via=tip FAIL ${Date.now() - t0}ms ${reason}`,
-      )
+  let cursor = 0
+  const worker = async () => {
+    while (cursor < groups.length) {
+      const index = cursor
+      cursor += 1
+      const [txid, group] = groups[index]!
+      const t0 = Date.now()
+      try {
+        const tx = await loadTx(ctx, txid)
+        // Merge on the awaiting side only: Beef is not reentrant.
+        beef.mergeTransaction(tx)
+        ready.push(...group)
+        console.info(
+          `[legacy-beef] ${txid.slice(0, 12)}… via=tip fetches=${ctx.fetches} ${Date.now() - t0}ms`,
+        )
+      } catch (err) {
+        const reason = err instanceof Error ? err.message : String(err)
+        for (const outpoint of group) failures.push({ outpoint, reason })
+        console.info(
+          `[legacy-beef] ${txid.slice(0, 12)}… via=tip FAIL ${Date.now() - t0}ms ${reason}`,
+        )
+      }
     }
   }
+  await Promise.all(Array.from({ length: Math.min(lanes, groups.length) }, () => worker()))
 
   if (failures.length > 0) {
     appendAppLog(

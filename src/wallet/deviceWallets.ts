@@ -1,8 +1,8 @@
 /**
- * Linked devices roster + pair QR.
+ * Known devices roster + backup-link QR.
  *
- * v3: different identity keys may link (identity link ≠ shared spend key).
- * Sealed mutual key backups are a separate contract (`deviceKeyBackup.ts`).
+ * Different identity keys are never linked as one identity. Their device id
+ * and public key may be retained only to establish one-way sealed recovery.
  * History URL sync remains optional for same-identity installs only.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
@@ -20,7 +20,7 @@ export type DeviceWallet = {
   deviceId: string
   label: string
   platform: string
-  /** Optional LAN peek URL; not required for identity link. */
+  /** Optional LAN peek URL; same-identity installs only. */
   peerBaseUrl: string | null
   isLocal: boolean
   identityKey: string
@@ -28,12 +28,12 @@ export type DeviceWallet = {
   address: string | null
   lastSeenAt: number | null
   online: boolean
-  /** When this peer was identity-linked on this install. */
+  /** When this peer relationship was added on this install. */
   linkedAt: number | null
   /**
-   * `backup-only` means the QR could not establish an identity link (for
-   * example a legacy v2 QR from a different identity), but its public key and
-   * device id are retained solely for a sealed-spare exchange.
+   * `backup-only` means identities differ. The public key and device id are
+   * retained solely for directional sealed recovery; there is no identity,
+   * balance, history, or spend link.
    */
   linkMode: 'linked' | 'backup-only'
 }
@@ -49,7 +49,7 @@ export type DevicePairPayloadV2 = {
   peerBaseUrl?: string | null
 }
 
-/** Cross-identity (or same) link — no History URL required. */
+/** Backup-link discovery payload. No identity claim is established by scanning it. */
 export type DevicePairPayloadV3 = {
   v: 3
   identityKey: string
@@ -63,16 +63,16 @@ export type DevicePairPayloadV3 = {
 export type DevicePairPayload = DevicePairPayloadV2 | DevicePairPayloadV3
 
 export type PairAcceptancePath =
-  | { path: 'identity-link' }
-  | { path: 'backup-only'; reason: 'legacy-cross-identity' }
+  | { path: 'same-identity' }
+  | { path: 'backup-only'; reason: 'cross-identity' }
   | { path: 'refuse'; reason: 'same-device' }
 
 /**
  * Decide what a scanned pair QR is allowed to establish.
  *
- * A legacy v2 QR claims same-key sync and therefore cannot identity-link to a
- * different key. Its device id + public key are still sufficient to encrypt a
- * cold BRC-78 spare, so retain that narrowly scoped fallback.
+ * Matching keys may use the existing same-wallet device path. Different keys
+ * are retained only as recovery peers; scanning never claims that they are one
+ * identity.
  */
 export function choosePairAcceptancePath(
   payload: DevicePairPayload,
@@ -82,13 +82,10 @@ export function choosePairAcceptancePath(
   if (payload.deviceId === localDeviceId) {
     return { path: 'refuse', reason: 'same-device' }
   }
-  if (
-    payload.v === 2 &&
-    payload.identityKey.toLowerCase() !== localIdentityKey.toLowerCase()
-  ) {
-    return { path: 'backup-only', reason: 'legacy-cross-identity' }
+  if (payload.identityKey.toLowerCase() !== localIdentityKey.toLowerCase()) {
+    return { path: 'backup-only', reason: 'cross-identity' }
   }
-  return { path: 'identity-link' }
+  return { path: 'same-identity' }
 }
 
 type RosterListener = (wallets: DeviceWallet[]) => void
@@ -194,9 +191,15 @@ export function listDeviceWallets(): DeviceWallet[] {
 }
 
 export function getSelectedDeviceId(): string {
-  const local = listDeviceWallets().find((w) => w.isLocal)
+  const wallets = listDeviceWallets()
+  const local = wallets.find((w) => w.isLocal)
   const saved = durableGetItem(SELECTED_KEY)?.trim()
-  if (saved && listDeviceWallets().some((w) => w.deviceId === saved)) return saved
+  if (
+    saved &&
+    wallets.some((w) => w.deviceId === saved && (w.isLocal || w.linkMode === 'linked'))
+  ) {
+    return saved
+  }
   return local?.deviceId ?? getOrCreateDeviceId()
 }
 
@@ -206,7 +209,13 @@ export function getSelectedDeviceWallet(): DeviceWallet | null {
 }
 
 export function selectDeviceWallet(deviceId: string): void {
-  if (!listDeviceWallets().some((w) => w.deviceId === deviceId)) return
+  if (
+    !listDeviceWallets().some(
+      (w) => w.deviceId === deviceId && (w.isLocal || w.linkMode === 'linked'),
+    )
+  ) {
+    return
+  }
   durableSetItem(SELECTED_KEY, deviceId)
   notifySelection(deviceId)
   notifyRoster()
@@ -243,7 +252,18 @@ export function enrollLocalDevice(args: {
     (typeof navigator !== 'undefined' ? navigator.platform : 'web')
   const label = args.label?.trim() || defaultLabel(platform)
   const previous = readRoster()
-  const peers = previous.filter((w) => !w.isLocal && w.deviceId !== deviceId)
+  const peers = previous
+    .filter((w) => !w.isLocal && w.deviceId !== deviceId)
+    .map((w) =>
+      w.identityKey.toLowerCase() === args.identityKey.toLowerCase()
+        ? w
+        : {
+            ...w,
+            peerBaseUrl: null,
+            online: false,
+            linkMode: 'backup-only' as const,
+          },
+    )
   const local: DeviceWallet = {
     deviceId,
     label,
@@ -279,18 +299,20 @@ export function upsertPeerDevice(
   if (peer.deviceId === local?.deviceId) {
     throw new Error('Cannot pair this device with itself')
   }
+  const sameIdentity =
+    local?.identityKey.toLowerCase() === peer.identityKey.toLowerCase()
   const entry: DeviceWallet = {
     deviceId: peer.deviceId,
     label: peer.label,
     platform: peer.platform,
-    peerBaseUrl: peer.peerBaseUrl ?? null,
+    peerBaseUrl: sameIdentity ? (peer.peerBaseUrl ?? null) : null,
     isLocal: false,
     identityKey: peer.identityKey,
     address: peer.address?.trim() || null,
     lastSeenAt: peer.lastSeenAt ?? Date.now(),
-    online: peer.online ?? false,
+    online: sameIdentity ? (peer.online ?? false) : false,
     linkedAt: peer.linkedAt ?? Date.now(),
-    linkMode: peer.linkMode ?? 'linked',
+    linkMode: sameIdentity ? 'linked' : 'backup-only',
   }
   const rest = readRoster().filter((w) => w.deviceId !== entry.deviceId)
   writeRoster([...rest, entry])
@@ -298,8 +320,7 @@ export function upsertPeerDevice(
 }
 
 /**
- * Make an imported sealed spare reachable from the exchange/recover UI even
- * when no identity link was established first.
+ * Make an imported sealed spare reachable from the recovery UI.
  */
 export function upsertPeerFromSealedBackup(pkg: {
   fromDeviceId: string
@@ -342,7 +363,7 @@ export function patchDeviceWallet(
   writeRoster(roster)
 }
 
-/** Build a v3 link QR (preferred). */
+/** Build a v3 backup-link discovery QR (preferred). */
 export function buildPairPayload(args: {
   identityKey: string
   address: string
@@ -448,7 +469,9 @@ export function parsePairPayload(raw: string): DevicePairPayload {
   if (typeof o.backupBaseUrl === 'string' && o.backupBaseUrl.trim()) {
     backupBaseUrl = normalizePairBackupUrl(o.backupBaseUrl)
   } else if (o.v === 1) {
-    throw new Error('This pair code is outdated — ask the other device to show a fresh link QR')
+    throw new Error(
+      'This backup-link code is outdated — ask the other device to show a fresh code',
+    )
   } else {
     throw new Error('Pair payload missing backup URL')
   }
@@ -464,7 +487,7 @@ export function parsePairPayload(raw: string): DevicePairPayload {
   }
 }
 
-/** True when raw QR text looks like a device-link payload (cheap, non-throwing). */
+/** True when raw QR text looks like a backup-link payload (cheap, non-throwing). */
 export function tryParsePairPayload(raw: string): DevicePairPayload | null {
   const text = raw.trim()
   if (!text.startsWith('{') || !text.includes('"identityKey"')) return null

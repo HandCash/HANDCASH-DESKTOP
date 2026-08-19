@@ -43,7 +43,7 @@ const MASTER = `stateDiagram-v2
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
-  settingsFlow --> deviceLink : link devices
+  settingsFlow --> deviceLink : device backup
   settingsFlow --> aboutHandCash : about
   settingsFlow --> wipeWallet : wipe
   aboutHandCash --> statecharts : view charts
@@ -66,7 +66,7 @@ const MASTER = `stateDiagram-v2
   changePassword : Change password
   backupKeys : Keys backup
   historyBackup : History backup
-  deviceLink : Link · sealed spares
+  deviceLink : Backup link · one-way recovery
   aboutHandCash : About HandCash
   statecharts : Statecharts
   wipeWallet : Wipe wallet
@@ -475,7 +475,7 @@ const SETTINGS = `stateDiagram-v2
   backupKeys --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
   deviceHandoff --> historyBackup : open history
-  deviceHandoff --> linkDevices : pair wizard
+  deviceHandoff --> linkDevices : add / open device
   deviceHandoff --> settingsHome : back
   linkDevices --> deviceHandoff : done
   historyBackup --> settingsHome : back
@@ -489,8 +489,8 @@ const SETTINGS = `stateDiagram-v2
   settingsHome : Settings
   changePassword : Password
   backupKeys : Keys
-  deviceHandoff : Use on another device
-  linkDevices : Link · sealed spares
+  deviceHandoff : Device backup
+  linkDevices : Devices · one-way recovery
   historyBackup : History
   wipeWallet : Wipe
   aboutHandCash : About HandCash
@@ -499,20 +499,44 @@ const SETTINGS = `stateDiagram-v2
 
 const DEVICE_LINK = `stateDiagram-v2
   direction TB
-  [*] --> link
-  link --> exchange : identities linked\\n(different keys)
-  link --> exchange : legacy cross-identity QR\\nbackup-only fallback
-  link --> link : same keys\\n(skip spare)
-  exchange --> link : done / back
-  link --> recover : open sealed spare
-  recover --> link : done / back
-  link --> scanning : scan QR
-  scanning --> link : pair or spare imported
-  scanning --> exchange : pair then exchange
+  [*] --> devices
+  devices --> scanning : SCAN
+  scanning --> devices : SCAN_CANCEL / SCANNED (same wallet)
+  scanning --> device : SCANNED (peer)
+  devices --> device : OPEN_DEVICE
+  devices --> recovery : OPEN_RECOVERY
+  device --> devices : BACK
+  recovery --> devices : BACK
 
-  link : Show link QR / scan
-  exchange : Seal spare to peer pubkey\\nlinked or backup-only
-  recover : Decrypt spare → copy phrase
+  state device {
+    [*] --> choosing
+    choosing --> sealPrompt : PROTECT_LOCAL
+    choosing --> importPrompt : PROTECT_PEER
+    sealPrompt --> sealing : SEAL
+    sealing --> sealed : SEAL_OK
+    sealing --> sealPrompt : FAIL
+    sealPrompt --> choosing : BACK
+    importPrompt --> importing : IMPORT
+    importing --> choosing : IMPORT_OK
+    importing --> importPrompt : FAIL
+    importPrompt --> choosing : BACK
+
+    choosing : One direction or none
+    sealPrompt : Unlock password
+    sealed : Sealed copy on screen
+    importPrompt : Scan / paste their copy
+  }
+
+  state recovery {
+    [*] --> locked
+    locked --> unsealing : UNSEAL
+    unsealing --> opened : UNSEAL_OK
+    unsealing --> locked : FAIL
+
+    opened : Phrase / emergency key
+  }
+
+  devices : Device list · my code
   scanning : Camera
 `
 
@@ -1015,8 +1039,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   },
   {
     id: 'deviceLink',
-    label: 'Link devices',
-    caption: 'deviceLink — identity link · sealed spare · recover',
+    label: 'Device backup',
+    caption: 'deviceBackupMachine — devices · one direction · recover',
     source: DEVICE_LINK,
   },
   {

@@ -9262,3 +9262,112 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
 .asset-burn-trigger {
   color: var(--hc-danger, #ef6464);
 }
+
+/* Device backup — one screen per step, one line per device. */
+[data-aeon-scope='device-backup'] {
+  display: grid;
+  gap: 14px;
+  align-content: start;
+  min-width: 0;
+}
+
+.device-backup-head {
+  display: grid;
+  gap: 4px;
+}
+
+.device-backup-head h3 {
+  margin: 0;
+  font-size: 0.95rem;
+  font-weight: 600;
+}
+
+.device-backup-head p {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.82rem;
+  line-height: 1.4;
+}
+
+.device-backup-head p[data-aeon-state='ok'] {
+  color: var(--hc-text);
+}
+
+.device-backup-head p[data-aeon-state='warn'] {
+  color: var(--hc-danger, #ef6464);
+}
+
+.device-backup-list,
+.device-backup-choices {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.device-backup-row {
+  width: 100%;
+  text-align: left;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: var(--hc-sunken-soft);
+  padding: 12px 14px;
+  cursor: pointer;
+  display: grid;
+  gap: 2px;
+  color: inherit;
+  font: inherit;
+}
+
+.device-backup-row:hover {
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, hsl(var(--border)));
+}
+
+.device-backup-row [data-aeon-part='label'] {
+  font-weight: 600;
+  font-size: 0.88rem;
+}
+
+.device-backup-row [data-aeon-part='description'] {
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+}
+
+.device-backup-row[data-aeon-state='warn'] [data-aeon-part='description'] {
+  color: var(--hc-danger, #ef6464);
+}
+
+.device-backup-qr {
+  display: grid;
+  justify-items: center;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+}
+
+.device-backup-qr p {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+}
+
+.device-backup-qr img {
+  border-radius: 4px;
+  background: #ffffff;
+}
+
+.device-backup-foot {
+  margin-top: 4px;
+}
+
+.device-backup-links {
+  margin-top: 16px;
+}
+
+[data-aeon-scope='device-backup'] .empty-state {
+  min-height: 0;
+  flex: 0 0 auto;
+  padding: 18px 12px;
+}
