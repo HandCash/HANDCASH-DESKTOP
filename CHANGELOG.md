@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.257] - 2026-08-19
+
+### Added
+
+- **Settings → Import phrase brings an outside 12- or 24-word wallet into this one.** Both BRC-75 and legacy-HD roots are derived and previewed, so the phrase's real address is found before anything is spent. Funding is swept with the foreign key while this wallet keeps the change and pays the fee, and 1-sat items migrate in small resumable batches — a cursor is stored so a very large collection can continue across sessions instead of restarting.
+- **Linked devices only count as linked once both sides hold a sealed spare.** Pairing reports each leg of the exchange separately (the spare this device made for the peer, and the peer's spare stored here) and the wizard stays open until both exist, so a link can no longer look complete while recovery would only work in one direction.
+
 ## [1.2.256] - 2026-08-18
 
 ### Fixed
