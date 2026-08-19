@@ -346,6 +346,7 @@ export type BalanceRead =
  * `fetchBalanceRead` and fail closed.
  */
 let lastKnownBalanceSats: number | null = null
+let lastBalanceBreakdown = ''
 
 export function lastKnownBalance(): number | null {
   return lastKnownBalanceSats
@@ -429,11 +430,20 @@ export async function fetchBalanceRead(
 
   if (opts?.creditUnconfirmed === false) return { kind: 'ok', sats: spendable }
 
+  let pendingChange = 0
   try {
     const { unconfirmedChangeSats } = await import('./balanceView')
-    spendable += await unconfirmedChangeSats()
+    pendingChange = await unconfirmedChangeSats()
+    spendable += pendingChange
   } catch (err) {
     console.warn('[balance] unconfirmed change credit skipped', err)
+  }
+  const breakdown = `${spendable - pendingChange}:${pendingChange}:${spendable}`
+  if (breakdown !== lastBalanceBreakdown) {
+    lastBalanceBreakdown = breakdown
+    console.info(
+      `[balance] spendable=${spendable - pendingChange} pendingChange=${pendingChange} displayed=${spendable}`,
+    )
   }
   lastKnownBalanceSats = spendable
   return { kind: 'ok', sats: spendable }

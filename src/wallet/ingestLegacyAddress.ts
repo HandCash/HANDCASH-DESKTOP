@@ -7,20 +7,15 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   scanLegacyAddress,
   importLegacyUtxos,
-  txExistsOnChain,
-  type LegacyFundingReceipt,
   type LegacyScanResult,
 } from './legacyScan'
-import {
-  forgetLegacyImported,
-  legacySweepRecord,
-  legacySweepRetryEligible,
-} from './legacyImportGuard'
+import { forgetLegacyImported } from './legacyImportGuard'
+import { retryableStuckSweeps } from './legacyStuckSweep'
+import { recordFundingReceipts } from './legacyReceiptActivity'
 import type { Chain } from './vault'
 import {
   hasActivityItemOutpoint,
   hasSettledActivityItemOutpoint,
-  hasSettledActivityTxid,
   recordAppActivity,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -65,67 +60,6 @@ export type LegacyAddressIngestOptions = {
    * Used when Refresh yields to an in-flight spend (fundingOnly / yield path).
    */
   fundingOnly?: boolean
-}
-
-/**
- * Sweeps safe to try again: old enough to be genuinely stuck, and with their
- * recorded transaction provably absent from the chain.
- *
- * The sweep runs through the toolbox in delayed mode, so a reported success only
- * means the transaction was accepted locally. If it never reached a miner, the
- * deposit sits unspent behind a permanent mark and no other code path can free
- * it — that is a received payment the wallet will never credit.
- *
- * An address scan still listing the input as unspent proves nothing on its own;
- * providers lag our own broadcast by minutes, and re-sweeping on that alone
- * double-spends the first sweep. So the recorded txid must be provably missing.
- * When the provider will not answer, the mark stands.
- */
-async function retryableStuckSweeps(
-  utxos: Array<{ outpoint: string }>,
-  chain: Chain,
-): Promise<string[]> {
-  const candidates = utxos
-    .map((u) => u.outpoint.trim().toLowerCase())
-    .filter((op) => {
-      if (!op || !legacySweepRetryEligible(op)) return false
-      // No recorded sweep txid means no evidence either way. The original version
-      // of this heal treated that as retryable, and re-sweeping on a hunch is what
-      // booked one deposit three times. Absent proof, the mark stands.
-      return !!legacySweepRecord(op)?.txid
-    })
-  if (candidates.length === 0) return []
-
-  const { mapPool } = await import('./asyncPool')
-  const flags = await mapPool(candidates, 4, async (op) => {
-    const txid = legacySweepRecord(op)?.txid
-    if (!txid) return null
-    if ((await txExistsOnChain(txid, chain)) !== false) return null
-    return op
-  })
-  return flags.filter((op): op is string => !!op)
-}
-
-/** Activity rows for newly swept funding — one per incoming payment txid. */
-function recordFundingReceipts(receipts: LegacyFundingReceipt[]): void {
-  const byTx = new Map<string, number>()
-  for (const receipt of receipts) {
-    const txid = receipt.receiveTxid.trim().toLowerCase()
-    if (!txid || !(receipt.satoshis > 0)) continue
-    byTx.set(txid, (byTx.get(txid) ?? 0) + receipt.satoshis)
-  }
-  for (const [txid, sats] of byTx) {
-    if (hasSettledActivityTxid(txid, 'earned', { item: false })) continue
-    upsertAppActivity({
-      origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'earned',
-      sats,
-      method: 'receive',
-      note: 'Received coins',
-      txid,
-      status: 'complete',
-    })
-  }
 }
 
 /** Activity rows for newly internalized collectables. */

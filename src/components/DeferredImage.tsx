@@ -81,6 +81,22 @@ let warnedLive = false
  * it can be painted without the ceremony.
  */
 const decodedOnce = new Set<string>()
+const MAX_DECODED_URLS = 500
+
+export function rememberDecodedUrl(src: string): void {
+  // Set insertion order doubles as a tiny LRU: revisits move to the end.
+  decodedOnce.delete(src)
+  decodedOnce.add(src)
+  while (decodedOnce.size > MAX_DECODED_URLS) {
+    const oldest = decodedOnce.values().next().value
+    if (typeof oldest !== 'string') break
+    decodedOnce.delete(oldest)
+  }
+}
+
+export function decodedImageCacheSize(): number {
+  return decodedOnce.size
+}
 
 function noteImageLive(delta: 1 | -1): void {
   liveImages += delta
@@ -362,7 +378,7 @@ export function DeferredImage({
         decoding="async"
         hidden={!showImg}
         onLoad={() => {
-          if (typeof src === 'string' && src !== '') decodedOnce.add(src)
+          if (typeof src === 'string' && src !== '') rememberDecodedUrl(src)
           if (retainDecoded) retained.current = true
           setStatus('ready')
         }}

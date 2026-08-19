@@ -247,6 +247,25 @@ export function rootKeyFromMnemonicLegacyHd(mnemonic: string, passphrase = ''): 
   return derivedFromPrivateKey(hd.privKey, m.toString(), 'legacy-hd')
 }
 
+/**
+ * BIP39 seed → BIP32 child key at an explicit HD path.
+ *
+ * `m` returns the master key (same as {@link rootKeyFromMnemonicLegacyHd}).
+ * Used to reach foreign wallets (Yours, RelayX, Twetch) that keep funds and
+ * ordinals on distinct BIP44 branches rather than at the seed root.
+ */
+export function keyFromMnemonicHdPath(
+  mnemonic: string,
+  path: string,
+  passphrase = '',
+): MnemonicDerived {
+  const m = normalizeMnemonic(mnemonic)
+  const seed = m.toSeed(passphrase)
+  const hd = HD.fromSeed(seed)
+  const node = !path || path === 'm' ? hd : hd.derive(path)
+  return derivedFromPrivateKey(node.privKey, m.toString(), 'legacy-hd')
+}
+
 /** Default derivation for new wallets / backups (BRC-75). */
 export function rootKeyFromMnemonic(mnemonic: string, passphrase = ''): MnemonicDerived {
   return rootKeyFromMnemonicBrc75(mnemonic, passphrase)

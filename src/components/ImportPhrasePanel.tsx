@@ -72,8 +72,13 @@ export function ImportPhrasePanel() {
 
   const runSweep = async () => {
     if (!preview) return
-    if (preview.sameAsActive) {
-      toastError('Same wallet', 'That phrase is already this identity — use Refresh.')
+    if (preview.hits.length === 0) {
+      toastError(
+        preview.sameAsActive ? 'Same wallet' : 'Nothing found',
+        preview.sameAsActive
+          ? 'That phrase is already this identity — use Refresh.'
+          : 'No BSV or collectables to sweep from that phrase.',
+      )
       return
     }
     abortRef.current = false
@@ -83,39 +88,81 @@ export function ImportPhrasePanel() {
     try {
       await unlockVault(password)
       setStatus('Sweeping BSV into this wallet…')
-      const funding = await sweepPhraseFunding({
-        mnemonic: phrase,
-        passphrase,
-        candidate: preview.candidate,
-        utxos: preview.scan.utxos,
-      })
+      let importedTotal = 0
+      let failedTotal = 0
+      let satsTotal = 0
+      let alreadySweptTotal = 0
+      for (const hit of preview.hits) {
+        if (abortRef.current) break
+        if (hit.fundingCount === 0) continue
+        const funding = await sweepPhraseFunding({
+          mnemonic: phrase,
+          passphrase,
+          candidate: hit.candidate,
+          utxos: hit.scan.utxos,
+        })
+        importedTotal += funding.imported
+        failedTotal += funding.failed
+        satsTotal += funding.fundingSatsMoved
+        alreadySweptTotal += funding.alreadySwept
+      }
       const fundMsg =
-        funding.imported > 0
-          ? `Moved ${formatSats(funding.fundingSatsMoved)} sats (${funding.imported} output${funding.imported === 1 ? '' : 's'})`
-          : funding.failed > 0
-            ? `No funding moved · ${funding.failed} failed`
-            : 'No sweepable BSV on that phrase'
+        importedTotal > 0
+          ? `Moved ${formatSats(satsTotal)} sats (${importedTotal} output${importedTotal === 1 ? '' : 's'})`
+          : failedTotal > 0
+            ? `No funding moved · ${failedTotal} failed`
+            : alreadySweptTotal > 0
+              ? `Already swept earlier · ${alreadySweptTotal} output${alreadySweptTotal === 1 ? '' : 's'} claimed by this wallet`
+              : 'No sweepable BSV on that phrase'
       setFundingResult(fundMsg)
       toastSuccess('BSV sweep', fundMsg)
 
-      if (migrateItems && preview.itemCountAtLeast > 0 && !abortRef.current) {
+      const itemHits = preview.hits.filter((h) => h.itemCountAtLeast > 0)
+      if (migrateItems && itemHits.length > 0 && !abortRef.current) {
         setStatus(
           preview.itemCountCapped
             ? `Moving collectables (large collection — this takes a while)…`
             : `Moving ${preview.itemCountAtLeast} collectables…`,
         )
-        let guard = 0
-        while (!abortRef.current && guard < 200_000) {
-          guard += 1
-          const batch = await migratePhraseItemsBatch({
-            candidate: preview.candidate,
-            batchSize: 5,
-          })
-          setItemProgress(
-            `${batch.moved} moved · ${batch.failed} failed · scanned ${batch.scanned}${batch.done ? ' · done' : ''}`,
-          )
-          if (batch.done) break
-          setStatus(`Moving collectables… ${batch.moved} so far`)
+        let movedRunning = 0
+        for (const hit of itemHits) {
+          if (abortRef.current) break
+          let guard = 0
+          // A collection-wide fault (unreadable tips, rejected broadcasts) fails
+          // every item identically. Grinding through thousands of them just to
+          // report the same error at the end is worse than stopping early.
+          let barrenBatches = 0
+          let lastMoved = 0
+          let lastFailed = 0
+          while (!abortRef.current && guard < 200_000) {
+            guard += 1
+            const batch = await migratePhraseItemsBatch({
+              candidate: hit.candidate,
+              batchSize: 5,
+            })
+            const skippedNote = batch.skipped > 0 ? ` · ${batch.skipped} skipped` : ''
+            setItemProgress(
+              `${movedRunning + batch.moved} moved · ${batch.failed} failed${skippedNote} · scanned ${batch.scanned}${batch.done ? ' · done' : ''}`,
+            )
+            if (batch.done) {
+              movedRunning += batch.moved
+              break
+            }
+            // Paging past outputs that are not collectables is progress, not a
+            // fault — only repeated failures with nothing moved end the run.
+            const stalled = batch.moved === lastMoved && batch.failed > lastFailed
+            barrenBatches = stalled ? barrenBatches + 1 : 0
+            lastMoved = batch.moved
+            lastFailed = batch.failed
+            if (barrenBatches >= 3) {
+              toastError(
+                'Collectable migration stopped',
+                batch.lastError ?? 'No collectables could be moved from that phrase.',
+              )
+              break
+            }
+            setStatus(`Moving collectables… ${movedRunning + batch.moved} so far`)
+          }
         }
       }
 
@@ -201,24 +248,37 @@ export function ImportPhrasePanel() {
       {preview && (phase === 'preview' || phase === 'working' || phase === 'done') ? (
         <div style={{ marginTop: 16 }}>
           <h3 className="settings-row-label">Source wallet</h3>
-          <p className="settings-row-desc" style={{ marginTop: 6 }}>
-            Scheme: <strong>{preview.candidate.scheme}</strong>
-            <br />
-            Address: {preview.candidate.address}
-            <br />
-            Identity: {preview.candidate.identityKey.slice(0, 14)}…
-            {preview.sameAsActive ? (
-              <>
-                <br />
-                <strong>Same as this wallet</strong> — nothing to sweep.
-              </>
-            ) : null}
-          </p>
+          {preview.hits.length === 0 ? (
+            <p className="settings-row-desc" style={{ marginTop: 6 }}>
+              {preview.sameAsActive ? (
+                <>
+                  <strong>Same as this wallet</strong> — nothing to sweep.
+                </>
+              ) : (
+                'No BSV or collectables found on the derivations we checked (Yours, RelayX, Twetch, BRC-75, HD master).'
+              )}
+            </p>
+          ) : (
+            <ul className="settings-row-desc" style={{ marginTop: 6, paddingLeft: 18 }}>
+              {preview.hits.map((hit) => (
+                <li key={hit.candidate.address} style={{ marginBottom: 4 }}>
+                  <strong>{hit.candidate.label}</strong> · {formatBsv(hit.fundingSats)}{' '}
+                  BSV ·{' '}
+                  {hit.itemCountCapped
+                    ? `${hit.itemCountAtLeast.toLocaleString()}+`
+                    : hit.itemCountAtLeast.toLocaleString()}{' '}
+                  item{hit.itemCountAtLeast === 1 ? '' : 's'}
+                  <br />
+                  <span style={{ opacity: 0.7 }}>{hit.candidate.address}</span>
+                </li>
+              ))}
+            </ul>
+          )}
           <p className="settings-row-desc" style={{ marginTop: 8 }}>
-            Sweepable BSV: <strong>{formatBsv(preview.fundingSats)}</strong> (
+            Total sweepable BSV: <strong>{formatBsv(preview.fundingSats)}</strong> (
             {preview.fundingCount} output{preview.fundingCount === 1 ? '' : 's'})
             <br />
-            Collectables:{' '}
+            Total collectables:{' '}
             <strong>
               {preview.itemCountCapped
                 ? `${preview.itemCountAtLeast.toLocaleString()}+`
@@ -226,7 +286,7 @@ export function ImportPhrasePanel() {
             </strong>
           </p>
 
-          {phase === 'preview' && !preview.sameAsActive ? (
+          {phase === 'preview' && preview.hits.length > 0 ? (
             <>
               <label className="wallet-setup-option" style={{ marginTop: 12 }}>
                 <input
@@ -329,9 +389,10 @@ export function ImportPhrasePanel() {
         </p>
       ) : null}
 
-      <SettingsFeatureAbout tags={['BRC-75', 'BIP39']}>
-        Tries BRC-75 (Yours / HandCash) then legacy HD. Funding uses the foreign key to sign;
-        change lands on this identity. Items are separate on-chain moves.
+      <SettingsFeatureAbout tags={['BRC-75', 'BIP39', 'BIP44']}>
+        Scans BRC-75, HD master, and the Yours / RelayX / Twetch BIP44 branches — Yours keeps
+        cash and ordinals on separate paths, so both are checked. Funding uses the foreign key
+        to sign; change lands on this identity. Items are separate on-chain moves.
       </SettingsFeatureAbout>
     </div>
   )

@@ -459,6 +459,7 @@ const DEVICE_LINK = `stateDiagram-v2
   direction TB
   [*] --> link
   link --> exchange : identities linked\\n(different keys)
+  link --> exchange : legacy cross-identity QR\\nbackup-only fallback
   link --> link : same keys\\n(skip spare)
   exchange --> link : done / back
   link --> recover : open sealed spare
@@ -468,9 +469,29 @@ const DEVICE_LINK = `stateDiagram-v2
   scanning --> exchange : pair then exchange
 
   link : Show link QR / scan
-  exchange : Seal spare to peer pubkey
+  exchange : Seal spare to peer pubkey\\nlinked or backup-only
   recover : Decrypt spare → copy phrase
   scanning : Camera
+`
+
+const QR_SCANNER = `stateDiagram-v2
+  direction LR
+  [*] --> loading
+  loading --> ready : CAMERA_READY
+  loading --> error : FAIL
+  loading --> done : SCANNED
+  ready --> error : FAIL
+  ready --> done : SCANNED
+  loading --> paused : PAUSE
+  ready --> paused : PAUSE
+  paused --> loading : RESUME / new session
+  done --> [*]
+
+  loading : Skeleton · acquire camera
+  ready : Throttled QR decode
+  error : Camera unavailable
+  paused : Tracks stopped in background
+  done : Tracks stopped
 `
 
 const CHANGE_PASSWORD = `stateDiagram-v2
@@ -972,6 +993,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     label: 'QR',
     caption: 'qrReveal — receive / identity QR dialog',
     source: QR,
+  },
+  {
+    id: 'qrScanner',
+    label: 'Scanner',
+    caption: 'qrScanner — camera acquisition · throttled decode · cleanup',
+    source: QR_SCANNER,
   },
   {
     id: 'appUpdate',

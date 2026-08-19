@@ -63,10 +63,12 @@ import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 
 /**
  * Messagebox tip-hint poll — independent of the address-scan interval so a
- * peer soft-latch notify can kick ingest in ~1s, not wait for the next chain tick.
+ * peer payment/item hints can kick ingest before the next full chain tick.
  */
-const TIP_HINT_POLL_MS = 1_500
-const TIP_HINT_POLL_HIDDEN_MS = 15_000
+// 1.5s produced ~40 messagebox requests/minute and measurable idle renderer
+// load. Five seconds keeps peer receives responsive without a permanent hot loop.
+const TIP_HINT_POLL_MS = 5_000
+const TIP_HINT_POLL_HIDDEN_MS = 30_000
 /** Cloud history is merged far less often than the chain poll — it is a network round trip. */
 const HISTORY_PULL_INTERVAL_MS = 60_000
 /**
@@ -75,10 +77,12 @@ const HISTORY_PULL_INTERVAL_MS = 60_000
  */
 const CHAIN_POLL_HIDDEN_MS = 30_000
 /**
- * Foreground unlocked poll. Peer item sends only land when the next address
- * scan runs — 30s made same-session transfers feel broken.
+ * Foreground unlocked poll. A full chain ingest is expensive (network + IDB +
+ * proof review), so 5s kept renderer/main/GPU hot almost continuously.
+ * Messagebox hints and pending-tip mode still collapse receipt latency.
  */
-const CHAIN_POLL_MS = 5_000
+const CHAIN_POLL_PHONE_MS = 10_000
+const CHAIN_POLL_DESKTOP_MS = 20_000
 /** Device-parity foreground poll (same target as quiet unlocked). */
 const CHAIN_POLL_PARITY_MS = 5_000
 /**
@@ -92,7 +96,8 @@ function nextChainPollMs(pendingTips: number): number {
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     return CHAIN_POLL_HIDDEN_MS
   }
-  return isDeviceParityEnabled() ? CHAIN_POLL_PARITY_MS : CHAIN_POLL_MS
+  if (isDeviceParityEnabled()) return CHAIN_POLL_PARITY_MS
+  return isPhoneShell() ? CHAIN_POLL_PHONE_MS : CHAIN_POLL_DESKTOP_MS
 }
 
 type Props = {
@@ -186,7 +191,9 @@ export function Dashboard({
     resolvePermission(pendingPrompt.id, 'deny')
     playWalletSound('deny')
   }, [pendingPrompt])
-  useEffect(() => startDeviceMesh(profile.identityKey), [profile.identityKey])
+  useEffect(() => {
+    return startDeviceMesh(profile.identityKey)
+  }, [profile.identityKey])
   useEffect(() => {
     // Mobile uses this lifecycle to keep the unlocked wallet's foreground
     // service alive while Android backgrounds the WebView.

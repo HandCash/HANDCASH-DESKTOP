@@ -6,6 +6,7 @@
 |------|------------|
 | **Linked identities** | Different (or same) keys on two installs. Link via QR. Each device spends **only its own** coins. |
 | **Sealed spare** | Cold EncryptedMessage of the other device’s custody secret (BRC-78). Not used for day-to-day spend. |
+| **Backup-only fallback** | A legacy cross-identity QR cannot establish an identity link, but its device id + pubkey may be retained only to exchange sealed spares. No sync, identity claim, balance view, or spend authority. |
 | **History backup URL** | Optional BRC-39 replica of **this** identity’s localState. Required only for legacy same-key Sync / spend-lease — **not** required to link. |
 
 ## Preferred: two devices, two keys
@@ -17,6 +18,10 @@
 4. Confirm Settings status: linked · mutual spares ready.
 5. Optional: still confirm **Key slices / phrase** offline for each device.
 6. Optional: History backup URL for each identity’s own recovery — independent URLs are fine.
+
+If one device still emits a legacy v2 QR for a different identity, scanning it enters
+**backup-only** mode instead of failing. Complete both sealed-spare legs; upgrade that
+device before expecting an identity link.
 
 ## Lose a device
 

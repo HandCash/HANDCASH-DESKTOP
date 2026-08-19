@@ -14,7 +14,7 @@
  *
  * History failure does not skip chain; chain failure does not roll back history.
  */
-import { clearCollectablesCache } from './collectables'
+import { relistCollectablesAfterLocalStateReplace } from './collectables'
 import { refreshFromChainExclusive } from './chainIngest'
 import {
   isRecomposeCoordinatorActive,
@@ -139,7 +139,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
     }
   }
 
-  clearCollectablesCache()
+  await relistCollectablesAfterLocalStateReplace()
 
   try {
     const { appendAppLog } = await import('./appLog')

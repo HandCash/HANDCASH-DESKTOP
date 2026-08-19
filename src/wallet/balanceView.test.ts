@@ -10,10 +10,11 @@ const { classifyOwnedCash, txLivenessFromStatus, unconfirmedChangeSats } =
   await import('./balanceView')
 
 describe('txLivenessFromStatus', () => {
-  it('treats sending / unproven / completed as live', () => {
-    for (const status of ['sending', 'unproven', 'completed', 'nosend', 'nonfinal']) {
-      expect(txLivenessFromStatus(status)).toBe('live')
+  it('separates pending sends from settled transactions', () => {
+    for (const status of ['sending', 'unproven', 'nosend', 'nonfinal']) {
+      expect(txLivenessFromStatus(status)).toBe('pending')
     }
+    expect(txLivenessFromStatus('completed')).toBe('settled')
   })
 
   it('treats failed / missing as not live', () => {
@@ -25,7 +26,7 @@ describe('txLivenessFromStatus', () => {
 describe('classifyOwnedCash', () => {
   it('counts remaining spendable coins', () => {
     expect(
-      classifyOwnedCash({ satoshis: 40_000, spendable: true }, 'live', 'none'),
+      classifyOwnedCash({ satoshis: 40_000, spendable: true }, 'pending', 'none'),
     ).toEqual({ kind: 'count', as: 'spendable', satoshis: 40_000 })
   })
 
@@ -33,7 +34,7 @@ describe('classifyOwnedCash', () => {
     expect(
       classifyOwnedCash(
         { satoshis: 9_000, change: true, spendable: false },
-        'live',
+        'pending',
         'none',
       ),
     ).toEqual({ kind: 'count', as: 'unconfirmedChange', satoshis: 9_000 })
@@ -43,8 +44,8 @@ describe('classifyOwnedCash', () => {
     expect(
       classifyOwnedCash(
         { satoshis: 50_000, spendable: false, spentBy: 7 },
-        'live',
-        'live',
+        'pending',
+        'pending',
       ),
     ).toEqual({ kind: 'exclude', reason: 'spentLive' })
   })
@@ -53,7 +54,7 @@ describe('classifyOwnedCash', () => {
     expect(
       classifyOwnedCash(
         { satoshis: 1_000, change: false, spendable: false },
-        'live',
+        'pending',
         'none',
       ),
     ).toEqual({ kind: 'exclude', reason: 'notOurs' })
@@ -63,14 +64,14 @@ describe('classifyOwnedCash', () => {
     expect(
       classifyOwnedCash(
         { satoshis: 1, spendable: true, basket: '1sat' },
-        'live',
+        'pending',
         'none',
       ),
     ).toEqual({ kind: 'exclude', reason: 'item' })
     expect(
       classifyOwnedCash(
         { satoshis: 100, spendable: true, basket: 'bsv21' },
-        'live',
+        'pending',
         'none',
       ),
     ).toEqual({ kind: 'exclude', reason: 'bsv21' })
@@ -85,28 +86,48 @@ describe('classifyOwnedCash', () => {
       ),
     ).toEqual({ kind: 'exclude', reason: 'notOurs' })
   })
+
+  it('does not credit historical change from a completed transaction', () => {
+    expect(
+      classifyOwnedCash(
+        { satoshis: 9_000, change: true, spendable: false },
+        'settled',
+        'none',
+      ),
+    ).toEqual({ kind: 'exclude', reason: 'notOurs' })
+  })
+
+  it('still excludes an input spent by a completed transaction', () => {
+    expect(
+      classifyOwnedCash(
+        { satoshis: 50_000, spendable: false, spentBy: 7 },
+        'none',
+        'settled',
+      ),
+    ).toEqual({ kind: 'exclude', reason: 'spentLive' })
+  })
 })
 
 describe('owned cash while sending', () => {
   it('equals leftover spendable plus in-flight change, not inputs minus nothing', () => {
     const input = classifyOwnedCash(
       { satoshis: 50_000, spendable: false, spentBy: 1 },
-      'live',
-      'live',
+      'pending',
+      'pending',
     )
     const payment = classifyOwnedCash(
       { satoshis: 1_000, change: false, spendable: false },
-      'live',
+      'pending',
       'none',
     )
     const change = classifyOwnedCash(
       { satoshis: 48_990, change: true, spendable: false },
-      'live',
+      'pending',
       'none',
     )
     const leftover = classifyOwnedCash(
       { satoshis: 10_000, spendable: true },
-      'live',
+      'pending',
       'none',
     )
     const coins = [input, payment, change, leftover]
@@ -151,6 +172,15 @@ describe('unconfirmedChangeSats', () => {
       partial: { spendable: false, change: true },
       paged: { limit: 200, offset: 0 },
     })
+  })
+
+  it('does not re-credit completed change restored from BRC-39 history', async () => {
+    findOutputs.mockResolvedValue([
+      { satoshis: 9_000, change: true, spendable: false, transactionId: 9 },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+
+    await expect(unconfirmedChangeSats()).resolves.toBe(0)
   })
 
   it('skips unspendable inputs that are not change', async () => {

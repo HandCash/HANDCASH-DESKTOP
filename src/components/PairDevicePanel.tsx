@@ -3,12 +3,15 @@ import QRCode from 'qrcode'
 import { getActiveWallet } from '../wallet/session'
 import {
   buildPairPayload,
+  choosePairAcceptancePath,
   isSameIdentityPeer,
   listDeviceWallets,
+  parsePairPayload,
   pairPayloadToQrText,
   removePeerDevice,
   subscribeDeviceWallets,
   upsertPeerDevice,
+  upsertPeerFromSealedBackup,
   type DeviceWallet,
 } from '../wallet/deviceWallets'
 import { verifyAndEnrichPair } from '../wallet/devicePeer'
@@ -119,11 +122,13 @@ export function PairDevicePanel() {
       setBusy(true)
       try {
         const pkg = importSealedDeviceKeyBackup(raw)
-        toastSuccess('Sealed spare stored', pkg.fromLabel)
+        const peer = upsertPeerFromSealedBackup(pkg)
+        setExchangePeer(peer)
+        toastSuccess('Sealed spare stored', 'Finish the exchange by sealing yours for them.')
         playWalletSound('success')
         setPaste('')
         setScanning(false)
-        setStep('link')
+        setStep('exchange')
         return true
       } catch (err) {
         playWalletSound('error')
@@ -137,6 +142,35 @@ export function PairDevicePanel() {
     setBusy(true)
     playWalletSound('soft')
     try {
+      const parsed = parsePairPayload(raw)
+      const acceptance = choosePairAcceptancePath(parsed, wallet.identityKey)
+      if (acceptance.path === 'refuse') {
+        throw new Error('Cannot pair this device with itself')
+      }
+      if (acceptance.path === 'backup-only') {
+        const peer = upsertPeerDevice({
+          deviceId: parsed.deviceId,
+          label: parsed.label,
+          platform: parsed.platform,
+          peerBaseUrl: null,
+          identityKey: parsed.identityKey,
+          address: null,
+          lastSeenAt: Date.now(),
+          online: false,
+          linkMode: 'backup-only',
+        })
+        setPaste('')
+        setScanning(false)
+        setExchangePeer(peer)
+        setStep('exchange')
+        toastSuccess(
+          'Backup-only fallback',
+          'The identities cannot use this legacy link code, but they can exchange sealed spares.',
+        )
+        playWalletSound('success')
+        return true
+      }
+
       const enriched = await verifyAndEnrichPair(raw, wallet.identityKey)
       const peer = upsertPeerDevice({
         deviceId: enriched.deviceId,
@@ -147,6 +181,7 @@ export function PairDevicePanel() {
         address: enriched.v === 3 ? enriched.address : null,
         lastSeenAt: Date.now(),
         online: enriched.online,
+        linkMode: 'linked',
       })
       void pollDeviceMeshOnce()
       setPaste('')
@@ -223,8 +258,10 @@ export function PairDevicePanel() {
     setBusy(true)
     try {
       const pkg = importSealedDeviceKeyBackup(paste)
+      const peer = upsertPeerFromSealedBackup(pkg)
+      setExchangePeer(peer)
       setPaste('')
-      toastSuccess('Sealed spare stored', `${pkg.fromLabel} · cold only`)
+      toastSuccess('Sealed spare stored', `${pkg.fromLabel} · finish both ways`)
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
@@ -402,7 +439,11 @@ export function PairDevicePanel() {
         </h3>
         <p className="settings-hint">{hint}</p>
         <p className="settings-row-desc" style={{ marginTop: 8 }}>
-          Linked: <strong>{exchangePeer.label}</strong>
+          {exchangePeer.linkMode === 'backup-only' ? 'Backup peer' : 'Linked'}:{' '}
+          <strong>{exchangePeer.label}</strong>
+          {exchangePeer.linkMode === 'backup-only'
+            ? ' · identities remain separate; only sealed recovery works'
+            : null}
         </p>
         <ul className="settings-hint" style={{ marginTop: 8, paddingLeft: '1.25rem' }}>
           <li>{mutual.gaveMine ? '✓' : '○'} My spare ready for them (they can recover me)</li>
@@ -616,7 +657,11 @@ export function PairDevicePanel() {
               return (
                 <li key={p.deviceId} style={{ marginBottom: 12 }}>
                   <strong>{p.label}</strong>
-                  {same
+                  {p.linkMode === 'backup-only'
+                    ? mutual.complete
+                      ? ' · backup-only · mutual spares ready'
+                      : ' · backup-only · spare exchange incomplete'
+                    : same
                     ? ' · same keys'
                     : mutual.complete
                       ? ' · mutual spares ready'

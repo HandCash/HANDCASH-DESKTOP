@@ -65,15 +65,18 @@ export function deviceHandoffStatus(): SettingRowStatus {
     return { text: 'Link identities · mutual sealed spares', tone: 'muted' }
   }
   const mutualOk = peers.filter((p) => getMutualSpareStatus(p.deviceId).complete).length
+  const backupOnly = peers.filter((p) => p.linkMode === 'backup-only').length
+  const deviceLabel =
+    backupOnly === peers.length ? 'backup-only' : backupOnly > 0 ? 'linked / backup' : 'linked'
   if (mutualOk === peers.length) {
     return {
-      text: `${peers.length} linked · mutual spares ready`,
+      text: `${peers.length} ${deviceLabel} · mutual spares ready`,
       tone: 'ok',
     }
   }
   if (mutualOk > 0) {
     return {
-      text: `${peers.length} linked · ${mutualOk} mutual`,
+      text: `${peers.length} ${deviceLabel} · ${mutualOk} mutual`,
       tone: 'warn',
     }
   }
@@ -83,12 +86,12 @@ export function deviceHandoffStatus(): SettingRowStatus {
   }).length
   if (partial > 0) {
     return {
-      text: `${peers.length} linked · finish both-way spares`,
+      text: `${peers.length} ${deviceLabel} · finish both-way spares`,
       tone: 'warn',
     }
   }
   return {
-    text: `${peers.length} linked · exchange spares both ways`,
+    text: `${peers.length} ${deviceLabel} · exchange spares both ways`,
     tone: 'warn',
   }
 }

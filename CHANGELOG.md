@@ -2,9 +2,12 @@
 
 ## [1.2.258] - 2026-08-19
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Coins swept from an imported phrase now appear on Activity.** The sweep credited the balance but wrote no row, and no later pass could ever write one — Refresh only ingests this wallet's own addresses, never an imported phrase — so a completed sweep was indistinguishable from one that silently did nothing. Both paths now share one receipt recorder, and a sweep that landed before this fix is backfilled from its durable sweep mark (de-duped on the receive txid, so no coins are re-spent).
+- **A phrase's cash outputs are no longer signed as if they were collectables.** The ordinal index lists every unspent output an address holds, so a Yours branch returned its 1.6M-sat cash output alongside its inscriptions; migrating it as a 1-sat tip signed the wrong sighash amount and failed script evaluation on every retry. Eligibility is now decided per output from the source transaction — value and lock must both match — and tips this phrase key cannot unlock (listed or covenant) are refused by name instead of retried forever.
+- **Item counts and progress reflect collectables rather than raw index rows.** The preview counted cash outputs as items, and the migration's stop-early guard treated pages of skipped outputs as failed batches. Skips are now reported separately and only repeated failures with nothing moved end a run.
+- **Migrated collectables get an Activity row of their own.**
 
 ## [1.2.257] - 2026-08-19
 

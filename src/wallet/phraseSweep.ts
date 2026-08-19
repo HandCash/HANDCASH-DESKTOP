@@ -7,13 +7,15 @@
  * 3. Optionally migrate 1-sat ordinals in small batches (resumable). Huge
  *    collections (e.g. 100k+) take a long time — progress is explicit.
  */
-import { Beef, P2PKH, PrivateKey } from '@bsv/sdk'
+import { Beef, P2PKH, PrivateKey, type BEEF } from '@bsv/sdk'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
+  keyFromMnemonicHdPath,
   rootKeyFromMnemonicBrc75,
   rootKeyFromMnemonicLegacyHd,
   type Chain,
 } from './vault'
+import { appendAppLog } from './appLog'
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
   importLegacyUtxos,
@@ -23,7 +25,19 @@ import {
   type LegacyUtxo,
 } from './legacyScan'
 import { chooseLegacySweepPath } from './legacySweepPath'
-import { buildLegacyInputBeef } from './legacyBeef'
+import { buildLegacyInputBeef, withVisibleOnChainBeef } from './legacyBeef'
+import { forgetLegacyImported, legacySweepRecord } from './legacyImportGuard'
+import { retryableStuckSweeps } from './legacyStuckSweep'
+import {
+  recordFundingReceipts,
+  recordMigratedItemActivity,
+  type MigratedItemReceipt,
+} from './legacyReceiptActivity'
+import {
+  chooseOrdinalMigratePath,
+  describeOrdinalMigrateSkip,
+  type OrdinalMigrateSkipReason,
+} from './ordinalMigratePath'
 import { yieldToUi } from './yieldToUi'
 import { runExclusiveSpend } from './spendGuard'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -37,25 +51,124 @@ const GP_PAGE = 50
 /** Soft preview cap — full count continues during migrate. */
 const PREVIEW_ITEM_CAP = 5_000
 
-export type PhraseScheme = 'brc-75' | 'legacy-hd'
+export type PhraseScheme =
+  | 'brc-75'
+  | 'legacy-hd'
+  | 'yours-wallet'
+  | 'yours-ord'
+  | 'yours-relayx-ord'
+  | 'yours-sweep'
+  | 'yours-identity'
+  | 'twetch'
 
 export type PhraseCandidate = {
   scheme: PhraseScheme
+  /** Human label for the source branch, e.g. "Yours ordinals". */
+  label: string
+  /** BIP32 path, or `brc75` / `m` for the seed-root schemes. */
+  path: string
   rootKeyHex: string
   identityKey: string
   address: string
 }
 
-export type PhraseSweepPreview = {
+/**
+ * One derivation that actually held value. A phrase can light up several at
+ * once — Yours keeps cash on one branch and ordinals on another — so a preview
+ * is a set of hits, not a single "best" address.
+ */
+export type PhraseSourceHit = {
   candidate: PhraseCandidate
-  /** Alternate derivation that also had UTXOs (rare). */
-  alsoFound: PhraseCandidate[]
+  scan: LegacyScanResult
   fundingSats: number
   fundingCount: number
   itemCountAtLeast: number
   itemCountCapped: boolean
+}
+
+export type PhraseSweepPreview = {
+  /** Only derivations with sweepable BSV or items. */
+  hits: PhraseSourceHit[]
+  /** Representative candidate for display (most valuable hit, else BRC-75). */
+  primary: PhraseCandidate
+  /** Aggregate across every hit. */
+  fundingSats: number
+  fundingCount: number
+  itemCountAtLeast: number
+  itemCountCapped: boolean
+  /** True when a hit derivation equals the active identity (nothing to move). */
   sameAsActive: boolean
-  scan: LegacyScanResult
+}
+
+/** Known foreign-wallet derivation branches (Yours / RelayX / Twetch). */
+const HD_BRANCHES: Array<{ scheme: PhraseScheme; label: string; path: string }> = [
+  { scheme: 'yours-ord', label: 'Yours ordinals', path: "m/44'/236'/1'/0/0" },
+  { scheme: 'yours-wallet', label: 'Yours wallet', path: "m/44'/236'/0'/1/0" },
+  { scheme: 'yours-sweep', label: 'Yours imported', path: "m/44'/236'/0'/0/0" },
+  { scheme: 'yours-relayx-ord', label: 'RelayX ordinals', path: "m/44'/236'/0'/2/0" },
+  { scheme: 'yours-identity', label: 'Yours identity', path: "m/0'/236'/0'/0/0" },
+  { scheme: 'twetch', label: 'Twetch', path: 'm/0/0' },
+]
+
+/** Derive every address a foreign phrase might hold value on. */
+function buildPhraseCandidates(
+  mnemonic: string,
+  passphrase: string,
+): PhraseCandidate[] {
+  const out: PhraseCandidate[] = []
+  const seen = new Set<string>()
+  const push = (c: PhraseCandidate) => {
+    const key = c.address.toLowerCase()
+    if (seen.has(key)) return
+    seen.add(key)
+    out.push(c)
+  }
+
+  try {
+    const d = rootKeyFromMnemonicBrc75(mnemonic, passphrase)
+    push({
+      scheme: 'brc-75',
+      label: 'BRC-75 (HandCash / Yours)',
+      path: 'brc75',
+      rootKeyHex: d.rootKeyHex,
+      identityKey: d.identityKey,
+      address: d.address,
+    })
+  } catch {
+    /* invalid phrase handled by validate */
+  }
+
+  try {
+    const d = rootKeyFromMnemonicLegacyHd(mnemonic, passphrase)
+    push({
+      scheme: 'legacy-hd',
+      label: 'HD master',
+      path: 'm',
+      rootKeyHex: d.rootKeyHex,
+      identityKey: d.identityKey,
+      address: d.address,
+    })
+  } catch {
+    /* ignore */
+  }
+
+  for (const branch of HD_BRANCHES) {
+    try {
+      const d = keyFromMnemonicHdPath(mnemonic, branch.path, passphrase)
+      push({
+        scheme: branch.scheme,
+        label: branch.label,
+        path: branch.path,
+        rootKeyHex: d.rootKeyHex,
+        identityKey: d.identityKey,
+        address: d.address,
+      })
+    } catch {
+      /* skip branches the SDK cannot derive */
+    }
+  }
+
+  return out
 }
 
 export type PhraseFundingSweepResult = {
@@ -63,11 +176,23 @@ export type PhraseFundingSweepResult = {
   failed: number
   fundingSatsMoved: number
   errors: string[]
+  /**
+   * Outputs a previous sweep already claimed. Distinct from "nothing to sweep":
+   * the coins were found on the address, but the durable import guard holds a
+   * mark for them, so they are either already in this wallet or waiting on a
+   * broadcast that has not yet been proven missing.
+   */
+  alreadySwept: number
 }
 
 export type PhraseItemMigrateProgress = {
   moved: number
   failed: number
+  /**
+   * Outputs the indexer listed for the address that are not migratable tips —
+   * cash outputs, and tips this phrase key cannot unlock.
+   */
+  skipped: number
   scanned: number
   done: boolean
   lastError: string | null
@@ -79,6 +204,8 @@ type ItemCursor = {
   offset: number
   moved: number
   failed: number
+  /** Absent on cursors written before skips were tracked. */
+  skipped?: number
 }
 
 function gorillaBase(chain: Chain): string {
@@ -121,13 +248,12 @@ async function scanAddressAny(
   return scanAddressViaWhatsOnChain(address, chain)
 }
 
-function scoreScan(scan: LegacyScanResult): number {
-  const funding = scan.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
-  const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
-  const ones = scan.utxos.filter((u) => u.satoshis === 1).length
-  return fundingSats * 1_000 + ones + scan.utxos.length
-}
-
+/**
+ * Count only 1-sat tips.
+ *
+ * The indexer lists every unspent output for the address, so counting rows made
+ * the preview promise cash outputs as collectables.
+ */
 async function countOrdinalsAtLeast(
   address: string,
   chain: Chain,
@@ -136,33 +262,29 @@ async function countOrdinalsAtLeast(
   let offset = 0
   let count = 0
   while (count < cap) {
-    const url =
-      `${gorillaBase(chain)}/api/txos/address/${encodeURIComponent(address)}/unspent` +
-      `?limit=${GP_PAGE}&offset=${offset}`
-    const res = await fetch(url, {
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(12_000),
-    })
-    if (!res.ok) break
-    const rows = (await res.json()) as unknown
-    if (!Array.isArray(rows) || rows.length === 0) {
-      return { count, capped: false }
-    }
-    count += rows.length
-    if (rows.length < GP_PAGE) return { count, capped: false }
-    offset += rows.length
+    const page = await fetchOrdinalPage(address, chain, offset)
+    if (page.rawCount === 0) return { count, capped: false }
+    count += page.rows.filter((r) => r.satoshis === 1).length
+    if (page.rawCount < GP_PAGE) return { count, capped: false }
+    offset += page.rawCount
     await yieldToUi()
   }
   return { count, capped: true }
 }
 
-type OrdinalRow = { outpoint: string; origin: string }
+type OrdinalRow = { outpoint: string; origin: string; satoshis: number }
+
+/**
+ * One indexer page. `rawCount` is what the indexer returned — the cursor must
+ * advance by that, never by the filtered subset, or unvisited rows are skipped.
+ */
+type OrdinalPage = { rows: OrdinalRow[]; rawCount: number }
 
 async function fetchOrdinalPage(
   address: string,
   chain: Chain,
   offset: number,
-): Promise<OrdinalRow[]> {
+): Promise<OrdinalPage> {
   const url =
     `${gorillaBase(chain)}/api/txos/address/${encodeURIComponent(address)}/unspent` +
     `?limit=${GP_PAGE}&offset=${offset}`
@@ -173,9 +295,9 @@ async function fetchOrdinalPage(
   if (!res.ok) {
     throw new Error(`Ordinal index ${res.status}`)
   }
-  const rows = (await res.json()) as Array<Record<string, unknown>>
-  if (!Array.isArray(rows)) return []
-  return rows.flatMap((r): OrdinalRow[] => {
+  const body = (await res.json()) as unknown
+  if (!Array.isArray(body)) return { rows: [], rawCount: 0 }
+  const rows = (body as Array<Record<string, unknown>>).flatMap((r): OrdinalRow[] => {
     const rawOp =
       typeof r.outpoint === 'string'
         ? r.outpoint
@@ -190,12 +312,17 @@ async function fetchOrdinalPage(
         : undefined
     const origin =
       typeof originRaw === 'string' ? originRaw.replace(/_(\d+)$/, '.$1') : outpoint
-    return [{ outpoint, origin }]
+    const satoshis = Number(r.satoshis ?? 0)
+    return [{ outpoint, origin, satoshis: Number.isFinite(satoshis) ? satoshis : 0 }]
   })
+  return { rows, rawCount: body.length }
 }
 
 /**
- * Preview which derivation holds coins/items. Does not spend.
+ * Preview every derivation the phrase might hold value on. Does not spend.
+ *
+ * Foreign wallets split cash and ordinals across separate BIP44 branches, so
+ * this scans all known branches and returns each that has funds or items.
  */
 export async function previewPhraseSweep(
   mnemonicRaw: string,
@@ -209,86 +336,112 @@ export async function previewPhraseSweep(
   if (err) throw new Error(err)
   const mnemonic = normalizeMnemonic(mnemonicRaw)
 
-  const candidates: PhraseCandidate[] = [
-    (() => {
-      const d = rootKeyFromMnemonicBrc75(mnemonic, passphrase)
-      return {
-        scheme: 'brc-75' as const,
-        rootKeyHex: d.rootKeyHex,
-        identityKey: d.identityKey,
-        address: d.address,
-      }
-    })(),
-    (() => {
-      const d = rootKeyFromMnemonicLegacyHd(mnemonic, passphrase)
-      return {
-        scheme: 'legacy-hd' as const,
-        rootKeyHex: d.rootKeyHex,
-        identityKey: d.identityKey,
-        address: d.address,
-      }
-    })(),
-  ]
+  const candidates = buildPhraseCandidates(mnemonic, passphrase)
+  appendAppLog(
+    'info',
+    `[phrase-sweep] preview scanning ${candidates.length} derivation(s)`,
+  )
 
-  // Deduplicate if both schemes collide.
-  const unique = new Map<string, PhraseCandidate>()
-  for (const c of candidates) unique.set(c.address, c)
+  const hits: PhraseSourceHit[] = []
+  let sameAsActive = false
+  const activeIdentity = active.identityKey.toLowerCase()
 
-  let best: { candidate: PhraseCandidate; scan: LegacyScanResult; score: number } | null =
-    null
-  const alsoFound: PhraseCandidate[] = []
-
-  for (const c of unique.values()) {
+  for (const candidate of candidates) {
     await yieldToUi()
-    let scan: LegacyScanResult
-    try {
-      scan = await scanAddressAny(c.address, active.chain)
-    } catch (e) {
-      console.warn('[phrase-sweep] scan failed', c.scheme, e)
+    if (candidate.identityKey.toLowerCase() === activeIdentity) {
+      sameAsActive = true
       continue
     }
-    const s = scoreScan(scan)
-    if (!best || s > best.score) {
-      if (best && best.score > 0) alsoFound.push(best.candidate)
-      best = { candidate: c, scan, score: s }
-    } else if (s > 0) {
-      alsoFound.push(c)
+    let scan: LegacyScanResult
+    try {
+      scan = await scanAddressAny(candidate.address, active.chain)
+    } catch (e) {
+      appendAppLog(
+        'warn',
+        `[phrase-sweep] scan failed ${candidate.scheme} ${candidate.address}: ${
+          e instanceof Error ? e.message : String(e)
+        }`,
+      )
+      continue
     }
+    const funding = scan.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
+    const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
+    const items = await countOrdinalsAtLeast(
+      candidate.address,
+      active.chain,
+      PREVIEW_ITEM_CAP,
+    )
+    appendAppLog(
+      'info',
+      `[phrase-sweep] ${candidate.scheme} (${candidate.path}) ${candidate.address}: ` +
+        `funding=${fundingSats}sats/${funding.length} items>=${items.count}${
+          items.capped ? '+' : ''
+        }`,
+    )
+    if (funding.length === 0 && items.count === 0) continue
+    hits.push({
+      candidate,
+      scan,
+      fundingSats,
+      fundingCount: funding.length,
+      itemCountAtLeast: items.count,
+      itemCountCapped: items.capped,
+    })
   }
 
-  if (!best) {
-    // Prefer BRC-75 (Yours / HandCash default) even if empty — clearer error.
-    const fallback = candidates[0]!
-    const emptyScan: LegacyScanResult = {
-      address: fallback.address,
-      chain: active.chain,
-      sats: 0,
-      utxos: [],
-      source: 'whatsonchain',
-      error: 'No UTXOs found for this phrase',
-    }
-    best = { candidate: fallback, scan: emptyScan, score: 0 }
-  }
+  const scoreHit = (h: PhraseSourceHit) =>
+    h.fundingSats * 1_000 + h.itemCountAtLeast
+  hits.sort((a, b) => scoreHit(b) - scoreHit(a))
 
-  const funding = best.scan.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
-  const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
-  const items = await countOrdinalsAtLeast(
-    best.candidate.address,
-    active.chain,
-    PREVIEW_ITEM_CAP,
+  const primary =
+    hits[0]?.candidate ??
+    candidates.find((c) => c.scheme === 'brc-75') ??
+    candidates[0]!
+
+  const fundingSats = hits.reduce((s, h) => s + h.fundingSats, 0)
+  const fundingCount = hits.reduce((s, h) => s + h.fundingCount, 0)
+  const itemCountAtLeast = hits.reduce((s, h) => s + h.itemCountAtLeast, 0)
+  const itemCountCapped = hits.some((h) => h.itemCountCapped)
+
+  appendAppLog(
+    'info',
+    `[phrase-sweep] preview hits=${hits.length} funding=${fundingSats}sats items>=${itemCountAtLeast}`,
   )
 
   return {
-    candidate: best.candidate,
-    alsoFound,
+    hits,
+    primary,
     fundingSats,
-    fundingCount: funding.length,
-    itemCountAtLeast: items.count,
-    itemCountCapped: items.capped,
-    sameAsActive:
-      best.candidate.identityKey.toLowerCase() === active.identityKey.toLowerCase(),
-    scan: best.scan,
+    fundingCount,
+    itemCountAtLeast,
+    itemCountCapped,
+    sameAsActive: sameAsActive && hits.length === 0,
   }
+}
+
+/**
+ * Write Activity for coins an earlier run already swept.
+ *
+ * Sweeps that landed before this path recorded receipts left the coins in the
+ * balance with nothing in Activity, and no later pass would ever write them:
+ * Refresh only ingests this wallet's own addresses, not an imported phrase.
+ * The durable sweep mark is the only remaining evidence, so it is what we read.
+ * `recordFundingReceipts` de-dupes on the receive txid, so this is idempotent.
+ */
+function backfillSweptFundingActivity(
+  funding: LegacyUtxo[],
+  importedOutpoints: string[],
+): void {
+  const imported = new Set(importedOutpoints.map((op) => op.trim().toLowerCase()))
+  const receipts = funding.flatMap((utxo) => {
+    const op = utxo.outpoint.trim().toLowerCase()
+    if (imported.has(op)) return []
+    // No recorded sweep txid means no proof the coins ever moved here.
+    const sweepTxid = legacySweepRecord(op)?.txid
+    if (!sweepTxid || !(utxo.satoshis > 0)) return []
+    return [{ outpoint: op, satoshis: utxo.satoshis, receiveTxid: utxo.txid, sweepTxid }]
+  })
+  if (receipts.length > 0) recordFundingReceipts(receipts)
 }
 
 /**
@@ -309,19 +462,46 @@ export async function sweepPhraseFunding(args: {
 
   const funding = args.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
   if (funding.length === 0) {
-    return { imported: 0, failed: 0, fundingSatsMoved: 0, errors: [] }
+    return { imported: 0, failed: 0, fundingSatsMoved: 0, errors: [], alreadySwept: 0 }
   }
 
   return runExclusiveSpend(async () => {
-    const result = await importLegacyUtxos(funding, active, {
-      spendKeyHex: args.candidate.rootKeyHex,
-    })
+    const spendKeyHex = args.candidate.rootKeyHex
+    let result = await importLegacyUtxos(funding, active, { spendKeyHex })
+
+    // Everything marked imported, yet the phrase address still lists the coins:
+    // the stuck-sweep signature. Same heal as the own-address ingest — retry only
+    // where the recorded sweep tx is provably absent from the chain.
+    if (result.imported === 0 && result.skippedKnown > 0) {
+      const retryable = await retryableStuckSweeps(funding, active.chain)
+      if (retryable.length > 0) {
+        forgetLegacyImported(retryable)
+        appendAppLog(
+          'warn',
+          `[phrase-sweep] ${retryable.length} funding out(s) marked imported with no sweep tx on chain — retrying`,
+        )
+        result = await importLegacyUtxos(funding, active, { spendKeyHex })
+      }
+    }
+
+    // Without this the coins land in the balance with no Activity row, which
+    // reads as a sweep that silently did nothing.
+    recordFundingReceipts(result.importedReceipts)
+    backfillSweptFundingActivity(funding, result.importedOutpoints)
+
     const moved = result.importedReceipts.reduce((s, r) => s + r.satoshis, 0)
+    appendAppLog(
+      'info',
+      `[phrase-sweep] swept ${args.candidate.scheme} (${args.candidate.path}): ` +
+        `imported=${result.imported} failed=${result.failed} ` +
+        `alreadySwept=${result.skippedKnown} moved=${moved}sats`,
+    )
     return {
       imported: result.imported,
       failed: result.failed,
       fundingSatsMoved: moved,
       errors: result.errors.slice(0, 8),
+      alreadySwept: result.skippedKnown,
     }
   })
 }
@@ -388,6 +568,7 @@ export async function migratePhraseItemsBatch(args: {
       offset: 0,
       moved: 0,
       failed: 0,
+      skipped: 0,
     }
   }
 
@@ -396,31 +577,45 @@ export async function migratePhraseItemsBatch(args: {
     active.chain,
     cursor.offset,
   )
-  if (page.length === 0) {
+  if (page.rawCount === 0) {
     writeItemCursor(null)
     return {
       moved: cursor.moved,
       failed: cursor.failed,
+      skipped: cursor.skipped ?? 0,
       scanned: cursor.offset,
       done: true,
       lastError: null,
     }
   }
 
-  const slice = page.slice(0, batchSize)
+  // Consume raw indexer rows in order so the cursor stays exact; eligibility is
+  // decided per row from the source transaction inside migrateOneOrdinal.
+  const slice = page.rows.slice(0, batchSize)
   let moved = 0
   let failed = 0
+  let skipped = 0
   let lastError: string | null = null
   const spendKey = PrivateKey.fromHex(args.candidate.rootKeyHex)
   const destLock = new P2PKH().lock(active.address).toHex()
+  const movedItems: MigratedItemReceipt[] = []
 
   for (const item of slice) {
     await yieldToUi()
     try {
-      await runExclusiveSpend(async () => {
-        await migrateOneOrdinal(active, spendKey, destLock, item)
-      })
+      const outcome = await runExclusiveSpend(async () =>
+        migrateOneOrdinal(active, spendKey, destLock, item),
+      )
+      if (outcome.kind === 'skipped') {
+        skipped += 1
+        continue
+      }
       moved += 1
+      movedItems.push({
+        outpoint: item.outpoint,
+        origin: item.origin,
+        sweepTxid: outcome.txid,
+      })
     } catch (err) {
       failed += 1
       lastError = err instanceof Error ? err.message : String(err)
@@ -428,17 +623,26 @@ export async function migratePhraseItemsBatch(args: {
     }
   }
 
+  if (skipped > 0) {
+    appendAppLog(
+      'info',
+      `[phrase-sweep] skipped ${skipped} non-collectable output(s) on ${args.candidate.address}`,
+    )
+  }
+
   const next: ItemCursor = {
     ...cursor,
     offset: cursor.offset + slice.length,
     moved: cursor.moved + moved,
     failed: cursor.failed + failed,
+    skipped: (cursor.skipped ?? 0) + skipped,
   }
-  const done = page.length < GP_PAGE && slice.length >= page.length
+  const done = page.rawCount < GP_PAGE && slice.length >= page.rows.length
   if (done) writeItemCursor(null)
   else writeItemCursor(next)
 
   if (moved > 0) {
+    recordMigratedItemActivity(movedItems, active.chain)
     try {
       await refreshFromChain({ forceReview: true, announceReceive: true })
     } catch (err) {
@@ -449,25 +653,50 @@ export async function migratePhraseItemsBatch(args: {
   return {
     moved: next.moved,
     failed: next.failed,
+    skipped: next.skipped ?? 0,
     scanned: next.offset,
     done,
     lastError,
   }
 }
 
+type MigrateOutcome =
+  | { kind: 'moved'; txid: string }
+  | { kind: 'skipped'; reason: OrdinalMigrateSkipReason }
+
 async function migrateOneOrdinal(
   active: ActiveWallet,
   spendKey: PrivateKey,
   destLockHex: string,
   item: { outpoint: string; origin?: string; name?: string },
-): Promise<void> {
-  const [txidPart] = item.outpoint.split('.')
+): Promise<MigrateOutcome> {
+  const [txidPart, voutPart] = item.outpoint.split('.')
   const txid = (txidPart ?? '').toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) throw new Error('Bad outpoint')
+  const vout = Number(voutPart)
 
   const built = await buildLegacyInputBeef(active.services, [item.outpoint])
   if (built.ready.length === 0 || built.beef.length === 0) {
     throw new Error(built.failures[0]?.reason ?? 'Could not load tip BEEF')
+  }
+
+  // Decide from the source transaction, not the indexer listing: it returns the
+  // address's cash outputs too, and signing those as 1-sat tips fails closed.
+  const sourceOut = Beef.fromBinary(built.beef).findTxid(txid)?.tx?.outputs[vout]
+  const expectedLock = new P2PKH().lock(spendKey.toAddress()).toHex()
+  const eligibility = chooseOrdinalMigratePath(
+    {
+      satoshis: sourceOut?.satoshis ?? null,
+      lockingScriptHex: sourceOut?.lockingScript?.toHex() ?? null,
+    },
+    expectedLock,
+  )
+  if (eligibility.path === 'skip') {
+    appendAppLog(
+      'info',
+      `[phrase-sweep] skip ${item.outpoint}: ${describeOrdinalMigrateSkip(eligibility.reason)}`,
+    )
+    return { kind: 'skipped', reason: eligibility.reason }
   }
 
   const origin = (item.origin ?? item.outpoint).replace(/_(\d+)$/, '.$1')
@@ -476,8 +705,43 @@ async function migrateOneOrdinal(
     name: (item.name ?? 'Collectable').slice(0, 40),
   })
 
+  // A foreign tip is fetched body-only: no BUMP, no ancestry. Default BEEF
+  // verification rejects that outright ("inputBEEF must be valid Beef when
+  // factoring options.trustSelf"), which failed every item migrate. The funding
+  // sweep already treats visible-on-chain as sufficient for a P2PKH tip; an
+  // ordinal tip is the same claim, so it runs under the same relaxation.
+  const sweepTxid = await withVisibleOnChainBeef(async () =>
+    buildAndPostItemMigrate({
+      active,
+      spendKey,
+      destLockHex,
+      item,
+      origin,
+      customInstructions,
+      txid,
+      inputBeef: built.beef,
+      satoshis: eligibility.satoshis,
+    }),
+  )
+  return { kind: 'moved', txid: sweepTxid }
+}
+
+async function buildAndPostItemMigrate(args: {
+  active: ActiveWallet
+  spendKey: PrivateKey
+  destLockHex: string
+  item: { outpoint: string }
+  origin: string
+  customInstructions: string
+  txid: string
+  inputBeef: BEEF
+  /** Real value of the source output — the sighash amount must match exactly. */
+  satoshis: number
+}): Promise<string> {
+  const { active, spendKey, destLockHex, item, origin, customInstructions, txid } = args
+
   const car = await active.wallet.createAction({
-    inputBEEF: built.beef,
+    inputBEEF: args.inputBeef,
     inputs: [
       {
         outpoint: item.outpoint,
@@ -532,7 +796,7 @@ async function migrateOneOrdinal(
     }
     unsignedTx.inputs[inputIndex]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
       spendKey,
-      1,
+      args.satoshis,
     )
     await unsignedTx.sign()
     const unlockingScript = unsignedTx.inputs[inputIndex]!.unlockingScript!.toHex()
@@ -548,7 +812,7 @@ async function migrateOneOrdinal(
   }
 
   const packed = new Beef()
-  packed.mergeBeef(built.beef)
+  packed.mergeBeef(args.inputBeef)
   packed.mergeBeef(sweepAtomic)
   packed.atomicTxid = undefined
   const bin = packed.toBinaryAtomic(sweepTxid)
@@ -558,4 +822,5 @@ async function migrateOneOrdinal(
   if (!summary.accepted) {
     throw new Error(`Broadcast rejected (${summary.detail})`)
   }
+  return sweepTxid
 }

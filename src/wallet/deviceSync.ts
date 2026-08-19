@@ -736,8 +736,8 @@ export async function softPullHistoryIfRemoteNewer(): Promise<{
     await downloadAndMergeFriendsBackup().catch(() => 0)
     await downloadAndMergeActivityBackup().catch(() => 0)
     try {
-      const { clearCollectablesCache } = await import('./collectables')
-      clearCollectablesCache()
+      const { relistCollectablesAfterLocalStateReplace } = await import('./collectables')
+      await relistCollectablesAfterLocalStateReplace()
     } catch {
       /* ignore */
     }

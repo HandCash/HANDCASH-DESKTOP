@@ -72,6 +72,50 @@ describe('deviceWallets pair + linked identities', () => {
     }
   })
 
+  it('routes a cross-identity legacy QR to backup-only fallback', async () => {
+    const { choosePairAcceptancePath } = await import('./deviceWallets')
+    const localIk =
+      '02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const peerIk =
+      '02cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    expect(
+      choosePairAcceptancePath(
+        {
+          v: 2,
+          identityKey: peerIk,
+          deviceId: 'peer',
+          label: 'Phone',
+          platform: 'android',
+          backupBaseUrl: 'https://backup.example',
+        },
+        localIk,
+        'local',
+      ),
+    ).toEqual({ path: 'backup-only', reason: 'legacy-cross-identity' })
+  })
+
+  it('still identity-links v3 QRs with different keys', async () => {
+    const { choosePairAcceptancePath } = await import('./deviceWallets')
+    const localIk =
+      '02bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
+    const peerIk =
+      '02cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+    expect(
+      choosePairAcceptancePath(
+        {
+          v: 3,
+          identityKey: peerIk,
+          address: '1PeerAddressxxxxxxxxxxxxxxxxxx',
+          deviceId: 'peer',
+          label: 'Phone',
+          platform: 'android',
+        },
+        localIk,
+        'local',
+      ),
+    ).toEqual({ path: 'identity-link' })
+  })
+
   it('tryParsePairPayload accepts v3 and rejects junk / sealed-backup blobs', async () => {
     const { tryParsePairPayload, buildPairPayload, pairPayloadToQrText } = await import(
       './deviceWallets'
@@ -147,6 +191,29 @@ describe('deviceWallets pair + linked identities', () => {
     expect(getSelectedDeviceId()).toBe('peer-1')
     selectDeviceWallet(local.deviceId)
     expect(getSelectedDeviceId()).toBe(local.deviceId)
+  })
+
+  it('upserts an imported spare as one idempotent backup-only peer', async () => {
+    const { upsertPeerFromSealedBackup, listDeviceWallets } = await import(
+      './deviceWallets'
+    )
+    const pkg = {
+      fromDeviceId: 'backup-peer',
+      fromIdentityKey:
+        '02cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+      fromAddress: '1PeerAddressxxxxxxxxxxxxxxxxxx',
+      fromLabel: 'Old phone',
+    }
+    upsertPeerFromSealedBackup(pkg)
+    upsertPeerFromSealedBackup({ ...pkg, fromLabel: 'Phone backup' })
+
+    const peers = listDeviceWallets().filter((w) => !w.isLocal)
+    expect(peers).toHaveLength(1)
+    expect(peers[0]).toMatchObject({
+      deviceId: 'backup-peer',
+      label: 'Phone backup',
+      linkMode: 'backup-only',
+    })
   })
 })
 

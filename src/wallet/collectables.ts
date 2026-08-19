@@ -227,6 +227,18 @@ function isCollectableShape(value: unknown): value is Collectable {
   )
 }
 
+/** Identity the cached list was written for, when the payload records one. */
+function durableListIdentity(): string | null {
+  try {
+    const raw = durableGetItem(LIST_CACHE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as { identityKey?: unknown }
+    return typeof parsed?.identityKey === 'string' ? parsed.identityKey : null
+  } catch {
+    return null
+  }
+}
+
 function loadDurableList(): Collectable[] {
   try {
     const raw = durableGetItem(LIST_CACHE_KEY)
@@ -262,6 +274,7 @@ function persistDurableList(items: Collectable[]): void {
       LIST_CACHE_KEY,
       JSON.stringify({
         at: Date.now(),
+        identityKey: getActiveWallet()?.identityKey ?? null,
         items: items.map((item) => ({
           outpoint: item.outpoint,
           origin: item.origin,
@@ -389,6 +402,29 @@ export function clearCollectablesCache(): void {
   seededItems.clear()
   durableRemoveItem(LIST_CACHE_KEY)
   notifyCollectables([])
+}
+
+/**
+ * localState was rebuilt under us (recompose, or a newer BRC-39 soft pull).
+ *
+ * The cached list is **stale, not known-empty**. Emptying it made a cold unlock
+ * paint "Looking for collectables…" on a wallet that already held items, so the
+ * rows stay on screen while the basket is re-read and replaced in place. Only a
+ * cache written for a different identity is dropped — those items are not ours.
+ */
+export async function relistCollectablesAfterLocalStateReplace(): Promise<void> {
+  const identityKey = getActiveWallet()?.identityKey ?? null
+  const cachedFor = durableListIdentity()
+  if (identityKey && cachedFor && cachedFor !== identityKey) {
+    clearCollectablesCache()
+  } else {
+    invalidateLiveOneSatOutpoints()
+  }
+  try {
+    await listCollectables()
+  } catch (err) {
+    console.warn('[collectables] re-list after localState replace failed', err)
+  }
 }
 
 export function getCachedCollectables(): Collectable[] {

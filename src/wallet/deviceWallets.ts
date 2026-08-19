@@ -30,6 +30,12 @@ export type DeviceWallet = {
   online: boolean
   /** When this peer was identity-linked on this install. */
   linkedAt: number | null
+  /**
+   * `backup-only` means the QR could not establish an identity link (for
+   * example a legacy v2 QR from a different identity), but its public key and
+   * device id are retained solely for a sealed-spare exchange.
+   */
+  linkMode: 'linked' | 'backup-only'
 }
 
 /** Legacy same-identity + History URL pair. */
@@ -55,6 +61,35 @@ export type DevicePairPayloadV3 = {
 }
 
 export type DevicePairPayload = DevicePairPayloadV2 | DevicePairPayloadV3
+
+export type PairAcceptancePath =
+  | { path: 'identity-link' }
+  | { path: 'backup-only'; reason: 'legacy-cross-identity' }
+  | { path: 'refuse'; reason: 'same-device' }
+
+/**
+ * Decide what a scanned pair QR is allowed to establish.
+ *
+ * A legacy v2 QR claims same-key sync and therefore cannot identity-link to a
+ * different key. Its device id + public key are still sufficient to encrypt a
+ * cold BRC-78 spare, so retain that narrowly scoped fallback.
+ */
+export function choosePairAcceptancePath(
+  payload: DevicePairPayload,
+  localIdentityKey: string,
+  localDeviceId = getOrCreateDeviceId(),
+): PairAcceptancePath {
+  if (payload.deviceId === localDeviceId) {
+    return { path: 'refuse', reason: 'same-device' }
+  }
+  if (
+    payload.v === 2 &&
+    payload.identityKey.toLowerCase() !== localIdentityKey.toLowerCase()
+  ) {
+    return { path: 'backup-only', reason: 'legacy-cross-identity' }
+  }
+  return { path: 'identity-link' }
+}
 
 type RosterListener = (wallets: DeviceWallet[]) => void
 type SelectionListener = (deviceId: string) => void
@@ -107,6 +142,7 @@ function normalizeWallet(raw: Partial<DeviceWallet> & {
     lastSeenAt: typeof raw.lastSeenAt === 'number' ? raw.lastSeenAt : null,
     online: Boolean(raw.online),
     linkedAt: typeof raw.linkedAt === 'number' ? raw.linkedAt : null,
+    linkMode: raw.linkMode === 'backup-only' ? 'backup-only' : 'linked',
   }
 }
 
@@ -137,6 +173,7 @@ function readRoster(): DeviceWallet[] {
           lastSeenAt: w.lastSeenAt as number | null | undefined,
           online: w.online as boolean | undefined,
           linkedAt: w.linkedAt as number | null | undefined,
+          linkMode: w.linkMode as DeviceWallet['linkMode'] | undefined,
         }),
       )
   } catch {
@@ -218,6 +255,7 @@ export function enrollLocalDevice(args: {
     lastSeenAt: Date.now(),
     online: true,
     linkedAt: null,
+    linkMode: 'linked',
   }
   writeRoster([local, ...peers])
   if (!durableGetItem(SELECTED_KEY)) {
@@ -227,10 +265,14 @@ export function enrollLocalDevice(args: {
 }
 
 export function upsertPeerDevice(
-  peer: Omit<DeviceWallet, 'isLocal' | 'online' | 'linkedAt' | 'address'> & {
+  peer: Omit<
+    DeviceWallet,
+    'isLocal' | 'online' | 'linkedAt' | 'address' | 'linkMode'
+  > & {
     online?: boolean
     linkedAt?: number | null
     address?: string | null
+    linkMode?: DeviceWallet['linkMode']
   },
 ): DeviceWallet {
   const local = readRoster().find((w) => w.isLocal)
@@ -248,10 +290,34 @@ export function upsertPeerDevice(
     lastSeenAt: peer.lastSeenAt ?? Date.now(),
     online: peer.online ?? false,
     linkedAt: peer.linkedAt ?? Date.now(),
+    linkMode: peer.linkMode ?? 'linked',
   }
   const rest = readRoster().filter((w) => w.deviceId !== entry.deviceId)
   writeRoster([...rest, entry])
   return entry
+}
+
+/**
+ * Make an imported sealed spare reachable from the exchange/recover UI even
+ * when no identity link was established first.
+ */
+export function upsertPeerFromSealedBackup(pkg: {
+  fromDeviceId: string
+  fromIdentityKey: string
+  fromAddress: string
+  fromLabel: string
+}): DeviceWallet {
+  return upsertPeerDevice({
+    deviceId: pkg.fromDeviceId,
+    label: pkg.fromLabel,
+    platform: 'unknown',
+    peerBaseUrl: null,
+    identityKey: pkg.fromIdentityKey,
+    address: pkg.fromAddress,
+    lastSeenAt: Date.now(),
+    online: false,
+    linkMode: 'backup-only',
+  })
 }
 
 export function removePeerDevice(deviceId: string): void {

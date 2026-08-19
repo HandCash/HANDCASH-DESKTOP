@@ -25,8 +25,15 @@ export type OwnedCashRow = {
   basket?: string
 }
 
-/** Whether the referenced local transaction still binds those coins. */
-export type TxLiveness = 'live' | 'dead' | 'none'
+/**
+ * Whether the referenced local transaction still binds those coins.
+ *
+ * `settled` must remain distinct from `pending`: both prove an input was spent,
+ * but only pending transactions may contribute not-yet-spendable change. BRC-39
+ * merges can retain old completed change rows with `spendable: false`; treating
+ * those as pending credits historical change on top of today's spendable set.
+ */
+export type TxLiveness = 'pending' | 'settled' | 'dead' | 'none'
 
 export type OwnedCashFate =
   | { kind: 'count'; as: 'spendable' | 'unconfirmedChange'; satoshis: number }
@@ -39,8 +46,10 @@ const PAGE = 200
 const MAX_PAGES = 10
 
 export function txLivenessFromStatus(status: unknown): TxLiveness {
-  if (status == null || status === '') return 'none'
-  return isLiveLocalTxStatus(status) ? 'live' : 'dead'
+  const normalized = String(status ?? '').toLowerCase()
+  if (!normalized) return 'none'
+  if (normalized === 'completed') return 'settled'
+  return isLiveLocalTxStatus(normalized) ? 'pending' : 'dead'
 }
 
 /**
@@ -61,13 +70,15 @@ export function classifyOwnedCash(
   if (basket === '1sat') return { kind: 'exclude', reason: 'item' }
   if (basket === 'bsv21') return { kind: 'exclude', reason: 'bsv21' }
 
-  if (spender === 'live') return { kind: 'exclude', reason: 'spentLive' }
+  if (spender === 'pending' || spender === 'settled') {
+    return { kind: 'exclude', reason: 'spentLive' }
+  }
 
   if (row.spendable === true) {
     return { kind: 'count', as: 'spendable', satoshis }
   }
 
-  if (row.change === true && creator === 'live') {
+  if (row.change === true && creator === 'pending') {
     return { kind: 'count', as: 'unconfirmedChange', satoshis }
   }
 
