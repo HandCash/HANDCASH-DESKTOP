@@ -127,14 +127,16 @@ describe('locally seeded collectables', () => {
     const newest = `${newestTxid}.0`
     const oldest = `${oldestTxid}.0`
     const listOutputs = vi.fn(async (args: { offset?: number }) => ({
-      totalOutputs: 2,
+      // Toolbox counts on a full page, then reports only the final partial
+      // page's length instead of offset + length.
+      totalOutputs: args.offset === -1 ? 1_001 : 1,
       outputs:
         args.offset === -1
-          ? [{
+          ? Array.from({ length: 1_000 }, () => ({
               outpoint: newest,
               satoshis: 1,
               tags: ['ordinal', `origin:${newest}`],
-            }]
+            }))
           : [{
               outpoint: oldest,
               satoshis: 1,
@@ -156,8 +158,8 @@ describe('locally seeded collectables', () => {
     expect((await listCollectables(wallet as never)).map((item) => item.outpoint))
       .toEqual([newest])
     expect(getCollectablePageStatus()).toEqual({
-      loadedOutputs: 1,
-      totalOutputs: 2,
+      loadedOutputs: 1_000,
+      totalOutputs: 1_001,
       hasMore: true,
     })
 
@@ -165,7 +167,18 @@ describe('locally seeded collectables', () => {
     expect(new Set(all.map((item) => item.outpoint))).toEqual(
       new Set([newest, oldest]),
     )
-    expect(listOutputs.mock.calls.map(([args]) => args.offset)).toEqual([-1, -2])
+    expect(listOutputs.mock.calls.map(([args]) => args.offset)).toEqual([-1, -1_001])
+    expect(getCollectablePageStatus().totalOutputs).toBe(1_001)
     expect(getCollectablePageStatus().hasMore).toBe(false)
+  })
+
+  it('infers the total from a final partial page instead of trusting Toolbox', async () => {
+    const { inferCollectableOutputTotal } = await import('./collectables')
+    expect(inferCollectableOutputTotal({
+      offset: 800_000,
+      pageLength: 417,
+      pageLimit: 1_000,
+      reportedTotal: 417,
+    })).toBe(800_417)
   })
 })

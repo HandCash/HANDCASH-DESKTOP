@@ -188,6 +188,25 @@ const DURABLE_LIST_LIMIT = 1_000
 /** One page is small enough to paint without retaining an 800k-row wallet. */
 const LIST_PAGE_SIZE = 1_000
 
+/**
+ * Toolbox 2.10 reports `outputs.length` (not offset + length) for a partial
+ * page. Infer the terminal total from our own cursor; full pages get the real
+ * count from Toolbox's count query.
+ */
+export function inferCollectableOutputTotal(args: {
+  offset: number
+  pageLength: number
+  pageLimit: number
+  reportedTotal: number | undefined
+}): number {
+  const reached = args.offset + args.pageLength
+  if (args.pageLength < args.pageLimit) return reached
+  const reported = Number.isFinite(args.reportedTotal)
+    ? Math.max(0, Math.trunc(args.reportedTotal!))
+    : reached
+  return Math.max(reached, reported)
+}
+
 let cachedCollectables: Collectable[] = []
 /** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
@@ -1792,7 +1811,12 @@ async function listCollectablesNow(
         lockingScript: lockingScript || undefined,
       }
     })
-    listedOutputTotal = Math.max(0, Math.trunc(result.totalOutputs ?? page.length))
+    listedOutputTotal = inferCollectableOutputTotal({
+      offset: pageOffset,
+      pageLength: result.outputs?.length ?? 0,
+      pageLimit: LIST_PAGE_SIZE,
+      reportedTotal: result.totalOutputs,
+    })
     listedOutputCursor = Math.min(
       listedOutputTotal,
       pageOffset + (result.outputs?.length ?? 0),
