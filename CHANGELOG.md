@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.268] - 2026-08-20
+
+### Changed
+
+- Version bump so Mobile can ship the 1.2.267 inbound-item retry against a
+  clean UI-core pin (workspace push gate requires Desktop semver strictly
+  ahead of the latest `v*` tag).
+
 ## [1.2.267] - 2026-08-20
 
 ### Fixed
