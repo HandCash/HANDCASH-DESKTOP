@@ -4,6 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <meta name="color-scheme" content="dark" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; base-uri 'none'; object-src 'none'; frame-src 'none'; form-action 'none'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob: https:; media-src 'self' data: blob: https:; connect-src 'self' http://127.0.0.1:* http://localhost:* https: ws: wss:; worker-src 'self' blob:"
+    />
     <title>HandCash</title>
     <link rel="icon" href="/favicon.ico" />
     <link rel="icon" type="image/png" href="/brand/handcash-mark-green.png" />
@@ -18,40 +22,7 @@
   <body>
     <div id="root"></div>
     <!-- Classic script: free `process` binding before ES modules. -->
-    <script>
-      (function () {
-        var g = typeof globalThis !== 'undefined' ? globalThis : window
-        if (!g.process || typeof g.process !== 'object') {
-          g.process = {
-            env: { NETWORK: '', BASEURL: '', NODE_ENV: 'production' },
-            browser: true,
-            version: 'v18.0.0',
-            versions: { node: '18.0.0' },
-            platform: 'browser',
-            title: 'browser',
-            argv: [],
-            pid: 0,
-            cwd: function () { return '/' },
-            nextTick: function (fn) {
-              var args = Array.prototype.slice.call(arguments, 1)
-              queueMicrotask(function () { fn.apply(null, args) })
-            },
-          }
-        } else {
-          g.process.env = g.process.env || {}
-          if (g.process.env.NETWORK === undefined) g.process.env.NETWORK = ''
-          if (g.process.env.BASEURL === undefined) g.process.env.BASEURL = ''
-          if (g.process.env.NODE_ENV === undefined) g.process.env.NODE_ENV = 'production'
-          if (typeof g.process.cwd !== 'function') g.process.cwd = function () { return '/' }
-          if (typeof g.process.nextTick !== 'function') {
-            g.process.nextTick = function (fn) {
-              var args = Array.prototype.slice.call(arguments, 1)
-              queueMicrotask(function () { fn.apply(null, args) })
-            }
-          }
-        }
-      })()
-    </script>
+    <script src="/process-shim.js"></script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

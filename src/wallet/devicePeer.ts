@@ -93,7 +93,7 @@ export async function verifyAndEnrichPair(
   }
   if (payload.identityKey !== localIdentityKey) {
     throw new Error(
-      'Different wallet identities cannot be linked; use the one-way backup flow instead',
+      'Those are two different wallets; use the one-way backup flow instead',
     )
   }
 

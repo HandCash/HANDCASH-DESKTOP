@@ -46,7 +46,9 @@ export async function resolveTokenIconDataUrl(
   if (!iconOutpoint?.trim()) return undefined
   const cached = getTokenIconDataUrl(iconOutpoint)
   if (cached) return cached
-  if (!wallet?.services?.getBeefForTxid) return undefined
+  // No services guard: an icon this wallet inscribed itself lives in local
+  // storage, and requiring the indexer hid fresh self-minted ticker art.
+  if (!wallet) return undefined
   const parts = splitOutpoint(iconOutpoint)
   if (!parts) return undefined
   try {

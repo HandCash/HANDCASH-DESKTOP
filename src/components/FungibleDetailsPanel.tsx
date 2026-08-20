@@ -203,8 +203,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
 
   const amount = formatFungibleAmount(token.amt, token.dec)
   const sendBlocked = token.spendKind !== 'plain'
-  const issuerLabel =
-    token.issuerHandle || (token.issuer ? shortIssuerLabel(token.issuer) : 'Unknown issuer')
+  const issuerLabel = token.issuerHandle
+    ? `Issued by ${token.issuerHandle}`
+    : token.issuer
+      ? `Issued by ${shortIssuerLabel(token.issuer)}`
+      : 'Issuer unknown'
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   const burnBlocked = sendBlocked || tokenIds.length > 1
   const spendLabel =
@@ -231,26 +234,27 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           tokenId={token.tokenId}
           sym={token.sym}
           iconUrl={token.iconUrl}
-          size={96}
+          size={72}
         />
         <div className="fungible-details-heading">
-          <span className="fungible-details-eyebrow">BSV-21 token</span>
-          <h2>{token.sym}</h2>
+          <div className="fungible-details-title">
+            <h2>{token.sym}</h2>
+            <span
+              className={`fungible-attest fungible-attest-${
+                token.issuerAttested ? 'ok' : 'none'
+              }`}
+              title={
+                token.issuerAttested
+                  ? 'Deploy inscription carries a Sigma signature matching the issuer address (BRC-77)'
+                  : 'No signed issuer attestation on the deploy inscription'
+              }
+            >
+              {token.issuerAttested ? 'Attested' : 'Unattested'}
+            </span>
+          </div>
           <strong className="fungible-details-balance">{amount}</strong>
           <span className="fungible-details-issuer" title={token.issuer || undefined}>
             {issuerLabel}
-          </span>
-          <span
-            className={`fungible-attest fungible-attest-${
-              token.issuerAttested ? 'ok' : 'none'
-            }`}
-            title={
-              token.issuerAttested
-                ? 'Deploy inscription carries a Sigma signature matching the issuer address (BRC-77)'
-                : 'No signed issuer attestation on the deploy inscription'
-            }
-          >
-            {token.issuerAttested ? 'Issuer attested' : 'Issuer unattested'}
           </span>
         </div>
       </header>
@@ -272,7 +276,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </button>
         <button
           type="button"
-          className="btn btn-ghost btn-icon asset-burn-trigger"
+          className="btn btn-ghost btn-icon"
+          title={`Copy token ID\n${token.tokenId}`}
+          onClick={() => {
+            playWalletSound('soft')
+            void copyText(token.tokenId, { label: 'token ID' })
+          }}
+        >
+          <CopyIcon size={14} />
+          Copy ID
+        </button>
+        {/* Destructive action is always last, on tokens and on items. */}
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon asset-burn-trigger asset-burn-last"
           disabled={burnBlocked}
           title={burnTitle}
           onClick={() => {
@@ -283,18 +300,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         >
           <WarningIcon size={14} />
           Burn token
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon"
-          title={`Copy token ID\n${token.tokenId}`}
-          onClick={() => {
-            playWalletSound('soft')
-            void copyText(token.tokenId, { label: 'token ID' })
-          }}
-        >
-          <CopyIcon size={14} />
-          Copy ID
         </button>
       </div>
 

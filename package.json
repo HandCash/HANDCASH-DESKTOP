@@ -1,6 +1,6 @@
 {
   "name": "handcash-brc100",
-  "version": "1.2.268",
+  "version": "1.2.269",
   "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
@@ -10,10 +10,11 @@
   "scripts": {
     "dev": "concurrently -k \"npm:dev:vite\" \"npm:dev:electron\"",
     "dev:vite": "vite",
-    "dev:electron": "wait-on tcp:5173 && tsc -p tsconfig.electron.json && electron .",
+    "dev:electron": "wait-on tcp:5173 && npm run build:electron && electron .",
     "build": "npm run build:renderer && npm run build:electron",
     "build:renderer": "tsc -p tsconfig.json --noEmit && vite build",
-    "build:electron": "tsc -p tsconfig.electron.json",
+    "build:electron": "tsc -p tsconfig.electron.json && npm run build:preload",
+    "build:preload": "esbuild electron/preload.ts --bundle --platform=node --format=cjs --external:electron --outfile=dist-electron/preload.cjs",
     "package": "npm run build && electron-builder",
     "package:linux": "npm run build && electron-builder --linux AppImage",
     "package:linux:all": "npm run build && electron-builder --linux AppImage deb",
@@ -35,8 +36,8 @@
     "version:check": "node scripts/require-version-bump.mjs"
   },
   "dependencies": {
-    "@bsv/sdk": "^2.2.0",
-    "@bsv/wallet-toolbox-client": "2.4.4",
+    "@bsv/sdk": "^2.4.1",
+    "@bsv/wallet-toolbox-client": "^2.10.2",
     "@google/model-viewer": "^4.3.1",
     "@xstate/react": "^5.0.3",
     "@zxing/browser": "^0.1.5",
@@ -67,8 +68,9 @@
     "@types/react-dom": "^19.1.5",
     "@vitejs/plugin-react": "^4.4.1",
     "concurrently": "^9.1.2",
-    "electron": "^35.2.1",
+    "electron": "^43.4.1",
     "electron-builder": "^26.0.12",
+    "esbuild": "^0.28.2",
     "fake-indexeddb": "^6.2.5",
     "patch-package": "^8.0.1",
     "typescript": "^5.8.3",

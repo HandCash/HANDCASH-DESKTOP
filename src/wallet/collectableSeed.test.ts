@@ -120,4 +120,52 @@ describe('locally seeded collectables', () => {
     )
     expect(after.map((c) => c.outpoint)).not.toContain(TIP)
   })
+
+  it('pages older outputs without silently truncating the basket', async () => {
+    const newestTxid = 'a1'.repeat(32)
+    const oldestTxid = 'b2'.repeat(32)
+    const newest = `${newestTxid}.0`
+    const oldest = `${oldestTxid}.0`
+    const listOutputs = vi.fn(async (args: { offset?: number }) => ({
+      totalOutputs: 2,
+      outputs:
+        args.offset === -1
+          ? [{
+              outpoint: newest,
+              satoshis: 1,
+              tags: ['ordinal', `origin:${newest}`],
+            }]
+          : [{
+              outpoint: oldest,
+              satoshis: 1,
+              tags: ['ordinal', `origin:${oldest}`],
+            }],
+    }))
+    const wallet = {
+      address: '1HandCashTestAddressAAAAAAAAAAAAAA',
+      identityKey: '02'.repeat(33),
+      chain: 'main' as const,
+      wallet: { listOutputs },
+    }
+    const {
+      getCollectablePageStatus,
+      listCollectables,
+      loadMoreCollectables,
+    } = await import('./collectables')
+
+    expect((await listCollectables(wallet as never)).map((item) => item.outpoint))
+      .toEqual([newest])
+    expect(getCollectablePageStatus()).toEqual({
+      loadedOutputs: 1,
+      totalOutputs: 2,
+      hasMore: true,
+    })
+
+    const all = await loadMoreCollectables(wallet as never)
+    expect(new Set(all.map((item) => item.outpoint))).toEqual(
+      new Set([newest, oldest]),
+    )
+    expect(listOutputs.mock.calls.map(([args]) => args.offset)).toEqual([-1, -2])
+    expect(getCollectablePageStatus().hasMore).toBe(false)
+  })
 })

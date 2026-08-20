@@ -19,7 +19,7 @@
  * Glossary:
  * - **Refresh** → `chainIngest` only (`refreshFromChain`). Does not pull BRC-39.
  * - **History backup / Sync devices** → `historyReplica` (`deviceSync` / `historyBackup`).
- * - **Device backup link** → known recovery peer + optional one-way sealed recovery
+ * - **Device backup** → known recovery peer + optional one-way sealed recovery
  *   (`deviceWallets` / `deviceKeyBackup`). Different keys remain different identities;
  *   reciprocal recovery is refused so compromise of one device does not expose both wallets.
  * - **Recompose** → historyReplica then chainIngest (`recomposeWallet`) — restore a device.

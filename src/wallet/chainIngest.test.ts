@@ -81,6 +81,7 @@ vi.mock('./oneSatImport', () => ({
 
 vi.mock('./collectables', () => ({
   clearCollectablesCache: () => mockClearCollectablesCache(),
+  invalidateLiveOneSatOutpoints: vi.fn(),
   rememberLiveOneSatOutpoints: vi.fn(),
   listCollectables: vi.fn(async () => []),
 }))

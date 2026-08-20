@@ -355,30 +355,16 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 {abandoning ? 'Removing…' : 'Remove from wallet'}
               </button>
             ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-primary btn-icon"
-                  onClick={startSend}
-                  disabled={sending}
-                  aria-busy={sending || undefined}
-                >
-                  <SendIcon size={14} />
-                  {sending ? 'Sending…' : 'Send item'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost btn-icon asset-burn-trigger"
-                  onClick={() => {
-                    playWalletSound('soft')
-                    openBurnCollectable(item.outpoint)
-                  }}
-                  disabled={sending}
-                >
-                  <WarningIcon size={14} />
-                  Burn item
-                </button>
-              </>
+              <button
+                type="button"
+                className="btn btn-primary btn-icon"
+                onClick={startSend}
+                disabled={sending}
+                aria-busy={sending || undefined}
+              >
+                <SendIcon size={14} />
+                {sending ? 'Sending…' : 'Send item'}
+              </button>
             )}
             {item.imageUrl && isModel ? (
               <button
@@ -415,6 +401,21 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 </button>
               </>
             ) : null}
+            {/* Destructive action is always last, on items and on tokens. */}
+            {item.covenantLocked ? null : (
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon asset-burn-trigger asset-burn-last"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openBurnCollectable(item.outpoint)
+                }}
+                disabled={sending}
+              >
+                <WarningIcon size={14} />
+                Burn item
+              </button>
+            )}
           </div>
         </div>
       </div>

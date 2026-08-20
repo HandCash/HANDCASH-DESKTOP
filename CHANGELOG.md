@@ -1,12 +1,90 @@
 # Changelog
 
+## [1.2.269] - 2026-08-20
+
+### Changed
+
+- **Collect now scales by paging instead of loading the wallet into the
+  renderer.** It opens on the newest 1,000 outputs, loads older pages only when
+  requested, bounds its durable startup cache, and avoids cloning very large
+  address scans into redundant in-memory ownership sets.
+- **Hosted key custody has been removed.** Cloud trustholder enrollment,
+  deposit, retrieval, OTP restore, provider endpoints, and their feature flags
+  are gone, and stale enrollment/share-plan records are purged locally.
+  Recovery remains local through phrase, emergency root key, or any two
+  offline BRC-140 slices; BRC-39 continues to back up history only.
+- **Burn is now the last action on a token and on an item, never the button next
+  to Send.** Both asset pages order their actions the same way — the everyday
+  action first, then copy/save, then the destructive one set apart at the end of
+  the row. Removing an unrecoverable device backup follows the same rule.
+- **Device backup says what it holds in plain sentences.** The screen headings
+  are now “This wallet is backed up to N devices” and “This wallet is storing N
+  backups”, each row adds the device platform instead of repeating its heading,
+  and an empty section is one line rather than a paragraph. “Link” is gone from
+  the feature: the QR is this device’s code, adding a device is “Add a device”,
+  and opening a stored copy is “Restore”. Add sits below the state it changes.
+
+### Fixed
+
+- **The token page no longer runs its heading text under the token icon.** The
+  hero reserved a 96px column while the avatar size buckets forced 112px, so the
+  eyebrow, symbol, balance, issuer, and attestation badge stacked into whatever
+  space was left. The icon is now pinned to its column and the heading is three
+  lines: symbol with the attestation badge beside it, balance, issuer. Decimals,
+  outputs, and deploys read as three equal cards instead of loose text.
+- **A ticker icon this wallet inscribed itself now shows up.** Resolving icon
+  bytes required a live indexer service, so a freshly minted token fell back to
+  the hash identicon even though the inscription was sitting in local storage.
+  The lookup now goes through the local-first BEEF path, and the icon cache
+  accepts the larger bitmaps a real uploaded image produces.
+
 ## [1.2.268] - 2026-08-20
 
 ### Changed
 
-- Version bump so Mobile can ship the 1.2.267 inbound-item retry against a
-  clean UI-core pin (workspace push gate requires Desktop semver strictly
-  ahead of the latest `v*` tag).
+- **Device backup now reads as two physical locations, not one abstract device
+  list.** The screen separately shows where this wallet is backed up and which
+  wallet backups are stored on this device, including a plain empty state for
+  each side. Unconfigured, same-wallet, missing-copy, and unsafe reciprocal
+  devices sit in their own small sections instead of blurring those two facts.
+  Direction choices now say exactly where the encrypted copy will be stored,
+  and the Settings row summarizes copies “elsewhere” versus “stored here.”
+
+### Fixed
+
+- **A token mint no longer stalls on proofs that cannot exist yet.** Minting
+  supply spends the auth tip of a genesis deployed seconds earlier, so that tip
+  and whichever change ancestors are still in the mempool have no merkle proof.
+  Enrichment asked the indexer for them anyway — one eight-second timeout per
+  ancestor, unbounded — and the whole `createAction` outran the bridge deadline
+  while the issuing app was told the mint had failed. Proof hydration now has a
+  fixed budget, after which the mint signs against the raw BEEF it already
+  holds; every spend body is present, so signing is unaffected, and the monitor
+  still broadcasts once headers land.
+- **An in-flight spend is no longer reported as a failure.** The bridge waited a
+  flat two minutes for any method and then answered
+  `WALLET_BRIDGE_TIMEOUT` — the same code it uses for a read that never ran,
+  even though `createAction` / `signAction` / `internalizeAction` may already
+  have signed. Those three now get a five-minute budget and, past it, a distinct
+  `WALLET_BRIDGE_PENDING` that tells the caller to reconcile rather than retry.
+  A renderer reply that arrives after the HTTP call was answered is logged
+  instead of dropped silently.
+- **A long spend keeps the scheduling priority it was given.** The spend-priority
+  hold expired after ninety seconds so a leaked one could not disable item
+  ingest forever, but a mint waiting on an unmined ancestry legitimately runs
+  past that — and when the hold lapsed, chain ingest and history backup piled
+  back on top of the spend they were meant to yield to. The hold now takes a
+  heartbeat from the work itself: expiry catches an abandoned hold, never a busy
+  one, and stall reports still quote the real held duration.
+
+- **A funded wallet no longer opens at zero while Mobile reads local state.**
+  Cold unlock raced the owned-cash scan against a 2.5-second timeout and wrote
+  literal zero into the app machine. The phone then finished the real read
+  (`710,091 sats` in the reported session) but only logged it, leaving the hero
+  at zero. The last successful display balance is now durably scoped to the
+  wallet identity and painted during sync; the completed fresh read always
+  replaces it. Confirm/send still reads Toolbox and fails closed, so stale
+  display state is never spend authority.
 
 ## [1.2.267] - 2026-08-20
 

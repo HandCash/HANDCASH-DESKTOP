@@ -45,4 +45,6 @@ never links identities.
 - A sealed copy never enters the hot spend path until an explicit Recover.
 - **No offline payments** (hard rule).
 - LAN peer (:3340) is same-identity peek only.
-- BRC-232 / key slices remain offline key recovery — orthogonal to device backup.
+- BRC-140 key slices remain offline key recovery — orthogonal to device backup.
+- There is no hosted key deposit or release path. BRC-39 stores encrypted wallet
+  history only; it never stores or releases custody keys.

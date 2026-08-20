@@ -4,19 +4,20 @@ import { PairDevicePanel } from './PairDevicePanel'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 /**
- * Multi-device: optional directional key recovery without identity linking.
- * Each device keeps its own spend keys; at most one side holds a cold spare.
+ * Multi-device: optional one-way key recovery between two separate wallets.
+ * Each device keeps its own spend keys; at most one side holds a cold copy.
  */
 export function DeviceHandoffPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="device-handoff">
       <p className="settings-hint">
-        Give one wallet a sealed recovery copy on the other device. One direction only.
+        An encrypted copy of a wallet’s keys, kept on one of your other devices. It
+        travels one way only.
       </p>
 
       <PairDevicePanel />
 
-      <div className="actions device-backup-links">
+      <div className="actions device-backup-more">
         <button
           type="button"
           className="btn btn-ghost"
@@ -40,8 +41,8 @@ export function DeviceHandoffPanel() {
       </div>
 
       <SettingsFeatureAbout tags={['BRC-75', 'BRC-140', 'BRC-78']}>
-        A backup device is only a name and a public key to seal a recovery copy to. It shares no
-        identity, balance, history, or spending authority, and never both directions at once.
+        Each encrypted copy goes one way. It does not share identity, balance, history, or
+        day-to-day spending access.
       </SettingsFeatureAbout>
     </div>
   )

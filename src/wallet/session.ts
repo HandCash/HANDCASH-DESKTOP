@@ -9,6 +9,7 @@ import { BALANCE_DEFAULT_BASKET } from './brc112'
 import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { appendAppLog } from './appLog'
+import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
 
 const { specOpWalletBalance } = sdk
 
@@ -316,6 +317,10 @@ export async function bootWallet(args: {
     handle: args.handle,
     chain: args.chain,
   }
+  // Cold start begins with the last balance actually read for this identity,
+  // never another wallet's figure and never a fabricated address balance.
+  lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
+  lastBalanceBreakdown = ''
   return active
 }
 
@@ -446,6 +451,9 @@ export async function fetchBalanceRead(
     )
   }
   lastKnownBalanceSats = spendable
+  if (session && w === session.wallet) {
+    writeTrustedBalance(session.identityKey, session.chain, spendable)
+  }
   return { kind: 'ok', sats: spendable }
 }
 

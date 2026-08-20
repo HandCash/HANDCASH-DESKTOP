@@ -6,7 +6,6 @@
  * origin-keyed and remittance history already lives under localhost:5173.
  */
 import express from 'express'
-import { execFileSync } from 'node:child_process'
 import fs from 'node:fs'
 import http from 'node:http'
 import path from 'node:path'
@@ -16,29 +15,7 @@ import log from 'electron-log'
 export const UI_ORIGIN = 'http://localhost:5173'
 const UI_PORT = 5173
 
-let server: http.Server | null = null
-
-/** Drop foreign listeners on :5173 so we never load a stale Vite / old .app UI. */
-function reclaimUiPort(): void {
-  try {
-    const out = execFileSync('lsof', ['-tiTCP:' + String(UI_PORT), '-sTCP:LISTEN'], {
-      encoding: 'utf8',
-      timeout: 2_000,
-    })
-    for (const raw of out.trim().split(/\s+/)) {
-      const pid = Number(raw)
-      if (!Number.isFinite(pid) || pid <= 0 || pid === process.pid) continue
-      try {
-        process.kill(pid, 'SIGTERM')
-        log.warn(`[ui-server] reclaimed :${UI_PORT} from pid ${pid}`)
-      } catch {
-        /* already gone */
-      }
-    }
-  } catch {
-    /* nothing listening / lsof missing */
-  }
-}
+let servers: http.Server[] = []
 
 function dirBytes(dir: string): number {
   if (!fs.existsSync(dir)) return 0
@@ -85,11 +62,7 @@ export function shouldLoadViaLocalhostOrigin(): boolean {
 }
 
 export async function startPackagedUiServer(distRoot: string): Promise<string> {
-  if (server) return UI_ORIGIN
-
-  reclaimUiPort()
-  // Brief pause so the kernel releases TIME_WAIT / dual-stack sockets.
-  await new Promise((r) => setTimeout(r, 150))
+  if (servers.length > 0) return UI_ORIGIN
 
   const ex = express()
   ex.use(express.static(distRoot, { index: 'index.html', fallthrough: true }))
@@ -104,38 +77,63 @@ export async function startPackagedUiServer(distRoot: string): Promise<string> {
       next.listen(UI_PORT, host, () => resolve(next))
     })
 
-  // Prefer IPv6 localhost — Chromium resolves `localhost` to ::1 first on macOS.
-  // Fall back to 127.0.0.1 if ::1 is unavailable (older kernels / IPv6 off).
-  let bound: http.Server
+  // The localhost origin contains live wallet IndexedDB state. Never kill an
+  // existing owner or wait and race it for the trusted port: an attacker could
+  // win the bind and make BrowserWindow execute hostile content with our
+  // preload bridge. Bind every available loopback family ourselves and fail
+  // closed if either is already occupied.
+  const bound: http.Server[] = []
   try {
-    bound = await listenOnce('::1')
-  } catch (err) {
-    const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: unknown }).code) : ''
-    if (code === 'EADDRINUSE') {
-      reclaimUiPort()
-      await new Promise((r) => setTimeout(r, 200))
-      try {
-        bound = await listenOnce('::1')
-      } catch {
-        bound = await listenOnce('127.0.0.1')
-      }
-    } else if (code === 'EADDRNOTAVAIL' || code === 'EAFNOSUPPORT') {
-      bound = await listenOnce('127.0.0.1')
-    } else {
-      throw err
+    bound.push(await listenOnce('127.0.0.1'))
+    try {
+      bound.push(await listenOnce('::1'))
+    } catch (err) {
+      const code =
+        err && typeof err === 'object' && 'code' in err
+          ? String((err as { code: unknown }).code)
+          : ''
+      if (code !== 'EADDRNOTAVAIL' && code !== 'EAFNOSUPPORT') throw err
+      log.warn('[ui-server] IPv6 loopback unavailable; bound IPv4 only')
     }
+  } catch (err) {
+    await Promise.all(
+      bound.map(
+        (current) =>
+          new Promise<void>((resolve) => {
+            current.close(() => resolve())
+          }),
+      ),
+    )
+    const code =
+      err && typeof err === 'object' && 'code' in err
+        ? String((err as { code: unknown }).code)
+        : ''
+    if (code === 'EADDRINUSE') {
+      throw new Error(
+        `Refusing to load the wallet: another process owns trusted UI port ${UI_PORT}.`,
+      )
+    }
+    throw err
   }
 
-  server = bound
-  log.info('Packaged UI on', UI_ORIGIN, '(localhost IDB partition)')
+  servers = bound
+  log.info(
+    'Packaged UI on',
+    UI_ORIGIN,
+    `(localhost IDB partition; ${servers.length} loopback listener${servers.length === 1 ? '' : 's'})`,
+  )
   return UI_ORIGIN
 }
 
 export async function stopPackagedUiServer(): Promise<void> {
-  if (!server) return
-  const current = server
-  server = null
-  await new Promise<void>((resolve) => {
-    current.close(() => resolve())
-  })
+  const current = servers
+  servers = []
+  await Promise.all(
+    current.map(
+      (server) =>
+        new Promise<void>((resolve) => {
+          server.close(() => resolve())
+        }),
+    ),
+  )
 }

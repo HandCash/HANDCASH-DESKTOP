@@ -1,5 +1,5 @@
 /**
- * Known devices roster + backup-link QR.
+ * Known devices roster + device code QR.
  *
  * Different identity keys are never linked as one identity. Their device id
  * and public key may be retained only to establish one-way sealed recovery.
@@ -363,7 +363,7 @@ export function patchDeviceWallet(
   writeRoster(roster)
 }
 
-/** Build a v3 backup-link discovery QR (preferred). */
+/** Build a v3 device code discovery QR (preferred). */
 export function buildPairPayload(args: {
   identityKey: string
   address: string
@@ -470,7 +470,7 @@ export function parsePairPayload(raw: string): DevicePairPayload {
     backupBaseUrl = normalizePairBackupUrl(o.backupBaseUrl)
   } else if (o.v === 1) {
     throw new Error(
-      'This backup-link code is outdated — ask the other device to show a fresh code',
+      'That device code is outdated — ask the other device to show a fresh code',
     )
   } else {
     throw new Error('Pair payload missing backup URL')
@@ -487,7 +487,7 @@ export function parsePairPayload(raw: string): DevicePairPayload {
   }
 }
 
-/** True when raw QR text looks like a backup-link payload (cheap, non-throwing). */
+/** True when raw QR text looks like a device code payload (cheap, non-throwing). */
 export function tryParsePairPayload(raw: string): DevicePairPayload | null {
   const text = raw.trim()
   if (!text.startsWith('{') || !text.includes('"identityKey"')) return null

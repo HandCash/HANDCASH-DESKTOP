@@ -69,27 +69,29 @@ import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 // load. Five seconds keeps peer receives responsive without a permanent hot loop.
 const TIP_HINT_POLL_MS = 5_000
 const TIP_HINT_POLL_HIDDEN_MS = 30_000
-/** Cloud history is merged far less often than the chain poll — it is a network round trip. */
-const HISTORY_PULL_INTERVAL_MS = 60_000
+/** Cloud history is a full encrypted replica merge, not a presence heartbeat. */
+const HISTORY_PULL_INTERVAL_MS = 5 * 60_000
 /**
- * Quiet poll while the app is backgrounded. Soft-latch receives are discover-
- * by-scan; 30s is fine when nobody is watching.
+ * Address scans return the complete P2PKH UTXO set. Large ordinal wallets can
+ * produce hundreds of thousands of rows, so hidden windows must not continuously
+ * download and parse that set. Messagebox hints remain on their lightweight loop.
  */
-const CHAIN_POLL_HIDDEN_MS = 30_000
+const CHAIN_POLL_HIDDEN_MS = 15 * 60_000
 /**
- * Foreground unlocked poll. A full chain ingest is expensive (network + IDB +
- * proof review), so 5s kept renderer/main/GPU hot almost continuously.
- * Messagebox hints and pending-tip mode still collapse receipt latency.
+ * Foreground fallback for sends that did not provide a BRC-29/item hint.
+ * Direct peer receives still ingest from the 5s hint poll; explicit Refresh runs
+ * immediately. Keeping the complete address scan at two minutes prevents the
+ * 800k-item stress wallet from living in a permanent parse/GC loop.
  */
-const CHAIN_POLL_PHONE_MS = 10_000
-const CHAIN_POLL_DESKTOP_MS = 20_000
-/** Device-parity foreground poll (same target as quiet unlocked). */
-const CHAIN_POLL_PARITY_MS = 5_000
+const CHAIN_POLL_PHONE_MS = 2 * 60_000
+const CHAIN_POLL_DESKTOP_MS = 2 * 60_000
+/** Device parity has its own history cadence; it does not need faster chain scans. */
+const CHAIN_POLL_PARITY_MS = 2 * 60_000
 /**
- * While latch-proven tips are waiting on GorillaPool / BEEF, poll hard so the
- * ordinal lands in Collectables as soon as the indexer catches up.
+ * Pending hints may be waiting on BEEF/indexer propagation. Retry promptly but
+ * never turn a complete address scan into a hot loop.
  */
-const CHAIN_POLL_PENDING_MS = 4_000
+const CHAIN_POLL_PENDING_MS = 30_000
 
 function nextChainPollMs(pendingTips: number): number {
   if (pendingTips > 0) return CHAIN_POLL_PENDING_MS

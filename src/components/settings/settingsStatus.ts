@@ -1,8 +1,4 @@
 import {
-  getEnrollmentForOperator,
-  getTrustholderEnrollments,
-} from '../../wallet/trustholderBackup'
-import {
   isHistoryBackupConfirmed,
   isKeysBackupConfirmed,
 } from '../../wallet/backupStatus'
@@ -13,26 +9,11 @@ import {
 import { handCashHistoryUrl } from '../../wallet/walletSetupApply'
 import { listDeviceWallets } from '../../wallet/deviceWallets'
 import { getDeviceBackupRoleStatus } from '../../wallet/deviceKeyBackup'
-import { TRUSTHOLDERS_ENABLED } from '../../wallet/walletConfig'
 import type { SettingId } from '../../wallet/navStore'
 
 export type SettingRowStatus = {
   text: string
   tone: 'ok' | 'warn' | 'muted'
-}
-
-export function trustholderStatus(): SettingRowStatus {
-  const { enrollments } = getTrustholderEnrollments()
-  const hc = getEnrollmentForOperator('handcash')
-  const haste = getEnrollmentForOperator('haste')
-  if (hc && haste) {
-    return { text: 'HandCash & Haste enrolled', tone: 'ok' }
-  }
-  if (enrollments.length === 1) {
-    const label = enrollments[0]!.operator === 'haste' ? 'Haste' : 'HandCash'
-    return { text: `${label} enrolled · add another anytime`, tone: 'ok' }
-  }
-  return { text: 'Recommend two providers', tone: 'muted' }
 }
 
 export function keysStatus(): SettingRowStatus {
@@ -64,20 +45,26 @@ export function deviceHandoffStatus(): SettingRowStatus {
   const label = peers.length === 1 ? '1 device' : `${peers.length} devices`
   const roles = peers.map((role) => getDeviceBackupRoleStatus(role.deviceId))
   if (roles.some((role) => role.direction === 'reciprocal')) {
-    return { text: 'Both directions — unsafe', tone: 'warn' }
+    return { text: 'Both sides hold a copy', tone: 'warn' }
   }
-  const withCopy = roles.filter((role) => role.direction !== 'none').length
-  if (withCopy === 0) return { text: `${label} · no copy yet`, tone: 'muted' }
-  if (withCopy === peers.length) return { text: `${label} · one-way`, tone: 'ok' }
-  return { text: `${label} · ${withCopy} protected`, tone: 'muted' }
+  const elsewhere = roles.filter((role) => role.recoveryCopyIssuedToPeer).length
+  const here = roles.filter((role) => role.protectsPeer).length
+  const configured = elsewhere + here
+  if (configured === 0) return { text: `${label} · no copy yet`, tone: 'muted' }
+
+  const parts: string[] = []
+  if (elsewhere > 0) parts.push(`Backed up to ${elsewhere}`)
+  if (here > 0) parts.push(parts.length ? `storing ${here}` : `Storing ${here}`)
+  return {
+    text: parts.join(' · '),
+    tone: configured === peers.length ? 'ok' : 'muted',
+  }
 }
 
 export function statusForSetting(id: SettingId): SettingRowStatus | null {
   switch (id) {
     case 'backup':
       return keysStatus()
-    case 'trustholder-backup':
-      return TRUSTHOLDERS_ENABLED ? trustholderStatus() : keysStatus()
     case 'history-backup':
       return historyStatus()
     case 'device-handoff':

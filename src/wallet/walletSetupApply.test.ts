@@ -8,6 +8,10 @@ vi.mock('./durableStorage', () => ({
     store.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    store.delete(key)
+    return true
+  },
 }))
 
 describe('ensureHandCashServiceDefaults', () => {
@@ -16,7 +20,7 @@ describe('ensureHandCashServiceDefaults', () => {
     vi.resetModules()
   })
 
-  it('applies HandCash history without trustholders when setup was never chosen', async () => {
+  it('applies HandCash history when setup was never chosen', async () => {
     const { ensureHandCashServiceDefaults } = await import('./walletSetupApply')
     const { getWalletConfigPrefs } = await import('./walletConfig')
     const { getHistoryBackupPrefs } = await import('./historyBackupPrefs')
@@ -26,7 +30,6 @@ describe('ensureHandCashServiceDefaults', () => {
     const cfg = getWalletConfigPrefs()
     expect(cfg.mode).toBe('history')
     expect(cfg.historyBaseUrl).toMatch(/brc-cloud|handcash/i)
-    expect(cfg.backupServiceUrls).toEqual([])
     expect(getHistoryBackupPrefs().baseUrl).toBe(cfg.historyBaseUrl.replace(/\/+$/, ''))
   })
 
@@ -50,32 +53,34 @@ describe('ensureHandCashServiceDefaults', () => {
     expect(getHistoryBackupPrefs().baseUrl).toBe('')
   })
 
-  it('fills a blank history URL for recommended mode', async () => {
-    const { applyWalletSetupSelection, ensureHandCashServiceDefaults, handCashHistoryUrl } =
+  it('reads legacy recommended prefs as history-only and drops provider URLs', async () => {
+    store.set('handcash.brc100.trustholderEnrollments.v1', '{"enrollments":[{}]}')
+    store.set('handcash.brc100.trustholderSharePlan.v1', '{"shares":["secret"]}')
+    store.set(
+      'handcash.brc100.walletConfig.v1',
+      JSON.stringify({
+        mode: 'recommended',
+        historyBaseUrl: '',
+        backupServiceUrls: [
+          'https://example.invalid/trustholders/handcash',
+          'https://example.invalid/trustholders/haste',
+        ],
+        configuredAt: 1,
+      }),
+    )
+    const { ensureHandCashServiceDefaults, handCashHistoryUrl } =
       await import('./walletSetupApply')
-    applyWalletSetupSelection('recommended', handCashHistoryUrl())
     const { getWalletConfigPrefs } = await import('./walletConfig')
     expect(getWalletConfigPrefs().mode).toBe('history')
-    expect(getWalletConfigPrefs().backupServiceUrls).toEqual([])
+    expect(getWalletConfigPrefs()).not.toHaveProperty('backupServiceUrls')
+    expect(store.get('handcash.brc100.walletConfig.v1')).not.toContain('backupServiceUrls')
+    expect(store.has('handcash.brc100.trustholderEnrollments.v1')).toBe(false)
+    expect(store.has('handcash.brc100.trustholderSharePlan.v1')).toBe(false)
     const { setHistoryBackupPrefs, getHistoryBackupPrefs } = await import(
       './historyBackupPrefs'
     )
     setHistoryBackupPrefs({ baseUrl: '' })
     ensureHandCashServiceDefaults()
     expect(getHistoryBackupPrefs().baseUrl).toBe(handCashHistoryUrl())
-  })
-
-  it('lists no trustholder providers while the feature is off', async () => {
-    const { listTrustholderProviders, depositShareToTrustholder } =
-      await import('./trustholderBackup')
-    expect(listTrustholderProviders()).toEqual([])
-    await expect(
-      depositShareToTrustholder({
-        operator: 'handcash',
-        password: 'x',
-        email: 'a@b.c',
-        onOtpNeeded: async () => '000000',
-      }),
-    ).rejects.toThrow(/not available/i)
   })
 })

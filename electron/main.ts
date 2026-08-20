@@ -35,6 +35,7 @@ import {
   stopPackagedUiServer,
   UI_ORIGIN,
 } from './uiServer.js'
+import { isTrustedAppUrl } from './appUrlPolicy.js'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
@@ -77,7 +78,6 @@ const bridgeWindows = createBridgeWindowSource({
 })
 
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('--disable-gpu-sandbox')
   app.commandLine.appendSwitch('--enable-features', 'WaylandWindowDecorations')
 }
 
@@ -86,17 +86,11 @@ function getIconPath(): string | undefined {
 }
 
 function isAppUrl(url: string): boolean {
-  if (url.startsWith(DEV_ORIGIN) || url.startsWith('http://127.0.0.1:5173')) return true
-  if (packagedUiOrigin && url.startsWith(packagedUiOrigin)) return true
-  if (url.startsWith('file://')) {
-    const distRoot = path.join(__dirname, '../dist')
-    try {
-      return decodeURIComponent(fileURLToPath(url)).startsWith(distRoot)
-    } catch {
-      return false
-    }
-  }
-  return false
+  return isTrustedAppUrl(url, {
+    devOrigins: [DEV_ORIGIN, 'http://127.0.0.1:5173'],
+    packagedUiOrigin,
+    distRoot: path.join(__dirname, '../dist'),
+  })
 }
 
 function isSafeExternalUrl(url: string): boolean {
@@ -291,24 +285,32 @@ function createWindow(): void {
     show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
     webPreferences: {
-      preload: path.join(__dirname, 'preload.js'),
+      // Sandboxed preloads must be CommonJS; build:preload emits this bundle.
+      preload: path.join(__dirname, 'preload.cjs'),
       contextIsolation: true,
       nodeIntegration: false,
-      sandbox: false,
+      sandbox: true,
     },
   })
 
-  mainWindow.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => {
-    if (permission === 'media' || permission === 'mediaKeySystem') {
-      callback(true)
-      return
-    }
-    callback(false)
-  })
+  mainWindow.webContents.session.setPermissionRequestHandler(
+    (webContents, permission, callback, details) => {
+      callback(
+        webContents.id === mainWindow?.webContents.id &&
+          permission === 'media' &&
+          details.isMainFrame &&
+          isAppUrl(details.requestingUrl),
+      )
+    },
+  )
 
-  mainWindow.webContents.session.setPermissionCheckHandler((_wc, permission) => {
-    return permission === 'media' || permission === 'mediaKeySystem'
-  })
+  mainWindow.webContents.session.setPermissionCheckHandler(
+    (webContents, permission, requestingOrigin, details) =>
+      webContents?.id === mainWindow?.webContents.id &&
+      permission === 'media' &&
+      details.isMainFrame &&
+      isAppUrl(requestingOrigin),
+  )
 
   // Packaged wallets that started life under `npm run dev` keep UTXOs in the
   // localhost IndexedDB partition — load that origin so balance is not zero.

@@ -28,7 +28,7 @@ export type DeviceBackupEvent =
 export type DeviceBackupContext = {
   /** Device whose recovery relationship is on screen. */
   peerDeviceId: string | null
-  /** This device's backup-link QR is revealed only on request. */
+  /** This device's own code QR is revealed only on request. */
   showMyCode: boolean
   error: string | null
 }

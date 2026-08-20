@@ -36,11 +36,48 @@ import { getSessionBackupPassword } from './wallet/sessionBackupAuth'
 import { refreshCloudBackupHealth } from './wallet/cloudBackupHealth'
 import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
 import { setSyncHealth } from './wallet/walletHealth'
+import { isRecomposeInFlight } from './wallet/recompose'
+import { shouldKeepTrustedBalance } from './wallet/balanceSnapshot'
+
+const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
 export function App() {
   const [snapshot, send] = useMachine(appMachine)
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const stateAttr = stateToAttr(snapshot.value)
+  const lockWallet = useCallback(
+    (reason: 'manual' | 'idle' = 'manual') => {
+      clearActiveWallet()
+      clearRemoteSnapshots()
+      cancelPendingPermissions(reason)
+      clearPermissionSession()
+      send({ type: 'LOCK' })
+    },
+    [send],
+  )
+
+  useEffect(() => {
+    // Never interrupt a legal spend phase. Once the chart returns to ready, a
+    // fresh idle window begins and unattended keys are removed from memory.
+    if (!snapshot.matches('ready')) return
+    let timer = 0
+    const arm = () => {
+      window.clearTimeout(timer)
+      timer = window.setTimeout(() => lockWallet('idle'), AUTO_LOCK_IDLE_MS)
+    }
+    const events: Array<keyof WindowEventMap> = [
+      'pointerdown',
+      'keydown',
+      'touchstart',
+      'focus',
+    ]
+    for (const event of events) window.addEventListener(event, arm, { passive: true })
+    arm()
+    return () => {
+      window.clearTimeout(timer)
+      for (const event of events) window.removeEventListener(event, arm)
+    }
+  }, [snapshot, lockWallet])
 
   useEffect(() => {
     let cancelled = false
@@ -166,6 +203,25 @@ export function App() {
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
   const walletUnlocked = snapshot.matches('ready') || snapshot.matches('sending')
+  const handleBalanceRefresh = useCallback(
+    (balanceSats: number) => {
+      // A BRC-39 pull temporarily replaces local state. An empty read in that
+      // window is not proof the wallet was spent; keep the trusted figure until
+      // recompose completes and reports its final Toolbox balance.
+      if (
+        shouldKeepTrustedBalance(
+          snapshot.context.balanceSats,
+          balanceSats,
+          isRecomposeInFlight(),
+        )
+      ) {
+        console.info('[balance] kept trusted balance during recompose')
+        return
+      }
+      send({ type: 'REFRESHED', balanceSats })
+    },
+    [send, snapshot.context.balanceSats],
+  )
 
   const handleManualSync = useCallback(async () => {
     if (!walletUnlocked) return
@@ -185,12 +241,12 @@ export function App() {
         }
       }
       const sats = await refreshFromChain({ forceReview: true, announceReceive: true })
-      if (sats != null) send({ type: 'REFRESHED', balanceSats: sats })
+      if (sats != null) handleBalanceRefresh(sats)
       void refreshCloudBackupHealth()
     } catch (err) {
       toastError('Refresh failed', err instanceof Error ? err.message : String(err))
     }
-  }, [send, walletUnlocked])
+  }, [handleBalanceRefresh, walletUnlocked])
 
   return (
     <UpdateProvider>
@@ -233,6 +289,7 @@ export function App() {
               recoveryOnly={snapshot.context.recoveryOnly}
               onCreated={(profile, balanceSats) => send({ type: 'CREATED', profile, balanceSats })}
               onUnlocked={(profile, balanceSats) => send({ type: 'UNLOCKED', profile, balanceSats })}
+              onBalanceRefreshed={handleBalanceRefresh}
               onFail={(error) => send({ type: 'FAIL', error })}
             />
           )}
@@ -242,14 +299,8 @@ export function App() {
               profile={snapshot.context.profile}
               balanceSats={snapshot.context.balanceSats}
               onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
-              onRefreshBalance={(balanceSats) => send({ type: 'REFRESHED', balanceSats })}
-              onLock={() => {
-                clearActiveWallet()
-                clearRemoteSnapshots()
-                cancelPendingPermissions('lock')
-                clearPermissionSession()
-                send({ type: 'LOCK' })
-              }}
+              onRefreshBalance={handleBalanceRefresh}
+              onLock={() => lockWallet('manual')}
               onFail={(error) => {
                 playWalletSound('error')
                 toastError('Something went wrong', error)

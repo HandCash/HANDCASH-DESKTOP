@@ -206,6 +206,31 @@ const emptyRun = (): ChainIngestRunResult => ({
   scannedTxids: [],
 })
 
+/** Repair passes scan local actions/outputs and are not receipt polling. */
+const CHAIN_MAINTENANCE_INTERVAL_MS = 10 * 60 * 1000
+let lastMaintenanceKey = ''
+let lastMaintenanceAt = 0
+
+function maintenanceDue(
+  active: NonNullable<ReturnType<typeof getActiveWallet>>,
+  force: boolean,
+): boolean {
+  const key = `${active.chain}:${active.identityKey}`
+  const now = Date.now()
+  if (
+    !force &&
+    key === lastMaintenanceKey &&
+    now - lastMaintenanceAt < CHAIN_MAINTENANCE_INTERVAL_MS
+  ) {
+    return false
+  }
+  // Claim the interval before async work so overlapping callers cannot start a
+  // second full IDB repair pass.
+  lastMaintenanceKey = key
+  lastMaintenanceAt = now
+  return true
+}
+
 /**
  * Exclusive chain-ingest body. Callers that already hold the ingest lock
  * (recompose, migration via runChainIngest) use this directly.
@@ -250,14 +275,6 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
-  try {
-    // Free reserved batches before a waiting spend retries createAction.
-    const { abortReservedActionBatches } = await import('./actionReview')
-    await abortReservedActionBatches(active)
-  } catch (err) {
-    console.warn('[chain-ingest] action-batch abort skipped', err)
-  }
-
   // Pay first: dual-layer / restore / ordinal work must not hold the spend region.
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
@@ -269,10 +286,19 @@ export async function refreshFromChainExclusive(
     })
   }
 
-  // Independent maintenance — run together so wall-clock ≈ slowest step, not sum.
-  // Yield checkpoints stay around the batch (not between each) so a waiting
-  // spend still interrupts before the address scan.
-  await runChainMaintenance(active.chain)
+  if (maintenanceDue(active, forceReview)) {
+    try {
+      // Free abandoned noSend batches as part of repair, not every receipt poll.
+      const { abortReservedActionBatches } = await import('./actionReview')
+      await abortReservedActionBatches(active)
+    } catch (err) {
+      console.warn('[chain-ingest] action-batch abort skipped', err)
+    }
+
+    // Independent maintenance — run together so wall-clock ≈ slowest step, not sum.
+    // Explicit Refresh always runs it; background receipt polling is throttled.
+    await runChainMaintenance(active.chain)
+  }
 
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {
@@ -342,9 +368,14 @@ export async function refreshFromChainExclusive(
     partialWarn = ingest.partialWarn
     importedFunding = ingest.importedFunding
     importedItems = ingest.importedItems
-    scannedTxids = [
-      ...new Set(ingest.scan.utxos.map((u) => u.txid).filter((t): t is string => !!t)),
-    ]
+    // The txid inventory is only consumed by the explicit migration contract.
+    // Building another 800k-entry Set on every background refresh doubled the
+    // largest allocation in the ingest path for no product benefit.
+    if (opts?.knownItems != null) {
+      scannedTxids = [
+        ...new Set(ingest.scan.utxos.map((u) => u.txid).filter((t): t is string => !!t)),
+      ]
+    }
     if (shouldYieldChainIngestToSpend()) {
       return finishEarlyForSpend(active, {
         heldCount,
@@ -360,8 +391,19 @@ export async function refreshFromChainExclusive(
     // listOutputs(1sat) (up to 20s). Paint/toast continues in the background.
     if (!fundingOnly) {
       try {
-        const { listCollectables, rememberLiveOneSatOutpoints } = await import('./collectables')
-        rememberLiveOneSatOutpoints(ingest.scan.utxos)
+        const {
+          invalidateLiveOneSatOutpoints,
+          listCollectables,
+          rememberLiveOneSatOutpoints,
+        } = await import('./collectables')
+        // A second pair of full-size outpoint Sets is useful for small wallets
+        // but wasteful at ordinal scale. Large baskets trust Toolbox's
+        // spendable state between scheduled review passes.
+        if (ingest.scan.utxos.length <= 10_000) {
+          rememberLiveOneSatOutpoints(ingest.scan.utxos)
+        } else {
+          invalidateLiveOneSatOutpoints()
+        }
         // Paint NFTs + tokens off the ingest critical path (parallel listOutputs).
         void listCollectables(active).catch((err) => {
           console.warn('[chain-ingest] collectables refresh failed', err)

@@ -36,9 +36,18 @@ let actor: Actor<typeof walletCoordinatorMachine> = createActor(walletCoordinato
  * verified, and history backup rescheduled itself forever. Expiring the hold and
  * naming the holder turns that into a bounded, diagnosable stall.
  */
-type SpendPriorityHold = { id: number; reason: string; at: number }
+type SpendPriorityHold = {
+  id: number
+  reason: string
+  /** When the work started — what the stall report should quote. */
+  since: number
+  /** Last proof of life. Expiry is measured from here, not from `since`. */
+  at: number
+}
 
 const SPEND_PRIORITY_MAX_MS = 90_000
+/** Proof-of-life cadence for a hold whose work is still running. */
+const SPEND_PRIORITY_TOUCH_MS = 30_000
 
 let spendPriorityHolds: SpendPriorityHold[] = []
 let nextSpendPriorityId = 1
@@ -60,12 +69,54 @@ function dropExpiredSpendPriority(now = Date.now()): void {
       continue
     }
     console.warn(
-      `[coordinator] spend priority expired — "${hold.reason}" held ${Math.round(
+      `[coordinator] spend priority expired — "${hold.reason}" went quiet ${Math.round(
         heldMs / 1000,
-      )}s without releasing; resuming item ingest and backup`,
+      )}s ago (held ${Math.round(
+        (now - hold.since) / 1000,
+      )}s); resuming item ingest and backup`,
     )
   }
   spendPriorityHolds = live
+}
+
+export type SpendPriorityLease = {
+  /**
+   * Prove the work is still alive. A BSV-21 mint that waits on proofs for an
+   * unmined genesis can legitimately run past the expiry, and letting the hold
+   * lapse under it invited chain ingest and history backup back on top of the
+   * spend it was meant to protect. Expiry now catches abandoned holds only.
+   */
+  touch: () => void
+  release: () => void
+}
+
+/**
+ * Raise before enqueueing a spend so in-flight chain ingest can yield. Callers
+ * that may run long should `touch()` while working; everyone else can use
+ * `requestSpendPriority`.
+ */
+export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
+  dropExpiredSpendPriority()
+  const now = Date.now()
+  const hold: SpendPriorityHold = {
+    id: nextSpendPriorityId++,
+    reason,
+    since: now,
+    at: now,
+  }
+  spendPriorityHolds.push(hold)
+  let released = false
+  return {
+    touch: () => {
+      if (released) return
+      hold.at = Date.now()
+    },
+    release: () => {
+      if (released) return
+      released = true
+      spendPriorityHolds = spendPriorityHolds.filter((h) => h.id !== hold.id)
+    },
+  }
 }
 
 /**
@@ -74,19 +125,7 @@ function dropExpiredSpendPriority(now = Date.now()): void {
  * and releases the hold it created rather than whichever is oldest.
  */
 export function requestSpendPriority(reason = 'spend'): () => void {
-  dropExpiredSpendPriority()
-  const hold: SpendPriorityHold = {
-    id: nextSpendPriorityId++,
-    reason,
-    at: Date.now(),
-  }
-  spendPriorityHolds.push(hold)
-  let released = false
-  return () => {
-    if (released) return
-    released = true
-    spendPriorityHolds = spendPriorityHolds.filter((h) => h.id !== hold.id)
-  }
+  return leaseSpendPriority(reason).release
 }
 
 /** Release the oldest hold. Kept for callers that cannot carry the releaser. */
@@ -110,8 +149,10 @@ export function getSpendPriorityDepth(): number {
 export function describeSpendPriorityHolds(): string[] {
   dropExpiredSpendPriority()
   const now = Date.now()
+  // Report the real held time, not the last heartbeat — a stall report wants to
+  // know how long the spend has been running.
   return spendPriorityHolds.map(
-    (h) => `${h.reason} (${Math.round((now - h.at) / 1000)}s)`,
+    (h) => `${h.reason} (${Math.round((now - h.since) / 1000)}s)`,
   )
 }
 
@@ -257,7 +298,14 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
 ): Promise<T> {
   // Before the region waits — so a running refresh can yield ordinal work now.
-  const releasePriority = requestSpendPriority('runExclusiveSpend')
+  const priority = leaseSpendPriority('runExclusiveSpend')
+  // A mint or a legacy sweep can outlive the expiry while doing real work. The
+  // heartbeat is what separates that from a leaked hold.
+  const heartbeat = setInterval(() => priority.touch(), SPEND_PRIORITY_TOUCH_MS)
+  const releasePriority = () => {
+    clearInterval(heartbeat)
+    priority.release()
+  }
   return spendQueue(async () => {
     try {
       const releaseSpend = await acquireSpend()

@@ -1,7 +1,6 @@
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { Prompt } from '@aeon-ui/react'
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { unlockMachine } from '../machines/unlockMachine'
 import {
   createVault,
@@ -11,7 +10,7 @@ import {
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
-import { bootWallet, fetchBalanceSats } from '../wallet/session'
+import { bootWallet, fetchBalanceSats, lastKnownBalance } from '../wallet/session'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
@@ -20,20 +19,13 @@ import {
   subscribeUnlockNudge,
 } from '../wallet/walletHealth'
 import type { WalletProfile } from '../machines/appMachine'
-import { getWalletConfigPrefs, TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
+import { getWalletConfigPrefs } from '../wallet/walletConfig'
 import {
   applyDefaultRestoreWalletSetup,
   ensureHandCashServiceDefaults,
 } from '../wallet/walletSetupApply'
 import { recomposeWallet } from '../wallet/recompose'
 import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
-import {
-  listTrustholderProviders,
-  retrieveShareFromTrustholder,
-  upsertTrustholderEnrollment,
-  type DepositOtpRequest,
-  type TrustholderOperator,
-} from '../wallet/trustholderBackup'
 import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
@@ -45,30 +37,23 @@ type Props = {
   recoveryOnly?: boolean
   onCreated: (profile: WalletProfile, balanceSats: number) => void
   onUnlocked: (profile: WalletProfile, balanceSats: number) => void
+  onBalanceRefreshed: (balanceSats: number) => void
   onFail: (error: string) => void
 }
 
 /** Custody restore paths the vault can bootstrap from. */
-type RestoreMethod = 'phrase' | 'shares' | 'cloud' | 'key'
+type RestoreMethod = 'phrase' | 'shares' | 'key'
 type FormMode = 'create' | 'unlock' | RestoreMethod
 
 const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
   { id: 'phrase', label: 'Phrase' },
-  ...(TRUSTHOLDERS_ENABLED ? [{ id: 'cloud' as const, label: 'Cloud' }] : []),
   { id: 'shares', label: 'Shares' },
   { id: 'key', label: 'Key' },
 ]
 
 function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
-  return mode === 'phrase' || mode === 'shares' || mode === 'cloud' || mode === 'key'
+  return mode === 'phrase' || mode === 'shares' || mode === 'key'
 }
-
-type OtpGate = DepositOtpRequest & {
-  resolve: (code: string) => void
-  reject: (err: Error) => void
-}
-
-type CloudSlot = TrustholderOperator | 'offline'
 
 function isMismatchError(message: string | null | undefined): boolean {
   if (!message) return false
@@ -103,6 +88,7 @@ export function AuthScreen({
   recoveryOnly = false,
   onCreated,
   onUnlocked,
+  onBalanceRefreshed,
   onFail,
 }: Props) {
   const [snapshot, send] = useMachine(unlockMachine)
@@ -117,14 +103,6 @@ export function AuthScreen({
   const [share1, setShare1] = useState('')
   const [share2, setShare2] = useState('')
   const [rootKeyInput, setRootKeyInput] = useState('')
-  const [cloudEmail, setCloudEmail] = useState('')
-  const [cloudShares, setCloudShares] = useState<Partial<Record<CloudSlot, string>>>({})
-  const [cloudBusy, setCloudBusy] = useState<TrustholderOperator | null>(null)
-  const [cloudStatus, setCloudStatus] = useState<string | null>(null)
-  const [otpGate, setOtpGate] = useState<OtpGate | null>(null)
-  const [otpDraft, setOtpDraft] = useState('')
-  const otpRef = useRef<OtpGate | null>(null)
-  const skipOtpDismiss = useRef(false)
   const [confirmPassword, setConfirmPassword] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
@@ -142,68 +120,6 @@ export function AuthScreen({
   /** Holds the create/unlock form off-screen while vault boots — avoids password flash. */
   const [preparing, setPreparing] = useState<{ title: string; lede: string } | null>(null)
   const shareFileRef = useRef<HTMLInputElement>(null)
-
-  const requestOtp = useCallback((req: DepositOtpRequest) => {
-    return new Promise<string>((resolve, reject) => {
-      const gate: OtpGate = { ...req, resolve, reject }
-      otpRef.current = gate
-      setOtpDraft(req.devCode?.trim() || '')
-      setOtpGate(gate)
-    })
-  }, [])
-
-  const closeOtp = (ok: boolean) => {
-    const gate = otpRef.current
-    otpRef.current = null
-    setOtpGate(null)
-    if (!gate) return
-    if (ok) {
-      const code = otpDraft.trim()
-      if (!code) {
-        gate.reject(new Error('Enter the email code'))
-        return
-      }
-      skipOtpDismiss.current = true
-      gate.resolve(code)
-      return
-    }
-    skipOtpDismiss.current = true
-    gate.reject(new Error('Verification cancelled'))
-  }
-
-  const cloudShareCount = Object.values(cloudShares).filter((s) => s?.trim()).length
-
-  const retrieveCloudShare = async (operator: TrustholderOperator) => {
-    if (cloudBusy) return
-    setCloudBusy(operator)
-    setCloudStatus(null)
-    try {
-      const result = await retrieveShareFromTrustholder({
-        operator,
-        email: cloudEmail,
-        onProgress: (p) => {
-          if (p.message) setCloudStatus(p.message)
-        },
-        onOtpNeeded: requestOtp,
-      })
-      setCloudShares((prev) => ({ ...prev, [operator]: result.share }))
-      upsertTrustholderEnrollment({
-        operator: result.operator,
-        baseUrl: listTrustholderProviders().find((p) => p.operator === operator)!.baseUrl,
-        shareIndex: result.shareIndex,
-        integrity: result.share.split('.')[3] || '',
-        enrolledAt: new Date().toISOString(),
-        emailHint: result.emailHint,
-      })
-      setCloudStatus(`${result.label} slice ready`)
-      playWalletSound('soft')
-    } catch (err) {
-      onFail(err instanceof Error ? err.message : String(err))
-      setCloudStatus(null)
-    } finally {
-      setCloudBusy(null)
-    }
-  }
 
   useEffect(() => {
     if (recoveryOnly) setFormMode('phrase')
@@ -344,25 +260,6 @@ export function AuthScreen({
         return
       }
 
-      if (formMode === 'cloud') {
-        const collected = Object.values(cloudShares).filter(
-          (s): s is string => Boolean(s?.trim()),
-        )
-        if (collected.length < 2) {
-          throw new Error(
-            'Retrieve any two slices — HandCash, Haste, and/or your offline slice',
-          )
-        }
-        const recovered = recoverRootKeyFromBrc140Shares(collected)
-        const unlocked = await restoreVaultFromRootKey({
-          rootKeyHex: recovered.rootKeyHex,
-          password,
-          chain,
-        })
-        await finishCreated(unlocked, password, 'restore')
-        return
-      }
-
       if (formMode === 'key') {
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: normalizeRootKeyHex(rootKeyInput),
@@ -389,16 +286,19 @@ export function AuthScreen({
         handle: unlocked.record.handle,
         chain: unlocked.record.chain,
       })
-      // Local unlock only — chain sync + history auto-push run after enter (non-blocking).
-      let balanceSats = 0
-      try {
-        balanceSats = await Promise.race([
-          fetchBalanceSats(active.wallet),
+      // Enter with the last balance actually read for this identity. On a cold
+      // phone the fresh owned-cash scan can take >10s; racing it against a
+      // literal zero made a funded wallet look empty for the whole sync.
+      const cachedBalance = lastKnownBalance()
+      const freshBalance = fetchBalanceSats(active.wallet).catch(
+        () => cachedBalance ?? 0,
+      )
+      const balanceSats =
+        cachedBalance ??
+        (await Promise.race([
+          freshBalance,
           new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
-        ])
-      } catch {
-        balanceSats = 0
-      }
+        ]))
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
       clearUnlockNudge()
@@ -417,8 +317,15 @@ export function AuthScreen({
         },
         balanceSats,
       )
+      void freshBalance.then((fresh) => {
+        if (fresh !== balanceSats) onBalanceRefreshed(fresh)
+      })
       setSessionBackupPassword(password)
-      void recomposeWallet({ password, reason: 'unlock' })
+      void recomposeWallet({ password, reason: 'unlock' }).then((result) => {
+        if (result.spendableSats != null) {
+          onBalanceRefreshed(result.spendableSats)
+        }
+      })
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err)
       setPreparing(null)
@@ -465,9 +372,7 @@ export function AuthScreen({
   const lede =
     formMode === 'phrase'
       ? 'Enter your BRC-75 recovery phrase, then set a password for this device. Same phrase = same identity on Desktop or Mobile.'
-      : formMode === 'cloud'
-        ? 'Set up this device from Cloud key backup. Sign in to HandCash and/or Haste with the deposit email, or add your offline slice — any two restore.'
-        : formMode === 'shares'
+      : formMode === 'shares'
           ? 'Paste any two BRC-140 key slices, then set a password for this device. Same slices = same identity.'
           : formMode === 'key'
             ? 'Paste your emergency root key (64 hex chars), then set a password for this device.'
@@ -664,67 +569,6 @@ export function AuthScreen({
           </>
         ) : null}
 
-        {formMode === 'cloud' ? (
-          <>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="cloud-email">Deposit email</label>
-              <input
-                id="cloud-email"
-                type="email"
-                autoComplete="email"
-                placeholder="Email used for HandCash / Haste backup"
-                value={cloudEmail}
-                onChange={(e) => setCloudEmail(e.target.value)}
-                autoFocus
-              />
-            </div>
-            <div className="auth-cloud-providers" role="group" aria-label="Trustholder slices">
-              {listTrustholderProviders().map((p) => {
-                const ready = Boolean(cloudShares[p.operator]?.trim())
-                return (
-                  <div key={p.operator} className="auth-cloud-row">
-                    <div>
-                      <strong>{p.label}</strong>
-                      <span>{ready ? 'Slice ready' : 'Not retrieved yet'}</span>
-                    </div>
-                    <button
-                      type="button"
-                      className="btn btn-ghost"
-                      disabled={Boolean(cloudBusy) || !cloudEmail.includes('@') || ready}
-                      onClick={() => void retrieveCloudShare(p.operator)}
-                    >
-                      {cloudBusy === p.operator ? 'Working…' : ready ? 'Done' : 'Retrieve'}
-                    </button>
-                  </div>
-                )
-              })}
-              <div className="field" data-aeon-part="field">
-                <label htmlFor="cloud-offline">Offline slice (optional)</label>
-                <textarea
-                  id="cloud-offline"
-                  rows={2}
-                  placeholder="Paste if you saved the offline key slice"
-                  value={cloudShares.offline ?? ''}
-                  onChange={(e) =>
-                    setCloudShares((prev) => ({
-                      ...prev,
-                      offline: e.target.value,
-                    }))
-                  }
-                  autoComplete="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                />
-              </div>
-            </div>
-            <p className="auth-lede auth-restore-note" role="status">
-              {cloudStatus
-                ? cloudStatus
-                : `${cloudShareCount} of 2+ slices ready — retrieve cloud providers or paste offline.`}
-            </p>
-          </>
-        ) : null}
-
         {formMode === 'shares' ? (
           <>
             <div className="field" data-aeon-part="field">
@@ -829,9 +673,7 @@ export function AuthScreen({
           className="btn btn-primary auth-submit"
           data-aeon-part="trigger"
           data-aeon-state={stateAttr}
-          disabled={
-            submitting || (formMode === 'cloud' && cloudShareCount < 2) || Boolean(cloudBusy)
-          }
+          disabled={submitting}
         >
           {submitting ? 'Working…' : primaryLabel}
         </button>
@@ -862,64 +704,6 @@ export function AuthScreen({
         ) : null}
       </form>
 
-      <Prompt.Root
-        open={Boolean(otpGate)}
-        status={otpGate ? 'pending' : 'dismissed'}
-        onOpenChange={(open) => {
-          if (open) return
-          if (skipOtpDismiss.current) {
-            skipOtpDismiss.current = false
-            return
-          }
-          closeOtp(false)
-        }}
-      >
-        <Prompt.Portal>
-          <Prompt.Backdrop className="permission-backdrop" />
-          <Prompt.Positioner className="permission-positioner">
-            {otpGate ? (
-              <Prompt.Content
-                className="panel modal permission-modal"
-                data-aeon-scope="trustholder-restore-otp"
-              >
-                <Prompt.Title>Verify {otpGate.label}</Prompt.Title>
-                <Prompt.Description>
-                  {otpGate.hint
-                    ? `Code sent to ${otpGate.hint}`
-                    : otpGate.devCode
-                      ? 'Local-only code (email not configured on this Worker)'
-                      : 'Enter the email verification code'}
-                </Prompt.Description>
-                <div className="field" style={{ marginTop: 12 }}>
-                  <label htmlFor="auth-trustholder-otp">Code</label>
-                  <input
-                    id="auth-trustholder-otp"
-                    type="text"
-                    inputMode="numeric"
-                    autoComplete="one-time-code"
-                    value={otpDraft}
-                    onChange={(e) => setOtpDraft(e.target.value)}
-                    autoFocus
-                  />
-                </div>
-                <div className="actions" style={{ marginTop: 12 }}>
-                  <button type="button" className="btn btn-ghost" onClick={() => closeOtp(false)}>
-                    Cancel
-                  </button>
-                  <button
-                    type="button"
-                    className="btn btn-primary"
-                    disabled={!otpDraft.trim()}
-                    onClick={() => closeOtp(true)}
-                  >
-                    Continue
-                  </button>
-                </div>
-              </Prompt.Content>
-            ) : null}
-          </Prompt.Positioner>
-        </Prompt.Portal>
-      </Prompt.Root>
     </section>
   )
 }

@@ -31,6 +31,21 @@ let previousSession: AppLogEntry[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let dirty = false
 
+const SENSITIVE_FIELD =
+  /((?:mnemonic|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization)\s*["']?\s*[:=]\s*["']?)([^"',}\]\s]+|[^"']{2,})/gi
+const JSON_SENSITIVE_FIELD =
+  /("(?:mnemonic|rootKeyHex|privateKey|spendKeyHex|password|passphrase|secret|authorization)"\s*:\s*")([^"]*)(")/gi
+
+/**
+ * Logs are durable and may be uploaded automatically. Redact custody material
+ * before it reaches either sink, including objects serialized by console capture.
+ */
+export function redactAppLogMessage(message: string): string {
+  return message
+    .replace(JSON_SENSITIVE_FIELD, '$1[REDACTED]$3')
+    .replace(SENSITIVE_FIELD, '$1[REDACTED]')
+}
+
 function emit() {
   const snapshot = entries.slice()
   for (const l of listeners) l(snapshot)
@@ -72,7 +87,7 @@ function scheduleFlush(): void {
 }
 
 export function appendAppLog(level: AppLogLevel, message: string): void {
-  const line = String(message ?? '').trim()
+  const line = redactAppLogMessage(String(message ?? '')).trim()
   if (!line) return
   entries.push({ at: Date.now(), level, message: line.slice(0, 4000) })
   if (entries.length > MAX) entries.splice(0, entries.length - MAX)
@@ -203,6 +218,9 @@ function startStallWatch(): void {
     // Background tabs have their timers throttled on purpose; that is not a stall.
     if (document.visibilityState === 'hidden') return
     if (previousTick < becameVisibleAt) return
+    // Some WebViews resume timers before dispatching visibilitychange. Multi-
+    // minute drift is suspension/sleep, not a continuously blocked JS task.
+    if (drift > 60_000) return
     if (drift < STALL_WARN_MS) return
     appendAppLog('warn', `[stall] main thread blocked ${Math.round(drift)}ms`)
     flushNow()
@@ -235,7 +253,9 @@ function startLongTaskWatch(): void {
 }
 
 /** Periodic proof of life, so a log tail shows exactly when the app stopped. */
-const HEARTBEAT_MS = 5_000
+// A 5s heartbeat filled and serialized the durable ring continuously while the
+// app was hidden. Thirty seconds still locates crashes without becoming workload.
+const HEARTBEAT_MS = 30_000
 let heartbeatTimer: ReturnType<typeof setInterval> | null = null
 
 function startHeartbeat(): void {

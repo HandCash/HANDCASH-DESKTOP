@@ -21,7 +21,6 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
-import { TRUSTHOLDERS_ENABLED } from '../wallet/walletConfig'
 import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
 
 type SettingItem = {
@@ -52,7 +51,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       {
         id: 'device-handoff',
         label: 'Device backup',
-        description: 'One-way sealed recovery',
+        description: 'Keep a copy on your other device',
       },
       {
         id: 'import-phrase',
@@ -128,7 +127,6 @@ export function settingLabel(id: SettingId): string {
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
-  if (id === 'trustholder-backup') return TRUSTHOLDERS_ENABLED ? 'Cloud key backup' : 'Key slices'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'import-phrase') return 'Import phrase'
   if (id === 'history-backup') return 'History'

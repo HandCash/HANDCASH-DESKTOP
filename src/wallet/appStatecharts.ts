@@ -43,7 +43,7 @@ const MASTER = `stateDiagram-v2
   settingsFlow --> changePassword : change pw
   settingsFlow --> backupKeys : keys
   settingsFlow --> historyBackup : history
-  settingsFlow --> deviceLink : device backup
+  settingsFlow --> deviceBackup : device backup
   settingsFlow --> aboutHandCash : about
   settingsFlow --> wipeWallet : wipe
   aboutHandCash --> statecharts : view charts
@@ -66,7 +66,7 @@ const MASTER = `stateDiagram-v2
   changePassword : Change password
   backupKeys : Keys backup
   historyBackup : History backup
-  deviceLink : Backup link · one-way recovery
+  deviceBackup : Device backup · one-way copy
   aboutHandCash : About HandCash
   statecharts : Statecharts
   wipeWallet : Wipe wallet
@@ -513,9 +513,9 @@ const SETTINGS = `stateDiagram-v2
   backupKeys --> settingsHome : back
   deviceHandoff --> backupKeys : open keys
   deviceHandoff --> historyBackup : open history
-  deviceHandoff --> linkDevices : add / open device
+  deviceHandoff --> deviceBackupFlow : add / open device
   deviceHandoff --> settingsHome : back
-  linkDevices --> deviceHandoff : done
+  deviceBackupFlow --> deviceHandoff : done
   historyBackup --> settingsHome : back
   historyBackup --> deviceHandoff : back
   historyBackup --> backupKeys : back
@@ -528,14 +528,14 @@ const SETTINGS = `stateDiagram-v2
   changePassword : Password
   backupKeys : Keys
   deviceHandoff : Device backup
-  linkDevices : Devices · one-way recovery
+  deviceBackupFlow : Devices · one-way copy
   historyBackup : History
   wipeWallet : Wipe
   aboutHandCash : About HandCash
   statecharts : Statecharts
 `
 
-const DEVICE_LINK = `stateDiagram-v2
+const DEVICE_BACKUP = `stateDiagram-v2
   direction TB
   [*] --> devices
   devices --> scanning : SCAN
@@ -574,7 +574,7 @@ const DEVICE_LINK = `stateDiagram-v2
     opened : Phrase / emergency key
   }
 
-  devices : Device list · my code
+  devices : Device list · this device’s code
   scanning : Camera
 `
 
@@ -1088,10 +1088,10 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: SETTINGS,
   },
   {
-    id: 'deviceLink',
+    id: 'deviceBackup',
     label: 'Device backup',
-    caption: 'deviceBackupMachine — devices · one direction · recover',
-    source: DEVICE_LINK,
+    caption: 'deviceBackupMachine — devices · one direction · restore',
+    source: DEVICE_BACKUP,
   },
   {
     id: 'changePassword',

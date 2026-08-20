@@ -19,9 +19,12 @@ function ensureMermaid(mermaid: typeof import('mermaid').default) {
     typeof document !== 'undefined' && document.documentElement.dataset.aeonMode === 'light'
   mermaid.initialize({
     startOnLoad: false,
-    securityLevel: 'loose',
+    // Statechart source is bundled, but the rendered SVG still reaches a DOM
+    // HTML sink below. Keep Mermaid's sanitizer enabled so future dynamic
+    // labels cannot become script-capable markup.
+    securityLevel: 'strict',
     theme: 'base',
-    htmlLabels: true,
+    htmlLabels: false,
     wrap: true,
     fontFamily: 'IBM Plex Sans, Instrument Sans, system-ui, sans-serif',
     themeVariables: light

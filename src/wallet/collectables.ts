@@ -183,11 +183,17 @@ type CollectablesListener = (items: Collectable[]) => void
 
 const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
 const SEEDED_ITEMS_KEY = 'handcash.collectables.seeded.v1'
+/** Keep startup JSON bounded; the live basket is paged from IndexedDB. */
+const DURABLE_LIST_LIMIT = 1_000
+/** One page is small enough to paint without retaining an 800k-row wallet. */
+const LIST_PAGE_SIZE = 1_000
 
 let cachedCollectables: Collectable[] = []
 /** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
 const collectablesListeners = new Set<CollectablesListener>()
+let listedOutputCursor = 0
+let listedOutputTotal = 0
 
 /**
  * Address UTXO scan is the ownership oracle. Cache it briefly so Collect and
@@ -271,12 +277,13 @@ function loadDurableList(): Collectable[] {
 
 function persistDurableList(items: Collectable[]): void {
   try {
+    const bounded = items.slice(0, DURABLE_LIST_LIMIT)
     durableSetItem(
       LIST_CACHE_KEY,
       JSON.stringify({
         at: Date.now(),
         identityKey: getActiveWallet()?.identityKey ?? null,
-        items: items.map((item) => ({
+        items: bounded.map((item) => ({
           outpoint: item.outpoint,
           origin: item.origin,
           ...(item.content ? { content: item.content } : {}),
@@ -339,7 +346,10 @@ function isProtectedFromGhostDrop(outpoint: string): boolean {
   return true
 }
 
-function setCollectablesCache(items: Collectable[]) {
+function setCollectablesCache(
+  items: Collectable[],
+  options: { announceArrivals?: boolean } = {},
+) {
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint)),
   )
@@ -371,7 +381,7 @@ function setCollectablesCache(items: Collectable[]) {
   // Toast / chime / OS banner only once the card is on the list. Ingest used
   // to announce first; self-send then showed "Item received" on an empty grid.
   // Durable dedupe in announceItemsReceived skips unlock rediscovery.
-  if (arrived.length === 0) return
+  if (arrived.length === 0 || options.announceArrivals === false) return
   if (pauseCollectableArrivalToasts > 0) return
   void yieldToUi().then(() => {
     announceItemsReceived(arrived)
@@ -397,6 +407,8 @@ function setCollectablesCache(items: Collectable[]) {
 export function clearCollectablesCache(): void {
   cachedCollectables = []
   collectablesHydrated = false
+  listedOutputCursor = 0
+  listedOutputTotal = 0
   cachedLiveOneSats = null
   cachedLiveAllOutpoints = null
   firstSeenAt.clear()
@@ -432,6 +444,18 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
 
 export function getCachedCollectables(): Collectable[] {
   return cachedCollectables.slice()
+}
+
+export function getCollectablePageStatus(): {
+  loadedOutputs: number
+  totalOutputs: number
+  hasMore: boolean
+} {
+  return {
+    loadedOutputs: listedOutputCursor,
+    totalOutputs: listedOutputTotal,
+    hasMore: listedOutputCursor < listedOutputTotal,
+  }
 }
 
 export function areCollectablesHydrated(): boolean {
@@ -1481,6 +1505,7 @@ async function walkInscription(
 }
 
 let listInFlight: Promise<Collectable[]> | null = null
+let listMoreInFlight: Promise<Collectable[]> | null = null
 
 /**
  * Ceiling on one basket read.
@@ -1691,7 +1716,7 @@ export function listCollectables(
   active?: ActiveWallet | null,
 ): Promise<Collectable[]> {
   if (listInFlight) return listInFlight
-  const run = listCollectablesNow(active)
+  const run = listCollectablesNow(active, false)
   listInFlight = run
   void run
     .catch(() => {})
@@ -1701,19 +1726,46 @@ export function listCollectables(
   return run
 }
 
+/**
+ * Append the next-oldest wallet page. The normal refresh intentionally resets
+ * to the newest page so an 800k-output wallet never enters renderer memory in
+ * one operation.
+ */
+export function loadMoreCollectables(
+  active?: ActiveWallet | null,
+): Promise<Collectable[]> {
+  if (listMoreInFlight) return listMoreInFlight
+  if (listedOutputCursor >= listedOutputTotal && collectablesHydrated) {
+    return Promise.resolve(getCachedCollectables())
+  }
+  const run = listCollectablesNow(active, true)
+  listMoreInFlight = run
+  void run
+    .catch(() => {})
+    .then(() => {
+      if (listMoreInFlight === run) listMoreInFlight = null
+    })
+  return run
+}
+
 async function listCollectablesNow(
   active?: ActiveWallet | null,
+  append = false,
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
 
   let outputs: ItemOutput[] = []
+  const pageOffset = append ? listedOutputCursor : 0
 
   try {
     const result = await Promise.race([
       wallet.wallet.listOutputs({
         basket: '1sat',
-        limit: 1000,
+        limit: LIST_PAGE_SIZE,
+        // Negative offsets are newest-first. Keep a raw-output cursor because
+        // sent/non-item rows may be filtered after the wallet page returns.
+        offset: -(pageOffset + 1),
         includeTags: true,
         // Locking scripts are small and let us spare covenant tips from
         // address-scan ghosting. Never pull customInstructions for a whole
@@ -1729,7 +1781,7 @@ async function listCollectablesNow(
         ),
       ),
     ])
-    outputs = (result.outputs ?? []).map((o) => {
+    const page = (result.outputs ?? []).map((o) => {
       const lockingScript = normalizeLockingScriptHex(
         (o as { lockingScript?: unknown }).lockingScript,
       )
@@ -1740,6 +1792,20 @@ async function listCollectablesNow(
         lockingScript: lockingScript || undefined,
       }
     })
+    listedOutputTotal = Math.max(0, Math.trunc(result.totalOutputs ?? page.length))
+    listedOutputCursor = Math.min(
+      listedOutputTotal,
+      pageOffset + (result.outputs?.length ?? 0),
+    )
+    if (append) {
+      const byOutpoint = new Map<string, ItemOutput>()
+      for (const output of [...lastItemOutputs, ...page]) {
+        byOutpoint.set(outpointKey(output.outpoint), output)
+      }
+      outputs = [...byOutpoint.values()]
+    } else {
+      outputs = page
+    }
   } catch (err) {
     console.warn('[collectables] listOutputs failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
@@ -1764,7 +1830,11 @@ async function listCollectablesNow(
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:
   // keepLive | graceHold | keepCovenant | ghostDrop — only ghostDrop relinquish.
   // Covenant tips never appear on the P2PKH address scan (only their beacon does).
-  const live = resolveLiveOneSatKeys(wallet)
+  // A full address-indexer scan defeats paging for huge wallets. Their local
+  // basket is reconciled by scheduled chain ingest; use an already-cached scan
+  // when one exists, but do not start another 800k-row network read here.
+  const live =
+    listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet)
   if (live) {
     // Do not un-hide sent tips just because a lagging address scan still lists
     // them. That put a just-sent NFT back in Collect so the user sent it twice.
@@ -1853,7 +1923,7 @@ async function listCollectablesNow(
   // Everything the list renders (name, app, image) comes from the output itself
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
-  setCollectablesCache(deduped)
+  setCollectablesCache(deduped, { announceArrivals: !append })
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.
   const ownRead = listInFlight

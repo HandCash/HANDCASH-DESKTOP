@@ -589,37 +589,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 .auth-mode-switch[aria-label='Restore method'] {
-  grid-template-columns: repeat(4, 1fr);
-}
-
-.auth-cloud-providers {
-  display: flex;
-  flex-direction: column;
-  gap: 10px;
-  margin-bottom: 8px;
-}
-
-.auth-cloud-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 10px 12px;
-  border-radius: var(--radius);
-  border: 1px solid hsl(var(--border));
-  background: var(--hc-sunken);
-}
-
-.auth-cloud-row strong {
-  display: block;
-  font-size: 0.9rem;
-}
-
-.auth-cloud-row span {
-  display: block;
-  margin-top: 2px;
-  font-size: 0.75rem;
-  color: var(--hc-muted);
+  grid-template-columns: repeat(3, 1fr);
 }
 
 .auth-mode-tab {
@@ -2778,10 +2748,6 @@ button.wallet-detail-value.is-copied {
   font-size: 0.82rem;
   font-weight: 700;
   color: var(--hc-muted);
-}
-
-.key-slice-leading--cloud {
-  font-size: 0.95rem;
 }
 
 .key-slice-row-text {
@@ -6836,18 +6802,35 @@ a.app-details-host:hover {
 
 [data-aeon-scope='fungible-details'] .fungible-details-hero {
   display: grid;
-  grid-template-columns: 96px minmax(0, 1fr);
+  grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
-  gap: 16px;
+  gap: 14px;
   padding: 14px;
   border: 1px solid var(--hc-border);
   border-radius: 14px;
   background: var(--hc-sunken-soft);
 }
 
+/* The avatar size buckets round 72 up to 112, which used to overflow the hero
+   column and run the heading text under the icon. Pin it to the column. */
+[data-aeon-scope='fungible-details'] .fungible-details-hero .fungible-avatar {
+  width: 72px !important;
+  height: 72px !important;
+  border-radius: 10px !important;
+}
+
 .fungible-details-heading {
   display: grid;
-  gap: 3px;
+  gap: 2px;
+  min-width: 0;
+}
+
+/* Symbol and the one authenticity badge share a line so the hero stays three
+   lines tall instead of stacking five different type sizes. */
+.fungible-details-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -6863,22 +6846,25 @@ a.app-details-host:hover {
 .fungible-details-heading h2 {
   margin: 0;
   overflow: hidden;
-  font-size: 1.35rem;
-  line-height: 1.15;
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1.2;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .fungible-details-balance {
-  font-size: 1.7rem;
+  font-size: 1.8rem;
   font-variant-numeric: tabular-nums;
-  line-height: 1.1;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
 }
 
 .fungible-details-issuer {
   overflow: hidden;
   color: var(--hc-muted);
-  font-size: 0.78rem;
+  font-size: 0.76rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -6886,8 +6872,8 @@ a.app-details-host:hover {
 /* Attestation is the one authenticity fact worth a badge; the row below it
    carries the detail. */
 .fungible-attest {
+  flex: 0 0 auto;
   justify-self: start;
-  margin-top: 4px;
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 0.66rem;
@@ -6906,8 +6892,39 @@ a.app-details-host:hover {
   color: var(--hc-muted);
 }
 
-.fungible-metrics {
+/* Three equal cards, not a run of loose text. Values read as data; labels are
+   quiet captions beneath them. Scoped so it outranks the Panda recipe. */
+[data-aeon-scope='fungible-details'] .fungible-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
   width: 100%;
+}
+
+[data-aeon-scope='fungible-details'] .fungible-metrics [data-aeon-part='chip'] {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 80%, transparent);
+  border-radius: 10px;
+  background: var(--hc-sunken-soft);
+  text-align: left;
+}
+
+[data-aeon-scope='fungible-details'] .fungible-metrics [data-aeon-part='value'] {
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 650;
+  line-height: 1.2;
+}
+
+[data-aeon-scope='fungible-details'] .fungible-metrics [data-aeon-part='label'] {
+  color: var(--hc-muted);
+  font-size: 0.62rem;
+  font-weight: 650;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
 }
 
 .fungible-send-notice {
@@ -7072,12 +7089,16 @@ a.app-details-host:hover {
 
 @media (max-width: 560px) {
   [data-aeon-scope='fungible-details'] .fungible-details-hero {
-    grid-template-columns: 72px minmax(0, 1fr);
+    grid-template-columns: 56px minmax(0, 1fr);
   }
 
-  [data-aeon-scope='fungible-details'] .fungible-avatar--md {
-    width: 72px !important;
-    height: 72px !important;
+  [data-aeon-scope='fungible-details'] .fungible-details-hero .fungible-avatar {
+    width: 56px !important;
+    height: 56px !important;
+  }
+
+  .fungible-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 
   .fungible-detail-row {
@@ -9663,7 +9684,19 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   color: var(--hc-danger, #ef6464);
 }
 
-/* Device backup — one screen per step, one line per device. */
+/* Burn is the last thing in any asset action row and sits away from the
+   everyday actions so it is never the button next to Send. */
+.asset-burn-last {
+  margin-inline-start: auto;
+}
+
+@media (max-width: 560px) {
+  .asset-burn-last {
+    margin-inline-start: 0;
+  }
+}
+
+/* Device backup — storage location first, then one line per device. */
 [data-aeon-scope='device-backup'] {
   display: grid;
   gap: 14px;
@@ -9695,6 +9728,44 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
 
 .device-backup-head p[data-aeon-state='warn'] {
   color: var(--hc-danger, #ef6464);
+}
+
+.device-backup-sections {
+  display: grid;
+  gap: 20px;
+}
+
+.device-backup-section {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.device-backup-section-head {
+  display: grid;
+  gap: 2px;
+}
+
+.device-backup-section-head h3 {
+  margin: 0;
+  color: var(--hc-text);
+  font-size: 0.86rem;
+  font-weight: 650;
+}
+
+.device-backup-section-head p,
+.device-backup-section-empty {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+  line-height: 1.4;
+}
+
+.device-backup-section-empty {
+  padding: 11px 13px;
+  border: 1px dashed hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: var(--hc-sunken-soft);
 }
 
 .device-backup-list,
@@ -9762,7 +9833,21 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   margin-top: 4px;
 }
 
-.device-backup-links {
+/* Remove is destructive: last in the row, pushed away from Back. */
+.device-backup-foot .device-backup-remove {
+  margin-inline-start: auto;
+  color: var(--hc-danger, #ef6464);
+}
+
+/* Add sits under the sections it changes, separated by a rule so it never
+   reads as part of the last list. */
+.device-backup-add {
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid hsl(var(--border));
+}
+
+.device-backup-more {
   margin-top: 16px;
 }
 

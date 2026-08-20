@@ -1,6 +1,5 @@
 import { useState } from 'react'
 import {
-  BACKUP_SERVICES_LIVE,
   listWalletConfigOptions,
   type WalletConfigMode,
 } from '../wallet/walletConfig'
@@ -15,15 +14,13 @@ type Props = {
 }
 
 /**
- * Post-create only: choose Recommended / history-only / none.
+ * Post-create only: choose history backup or local-only.
  * Restore applies HandCash defaults in AuthScreen and skips this panel.
  * Custom history host is opt-in — otherwise everything is HandCash.
  */
 export function WalletSetupConfigPanel({ onDone }: Props) {
   const options = listWalletConfigOptions()
-  const [selected, setSelected] = useState<WalletConfigMode>(
-    BACKUP_SERVICES_LIVE ? 'recommended' : 'history',
-  )
+  const [selected, setSelected] = useState<WalletConfigMode>('history')
   const [customHost, setCustomHost] = useState(false)
   const [historyUrl, setHistoryUrl] = useState(handCashHistoryUrl())
   const [busy, setBusy] = useState(false)

@@ -15,6 +15,9 @@ import type { ActiveWallet } from './session'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
 
+/** Ceiling on proof hydration for a tip spend before we sign against raw BEEF. */
+const HYDRATE_BUDGET_MS = 6_000
+
 export function normalizeIssuerPubKey(raw: string | undefined | null): string | null {
   if (!raw || typeof raw !== 'string') return null
   const hex = raw.trim().toLowerCase().replace(/^0x/, '')
@@ -600,6 +603,42 @@ function broadcastSafeBeefBinary(beef: Beef): number[] | undefined {
 }
 
 /**
+ * `hydrateInputBeef` walks the ancestry and fetches a proof per tx. On a chain
+ * of freshly-created tips those proofs do not exist yet, so an unbounded call
+ * spends the whole bridge deadline learning that. Cap it.
+ */
+async function hydrateWithinBudget(
+  active: ActiveWallet,
+  beef: Beef,
+): Promise<number[] | undefined> {
+  try {
+    return await Promise.race([
+      hydrateInputBeef(active, beef),
+      new Promise<undefined>((resolve) =>
+        setTimeout(() => resolve(undefined), HYDRATE_BUDGET_MS),
+      ),
+    ])
+  } catch (err) {
+    console.warn('[bsv21-issuer] inputBEEF hydrate failed', err)
+    return undefined
+  }
+}
+
+/**
+ * Serialize without asking whether the ancestry is proven. Signing only needs
+ * each spend's source body; proofs are a broadcast concern.
+ */
+function rawBeefBinary(beef: Beef): number[] | undefined {
+  try {
+    const work = beef.clone()
+    work.atomicTxid = undefined
+    return work.toBinary()
+  } catch {
+    return undefined
+  }
+}
+
+/**
  * Build inputBEEF covering every spend outpoint with raw tip bodies (required
  * for signable `sourceTransaction`) and full parent merkle proofs (required
  * for processAction broadcast — no txidOnly stubs).
@@ -701,10 +740,28 @@ async function ensureBsv21InputBeef(
     }
   }
 
-  const shaped = await hydrateInputBeef(active, merged)
+  // A mint that spends the auth tip of a genesis deployed seconds ago cannot be
+  // made broadcast-safe: the genesis is unmined, so no merkle proof exists for
+  // it or for whichever change ancestors are still in the mempool. Hydration
+  // asks the indexer for those proofs anyway, one 8s timeout per ancestor, and
+  // the whole createAction outran the bridge deadline while the caller was told
+  // the mint had failed. Give hydration a fixed budget, then ship the raw
+  // BEEF: every spend body is present, so the toolbox can sign, and
+  // `trustSelf: 'known'` + `knownTxids` + `acceptDelayedBroadcast` already let
+  // the monitor post once headers catch up.
+  const shaped = await hydrateWithinBudget(active, merged)
   if (shaped) {
     for (const txid of txids) rememberBeefBinary(txid, shaped)
     return shaped
+  }
+
+  const raw = rawBeefBinary(merged)
+  if (raw) {
+    console.info(
+      '[bsv21-issuer] no proofs for the tip ancestry yet (unmined genesis) — signing against raw inputBEEF; monitor broadcasts when headers land',
+    )
+    for (const txid of txids) rememberBeefBinary(txid, raw)
+    return raw
   }
 
   console.warn(
@@ -810,7 +867,7 @@ export async function completeBsv21SignableWithRootP2pkh(
       wrap.mergeBeef(signable.tx)
       wrap.mergeTransaction(unsigned)
       wrap.atomicTxid = undefined
-      txBinary = await hydrateInputBeef(active, wrap)
+      txBinary = (await hydrateWithinBudget(active, wrap)) ?? rawBeefBinary(wrap)
     } catch (err) {
       console.warn('[bsv21-issuer] could not wrap signed mint tx for BEEF cache', err)
     }
@@ -818,7 +875,7 @@ export async function completeBsv21SignableWithRootP2pkh(
   if (txBinary?.length) {
     try {
       const stored =
-        (await hydrateInputBeef(active, Beef.fromBinary(txBinary))) ?? txBinary
+        (await hydrateWithinBudget(active, Beef.fromBinary(txBinary))) ?? txBinary
       rememberBeefBinary(txid, stored)
       txBinary = stored
     } catch {

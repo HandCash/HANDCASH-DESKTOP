@@ -1,6 +1,5 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
-import { TRUSTHOLDERS_ENABLED } from './walletConfig'
 
 export type NavSection =
   | 'activity'
@@ -15,7 +14,6 @@ export type SettingId =
   | 'backup'
   | 'backup-phrase'
   | 'split-backup'
-  | 'trustholder-backup'
   | 'device-handoff'
   | 'history-backup'
   | 'import-phrase'
@@ -177,11 +175,10 @@ export function openBurnFungible(tokenId: string) {
 
 function resolveSettingId(settingId: SettingId): SettingId {
   if (settingId === 'backup-phrase' || settingId === 'split-backup') return 'backup'
-  if (settingId === 'trustholder-backup' && !TRUSTHOLDERS_ENABLED) return 'backup'
   return settingId
 }
 
-/** Nested Settings screens (Keys → Cloud backup, About → Statecharts). */
+/** Nested Settings screens (for example About → Statecharts). */
 let settingBackStack: SettingId[] = []
 
 export function getSettingBackStack(): readonly SettingId[] {

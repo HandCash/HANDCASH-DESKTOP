@@ -10,8 +10,10 @@ import {
 } from '../wallet/collectionView'
 import {
   areCollectablesHydrated,
+  getCollectablePageStatus,
   getCachedCollectables,
   listCollectables,
+  loadMoreCollectables,
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
@@ -368,7 +370,7 @@ export function InventoryPanel() {
         void refresh('ownership')
         intervalId = window.setInterval(() => {
           void refresh('interval')
-        }, 60_000)
+        }, 5 * 60_000)
       }, 750)
       return () => {
         cancelled = true
@@ -383,7 +385,7 @@ export function InventoryPanel() {
     }, 2_500)
     intervalId = window.setInterval(() => {
       void refresh('interval')
-    }, 60_000)
+    }, 5 * 60_000)
     return () => {
       cancelled = true
       window.clearTimeout(deferTimer)
@@ -456,6 +458,21 @@ export function InventoryPanel() {
               ))}
             </ul>
           )}
+          {shownCount >= items.length && getCollectablePageStatus().hasMore ? (
+            <div className="actions collect-load-more">
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => void loadMoreCollectables()}
+              >
+                Load older items
+              </button>
+              <span className="settings-row-desc">
+                {getCollectablePageStatus().loadedOutputs.toLocaleString()} of{' '}
+                {getCollectablePageStatus().totalOutputs.toLocaleString()} wallet outputs checked
+              </span>
+            </div>
+          ) : null}
         </section>
       ) : null}
 

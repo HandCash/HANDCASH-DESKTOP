@@ -6,6 +6,7 @@ import log from 'electron-log'
 import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
+import { bridgeDeadlineMessage, bridgeDeadlineMs } from './bridgeDeadline.js'
 
 type HttpRequestEvent = {
   method: string
@@ -26,8 +27,6 @@ type PendingRequest = {
   reject: (error: Error) => void
   timer: ReturnType<typeof setTimeout>
 }
-
-const REQUEST_TIMEOUT_MS = 120_000
 
 let requestIdCounter = 1
 const pendingRequests = new Map<number, PendingRequest>()
@@ -176,7 +175,15 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
 
   const onHttpResponse = (_event: Electron.IpcMainEvent, response: HttpResponseEvent) => {
     const pending = pendingRequests.get(response.request_id)
-    if (!pending) return
+    if (!pending) {
+      // The HTTP call was already answered (deadline or client hang-up). Say so:
+      // for a spend this is the record that the wallet finished an action the
+      // caller was told nothing about.
+      log.warn(
+        `[HTTP] late renderer reply request_id=${response.request_id} status=${response.status} — HTTP call already answered`,
+      )
+      return
+    }
     clearTimeout(pending.timer)
     pending.resolve(response)
     pendingRequests.delete(response.request_id)
@@ -218,12 +225,8 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
         const timer = setTimeout(() => {
           if (!pendingRequests.has(request_id)) return
           pendingRequests.delete(request_id)
-          reject(
-            new Error(
-              `WALLET_BRIDGE_TIMEOUT: no renderer reply for ${req.method} ${req.path} within ${REQUEST_TIMEOUT_MS}ms`,
-            ),
-          )
-        }, REQUEST_TIMEOUT_MS)
+          reject(new Error(bridgeDeadlineMessage(req.method, req.path)))
+        }, bridgeDeadlineMs(req.path))
 
         pendingRequests.set(request_id, { resolve, reject, timer })
 
@@ -272,16 +275,19 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       if (message.includes('CLIENT_DISCONNECTED')) return
       setCorsHeaders(res)
       const isBridgeUnavailable = message.includes('WALLET_BRIDGE_UNAVAILABLE')
+      const isPending = message.includes('WALLET_BRIDGE_PENDING')
       const isTimeout = message.includes('WALLET_BRIDGE_TIMEOUT')
       log.warn(`[HTTP] bridge error: ${message}`)
-      res.status(isBridgeUnavailable || isTimeout ? 503 : 500).send(
+      res.status(isBridgeUnavailable || isPending || isTimeout ? 503 : 500).send(
         JSON.stringify({
           status: 'error',
-          code: isTimeout
-            ? 'WALLET_BRIDGE_TIMEOUT'
-            : isBridgeUnavailable
-              ? 'WALLET_BRIDGE_UNAVAILABLE'
-              : 'HTTP_BRIDGE_ERROR',
+          code: isPending
+            ? 'WALLET_BRIDGE_PENDING'
+            : isTimeout
+              ? 'WALLET_BRIDGE_TIMEOUT'
+              : isBridgeUnavailable
+                ? 'WALLET_BRIDGE_UNAVAILABLE'
+                : 'HTTP_BRIDGE_ERROR',
           description: message,
         }),
       )

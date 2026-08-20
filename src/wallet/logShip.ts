@@ -100,8 +100,10 @@ let autoShipTimer: ReturnType<typeof setInterval> | null = null
 let lastAutoShipAt = 0
 let autoShipInflight: Promise<void> | null = null
 
-const AUTO_SHIP_INTERVAL_MS = 45_000
-const AUTO_SHIP_MIN_GAP_MS = 12_000
+// Support tails are diagnostic snapshots, not telemetry. Avoid repeatedly
+// serializing and uploading ~300 KiB while a large wallet is idle.
+const AUTO_SHIP_INTERVAL_MS = 5 * 60_000
+const AUTO_SHIP_MIN_GAP_MS = 60_000
 
 /**
  * Background / event-driven upload so support can `GET /latest` without the

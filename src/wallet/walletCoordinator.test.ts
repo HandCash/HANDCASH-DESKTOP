@@ -188,6 +188,41 @@ describe('walletCoordinator runtime', () => {
     }
   })
 
+  it('keeps a hold alive while its work reports in, and still expires a dead one', async () => {
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    vi.useFakeTimers()
+    try {
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+      const lease = leaseSpendPriority('runExclusiveSpend')
+
+      // A mint that waits on proofs for an unmined genesis outlives the expiry.
+      for (let i = 0; i < 6; i++) {
+        vi.advanceTimersByTime(30_000)
+        lease.touch()
+      }
+      expect(shouldYieldChainIngestToSpend()).toBe(true)
+
+      // Stop reporting in and the hold lapses, as a leaked one must.
+      vi.advanceTimersByTime(91_000)
+      expect(shouldYieldChainIngestToSpend()).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('reports how long a spend has really been held, not since its last heartbeat', async () => {
+    const { leaseSpendPriority } = await import('./walletCoordinator')
+    vi.useFakeTimers()
+    try {
+      const lease = leaseSpendPriority('runExclusiveSpend')
+      vi.advanceTimersByTime(60_000)
+      lease.touch()
+      expect(describeSpendPriorityHolds()[0]).toBe('runExclusiveSpend (60s)')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('names the holder so a stall can be attributed', () => {
     requestSpendPriority('runExclusiveSpend')
     expect(describeSpendPriorityHolds()[0]).toMatch(/^runExclusiveSpend \(\d+s\)$/)

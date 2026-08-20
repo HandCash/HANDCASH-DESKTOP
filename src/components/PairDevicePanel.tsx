@@ -32,6 +32,11 @@ import {
   type OpenedDeviceKeyBackup,
 } from '../wallet/deviceKeyBackup'
 import { deviceBackupMachine } from '../machines/deviceBackupMachine'
+import {
+  backedUpToTitle,
+  groupDeviceBackups,
+  storingTitle,
+} from '../wallet/deviceBackupGroups'
 import { takePendingPairScan } from '../wallet/pendingPairScan'
 import { copyText } from '../wallet/clipboard'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
@@ -43,18 +48,44 @@ import { QrScanner } from './QrScanner'
 import { SkeletonQr } from './Skeleton'
 import { ScanQrIcon } from './icons'
 
-/** One line per device — the direction, never a checklist. */
+/** Detail-screen status. The list itself gets its meaning from section headers. */
 function directionLabel(peer: DeviceWallet, role: DeviceBackupRoleStatus, same: boolean): string {
   if (same) return 'Same wallet · no copy needed'
   switch (role.direction) {
     case 'reciprocal':
-      return 'Both directions — unsafe'
+      return 'Both sides hold a copy — unsafe'
     case 'this-wallet-to-peer':
-      return `This wallet → ${peer.label}`
+      return `This wallet is backed up to ${peer.label}`
     case 'peer-wallet-to-this-device':
-      return role.protectsPeer ? `${peer.label} → this device` : `${peer.label} → this device (copy missing)`
+      return role.protectsPeer
+        ? `This wallet is storing ${peer.label}’s backup`
+        : `${peer.label}’s backup is missing`
     default:
-      return 'No recovery copy'
+      return 'No copy either way yet'
+  }
+}
+
+/**
+ * In a section whose heading already states the direction, the row should add
+ * something new — the platform — instead of repeating the heading.
+ */
+function platformLabel(peer: DeviceWallet): string {
+  const raw = (peer.platform ?? '').trim().toLowerCase()
+  switch (raw) {
+    case 'darwin':
+    case 'mac':
+      return 'Mac'
+    case 'win32':
+    case 'windows':
+      return 'Windows'
+    case 'linux':
+      return 'Linux'
+    case 'android':
+      return 'Android'
+    case 'ios':
+      return 'iPhone or iPad'
+    default:
+      return raw ? raw.replace(/^./, (c) => c.toUpperCase()) : 'Device'
   }
 }
 
@@ -87,6 +118,7 @@ export function PairDevicePanel() {
 
   const active = getActiveWallet()
   const localIk = active?.identityKey ?? ''
+  const backupGroups = groupDeviceBackups(peers, localIk, getDeviceBackupRoleStatus)
   const { peerDeviceId, showMyCode, error } = snapshot.context
   const peer = peers.find((p) => p.deviceId === peerDeviceId) ?? null
   const busy =
@@ -141,7 +173,7 @@ export function PairDevicePanel() {
         upsertPeerFromSealedBackup(pkg)
         setPaste('')
         send({ type: 'SCANNED', peerDeviceId: pkg.fromDeviceId })
-        toastSuccess('Copy stored', `You can now recover ${pkg.fromLabel}.`)
+        toastSuccess('Copy stored', `This wallet can now restore ${pkg.fromLabel}.`)
         playWalletSound('success')
       } catch (err) {
         playWalletSound('error')
@@ -169,7 +201,7 @@ export function PairDevicePanel() {
         })
         setPaste('')
         send({ type: 'SCANNED', peerDeviceId: added.deviceId })
-        toastSuccess('Device added', 'Now choose one recovery direction.')
+        toastSuccess('Device added', 'Now choose which device keeps the copy.')
         playWalletSound('success')
         return
       }
@@ -245,7 +277,7 @@ export function PairDevicePanel() {
       upsertPeerFromSealedBackup(pkg)
       setPaste('')
       send({ type: 'IMPORT_OK' })
-      toastSuccess('Copy stored', `You can now recover ${pkg.fromLabel}.`)
+      toastSuccess('Copy stored', `This wallet can now restore ${pkg.fromLabel}.`)
       playWalletSound('success')
     } catch (err) {
       playWalletSound('error')
@@ -298,8 +330,8 @@ export function PairDevicePanel() {
     return (
       <div className="device-backup" data-aeon-scope="device-backup" data-aeon-state="recovery">
         <header className="device-backup-head">
-          <h3>Recover {name}</h3>
-          <p>Restore this on a new device, then remove {name} here.</p>
+          <h3>Restore {name}</h3>
+          <p>Enter this on the new device, then remove {name} here.</p>
         </header>
 
         {error ? (
@@ -416,8 +448,10 @@ export function PairDevicePanel() {
                 className="device-backup-row"
                 onClick={() => send({ type: 'PROTECT_LOCAL' })}
               >
-                <ListRow.Label>Protect this wallet</ListRow.Label>
-                <ListRow.Description>{peer.label} can recover it</ListRow.Description>
+                <ListRow.Label>Back up this wallet to {peer.label}</ListRow.Label>
+                <ListRow.Description>
+                  {peer.label} keeps the encrypted copy and can restore this wallet
+                </ListRow.Description>
               </ListRow.Root>
             </li>
             <li>
@@ -425,8 +459,10 @@ export function PairDevicePanel() {
                 className="device-backup-row"
                 onClick={() => send({ type: 'PROTECT_PEER' })}
               >
-                <ListRow.Label>Protect {peer.label}</ListRow.Label>
-                <ListRow.Description>This device can recover it</ListRow.Description>
+                <ListRow.Label>Store {peer.label}’s backup on this device</ListRow.Label>
+                <ListRow.Description>
+                  This wallet keeps the encrypted copy and can restore {peer.label}
+                </ListRow.Description>
               </ListRow.Root>
             </li>
           </ul>
@@ -434,6 +470,9 @@ export function PairDevicePanel() {
 
         {sealing ? (
           <>
+            <p className="settings-hint">
+              Seals this wallet’s keys so only {peer.label} can open the copy.
+            </p>
             <div className="field" data-aeon-part="field">
               <label htmlFor="seal-password">Your unlock password</label>
               <input
@@ -491,6 +530,10 @@ export function PairDevicePanel() {
 
         {importing ? (
           <>
+            <p className="settings-hint">
+              On {peer.label}, choose “Back up this wallet to …”, then scan the code it
+              shows.
+            </p>
             <div className="actions">
               <button
                 type="button"
@@ -542,15 +585,16 @@ export function PairDevicePanel() {
                   send({ type: 'OPEN_RECOVERY', peerDeviceId: peer.deviceId })
                 }}
               >
-                Recover {peer.label}
+                Restore {peer.label}
               </button>
             ) : null}
             <button type="button" className="btn btn-ghost" onClick={leave}>
               Back
             </button>
+            {/* Destructive last, and set apart from the everyday actions. */}
             <button
               type="button"
-              className="btn btn-ghost"
+              className="btn btn-ghost device-backup-remove"
               onClick={() => {
                 playWalletSound('soft')
                 removePeerDevice(peer.deviceId)
@@ -567,9 +611,78 @@ export function PairDevicePanel() {
     )
   }
 
+  const openDevice = (deviceId: string) =>
+    send({ type: 'OPEN_DEVICE', peerDeviceId: deviceId })
+
   return (
     <div className="device-backup" data-aeon-scope="device-backup" data-aeon-state="devices">
-      <div className="actions">
+      {error ? (
+        <StatusBanner.Root tone="danger" status="add-failed">
+          <StatusBanner.Copy>
+            <StatusBanner.Body>{error}</StatusBanner.Body>
+          </StatusBanner.Copy>
+        </StatusBanner.Root>
+      ) : null}
+
+      {peers.length === 0 ? (
+        <EmptyState
+          icon={<ScanQrIcon size={22} />}
+          title="No device backups yet"
+          body="Add another device, then choose which one keeps the encrypted copy."
+        />
+      ) : (
+        <div className="device-backup-sections">
+          <DeviceBackupSection
+            title={backedUpToTitle(backupGroups.elsewhere.length)}
+            description="Each one can restore this wallet if you lose this device."
+            empty="Nothing holds a copy of this wallet yet."
+            headingSaysDirection
+            peers={backupGroups.elsewhere}
+            localIdentityKey={localIk}
+            onOpen={openDevice}
+          />
+          <DeviceBackupSection
+            title={storingTitle(backupGroups.here.length)}
+            description="You can restore each of these wallets from here."
+            empty="No other wallet keeps its copy here."
+            headingSaysDirection
+            peers={backupGroups.here}
+            localIdentityKey={localIk}
+            onOpen={openDevice}
+          />
+          {backupGroups.setup.length > 0 ? (
+            <DeviceBackupSection
+              title="Waiting on a choice"
+              description="Open a device to pick which side keeps the copy."
+              peers={backupGroups.setup}
+              localIdentityKey={localIk}
+              onOpen={openDevice}
+            />
+          ) : null}
+          {backupGroups.sameWallet.length > 0 ? (
+            <DeviceBackupSection
+              title="Already this wallet"
+              description="Same keys on both devices, so no copy is needed."
+              peers={backupGroups.sameWallet}
+              localIdentityKey={localIk}
+              onOpen={openDevice}
+            />
+          ) : null}
+          {backupGroups.attention.length > 0 ? (
+            <DeviceBackupSection
+              title="Needs attention"
+              description="A copy is missing, or both sides hold one. Open the device to fix it."
+              peers={backupGroups.attention}
+              localIdentityKey={localIk}
+              onOpen={openDevice}
+            />
+          ) : null}
+        </div>
+      )}
+
+      {/* Actions sit under the state they change, and adding a device is the
+          only primary here. */}
+      <div className="actions device-backup-add">
         <button
           type="button"
           className="btn btn-primary"
@@ -578,7 +691,7 @@ export function PairDevicePanel() {
             send({ type: 'SCAN' })
           }}
         >
-          Scan a device
+          Add a device
         </button>
         <button
           type="button"
@@ -588,12 +701,13 @@ export function PairDevicePanel() {
             send({ type: 'TOGGLE_MY_CODE' })
           }}
         >
-          {showMyCode ? 'Hide my code' : 'Show my code'}
+          {showMyCode ? 'Hide this device’s code' : 'Show this device’s code'}
         </button>
       </div>
 
       {showMyCode ? (
         <div className="device-backup-qr">
+          <p>Scan this on the other device</p>
           {qrUrl ? (
             <DeferredImage
               src={qrUrl}
@@ -620,44 +734,69 @@ export function PairDevicePanel() {
           </div>
         </div>
       ) : null}
+    </div>
+  )
+}
 
-      {error ? (
-        <StatusBanner.Root tone="danger" status="add-failed">
-          <StatusBanner.Copy>
-            <StatusBanner.Body>{error}</StatusBanner.Body>
-          </StatusBanner.Copy>
-        </StatusBanner.Root>
-      ) : null}
-
-      {peers.length === 0 ? (
-        <EmptyState
-          icon={<ScanQrIcon size={22} />}
-          title="No backup device"
-          body="Scan another device to give one of the two wallets a sealed recovery copy."
-        />
-      ) : (
+function DeviceBackupSection({
+  title,
+  description,
+  empty,
+  /** True when the heading already says the direction — rows show platform. */
+  headingSaysDirection = false,
+  peers,
+  localIdentityKey,
+  onOpen,
+}: {
+  title: string
+  description: string
+  empty?: string
+  headingSaysDirection?: boolean
+  peers: DeviceWallet[]
+  localIdentityKey: string
+  onOpen: (deviceId: string) => void
+}) {
+  return (
+    <section className="device-backup-section">
+      <header className="device-backup-section-head">
+        <h3>{title}</h3>
+        {/* An empty section is explained by its one line below; two lines of
+            prose for nothing is the noise this screen had. */}
+        {peers.length > 0 ? <p>{description}</p> : null}
+      </header>
+      {peers.length > 0 ? (
         <ul className="device-backup-list">
-          {peers.map((p) => {
-            const role = getDeviceBackupRoleStatus(p.deviceId)
-            const same = localIk ? isSameIdentityPeer(p, localIk) : false
+          {peers.map((peer) => {
+            const role = getDeviceBackupRoleStatus(peer.deviceId)
+            const same = localIdentityKey
+              ? isSameIdentityPeer(peer, localIdentityKey)
+              : false
             return (
-              <li key={p.deviceId}>
+              <li key={peer.deviceId}>
                 <ListRow.Root
                   className="device-backup-row"
                   data-aeon-state={roleTone(role)}
                   onClick={() => {
                     playWalletSound('soft')
-                    send({ type: 'OPEN_DEVICE', peerDeviceId: p.deviceId })
+                    onOpen(peer.deviceId)
                   }}
                 >
-                  <ListRow.Label>{p.label}</ListRow.Label>
-                  <ListRow.Description>{directionLabel(p, role, same)}</ListRow.Description>
+                  <ListRow.Label>{peer.label}</ListRow.Label>
+                  <ListRow.Description>
+                    {headingSaysDirection
+                      ? platformLabel(peer)
+                      : same
+                        ? 'Same wallet'
+                        : directionLabel(peer, role, false)}
+                  </ListRow.Description>
                 </ListRow.Root>
               </li>
             )
           })}
         </ul>
-      )}
-    </div>
+      ) : empty ? (
+        <p className="device-backup-section-empty">{empty}</p>
+      ) : null}
+    </section>
   )
 }

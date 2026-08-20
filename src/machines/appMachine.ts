@@ -172,6 +172,9 @@ export const appMachine = setup({
             error: null,
           }),
         },
+        REFRESHED: {
+          actions: assign({ balanceSats: ({ event }) => event.balanceSats }),
+        },
         BRIDGE: {
           actions: assign({ bridgeOnline: ({ event }) => event.online }),
         },

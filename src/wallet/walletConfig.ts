@@ -1,11 +1,20 @@
 /**
  * Wallet configuration chosen at setup (and editable later in Settings).
- * History backup on BRC-CLOUD is the default. BRC-232 trustholders stay off
- * until explicitly re-enabled (`VITE_TRUSTHOLDERS_ENABLED=true`).
+ * History backup on BRC-CLOUD is the default. Custody keys remain local.
  */
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 
 const KEY = 'handcash.brc100.walletConfig.v1'
+const DEPRECATED_CLOUD_KEY_STORAGE_KEYS = [
+  'handcash.brc100.trustholderEnrollments.v1',
+  'handcash.brc100.trustholderSharePlan.v1',
+] as const
+
+function purgeDeprecatedCloudKeyState(): void {
+  for (const key of DEPRECATED_CLOUD_KEY_STORAGE_KEYS) {
+    durableRemoveItem(key)
+  }
+}
 
 /** Public BRC-CLOUD origin (handles, history). */
 export const DEFAULT_BRC_CLOUD_BASE_URL =
@@ -13,25 +22,6 @@ export const DEFAULT_BRC_CLOUD_BASE_URL =
     typeof import.meta.env?.VITE_BRC_CLOUD_BASE_URL === 'string' &&
     import.meta.env.VITE_BRC_CLOUD_BASE_URL.trim()) ||
   'https://brc-cloud.bcryderman.workers.dev'
-
-/**
- * BRC-232 trustholder deposit / retrieve. Off unless
- * `VITE_TRUSTHOLDERS_ENABLED=true`.
- */
-export const TRUSTHOLDERS_ENABLED =
-  typeof import.meta !== 'undefined' &&
-  import.meta.env?.VITE_TRUSTHOLDERS_ENABLED === 'true'
-
-/**
- * Recommended (HC + Haste key shares) only when trustholders are on.
- * Set `VITE_BACKUP_SERVICES_LIVE=false` to force it off even then.
- */
-export const BACKUP_SERVICES_LIVE =
-  TRUSTHOLDERS_ENABLED &&
-  !(
-    typeof import.meta !== 'undefined' &&
-    import.meta.env?.VITE_BACKUP_SERVICES_LIVE === 'false'
-  )
 
 export const DEFAULT_METANET_HANDLES_BASE_URL =
   (typeof import.meta !== 'undefined' &&
@@ -45,12 +35,6 @@ export const DEFAULT_HISTORY_BACKUP_SETUP_URL =
     typeof import.meta.env?.VITE_HISTORY_BACKUP_BASE_URL === 'string' &&
     import.meta.env.VITE_HISTORY_BACKUP_BASE_URL.trim()) ||
   DEFAULT_BRC_CLOUD_BASE_URL
-
-export const HANDCASH_BACKUP_SERVICE_URL =
-  (typeof import.meta !== 'undefined' &&
-    typeof import.meta.env?.VITE_HANDCASH_BACKUP_SERVICE_URL === 'string' &&
-    import.meta.env.VITE_HANDCASH_BACKUP_SERVICE_URL.trim()) ||
-  `${DEFAULT_BRC_CLOUD_BASE_URL}/trustholders/handcash`
 
 /** items-market origin that hosts the Desktop swap ("Add money") flow. */
 export const DEFAULT_MARKET_BASE_URL =
@@ -72,50 +56,50 @@ export const CLAIM_HANDLE_URL =
     import.meta.env.VITE_CLAIM_HANDLE_URL.trim()) ||
   'https://preprod-market.handcash.io/claim-handle'
 
-export const HASTE_BACKUP_SERVICE_URL =
-  (typeof import.meta !== 'undefined' &&
-    typeof import.meta.env?.VITE_HASTE_BACKUP_SERVICE_URL === 'string' &&
-    import.meta.env.VITE_HASTE_BACKUP_SERVICE_URL.trim()) ||
-  `${DEFAULT_BRC_CLOUD_BASE_URL}/trustholders/haste`
-
-export type WalletConfigMode = 'recommended' | 'history' | 'none'
+export type WalletConfigMode = 'history' | 'none'
 
 export type WalletConfigPrefs = {
   mode: WalletConfigMode | null
-  /** History host URL when mode is history or recommended (parity). */
+  /** History host URL when history backup is enabled. */
   historyBaseUrl: string
-  /** BRC-232 provider URLs when recommended is applied. */
-  backupServiceUrls: string[]
   configuredAt: number | null
 }
 
 const DEFAULTS: WalletConfigPrefs = {
   mode: null,
   historyBaseUrl: '',
-  backupServiceUrls: [],
   configuredAt: null,
 }
 
 export function getWalletConfigPrefs(): WalletConfigPrefs {
+  purgeDeprecatedCloudKeyState()
   try {
     const raw = durableGetItem(KEY)
     if (!raw) return { ...DEFAULTS }
-    const parsed = JSON.parse(raw) as Partial<WalletConfigPrefs>
-    return {
+    const parsed = JSON.parse(raw) as {
+      mode?: unknown
+      historyBaseUrl?: unknown
+      configuredAt?: unknown
+      backupServiceUrls?: unknown
+    }
+    const next: WalletConfigPrefs = {
+      // Legacy "recommended" included active key-share providers. Treat it as
+      // history-only; never retain or act on its provider URLs.
       mode:
-        parsed.mode === 'recommended' ||
-        parsed.mode === 'history' ||
-        parsed.mode === 'none'
-          ? parsed.mode
-          : null,
+        parsed.mode === 'recommended' || parsed.mode === 'history'
+          ? 'history'
+          : parsed.mode === 'none'
+            ? 'none'
+            : null,
       historyBaseUrl:
         typeof parsed.historyBaseUrl === 'string' ? parsed.historyBaseUrl : '',
-      backupServiceUrls: Array.isArray(parsed.backupServiceUrls)
-        ? parsed.backupServiceUrls.filter((u) => typeof u === 'string')
-        : [],
       configuredAt:
         typeof parsed.configuredAt === 'number' ? parsed.configuredAt : null,
     }
+    if (parsed.mode === 'recommended' || parsed.backupServiceUrls !== undefined) {
+      durableSetItem(KEY, JSON.stringify(next))
+    }
+    return next
   } catch {
     return { ...DEFAULTS }
   }
@@ -128,10 +112,6 @@ export function setWalletConfigPrefs(
   const next: WalletConfigPrefs = {
     ...current,
     ...patch,
-    backupServiceUrls:
-      patch.backupServiceUrls !== undefined
-        ? patch.backupServiceUrls
-        : current.backupServiceUrls,
   }
   durableSetItem(KEY, JSON.stringify(next))
   return next
@@ -150,7 +130,7 @@ export function listWalletConfigOptions(): WalletConfigOption[] {
   const options: WalletConfigOption[] = [
     {
       id: 'history',
-      title: BACKUP_SERVICES_LIVE ? 'Advanced — history backup only' : 'History backup',
+      title: 'History backup',
       description:
         'HandCash history, friends, and spend locks across devices. Keys stay only on your devices (phrase / slices).',
       disabled: false,
@@ -164,15 +144,5 @@ export function listWalletConfigOptions(): WalletConfigOption[] {
         'No remote recovery or device parity. Losing this device without an offline backup means losing access.',
     },
   ]
-  if (!BACKUP_SERVICES_LIVE) return options
-  return [
-    {
-      id: 'recommended',
-      title: 'Recommended',
-      description:
-        'HandCash history plus key shares at HandCash and Haste (BRC-232). Best recovery if you lose this device.',
-      disabled: false,
-    },
-    ...options,
-  ]
+  return options
 }
