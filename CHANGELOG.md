@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.2.267] - unreleased
+
+### Changed
+
+- Version in flight. Entries land with the change that ships them.
+
 ## [1.2.266] - 2026-08-20
 
 ### Added
