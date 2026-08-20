@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.265] - 2026-08-20
+
+### Changed
+
+- **A burn is composed like a payment.** It was one dialog that let you retype the amount beside the button that destroys it, then sat spinning, then left that same button live under an error. The chart is now the send chart — `closed → editing → confirming → handoff | failure` — so the amount is writable only while editing, the confirm face restates one fixed amount with no field to change it, and confirming hands the burn to the wallet and closes: the toast and the Activity row carry the result, as with a send. A refusal returns as its own stage with Close / Edit, and cannot burn again without going back through editing.
+- **A token burn no longer opens with your whole balance selected.** The field starts empty with the held amount shown beside it, Review stays blocked until an amount that you actually hold is typed, and the economics preview coalesces keystrokes instead of selecting real outputs per digit. Burns now play the wallet's success and error sounds, and the trigger reads `Burning…` while one is in flight.
+
+### Fixed
+
+- **Statecharts actually show a chart.** The live readout, a wrapping wall of page chips and a caption line took about 160px of header, and the diagram got whatever was left of the settings body — in a short window that was two pixels, so the page looked like text with no chart. The chart now claims a real minimum height (the body scrolls), the live readout folds to one summary line behind an Aeon disclosure, the page list scrolls in a single row that keeps the selected page in view, and the caption floats over the chart instead of taking a row from it.
+- **The selected statechart page is legible on the light theme.** White on the sheet's mid green was 3.6:1 and read as a disabled pill. Which chart you are reading is chrome, not wallet state, so it takes the same near-black selection treatment as the wallet nav tabs — 16.7:1 on paper.
+- Settings → Statecharts carries the burn UI chart, so the Mermaid matches the machine that ships.
+
 ## [1.2.264] - 2026-08-19
 
 ### Fixed
