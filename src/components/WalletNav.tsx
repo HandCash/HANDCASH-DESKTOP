@@ -44,6 +44,7 @@ import { CollectableDetailsPanel } from './CollectableDetailsPanel'
 import { FungibleDetailsPanel } from './FungibleDetailsPanel'
 import { SendCollectablePanel } from './SendCollectablePanel'
 import { SendFungiblePanel } from './SendFungiblePanel'
+import { BurnAssetPanel } from './BurnAssetPanel'
 import { TransactionsPanel } from './RecentActivity'
 import {
   PermissionRequestPanel,
@@ -194,7 +195,12 @@ export function WalletNav({
 
   useEffect(() => {
     const child = nav.child
-    if (!child || (child.type !== 'collectable' && child.type !== 'send-collectable')) {
+    if (
+      !child ||
+      (child.type !== 'collectable' &&
+        child.type !== 'send-collectable' &&
+        child.type !== 'burn-collectable')
+    ) {
       return
     }
     let cancelled = false
@@ -208,7 +214,14 @@ export function WalletNav({
 
   useEffect(() => {
     const child = nav.child
-    if (!child || (child.type !== 'fungible' && child.type !== 'send-fungible')) return
+    if (
+      !child ||
+      (child.type !== 'fungible' &&
+        child.type !== 'send-fungible' &&
+        child.type !== 'burn-fungible')
+    ) {
+      return
+    }
     const cached =
       getFungible(child.tokenId) ??
       getCachedFungibles().find((t) => t.tokenId === child.tokenId)
@@ -291,6 +304,26 @@ export function WalletNav({
           onClick: () => openFungibleDetails(child.tokenId),
         },
         { label: 'Send' },
+      ]
+    }
+    if (child.type === 'burn-collectable') {
+      return [
+        root,
+        {
+          label: collectableLabel,
+          onClick: () => openCollectableDetails(child.outpoint),
+        },
+        { label: 'Burn' },
+      ]
+    }
+    if (child.type === 'burn-fungible') {
+      return [
+        root,
+        {
+          label: fungibleLabel,
+          onClick: () => openFungibleDetails(child.tokenId),
+        },
+        { label: 'Burn' },
       ]
     }
     if (child.type === 'payment') {
@@ -385,6 +418,12 @@ export function WalletNav({
                   onSent={onSent}
                   onFail={onFail}
                 />
+              )}
+              {child.type === 'burn-collectable' && (
+                <BurnAssetPanel target={{ kind: 'collectable', outpoint: child.outpoint }} />
+              )}
+              {child.type === 'burn-fungible' && (
+                <BurnAssetPanel target={{ kind: 'fungible', tokenId: child.tokenId }} />
               )}
               {child.type === 'setting' && child.settingId === 'change-password' && (
                 <ChangePasswordPanel />

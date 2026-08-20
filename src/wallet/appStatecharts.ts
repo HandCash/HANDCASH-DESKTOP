@@ -208,29 +208,48 @@ const COLLECTABLES = `stateDiagram-v2
   fungibleDetails --> grid : back
   details --> sendCollectable : Send
   fungibleDetails --> sendFungible : Send
-  details --> burnConfirm : OPEN item burn
-  fungibleDetails --> burnConfirm : OPEN token burn
+  details --> modelLoading : GLB / GLTF body
+  modelLoading --> modelReady : READY
+  modelLoading --> modelFailed : FAIL
+  modelFailed --> modelLoading : RETRY
+  details --> burnEditing : Burn item (side panel)
+  fungibleDetails --> burnEditing : Burn token (side panel)
   sendCollectable --> details : back / done
   sendFungible --> fungibleDetails : back / done
-  burnConfirm --> details : CANCEL item burn
-  burnConfirm --> fungibleDetails : CANCEL token burn
-  burnConfirm --> burning : CONFIRM
+  burnEditing --> burnConfirm : REVIEW
+  burnConfirm --> burnEditing : BACK
+  burnEditing --> details : CANCEL item burn
+  burnEditing --> fungibleDetails : CANCEL token burn
+  burnConfirm --> burning : CONFIRM / handoff
   burning --> burnDone : SUCCESS
   burning --> burnFailed : FAIL
-  burnFailed --> burning : CONFIRM retry
-  burnFailed --> details : CANCEL item burn
-  burnFailed --> fungibleDetails : CANCEL token burn
+  burnFailed --> burnEditing : BACK
   burnDone --> grid : item inventory refresh
   burnDone --> fungibleDetails : token inventory refresh
   grid : Grid
   details : Details
+  modelLoading : 3D skeleton
+  modelReady : Orbit / zoom / auto-rotate
+  modelFailed : Named render failure
   fungibleDetails : Token details
   sendCollectable : Send item
   sendFungible : Send token
-  burnConfirm : Irreversible economics preview
+  burnEditing : Burn panel — amount + economics
+  burnConfirm : Confirm fixed amount
   burning : Burn on chain
   burnFailed : Failure and named reason
   burnDone : Burn activity recorded
+`
+
+const MODEL_VIEWER = `stateDiagram-v2
+  direction LR
+  [*] --> loading
+  loading --> ready : READY after first frame
+  loading --> failed : FAIL / timeout
+  failed --> loading : RETRY / remount
+  loading : Skeleton; model mounted underneath
+  ready : Orbit · zoom · auto-rotate
+  failed : Error + Try again
 `
 
 const SEND_COLLECTABLE = `stateDiagram-v2
@@ -959,8 +978,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'collectablesFlow',
     label: 'Items',
-    caption: 'collectables — inventory, details, send',
+    caption: 'collectables — inventory, deferred media, send and burn',
     source: COLLECTABLES,
+  },
+  {
+    id: 'modelViewer',
+    label: '3D viewer',
+    caption: 'modelViewerMachine — skeleton → first frame | named failure and retry',
+    source: MODEL_VIEWER,
   },
   {
     id: 'sendCollectable',
@@ -985,7 +1010,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'assetBurnUi',
     label: 'Burn',
-    caption: 'assetBurn UI — edit → confirm → hand off to the wallet',
+    caption: 'assetBurn UI — side panel: edit → confirm → hand off to the wallet',
     source: ASSET_BURN_UI,
   },
   {

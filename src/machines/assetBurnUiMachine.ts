@@ -5,11 +5,12 @@ import { assign, setup, type SnapshotFrom } from 'xstate'
  * States: closed → editing → confirming → handoff | failure
  *
  * Same shape as `sendMachine`, because a burn is a spend the user composes and
- * confirms: the amount is chosen in `editing` and can no longer be edited in
- * `confirming`, so the irreversible step restates one fixed amount instead of
- * offering a text field beside a destroy button.
+ * confirms: it owns a side panel (`BurnAssetPanel`), the amount is chosen in
+ * `editing` and can no longer be edited in `confirming`, so the irreversible
+ * step restates one fixed amount instead of offering a text field beside a
+ * destroy button.
  *
- * `CONFIRM` hands the burn to the wallet and closes the prompt — progress and
+ * `CONFIRM` hands the burn to the wallet and leaves the panel — progress and
  * the settled row live in Activity, which outlives this chart. `failure` is a
  * refusal the user can edit their way out of.
  */
@@ -117,7 +118,7 @@ export const assetBurnUiMachine = setup({
         FAIL: { target: 'failure', actions: 'fail' },
       },
     },
-    /** Handed to the wallet. The prompt closes; Activity carries the result. */
+    /** Handed to the wallet. The panel closes; Activity carries the result. */
     burning: {
       on: {
         SUCCESS: { target: 'done', actions: 'succeed' },

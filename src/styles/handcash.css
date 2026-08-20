@@ -6214,6 +6214,125 @@ a.app-details-host:hover {
   text-align: left;
 }
 
+.collectable-details-hero.is-model {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 14px;
+}
+
+.collectable-model-stage {
+  position: relative;
+  width: 100%;
+  height: clamp(280px, 48vh, 560px);
+  min-height: 280px;
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 24%, var(--hc-border));
+  border-radius: 16px;
+  background:
+    radial-gradient(
+      circle at 50% 35%,
+      color-mix(in srgb, var(--hc-accent) 16%, transparent),
+      transparent 42%
+    ),
+    linear-gradient(
+      155deg,
+      color-mix(in srgb, var(--hc-panel) 95%, var(--hc-accent) 5%),
+      var(--hc-sunken-strong)
+    );
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, white 9%, transparent),
+    0 18px 44px color-mix(in srgb, black 24%, transparent);
+}
+
+.collectable-model-stage::after {
+  content: '';
+  position: absolute;
+  z-index: 0;
+  inset: 52% 8% 5%;
+  pointer-events: none;
+  opacity: 0.24;
+  background-image:
+    linear-gradient(color-mix(in srgb, var(--hc-accent) 20%, transparent) 1px, transparent 1px),
+    linear-gradient(90deg, color-mix(in srgb, var(--hc-accent) 20%, transparent) 1px, transparent 1px);
+  background-size: 26px 26px;
+  transform: perspective(360px) rotateX(58deg);
+  transform-origin: center bottom;
+  mask-image: linear-gradient(to bottom, transparent, black 38%, transparent);
+}
+
+.collectable-model-viewer {
+  position: absolute;
+  z-index: 1;
+  inset: 0;
+}
+
+.collectable-model-element {
+  display: block;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  outline: none;
+  cursor: grab;
+  transition: opacity 220ms ease;
+  --poster-color: transparent;
+  --progress-bar-color: var(--hc-accent);
+  --progress-mask: transparent;
+}
+
+.collectable-model-element:active {
+  cursor: grabbing;
+}
+
+[data-aeon-scope='model-viewer'][data-aeon-state='ready'] .collectable-model-element {
+  opacity: 1;
+}
+
+.collectable-model-skeleton {
+  position: absolute;
+  z-index: 2;
+  inset: 0;
+}
+
+.collectable-model-fallback {
+  position: absolute;
+  z-index: 3;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 8px;
+  padding: 24px;
+  color: var(--hc-muted);
+  text-align: center;
+}
+
+.collectable-model-fallback strong {
+  color: var(--hc-text);
+}
+
+.collectable-model-fallback span {
+  max-width: 32rem;
+  font-size: 0.76rem;
+}
+
+.collectable-model-hint {
+  position: absolute;
+  z-index: 3;
+  right: 10px;
+  bottom: 10px;
+  padding: 5px 9px;
+  border: 1px solid color-mix(in srgb, var(--hc-border) 70%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-panel) 78%, transparent);
+  box-shadow: 0 4px 14px color-mix(in srgb, black 18%, transparent);
+  color: var(--hc-muted);
+  font-size: 0.66rem;
+  font-weight: 650;
+  line-height: 1;
+  pointer-events: none;
+  backdrop-filter: blur(10px);
+}
+
 .collectable-details-copy {
   display: grid;
   gap: 2px;
@@ -6717,9 +6836,13 @@ a.app-details-host:hover {
 
 [data-aeon-scope='fungible-details'] .fungible-details-hero {
   display: grid;
-  grid-template-columns: 112px minmax(0, 1fr);
+  grid-template-columns: 96px minmax(0, 1fr);
   align-items: center;
   gap: 16px;
+  padding: 14px;
+  border: 1px solid var(--hc-border);
+  border-radius: 14px;
+  background: var(--hc-sunken-soft);
 }
 
 .fungible-details-heading {
@@ -6758,6 +6881,29 @@ a.app-details-host:hover {
   font-size: 0.78rem;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Attestation is the one authenticity fact worth a badge; the row below it
+   carries the detail. */
+.fungible-attest {
+  justify-self: start;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 0.66rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.fungible-attest-ok {
+  background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
+  color: var(--hc-accent-deep);
+}
+
+.fungible-attest-none {
+  background: var(--hc-hover);
+  color: var(--hc-muted);
 }
 
 .fungible-metrics {
@@ -6835,6 +6981,20 @@ a.app-details-host:hover {
   text-align: right;
 }
 
+/* Long ids stay on one line; the full value lives in the tooltip and the
+   clipboard. Wrapping them turned this page into a wall of hex. */
+.fungible-detail-row .fungible-detail-id {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fungible-detail-row[data-aeon-state='absent'] dd {
+  color: var(--hc-muted);
+}
+
 .fungible-activity-list {
   display: grid;
   gap: 3px;
@@ -6903,7 +7063,6 @@ a.app-details-host:hover {
   display: flex;
   flex-wrap: wrap;
   gap: 7px;
-  padding-top: 2px;
 }
 
 .fungible-details-actions .btn,
@@ -6913,12 +7072,12 @@ a.app-details-host:hover {
 
 @media (max-width: 560px) {
   [data-aeon-scope='fungible-details'] .fungible-details-hero {
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: 72px minmax(0, 1fr);
   }
 
   [data-aeon-scope='fungible-details'] .fungible-avatar--md {
-    width: 88px !important;
-    height: 88px !important;
+    width: 72px !important;
+    height: 72px !important;
   }
 
   .fungible-detail-row {
@@ -9310,79 +9469,194 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
 }
 
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-modal {
-  max-width: 460px;
-}
-
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-amount {
+/* Burn lives in the side panel, composed like a payment: hero, breakdown,
+   one destructive action. Danger is carried by the accent, not by clutter. */
+[data-aeon-scope='asset-burn'] {
   display: grid;
-  gap: 7px;
-  margin: 16px 0;
-  color: var(--hc-muted);
-  font-size: 12px;
-  font-weight: 700;
-}
-
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-amount-control {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  border: 1px solid var(--hc-border);
-  border-radius: 10px;
-  background: var(--hc-sunken-soft);
-  padding: 0 12px;
-}
-
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-amount-control input {
   min-width: 0;
-  flex: 1;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--hc-text);
-  font: inherit;
-  font-size: 17px;
-  padding: 12px 0;
+  align-content: start;
+  gap: 14px;
 }
 
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-amount-control em {
+[data-aeon-scope='asset-burn'] .burn-layout {
+  gap: 16px;
+}
+
+.burn-hero {
+  display: grid;
+  grid-template-columns: 64px minmax(0, 1fr);
+  align-items: center;
+  gap: 14px;
+  padding: 14px;
+  border: 1px solid color-mix(in srgb, var(--hc-danger, #ef6464) 32%, var(--hc-border));
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--hc-danger, #ef6464) 7%, var(--hc-sunken-soft));
+}
+
+.burn-hero-media {
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 12px;
+}
+
+.burn-hero-image,
+.burn-hero-media .deferred-image img {
+  width: 64px;
+  height: 64px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+.burn-hero-model {
+  display: grid;
+  width: 100%;
+  height: 100%;
+  place-items: center;
+  border: 1px solid var(--hc-border);
+  border-radius: 12px;
+  background: var(--hc-sunken);
   color: var(--hc-muted);
-  font-style: normal;
 }
 
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-available {
+.burn-hero-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.burn-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   margin: 0;
-  color: var(--hc-muted);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-/* Confirm stage mirrors the send confirm face: one amount, one target. */
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-confirm-amount {
-  margin: 6px 0 0;
-  font-family: var(--hc-display);
-  font-size: clamp(1.9rem, 5vw, 2.6rem);
-  font-weight: 700;
-  letter-spacing: 0.02em;
-  line-height: 1.1;
   color: var(--hc-danger, #ef6464);
 }
 
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-target {
-  margin: 4px 0 0;
+.burn-hero-title,
+.burn-hero-amount {
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--hc-display);
+  line-height: 1.12;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.burn-hero-title {
+  font-size: 1.25rem;
+  font-weight: 700;
+}
+
+.burn-hero-amount {
+  color: var(--hc-danger, #ef6464);
+  font-size: clamp(1.6rem, 4.4vw, 2.2rem);
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.burn-hero-sub {
+  margin: 0;
+  overflow: hidden;
   color: var(--hc-muted);
-  font-size: 1rem;
+  font-size: 0.8rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+[data-aeon-scope='asset-burn'] .burn-side {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  align-content: start;
+}
+
+.burn-amount-field {
+  margin: 0;
+}
+
+.burn-available {
+  margin: 6px 0 0;
+}
+
+.burn-breakdown {
+  display: grid;
+  gap: 0;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--hc-border);
+  border-radius: 12px;
+  background: var(--hc-sunken-soft);
+}
+
+.burn-breakdown > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 0;
+  border-bottom: 1px solid color-mix(in srgb, hsl(var(--border)) 60%, transparent);
+}
+
+.burn-breakdown > div:last-child {
+  border-bottom: 0;
+}
+
+.burn-breakdown dt {
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+}
+
+.burn-breakdown dd {
+  margin: 0;
+  font-size: 0.8rem;
+  font-variant-numeric: tabular-nums;
   font-weight: 600;
-  overflow-wrap: anywhere;
+  text-align: right;
 }
 
-[data-aeon-scope='asset-burn-prompt'][data-aeon-state='confirming'] .asset-burn-meta {
-  margin-top: 14px;
+.burn-breakdown dd em {
+  color: var(--hc-muted);
+  font-style: normal;
+  font-weight: 500;
 }
 
-[data-aeon-scope='asset-burn-prompt'] .asset-burn-error {
-  margin: 12px 0 0;
-  overflow-wrap: anywhere;
+.burn-breakdown-net dt,
+.burn-breakdown-net dd {
+  color: var(--hc-text);
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.burn-note {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+  line-height: 1.45;
+}
+
+[data-aeon-scope='asset-burn'] .burn-actions {
+  margin-top: 2px;
+}
+
+[data-aeon-scope='asset-burn'][data-aeon-state='confirming'] .burn-hero {
+  border-color: color-mix(in srgb, var(--hc-danger, #ef6464) 55%, var(--hc-border));
+  background: color-mix(in srgb, var(--hc-danger, #ef6464) 12%, var(--hc-sunken-soft));
+}
+
+@media (max-width: 560px) {
+  .burn-hero {
+    grid-template-columns: 52px minmax(0, 1fr);
+  }
+
+  .burn-hero-media,
+  .burn-hero-image,
+  .burn-hero-media .deferred-image img {
+    width: 52px;
+    height: 52px;
+  }
 }
 
 .asset-burn-trigger {

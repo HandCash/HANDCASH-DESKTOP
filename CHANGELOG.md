@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.266] - 2026-08-20
+
+### Added
+
+- **A 3D collectable renders as a 3D object.** An item whose body is a GLB or GLTF was shown as a broken image frame, because the panel only knew how to paint bitmaps. Such an item now mounts an interactive viewer — drag to orbit, scroll to zoom, with a slow auto-rotate and studio lighting — behind the same deferral rule as every other image: a skeleton holds the space until the first frame is actually drawn, a render that fails or hangs says so by name and offers a retry, and the media action becomes Save model instead of Copy / Save image. Detection is by MIME and by body extension, so a JPEG item keeps the bitmap path exactly as before.
+
+### Changed
+
+- **Burning is a screen, not a dialog.** A burn is composed like a payment, so it now lives where payments live: its own side panel with a breadcrumb (Items → token → Burn), not a modal floating over the page it came from. The chart is unchanged — amount is writable only while editing, confirm restates one fixed amount, confirming hands off to the wallet — but the flow can now be backed out of the way every other flow can, and the destination after a token burn is the token page whose Activity the row lands in.
+- **The burn panel says what it costs in one glance.** The economics are an aligned breakdown ending in a bold effect-on-Pay row with its fiat estimate, the amount field carries an All button and the held amount beside it, and the confirm face's second line tells you what survives — *Leaves 750 DEMO* for a partial token burn, or that an item's BRC-150 lineage ends with it — instead of repeating the name already above it.
+- **The token page leads with the token.** Icon, ticker, balance and issuer are one card with an attestation badge, and Send / Burn / Copy ID sit directly beneath it rather than stranded below a wall of metadata. Rows that only repeated the hero or the metric chips are gone, long ids stay on one line with the full value in the tooltip and the clipboard, and values the deploy never supplied read as quiet rather than as data.
+
 ## [1.2.265] - 2026-08-20
 
 ### Changed

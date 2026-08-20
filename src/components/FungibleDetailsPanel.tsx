@@ -25,13 +25,9 @@ import {
   fungibleDetailsMachine,
   activityForFungible,
 } from '../machines/fungibleDetailsMachine'
-import { assetBurnUiMachine } from '../machines/assetBurnUiMachine'
-import { burnBsv21, previewBsv21Burn } from '../wallet/burn'
-import { estimateBurnEconomics } from '../wallet/burnEconomics'
-import { parseFungibleSendAmount } from '../wallet/sendFungible'
 import { shortIssuerLabel } from '../wallet/bsv21'
 import {
-  clearNavChild,
+  openBurnFungible,
   openPaymentDetails,
   openSendFungible,
 } from '../wallet/navStore'
@@ -46,8 +42,6 @@ import {
 } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { BurnAssetPrompt } from './BurnAssetPrompt'
-import { toastError, toastSuccess } from '../wallet/toast'
 
 type Props = {
   tokenId: string
@@ -57,19 +51,23 @@ function MetaRow({
   label,
   value,
   copyLabel,
+  muted = false,
 }: {
   label: string
   value: string
+  /** Present makes the value a copy button; long ids stay on one line. */
   copyLabel?: string
+  /** Absent / not-supplied values read as quiet, not as data. */
+  muted?: boolean
 }) {
   return (
-    <div className="fungible-detail-row">
+    <div className="fungible-detail-row" data-aeon-state={muted ? 'absent' : 'present'}>
       <dt>{label}</dt>
       <dd>
         {copyLabel ? (
           <button
             type="button"
-            className="mono collectable-meta-copy"
+            className="mono collectable-meta-copy fungible-detail-id"
             title={`Copy ${copyLabel}\n${value}`}
             onClick={() => {
               playWalletSound('soft')
@@ -158,7 +156,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       activity: activityForFungible(initialToken, listRecentActivity(500)),
     },
   })
-  const [burnSnapshot, burnEvent] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
     const sync = () => {
@@ -180,49 +177,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       unsubscribeActivity()
     }
   }, [tokenId, send])
-
-  useEffect(() => {
-    if (burnSnapshot.matches('closed') || burnSnapshot.matches('done')) return
-    const current = snapshot.context.token
-    const raw = burnSnapshot.context.amount
-    if (!current || !raw.trim()) return
-    let units: string
-    try {
-      units = parseFungibleSendAmount(raw, current).unitsStr
-    } catch {
-      burnEvent({ type: 'PREVIEW', preview: null })
-      return
-    }
-    // Coalesce keystrokes: the preview selects real outputs, so it should not
-    // run once per typed digit.
-    let cancelled = false
-    const timer = window.setTimeout(() => {
-      void previewBsv21Burn({ tokenId: current.tokenId, amount: units })
-        .then((preview) => {
-          if (cancelled) return
-          burnEvent({
-            type: 'PREVIEW',
-            preview: {
-              grossSats: preview.grossAssetSats,
-              protocolOutputSats: preview.protocolOutputSats,
-              estimatedFeeSats: preview.estimatedFeeSats,
-            },
-          })
-        })
-        .catch(() => {
-          if (!cancelled) burnEvent({ type: 'PREVIEW', preview: null })
-        })
-    }, 220)
-    return () => {
-      cancelled = true
-      window.clearTimeout(timer)
-    }
-  }, [
-    burnSnapshot.value,
-    burnSnapshot.context.amount,
-    snapshot.context.token,
-    burnEvent,
-  ])
 
   if (snapshot.matches('loading')) {
     return (
@@ -259,85 +213,12 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       : token.spendKind === 'cosigned'
         ? 'Cosigner required'
         : 'Mixed plain and cosigned outputs'
-  // Never default a burn to the whole balance — the field starts empty and
-  // Review stays blocked until the user types what they mean to destroy.
-  const burnAmount = burnSnapshot.context.amount
-  let burnUnits: bigint | null = null
-  try {
-    burnUnits = parseFungibleSendAmount(burnAmount, token).units
-  } catch {
-    burnUnits = null
-  }
-  const heldUnits = BigInt(token.amt.replace(/\D/g, '') || '0')
-  const tokenChange = burnUnits != null && burnUnits < heldUnits
-  const fallbackBurnEconomics = estimateBurnEconomics({
-    inputCount: token.utxoCount,
-    protocolOutputCount: tokenChange ? 2 : 1,
-    recoveryOutput: token.utxoCount > (tokenChange ? 2 : 1),
-  })
-  const burnEconomics = burnSnapshot.context.preview ?? fallbackBurnEconomics
-  const pageState = !burnSnapshot.matches('closed')
-    ? String(burnSnapshot.value)
-    : sendBlocked
-      ? 'send-refused'
-      : 'ready'
-  /** Pre-flight the amount while it can still be edited, as Send does. */
-  const reviewTokenBurn = () => {
-    playWalletSound('soft')
-    try {
-      const { units } = parseFungibleSendAmount(burnAmount, token)
-      if (units <= 0n) throw new Error('Enter an amount to burn')
-      if (units > heldUnits) throw new Error(`You only hold ${amount}`)
-    } catch (err) {
-      burnEvent({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return
-    }
-    burnEvent({ type: 'REVIEW' })
-  }
-
-  /**
-   * Hand the burn to the wallet and get out of the way — the prompt closes on
-   * `CONFIRM` and the row lands in this page's Activity, exactly like a send.
-   */
-  const confirmTokenBurn = () => {
-    if (burnSnapshot.matches('burning')) return
-    let units: string
-    try {
-      units = parseFungibleSendAmount(burnAmount, token).unitsStr
-    } catch (err) {
-      burnEvent({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-      return
-    }
-    burnEvent({ type: 'CONFIRM' })
-    void burnBsv21({ tokenId: token.tokenId, amount: units })
-      .then((result) => {
-        burnEvent({
-          type: 'SUCCESS',
-          txid: result.txid,
-          recoveredSatoshis: result.recoveredSatoshis,
-        })
-        playWalletSound('success')
-        toastSuccess(
-          `${token.sym} burned`,
-          `${burnAmount} permanently destroyed. ${result.recoveredSatoshis.toLocaleString()} physical sats recovered${
-            result.feeSatoshis != null
-              ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
-              : ' before fees.'
-          }`,
-        )
-      })
-      .catch((err) => {
-        const error = err instanceof Error ? err.message : String(err)
-        burnEvent({ type: 'FAIL', error })
-        toastError('Token burn failed', error)
-      })
-  }
+  const burnTitle = sendBlocked
+    ? `${spendLabel}; burn unavailable`
+    : tokenIds.length > 1
+      ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
+      : `Burn ${token.sym}`
+  const pageState = sendBlocked ? 'send-refused' : 'ready'
 
   return (
     <div
@@ -350,15 +231,81 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           tokenId={token.tokenId}
           sym={token.sym}
           iconUrl={token.iconUrl}
-          size={112}
+          size={96}
         />
         <div className="fungible-details-heading">
           <span className="fungible-details-eyebrow">BSV-21 token</span>
           <h2>{token.sym}</h2>
           <strong className="fungible-details-balance">{amount}</strong>
-          <span className="fungible-details-issuer">{issuerLabel}</span>
+          <span className="fungible-details-issuer" title={token.issuer || undefined}>
+            {issuerLabel}
+          </span>
+          <span
+            className={`fungible-attest fungible-attest-${
+              token.issuerAttested ? 'ok' : 'none'
+            }`}
+            title={
+              token.issuerAttested
+                ? 'Deploy inscription carries a Sigma signature matching the issuer address (BRC-77)'
+                : 'No signed issuer attestation on the deploy inscription'
+            }
+          >
+            {token.issuerAttested ? 'Issuer attested' : 'Issuer unattested'}
+          </span>
         </div>
       </header>
+
+      <div className="fungible-details-actions" data-aeon-part="actions">
+        <button
+          type="button"
+          className="btn btn-primary btn-icon"
+          disabled={sendBlocked}
+          title={sendBlocked ? spendLabel : `Send ${token.sym}`}
+          onClick={() => {
+            if (sendBlocked) return
+            playWalletSound('soft')
+            openSendFungible(token.tokenId)
+          }}
+        >
+          <SendIcon size={14} />
+          Send token
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon asset-burn-trigger"
+          disabled={burnBlocked}
+          title={burnTitle}
+          onClick={() => {
+            if (burnBlocked) return
+            playWalletSound('soft')
+            openBurnFungible(token.tokenId)
+          }}
+        >
+          <WarningIcon size={14} />
+          Burn token
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost btn-icon"
+          title={`Copy token ID\n${token.tokenId}`}
+          onClick={() => {
+            playWalletSound('soft')
+            void copyText(token.tokenId, { label: 'token ID' })
+          }}
+        >
+          <CopyIcon size={14} />
+          Copy ID
+        </button>
+      </div>
+
+      {sendBlocked ? (
+        <StatusBanner.Root tone="warning" status="send-refused" className="fungible-send-notice">
+          <StatusBanner.Copy>
+            <StatusBanner.Title>Send unavailable</StatusBanner.Title>
+            <StatusBanner.Body>{spendLabel}.</StatusBanner.Body>
+          </StatusBanner.Copy>
+        </StatusBanner.Root>
+      ) : null}
 
       <MetricStrip.Root density="loose" className="fungible-metrics">
         <MetricStrip.Chip>
@@ -375,31 +322,18 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </MetricStrip.Chip>
       </MetricStrip.Root>
 
-      {sendBlocked ? (
-        <StatusBanner.Root tone="warning" status="send-refused" className="fungible-send-notice">
-          <StatusBanner.Copy>
-            <StatusBanner.Title>Send unavailable</StatusBanner.Title>
-            <StatusBanner.Body>{spendLabel}.</StatusBanner.Body>
-          </StatusBanner.Copy>
-        </StatusBanner.Root>
-      ) : null}
-
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">
           <h3>Token details</h3>
-          <span>Locally verified wallet metadata</span>
+          <span>Wallet-local</span>
         </div>
         <dl className="fungible-details-meta">
-          <MetaRow label="Ticker" value={token.sym} />
-          <MetaRow label="Balance" value={amount} copyLabel="token balance" />
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
-          <MetaRow label="Decimals" value={String(token.dec)} />
-          <MetaRow label="Protocol" value="BSV-21 (application/bsv-20)" />
+          <MetaRow label="Protocol" value="BSV-21" />
           <MetaRow label="Basket" value="bsv21" />
           <MetaRow label="Spend policy" value={spendLabel} />
-          <MetaRow label="Held outputs" value={String(token.utxoCount)} />
           <MetaRow
-            label="Representative output"
+            label="Output"
             value={token.outpoint}
             copyLabel="representative output"
           />
@@ -415,7 +349,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               ))
             : null}
           {token.icon ? (
-            <MetaRow label="Icon inscription" value={token.icon} copyLabel="icon inscription" />
+            <MetaRow label="Icon" value={token.icon} copyLabel="icon inscription" />
           ) : null}
           {token.issuer ? (
             <MetaRow
@@ -424,11 +358,12 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               copyLabel="issuer identity key"
             />
           ) : (
-            <MetaRow label="Issuer" value="Not supplied" />
+            <MetaRow label="Issuer" value="Not supplied" muted />
           )}
           <MetaRow
-            label="Issuer attestation"
-            value={token.issuerAttested ? 'Sigma address matched (BRC-77)' : 'Not attested'}
+            label="Attestation"
+            value={token.issuerAttested ? 'Sigma matched (BRC-77)' : 'None'}
+            muted={!token.issuerAttested}
           />
           {token.cosign?.pubkey ? (
             <MetaRow
@@ -469,102 +404,6 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           <p className="fungible-activity-empty">No local activity for this token yet.</p>
         )}
       </section>
-
-      <div className="fungible-details-actions" data-aeon-part="actions">
-        <button
-          type="button"
-          className="btn btn-primary btn-icon"
-          disabled={sendBlocked}
-          title={sendBlocked ? spendLabel : `Send ${token.sym}`}
-          onClick={() => {
-            if (sendBlocked) return
-            playWalletSound('soft')
-            openSendFungible(token.tokenId)
-          }}
-        >
-          <SendIcon size={14} />
-          Send token
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost btn-icon asset-burn-trigger"
-          disabled={burnBlocked || burnSnapshot.matches('burning')}
-          title={
-            sendBlocked
-              ? `${spendLabel}; burn unavailable`
-              : tokenIds.length > 1
-                ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
-                : `Burn ${token.sym}`
-          }
-          onClick={() => {
-            if (burnBlocked) return
-            playWalletSound('soft')
-            burnEvent({ type: 'OPEN' })
-          }}
-        >
-          <WarningIcon size={14} />
-          {burnSnapshot.matches('burning') ? 'Burning…' : 'Burn token'}
-        </button>
-        <button
-          type="button"
-          className="secondary-btn"
-          onClick={() => {
-            playWalletSound('soft')
-            void copyText(token.tokenId, { label: 'token ID' })
-          }}
-        >
-          <CopyIcon size={16} />
-          Copy token ID
-        </button>
-        <button
-          type="button"
-          className="secondary-btn"
-          onClick={() => {
-            playWalletSound('soft')
-            clearNavChild()
-          }}
-        >
-          Back
-        </button>
-      </div>
-      <BurnAssetPrompt
-        stage={
-          burnSnapshot.matches('editing')
-            ? 'editing'
-            : burnSnapshot.matches('confirming')
-              ? 'confirming'
-              : burnSnapshot.matches('failure')
-                ? 'failure'
-                : null
-        }
-        assetName={token.sym}
-        amountLabel={`${burnAmount || '0'} ${token.sym}`}
-        amountInput={{
-          label: 'Amount',
-          value: burnAmount,
-          suffix: token.sym,
-          onChange: (value) => burnEvent({ type: 'SET_AMOUNT', amount: value }),
-        }}
-        availableLabel={`${amount} ${token.sym}`}
-        grossSats={
-          'grossSats' in burnEconomics
-            ? burnEconomics.grossSats
-            : burnEconomics.grossAssetSats
-        }
-        grossLabel={
-          burnSnapshot.context.preview
-            ? 'Asset sats selected'
-            : 'Asset sats available (upper bound)'
-        }
-        protocolOutputSats={burnEconomics.protocolOutputSats}
-        estimatedFeeSats={burnEconomics.estimatedFeeSats}
-        canReview={burnUnits != null && burnUnits > 0n && burnUnits <= heldUnits}
-        error={burnSnapshot.context.error}
-        onCancel={() => burnEvent({ type: 'CANCEL' })}
-        onBack={() => burnEvent({ type: 'BACK' })}
-        onReview={reviewTokenBurn}
-        onConfirm={confirmTokenBurn}
-      />
     </div>
   )
 }

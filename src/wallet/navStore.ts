@@ -36,8 +36,10 @@ export type NavChild =
   | { type: 'messages'; friendId: string }
   | { type: 'collectable'; outpoint: string }
   | { type: 'send-collectable'; outpoint: string }
+  | { type: 'burn-collectable'; outpoint: string }
   | { type: 'fungible'; tokenId: string }
   | { type: 'send-fungible'; tokenId: string }
+  | { type: 'burn-fungible'; tokenId: string }
   | { type: 'setting'; settingId: SettingId }
 
 export type NavState = {
@@ -157,12 +159,20 @@ export function openSendCollectable(outpoint: string) {
   openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 
+export function openBurnCollectable(outpoint: string) {
+  openNavChild('collectables', { type: 'burn-collectable', outpoint })
+}
+
 export function openFungibleDetails(tokenId: string) {
   openNavChild('collectables', { type: 'fungible', tokenId })
 }
 
 export function openSendFungible(tokenId: string) {
   openNavChild('collectables', { type: 'send-fungible', tokenId })
+}
+
+export function openBurnFungible(tokenId: string) {
+  openNavChild('collectables', { type: 'burn-fungible', tokenId })
 }
 
 function resolveSettingId(settingId: SettingId): SettingId {
