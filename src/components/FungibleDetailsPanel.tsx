@@ -182,12 +182,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   }, [tokenId, send])
 
   useEffect(() => {
-    if (
-      !burnSnapshot.matches('confirming') &&
-      !burnSnapshot.matches('failed')
-    ) {
-      return
-    }
+    if (burnSnapshot.matches('closed') || burnSnapshot.matches('done')) return
     const current = snapshot.context.token
     const raw = burnSnapshot.context.amount
     if (!current || !raw.trim()) return
@@ -198,24 +193,29 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       burnEvent({ type: 'PREVIEW', preview: null })
       return
     }
+    // Coalesce keystrokes: the preview selects real outputs, so it should not
+    // run once per typed digit.
     let cancelled = false
-    void previewBsv21Burn({ tokenId: current.tokenId, amount: units })
-      .then((preview) => {
-        if (cancelled) return
-        burnEvent({
-          type: 'PREVIEW',
-          preview: {
-            grossSats: preview.grossAssetSats,
-            protocolOutputSats: preview.protocolOutputSats,
-            estimatedFeeSats: preview.estimatedFeeSats,
-          },
+    const timer = window.setTimeout(() => {
+      void previewBsv21Burn({ tokenId: current.tokenId, amount: units })
+        .then((preview) => {
+          if (cancelled) return
+          burnEvent({
+            type: 'PREVIEW',
+            preview: {
+              grossSats: preview.grossAssetSats,
+              protocolOutputSats: preview.protocolOutputSats,
+              estimatedFeeSats: preview.estimatedFeeSats,
+            },
+          })
         })
-      })
-      .catch(() => {
-        if (!cancelled) burnEvent({ type: 'PREVIEW', preview: null })
-      })
+        .catch(() => {
+          if (!cancelled) burnEvent({ type: 'PREVIEW', preview: null })
+        })
+    }, 220)
     return () => {
       cancelled = true
+      window.clearTimeout(timer)
     }
   }, [
     burnSnapshot.value,
@@ -259,7 +259,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       : token.spendKind === 'cosigned'
         ? 'Cosigner required'
         : 'Mixed plain and cosigned outputs'
-  const burnAmount = burnSnapshot.context.amount || amount
+  // Never default a burn to the whole balance — the field starts empty and
+  // Review stays blocked until the user types what they mean to destroy.
+  const burnAmount = burnSnapshot.context.amount
   let burnUnits: bigint | null = null
   try {
     burnUnits = parseFungibleSendAmount(burnAmount, token).units
@@ -279,6 +281,27 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     : sendBlocked
       ? 'send-refused'
       : 'ready'
+  /** Pre-flight the amount while it can still be edited, as Send does. */
+  const reviewTokenBurn = () => {
+    playWalletSound('soft')
+    try {
+      const { units } = parseFungibleSendAmount(burnAmount, token)
+      if (units <= 0n) throw new Error('Enter an amount to burn')
+      if (units > heldUnits) throw new Error(`You only hold ${amount}`)
+    } catch (err) {
+      burnEvent({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
+      return
+    }
+    burnEvent({ type: 'REVIEW' })
+  }
+
+  /**
+   * Hand the burn to the wallet and get out of the way — the prompt closes on
+   * `CONFIRM` and the row lands in this page's Activity, exactly like a send.
+   */
   const confirmTokenBurn = () => {
     if (burnSnapshot.matches('burning')) return
     let units: string
@@ -299,6 +322,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           txid: result.txid,
           recoveredSatoshis: result.recoveredSatoshis,
         })
+        playWalletSound('success')
         toastSuccess(
           `${token.sym} burned`,
           `${burnAmount} permanently destroyed. ${result.recoveredSatoshis.toLocaleString()} physical sats recovered${
@@ -475,11 +499,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           onClick={() => {
             if (burnBlocked) return
             playWalletSound('soft')
-            burnEvent({ type: 'OPEN', amount })
+            burnEvent({ type: 'OPEN' })
           }}
         >
           <WarningIcon size={14} />
-          Burn token
+          {burnSnapshot.matches('burning') ? 'Burning…' : 'Burn token'}
         </button>
         <button
           type="button"
@@ -504,19 +528,24 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </button>
       </div>
       <BurnAssetPrompt
-        open={
-          burnSnapshot.matches('confirming') ||
-          burnSnapshot.matches('burning') ||
-          burnSnapshot.matches('failed')
+        stage={
+          burnSnapshot.matches('editing')
+            ? 'editing'
+            : burnSnapshot.matches('confirming')
+              ? 'confirming'
+              : burnSnapshot.matches('failure')
+                ? 'failure'
+                : null
         }
         assetName={token.sym}
         amountLabel={`${burnAmount || '0'} ${token.sym}`}
         amountInput={{
-          label: 'Token amount to burn',
+          label: 'Amount',
           value: burnAmount,
           suffix: token.sym,
           onChange: (value) => burnEvent({ type: 'SET_AMOUNT', amount: value }),
         }}
+        availableLabel={`${amount} ${token.sym}`}
         grossSats={
           'grossSats' in burnEconomics
             ? burnEconomics.grossSats
@@ -529,9 +558,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         }
         protocolOutputSats={burnEconomics.protocolOutputSats}
         estimatedFeeSats={burnEconomics.estimatedFeeSats}
-        busy={burnSnapshot.matches('burning')}
+        canReview={burnUnits != null && burnUnits > 0n && burnUnits <= heldUnits}
         error={burnSnapshot.context.error}
         onCancel={() => burnEvent({ type: 'CANCEL' })}
+        onBack={() => burnEvent({ type: 'BACK' })}
+        onReview={reviewTokenBurn}
         onConfirm={confirmTokenBurn}
       />
     </div>

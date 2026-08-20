@@ -269,11 +269,16 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       })
   }
 
+  /**
+   * Hand the burn to the wallet and get out of the way, as a send does: the
+   * prompt closes on `CONFIRM`, the toast and Activity row carry the result.
+   */
   const confirmBurn = () => {
     if (sending || item.covenantLocked || burnSnapshot.matches('burning')) return
     burnEvent({ type: 'CONFIRM' })
     void burnOneSat([item.outpoint])
       .then((result) => {
+        playWalletSound('success')
         burnEvent({
           type: 'SUCCESS',
           txid: result.txid,
@@ -386,11 +391,15 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 <button
                   type="button"
                   className="btn btn-ghost btn-icon asset-burn-trigger"
-                  onClick={() => burnEvent({ type: 'OPEN' })}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    burnEvent({ type: 'OPEN' })
+                  }}
                   disabled={sending || burnSnapshot.matches('burning')}
+                  aria-busy={burnSnapshot.matches('burning') || undefined}
                 >
                   <WarningIcon size={14} />
-                  Burn item
+                  {burnSnapshot.matches('burning') ? 'Burning…' : 'Burn item'}
                 </button>
               </>
             )}
@@ -445,19 +454,28 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
         />
       </dl>
       <BurnAssetPrompt
-        open={
-          burnSnapshot.matches('confirming') ||
-          burnSnapshot.matches('burning') ||
-          burnSnapshot.matches('failed')
+        stage={
+          burnSnapshot.matches('editing')
+            ? 'editing'
+            : burnSnapshot.matches('confirming')
+              ? 'confirming'
+              : burnSnapshot.matches('failure')
+                ? 'failure'
+                : null
         }
         assetName={item.name}
         amountLabel="this collectable"
         grossSats={burnEconomics.grossAssetSats}
         protocolOutputSats={burnEconomics.protocolOutputSats}
         estimatedFeeSats={burnEconomics.estimatedFeeSats}
-        busy={burnSnapshot.matches('burning')}
+        canReview={!sending && !item.covenantLocked}
         error={burnSnapshot.context.error}
         onCancel={() => burnEvent({ type: 'CANCEL' })}
+        onBack={() => burnEvent({ type: 'BACK' })}
+        onReview={() => {
+          playWalletSound('soft')
+          burnEvent({ type: 'REVIEW' })
+        }}
         onConfirm={confirmBurn}
       />
     </div>

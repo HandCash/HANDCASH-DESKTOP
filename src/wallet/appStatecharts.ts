@@ -272,6 +272,25 @@ const BSV21_SEND_PATH = `stateDiagram-v2
   unknown --> refuse : unknown_lock
 `
 
+const ASSET_BURN_UI = `stateDiagram-v2
+  direction LR
+  [*] --> closed
+  closed --> editing : OPEN
+  editing --> confirming : REVIEW
+  editing --> failure : FAIL (pre-flight)
+  confirming --> editing : BACK
+  confirming --> burning : CONFIRM
+  burning --> done : SUCCESS
+  burning --> failure : FAIL
+  failure --> editing : BACK
+  failure --> closed : CANCEL / RESET
+  done --> closed : RESET
+  editing : Choose amount
+  confirming : Confirm fixed amount
+  burning : Handed to wallet
+  failure : Nothing destroyed
+`
+
 const ASSET_BURN = `stateDiagram-v2
   direction LR
   [*] --> idle
@@ -962,6 +981,12 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     caption:
       'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
     source: BSV21_SEND_PATH,
+  },
+  {
+    id: 'assetBurnUi',
+    label: 'Burn',
+    caption: 'assetBurn UI — edit → confirm → hand off to the wallet',
+    source: ASSET_BURN_UI,
   },
   {
     id: 'assetBurn',

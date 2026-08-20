@@ -1,5 +1,18 @@
 import { assign, setup, type SnapshotFrom } from 'xstate'
 
+/**
+ * Chart: assetBurn
+ * States: closed → editing → confirming → handoff | failure
+ *
+ * Same shape as `sendMachine`, because a burn is a spend the user composes and
+ * confirms: the amount is chosen in `editing` and can no longer be edited in
+ * `confirming`, so the irreversible step restates one fixed amount instead of
+ * offering a text field beside a destroy button.
+ *
+ * `CONFIRM` hands the burn to the wallet and closes the prompt — progress and
+ * the settled row live in Activity, which outlives this chart. `failure` is a
+ * refusal the user can edit their way out of.
+ */
 export type AssetBurnUiEvent =
   | { type: 'OPEN'; amount?: string }
   | { type: 'SET_AMOUNT'; amount: string }
@@ -11,6 +24,8 @@ export type AssetBurnUiEvent =
         estimatedFeeSats: number
       } | null
     }
+  | { type: 'REVIEW' }
+  | { type: 'BACK' }
   | { type: 'CANCEL' }
   | { type: 'CONFIRM' }
   | { type: 'SUCCESS'; txid: string; recoveredSatoshis: number }
@@ -65,12 +80,10 @@ export const assetBurnUiMachine = setup({
           }
         : {},
     ),
-    fail: assign(({ event }) =>
-      event.type === 'FAIL' ? { error: event.error } : {},
-    ),
+    fail: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
   },
 }).createMachine({
-  id: 'assetBurnUi',
+  id: 'assetBurn',
   initial: 'closed',
   context: {
     error: null,
@@ -82,29 +95,42 @@ export const assetBurnUiMachine = setup({
   states: {
     closed: {
       entry: 'clear',
-      on: { OPEN: { target: 'confirming', actions: 'open' } },
+      on: { OPEN: { target: 'editing', actions: 'open' } },
     },
-    confirming: {
+    /** Choose what to destroy and read the economics before committing. */
+    editing: {
       on: {
         CANCEL: { target: 'closed' },
         SET_AMOUNT: { actions: 'setAmount' },
         PREVIEW: { actions: 'setPreview' },
-        CONFIRM: { target: 'burning' },
-        FAIL: { target: 'failed', actions: 'fail' },
+        REVIEW: { target: 'confirming' },
+        FAIL: { target: 'failure', actions: 'fail' },
       },
     },
+    /** The amount is fixed here; the only ways out are Back or Burn. */
+    confirming: {
+      on: {
+        BACK: { target: 'editing' },
+        CANCEL: { target: 'closed' },
+        PREVIEW: { actions: 'setPreview' },
+        CONFIRM: { target: 'burning' },
+        FAIL: { target: 'failure', actions: 'fail' },
+      },
+    },
+    /** Handed to the wallet. The prompt closes; Activity carries the result. */
     burning: {
       on: {
         SUCCESS: { target: 'done', actions: 'succeed' },
-        FAIL: { target: 'failed', actions: 'fail' },
+        FAIL: { target: 'failure', actions: 'fail' },
       },
     },
-    failed: {
+    failure: {
       on: {
-        CONFIRM: { target: 'burning', actions: 'clearError' },
+        BACK: { target: 'editing', actions: 'clearError' },
         SET_AMOUNT: { actions: 'setAmount' },
         PREVIEW: { actions: 'setPreview' },
         CANCEL: { target: 'closed' },
+        RESET: { target: 'closed' },
       },
     },
     done: {

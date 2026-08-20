@@ -7063,17 +7063,51 @@ a.app-details-host:hover {
 
 .statecharts-live {
   flex: 0 0 auto;
-  padding: 10px 12px;
   border-radius: var(--hc-radius);
   border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, transparent);
   background: var(--hc-sunken);
-  display: grid;
-  gap: 8px;
+}
+
+.statecharts-live-trigger {
+  appearance: none;
+  width: 100%;
+  margin: 0;
+  padding: 5px 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  text-align: left;
+}
+
+.statecharts-live-trigger [data-aeon-part='item-indicator'],
+.statecharts-live-trigger [data-aeon-part='itemIndicator'] {
+  flex: 0 0 auto;
+  width: 14px;
+  height: 14px;
+  opacity: 0.55;
+  transition: transform 0.2s ease;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+
+.statecharts-live-trigger[aria-expanded='true'] [data-aeon-part='item-indicator'],
+.statecharts-live-trigger[aria-expanded='true'] [data-aeon-part='itemIndicator'] {
+  transform: rotate(180deg);
 }
 
 .statecharts-live-title {
+  flex: 0 0 auto;
   margin: 0;
-  font-size: 0.68rem;
+  font-size: 0.62rem;
   font-weight: 700;
   letter-spacing: 0.08em;
   text-transform: uppercase;
@@ -7081,18 +7115,28 @@ a.app-details-host:hover {
 }
 
 .statecharts-live-summary {
+  flex: 1 1 auto;
+  min-width: 0;
   margin: 0;
-  font-size: 0.72rem;
-  line-height: 1.35;
+  font-size: 0.68rem;
+  line-height: 1.3;
   color: var(--hc-text);
-  overflow-wrap: anywhere;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.statecharts-live-body {
+  display: grid;
+  gap: 6px;
+  padding: 0 10px 8px;
 }
 
 .statecharts-live-grid {
   margin: 0;
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px 12px;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 4px 12px;
 }
 
 .statecharts-live-grid > div {
@@ -7127,24 +7171,32 @@ a.app-details-host:hover {
   color: var(--hc-muted);
 }
 
-.statecharts-toolbar {
-  flex-shrink: 0;
+/* One scrolling row, not a wrapping wall of chips — the chart needs the height
+   more than the page list needs to be fully visible at once. */
+.statecharts-nav {
+  flex: 0 0 auto;
   display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
+  flex-wrap: nowrap;
+  gap: 0.28rem;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  padding-bottom: 2px;
 }
 
-.statecharts-nav {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.28rem;
-  max-height: 5.5rem;
-  overflow-y: auto;
-  padding-right: 2px;
+.statecharts-nav::-webkit-scrollbar {
+  height: 4px;
+}
+
+.statecharts-nav::-webkit-scrollbar-thumb {
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hc-muted) 40%, transparent);
 }
 
 .statecharts-nav-btn {
   appearance: none;
+  flex: 0 0 auto;
+  white-space: nowrap;
   margin: 0;
   padding: 0.22rem 0.5rem;
   border-radius: 6px;
@@ -7174,21 +7226,34 @@ a.app-details-host:hover {
   border-color: var(--hc-accent);
 }
 
+/* Floats over the chart's top-left corner opposite the zoom bar. */
 .statecharts-caption {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  left: 10px;
+  max-width: calc(100% - 150px);
   margin: 0;
-  font-size: 0.68rem;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--hc-surface) 78%, transparent);
+  font-size: 0.64rem;
   line-height: 1.3;
   color: var(--hc-muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  pointer-events: none;
 }
 
+/* A floor, not just a share: in a short window the settings body would hand the
+   chart 2px of leftover space and the page looked empty. The body scrolls, so
+   claiming a readable height here is safe. */
 .statecharts-viewport {
+  position: relative;
   flex: 1 1 auto;
-  min-height: 0;
-  max-height: 100%;
+  min-height: clamp(260px, 46vh, 620px);
   overflow: hidden;
   isolation: isolate;
   contain: layout;
@@ -7199,7 +7264,6 @@ a.app-details-host:hover {
   display: flex;
   align-items: stretch;
   justify-content: stretch;
-  position: relative;
 }
 
 .statechart-figure {
@@ -7395,8 +7459,10 @@ body > div.statechart-mermaid-host {
     font-size: 0.62rem;
   }
 
+  /* Stays one line: it overlays the chart now, so wrapping would cover it. */
   .statecharts-caption {
-    white-space: normal;
+    max-width: calc(100% - 128px);
+    font-size: 0.6rem;
   }
 }
 
@@ -9123,8 +9189,13 @@ html[data-aeon-mode='light'] .statecharts-nav-btn {
   background: var(--hc-sunken);
 }
 
+/* Which page you're reading is chrome, not wallet state, so on paper it takes
+   the same near-black selected treatment as the wallet nav tabs. White on the
+   sheet's mid green was only 3.6:1 and read as a disabled pill. */
 html[data-aeon-mode='light'] .statecharts-nav-btn.is-active {
-  color: #ffffff;
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
+  border-color: color-mix(in srgb, hsl(var(--primary)) 45%, transparent);
 }
 
 html[data-aeon-mode='light'] .screenshot-toast {
@@ -9277,6 +9348,41 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
 [data-aeon-scope='asset-burn-prompt'] .asset-burn-amount-control em {
   color: var(--hc-muted);
   font-style: normal;
+}
+
+[data-aeon-scope='asset-burn-prompt'] .asset-burn-available {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+/* Confirm stage mirrors the send confirm face: one amount, one target. */
+[data-aeon-scope='asset-burn-prompt'] .asset-burn-confirm-amount {
+  margin: 6px 0 0;
+  font-family: var(--hc-display);
+  font-size: clamp(1.9rem, 5vw, 2.6rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  line-height: 1.1;
+  color: var(--hc-danger, #ef6464);
+}
+
+[data-aeon-scope='asset-burn-prompt'] .asset-burn-target {
+  margin: 4px 0 0;
+  color: var(--hc-muted);
+  font-size: 1rem;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+[data-aeon-scope='asset-burn-prompt'][data-aeon-state='confirming'] .asset-burn-meta {
+  margin-top: 14px;
+}
+
+[data-aeon-scope='asset-burn-prompt'] .asset-burn-error {
+  margin: 12px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .asset-burn-trigger {
