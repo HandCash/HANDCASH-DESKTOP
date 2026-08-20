@@ -6,6 +6,7 @@
  * the exact BSV-21 tip into basket `bsv21`. No indexer decides custody.
  */
 import { Beef } from '@bsv/sdk'
+import type { AtomicBeefPurpose } from './beefCache'
 import {
   BSV21_BASKET,
   buildBsv21CustomInstructions,
@@ -65,6 +66,8 @@ export async function internalizePeerFungibleSettle(opts: {
   tx?: number[]
   beefUrl?: string
   token: FungibleAsset
+  /** Inbox hints race sender postBeef and therefore use a short retry backoff. */
+  beefPurpose?: AtomicBeefPurpose
 }): Promise<IngestFungibleSettleResult> {
   const id = opts.txid.trim().toLowerCase()
   const tokenId = normalizeTokenId(opts.token.tokenId)
@@ -91,14 +94,10 @@ export async function internalizePeerFungibleSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getAtomicBeefBinaryForTxid, isAtomicBeefInBackoff } = await import(
-        './beefCache'
-      )
-      if (isAtomicBeefInBackoff(id)) {
-        clearInboundReceivePending(id)
-        return { accepted: false, outpoints: [], reason: 'beef-backoff' }
-      }
-      atomic = await getAtomicBeefBinaryForTxid(active, id)
+      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      atomic = await getAtomicBeefBinaryForTxid(active, id, {
+        purpose: opts.beefPurpose,
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (!/AtomicBEEF backoff/i.test(msg)) {

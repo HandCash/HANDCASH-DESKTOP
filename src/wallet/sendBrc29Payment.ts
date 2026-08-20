@@ -1001,10 +1001,6 @@ export async function ingestPaymentsFromTipHints(
     let balanceSats: number | null = null
 
     if (hint.item) {
-      const { isAtomicBeefInBackoff } = await import('./beefCache')
-      if (isAtomicBeefInBackoff(hint.txid)) {
-        return { importedTxid, balanceSats }
-      }
       let atomic = hint.tx
       if ((!atomic || !atomic.length) && hint.beefUrl) {
         atomic = await fetchAtomicBeefFromUrl(hint.beefUrl)
@@ -1012,7 +1008,6 @@ export async function ingestPaymentsFromTipHints(
       const hadLocalBeef = !!(atomic && atomic.length > 0)
       let accepted = false
       for (let attempt = 0; attempt < ingestAttempts; attempt++) {
-        if (attempt > 0 && isAtomicBeefInBackoff(hint.txid)) break
         const asset = hint.asset
         const result =
           asset?.kind === 'fungible'
@@ -1023,6 +1018,7 @@ export async function ingestPaymentsFromTipHints(
                     tx: attempt === 0 ? atomic : undefined,
                     beefUrl: attempt === 0 ? undefined : hint.beefUrl,
                     token: asset,
+                    beefPurpose: 'inboundItemHint',
                   }),
               )
             : await import('./ingestItemSettle').then(
@@ -1032,6 +1028,7 @@ export async function ingestPaymentsFromTipHints(
                     tx: attempt === 0 ? atomic : undefined,
                     beefUrl: attempt === 0 ? undefined : hint.beefUrl,
                     name: hint.itemName,
+                    beefPurpose: 'inboundItemHint',
                   }),
               )
         if (result.accepted) {

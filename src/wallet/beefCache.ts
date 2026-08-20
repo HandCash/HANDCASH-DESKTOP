@@ -24,6 +24,8 @@ export type GetBeefOpts = {
   allowUnprovenRawTx?: boolean
 }
 
+export type AtomicBeefPurpose = 'default' | 'inboundItemHint'
+
 const TTL_MS = 10 * 60_000
 const MAX = 200
 /** Per-txid fetch — indexer / WoC must not wedge mint or send forever. */
@@ -40,6 +42,12 @@ const atomicFailUntil = new Map<string, number>()
 
 const ATOMIC_FAIL_BACKOFF_MS = 10 * 60_000
 const ATOMIC_NOT_ON_CHAIN_BACKOFF_MS = 60 * 60_000
+/**
+ * A durable, un-ACK'd inbox hint can arrive just before the sender's silent
+ * postBeef. That race is expected, not an indexer outage: retry soon instead of
+ * suppressing every five-second inbox poll for ten minutes.
+ */
+const INBOUND_ITEM_HINT_BACKOFF_MS = 10_000
 
 const DURABLE_PREFIX = 'handcash.createdBeef.'
 const DURABLE_INDEX_KEY = 'handcash.createdBeef.index'
@@ -427,6 +435,7 @@ export async function getBeefForTxidCached(
 export async function getAtomicBeefBinaryForTxid(
   wallet: ActiveWallet,
   txid: string,
+  opts?: { purpose?: AtomicBeefPurpose },
 ): Promise<number[]> {
   const key = keyOf(txid)
   const until = atomicFailUntil.get(key)
@@ -476,7 +485,7 @@ export async function getAtomicBeefBinaryForTxid(
         `Could not build AtomicBEEF for ${key.slice(0, 12)}… — wait for the indexer, then refresh.`,
       )
     } catch (err) {
-      noteAtomicBeefFailure(key, err)
+      noteAtomicBeefFailure(key, err, opts)
       throw err
     }
   })().finally(() => {
@@ -487,16 +496,23 @@ export async function getAtomicBeefBinaryForTxid(
   return request
 }
 
-export function noteAtomicBeefFailure(txid: string, err: unknown): void {
+export function noteAtomicBeefFailure(
+  txid: string,
+  err: unknown,
+  opts?: { purpose?: AtomicBeefPurpose },
+): void {
   const key = keyOf(txid)
   if (!key) return
   const msg = err instanceof Error ? err.message : String(err)
   if (/AtomicBEEF backoff/i.test(msg)) return
-  const ms = /valid transaction on chain|not (?:found|on[ -]?chain)|offline/i.test(
-    msg,
-  )
-    ? ATOMIC_NOT_ON_CHAIN_BACKOFF_MS
-    : ATOMIC_FAIL_BACKOFF_MS
+  const ms =
+    opts?.purpose === 'inboundItemHint'
+      ? INBOUND_ITEM_HINT_BACKOFF_MS
+      : /valid transaction on chain|not (?:found|on[ -]?chain)|offline/i.test(
+            msg,
+          )
+        ? ATOMIC_NOT_ON_CHAIN_BACKOFF_MS
+        : ATOMIC_FAIL_BACKOFF_MS
   const prev = atomicFailUntil.get(key) ?? 0
   const next = Date.now() + ms
   if (next > prev) atomicFailUntil.set(key, next)

@@ -8,6 +8,7 @@
  * latch companion.
  */
 import { Beef } from '@bsv/sdk'
+import type { AtomicBeefPurpose } from './beefCache'
 import { getActiveWallet } from './session'
 import { rememberBeefTree } from './beefCache'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -58,6 +59,8 @@ export async function internalizePeerItemSettle(opts: {
   /** Optional BRC-150 origin hint from the messagebox notify. */
   origin?: string
   app?: string
+  /** Inbox hints race sender postBeef and therefore use a short retry backoff. */
+  beefPurpose?: AtomicBeefPurpose
 }): Promise<IngestItemSettleResult> {
   const id = opts.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) {
@@ -78,14 +81,10 @@ export async function internalizePeerItemSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getAtomicBeefBinaryForTxid, isAtomicBeefInBackoff } = await import(
-        './beefCache'
-      )
-      if (isAtomicBeefInBackoff(id)) {
-        clearInboundReceivePending(id)
-        return { accepted: false, outpoints: [], reason: 'beef-backoff' }
-      }
-      atomic = await getAtomicBeefBinaryForTxid(active, id)
+      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      atomic = await getAtomicBeefBinaryForTxid(active, id, {
+        purpose: opts.beefPurpose,
+      })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
       if (!/AtomicBEEF backoff/i.test(msg)) {
@@ -224,11 +223,13 @@ export async function internalizePeerItemSettle(opts: {
     rememberBeefTree(atomic, id)
     scheduleHistoryBackupPush('internalizeAction')
     paintReceivedTip()
+    console.info(`[item-settle] accepted ${tipOp} into 1sat`)
     return { accepted: true, outpoints: allOps }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
       markOneSatImported(allOps)
       paintReceivedTip()
+      console.info(`[item-settle] accepted existing ${tipOp} into 1sat`)
       return { accepted: true, outpoints: allOps, reason: 'already-imported' }
     }
     markOneSatImportFailed(allOps)

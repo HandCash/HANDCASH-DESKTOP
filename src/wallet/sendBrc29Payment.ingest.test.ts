@@ -16,6 +16,11 @@ const postBeef = vi.fn(async () => [
 const txExistsOnChain = vi.fn(async (): Promise<boolean | null> => null)
 const internalizeAction = vi.fn(async () => ({ accepted: true }))
 const fetchBalanceSats = vi.fn(async () => 91_000)
+const internalizePeerItemSettle = vi.fn(async (_opts: unknown) => ({
+  accepted: true,
+  outpoints: ['a'.repeat(64) + '.0'],
+}))
+const isAtomicBeefInBackoff = vi.fn((_txid: string) => false)
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -36,9 +41,13 @@ vi.mock('./legacyBeef', () => ({
   withVisibleOnChainBeef: <T>(fn: () => Promise<T>) => fn(),
 }))
 
+vi.mock('./ingestItemSettle', () => ({
+  internalizePeerItemSettle: (opts: unknown) => internalizePeerItemSettle(opts),
+}))
+
 vi.mock('./beefCache', () => ({
   getBeefForTxidCached: async () => ({ toBinaryAtomic: () => [1, 2, 3] }),
-  isAtomicBeefInBackoff: () => false,
+  isAtomicBeefInBackoff: (txid: string) => isAtomicBeefInBackoff(txid),
   rememberBeefBinary: () => {},
   rememberBeefTree: () => {},
 }))
@@ -112,6 +121,13 @@ beforeEach(() => {
   internalizeAction.mockClear()
   internalizeAction.mockImplementation(async () => ({ accepted: true }))
   fetchBalanceSats.mockClear()
+  internalizePeerItemSettle.mockClear()
+  internalizePeerItemSettle.mockResolvedValue({
+    accepted: true,
+    outpoints: ['a'.repeat(64) + '.0'],
+  })
+  isAtomicBeefInBackoff.mockReset()
+  isAtomicBeefInBackoff.mockReturnValue(false)
   vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
 })
 
@@ -258,6 +274,28 @@ describe('ingestPaymentsFromTipHints', () => {
 
     expect(result.imported).toBe(0)
     expect(internalizeAction).not.toHaveBeenCalled()
+  })
+
+  it('attempts a txid-only item hint even while the ordinary BEEF cache is backed off', async () => {
+    const { ingestPaymentsFromTipHints } = await import('./sendBrc29Payment')
+    const txid = 'b'.repeat(64)
+    isAtomicBeefInBackoff.mockReturnValue(true)
+    const result = await ingestPaymentsFromTipHints([
+      {
+        txid,
+        messageId: 'item-message',
+        item: true,
+        itemName: 'Incoming item',
+      },
+    ])
+
+    expect(result.importedTxids).toEqual([txid])
+    expect(internalizePeerItemSettle).toHaveBeenCalledWith(
+      expect.objectContaining({
+        txid,
+        beefPurpose: 'inboundItemHint',
+      }),
+    )
   })
 
   /** The failure path sleeps between retries — don't pay that in CI. */

@@ -1,10 +1,18 @@
 # Changelog
 
-## [1.2.267] - unreleased
+## [1.2.267] - 2026-08-20
 
-### Changed
+### Fixed
 
-- Version in flight. Entries land with the change that ships them.
+- **Identity-key item deliveries no longer disappear behind a ten-minute
+  retry.** A large AtomicBEEF can exceed the messagebox body limit, leaving the
+  recipient to fetch it by txid. If that first fetch raced the sender's silent
+  `postBeef`, the ordinary indexer-failure cache suppressed every five-second
+  inbox poll for ten minutes. Durable, un-ACK'd item and token hints now use a
+  ten-second backoff while ordinary indexer failures retain their conservative
+  backoff. Once accepted, the temporary inventory card is also durable across
+  renderer restarts, scoped to the receiving identity, and retained for the
+  full settlement window until the real basket row appears.
 
 ## [1.2.266] - 2026-08-20
 

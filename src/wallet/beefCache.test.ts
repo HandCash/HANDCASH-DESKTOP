@@ -395,4 +395,26 @@ describe('beefCache', () => {
     expect(got.findTxid(txid)?.tx).toBeTruthy()
     expect(getBeefForTxid).not.toHaveBeenCalled()
   })
+
+  it('retries an inbound item hint after seconds, not the global ten-minute backoff', async () => {
+    const { isAtomicBeefInBackoff, noteAtomicBeefFailure } = await import(
+      './beefCache'
+    )
+    const now = 1_700_000_000_000
+    const itemTxid = 'c'.repeat(64)
+    const ordinaryTxid = 'd'.repeat(64)
+    const clock = vi.spyOn(Date, 'now').mockReturnValue(now)
+    try {
+      noteAtomicBeefFailure(itemTxid, new Error('not found'), {
+        purpose: 'inboundItemHint',
+      })
+      noteAtomicBeefFailure(ordinaryTxid, new Error('indexer miss'))
+
+      expect(isAtomicBeefInBackoff(itemTxid, now + 9_999)).toBe(true)
+      expect(isAtomicBeefInBackoff(itemTxid, now + 10_001)).toBe(false)
+      expect(isAtomicBeefInBackoff(ordinaryTxid, now + 10_001)).toBe(true)
+    } finally {
+      clock.mockRestore()
+    }
+  })
 })

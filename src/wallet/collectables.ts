@@ -182,6 +182,7 @@ export type Collectable = {
 type CollectablesListener = (items: Collectable[]) => void
 
 const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
+const SEEDED_ITEMS_KEY = 'handcash.collectables.seeded.v1'
 
 let cachedCollectables: Collectable[] = []
 /** True after at least one successful list (even if empty), or a durable hit. */
@@ -400,7 +401,9 @@ export function clearCollectablesCache(): void {
   cachedLiveAllOutpoints = null
   firstSeenAt.clear()
   seededItems.clear()
+  loadedSeedIdentity = null
   durableRemoveItem(LIST_CACHE_KEY)
+  durableRemoveItem(SEEDED_ITEMS_KEY)
   notifyCollectables([])
 }
 
@@ -748,26 +751,116 @@ const firstSeenAt = new Map<string, number>()
  */
 const seededItems = new Map<string, ItemOutput>()
 
-/** How long a locally seeded tip is carried before the basket must confirm it. */
-const SEEDED_ITEM_TTL_MS = 5 * 60_000
+/**
+ * How long a locally seeded tip is carried before the basket must confirm it.
+ *
+ * Toolbox can keep an internalized, unmined item out of `listOutputs` for longer
+ * than five minutes. The wallet already accepted custody before a seed is
+ * created, so keep that fact across renderer restarts and allow the monitor a
+ * full half hour to settle. Sent tips still leave immediately.
+ */
+const SEEDED_ITEM_TTL_MS = 30 * 60_000
+let loadedSeedIdentity: string | null = null
+
+type DurableSeed = {
+  outpoint: string
+  satoshis: number
+  tags?: string[]
+  seenAt: number
+}
+
+function persistSeededItems(identityKey: string): void {
+  const items: DurableSeed[] = []
+  for (const [key, output] of seededItems) {
+    items.push({
+      outpoint: output.outpoint,
+      satoshis: output.satoshis,
+      ...(output.tags ? { tags: output.tags } : {}),
+      seenAt: firstSeenAt.get(key) ?? Date.now(),
+    })
+  }
+  durableSetItem(
+    SEEDED_ITEMS_KEY,
+    JSON.stringify({ identityKey, items }),
+  )
+}
+
+/** Restore only seeds created by this identity; another wallet's tips are never ours. */
+function hydrateSeededItems(identityKey: string): void {
+  if (loadedSeedIdentity === identityKey) return
+  seededItems.clear()
+  loadedSeedIdentity = identityKey
+  try {
+    const raw = durableGetItem(SEEDED_ITEMS_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as {
+      identityKey?: unknown
+      items?: unknown
+    }
+    if (parsed.identityKey !== identityKey || !Array.isArray(parsed.items)) {
+      return
+    }
+    const now = Date.now()
+    for (const candidate of parsed.items) {
+      if (!candidate || typeof candidate !== 'object') continue
+      const seed = candidate as Partial<DurableSeed>
+      if (
+        typeof seed.outpoint !== 'string' ||
+        typeof seed.satoshis !== 'number' ||
+        typeof seed.seenAt !== 'number' ||
+        now - seed.seenAt >= SEEDED_ITEM_TTL_MS ||
+        isItemSent(seed.outpoint)
+      ) {
+        continue
+      }
+      const output: ItemOutput = {
+        outpoint: normalizeOutpoint(seed.outpoint),
+        satoshis: seed.satoshis,
+        ...(Array.isArray(seed.tags)
+          ? { tags: seed.tags.filter((tag): tag is string => typeof tag === 'string') }
+          : {}),
+      }
+      const key = outpointKey(output.outpoint)
+      seededItems.set(key, output)
+      firstSeenAt.set(key, seed.seenAt)
+    }
+    if (seededItems.size > 0) {
+      console.info(
+        `[collectables] restored ${seededItems.size} pending received item seed(s)`,
+      )
+    }
+    persistSeededItems(identityKey)
+  } catch {
+    durableRemoveItem(SEEDED_ITEMS_KEY)
+  }
+}
 
 /** Seeded rows the basket has not returned yet, minus anything already spent. */
-function pendingSeededItems(outputs: ItemOutput[], now: number): ItemOutput[] {
+function pendingSeededItems(
+  outputs: ItemOutput[],
+  now: number,
+  identityKey: string,
+): ItemOutput[] {
+  hydrateSeededItems(identityKey)
   if (seededItems.size === 0) return []
   const listed = new Set(outputs.map((o) => outpointKey(o.outpoint)))
   const pending: ItemOutput[] = []
+  let changed = false
   for (const [key, output] of seededItems) {
     const seenAt = firstSeenAt.get(key) ?? 0
     if (listed.has(key) || isItemSent(output.outpoint)) {
       seededItems.delete(key)
+      changed = true
       continue
     }
     if (now - seenAt >= SEEDED_ITEM_TTL_MS) {
       seededItems.delete(key)
+      changed = true
       continue
     }
     pending.push(output)
   }
+  if (changed) persistSeededItems(identityKey)
   return pending
 }
 
@@ -801,10 +894,13 @@ export function noteIngestedItem(args: {
     ...(name ? [`name:${name}`] : []),
   ]
   const output: ItemOutput = { outpoint: target, satoshis: 1, tags }
+  const identityKey = getActiveWallet()?.identityKey
+  if (identityKey) hydrateSeededItems(identityKey)
   // Judged against the scan that ran before this tip existed, it would look
   // missing — record when we first held it so ownership grace applies.
   if (!firstSeenAt.has(key)) firstSeenAt.set(key, Date.now())
   seededItems.set(key, output)
+  if (identityKey) persistSeededItems(identityKey)
   if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
@@ -1660,7 +1756,10 @@ async function listCollectablesNow(
   // Rebuilding from the read alone is what dropped the card on a send to your
   // own handle: the spent tip leaves, the replacement is not listed yet, and
   // Collect comes back one card short until a later scan.
-  outputs = [...outputs, ...pendingSeededItems(outputs, seenNow)]
+  outputs = [
+    ...outputs,
+    ...pendingSeededItems(outputs, seenNow, wallet.identityKey),
+  ]
 
   // Basket rows are necessary but not sufficient. Ownership fate is exhaustive:
   // keepLive | graceHold | keepCovenant | ghostDrop — only ghostDrop relinquish.
