@@ -9,6 +9,12 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   case "$remote_ref" in
     refs/heads/master|refs/heads/main)
       node "$ROOT/scripts/require-version-bump.mjs"
+      node "$ROOT/scripts/require-toolbox-patch.mjs"
+      ;;
+    # A tag push is what actually builds installers, and a stale toolbox patch
+    # breaks `npm ci` in every release workflow.
+    refs/tags/v*)
+      node "$ROOT/scripts/require-toolbox-patch.mjs"
       ;;
   esac
 done

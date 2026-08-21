@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.2.271] - 2026-08-21
+
+### Fixed
+
+- **Release builds produce installers again.** The Toolbox patch was still pinned
+  to 2.4.4 while the wallet installs 2.10.2, so `npm ci` failed in `postinstall`
+  and 1.2.268 through 1.2.270 shipped no downloads. The patch is regenerated for
+  2.10.2, and a stale patch now fails `npm test` and the pre-push hook instead of
+  a release workflow nobody was watching.
+- **Legacy P2PKH sweeps and BRC-29 receipts no longer need a merkle proof of a
+  just-seen output.** Those Toolbox edits had silently stopped applying, so
+  importing visible funds and internalizing a fresh payment could refuse work
+  the wallet is meant to do.
+
 ## [1.2.270] - 2026-08-21
 
 ### Changed

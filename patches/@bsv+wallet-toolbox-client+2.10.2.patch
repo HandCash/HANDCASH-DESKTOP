@@ -1,0 +1,148 @@
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
+index e1dedf2..5b1a87e 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
++++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
+@@ -5703,6 +5703,10 @@ function classifyReqDetails(details, swr, readyToSendReqs) {
+ async function verifyMergedBeef(storage, r, readyToSendReqs, logger) {
+ 	if (readyToSendReqs.length === 0 || r.verified === true) return;
+ 	if (!await r.beef.verify(await storage.getServices().getChainTracker())) {
++		if ((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0) {
++			logger?.log('visible unconfirmed P2PKH — posting without merkle');
++			return;
++		}
+ 		logger?.error(`VERIFY FALSE BEEF: ${r.beef.toLogString()}`);
+ 		throw new WERR_INTERNAL("merged Beef failed validation.");
+ 	}
+@@ -7944,7 +7948,8 @@ async function internalizeAction$1(wallet, auth, args) {
+ 	*/
+ 	async function validateAtomicBeef() {
+ 		const ab = canonicalizeAtomicBeef(vargs.tx);
+-		if (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {
++		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"));
++		if ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {
+ 			console.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);
+ 			throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
+ 		}
+@@ -9088,7 +9093,7 @@ var ActionBatchWorkspace = class {
+ 	missingExplicitOutpoints(args) {
+ 		return [...args.inputs.map((input) => input.outpoint), ...args.options.noSendChange].filter((outpoint) => {
+ 			const key = `${outpoint.txid}.${outpoint.vout}`;
+-			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key) && (this.state.discardedStagedTxids.has(outpoint.txid) || this.state.sharedBeef.findTxid(outpoint.txid)?.tx == null);
++			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key);
+ 		});
+ 	}
+ 	async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
+@@ -11069,7 +11074,8 @@ async function validateRequiredInputs(storage, userId, vargs) {
+ 	});
+ 	await validateBeefTxidOnlyEntries(beef, inputsByTxid, trustSelf, storage);
+ 	await ensureBeefContainsAllInputTxids(beef, inputsByTxid, localKnownInputTxids, trustSelf, storage);
+-	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) {
++	const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"));
++	if (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {
+ 		console.log(`verifyInputBeef failed, inputBEEF failed to verify.\n${beef.toLogString()}\n`);
+ 		throw new WERR_INVALID_PARAMETER("inputBEEF", "valid Beef when factoring options.trustSelf");
+ 	}
+@@ -12477,7 +12483,8 @@ var InternalizeActionContext = class {
+ 	*/
+ 	async validateAtomicBeef(atomicBeef) {
+ 		const ab = canonicalizeAtomicBeef(atomicBeef);
+-		if (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
++		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"));
++		if ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
+ 		const txid = ab.atomicTxid;
+ 		const btx = ab.findTxid(txid);
+ 		if (btx == null) throw new WERR_INVALID_PARAMETER("tx", `valid AtomicBEEF with newest txid of ${txid}`);
+@@ -13866,7 +13873,7 @@ async function validateManifestActions(storage, batch, manifest) {
+ 	};
+ 	for (const compactAction of manifest.actions) actions.push(await validateManifestAction(compactAction, state));
+ 	await verifyUnlockScriptsBatch(actions.map(({ action }) => action.txid), beef, storage.scriptVerifier);
+-	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
++	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
+ 	return {
+ 		actions,
+ 		dependencyBeef,
+@@ -16526,6 +16533,10 @@ var StorageIdb = class extends StorageProvider {
+ 					spentBy: transactionId
+ 				}, dbTrx);
+ 				await this.validateOutputScript(output, dbTrx);
++				if (output.lockingScript == null) {
++					const stored = await this.findOutputById(output.outputId, dbTrx);
++					if (stored?.lockingScript != null) output.lockingScript = stored.lockingScript;
++				}
+ 			}
+ 			return output;
+ 		} finally {
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
+index 864baf0..66a8db8 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
++++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
+@@ -5668,6 +5668,10 @@ function classifyReqDetails(details, swr, readyToSendReqs) {
+ async function verifyMergedBeef(storage, r, readyToSendReqs, logger) {
+ 	if (readyToSendReqs.length === 0 || r.verified === true) return;
+ 	if (!await r.beef.verify(await storage.getServices().getChainTracker())) {
++		if ((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0) {
++			logger?.log('visible unconfirmed P2PKH — posting without merkle');
++			return;
++		}
+ 		logger?.error(`VERIFY FALSE BEEF: ${r.beef.toLogString()}`);
+ 		throw new WERR_INTERNAL("merged Beef failed validation.");
+ 	}
+@@ -7909,7 +7913,8 @@ async function internalizeAction$1(wallet, auth, args) {
+ 	*/
+ 	async function validateAtomicBeef() {
+ 		const ab = canonicalizeAtomicBeef(vargs.tx);
+-		if (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {
++		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"));
++		if ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {
+ 			console.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);
+ 			throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
+ 		}
+@@ -9053,7 +9058,7 @@ var ActionBatchWorkspace = class {
+ 	missingExplicitOutpoints(args) {
+ 		return [...args.inputs.map((input) => input.outpoint), ...args.options.noSendChange].filter((outpoint) => {
+ 			const key = `${outpoint.txid}.${outpoint.vout}`;
+-			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key) && (this.state.discardedStagedTxids.has(outpoint.txid) || this.state.sharedBeef.findTxid(outpoint.txid)?.tx == null);
++			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key);
+ 		});
+ 	}
+ 	async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
+@@ -11034,7 +11039,8 @@ async function validateRequiredInputs(storage, userId, vargs) {
+ 	});
+ 	await validateBeefTxidOnlyEntries(beef, inputsByTxid, trustSelf, storage);
+ 	await ensureBeefContainsAllInputTxids(beef, inputsByTxid, localKnownInputTxids, trustSelf, storage);
+-	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) {
++	const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"));
++	if (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {
+ 		console.log(`verifyInputBeef failed, inputBEEF failed to verify.\n${beef.toLogString()}\n`);
+ 		throw new WERR_INVALID_PARAMETER("inputBEEF", "valid Beef when factoring options.trustSelf");
+ 	}
+@@ -12442,7 +12448,8 @@ var InternalizeActionContext = class {
+ 	*/
+ 	async validateAtomicBeef(atomicBeef) {
+ 		const ab = canonicalizeAtomicBeef(atomicBeef);
+-		if (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
++		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"));
++		if ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
+ 		const txid = ab.atomicTxid;
+ 		const btx = ab.findTxid(txid);
+ 		if (btx == null) throw new WERR_INVALID_PARAMETER("tx", `valid AtomicBEEF with newest txid of ${txid}`);
+@@ -13831,7 +13838,7 @@ async function validateManifestActions(storage, batch, manifest) {
+ 	};
+ 	for (const compactAction of manifest.actions) actions.push(await validateManifestAction(compactAction, state));
+ 	await verifyUnlockScriptsBatch(actions.map(({ action }) => action.txid), beef, storage.scriptVerifier);
+-	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
++	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
+ 	return {
+ 		actions,
+ 		dependencyBeef,
+@@ -16491,6 +16498,10 @@ var StorageIdb = class extends StorageProvider {
+ 					spentBy: transactionId
+ 				}, dbTrx);
+ 				await this.validateOutputScript(output, dbTrx);
++				if (output.lockingScript == null) {
++					const stored = await this.findOutputById(output.outputId, dbTrx);
++					if (stored?.lockingScript != null) output.lockingScript = stored.lockingScript;
++				}
+ 			}
+ 			return output;
+ 		} finally {
