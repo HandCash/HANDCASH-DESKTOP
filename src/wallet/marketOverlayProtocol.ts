@@ -21,6 +21,15 @@ export const MARKET_OFFER_DEPOSIT_SATS = 1 as const
  * peer remittance wire budget, because a listing proof may not be slimmed.
  */
 export const MARKET_MAX_PROVENANCE_JSON_BYTES = 1_000_000
+/**
+ * Txid-only path bodies the overlay will fetch for itself before refusing a
+ * proof (`MAX_HYDRATED_PATH_TXS` in BRC-CLOUD `marketProof.js`).
+ *
+ * A proof within this budget is publishable as it stands, so the wallet does not
+ * have to inline those bodies — which matters because a batch-mint origin is
+ * megabytes and would overflow the JSON budget above anyway.
+ */
+export const MARKET_OVERLAY_HYDRATE_MAX_TXS = 8
 
 export type MarketOfferFields = {
   magic: typeof MARKET_OFFER_MAGIC

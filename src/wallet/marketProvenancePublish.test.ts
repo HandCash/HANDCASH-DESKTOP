@@ -15,12 +15,19 @@ import {
   UnlockingScript,
 } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { verifyProvenanceV2 } from '../../../BRC-CLOUD/src/marketProof.js'
-import { MARKET_MAX_PROVENANCE_JSON_BYTES } from './marketOverlayProtocol'
+import {
+  MAX_HYDRATED_PATH_TXS,
+  verifyProvenanceV2,
+} from '../../../BRC-CLOUD/src/marketProof.js'
+import {
+  MARKET_MAX_PROVENANCE_JSON_BYTES,
+  MARKET_OVERLAY_HYDRATE_MAX_TXS,
+} from './marketOverlayProtocol'
 import { choosePublishableProvenance } from './marketListing'
 import {
   completeProvenanceForPublish,
   fitRemittanceBeef,
+  provenanceMissingPathBodies,
   type ProvenanceV2,
 } from './oneSatProvenance'
 
@@ -122,6 +129,32 @@ describe('publishing a BRC-150 proof to the market overlay', () => {
       },
     })
     expect(published).toBeNull()
+  })
+})
+
+describe('pricing a proof before completing it', () => {
+  it('names the bodies a verifier would have to fetch, without fetching', () => {
+    const value = lineage()
+    expect(provenanceMissingPathBodies(value.provenance)).toEqual([])
+    expect(provenanceMissingPathBodies(slimmed(value))).toEqual([
+      value.path[1]!.slice(0, 64),
+    ])
+  })
+
+  it('makes no claim about a proof it cannot read', () => {
+    expect(provenanceMissingPathBodies(null)).toBeNull()
+    expect(provenanceMissingPathBodies({ v: 2, beefB64: 'not base64 beef' })).toBeNull()
+  })
+
+  it('leaves a slim proof alone when the overlay will finish it', () => {
+    // The overlay fetches this many bodies itself, so completing the proof here
+    // would pull a batch-mint origin only for the size budget to discard it.
+    const outstanding = provenanceMissingPathBodies(slimmed(lineage()))!
+    expect(outstanding.length).toBeLessThanOrEqual(MARKET_OVERLAY_HYDRATE_MAX_TXS)
+  })
+
+  it('matches the hydration budget the overlay actually applies', () => {
+    expect(MARKET_OVERLAY_HYDRATE_MAX_TXS).toBe(MAX_HYDRATED_PATH_TXS)
   })
 })
 

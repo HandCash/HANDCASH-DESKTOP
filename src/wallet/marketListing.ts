@@ -18,6 +18,7 @@ import {
   buildCollectableCustomInstructions,
   completeProvenanceForPublish,
   parseProvenanceV2,
+  provenanceMissingPathBodies,
   tryBuildProvenanceV2,
   verifyProvenanceForHeldTip,
   verifyProvenanceV2Async,
@@ -37,6 +38,7 @@ import {
   MARKET_MAX_PROVENANCE_JSON_BYTES,
   MARKET_OFFER_DEPOSIT_SATS,
   MARKET_OFFER_VOUT,
+  MARKET_OVERLAY_HYDRATE_MAX_TXS,
   normalizeMarketOfferFields,
   parseMarketOffer,
   type MarketOfferFields,
@@ -622,15 +624,21 @@ export async function createMarketListingAdvert(
       'A complete BRC-150 proof could not be built for this item.'
     )
   }
-  // Prefer a self-contained package: the overlay will hydrate a txid-only path
-  // body, but only within a small bounded favour, and a proof that needs no
-  // fetch is one fewer thing that can fail at submit. A batch-mint origin is
-  // megabytes on its own, so when the complete form cannot fit the overlay's
-  // JSON budget the slim form is the correct thing to publish, not a failure.
-  const complete = await completeProvenanceForPublish({
-    provenance: built,
-    getBeef: (txid) => getBeefForTxidCached(active, txid),
-  })
+  // Publish the proof we already hold when the overlay can finish it itself.
+  //
+  // Completing it here means pulling every txid-only path body — for a
+  // batch-mint origin, megabytes — and the result is then thrown away by
+  // `choosePublishableProvenance`, because inlining that origin is exactly what
+  // overflows the overlay's JSON budget. So completion is only worth attempting
+  // when the proof asks the overlay for more bodies than it will fetch.
+  const outstanding = provenanceMissingPathBodies(built)
+  const complete =
+    outstanding && outstanding.length <= MARKET_OVERLAY_HYDRATE_MAX_TXS
+      ? null
+      : await completeProvenanceForPublish({
+          provenance: built,
+          getBeef: (txid) => getBeefForTxidCached(active, txid),
+        })
   const provenance = choosePublishableProvenance([complete, built])
   if (!provenance) {
     throw new MarketListingError(

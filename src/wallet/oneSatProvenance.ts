@@ -438,6 +438,25 @@ export async function hydrateMissingPathTxs(
 }
 
 /**
+ * Path bodies a verifier would have to fetch for itself, without fetching any.
+ *
+ * Lets a caller price the choice between publishing a proof as it stands and
+ * completing it first, which costs a round trip per missing body. Null means the
+ * proof could not be read at all, so no claim is made about what it needs.
+ */
+export function provenanceMissingPathBodies(provenance: unknown): string[] | null {
+  const parsed = parseProvenanceV2(provenance)
+  if (!parsed) return null
+  try {
+    const beef = Beef.fromBinary(Array.from(base64ToBytes(parsed.beefB64)))
+    const path = parsed.path.map((point) => toUnderscore(point).toLowerCase())
+    return missingPathTxBodies(beef, path)
+  } catch {
+    return null
+  }
+}
+
+/**
  * Re-encode a proof so it stands on its own, for a verifier that cannot fetch.
  *
  * A peer remittance may ship path transactions as txid-only because the
