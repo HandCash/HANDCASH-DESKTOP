@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.2.270] - 2026-08-21
+
+### Changed
+
+- **Collect groups items by collection.** A collection is one facepile and a
+  quantity, not a flat list of every output. Loose items stay on their own.
+- **This wallet can list and buy collectables on HandCash Market.** A listing is
+  a seller-signed advert with a BRC-150 origin proof. Buy is gated on that proof.
+  The advertised price is what the buyer pays; 5% of it is the market fee and
+  the rest is the seller. Settlement is atomic between the two wallets — the
+  market never holds keys or funds.
+- **Phrase import can resume an item sweep** instead of starting over after a
+  stop. PeerPay links open Send as a request, and a phone can open a BRC-100 app
+  in the wallet's own browser when Chrome cannot reach loopback.
+
 ## [1.2.269] - 2026-08-20
 
 ### Changed
