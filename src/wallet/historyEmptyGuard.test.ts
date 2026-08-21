@@ -138,6 +138,38 @@ describe('decideHistoryPush', () => {
     })
     expect(d.reason).toMatch(/empty/i)
   })
+
+  it('preserves a non-empty legacy remote whose richness headers are missing', () => {
+    const d = decideHistoryPush({
+      remoteExists: true,
+      remoteBytes: 26_000_000,
+      localLooksEmpty: false,
+      localSpendableSats: 710_091,
+      localActionCount: 97,
+      remoteSpendableSats: null,
+      remoteActionCount: null,
+      highWaterSpendableSats: null,
+      highWaterActionCount: null,
+    })
+    expect(d.refusePush).toBe(true)
+    expect(d.reason).toMatch(/incomplete richness metadata/i)
+  })
+
+  it('allows an explicit manual overwrite of a headerless remote', () => {
+    const d = decideHistoryPush({
+      remoteExists: true,
+      remoteBytes: 26_000_000,
+      localLooksEmpty: false,
+      localSpendableSats: 710_091,
+      localActionCount: 97,
+      remoteSpendableSats: null,
+      remoteActionCount: null,
+      highWaterSpendableSats: null,
+      highWaterActionCount: null,
+      force: true,
+    })
+    expect(d.refusePush).toBe(false)
+  })
 })
 
 describe('allowEmptyLocalHistoryPull', () => {

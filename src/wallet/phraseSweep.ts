@@ -8,7 +8,7 @@
  *    collections (e.g. 100k+) take a long time — progress is explicit.
  */
 import { Beef, P2PKH, PrivateKey, type BEEF, type LockingScript } from '@bsv/sdk'
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import {
   keyFromMnemonicHdPath,
   rootKeyFromMnemonicBrc75,
@@ -55,6 +55,54 @@ const ITEM_CURSOR_KEY = 'handcash.brc100.phraseSweepItemCursor.v1'
 const GP_PAGE = 50
 /** Soft preview cap — full count continues during migrate. */
 const PREVIEW_ITEM_CAP = 5_000
+
+/** Toolbox `defaultOptions().feeModel` — mirror it so estimates match reality. */
+const DEFAULT_FEE_SAT_PER_KB = 100
+const P2PKH_INPUT_BYTES = 148
+const P2PKH_OUTPUT_BYTES = 34
+const TX_OVERHEAD_BYTES = 10
+
+export type ItemMigrateEstimate = {
+  transactions: number
+  feeSats: number
+}
+
+/**
+ * What a full item migration costs this wallet, in transactions and fees.
+ *
+ * At ordinal scale the answer changes the decision — an 800k collection is tens
+ * of thousands of transactions and a non-trivial fee budget — and a run that
+ * halts partway for want of change reads as a failure unless the budget was
+ * stated up front. Sizing follows the shape `migrateOrdinalUnit` builds: one
+ * P2PKH input per tip plus a funding input, one 1-sat output per tip plus
+ * change.
+ */
+export function estimateItemMigrateCost(args: {
+  itemCount: number
+  itemsPerTx?: number
+  feeRateSatPerKb?: number
+}): ItemMigrateEstimate {
+  const items = Math.max(0, Math.trunc(args.itemCount))
+  if (items === 0) return { transactions: 0, feeSats: 0 }
+  const perTx = Math.max(
+    1,
+    Math.min(args.itemsPerTx ?? MAX_ITEMS_PER_MIGRATE_TX, MAX_ITEMS_PER_MIGRATE_TX),
+  )
+  const rate = Math.max(0, args.feeRateSatPerKb ?? DEFAULT_FEE_SAT_PER_KB)
+  const fullTransactions = Math.floor(items / perTx)
+  const remainder = items % perTx
+  const transactionFee = (tipCount: number) => {
+    const bytes =
+      (tipCount + 1) * P2PKH_INPUT_BYTES +
+      (tipCount + 1) * P2PKH_OUTPUT_BYTES +
+      TX_OVERHEAD_BYTES
+    return Math.ceil((bytes / 1000) * rate)
+  }
+  const transactions = fullTransactions + (remainder > 0 ? 1 : 0)
+  const feeSats =
+    fullTransactions * transactionFee(perTx) + (remainder > 0 ? transactionFee(remainder) : 0)
+  return { transactions, feeSats }
+}
 
 export type PhraseScheme =
   | 'brc-75'
@@ -215,15 +263,96 @@ export type PhraseItemMigrateProgress = {
   lastError: string | null
 }
 
-type ItemCursor = {
+export type PhraseItemMigrateCursor = {
   sourceAddress: string
   destIdentityKey: string
+  /** Total rows settled for progress; not a direct offset into mutable `/unspent`. */
   offset: number
   moved: number
   failed: number
   /** Absent on cursors written before skips were tracked. */
   skipped?: number
+  /** Absent on cursors written before pause details were tracked. */
+  stopped?: PhraseItemStopReason | null
+  /** Last per-item error, when a fault rather than funding paused the run. */
+  lastError?: string | null
 }
+
+export function phraseImportBelongsToWallet(
+  cursor: PhraseItemMigrateCursor | null,
+  identityKey: string | null | undefined,
+): boolean {
+  if (!cursor || !identityKey) return false
+  return (
+    cursor.destIdentityKey.trim().toLowerCase() ===
+    identityKey.trim().toLowerCase()
+  )
+}
+
+export type PhraseItemResumeDecision =
+  | { kind: 'start' }
+  | { kind: 'resume'; cursor: PhraseItemMigrateCursor }
+  | {
+      kind: 'refuse'
+      reason: 'different-source' | 'different-destination'
+      message: string
+    }
+
+export function phraseItemBatchIsDone(args: {
+  stopped: PhraseItemStopReason | null
+  moved: number
+  failed: number
+  expectedItemCount?: number
+  pageExhausted: boolean
+  consumed: number
+  pageRows: number
+}): boolean {
+  if (args.stopped) return false
+  const expected =
+    Number.isFinite(args.expectedItemCount) && Number(args.expectedItemCount) >= 0
+      ? Math.trunc(Number(args.expectedItemCount))
+      : null
+  const exactPreviewComplete =
+    expected != null && args.failed === 0 && args.moved >= expected
+  return exactPreviewComplete || (args.pageExhausted && args.consumed >= args.pageRows)
+}
+
+/**
+ * A durable cursor belongs to one source address and one destination identity.
+ * Never silently replace it when another phrase/wallet is entered: the user
+ * must review and discard that pending import explicitly.
+ */
+export function decidePhraseItemResume(args: {
+  cursor: PhraseItemMigrateCursor | null
+  sourceAddress: string
+  destIdentityKey: string
+}): PhraseItemResumeDecision {
+  if (!args.cursor) return { kind: 'start' }
+  if (
+    args.cursor.destIdentityKey.trim().toLowerCase() !==
+    args.destIdentityKey.trim().toLowerCase()
+  ) {
+    return {
+      kind: 'refuse',
+      reason: 'different-destination',
+      message:
+        'This pending import belongs to another wallet identity. Open its details and discard it before starting a new import.',
+    }
+  }
+  if (args.cursor.sourceAddress.trim() !== args.sourceAddress.trim()) {
+    return {
+      kind: 'refuse',
+      reason: 'different-source',
+      message:
+        'The phrase does not match the pending import source. Use the same source phrase, or discard the pending import before starting another.',
+    }
+  }
+  return { kind: 'resume', cursor: args.cursor }
+}
+
+const itemCursorListeners = new Set<
+  (cursor: PhraseItemMigrateCursor | null) => void
+>()
 
 function gorillaBase(chain: Chain): string {
   return chain === 'main'
@@ -297,6 +426,34 @@ type OrdinalRow = { outpoint: string; origin: string; satoshis: number }
  */
 type OrdinalPage = { rows: OrdinalRow[]; rawCount: number }
 
+/**
+ * Broadcast acceptance can lead the ordinal index by a few requests. Keep only
+ * that short in-process gap so a just-moved tip is not attempted again while
+ * `/unspent` catches up. This is deliberately not durable: after a restart the
+ * index has had ample time to settle, and persisting hundreds of thousands of
+ * outpoints would recreate the inventory-scaling problem in preferences.
+ */
+const recentlyMovedPhraseItems = new Map<string, Set<string>>()
+
+/**
+ * Offset into the *current unspent list*.
+ *
+ * Successful migrations disappear from `/unspent`, while failed and skipped
+ * rows remain. Advancing the query offset by every consumed row therefore
+ * skips untouched items as soon as the indexer observes our broadcasts. The
+ * durable cursor still counts all scanned rows for progress, but only retained
+ * rows may contribute to the next list offset.
+ *
+ * This also repairs v1 cursors written by the old algorithm: for example
+ * `{ offset: 15, moved: 15 }` resumes at list offset zero, not fifteen.
+ */
+export function phraseItemUnspentOffset(cursor: {
+  offset: number
+  moved: number
+}): number {
+  return Math.max(0, Math.trunc(cursor.offset) - Math.max(0, Math.trunc(cursor.moved)))
+}
+
 async function fetchOrdinalPage(
   address: string,
   chain: Chain,
@@ -333,6 +490,56 @@ async function fetchOrdinalPage(
     return [{ outpoint, origin, satoshis: Number.isFinite(satoshis) ? satoshis : 0 }]
   })
   return { rows, rawCount: body.length }
+}
+
+/**
+ * Fill one work page while ignoring successful broadcasts the index still
+ * reports as unspent. The transient fetch offset may cross several stale
+ * pages, but the durable cursor does not advance for those rows.
+ */
+async function fetchOrdinalWorkPage(
+  address: string,
+  chain: Chain,
+  offset: number,
+): Promise<OrdinalPage & { exhausted: boolean }> {
+  const recent = recentlyMovedPhraseItems.get(address)
+  if (!recent || recent.size === 0) {
+    const page = await fetchOrdinalPage(address, chain, offset)
+    return { ...page, exhausted: page.rawCount < GP_PAGE }
+  }
+
+  const rows: OrdinalRow[] = []
+  let fetchOffset = offset
+  let exhausted = false
+  let firstPageStillHasRecent = false
+  // The index normally catches up within one page. The bound fails closed
+  // against a broken endpoint returning the same full page for every offset.
+  for (let pages = 0; pages < 100 && rows.length < GP_PAGE; pages += 1) {
+    const page = await fetchOrdinalPage(address, chain, fetchOffset)
+    for (const row of page.rows) {
+      if (recent.has(row.outpoint)) {
+        if (pages === 0) firstPageStillHasRecent = true
+      } else {
+        rows.push(row)
+      }
+      if (rows.length >= GP_PAGE) break
+    }
+    if (page.rawCount < GP_PAGE) {
+      exhausted = true
+      break
+    }
+    fetchOffset += page.rawCount
+  }
+
+  // Once the compacted first page no longer contains any recent move, the
+  // index has caught up and the transient guard can be discarded.
+  if (!firstPageStillHasRecent) recentlyMovedPhraseItems.delete(address)
+  if (rows.length === 0 && !exhausted) {
+    throw new Error(
+      'Ordinal index is still catching up with migrated items; pause briefly and resume.',
+    )
+  }
+  return { rows, rawCount: rows.length, exhausted }
 }
 
 /**
@@ -523,11 +730,11 @@ export async function sweepPhraseFunding(args: {
   })
 }
 
-function readItemCursor(): ItemCursor | null {
+function readItemCursor(): PhraseItemMigrateCursor | null {
   try {
     const raw = durableGetItem(ITEM_CURSOR_KEY)
     if (!raw) return null
-    const p = JSON.parse(raw) as ItemCursor
+    const p = JSON.parse(raw) as PhraseItemMigrateCursor
     if (!p?.sourceAddress || typeof p.offset !== 'number') return null
     return p
   } catch {
@@ -535,20 +742,32 @@ function readItemCursor(): ItemCursor | null {
   }
 }
 
-function writeItemCursor(cursor: ItemCursor | null) {
+function writeItemCursor(cursor: PhraseItemMigrateCursor | null) {
   if (!cursor) {
-    durableSetItem(ITEM_CURSOR_KEY, '')
-    return
+    durableRemoveItem(ITEM_CURSOR_KEY)
+  } else {
+    durableSetItem(ITEM_CURSOR_KEY, JSON.stringify(cursor))
   }
-  durableSetItem(ITEM_CURSOR_KEY, JSON.stringify(cursor))
+  for (const listener of itemCursorListeners) listener(cursor)
 }
 
 export function clearPhraseItemMigrateCursor(): void {
   writeItemCursor(null)
 }
 
-export function peekPhraseItemMigrateCursor(): ItemCursor | null {
+export function peekPhraseItemMigrateCursor(): PhraseItemMigrateCursor | null {
   return readItemCursor()
+}
+
+/** Observe durable phrase-import progress without coupling Activity to the importer UI. */
+export function subscribePhraseItemMigrateCursor(
+  listener: (cursor: PhraseItemMigrateCursor | null) => void,
+): () => void {
+  itemCursorListeners.add(listener)
+  listener(readItemCursor())
+  return () => {
+    itemCursorListeners.delete(listener)
+  }
 }
 
 function asBytes(tx: unknown): number[] {
@@ -566,6 +785,12 @@ export async function migratePhraseItemsBatch(args: {
   batchSize?: number
   /** Tips per transaction. Fewer round trips per item is the whole speed-up. */
   itemsPerTx?: number
+  /**
+   * Exact collectable count from an uncapped preview. This lets the final
+   * successful batch finish immediately instead of leaving a false pending
+   * cursor while the external unspent index catches up with our broadcasts.
+   */
+  expectedItemCount?: number
   /** Chain ingest is for the end of a run, not for every batch. */
   refreshAfter?: boolean
 }): Promise<PhraseItemMigrateProgress> {
@@ -581,12 +806,14 @@ export async function migratePhraseItemsBatch(args: {
     1,
     Math.min(args.itemsPerTx ?? MAX_ITEMS_PER_MIGRATE_TX, MAX_ITEMS_PER_MIGRATE_TX),
   )
-  let cursor = readItemCursor()
-  if (
-    !cursor ||
-    cursor.sourceAddress !== args.candidate.address ||
-    cursor.destIdentityKey.toLowerCase() !== active.identityKey.toLowerCase()
-  ) {
+  const resume = decidePhraseItemResume({
+    cursor: readItemCursor(),
+    sourceAddress: args.candidate.address,
+    destIdentityKey: active.identityKey,
+  })
+  if (resume.kind === 'refuse') throw new Error(resume.message)
+  let cursor = resume.kind === 'resume' ? resume.cursor : null
+  if (!cursor) {
     cursor = {
       sourceAddress: args.candidate.address,
       destIdentityKey: active.identityKey,
@@ -594,13 +821,15 @@ export async function migratePhraseItemsBatch(args: {
       moved: 0,
       failed: 0,
       skipped: 0,
+      stopped: null,
+      lastError: null,
     }
   }
 
-  const page = await fetchOrdinalPage(
+  const page = await fetchOrdinalWorkPage(
     args.candidate.address,
     active.chain,
-    cursor.offset,
+    phraseItemUnspentOffset(cursor),
   )
   if (page.rawCount === 0) {
     writeItemCursor(null)
@@ -701,9 +930,12 @@ export async function migratePhraseItemsBatch(args: {
       // Out of money is a property of the wallet, not of a tip. Leave the cursor
       // on the first unresolved row so a funded run resumes exactly here.
       stopped = 'funds'
+      // Name the budget, not just the symptom: at ordinal scale "ran low" after
+      // a handful of items looks like a bug rather than an unfunded run.
       appendAppLog(
         'warn',
-        `[phrase-sweep] stopping: not enough spendable BSV to keep migrating (moved ${cursor.moved + moved} so far)`,
+        `[phrase-sweep] stopping at offset ${cursor.offset + consumed}: not enough spendable BSV` +
+          ` (moved ${cursor.moved + moved} so far; ~${estimateItemMigrateCost({ itemsPerTx, itemCount: itemsPerTx }).feeSats} sats per ${itemsPerTx}-item transaction)`,
       )
       break
     }
@@ -722,19 +954,33 @@ export async function migratePhraseItemsBatch(args: {
     )
   }
 
-  const next: ItemCursor = {
+  const next: PhraseItemMigrateCursor = {
     ...cursor,
     offset: cursor.offset + consumed,
     moved: cursor.moved + moved,
     failed: cursor.failed + failed,
     skipped: (cursor.skipped ?? 0) + skipped,
+    stopped,
+    lastError,
   }
-  const done =
-    !stopped && page.rawCount < GP_PAGE && consumed >= page.rows.length
+  const done = phraseItemBatchIsDone({
+    stopped,
+    moved: next.moved,
+    failed: next.failed,
+    expectedItemCount: args.expectedItemCount,
+    pageExhausted: page.exhausted,
+    consumed,
+    pageRows: page.rows.length,
+  })
   if (done) writeItemCursor(null)
   else writeItemCursor(next)
 
-  if (moved > 0) recordMigratedItemActivity(movedItems, active.chain)
+  if (moved > 0) {
+    recordMigratedItemActivity(movedItems, active.chain)
+    const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
+    for (const item of movedItems) recent.add(item.outpoint)
+    recentlyMovedPhraseItems.set(args.candidate.address, recent)
+  }
   // Chain ingest walks the whole wallet and gets slower as items land, so a
   // refresh per batch is what made a large collection crawl. Callers refresh
   // when a run ends; the migrated outputs are already in the local basket.

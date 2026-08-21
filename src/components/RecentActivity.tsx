@@ -45,7 +45,10 @@ import {
   shouldAnnounceActivity,
 } from '../wallet/activitySeen'
 import { viewActivityItem } from '../wallet/activityItemView'
-import { getCachedCollectables, subscribeCollectables } from '../wallet/collectables'
+import {
+  getCachedCollectables,
+  subscribeCollectables,
+} from '../wallet/collectables'
 import { subscribeFungibles } from '../wallet/fungibles'
 import {
   getVerificationProgress,
@@ -75,45 +78,91 @@ import {
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
+import { LIVE_OUTBOUND_ID, mergeLiveOutbound } from '../wallet/liveOutboundRow'
 import {
-  LIVE_OUTBOUND_ID,
-  mergeLiveOutbound,
-} from '../wallet/liveOutboundRow'
-import { openPaymentDetails, setNavSection } from '../wallet/navStore'
+  openPaymentDetails,
+  openSetting,
+  setNavSection,
+} from '../wallet/navStore'
 import { subscribeConnectedApps } from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
 import type { Chain } from '../wallet/vault'
+import {
+  phraseImportBelongsToWallet,
+  peekPhraseItemMigrateCursor,
+  subscribePhraseItemMigrateCursor,
+  type PhraseItemMigrateCursor,
+} from '../wallet/phraseSweep'
+import { getActiveWallet } from '../wallet/session'
 import { EmptyState } from './EmptyState'
+import { useChunkedCount } from './useChunkedCount'
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24
 
-function useChunkedCount(total: number): number {
-  const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))
+function PendingPhraseImportRow({
+  cursor,
+}: {
+  cursor: PhraseItemMigrateCursor
+}) {
+  const skipped = Math.max(0, Math.trunc(cursor.skipped ?? 0))
+  const failed = Math.max(0, Math.trunc(cursor.failed))
+  const moved = Math.max(0, Math.trunc(cursor.moved))
+  const detail = [
+    `${moved.toLocaleString()} imported`,
+    `${Math.max(0, Math.trunc(cursor.offset)).toLocaleString()} scanned`,
+    failed > 0 ? `${failed.toLocaleString()} failed` : null,
+    skipped > 0 ? `${skipped.toLocaleString()} skipped` : null,
+  ]
+    .filter(Boolean)
+    .join(' · ')
+  const status =
+    cursor.stopped === 'funds'
+      ? 'Paused — add BSV to continue'
+      : 'Paused — review details'
 
-  useEffect(() => {
-    setShown(Math.min(RENDER_CHUNK, total))
-    if (total <= RENDER_CHUNK) return
-
-    let cancelled = false
-    let next = RENDER_CHUNK
-    let handle = 0
-
-    const step = () => {
-      if (cancelled) return
-      next = Math.min(total, next + RENDER_CHUNK)
-      setShown(next)
-      if (next < total) handle = window.requestAnimationFrame(step)
-    }
-
-    handle = window.requestAnimationFrame(step)
-    return () => {
-      cancelled = true
-      if (handle) window.cancelAnimationFrame(handle)
-    }
-  }, [total])
-
-  return shown
+  return (
+    <li
+      data-aeon-scope="phrase-import"
+      data-aeon-state="paused"
+      data-activity-key={`phrase-import:${cursor.sourceAddress}`}
+      data-activity-pending=""
+    >
+      <button
+        type="button"
+        className="history-row history-row-btn"
+        onClick={() => {
+          playWalletSound('soft')
+          openSetting('import-phrase')
+        }}
+        aria-label={`Review paused collectable import, ${detail}`}
+      >
+        <div className="history-icon-wrap">
+          <div className="history-icon">
+            <span className="history-item-thumb-icon" aria-hidden>
+              <CollectablesIcon size={18} />
+            </span>
+          </div>
+          <span
+            className="history-pending-mark"
+            aria-label="Import paused"
+            title="Import paused safely"
+          >
+            <span className="collectable-verify-spinner" aria-hidden />
+          </span>
+        </div>
+        <div className="history-body">
+          <strong className="history-title">Collectable import paused</strong>
+          <span className="history-when" title={`${status}. ${detail}`}>
+            {status} · {detail}
+          </span>
+        </div>
+        <div className="history-amount-block">
+          <span className="history-amount history-amount-item">Review</span>
+        </div>
+      </button>
+    </li>
+  )
 }
 
 type ActivityFeedSnapshot = {
@@ -195,9 +244,15 @@ function HistoryRow({
       getCachedCollectables().some(
         (c) =>
           c.proven === true &&
-          c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
-            entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
-      ),
+          c.outpoint
+            .trim()
+            .toLowerCase()
+            .replace(/_(\d+)$/, '.$1') ===
+            entry
+              .item!.outpoint!.trim()
+              .toLowerCase()
+              .replace(/_(\d+)$/, '.$1')
+      )
   )
   const showPending = pending && (spent || !inventoryProven)
   const pendingLabel = burned ? 'Burning…' : spent ? 'Sending…' : 'Verifying…'
@@ -211,46 +266,63 @@ function HistoryRow({
   const amountLabel = event
     ? eventAmountLabel(entry)
     : token
-      ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
-      : item
-        ? shown?.name || 'Collectable'
-        : approving
-          ? 'Approving'
-          : showPending && entry.sats <= 0
-            ? '…'
-            : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+    ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
+    : item
+    ? shown?.name || 'Collectable'
+    : approving
+    ? 'Approving'
+    : showPending && entry.sats <= 0
+    ? '…'
+    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
   const signed = event
     ? amountLabel
     : token
-      ? amountLabel
-      : item
-        ? 'Item'
-        : approving
-          ? amountLabel
-          : currency === 'usd' && usdPerBsv == null
-            ? '—'
-            : spent
-              ? `−${amountLabel}`
-              : `+${amountLabel}`
-  const subtitle = failed && failureReason
-    ? failureReason
-    : event
+    ? amountLabel
+    : item
+    ? 'Item'
+    : approving
+    ? amountLabel
+    : currency === 'usd' && usdPerBsv == null
+    ? '—'
+    : spent
+    ? `−${amountLabel}`
+    : `+${amountLabel}`
+  const subtitle =
+    failed && failureReason
+      ? failureReason
+      : event
       ? entry.origin !== WALLET_ACTIVITY_ORIGIN
         ? entry.origin
         : null
       : item && shown?.app
-        ? shown.app
-        : null
+      ? shown.app
+      : null
 
   const entryKey = activityEntryKey(entry)
   const showVerify = Boolean(
-    !spent && !event && !inventoryProven && (showPending || (item && verifying)),
+    !spent && !event && !inventoryProven && (showPending || (item && verifying))
   )
   // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
   // never resolve into an authenticity check for the tip it just gave away.
   const showSending = Boolean(spent && !event && showPending)
-  const badgeKind = failed ? 'failed' : burned ? 'burn' : minted ? 'mint' : spent ? 'send' : 'receive'
-  const badgeLabel = failed ? 'Failed' : burned ? 'Burn' : minted ? 'Mint' : spent ? 'Send' : 'Receive'
+  const badgeKind = failed
+    ? 'failed'
+    : burned
+    ? 'burn'
+    : minted
+    ? 'mint'
+    : spent
+    ? 'send'
+    : 'receive'
+  const badgeLabel = failed
+    ? 'Failed'
+    : burned
+    ? 'Burn'
+    : minted
+    ? 'Mint'
+    : spent
+    ? 'Send'
+    : 'Receive'
 
   return (
     <li
@@ -297,7 +369,13 @@ function HistoryRow({
                 <CollectablesIcon size={18} />
               </span>
             ) : (
-              <img className="history-asset-logo" src={bsvLogo} alt="" width={32} height={32} />
+              <img
+                className="history-asset-logo"
+                src={bsvLogo}
+                alt=""
+                width={32}
+                height={32}
+              />
             )}
           </div>
           <CollectableVerifyMark
@@ -370,13 +448,21 @@ function eventAmountLabel(entry: ActivityEntry): string {
   if (m === 'connect-deny' || m === 'deny') return 'Denied'
   if (m === 'disconnect') return 'Removed'
   if (m === 'add-friend') return 'Friend'
+  if (m === 'forget-collectable') return 'Forgot'
+  if (m === 'market-list') return 'Listed'
+  if (m === 'market-cancel') return 'Cancelled'
   return 'Action'
 }
 
 function eventIcon(entry: ActivityEntry) {
   const m = entry.method
   if (m === 'add-friend') return <FriendsIcon size={18} />
-  if (m.startsWith('connect') || m === 'disconnect' || m === 'approve' || m === 'deny') {
+  if (
+    m.startsWith('connect') ||
+    m === 'disconnect' ||
+    m === 'approve' ||
+    m === 'deny'
+  ) {
     return <AppsIcon size={18} />
   }
   return <ActivityIcon size={18} />
@@ -397,11 +483,21 @@ type FeedProps = {
 }
 
 function useActivityFeed(limit: number) {
-  const [entries, setEntries] = useState<ActivityEntry[]>(() => readActivityFeed(limit).entries)
-  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
-  const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [origins, setOrigins] = useState<PaymentOriginOption[]>(() => readActivityFeed(limit).origins)
-  const [payment, setPayment] = useState<PaymentProgress>(() => getPaymentProgress())
+  const [entries, setEntries] = useState<ActivityEntry[]>(
+    () => readActivityFeed(limit).entries
+  )
+  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() =>
+    getCachedUsdPerBsv()
+  )
+  const [currency, setCurrency] = useState<DisplayCurrency>(() =>
+    getDisplayCurrency()
+  )
+  const [origins, setOrigins] = useState<PaymentOriginOption[]>(
+    () => readActivityFeed(limit).origins
+  )
+  const [payment, setPayment] = useState<PaymentProgress>(() =>
+    getPaymentProgress()
+  )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -431,7 +527,7 @@ function useActivityFeed(limit: number) {
 
   const merged = useMemo(
     () => mergeLiveOutbound(entries, payment),
-    [entries, payment],
+    [entries, payment]
   )
 
   return { entries: merged, usdPerBsv, currency, origins }
@@ -469,7 +565,7 @@ function useScrollReveal(ref: RefObject<HTMLElement | null>) {
 function useStickNewestToTop(
   listRef: RefObject<HTMLElement | null>,
   newest: { key: string; at: number } | undefined,
-  shownKeys: readonly string[],
+  shownKeys: readonly string[]
 ) {
   const stickToTopRef = useRef(true)
   // Stable fingerprint so collectables healing the feed cannot re-fire the
@@ -507,7 +603,7 @@ function useStickNewestToTop(
       el.scrollTop = 0
       stickToTopRef.current = true
       const row = el.querySelector<HTMLElement>(
-        `[data-activity-key="${CSS.escape(newest.key)}"]`,
+        `[data-activity-key="${CSS.escape(newest.key)}"]`
       )
       if (!row) return
       row.classList.remove('is-fresh')
@@ -545,18 +641,32 @@ export function ActivityFeed({
   onViewAll,
 }: FeedProps) {
   const { entries, usdPerBsv, currency, origins } = useActivityFeed(limit)
-  const [filters, setFilters] = useState<PaymentFilters>(DEFAULT_PAYMENT_FILTERS)
+  const [filters, setFilters] = useState<PaymentFilters>(
+    DEFAULT_PAYMENT_FILTERS
+  )
   const [filtersOpen, setFiltersOpen] = useState(false)
-  const [verification, setVerification] = useState(() => getVerificationProgress())
+  const [verification, setVerification] = useState(() =>
+    getVerificationProgress()
+  )
+  const [phraseImport, setPhraseImport] = useState(() =>
+    peekPhraseItemMigrateCursor()
+  )
   const listRef = useRef<HTMLUListElement>(null)
   useScrollReveal(listRef)
   useEffect(() => subscribeVerificationProgress(setVerification), [])
+  useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), [])
+  const visiblePhraseImport = phraseImportBelongsToWallet(
+    phraseImport,
+    getActiveWallet()?.identityKey
+  )
+    ? phraseImport
+    : null
 
   const filtered = useMemo(
     () => (showFilters ? filterPaymentActivity(entries, filters) : entries),
-    [entries, filters, showFilters],
+    [entries, filters, showFilters]
   )
-  const shownCount = useChunkedCount(filtered.length)
+  const shownCount = useChunkedCount(filtered.length, RENDER_CHUNK)
   const visibleEntries = filtered.slice(0, shownCount)
   const newest = useMemo(() => {
     const top = filtered[0]
@@ -578,7 +688,7 @@ export function ActivityFeed({
       showFilters
         ? countFailedActivity((entry) => isCounterpartySettlePending(entry))
         : 0,
-    [entries, showFilters],
+    [entries, showFilters]
   )
   const [clearingFailed, setClearingFailed] = useState(false)
 
@@ -587,7 +697,7 @@ export function ActivityFeed({
     const confirmed = window.confirm(
       `Clear ${failedCount} failed send${
         failedCount === 1 ? '' : 's'
-      } from Activity? Unsigned failed sends are removed. A signed send stays until every one of its inputs is already spent on chain — this does not cancel a live transaction.`,
+      } from Activity? Unsigned failed sends are removed. A signed send stays until every one of its inputs is already spent on chain — this does not cancel a live transaction.`
     )
     if (!confirmed) return
     setClearingFailed(true)
@@ -599,12 +709,12 @@ export function ActivityFeed({
           kept > 0
             ? ` Kept ${kept} still live (coins unspent, or the recipient can still broadcast).`
             : ''
-        }`,
+        }`
       )
     } catch (err) {
       toastError(
         'Clear failed',
-        err instanceof Error ? err.message : String(err),
+        err instanceof Error ? err.message : String(err)
       )
     } finally {
       setClearingFailed(false)
@@ -619,7 +729,7 @@ export function ActivityFeed({
   }, [origins, filters.origin])
 
   const body =
-    filtered.length === 0 ? (
+    filtered.length === 0 && !visiblePhraseImport ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : 'Nothing matches'}
@@ -631,6 +741,9 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
+        {visiblePhraseImport ? (
+          <PendingPhraseImportRow cursor={visiblePhraseImport} />
+        ) : null}
         {visibleEntries.map((entry, index) => (
           <HistoryRow
             key={activityEntryKey(entry)}
@@ -645,8 +758,14 @@ export function ActivityFeed({
                 getCachedCollectables().some(
                   (c) =>
                     c.proven === true &&
-                    c.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
-                      entry.item!.outpoint!.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+                    c.outpoint
+                      .trim()
+                      .toLowerCase()
+                      .replace(/_(\d+)$/, '.$1') ===
+                      entry
+                        .item!.outpoint!.trim()
+                        .toLowerCase()
+                        .replace(/_(\d+)$/, '.$1')
                 )
               ) &&
               (isPendingActivity(entry) ||
@@ -675,7 +794,9 @@ export function ActivityFeed({
     <div className="connected-panel-head">
       <h2>{title}</h2>
       <div className="connected-panel-head-actions">
-        {showCount ? <span className="connected-count">{filtered.length}</span> : null}
+        {showCount ? (
+          <span className="connected-count">{filtered.length}</span>
+        ) : null}
         {showFilters && failedCount > 0 ? (
           <button
             type="button"
@@ -705,7 +826,9 @@ export function ActivityFeed({
             }}
           >
             <FilterIcon size={16} />
-            {filtersActive ? <span className="activity-filter-dot" aria-hidden /> : null}
+            {filtersActive ? (
+              <span className="activity-filter-dot" aria-hidden />
+            ) : null}
           </button>
         ) : null}
       </div>
@@ -727,7 +850,9 @@ export function ActivityFeed({
       <div
         className={
           showFilters
-            ? `history-embedded history-with-filters${filtersOpen ? ' filters-open' : ''}`
+            ? `history-embedded history-with-filters${
+                filtersOpen ? ' filters-open' : ''
+              }`
             : 'history-embedded'
         }
         data-aeon-scope="activity-feed"

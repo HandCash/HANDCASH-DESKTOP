@@ -154,12 +154,14 @@ export function AuthScreen({
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
     })
-    // Never block create/restore on chain/cloud — Dashboard heals in the background.
+    // Never block create/restore on chain/cloud or the expensive unconfirmed-
+    // change scan. A confirmed localState read gets a short head start;
+    // Dashboard/recompose heals the full displayed balance in the background.
     let balanceSats = 0
     try {
       balanceSats = await Promise.race([
-        fetchBalanceSats(active.wallet),
-        new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
+        fetchBalanceSats(active.wallet, { creditUnconfirmed: false }),
+        new Promise<number>((resolve) => setTimeout(() => resolve(0), 500)),
       ])
     } catch {
       balanceSats = 0
@@ -290,14 +292,16 @@ export function AuthScreen({
       // phone the fresh owned-cash scan can take >10s; racing it against a
       // literal zero made a funded wallet look empty for the whole sync.
       const cachedBalance = lastKnownBalance()
-      const freshBalance = fetchBalanceSats(active.wallet).catch(
+      const confirmedBalance = fetchBalanceSats(active.wallet, {
+        creditUnconfirmed: false,
+      }).catch(
         () => cachedBalance ?? 0,
       )
       const balanceSats =
         cachedBalance ??
         (await Promise.race([
-          freshBalance,
-          new Promise<number>((resolve) => setTimeout(() => resolve(0), 2500)),
+          confirmedBalance,
+          new Promise<number>((resolve) => setTimeout(() => resolve(0), 500)),
         ]))
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
@@ -317,9 +321,18 @@ export function AuthScreen({
         },
         balanceSats,
       )
-      void freshBalance.then((fresh) => {
+      void confirmedBalance.then((fresh) => {
         if (fresh !== balanceSats) onBalanceRefreshed(fresh)
       })
+      // Credit live local change only after the wallet is visible. This can
+      // inspect hundreds of old output rows and must never hold the unlock UI.
+      void fetchBalanceSats(active.wallet)
+        .then((fresh) => {
+          if (fresh !== balanceSats) onBalanceRefreshed(fresh)
+        })
+        .catch(() => {
+          /* trusted/confirmed figure remains visible */
+        })
       setSessionBackupPassword(password)
       void recomposeWallet({ password, reason: 'unlock' }).then((result) => {
         if (result.spendableSats != null) {

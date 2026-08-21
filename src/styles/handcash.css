@@ -4914,6 +4914,25 @@ a.app-details-host:hover {
   margin-bottom: 16px;
 }
 
+/* Apps → open a BRC-100 app in the wallet's own browser (mobile shells only). */
+.app-browser-launcher {
+  display: grid;
+  gap: 8px;
+  margin: 4px 0 18px;
+  padding: 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: hsl(var(--secondary) / 0.85);
+}
+
+.app-browser-launcher .actions {
+  margin-top: 0;
+}
+
+.app-browser-launcher[data-aeon-state='handedOff'] {
+  border-color: color-mix(in srgb, var(--hc-accent) 40%, transparent);
+}
+
 .friends-add-form .actions {
   margin-top: 0;
 }
@@ -6631,6 +6650,114 @@ a.app-details-host:hover {
 
 .collect-tokens-section + .collect-items-section {
   margin-top: 0.5rem;
+}
+
+/* Folded collections (Collect): facepile + quantity, items on expand. */
+.collect-collections {
+  display: grid;
+  gap: 8px;
+}
+
+.collect-collection {
+  border: 1px solid var(--hc-border);
+  border-radius: 12px;
+  background: var(--hc-surface-2, var(--hc-surface));
+  overflow: hidden;
+}
+
+.collect-collection[data-sending='true'] {
+  border-color: var(--hc-accent);
+}
+
+.collect-collection-trigger {
+  display: grid;
+  width: 100%;
+  align-items: center;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+
+.collect-collection-trigger:hover {
+  background: var(--hc-surface-hover, rgb(255 255 255 / 4%));
+}
+
+.collect-facepile {
+  display: flex;
+  align-items: center;
+  padding-left: 2px;
+}
+
+.collect-facepile-face,
+.collect-facepile-more {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  overflow: hidden;
+  margin-left: -10px;
+  border: 2px solid var(--hc-surface-2, var(--hc-surface));
+  border-radius: 999px;
+  background: var(--hc-surface);
+}
+
+.collect-facepile-face:first-child {
+  margin-left: 0;
+}
+
+.collect-facepile-face img,
+.collect-facepile-face .deferred-image {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 999px;
+}
+
+.collect-facepile-more {
+  color: var(--hc-text);
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.collect-collection-body {
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.collect-collection-name,
+.collect-collection-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.collect-collection-name {
+  font-size: 0.86rem;
+}
+
+.collect-collection-meta {
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+}
+
+.collect-collection-indicator {
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+  transition: transform 120ms ease;
+}
+
+.collect-collection-trigger[aria-expanded='true'] .collect-collection-indicator {
+  transform: rotate(180deg);
+}
+
+.collect-collection-body-content {
+  padding: 0 10px 10px;
 }
 
 /* One-row horizontal token carousel (Collect). */

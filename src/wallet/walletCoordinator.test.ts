@@ -11,6 +11,7 @@ import {
   runChainIngestDuringSpend,
   runExclusiveSpend,
   runHistoryReplica,
+  runRecompose,
   requestSpendPriority,
   releaseSpendPriority,
   shouldYieldChainIngestToSpend,
@@ -85,6 +86,34 @@ describe('walletCoordinator runtime', () => {
     await Promise.all([spend, refresh])
 
     expect(order).toEqual(['refresh-queued', 'spend-start', 'spend-end', 'refresh'])
+  })
+
+  it('blocks external chain ingest during wallet recompose', async () => {
+    const order: string[] = []
+    let releaseRecompose!: () => void
+    const hold = new Promise<void>((resolve) => {
+      releaseRecompose = resolve
+    })
+
+    const recompose = runRecompose(async () => {
+      order.push('recompose-start')
+      await hold
+      order.push('recompose-end')
+    })
+    await Promise.resolve()
+    const refresh = runChainIngest(async () => {
+      order.push('refresh')
+    })
+    order.push('refresh-queued')
+
+    releaseRecompose()
+    await Promise.all([recompose, refresh])
+    expect(order).toEqual([
+      'refresh-queued',
+      'recompose-start',
+      'recompose-end',
+      'refresh',
+    ])
   })
 
   it('allows nested chain ingest during spend heal', async () => {

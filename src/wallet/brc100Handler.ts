@@ -1,6 +1,6 @@
 import type { WalletInterface } from '@bsv/sdk'
 import { Beef, Transaction } from '@bsv/sdk'
-import { getActiveWallet, fetchBalanceSats } from './session'
+import { getActiveWallet, fetchFastBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
   gateOriginAccess,
@@ -43,6 +43,18 @@ import {
   listMigrationTxids,
   refreshLegacyAddressPayload,
 } from './migration'
+import {
+  createCancelMarketListingAdvert,
+  createMarketListingAdvert,
+  createMarketPurchaseIntent,
+  getMarketSettlementReceipt,
+  getMarketSaleStatus,
+  isMarketListingOrigin,
+  MarketListingError,
+  purchaseMarketListing,
+  verifyMarketListingProvenance,
+  type CreateMarketListingArgs,
+} from './marketListing'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -53,6 +65,7 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
+import { appendAppLog } from './appLog'
 type HttpRequestEvent = {
   method: string
   path: string
@@ -467,6 +480,32 @@ async function dispatchWalletMethod(
       )
     case 'listMigrationTxids':
       return listMigrationTxids()
+    case 'createMarketListingAdvert':
+      return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
+    case 'createMarketPurchaseIntent':
+      return createMarketPurchaseIntent(
+        (args ?? {}) as Parameters<typeof createMarketPurchaseIntent>[0]
+      )
+    case 'verifyMarketListingProvenance':
+      return verifyMarketListingProvenance(
+        (args ?? {}) as Parameters<typeof verifyMarketListingProvenance>[0],
+      )
+    case 'purchaseMarketListing':
+      return purchaseMarketListing(
+        (args ?? {}) as Parameters<typeof purchaseMarketListing>[0],
+      )
+    case 'getMarketSettlementReceipt':
+      return getMarketSettlementReceipt(
+        (args ?? {}) as Parameters<typeof getMarketSettlementReceipt>[0],
+      )
+    case 'createCancelMarketListingAdvert':
+      return createCancelMarketListingAdvert(
+        (args ?? {}) as Parameters<typeof createCancelMarketListingAdvert>[0],
+      )
+    case 'getMarketListingStatus':
+      return getMarketSaleStatus(
+        (args ?? {}) as Parameters<typeof getMarketSaleStatus>[0],
+      )
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -502,7 +541,7 @@ async function dispatchWalletMethod(
     case 'relinquishOutput':
       return wallet.relinquishOutput((args ?? {}) as never, originator)
     case 'getBalance': {
-      const satoshis = await fetchBalanceSats(wallet)
+      const satoshis = await fetchFastBalanceSats(wallet)
       return { satoshis }
     }
     case 'encrypt':
@@ -624,12 +663,40 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   }
 
   if (isMigrationMethod(method) && !isMigrationOrigin(originator)) {
+    // A silent 403 here looks like an import that simply never happened, so
+    // name the refused origin in the session log.
+    appendAppLog(
+      'warn',
+      `[migrate] refused ${method} from ${normalizeOrigin(originator) || 'unknown origin'}`,
+    )
     return {
       status: 403,
       body: JSON.stringify({
         status: 'error',
         code: 'MIGRATION_ORIGIN_DENIED',
         description: 'Migration methods are only available to HandCash web hosts.',
+      }),
+    }
+  }
+
+  if (
+    [
+      'createMarketListingAdvert',
+      'createMarketPurchaseIntent',
+      'verifyMarketListingProvenance',
+      'purchaseMarketListing',
+      'getMarketSettlementReceipt',
+      'createCancelMarketListingAdvert',
+      'getMarketListingStatus',
+    ].includes(method) &&
+    !isMarketListingOrigin(originator)
+  ) {
+    return {
+      status: 403,
+      body: JSON.stringify({
+        status: 'error',
+        code: 'MARKET_ORIGIN_DENIED',
+        description: 'Market listing is only available to HandCash market hosts.',
       }),
     }
   }
@@ -898,7 +965,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     if (isActionMethod(method)) playWalletSound('error')
     return {
       status: 400,
-      body: JSON.stringify({ status: 'error', description: message }),
+      body: JSON.stringify({
+        status: 'error',
+        ...(error instanceof MarketListingError ? { code: error.code } : {}),
+        description: message,
+      }),
     }
   }
 }

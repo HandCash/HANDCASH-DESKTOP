@@ -98,6 +98,13 @@ interface HandCashBridge {
   respondDevicePeerHttp?: (response: HttpResponseEvent) => void
   focusWindow?: () => Promise<void>
   openExternal?: (url: string) => Promise<void>
+  /**
+   * Mobile only: open a BRC-100 web app in the wallet's in-app browser, which
+   * can reach the local bridge. Absent on Desktop, where the OS browser can.
+   */
+  openAppBrowser?: (
+    url: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
   getLogInfo?: () => Promise<{ file: string | null; dir: string | null }>
   openLogs?: () => Promise<{ ok: true; file: string } | { ok: false; error: string }>
   readLogs?: (opts?: {

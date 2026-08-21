@@ -28,6 +28,8 @@ const MASTER = `stateDiagram-v2
   appSession --> walletIo : always (I/O map)
   appSession --> coordinator : always (UTXO mutex)
   appSession --> spendSign : spend paths
+  appSession --> marketPurchase : market buy
+  appSession --> marketSellerSettlement : market sell
   appSession --> chainIngestChart : Refresh
   appSession --> messageboxChart : chat relay
 
@@ -77,6 +79,8 @@ const MASTER = `stateDiagram-v2
   spendSign : Sign / broadcast
   chainIngestChart : Chain ingest
   messageboxChart : Messagebox
+  marketPurchase : Market purchase
+  marketSellerSettlement : Market seller settlement
 `
 
 const APP_SESSION = `stateDiagram-v2
@@ -218,9 +222,10 @@ const COLLECTABLES = `stateDiagram-v2
   sendFungible --> fungibleDetails : back / done
   burnEditing --> burnConfirm : REVIEW
   burnConfirm --> burnEditing : BACK
+  burnConfirm --> grid : FORGET / local relinquish + Activity
   burnEditing --> details : CANCEL item burn
   burnEditing --> fungibleDetails : CANCEL token burn
-  burnConfirm --> burning : CONFIRM / handoff
+  burnConfirm --> burning : CONFIRM / Activity pending before queue
   burning --> burnDone : SUCCESS
   burning --> burnFailed : FAIL
   burnFailed --> burnEditing : BACK
@@ -298,6 +303,7 @@ const ASSET_BURN_UI = `stateDiagram-v2
   editing --> confirming : REVIEW
   editing --> failure : FAIL (pre-flight)
   confirming --> editing : BACK
+  confirming --> closed : FORGET item locally
   confirming --> burning : CONFIRM
   burning --> done : SUCCESS
   burning --> failure : FAIL
@@ -431,6 +437,50 @@ const BRC29_SEND = `stateDiagram-v2
   end note
   preparing --> failed : FAIL
   broadcasting --> failed : FAIL
+`
+
+const MARKET_PURCHASE = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> classifying : START with MarketPurchasePath
+  classifying --> failed : refuse / named reason
+  classifying --> verifying : atomicPeerSettlement
+  verifying --> reserving : VERIFIED
+  reserving --> awaitingSeller : RESERVED
+  awaitingSeller --> peerDeliver : SELLER_SIGNED / buyer signAction
+  peerDeliver --> confirmBroadcast : signed BEEF delivered to seller
+  confirmBroadcast --> done : seller confirmed broadcast
+  confirmBroadcast --> done : buyer fallback BROADCASTED
+  awaitingSeller --> aborting : TIMEOUT / DUPLICATE / COMPETING_BUYER / FAIL
+  peerDeliver --> aborting : TIMEOUT / FAIL
+  confirmBroadcast --> aborting : FAIL
+  aborting --> failed : ABORTED
+  note right of peerDeliver
+    Buyer-local reference never crosses wallets.
+    Seller signs only listed item vin.
+    Buyer total includes 500 bps.
+    Signed BEEF reaches seller before fallback.
+  end note
+`
+
+const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
+  direction LR
+  [*] --> idle
+  idle --> classifying : START with MarketSellerSettlePath
+  classifying --> refused : refuse / named reason
+  classifying --> validating : peerDeliver
+  validating --> signingItemInput : VALIDATED
+  signingItemInput --> peerDeliver : ITEM_INPUT_SIGNED
+  peerDeliver --> awaitingBroadcast : DELIVERED
+  awaitingBroadcast --> settled : receipt BEEF validated + broadcast
+  validating --> refused : DUPLICATE / COMPETING_BUYER / TIMEOUT / FAIL
+  signingItemInput --> refused : TIMEOUT / FAIL
+  peerDeliver --> refused : TIMEOUT / FAIL
+  note right of peerDeliver
+    Validate local outpoint+nonce authorization
+    BRC-150 + every input/output before signing.
+    Seller signs the item input only.
+  end note
 `
 
 const CONNECTED_APPS = `stateDiagram-v2
@@ -984,7 +1034,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'modelViewer',
     label: '3D viewer',
-    caption: 'modelViewerMachine — skeleton → first frame | named failure and retry',
+    caption:
+      'modelViewerMachine — skeleton → first frame | named failure and retry',
     source: MODEL_VIEWER,
   },
   {
@@ -1003,14 +1054,14 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'bsv21SendPath',
     label: 'Token send path',
-    caption:
-      'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
+    caption: 'chooseBsv21BatchSendPath — selected tips → plain | named refuse',
     source: BSV21_SEND_PATH,
   },
   {
     id: 'assetBurnUi',
     label: 'Burn',
-    caption: 'assetBurn UI — side panel: edit → confirm → hand off to the wallet',
+    caption:
+      'assetBurn UI — side panel: edit → confirm → hand off to the wallet',
     source: ASSET_BURN_UI,
   },
   {
@@ -1052,6 +1103,20 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     source: BRC29_SEND,
   },
   {
+    id: 'marketPurchase',
+    label: 'Market buy',
+    caption:
+      'marketPurchaseMachine — exact-output reserve → seller sign → peer deliver → broadcast',
+    source: MARKET_PURCHASE,
+  },
+  {
+    id: 'marketSellerSettlement',
+    label: 'Market sell',
+    caption:
+      'marketSellerSettlementMachine — authorize terms → item-input signature → peer deliver',
+    source: MARKET_SELLER_SETTLEMENT,
+  },
+  {
     id: 'connectedApps',
     label: 'Connect',
     caption: 'connectedApps — Connected apps list, details, scopes',
@@ -1072,7 +1137,8 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'activityFeed',
     label: 'Activity',
-    caption: 'activity — feed, filters; clear signed sends only if inputs spent',
+    caption:
+      'activity — feed, filters; clear signed sends only if inputs spent',
     source: ACTIVITY,
   },
   {
@@ -1139,5 +1205,5 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
 
 /** Page ids that can be opened from a diagram node click (excludes master hub). */
 export const STATECHART_NAVIGABLE_IDS: ReadonlySet<string> = new Set(
-  APP_STATECHART_PAGES.map((p) => p.id).filter((id) => id !== 'master'),
+  APP_STATECHART_PAGES.map((p) => p.id).filter((id) => id !== 'master')
 )

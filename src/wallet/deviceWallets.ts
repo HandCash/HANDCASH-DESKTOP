@@ -114,7 +114,8 @@ export function getOrCreateDeviceId(): string {
   return id
 }
 
-function defaultLabel(platform: string): string {
+/** How this install names itself, in its own list. */
+function localDefaultLabel(platform: string): string {
   if (platform === 'darwin') return 'This Mac'
   if (platform === 'win32') return 'This Windows PC'
   if (platform === 'linux') return 'This Linux PC'
@@ -123,17 +124,61 @@ function defaultLabel(platform: string): string {
   return 'This device'
 }
 
+/**
+ * How *another* device should be named.
+ *
+ * Self labels are first person, and they travel in the pair QR. Rendered on the
+ * far side they claim to be the local install — an Android peer turns into
+ * "Back up this wallet to This phone" on a Mac. Anything a peer sees is
+ * therefore third person.
+ */
+export function peerDefaultLabel(platform: string): string {
+  if (platform === 'darwin') return 'Mac'
+  if (platform === 'win32') return 'Windows PC'
+  if (platform === 'linux') return 'Linux PC'
+  if (platform === 'android') return 'Android phone'
+  if (platform === 'ios') return 'iPhone'
+  return 'Device'
+}
+
+const SELF_LABEL_PLATFORMS = ['darwin', 'win32', 'linux', 'android', 'ios', 'unknown']
+
+/**
+ * Rewrite a peer label that describes itself in the first person.
+ *
+ * Applies to labels already on the roster as well as newly scanned ones, so no
+ * migration is needed. A name the owner chose ("Brandon's Mac") is kept: only a
+ * generated "This …" label is rewritten.
+ */
+export function normalizePeerLabel(label: string, platform = 'unknown'): string {
+  const trimmed = label.trim()
+  if (!trimmed) return peerDefaultLabel(platform)
+  // A generated self label is replaced by the peer wording for the platform it
+  // describes, which need not be the platform field we were handed.
+  for (const known of SELF_LABEL_PLATFORMS) {
+    if (trimmed.toLowerCase() === localDefaultLabel(known).toLowerCase()) {
+      return peerDefaultLabel(known === 'unknown' ? platform : known)
+    }
+  }
+  if (!/^this\s+/i.test(trimmed)) return trimmed
+  const stripped = trimmed.replace(/^this\s+/i, '').trim()
+  if (!stripped) return peerDefaultLabel(platform)
+  return stripped.replace(/^./, (c) => c.toUpperCase())
+}
+
 function normalizeWallet(raw: Partial<DeviceWallet> & {
   deviceId: string
   label: string
   identityKey: string
 }): DeviceWallet {
+  const isLocal = Boolean(raw.isLocal)
+  const platform = typeof raw.platform === 'string' ? raw.platform : 'unknown'
   return {
     deviceId: raw.deviceId,
-    label: raw.label,
-    platform: typeof raw.platform === 'string' ? raw.platform : 'unknown',
+    label: isLocal ? raw.label : normalizePeerLabel(raw.label, platform),
+    platform,
     peerBaseUrl: typeof raw.peerBaseUrl === 'string' ? raw.peerBaseUrl : null,
-    isLocal: Boolean(raw.isLocal),
+    isLocal,
     identityKey: raw.identityKey,
     address: typeof raw.address === 'string' && raw.address.trim() ? raw.address.trim() : null,
     lastSeenAt: typeof raw.lastSeenAt === 'number' ? raw.lastSeenAt : null,
@@ -250,7 +295,7 @@ export function enrollLocalDevice(args: {
     args.platform ??
     window.handcash?.platform ??
     (typeof navigator !== 'undefined' ? navigator.platform : 'web')
-  const label = args.label?.trim() || defaultLabel(platform)
+  const label = args.label?.trim() || localDefaultLabel(platform)
   const previous = readRoster()
   const peers = previous
     .filter((w) => !w.isLocal && w.deviceId !== deviceId)
@@ -303,7 +348,7 @@ export function upsertPeerDevice(
     local?.identityKey.toLowerCase() === peer.identityKey.toLowerCase()
   const entry: DeviceWallet = {
     deviceId: peer.deviceId,
-    label: peer.label,
+    label: normalizePeerLabel(peer.label, peer.platform),
     platform: peer.platform,
     peerBaseUrl: sameIdentity ? (peer.peerBaseUrl ?? null) : null,
     isLocal: false,
@@ -383,7 +428,8 @@ export function buildPairPayload(args: {
     identityKey: args.identityKey.trim(),
     address,
     deviceId: getOrCreateDeviceId(),
-    label: args.label?.trim() || defaultLabel(platform),
+    // The scanner displays this, so it must not be our first-person label.
+    label: args.label?.trim() || peerDefaultLabel(platform),
     platform,
     peerBaseUrl: peer,
   }
@@ -406,7 +452,7 @@ export function buildLegacyPairPayload(args: {
     v: 2,
     identityKey: args.identityKey.trim(),
     deviceId: getOrCreateDeviceId(),
-    label: args.label?.trim() || defaultLabel(platform),
+    label: args.label?.trim() || peerDefaultLabel(platform),
     platform,
     backupBaseUrl: normalizePairBackupUrl(args.backupBaseUrl),
     peerBaseUrl: peer,

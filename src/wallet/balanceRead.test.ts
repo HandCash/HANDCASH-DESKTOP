@@ -62,4 +62,59 @@ describe('fetchBalanceRead', () => {
       fetchBalanceSats(unreadableWallet() as never, { creditUnconfirmed: false }),
     ).resolves.toBe(0)
   })
+
+  it('returns a proven partner-app balance without waiting for its refresh', async () => {
+    const { fetchBalanceSats, fetchFastBalanceSats } = await import('./session')
+    let blocked = false
+    const wallet = {
+      balance: async () => {
+        if (blocked) return new Promise<number>(() => {})
+        return 42_000
+      },
+      listOutputs: async () => ({ outputs: [] }),
+    }
+
+    await fetchBalanceSats(wallet as never, { creditUnconfirmed: false })
+    blocked = true
+
+    await expect(
+      Promise.race([
+        fetchFastBalanceSats(wallet as never),
+        new Promise<number>((resolve) => setTimeout(() => resolve(-1), 25)),
+      ]),
+    ).resolves.toBe(42_000)
+  })
+
+  it('bounds a cold partner-app balance read while refreshing in background', async () => {
+    const { fetchFastBalanceSats } = await import('./session')
+    const wallet = {
+      balance: async () => new Promise<number>(() => {}),
+      listOutputs: async () => new Promise<never>(() => {}),
+    }
+
+    await expect(fetchFastBalanceSats(wallet as never, 10)).resolves.toBe(0)
+  })
+
+  it('coalesces concurrent display reads into one storage pass', async () => {
+    const { fetchBalanceSats } = await import('./session')
+    let reads = 0
+    let release!: (sats: number) => void
+    const pending = new Promise<number>((resolve) => {
+      release = resolve
+    })
+    const wallet = {
+      balance: async () => {
+        reads += 1
+        return pending
+      },
+      listOutputs: async () => ({ outputs: [] }),
+    }
+
+    const first = fetchBalanceSats(wallet as never)
+    const second = fetchBalanceSats(wallet as never)
+    release(12_345)
+
+    await expect(Promise.all([first, second])).resolves.toEqual([12_345, 12_345])
+    expect(reads).toBe(1)
+  })
 })

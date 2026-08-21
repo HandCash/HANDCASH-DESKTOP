@@ -52,6 +52,62 @@ describe('deviceWallets backup links', () => {
     if (roundTrip.v === 3) expect(roundTrip.address).toBe(payload.address)
   })
 
+  it('names this install in the first person and peers in the third', async () => {
+    const { peerDefaultLabel, normalizePeerLabel } = await import('./deviceWallets')
+    expect(peerDefaultLabel('android')).toBe('Android phone')
+    expect(peerDefaultLabel('darwin')).toBe('Mac')
+    // The label an Android peer advertises for itself, seen from a Mac.
+    expect(normalizePeerLabel('This phone', 'android')).toBe('Android phone')
+    expect(normalizePeerLabel('This Mac', 'darwin')).toBe('Mac')
+    expect(normalizePeerLabel('This device', 'android')).toBe('Android phone')
+  })
+
+  it('keeps a label its owner chose', async () => {
+    const { normalizePeerLabel } = await import('./deviceWallets')
+    expect(normalizePeerLabel("Brandon's Mac", 'darwin')).toBe("Brandon's Mac")
+    expect(normalizePeerLabel('Workshop pixel', 'android')).toBe('Workshop pixel')
+    expect(normalizePeerLabel('  ', 'darwin')).toBe('Mac')
+  })
+
+  it('does not advertise a first-person label to whoever scans us', async () => {
+    const { buildPairPayload } = await import('./deviceWallets')
+    const payload = buildPairPayload({
+      identityKey:
+        '02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      address: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
+      platform: 'android',
+    })
+    expect(payload.label).toBe('Android phone')
+  })
+
+  it('rewrites a first-person peer label already on the roster', async () => {
+    const { listDeviceWallets } = await import('./deviceWallets')
+    store.set(
+      'handcash.brc100.deviceWallets.v1',
+      JSON.stringify([
+        {
+          deviceId: 'local',
+          label: 'This Mac',
+          platform: 'darwin',
+          isLocal: true,
+          identityKey: '02'.repeat(33),
+        },
+        {
+          deviceId: 'peer',
+          label: 'This phone',
+          platform: 'android',
+          isLocal: false,
+          identityKey: '03'.repeat(33),
+          linkMode: 'backup-only',
+        },
+      ]),
+    )
+    const wallets = listDeviceWallets()
+    // This install keeps its own first-person name; the peer must not.
+    expect(wallets.find((w) => w.isLocal)?.label).toBe('This Mac')
+    expect(wallets.find((w) => !w.isLocal)?.label).toBe('Android phone')
+  })
+
   it('still parses legacy v2 pair payload with backupBaseUrl', async () => {
     const { parsePairPayload } = await import('./deviceWallets')
     const ik =

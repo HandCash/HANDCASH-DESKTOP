@@ -29,6 +29,7 @@ export type AssetBurnUiEvent =
   | { type: 'BACK' }
   | { type: 'CANCEL' }
   | { type: 'CONFIRM' }
+  | { type: 'FORGET' }
   | { type: 'SUCCESS'; txid: string; recoveredSatoshis: number }
   | { type: 'FAIL'; error: string }
   | { type: 'RESET' }
@@ -61,16 +62,16 @@ export const assetBurnUiMachine = setup({
     open: assign(({ event }) =>
       event.type === 'OPEN'
         ? { amount: event.amount ?? '', error: null, preview: null }
-        : {},
+        : {}
     ),
     setAmount: assign(({ event }) =>
       event.type === 'SET_AMOUNT'
         ? { amount: event.amount, error: null, preview: null }
-        : {},
+        : {}
     ),
     clearError: assign({ error: null }),
     setPreview: assign(({ event }) =>
-      event.type === 'PREVIEW' ? { preview: event.preview } : {},
+      event.type === 'PREVIEW' ? { preview: event.preview } : {}
     ),
     succeed: assign(({ event }) =>
       event.type === 'SUCCESS'
@@ -79,9 +80,11 @@ export const assetBurnUiMachine = setup({
             txid: event.txid,
             recoveredSatoshis: event.recoveredSatoshis,
           }
-        : {},
+        : {}
     ),
-    fail: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
+    fail: assign(({ event }) =>
+      event.type === 'FAIL' ? { error: event.error } : {}
+    ),
   },
 }).createMachine({
   id: 'assetBurn',
@@ -113,6 +116,7 @@ export const assetBurnUiMachine = setup({
       on: {
         BACK: { target: 'editing' },
         CANCEL: { target: 'closed' },
+        FORGET: { target: 'closed' },
         PREVIEW: { actions: 'setPreview' },
         CONFIRM: { target: 'burning' },
         FAIL: { target: 'failure', actions: 'fail' },

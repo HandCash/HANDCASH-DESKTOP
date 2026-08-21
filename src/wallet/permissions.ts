@@ -83,6 +83,10 @@ const ACTION_METHODS = new Set([
   'relinquishOutput',
   'relinquishCertificate',
   'createSignature',
+  'createMarketListingAdvert',
+  'createMarketPurchaseIntent',
+  'purchaseMarketListing',
+  'createCancelMarketListingAdvert',
   'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',
@@ -735,6 +739,71 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Sign with wallet',
       summary: 'Create a signature proving you control this wallet',
       details: [],
+    }
+  }
+
+  if (method === 'createMarketListingAdvert') {
+    const price = Math.max(0, Math.trunc(Number(body.priceSats) || 0))
+    const outpoint =
+      typeof body.outpoint === 'string' ? body.outpoint : 'Unknown item'
+    return {
+      title: 'List item for sale',
+      summary: 'Sign a public market advert for this collectable',
+      amountSats: price || undefined,
+      amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
+      details: [
+        `Item: ${outpoint}`,
+        'The market index cannot move the item or spend your funds',
+      ],
+    }
+  }
+
+  if (method === 'purchaseMarketListing') {
+    const price = Math.max(
+      0,
+      Math.trunc(
+        Number(
+          body.priceSats ??
+            (body.listing && typeof body.listing === 'object'
+              ? (body.listing as Record<string, unknown>).priceSats
+              : 0),
+        ) || 0,
+      ),
+    )
+    return {
+      title: 'Buy market item',
+      summary: 'Authorize one atomic item purchase',
+      amountSats: price || undefined,
+      amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
+      details: [
+        'Total includes the 5% market fee',
+        'No payment is sent unless the exact item settlement can complete',
+      ],
+    }
+  }
+
+  if (method === 'createMarketPurchaseIntent') {
+    const listing =
+      body.listing && typeof body.listing === 'object'
+        ? (body.listing as Record<string, unknown>)
+        : {}
+    const price = Math.max(0, Math.trunc(Number(listing.priceSats) || 0))
+    return {
+      title: 'Approve market purchase',
+      summary: `Sign an intent to buy this item for ${price.toLocaleString()} sats`,
+      details: ['The signed intent binds the listing, price, fee, and BRC-150 proof.'],
+    }
+  }
+
+  if (method === 'createCancelMarketListingAdvert') {
+    return {
+      title: 'Cancel market listing',
+      summary: 'Revoke this wallet’s local sale authorization',
+      details: [
+        typeof body.outpoint === 'string'
+          ? `Item: ${body.outpoint}`
+          : 'Unknown item',
+      ],
     }
   }
 

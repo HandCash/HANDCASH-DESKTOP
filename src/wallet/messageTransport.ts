@@ -29,11 +29,107 @@ import {
 import { rememberBeefBinary } from './beefCache'
 import { noteInboundReceivePending } from './appActivity'
 import { isGhostTxSuppressed } from './ghostTxSuppress'
+import type {
+  MarketPurchaseIntent,
+  MarketSettlementReceipt,
+} from './marketListing'
 
 const WIRE_PREFIX = 'handcash-message:'
+const MARKET_WIRE_PREFIX = 'handcash-market-v2:'
 export const MAX_CHAT_FILE_BYTES = 8 * 1024 * 1024
 /** BRC-CLOUD sendMessage cap is 16_384 — stay under it for remittance ± inline BEEF. */
 export const MESSAGEBOX_BODY_MAX = 16_000
+
+export type MarketSettlementWire =
+  | {
+      type: 'sign-request'
+      saleId: string
+      buyerIdentityKey: string
+      intent: MarketPurchaseIntent
+      buyerMessagebox?: string
+      listing: unknown
+      provenance: unknown
+      signableBeefB64: string
+      itemVin: number
+      itemOutputIndex: number
+      sellerOutputIndex: number
+      feeOutputIndex: number
+      expiresAt: number
+    }
+  | {
+      type: 'sign-response'
+      saleId: string
+      accepted: boolean
+      unlockingScript?: string
+      reason?: string
+    }
+  | {
+      type: 'receipt'
+      saleId: string
+      txid: string
+      atomicBeefB64: string
+      buyerMessagebox?: string
+    }
+  | {
+      type: 'receipt-response'
+      saleId: string
+      txid: string
+      broadcasted: boolean
+      receipt: MarketSettlementReceipt
+      reason?: string
+    }
+
+export function encodeMarketSettlementWire(wire: MarketSettlementWire): string {
+  const body = `${MARKET_WIRE_PREFIX}${JSON.stringify(wire)}`
+  if (body.length > MESSAGEBOX_BODY_MAX) {
+    throw new Error('Market settlement message exceeds the BRC-33 body limit')
+  }
+  return body
+}
+
+export function decodeMarketSettlementWire(
+  body: string,
+): MarketSettlementWire | null {
+  if (!body.startsWith(MARKET_WIRE_PREFIX)) return null
+  try {
+    const wire = JSON.parse(body.slice(MARKET_WIRE_PREFIX.length)) as
+      | Partial<MarketSettlementWire>
+      | null
+    if (
+      !wire ||
+      typeof wire !== 'object' ||
+      (wire.type !== 'sign-request' &&
+        wire.type !== 'sign-response' &&
+        wire.type !== 'receipt' &&
+        wire.type !== 'receipt-response') ||
+      typeof wire.saleId !== 'string' ||
+      !wire.saleId
+    ) {
+      return null
+    }
+    return wire as MarketSettlementWire
+  } catch {
+    return null
+  }
+}
+
+export async function deliverMarketSettlementWire(args: {
+  wire: MarketSettlementWire
+  recipientIdentityKey: string
+  rootKeyHex: string
+  senderIdentityKey: string
+  messagebox?: string | null
+}): Promise<boolean> {
+  const sent = await deliverOutbound({
+    recipientIdentityKey: args.recipientIdentityKey,
+    rootKeyHex: args.rootKeyHex,
+    senderIdentityKey: args.senderIdentityKey,
+    messagebox: args.messagebox,
+    body: encodeMarketSettlementWire(args.wire),
+    peerId: args.recipientIdentityKey,
+  })
+  return sent.delivered === 'cloud'
+}
 
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
@@ -529,6 +625,26 @@ export async function pollInboundTipHints(args: {
     const paymentHints: InboundPaymentHint[] = []
     for (const m of list) {
       const senderKey = listedSender(m)
+      const marketWire = decodeMarketSettlementWire(m.body)
+      if (marketWire) {
+        try {
+          const { handleInboundMarketSettlementWire } = await import(
+            './marketSettlement'
+          )
+          const handled = await handleInboundMarketSettlementWire({
+            wire: marketWire,
+            senderIdentityKey: senderKey,
+            messagebox: box,
+          })
+          if (handled && m.messageId) ackIds.push(String(m.messageId))
+        } catch (err) {
+          console.warn(
+            '[market] inbound settlement message failed',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+        continue
+      }
       const peerId = args.peerIdForSender?.(senderKey) ?? null
       const decoded = decodeMessageBody(m.body)
       const isPaymentHint =

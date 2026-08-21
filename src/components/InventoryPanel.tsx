@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import { CollectableSendingMark } from './CollectableSendingMark'
+import { useChunkedCount } from './useChunkedCount'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -17,6 +19,11 @@ import {
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
+import {
+  groupCollectables,
+  groupQuantityLabel,
+  type CollectableGroup,
+} from '../wallet/collectableGroups'
 import {
   getVerificationProgress,
   isOutpointVerifying,
@@ -44,34 +51,6 @@ import {
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
-
-function useChunkedCount(total: number): number {
-  const [shown, setShown] = useState(() => Math.min(RENDER_CHUNK, total))
-
-  useEffect(() => {
-    setShown(Math.min(RENDER_CHUNK, total))
-    if (total <= RENDER_CHUNK) return
-
-    let cancelled = false
-    let next = RENDER_CHUNK
-    let handle = 0
-
-    const step = () => {
-      if (cancelled) return
-      next = Math.min(total, next + RENDER_CHUNK)
-      setShown(next)
-      if (next < total) handle = window.requestAnimationFrame(step)
-    }
-
-    handle = window.requestAnimationFrame(step)
-    return () => {
-      cancelled = true
-      if (handle) window.cancelAnimationFrame(handle)
-    }
-  }, [total])
-
-  return shown
-}
 
 function CollectableGridItem({
   item,
@@ -210,6 +189,111 @@ function CollectableListItem({
   )
 }
 
+
+/** Grid or list of individual items — used loose and inside a collection. */
+function CollectableItems({
+  items,
+  view,
+  verification,
+  sendingOutpoint,
+}: {
+  items: Collectable[]
+  view: CollectionView
+  verification: VerificationProgress
+  sendingOutpoint: string | null
+}) {
+  const shownCount = useChunkedCount(items.length, RENDER_CHUNK)
+  const visible = items.slice(0, shownCount)
+  const Item = view === 'grid' ? CollectableGridItem : CollectableListItem
+
+  return (
+    <ul className={view === 'grid' ? 'collection-grid' : 'connected-app-list'}>
+      {visible.map((item) => (
+        <Item
+          key={item.outpoint}
+          item={item}
+          verifying={isOutpointVerifying(item.outpoint, verification)}
+          sending={sendingOutpoint != null && isOutpointSending(item.outpoint)}
+        />
+      ))}
+    </ul>
+  )
+}
+
+/** Stacked art for a folded collection. Faces defer like any other bitmap. */
+function CollectableFacepile({ group }: { group: CollectableGroup }) {
+  return (
+    <span className="collect-facepile" aria-hidden>
+      {group.faces.map((face) => (
+        <span key={face.outpoint} className="collect-facepile-face">
+          <DeferredImage
+            src={face.imageUrl}
+            alt=""
+            width={40}
+            height={40}
+            skeletonWidth={40}
+            skeletonHeight={40}
+            skeletonRadius={999}
+            skeletonClassName="skeleton-qr"
+            decoding="async"
+            fallback={
+              <span className="collectable-media-fallback" aria-hidden>
+                <CollectablesIcon size={18} />
+              </span>
+            }
+          />
+        </span>
+      ))}
+      {group.overflow > 0 ? (
+        <span className="collect-facepile-more">+{group.overflow.toLocaleString()}</span>
+      ) : null}
+    </span>
+  )
+}
+
+function CollectionGroupItem({
+  group,
+  view,
+  verification,
+  sendingOutpoint,
+}: {
+  group: CollectableGroup
+  view: CollectionView
+  verification: VerificationProgress
+  sendingOutpoint: string | null
+}) {
+  const sendingHere =
+    sendingOutpoint != null && group.items.some((item) => isOutpointSending(item.outpoint))
+
+  return (
+    <Accordion.Item
+      value={group.key}
+      className="collect-collection"
+      data-sending={sendingHere ? 'true' : undefined}
+    >
+      <Accordion.ItemTrigger value={group.key} className="collect-collection-trigger">
+        <CollectableFacepile group={group} />
+        <span className="collect-collection-body">
+          <strong className="collect-collection-name" title={group.label}>
+            {group.label}
+          </strong>
+          <span className="collect-collection-meta">{groupQuantityLabel(group)}</span>
+        </span>
+        <Accordion.ItemIndicator className="collect-collection-indicator" aria-hidden>
+          ▾
+        </Accordion.ItemIndicator>
+      </Accordion.ItemTrigger>
+      <Accordion.ItemContent value={group.key} className="collect-collection-body-content">
+        <CollectableItems
+          items={group.items}
+          view={view}
+          verification={verification}
+          sendingOutpoint={sendingOutpoint}
+        />
+      </Accordion.ItemContent>
+    </Accordion.Item>
+  )
+}
 
 function FungibleCarouselCard({
   token,
@@ -394,8 +478,7 @@ export function InventoryPanel() {
   }, [])
 
   const showLoading = (awaitingFirst || !ready) && items.length === 0 && tokens.length === 0
-  const shownCount = useChunkedCount(items.length)
-  const visibleItems = items.slice(0, shownCount)
+  const { groups, loose } = useMemo(() => groupCollectables(items), [items])
   const empty = items.length === 0 && tokens.length === 0 && ready && tokensReady
 
   return (
@@ -431,34 +514,36 @@ export function InventoryPanel() {
       {items.length > 0 ? (
         <section className="collect-items-section" aria-label="Items">
           {tokens.length > 0 ? <h3 className="collect-section-title">Items</h3> : null}
-          {view === 'grid' ? (
-            <ul className="collection-grid">
-              {visibleItems.map((item) => (
-                <CollectableGridItem
-                  key={item.outpoint}
-                  item={item}
-                  verifying={isOutpointVerifying(item.outpoint, verification)}
-                  sending={
-                    sendingOutpoint != null && isOutpointSending(item.outpoint)
-                  }
+
+          {groups.length > 0 ? (
+            <Accordion.Root collapsible className="collect-collections">
+              {groups.map((group) => (
+                <CollectionGroupItem
+                  key={group.key}
+                  group={group}
+                  view={view}
+                  verification={verification}
+                  sendingOutpoint={sendingOutpoint}
                 />
               ))}
-            </ul>
-          ) : (
-            <ul className="connected-app-list">
-              {visibleItems.map((item) => (
-                <CollectableListItem
-                  key={item.outpoint}
-                  item={item}
-                  verifying={isOutpointVerifying(item.outpoint, verification)}
-                  sending={
-                    sendingOutpoint != null && isOutpointSending(item.outpoint)
-                  }
-                />
-              ))}
-            </ul>
-          )}
-          {shownCount >= items.length && getCollectablePageStatus().hasMore ? (
+            </Accordion.Root>
+          ) : null}
+
+          {loose.length > 0 ? (
+            <>
+              {groups.length > 0 ? (
+                <h3 className="collect-section-title">Not in a collection</h3>
+              ) : null}
+              <CollectableItems
+                items={loose}
+                view={view}
+                verification={verification}
+                sendingOutpoint={sendingOutpoint}
+              />
+            </>
+          ) : null}
+
+          {getCollectablePageStatus().hasMore ? (
             <div className="actions collect-load-more">
               <button
                 type="button"

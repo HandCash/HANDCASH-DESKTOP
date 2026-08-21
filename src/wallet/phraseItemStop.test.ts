@@ -157,6 +157,31 @@ describe('migratePhraseItemsBatch funds stop', () => {
     expect(createAction).toHaveBeenCalledTimes(1)
   })
 
+  it('repairs an old moved cursor against the mutable unspent list', async () => {
+    stored.set(
+      'handcash.brc100.phraseSweepItemCursor.v1',
+      JSON.stringify({
+        sourceAddress: CANDIDATE.address,
+        destIdentityKey: '02'.repeat(33),
+        offset: 15,
+        moved: 15,
+        failed: 0,
+        skipped: 0,
+      }),
+    )
+    createAction.mockRejectedValue(new Error('Insufficient funds'))
+
+    const { migratePhraseItemsBatch } = await import('./phraseSweep')
+    await migratePhraseItemsBatch({ candidate: CANDIDATE, batchSize: 1 })
+
+    // The fifteen successful rows have left `/unspent`; offset 15 would skip
+    // the next fifteen untouched collectables.
+    expect(fetch).toHaveBeenCalledWith(
+      expect.stringContaining('offset=0'),
+      expect.objectContaining({ headers: { Accept: 'application/json' } }),
+    )
+  })
+
   it('aborts the action when signing fails, so no phantom item is left listed', async () => {
     // An unsigned action still lists its `1sat` output until background review
     // fails it — that is the collectable that appeared and then vanished.
@@ -173,5 +198,31 @@ describe('migratePhraseItemsBatch funds stop', () => {
     expect(progress.failed).toBe(1)
     expect(progress.moved).toBe(0)
     expect(abortAction).toHaveBeenCalledWith({ reference: 'ref-1' })
+  })
+
+  it('removes a forgotten cursor and immediately clears Activity subscribers', async () => {
+    stored.set(
+      'handcash.brc100.phraseSweepItemCursor.v1',
+      JSON.stringify({
+        sourceAddress: CANDIDATE.address,
+        destIdentityKey: '02'.repeat(33),
+        offset: 465,
+        moved: 465,
+        failed: 0,
+      }),
+    )
+    const {
+      clearPhraseItemMigrateCursor,
+      peekPhraseItemMigrateCursor,
+      subscribePhraseItemMigrateCursor,
+    } = await import('./phraseSweep')
+    const seen: unknown[] = []
+    const unsubscribe = subscribePhraseItemMigrateCursor((value) => seen.push(value))
+
+    clearPhraseItemMigrateCursor()
+
+    expect(peekPhraseItemMigrateCursor()).toBeNull()
+    expect(seen.at(-1)).toBeNull()
+    unsubscribe()
   })
 })

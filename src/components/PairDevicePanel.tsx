@@ -201,7 +201,7 @@ export function PairDevicePanel() {
         })
         setPaste('')
         send({ type: 'SCANNED', peerDeviceId: added.deviceId })
-        toastSuccess('Device added', 'Now choose which device keeps the copy.')
+        toastSuccess('Device added', 'Now pick which wallet gets backed up.')
         playWalletSound('success')
         return
       }
@@ -628,7 +628,7 @@ export function PairDevicePanel() {
         <EmptyState
           icon={<ScanQrIcon size={22} />}
           title="No device backups yet"
-          body="Add another device, then choose which one keeps the encrypted copy."
+          body="Add another device, then pick which wallet gets backed up."
         />
       ) : (
         <div className="device-backup-sections">
@@ -653,7 +653,7 @@ export function PairDevicePanel() {
           {backupGroups.setup.length > 0 ? (
             <DeviceBackupSection
               title="Waiting on a choice"
-              description="Open a device to pick which side keeps the copy."
+              description="Open a device to pick which wallet gets backed up."
               peers={backupGroups.setup}
               localIdentityKey={localIk}
               onOpen={openDevice}

@@ -32,6 +32,15 @@ describe('assetBurnUiMachine', () => {
     expect(actor.getSnapshot().context.amount).toBe('500')
   })
 
+  it('allows a reviewed item to take the explicit local forget path', () => {
+    const actor = createActor(assetBurnUiMachine).start()
+    actor.send({ type: 'OPEN' })
+    actor.send({ type: 'REVIEW' })
+    actor.send({ type: 'FORGET' })
+
+    expect(actor.getSnapshot().matches('closed')).toBe(true)
+  })
+
   it('sends a failure back to editing with the amount intact', () => {
     const actor = createActor(assetBurnUiMachine).start()
     actor.send({ type: 'OPEN', amount: '5' })
@@ -61,7 +70,11 @@ describe('assetBurnUiMachine', () => {
     actor.send({ type: 'OPEN' })
     actor.send({ type: 'REVIEW' })
     actor.send({ type: 'CONFIRM' })
-    actor.send({ type: 'SUCCESS', txid: 'aa'.repeat(32), recoveredSatoshis: 4 })
+    actor.send({
+      type: 'SUCCESS',
+      txid: 'aa'.repeat(32),
+      recoveredSatoshis: 4,
+    })
     expect(actor.getSnapshot().matches('done')).toBe(true)
     expect(actor.getSnapshot().context.recoveredSatoshis).toBe(4)
     actor.send({ type: 'RESET' })

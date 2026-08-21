@@ -22,6 +22,8 @@ import {
   noteOutboundSendPending,
   failOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
+  upsertAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import {
   beginPendingSend,
@@ -165,6 +167,8 @@ export type Collectable = {
   app?: string
   imageUrl: string
   satoshis: number
+  /** Held tip script retained so send/burn planning does not require a network fetch. */
+  lockingScript?: string
   mimeType?: string
   type?: string
   subType?: string
@@ -225,7 +229,7 @@ let cachedLiveAllOutpoints: { at: number; keys: Set<string> } | null = null
 
 /** Feed a fresh address scan into the ownership filter (chain ingest). */
 export function rememberLiveOneSatOutpoints(
-  utxos: Array<{ outpoint: string; satoshis: number }>,
+  utxos: Array<{ outpoint: string; satoshis: number }>
 ): void {
   const at = Date.now()
   cachedLiveOneSats = { at, keys: liveOneSatKeys(utxos) }
@@ -319,7 +323,7 @@ function persistDurableList(items: Collectable[]): void {
           proven: item.proven,
           authenticity: item.authenticity,
         })),
-      }),
+      })
     )
   } catch {
     // Cache is an optimisation.
@@ -367,10 +371,10 @@ function isProtectedFromGhostDrop(outpoint: string): boolean {
 
 function setCollectablesCache(
   items: Collectable[],
-  options: { announceArrivals?: boolean } = {},
+  options: { announceArrivals?: boolean } = {}
 ) {
   const prev = new Set(
-    cachedCollectables.map((i) => normalizeOutpoint(i.outpoint)),
+    cachedCollectables.map((i) => normalizeOutpoint(i.outpoint))
   )
   const arrived = items
     .map((i) => normalizeOutpoint(i.outpoint))
@@ -391,7 +395,7 @@ function setCollectablesCache(
       proven: i.proven,
       name: i.name,
       origin: i.origin,
-    })),
+    }))
   )
   for (const item of items) {
     if (item.proven) clearAwaitingVerification(item.outpoint)
@@ -415,7 +419,7 @@ function setCollectablesCache(
                 ? 'A collectable landed in your wallet'
                 : `${arrived.length} collectables landed in your wallet`,
           },
-        }),
+        })
       )
     } catch {
       // Node tests / no DOM
@@ -482,7 +486,7 @@ export function areCollectablesHydrated(): boolean {
 }
 
 export function subscribeCollectables(
-  listener: CollectablesListener,
+  listener: CollectablesListener
 ): () => void {
   collectablesListeners.add(listener)
   listener(getCachedCollectables())
@@ -506,7 +510,7 @@ export function shortOrigin(origin: string): string {
 
 function tagValue(
   tags: string[] | undefined,
-  prefix: string,
+  prefix: string
 ): string | undefined {
   if (!tags) return undefined
   const hit = tags.find((t) => t.startsWith(prefix))
@@ -515,7 +519,7 @@ function tagValue(
 
 function parseOrigin(
   raw: string | undefined,
-  fallbackOutpoint: string,
+  fallbackOutpoint: string
 ): string {
   const source = raw?.trim() || fallbackOutpoint
   return source.includes('.') ? source.replace(/\.(\d+)$/, '_$1') : source
@@ -561,7 +565,7 @@ function toCollectable(
     lockingScript?: string
   },
   chain: Chain,
-  resolved?: Partial<ResolvedInscription> | null,
+  resolved?: Partial<ResolvedInscription> | null
 ): Collectable {
   const custom = parseCustom(o.customInstructions)
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
@@ -578,7 +582,7 @@ function toCollectable(
     // A lineage proof outranks both: it is the only origin this wallet verified.
     verdict?.origin ??
       (trustWalk ? resolved?.origin ?? claimed : claimed ?? resolved?.origin),
-    o.outpoint,
+    o.outpoint
   )
   // Tags are not display text: @bsv/sdk validateTag lowercases them, so a
   // `name:` / `app:` tag is only a flattened search key. Prefer the resolution
@@ -605,6 +609,7 @@ function toCollectable(
     app,
     imageUrl: contentUrlForOrigin(mediaOrigin, chain),
     satoshis: o.satoshis,
+    ...(o.lockingScript ? { lockingScript: o.lockingScript } : {}),
     mimeType: resolved?.mimeType,
     type: resolved?.type,
     subType: resolved?.subType,
@@ -635,7 +640,7 @@ function toCollectable(
  */
 export function dedupeByOrigin(
   items: Collectable[],
-  seenAtFor: (outpoint: string) => number = () => 0,
+  seenAtFor: (outpoint: string) => number = () => 0
 ): Collectable[] {
   const rank = (c: Collectable): number => {
     let score = 0
@@ -697,7 +702,7 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
     .catch((err) => {
       console.warn(
         '[collectables] address UTXO scan failed — keeping basket list',
-        err,
+        err
       )
     })
     .finally(() => {
@@ -747,7 +752,7 @@ async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
  */
 export async function isCollectableOutpointSpendable(
   outpoint: string,
-  active: ActiveWallet | null = getActiveWallet(),
+  active: ActiveWallet | null = getActiveWallet()
 ): Promise<boolean | null> {
   if (!active) return null
   const live = await awaitLiveOutpoints(active)
@@ -764,7 +769,7 @@ export async function isCollectableOutpointSpendable(
  * whatever we last learned, and the scan lands as a second render.
  */
 function resolveLiveOneSatKeys(
-  wallet: ActiveWallet,
+  wallet: ActiveWallet
 ): { at: number; keys: Set<string> } | null {
   const fresh =
     cachedLiveOneSats != null &&
@@ -822,10 +827,7 @@ function persistSeededItems(identityKey: string): void {
       seenAt: firstSeenAt.get(key) ?? Date.now(),
     })
   }
-  durableSetItem(
-    SEEDED_ITEMS_KEY,
-    JSON.stringify({ identityKey, items }),
-  )
+  durableSetItem(SEEDED_ITEMS_KEY, JSON.stringify({ identityKey, items }))
 }
 
 /** Restore only seeds created by this identity; another wallet's tips are never ours. */
@@ -860,7 +862,11 @@ function hydrateSeededItems(identityKey: string): void {
         outpoint: normalizeOutpoint(seed.outpoint),
         satoshis: seed.satoshis,
         ...(Array.isArray(seed.tags)
-          ? { tags: seed.tags.filter((tag): tag is string => typeof tag === 'string') }
+          ? {
+              tags: seed.tags.filter(
+                (tag): tag is string => typeof tag === 'string'
+              ),
+            }
           : {}),
       }
       const key = outpointKey(output.outpoint)
@@ -869,7 +875,7 @@ function hydrateSeededItems(identityKey: string): void {
     }
     if (seededItems.size > 0) {
       console.info(
-        `[collectables] restored ${seededItems.size} pending received item seed(s)`,
+        `[collectables] restored ${seededItems.size} pending received item seed(s)`
       )
     }
     persistSeededItems(identityKey)
@@ -882,7 +888,7 @@ function hydrateSeededItems(identityKey: string): void {
 function pendingSeededItems(
   outputs: ItemOutput[],
   now: number,
-  identityKey: string,
+  identityKey: string
 ): ItemOutput[] {
   hydrateSeededItems(identityKey)
   if (seededItems.size === 0) return []
@@ -953,8 +959,8 @@ export function noteIngestedItem(args: {
         toCollectable(output, args.chain, getResolvedInscription(target)),
         ...cachedCollectables,
       ],
-      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
-    ),
+      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0
+    )
   )
 }
 
@@ -993,13 +999,13 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
       toCollectable(
         o,
         chain,
-        getResolvedInscription(normalizeOutpoint(o.outpoint)),
-      ),
+        getResolvedInscription(normalizeOutpoint(o.outpoint))
+      )
     )
   }
   return dedupeByOrigin(
     items,
-    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0
   )
 }
 
@@ -1027,7 +1033,7 @@ async function resolveUnknownOrigins(): Promise<void> {
   const pending = listable.filter(
     (o) =>
       needsIndexerResolve(o) &&
-      shouldResolveInscription(normalizeOutpoint(o.outpoint)),
+      shouldResolveInscription(normalizeOutpoint(o.outpoint))
   )
   // Thin cards need an upgrade whether remittance named them or lineage did —
   // both paths can land an origin with no traits, and that is what "came in
@@ -1058,10 +1064,10 @@ async function resolveUnknownOrigins(): Promise<void> {
     const orderedUpgrades = preferred
       ? [
           ...upgrades.filter(
-            (o) => normalizeOutpoint(o.outpoint) === preferred,
+            (o) => normalizeOutpoint(o.outpoint) === preferred
           ),
           ...upgrades.filter(
-            (o) => normalizeOutpoint(o.outpoint) !== preferred,
+            (o) => normalizeOutpoint(o.outpoint) !== preferred
           ),
         ]
       : upgrades
@@ -1070,7 +1076,7 @@ async function resolveUnknownOrigins(): Promise<void> {
       setVerificationProgress(
         'identifying',
         outpoint,
-        'Looking up this item with the indexer',
+        'Looking up this item with the indexer'
       )
       const walked = await walkInscription(outpoint)
       if (walked) {
@@ -1087,7 +1093,7 @@ async function resolveUnknownOrigins(): Promise<void> {
       setVerificationProgress(
         'identifying',
         outpoint,
-        'Fetching name and traits from the indexer',
+        'Fetching name and traits from the indexer'
       )
       const walked = await walkInscription(outpoint)
       // Only a richer answer may replace what the card already shows; a second
@@ -1130,7 +1136,7 @@ let provingGenesis = false
 
 function genesisWalkBudgetSpent(now = Date.now()): boolean {
   genesisWalkTimes = genesisWalkTimes.filter(
-    (at) => now - at < GENESIS_WALK_WINDOW_MS,
+    (at) => now - at < GENESIS_WALK_WINDOW_MS
   )
   return genesisWalkTimes.length >= GENESIS_WALK_BUDGET
 }
@@ -1148,7 +1154,7 @@ function noteGenesisWalk(now = Date.now()): void {
  */
 async function proveHeldGenesis(
   wallet: ActiveWallet,
-  ownRead: Promise<Collectable[]> | null,
+  ownRead: Promise<Collectable[]> | null
 ): Promise<void> {
   const settleAwaitingOutsideQueue = (queued: Set<string>) => {
     settleStaleAwaitingVerification((outpoint) => queued.has(outpoint))
@@ -1174,12 +1180,12 @@ async function proveHeldGenesis(
       listRecentActivity(ACTIVITY_REPAIR_DEPTH)
         .map((entry) => entry.item?.outpoint)
         .filter((outpoint): outpoint is string => !!outpoint)
-        .map(normalizeOutpoint),
+        .map(normalizeOutpoint)
     ),
   ].filter((outpoint) => !held.includes(outpoint))
   const preferred = takePreferredCollectableVerification()
   const candidates = [...held, ...inActivity].filter((outpoint) =>
-    shouldAttemptGenesis(outpoint),
+    shouldAttemptGenesis(outpoint)
   )
   if (
     preferred &&
@@ -1213,7 +1219,7 @@ async function proveHeldGenesis(
       setVerificationProgress(
         'verifying',
         outpoint,
-        'Proving tip-to-origin lineage (BRC-150)',
+        'Proving tip-to-origin lineage (BRC-150)'
       )
       let outcome: GenesisWalkOutcome = {
         kind: 'unavailable',
@@ -1262,21 +1268,25 @@ async function proveHeldGenesis(
         // indistinguishable to anyone reading it.
         if (aborted || outcome.kind === 'aborted') {
           console.info(
-            `[brc-150] walk deferred ${outpoint} — ${describeGenesisWalk(outcome)}`,
+            `[brc-150] walk deferred ${outpoint} — ${describeGenesisWalk(
+              outcome
+            )}`
           )
         } else if (outcome.kind === 'invalid') {
           console.warn(
-            `[brc-150] unprovable ${outpoint} — ${describeGenesisWalk(outcome)}`,
+            `[brc-150] unprovable ${outpoint} — ${describeGenesisWalk(outcome)}`
           )
         } else {
           console.info(
-            `[brc-150] walk incomplete ${outpoint} — ${describeGenesisWalk(outcome)}`,
+            `[brc-150] walk incomplete ${outpoint} — ${describeGenesisWalk(
+              outcome
+            )}`
           )
         }
         rememberGenesisFailure(
           outpoint,
           outcome.kind,
-          describeGenesisWalk(outcome),
+          describeGenesisWalk(outcome)
         )
         clearVerificationProgress(outpoint)
         if (!aborted && outcome.kind !== 'aborted') {
@@ -1309,7 +1319,7 @@ async function proveHeldGenesis(
       queued.delete(outpoint)
 
       console.info(
-        `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`,
+        `[brc-150] proved ${outpoint} back to ${proof.origin} in ${proof.hops} hop(s)`
       )
       rememberProvenVerdict(outpoint, {
         tier: 'brc150',
@@ -1329,13 +1339,15 @@ async function proveHeldGenesis(
           beef: proof.beef,
         })
       ) {
-        console.info(`[brc-150] remittance kept for ${outpoint} — sends reuse it`)
+        console.info(
+          `[brc-150] remittance kept for ${outpoint} — sends reuse it`
+        )
       }
       // Spinner stays via awaitingVerify until announceItemVerified clears it.
       setVerificationProgress(
         'verifying',
         outpoint,
-        'Fetching name and traits for the proven origin',
+        'Fetching name and traits for the proven origin'
       )
       await adoptProvenOrigin(outpoint, proof.origin, wallet.chain)
       await yieldToUi()
@@ -1352,7 +1364,7 @@ async function proveHeldGenesis(
     // Tips left in the queue were aborted / budget-cut — keep their spinner only
     // if we still plan to retry (shouldAttemptGenesis). Everything else → Unverified.
     settleStaleAwaitingVerification(
-      (outpoint) => queued.has(outpoint) && shouldAttemptGenesis(outpoint),
+      (outpoint) => queued.has(outpoint) && shouldAttemptGenesis(outpoint)
     )
   }
 }
@@ -1373,13 +1385,13 @@ export function requestCollectableVerification(outpoint: string): void {
     return
   }
   const cached = getCachedCollectables().find(
-    (c) => normalizeOutpoint(c.outpoint) === target,
+    (c) => normalizeOutpoint(c.outpoint) === target
   )
   noteAwaitingVerification(target)
   setVerificationProgress(
     'verifying',
     target,
-    'Proving tip-to-origin lineage (BRC-150)',
+    'Proving tip-to-origin lineage (BRC-150)'
   )
   if (cached?.origin) {
     void verifyItemAuthenticity(target, cached.origin)
@@ -1440,7 +1452,7 @@ function originKey(value: string): string {
 async function adoptProvenOrigin(
   outpoint: string,
   origin: string,
-  chain: Chain,
+  chain: Chain
 ): Promise<void> {
   const point = originKey(origin)
   const existing = getResolvedInscription(outpoint)
@@ -1493,7 +1505,7 @@ async function adoptProvenOrigin(
  * truncated outpoint and empty traits.
  */
 async function walkInscription(
-  outpoint: string,
+  outpoint: string
 ): Promise<ResolvedInscription | null> {
   // The item's own origin claim (remittance `customInstructions` / `origin:`
   // tag) is a known origin too. Old BRC-156 tips 404 on the indexer and sit too
@@ -1502,7 +1514,7 @@ async function walkInscription(
   // one request. Only trust a claim that is not just the tip fallback.
   const key = normalizeOutpoint(outpoint)
   const cachedOrigin = getCachedCollectables().find(
-    (c) => normalizeOutpoint(c.outpoint) === key,
+    (c) => normalizeOutpoint(c.outpoint) === key
   )?.origin
   const claimedOrigin =
     cachedOrigin && normalizeOutpoint(cachedOrigin) !== key
@@ -1516,7 +1528,7 @@ async function walkInscription(
     return await resolveInscriptionPreferringOrigin(
       outpoint,
       lastItemChain,
-      knownOrigin,
+      knownOrigin
     )
   } catch {
     return null
@@ -1544,7 +1556,7 @@ const LIST_TIMEOUT_MS = 20_000
 export async function verifyItemAuthenticity(
   outpoint: string,
   originTag: string,
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<AuthenticityResult> {
   const target = normalizeOutpoint(outpoint)
   const cached = getProvenVerdict(target)
@@ -1578,7 +1590,7 @@ export async function verifyItemAuthenticity(
       seekPermission: false,
     })
     const match = (listed.outputs ?? []).find(
-      (o) => normalizeOutpoint(o.outpoint) === target,
+      (o) => normalizeOutpoint(o.outpoint) === target
     )
     if (!match) {
       return {
@@ -1622,8 +1634,8 @@ export async function verifyItemAuthenticity(
           tag
         console.info(
           `[brc-150] remittance verified ${target.slice(0, 14)}… → ${String(
-            provenOrigin,
-          ).slice(0, 18)}…`,
+            provenOrigin
+          ).slice(0, 18)}…`
         )
       }
     }
@@ -1643,7 +1655,7 @@ export async function verifyItemAuthenticity(
         console.info(
           `[brc-150] lineage proved ${target.slice(0, 14)}… in ${
             proof.hops
-          } hop(s)`,
+          } hop(s)`
         )
       }
     }
@@ -1678,7 +1690,7 @@ export async function verifyItemAuthenticity(
 
 function applyAuthenticityResult(
   outpoint: string,
-  result: AuthenticityResult,
+  result: AuthenticityResult
 ): void {
   const target = normalizeOutpoint(outpoint)
   // Durable provenCache is the only authenticity SSoT. Never paint Unverified
@@ -1690,7 +1702,7 @@ function applyAuthenticityResult(
       !cachedCollectables.some(
         (c) =>
           c.outpoint === target &&
-          (c.proven !== true || c.authenticity !== 'brc150'),
+          (c.proven !== true || c.authenticity !== 'brc150')
       )
     ) {
       return
@@ -1699,8 +1711,8 @@ function applyAuthenticityResult(
       cachedCollectables.map((c) =>
         c.outpoint === target
           ? { ...c, proven: true, authenticity: 'brc150' }
-          : c,
-      ),
+          : c
+      )
     )
     return
   }
@@ -1712,17 +1724,15 @@ function applyAuthenticityResult(
     !cachedCollectables.some(
       (c) =>
         c.outpoint === target &&
-        (c.proven !== true || c.authenticity !== 'brc150'),
+        (c.proven !== true || c.authenticity !== 'brc150')
     )
   ) {
     return
   }
   setCollectablesCache(
     cachedCollectables.map((c) =>
-      c.outpoint === target
-        ? { ...c, proven: true, authenticity: 'brc150' }
-        : c,
-    ),
+      c.outpoint === target ? { ...c, proven: true, authenticity: 'brc150' } : c
+    )
   )
 }
 
@@ -1732,7 +1742,7 @@ function applyAuthenticityResult(
  * one session wallet, so joining the in-flight read is the same answer.
  */
 export function listCollectables(
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<Collectable[]> {
   if (listInFlight) return listInFlight
   const run = listCollectablesNow(active, false)
@@ -1751,7 +1761,7 @@ export function listCollectables(
  * one operation.
  */
 export function loadMoreCollectables(
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<Collectable[]> {
   if (listMoreInFlight) return listMoreInFlight
   if (listedOutputCursor >= listedOutputTotal && collectablesHydrated) {
@@ -1769,7 +1779,7 @@ export function loadMoreCollectables(
 
 async function listCollectablesNow(
   active?: ActiveWallet | null,
-  append = false,
+  append = false
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
@@ -1796,13 +1806,13 @@ async function listCollectablesNow(
       new Promise<never>((_, reject) =>
         setTimeout(
           () => reject(new Error('listOutputs timed out')),
-          LIST_TIMEOUT_MS,
-        ),
+          LIST_TIMEOUT_MS
+        )
       ),
     ])
     const page = (result.outputs ?? []).map((o) => {
       const lockingScript = normalizeLockingScriptHex(
-        (o as { lockingScript?: unknown }).lockingScript,
+        (o as { lockingScript?: unknown }).lockingScript
       )
       return {
         outpoint: o.outpoint,
@@ -1819,7 +1829,7 @@ async function listCollectablesNow(
     })
     listedOutputCursor = Math.min(
       listedOutputTotal,
-      pageOffset + (result.outputs?.length ?? 0),
+      pageOffset + (result.outputs?.length ?? 0)
     )
     if (append) {
       const byOutpoint = new Map<string, ItemOutput>()
@@ -1858,7 +1868,9 @@ async function listCollectablesNow(
   // basket is reconciled by scheduled chain ingest; use an already-cached scan
   // when one exists, but do not start another 800k-row network read here.
   const live =
-    listedOutputTotal > 10_000 ? cachedLiveOneSats : resolveLiveOneSatKeys(wallet)
+    listedOutputTotal > 10_000
+      ? cachedLiveOneSats
+      : resolveLiveOneSatKeys(wallet)
   if (live) {
     // Do not un-hide sent tips just because a lagging address scan still lists
     // them. That put a just-sent NFT back in Collect so the user sent it twice.
@@ -1893,14 +1905,14 @@ async function listCollectablesNow(
     if (ghosts.length > 0) {
       console.info(
         `[collectables] dropping ${ghosts.length} tip(s) not in the address UTXO set`,
-        ghosts.map((g) => outpointKey(g.outpoint)),
+        ghosts.map((g) => outpointKey(g.outpoint))
       )
       void relinquishSpentOutputs(
         wallet,
         ghosts.map((g) => ({
           outpoint: normalizeOutpoint(g.outpoint),
           basket: '1sat',
-        })),
+        }))
       )
     }
     outputs = [...owned, ...keptMissing]
@@ -1928,14 +1940,14 @@ async function listCollectablesNow(
     if (ghosts.length > 0) {
       console.info(
         `[collectables] dropping ${ghosts.length} outbound tip(s) before address scan`,
-        ghosts.map((g) => outpointKey(g.outpoint)),
+        ghosts.map((g) => outpointKey(g.outpoint))
       )
       void relinquishSpentOutputs(
         wallet,
         ghosts.map((g) => ({
           outpoint: normalizeOutpoint(g.outpoint),
           basket: '1sat',
-        })),
+        }))
       )
     }
     outputs = kept
@@ -1957,7 +1969,7 @@ async function listCollectablesNow(
 
 export async function getCollectable(
   outpoint: string,
-  active?: ActiveWallet | null,
+  active?: ActiveWallet | null
 ): Promise<Collectable | null> {
   const target = normalizeOutpoint(outpoint)
   const wallet = active ?? getActiveWallet()
@@ -2001,7 +2013,7 @@ export async function getCollectable(
           ? await resolveInscriptionPreferringOrigin(
               target,
               wallet.chain,
-              knownOrigin,
+              knownOrigin
             ).catch(() => cachedResolved)
           : cachedResolved
       if (resolved) {
@@ -2026,7 +2038,7 @@ export async function getCollectable(
           imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
         }
         setCollectablesCache(
-          cachedCollectables.map((c) => (c.outpoint === target ? item! : c)),
+          cachedCollectables.map((c) => (c.outpoint === target ? item! : c))
         )
       }
     }
@@ -2059,7 +2071,7 @@ function formatSendError(err: unknown): Error {
     const msg = err.message || String(err)
     if (name === 'AbortError' || /^AbortError$/i.test(msg)) {
       return new Error(
-        'Signing was interrupted (wallet storage busy). Wait a second and send again.',
+        'Signing was interrupted (wallet storage busy). Wait a second and send again.'
       )
     }
     if (
@@ -2067,7 +2079,7 @@ function formatSendError(err: unknown): Error {
       /insufficient.?funds/i.test(msg)
     ) {
       return new Error(
-        'Not enough BSV to cover the network fee for this transfer',
+        'Not enough BSV to cover the network fee for this transfer'
       )
     }
     // Must not match `unlockingScript` — that is a signing fault, not a bad recipient.
@@ -2079,7 +2091,7 @@ function formatSendError(err: unknown): Error {
     }
     if (/no longer spendable/i.test(msg)) {
       return new Error(
-        'A previous send left this item’s tip stuck. Recovered it — tap Send again.',
+        'A previous send left this item’s tip stuck. Recovered it — tap Send again.'
       )
     }
     if (
@@ -2087,7 +2099,7 @@ function formatSendError(err: unknown): Error {
       /reserved by an active action batch/i.test(msg)
     ) {
       return new Error(
-        'A previous send is still holding this item. Cleared it — tap Send again.',
+        'A previous send is still holding this item. Cleared it — tap Send again.'
       )
     }
     if (
@@ -2096,7 +2108,7 @@ function formatSendError(err: unknown): Error {
       /must have a sourcetransaction/i.test(msg)
     ) {
       return new Error(
-        'Can’t find the transaction that holds this item yet. Wait a moment after receiving it, then Send again.',
+        'Can’t find the transaction that holds this item yet. Wait a moment after receiving it, then Send again.'
       )
     }
     if (/is not iterable/i.test(msg)) {
@@ -2120,7 +2132,7 @@ function formatSendError(err: unknown): Error {
  */
 function assertOrdinalIsDeviceLocked(
   lockingScript: unknown,
-  wallet: ActiveWallet,
+  wallet: ActiveWallet
 ): void {
   const hex = normalizeLockingScriptHex(lockingScript)
   if (!hex) return
@@ -2128,7 +2140,7 @@ function assertOrdinalIsDeviceLocked(
   if (isCovenantLockedScript(hex)) return
   if (!scriptPaysAddress(hex, wallet.address)) {
     throw new Error(
-      'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.',
+      'This collectable is locked to a key this device cannot sign. Restore the wallet that received it, then send again.'
     )
   }
 }
@@ -2144,7 +2156,7 @@ function assertOrdinalIsDeviceLocked(
  */
 async function buildInputBeefForSpends(
   wallet: ActiveWallet,
-  outpoints: string[],
+  outpoints: string[]
 ): Promise<number[]> {
   return buildMergedInputBeef(wallet, outpoints, normalizeOutpoint)
 }
@@ -2180,7 +2192,7 @@ async function signOrdinalTransfer(args: {
   rememberBeefTree(
     Array.isArray(args.signable.tx)
       ? args.signable.tx
-      : Array.from(args.signable.tx),
+      : Array.from(args.signable.tx)
   )
   const beef = Beef.fromBinary(args.signable.tx)
   let unsigned: Transaction | undefined
@@ -2210,7 +2222,7 @@ async function signOrdinalTransfer(args: {
       try {
         const extra = await getBeefForTxidCached(
           args.wallet,
-          String(input.sourceTXID),
+          String(input.sourceTXID)
         )
         beef.mergeBeef(extra.toBinary())
         input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
@@ -2218,7 +2230,7 @@ async function signOrdinalTransfer(args: {
         console.warn(
           '[collectables] source tx hydrate failed',
           input.sourceTXID,
-          err,
+          err
         )
       }
     }
@@ -2228,7 +2240,7 @@ async function signOrdinalTransfer(args: {
       ]?.lockingScript?.toHex()
     if (isCovenantLockedScript(locking)) {
       throw new Error(
-        'This collectable is covenant-locked and cannot be spent with a P2PKH unlock. Abandon it instead.',
+        'This collectable is covenant-locked and cannot be spent with a P2PKH unlock. Abandon it instead.'
       )
     }
   }
@@ -2247,7 +2259,7 @@ async function signOrdinalTransfer(args: {
     }
     input.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
       rootKey,
-      satoshis,
+      satoshis
     )
   }
   await unsigned.sign()
@@ -2331,7 +2343,7 @@ async function signOrdinalTransfer(args: {
       formatReviewActionsError({
         sendWithResults: sendWith,
         reviewActionResults: [],
-      }),
+      })
     )
   }
 
@@ -2347,7 +2359,7 @@ async function signOrdinalTransfer(args: {
  */
 async function relinquishSpentOutputs(
   wallet: ActiveWallet,
-  spends: Array<{ outpoint: string; basket: string }>,
+  spends: Array<{ outpoint: string; basket: string }>
 ): Promise<void> {
   for (const spend of spends) {
     try {
@@ -2362,40 +2374,45 @@ async function relinquishSpentOutputs(
       console.warn(
         '[collectables] relinquish after send skipped',
         spend.outpoint,
-        err,
+        err
       )
     }
   }
 }
 
 /**
- * Drop a stuck covenant tip from local inventory.
+ * Forget a held collectable tip from local inventory.
  *
- * Does not spend on-chain — covenant tips cannot be spent. Relinquishes the
- * basket row, marks sent/abandoned, and clears the collectables cache entry.
+ * Does not spend on-chain. Relinquishes the basket row, marks it abandoned, and
+ * clears the collectables cache entry. This is the only path for covenant tips
+ * and an explicit user alternative to burning an otherwise spendable tip.
  */
 export async function abandonCollectable(outpointRaw: string): Promise<void> {
   const outpoint = normalizeOutpoint(outpointRaw)
   const wallet = getActiveWallet()
   if (!wallet) throw new Error('Wallet locked')
-
-  const held = await wallet.wallet.listOutputs({
-    basket: '1sat',
-    limit: 1000,
-    includeTags: true,
-    includeCustomInstructions: true,
-    include: 'locking scripts',
-    seekPermission: false,
-  })
-  const match = (held.outputs ?? []).find(
-    (o) => normalizeOutpoint(o.outpoint) === outpoint,
+  const cached = cachedCollectables.find(
+    (item) => normalizeOutpoint(item.outpoint) === outpoint
   )
+
+  const match =
+    cached ??
+    (
+      await wallet.wallet.listOutputs({
+        basket: '1sat',
+        limit: 1000,
+        includeTags: true,
+        includeCustomInstructions: true,
+        include: 'locking scripts',
+        seekPermission: false,
+      })
+    ).outputs?.find((o) => normalizeOutpoint(o.outpoint) === outpoint)
   if (!match) throw new Error('Collectable is no longer in this wallet')
 
   console.info(
     `[collectables] abandon tip=${outpoint} tipKind=${
       classifyTipKind(match.lockingScript).kind
-    }`,
+    }`
   )
 
   markItemsSent([{ outpoint, txid: `abandon:${outpoint}` }])
@@ -2404,8 +2421,23 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
 
   invalidateLiveOneSatOutpoints()
   setCollectablesCache(
-    cachedCollectables.filter((i) => i.outpoint !== outpoint),
+    cachedCollectables.filter((i) => i.outpoint !== outpoint)
   )
+  upsertAppActivity({
+    origin: WALLET_ACTIVITY_ORIGIN,
+    kind: 'event',
+    sats: 0,
+    method: 'forget-collectable',
+    note: `Forgot ${cached?.name ?? 'collectable'} from this wallet`,
+    item: {
+      name: cached?.name ?? 'Collectable',
+      origin: cached?.origin ?? outpoint.replace('.', '_'),
+      outpoint,
+      ...(cached?.imageUrl ? { imageUrl: cached.imageUrl } : {}),
+      ...(cached?.app ? { app: cached.app } : {}),
+    },
+    status: 'complete',
+  })
   scheduleHistoryBackupPush('abandonCollectable')
   void listCollectables(wallet).catch((err) => {
     console.warn('[collectables] post-abandon refresh failed', err)
@@ -2485,7 +2517,7 @@ export async function sendCollectable(args: {
           setPaymentProgress(
             'building',
             'Preparing the collectable for transfer',
-            outpoint,
+            outpoint
           )
           const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
 
@@ -2502,7 +2534,7 @@ export async function sendCollectable(args: {
             cachedCollectables.find((i) => i.outpoint === outpoint) ?? null
           const originGuess = parseOrigin(
             args.origin ?? cachedItem?.origin,
-            outpoint,
+            outpoint
           )
           const originTag = originGuess.replace(/_(\d+)$/, '.$1')
 
@@ -2519,7 +2551,7 @@ export async function sendCollectable(args: {
             seekPermission: false,
           })
           let match = (held.outputs ?? []).find(
-            (o) => normalizeOutpoint(o.outpoint) === outpoint,
+            (o) => normalizeOutpoint(o.outpoint) === outpoint
           )
           // Origin tag can miss after a migrate / rename; one broader pass is enough.
           if (!match) {
@@ -2532,7 +2564,7 @@ export async function sendCollectable(args: {
               seekPermission: false,
             })
             match = (wide.outputs ?? []).find(
-              (o) => normalizeOutpoint(o.outpoint) === outpoint,
+              (o) => normalizeOutpoint(o.outpoint) === outpoint
             )
           }
           if (!match) throw new Error('Collectable is no longer in this wallet')
@@ -2552,7 +2584,7 @@ export async function sendCollectable(args: {
               tipCustom.origin ??
               args.origin ??
               item?.origin,
-            outpoint,
+            outpoint
           )
           const name =
             (
@@ -2585,7 +2617,7 @@ export async function sendCollectable(args: {
               if (originTxid?.length === 64 && Number.isInteger(originVout)) {
                 const originBeef = await getBeefForTxidCached(
                   wallet,
-                  originTxid,
+                  originTxid
                 )
                 const scriptHex =
                   originBeef
@@ -2598,7 +2630,7 @@ export async function sendCollectable(args: {
             } catch (err) {
               console.warn(
                 '[collectables] derivative content resolve skipped',
-                err,
+                err
               )
             }
           }
@@ -2626,7 +2658,7 @@ export async function sendCollectable(args: {
             markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
             void listCollectables(wallet).catch(() => {})
             throw new Error(
-              'This collectable is no longer unspent on your address (already sent). Inventory refreshed.',
+              'This collectable is no longer unspent on your address (already sent). Inventory refreshed.'
             )
           }
 
@@ -2642,7 +2674,7 @@ export async function sendCollectable(args: {
             tipLockingScript
           ) {
             console.info(
-              `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`,
+              `[collectables] tip locking script recovered from BEEF (${tipLockingScript.length} hex chars)`
             )
           }
           assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
@@ -2655,7 +2687,7 @@ export async function sendCollectable(args: {
             ...new Set(
               spendOutpoints
                 .map((op) => normalizeOutpoint(op).split('.')[0])
-                .filter((txid): txid is string => !!txid),
+                .filter((txid): txid is string => !!txid)
             ),
           ]
 
@@ -2693,12 +2725,12 @@ export async function sendCollectable(args: {
               sendPath.path === 'refuse' ? ` reason=${sendPath.reason}` : ''
             } settle=${settlePath.settle} tipKind=${tipKind.kind} proven=${
               provenTier ?? 'none'
-            } scriptChars=${tipLockingScript.length}`,
+            } scriptChars=${tipLockingScript.length}`
           )
 
           const finishSend = async (
             txid: string,
-            opts?: { remittanceBuilt?: boolean },
+            opts?: { remittanceBuilt?: boolean }
           ): Promise<{ txid: string }> => {
             // Record activity as soon as the txid exists — before relinquish / list /
             // progress clear — so the feed updates while Working is still showing.
@@ -2751,7 +2783,7 @@ export async function sendCollectable(args: {
             }
             setPaymentProgress('finishing')
             setCollectablesCache(
-              cachedCollectables.filter((i) => i.outpoint !== outpoint),
+              cachedCollectables.filter((i) => i.outpoint !== outpoint)
             )
             if (selfReceive) {
               // The line above drops the tip we spent; the one we now hold is a
@@ -2775,7 +2807,7 @@ export async function sendCollectable(args: {
                       title: 'Item received',
                       body: 'A collectable landed in your wallet',
                     },
-                  }),
+                  })
                 )
               } catch {
                 // Node tests / no DOM
@@ -2815,7 +2847,7 @@ export async function sendCollectable(args: {
           // p2pkhSend path — machine is in p2pkhSend; covenant never reaches here.
           if (!chart.getSnapshot().matches('p2pkhSend')) {
             return failSend(
-              new Error('collectableSendMachine did not enter p2pkhSend'),
+              new Error('collectableSendMachine did not enter p2pkhSend')
             )
           }
 
@@ -2825,7 +2857,7 @@ export async function sendCollectable(args: {
           setPaymentProgress(
             'building',
             'Preparing authenticity proof',
-            outpoint,
+            outpoint
           )
           const provenance = await tryBuildProvenanceForSend({
             tipOutpoint: outpoint,
@@ -2839,14 +2871,15 @@ export async function sendCollectable(args: {
 
           const recoverSendFailure = async (
             err: unknown,
-            reference?: string | null,
+            reference?: string | null
           ): Promise<Error> => {
             const {
               isReviewActionsError,
               formatReviewActionsError,
               recoverFromReviewActions,
             } = await import('./actionReview')
-            if (isAlreadySpentInputError(err)) await hideSpentOutpoints(spendOutpoints)
+            if (isAlreadySpentInputError(err))
+              await hideSpentOutpoints(spendOutpoints)
             await recoverFromReviewActions({
               err,
               reference,
@@ -2877,7 +2910,7 @@ export async function sendCollectable(args: {
               setPaymentProgress(
                 'signing',
                 'Signing the collectable for the recipient',
-                outpoint,
+                outpoint
               )
               console.info('[collectables] createAction start')
               result = await wallet.wallet.createAction({
@@ -2915,13 +2948,13 @@ export async function sendCollectable(args: {
                   (result.signableTransaction?.tx
                     ? Array.from(result.signableTransaction.tx)
                     : undefined),
-                typeof result.txid === 'string' ? result.txid : undefined,
+                typeof result.txid === 'string' ? result.txid : undefined
               )
               itemChart.send({ type: 'CREATED', txid: result.txid })
               console.info(
                 `[collectables] createAction done txid=${
                   result.txid ?? 'signable'
-                }`,
+                }`
               )
             } catch (err) {
               const { isReservedActionBatchError, abortReservedActionBatches } =
@@ -2940,7 +2973,7 @@ export async function sendCollectable(args: {
             if (!result) {
               itemChart.stop()
               return failSend(
-                new Error('Send completed without createAction result'),
+                new Error('Send completed without createAction result')
               )
             }
             txid = result.txid ?? ''
@@ -2959,7 +2992,7 @@ export async function sendCollectable(args: {
             if (!itemChart.getSnapshot().matches('signing')) {
               itemChart.stop()
               return failSend(
-                new Error('itemSendMachine did not enter signing'),
+                new Error('itemSendMachine did not enter signing')
               )
             }
             try {
@@ -2976,7 +3009,7 @@ export async function sendCollectable(args: {
             } catch (err) {
               const formatted = await recoverSendFailure(
                 err,
-                result.signableTransaction?.reference,
+                result.signableTransaction?.reference
               )
               itemChart.send({ type: 'FAIL', error: formatted.message })
               itemChart.stop()
@@ -3005,13 +3038,13 @@ export async function sendCollectable(args: {
               if (settlePath.settle !== 'peerDeliver') {
                 itemChart.stop()
                 return failSend(
-                  new Error('itemSendMachine peerDeliver without settle path'),
+                  new Error('itemSendMachine peerDeliver without settle path')
                 )
               }
               setPaymentProgress(
                 'finishing',
                 'Delivering item to recipient',
-                outpoint,
+                outpoint
               )
               const { notifyPeerItemIncoming } = await import(
                 './messageTransport'
@@ -3020,7 +3053,7 @@ export async function sendCollectable(args: {
               const friend = listFriends().find(
                 (f) =>
                   f.identityKey.toLowerCase() ===
-                  settlePath.recipientIdentityKey.toLowerCase(),
+                  settlePath.recipientIdentityKey.toLowerCase()
               )
               const delivered = await notifyPeerItemIncoming({
                 recipientIdentityKey: settlePath.recipientIdentityKey,
@@ -3032,7 +3065,7 @@ export async function sendCollectable(args: {
                 atomicBeef,
               })
               console.info(
-                `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`,
+                `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
               )
               if (delivered.delivered === 'cloud') {
                 itemChart.send({ type: 'DELIVERED' })
@@ -3042,7 +3075,7 @@ export async function sendCollectable(args: {
               if (!maySenderBroadcast(itemChart.getSnapshot())) {
                 itemChart.stop()
                 return failSend(
-                  new Error('itemSendMachine refused sender broadcast'),
+                  new Error('itemSendMachine refused sender broadcast')
                 )
               }
               const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
@@ -3050,7 +3083,7 @@ export async function sendCollectable(args: {
                 setPaymentProgress(
                   'broadcasting',
                   'Inbox unreachable — submitting on chain',
-                  outpoint,
+                  outpoint
                 )
               }
               const ok = await broadcastAtomicBeef(txid, atomicBeef)
@@ -3058,11 +3091,7 @@ export async function sendCollectable(args: {
                 itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
               } else if (!ok) {
                 itemChart.stop()
-                return failSend(
-                  new Error(
-                    'Not sent',
-                  ),
-                )
+                return failSend(new Error('Not sent'))
               } else {
                 itemChart.send({ type: 'BROADCASTED' })
               }
@@ -3072,22 +3101,18 @@ export async function sendCollectable(args: {
                 settleSnap.matches('selfReceive')
                   ? 'Broadcasting item back to this wallet'
                   : 'Broadcasting the collectable',
-                outpoint,
+                outpoint
               )
               const ok = await broadcastAtomicBeef(txid, atomicBeef)
               if (!ok) {
                 itemChart.stop()
-                return failSend(
-                  new Error(
-                    'Not sent',
-                  ),
-                )
+                return failSend(new Error('Not sent'))
               }
               itemChart.send({ type: 'BROADCASTED' })
             } else {
               itemChart.stop()
               return failSend(
-                new Error('itemSendMachine has no legal settle phase'),
+                new Error('itemSendMachine has no legal settle phase')
               )
             }
           } catch (err) {
@@ -3137,12 +3162,12 @@ export async function sendCollectable(args: {
         } finally {
           pauseCollectableArrivalToasts = Math.max(
             0,
-            pauseCollectableArrivalToasts - 1,
+            pauseCollectableArrivalToasts - 1
           )
           clearPaymentProgress()
         }
       },
-      () => setPaymentProgress('preparing', undefined, outpoint),
+      () => setPaymentProgress('preparing', undefined, outpoint)
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)

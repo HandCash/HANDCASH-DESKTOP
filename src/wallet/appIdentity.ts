@@ -119,7 +119,11 @@ export function appDisplayName(origin: string | undefined): string {
 
   const base = host.split(':')[0] ?? host
   if (base === 'handcash.io' || base === 'www.handcash.io') return 'HandCash'
-  if (base === 'market.handcash.io' || base === 'preprod-market.handcash.io') {
+  if (
+    base === 'market.handcash.io' ||
+    base === 'preprod-market.handcash.io' ||
+    base === 'market-v2.handcash.io'
+  ) {
     return 'HandCash'
   }
 

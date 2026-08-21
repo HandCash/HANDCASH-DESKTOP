@@ -60,6 +60,7 @@ import { getActiveWallet } from '../wallet/session'
 import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
+import { whenRecomposeIdle } from '../wallet/recompose'
 
 /**
  * Messagebox tip-hint poll — independent of the address-scan interval so a
@@ -472,7 +473,9 @@ export function Dashboard({
     // UI live, and the old idle wait made desktop sync feel slower than mobile.
     let idleHandle: number | null = null
     let deferTimer: number | null = null
-    const startFirst = () => {
+    const startFirst = async () => {
+      if (cancelled) return
+      await whenRecomposeIdle()
       if (cancelled) return
       void sync().finally(() => {
         scheduleNext()

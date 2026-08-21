@@ -36,6 +36,8 @@ import {
   countFailedActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
+  upsertAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
 } from './appActivity'
 import {
@@ -591,5 +593,54 @@ describe('inbound receive activity', () => {
     expect(activityEntryTitle(burn)).toBe('Burned 25 CHIPS')
     expect(activityEntryTitle({ ...burn, status: 'pending' })).toBe('Burning CHIPS…')
     expect(activityEntryTitle({ ...burn, status: 'failed' })).toBe('CHIPS not burned')
+  })
+})
+
+describe('burn activity handoff', () => {
+  beforeEach(() => {
+    store.clear()
+    clearAppActivity()
+  })
+
+  it('keeps one visible row from queued through terminal failure', () => {
+    const pendingId = 'burn-test'
+    const item = {
+      name: 'Fox',
+      origin: `${'a'.repeat(64)}_0`,
+      outpoint: `${'b'.repeat(64)}.0`,
+    }
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 1,
+      method: 'burn-collectable',
+      item,
+      burn: { asset: '1sat', destroyedAmount: '1' },
+      status: 'pending',
+      pendingId,
+    })
+    expect(listRecentActivity(10)[0]).toMatchObject({
+      method: 'burn-collectable',
+      status: 'pending',
+      pendingId,
+    })
+
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 1,
+      method: 'burn-collectable',
+      item,
+      burn: { asset: '1sat', destroyedAmount: '1' },
+      status: 'failed',
+      pendingId,
+      failureReason: 'source transaction timed out',
+    })
+    const rows = listRecentActivity(10)
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({
+      status: 'failed',
+      failureReason: 'source transaction timed out',
+    })
   })
 })

@@ -37,7 +37,7 @@ import {
   repairProvenTxReqHistoryNulls,
   type ProvenTxReqHistoryStore,
 } from './brc38HistoryRepair'
-import { decideThinHistoryOverwrite } from './historyEmptyGuard'
+import { decideHistoryPush } from './historyEmptyGuard'
 import { inspectLocalToolboxState } from './layers'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
@@ -276,11 +276,18 @@ export async function uploadBrc39Backup(
   const url = historyBackupObjectUrl(active.identityKey, prefs)
 
   const local = await inspectLocalToolboxState()
-  noteSpendableHighWater(local.spendableSats, local.actionCount)
-  const prefsNow = getHistoryBackupPrefs()
-
   const remote = await fetchRemoteBrc39Meta()
-  const gate = decideThinHistoryOverwrite({
+  if (remote == null && opts.force !== true) {
+    const msg = 'refuse history upload while remote BRC-39 metadata is unavailable'
+    appendAppLog('warn', `[cloud-backup] skip upload — ${msg}`)
+    setHistoryBackupPrefs({ lastError: msg })
+    throw new HistoryThinOverwriteError(msg)
+  }
+  const prefsNow = getHistoryBackupPrefs()
+  const gate = decideHistoryPush({
+    remoteExists: remote?.exists ?? false,
+    remoteBytes: remote?.bytes ?? null,
+    localLooksEmpty: local.looksEmpty,
     localSpendableSats: local.spendableSats,
     localActionCount: local.actionCount,
     remoteSpendableSats: remote?.spendableSats ?? null,

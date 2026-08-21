@@ -262,11 +262,13 @@ export async function refreshFromChainExclusive(
 
   let balanceBefore = 0
   let balanceBeforeOk = false
-  try {
-    balanceBefore = await fetchBalanceSats(active.wallet)
-    balanceBeforeOk = true
-  } catch {
-    balanceBefore = 0
+  if (opts?.announceReceive !== false) {
+    try {
+      balanceBefore = await fetchBalanceSats(active.wallet)
+      balanceBeforeOk = true
+    } catch {
+      balanceBefore = 0
+    }
   }
 
   try {

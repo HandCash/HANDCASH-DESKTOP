@@ -257,9 +257,6 @@ async function acquireRecompose(): Promise<() => void> {
  * during spend (except nested spend heal) and historyReplica by the machine.
  */
 export function runChainIngest<T>(fn: () => Promise<T>): Promise<T> {
-  if (context().recomposeDepth > 0) {
-    return fn()
-  }
   return chainIngestQueue(async () => {
     const release = await acquireChainIngest(false)
     try {

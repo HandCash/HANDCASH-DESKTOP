@@ -36,6 +36,23 @@ export const DEFAULT_HISTORY_BACKUP_SETUP_URL =
     import.meta.env.VITE_HISTORY_BACKUP_BASE_URL.trim()) ||
   DEFAULT_BRC_CLOUD_BASE_URL
 
+/** Marketplace operator identity committed by every signed listing. */
+export const MARKET_FEE_IDENTITY_KEY =
+  (typeof import.meta !== 'undefined' &&
+    typeof import.meta.env?.VITE_MARKET_FEE_IDENTITY_KEY === 'string' &&
+    import.meta.env.VITE_MARKET_FEE_IDENTITY_KEY.trim()) ||
+  '0365ee5b1907426b54e10ef9e4474c26f12329e67bdc63657ec61e9ed9c230b43d'
+
+/**
+ * Static mainnet P2PKH destination of MARKET_FEE_IDENTITY_KEY. Settlement
+ * creation derives the address from the signed listing and requires this exact
+ * value, so the root identity key can spend the fee and the Worker can verify it.
+ */
+export const MARKET_FEE_PAY_TO_ADDRESS = '17M4gYpygf4GvbFuS65z4fV6712t9Kth4Y'
+
+/** Five percent, included in the buyer's advertised total (seller receives 95%). */
+export const MARKET_FEE_BASIS_POINTS = 500
+
 /** items-market origin that hosts the Desktop swap ("Add money") flow. */
 export const DEFAULT_MARKET_BASE_URL =
   (typeof import.meta !== 'undefined' &&

@@ -1,13 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { formatBsv, formatSats } from '../wallet/session'
+import { formatBsv, formatSats, getActiveWallet } from '../wallet/session'
 import {
   clearPhraseItemMigrateCursor,
+  estimateItemMigrateCost,
   migratePhraseItemsBatch,
   peekPhraseItemMigrateCursor,
   previewPhraseSweep,
   refreshAfterPhraseItemMigrate,
+  subscribePhraseItemMigrateCursor,
   sweepPhraseFunding,
   validatePhraseInput,
+  type PhraseItemMigrateCursor,
   type PhraseSweepPreview,
 } from '../wallet/phraseSweep'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
@@ -17,6 +20,26 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type Phase = 'enter' | 'preview' | 'working' | 'done'
+
+/** Tips per transaction the run below uses — the estimate must match it. */
+const ITEMS_PER_TX = 25
+
+/**
+ * State the fee budget and transaction count before the run, not after it
+ * stops. A large collection costs real money and takes hours, and the previous
+ * copy said "hours of fees" without a number to weigh.
+ */
+function describeItemMigrateBudget(itemCount: number, capped: boolean): string {
+  const { transactions, feeSats } = estimateItemMigrateCost({
+    itemCount,
+    itemsPerTx: ITEMS_PER_TX,
+  })
+  const cost = `~${transactions.toLocaleString()} transaction${
+    transactions === 1 ? '' : 's'
+  }, ~${formatBsv(feeSats)} BSV in fees`
+  if (!capped) return `${cost} — finishes in one run.`
+  return `At least ${cost}, and the real count is higher. Runs for hours, stops if this wallet runs low on BSV, and resumes where it left off.`
+}
 
 /**
  * Settings → Import phrase — sweep another BIP39 wallet into this install.
@@ -32,6 +55,9 @@ export function ImportPhrasePanel() {
   const [fundingResult, setFundingResult] = useState<string | null>(null)
   const [itemProgress, setItemProgress] = useState<string | null>(null)
   const [migrateItems, setMigrateItems] = useState(true)
+  const [pendingImport, setPendingImport] = useState<PhraseItemMigrateCursor | null>(
+    () => peekPhraseItemMigrateCursor(),
+  )
   /** Addresses whose collectables this run will move. */
   const [itemBranches, setItemBranches] = useState<string[]>([])
   const abortRef = useRef(false)
@@ -40,10 +66,27 @@ export function ImportPhrasePanel() {
     const cur = peekPhraseItemMigrateCursor()
     if (cur) {
       setItemProgress(
-        `Resume available · ${cur.moved} moved · offset ${cur.offset}`,
+        `Resume available · ${cur.moved} imported · ${cur.offset} scanned`,
       )
     }
+    return subscribePhraseItemMigrateCursor(setPendingImport)
   }, [])
+
+  const activeIdentityKey = getActiveWallet()?.identityKey.trim().toLowerCase() ?? ''
+  const pendingBelongsToActiveWallet =
+    pendingImport != null &&
+    pendingImport.destIdentityKey.trim().toLowerCase() === activeIdentityKey
+
+  const forgetPendingImport = () => {
+    if (!pendingImport) return
+    const confirmed = window.confirm(
+      'Forget this pending import? Items already imported stay in this wallet. Only the saved resume position is removed.',
+    )
+    if (!confirmed) return
+    clearPhraseItemMigrateCursor()
+    setItemProgress(null)
+    toastSuccess('Pending import removed', 'Already imported collectables were not changed.')
+  }
 
   const runPreview = async () => {
     const invalid = validatePhraseInput(phrase)
@@ -61,13 +104,27 @@ export function ImportPhrasePanel() {
     try {
       await unlockVault(password)
       const next = await previewPhraseSweep(phrase, passphrase)
+      if (
+        pendingImport &&
+        !next.hits.some((hit) => hit.candidate.address === pendingImport.sourceAddress)
+      ) {
+        throw new Error(
+          'This phrase does not contain the source address for the pending import. Enter the same phrase used to start it, or forget the pending import first.',
+        )
+      }
       setPreview(next)
       // Start a very large branch switched off. Destination change pays a fee
       // per collectable, so a capped count can outrun the balance and take
       // hours — that is a decision to make deliberately, not a default.
       setItemBranches(
         next.hits
-          .filter((h) => h.itemCountAtLeast > 0 && !h.itemCountCapped)
+          .filter(
+            (h) =>
+              h.itemCountAtLeast > 0 &&
+              (pendingImport
+                ? h.candidate.address === pendingImport.sourceAddress
+                : !h.itemCountCapped),
+          )
           .map((h) => h.candidate.address),
       )
       setPhase('preview')
@@ -98,38 +155,48 @@ export function ImportPhrasePanel() {
     playWalletSound('soft')
     try {
       await unlockVault(password)
-      setStatus('Sweeping BSV into this wallet…')
-      let importedTotal = 0
-      let failedTotal = 0
-      let satsTotal = 0
-      let alreadySweptTotal = 0
-      for (const hit of preview.hits) {
-        if (abortRef.current) break
-        if (hit.fundingCount === 0) continue
-        const funding = await sweepPhraseFunding({
-          mnemonic: phrase,
-          passphrase,
-          candidate: hit.candidate,
-          utxos: hit.scan.utxos,
-        })
-        importedTotal += funding.imported
-        failedTotal += funding.failed
-        satsTotal += funding.fundingSatsMoved
-        alreadySweptTotal += funding.alreadySwept
+      if (pendingImport) {
+        // This is an explicit continuation action, not a second general phrase
+        // sweep. Do not move unrelated funding outputs while resuming items.
+        setStatus('Resuming collectable import…')
+        setFundingResult(null)
+      } else {
+        setStatus('Sweeping BSV into this wallet…')
+        let importedTotal = 0
+        let failedTotal = 0
+        let satsTotal = 0
+        let alreadySweptTotal = 0
+        for (const hit of preview.hits) {
+          if (abortRef.current) break
+          if (hit.fundingCount === 0) continue
+          const funding = await sweepPhraseFunding({
+            mnemonic: phrase,
+            passphrase,
+            candidate: hit.candidate,
+            utxos: hit.scan.utxos,
+          })
+          importedTotal += funding.imported
+          failedTotal += funding.failed
+          satsTotal += funding.fundingSatsMoved
+          alreadySweptTotal += funding.alreadySwept
+        }
+        const fundMsg =
+          importedTotal > 0
+            ? `Moved ${formatSats(satsTotal)} sats (${importedTotal} output${importedTotal === 1 ? '' : 's'})`
+            : failedTotal > 0
+              ? `No funding moved · ${failedTotal} failed`
+              : alreadySweptTotal > 0
+                ? `Already swept earlier · ${alreadySweptTotal} output${alreadySweptTotal === 1 ? '' : 's'} claimed by this wallet`
+                : 'No sweepable BSV on that phrase'
+        setFundingResult(fundMsg)
+        toastSuccess('BSV sweep', fundMsg)
       }
-      const fundMsg =
-        importedTotal > 0
-          ? `Moved ${formatSats(satsTotal)} sats (${importedTotal} output${importedTotal === 1 ? '' : 's'})`
-          : failedTotal > 0
-            ? `No funding moved · ${failedTotal} failed`
-            : alreadySweptTotal > 0
-              ? `Already swept earlier · ${alreadySweptTotal} output${alreadySweptTotal === 1 ? '' : 's'} claimed by this wallet`
-              : 'No sweepable BSV on that phrase'
-      setFundingResult(fundMsg)
-      toastSuccess('BSV sweep', fundMsg)
 
       const itemHits = preview.hits.filter(
-        (h) => h.itemCountAtLeast > 0 && itemBranches.includes(h.candidate.address),
+        (h) =>
+          h.itemCountAtLeast > 0 &&
+          itemBranches.includes(h.candidate.address) &&
+          (!pendingImport || h.candidate.address === pendingImport.sourceAddress),
       )
       if (migrateItems && itemHits.length > 0 && !abortRef.current) {
         setStatus(
@@ -160,7 +227,10 @@ export function ImportPhrasePanel() {
             const batch = await migratePhraseItemsBatch({
               candidate: hit.candidate,
               batchSize: 50,
-              itemsPerTx: 25,
+              itemsPerTx: ITEMS_PER_TX,
+              expectedItemCount: hit.itemCountCapped
+                ? undefined
+                : hit.itemCountAtLeast,
             })
             movedTotal = movedRunning + batch.moved
             const skippedNote = batch.skipped > 0 ? ` · ${batch.skipped} skipped` : ''
@@ -175,7 +245,12 @@ export function ImportPhrasePanel() {
               movedRunning += batch.moved
               toastError(
                 'Out of spendable BSV',
-                `Moved ${movedRunning.toLocaleString()} collectable${movedRunning === 1 ? '' : 's'} before the wallet ran low. Add funds and run Import phrase again — it resumes where this stopped.`,
+                `Moved ${movedRunning.toLocaleString()} collectable${movedRunning === 1 ? '' : 's'} before the wallet ran low. Each ${ITEMS_PER_TX}-item transaction costs about ${formatSats(
+                  estimateItemMigrateCost({
+                    itemCount: ITEMS_PER_TX,
+                    itemsPerTx: ITEMS_PER_TX,
+                  }).feeSats,
+                )} sats. Add funds and run Import phrase again — it resumes where this stopped.`,
               )
               outOfFunds = true
               break
@@ -228,6 +303,65 @@ export function ImportPhrasePanel() {
         Move BSV and collectables from another wallet’s 12- or 24-word phrase into this one.
       </p>
 
+      {pendingImport ? (
+        <section
+          className="settings-row"
+          data-aeon-scope="phrase-import-resume"
+          data-aeon-state={
+            pendingBelongsToActiveWallet ? 'eligible' : 'different-destination'
+          }
+          style={{ marginTop: 12 }}
+        >
+          <div data-aeon-part="header">
+            <h3 className="settings-row-label">Pending collectable import</h3>
+            <p className="settings-row-desc" style={{ marginTop: 4 }}>
+              {pendingImport.stopped === 'funds'
+                ? 'Paused because this wallet ran out of spendable BSV for transaction fees.'
+                : 'Paused before every source output was checked.'}
+            </p>
+          </div>
+          <dl className="payment-details-meta" style={{ marginTop: 10 }}>
+            <dt>Imported</dt>
+            <dd>{Math.max(0, Math.trunc(pendingImport.moved)).toLocaleString()}</dd>
+            <dt>Scanned</dt>
+            <dd>{Math.max(0, Math.trunc(pendingImport.offset)).toLocaleString()}</dd>
+            <dt>Failed</dt>
+            <dd>{Math.max(0, Math.trunc(pendingImport.failed)).toLocaleString()}</dd>
+            <dt>Ignored</dt>
+            <dd>
+              {Math.max(0, Math.trunc(pendingImport.skipped ?? 0)).toLocaleString()}{' '}
+              non-collectables
+            </dd>
+          </dl>
+          <p className="settings-row-desc" style={{ marginTop: 8 }}>
+            Source address
+            <br />
+            <code>{pendingImport.sourceAddress}</code>
+          </p>
+          <p className="settings-row-desc" style={{ marginTop: 8 }}>
+            Destination:{' '}
+            <strong>
+              {pendingBelongsToActiveWallet ? 'this wallet' : 'a different wallet identity'}
+            </strong>
+          </p>
+          {pendingImport.lastError ? (
+            <p className="settings-row-desc" style={{ marginTop: 8 }}>
+              Last error: {pendingImport.lastError}
+            </p>
+          ) : null}
+          <p className="settings-row-desc" style={{ marginTop: 8 }}>
+            {pendingBelongsToActiveWallet
+              ? 'To continue, enter the same source phrase and your unlock password below. Preview verifies the source before any transaction is made.'
+              : 'Switch back to the destination wallet to continue. This wallet may only forget the saved resume position.'}
+          </p>
+          <div className="actions" data-aeon-part="actions" style={{ marginTop: 10 }}>
+            <button type="button" className="btn btn-ghost" onClick={forgetPendingImport}>
+              Forget pending import
+            </button>
+          </div>
+        </section>
+      ) : null}
+
       {phase === 'enter' || phase === 'preview' ? (
         <>
           <div className="field" data-aeon-part="field" style={{ marginTop: 12 }}>
@@ -273,10 +407,14 @@ export function ImportPhrasePanel() {
           <button
             type="button"
             className="btn btn-primary"
-            disabled={busy || !phrase.trim()}
+            disabled={
+              busy ||
+              !phrase.trim() ||
+              (pendingImport != null && !pendingBelongsToActiveWallet)
+            }
             onClick={() => void runPreview()}
           >
-            {busy ? 'Scanning…' : 'Preview'}
+            {busy ? 'Scanning…' : pendingImport ? 'Preview and resume' : 'Preview'}
           </button>
         </div>
       ) : null}
@@ -351,6 +489,10 @@ export function ImportPhrasePanel() {
                         <input
                           type="checkbox"
                           checked={itemBranches.includes(hit.candidate.address)}
+                          disabled={
+                            pendingImport != null &&
+                            hit.candidate.address !== pendingImport.sourceAddress
+                          }
                           onChange={(e) =>
                             setItemBranches((prev) =>
                               e.target.checked
@@ -368,9 +510,10 @@ export function ImportPhrasePanel() {
                             item{hit.itemCountAtLeast === 1 ? '' : 's'}
                           </strong>
                           <span>
-                            {hit.itemCountCapped
-                              ? 'Off by default — hours of fees, and it stops when funds run low.'
-                              : 'Finishes in one run.'}
+                            {describeItemMigrateBudget(
+                              hit.itemCountAtLeast,
+                              hit.itemCountCapped,
+                            )}
                           </span>
                         </span>
                       </label>
@@ -384,7 +527,7 @@ export function ImportPhrasePanel() {
                   disabled={busy}
                   onClick={() => void runSweep()}
                 >
-                  Sweep into this wallet
+                  {pendingImport ? 'Resume collectable import' : 'Sweep into this wallet'}
                 </button>
                 <button
                   type="button"
@@ -442,17 +585,6 @@ export function ImportPhrasePanel() {
               }}
             >
               Done
-            </button>
-            <button
-              type="button"
-              className="btn btn-ghost"
-              onClick={() => {
-                clearPhraseItemMigrateCursor()
-                setItemProgress(null)
-                toastSuccess('Cleared', 'Item migrate cursor reset')
-              }}
-            >
-              Clear item resume
             </button>
           </div>
         </div>

@@ -352,6 +352,12 @@ export type BalanceRead =
  */
 let lastKnownBalanceSats: number | null = null
 let lastBalanceBreakdown = ''
+const spendableBalanceCache = new WeakMap<object, number>()
+const spendableBalanceRefresh = new WeakMap<object, Promise<number | null>>()
+const balanceReadFlights = new WeakMap<
+  object,
+  Partial<Record<'display' | 'confirmed', Promise<BalanceRead>>>
+>()
 
 export function lastKnownBalance(): number | null {
   return lastKnownBalanceSats
@@ -433,6 +439,9 @@ export async function fetchBalanceRead(
     return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
 
+  if (typeof w === 'object' && w != null) {
+    spendableBalanceCache.set(w, spendable)
+  }
   if (opts?.creditUnconfirmed === false) return { kind: 'ok', sats: spendable }
 
   let pendingChange = 0
@@ -470,10 +479,77 @@ export async function fetchBalanceSats(
   wallet?: Wallet | WalletInterface,
   opts?: { creditUnconfirmed?: boolean },
 ): Promise<number> {
-  const read = await fetchBalanceRead(wallet, opts)
+  const w = wallet ?? getActiveWallet()?.wallet
+  const read =
+    w && typeof w === 'object'
+      ? await coalescedBalanceRead(w, opts)
+      : await fetchBalanceRead(w, opts)
   if (read.kind === 'ok') return read.sats
   if (opts?.creditUnconfirmed === false) return 0
   return lastKnownBalanceSats ?? 0
+}
+
+function coalescedBalanceRead(
+  wallet: Wallet | WalletInterface,
+  opts?: { creditUnconfirmed?: boolean },
+): Promise<BalanceRead> {
+  const key = opts?.creditUnconfirmed === false ? 'confirmed' : 'display'
+  const walletKey = wallet as object
+  let flights = balanceReadFlights.get(walletKey)
+  const existing = flights?.[key]
+  if (existing) return existing
+
+  if (!flights) {
+    flights = {}
+    balanceReadFlights.set(walletKey, flights)
+  }
+  let flight!: Promise<BalanceRead>
+  flight = fetchBalanceRead(wallet, opts).finally(() => {
+    const current = balanceReadFlights.get(walletKey)
+    if (current?.[key] === flight) delete current[key]
+    if (current && !current.display && !current.confirmed) {
+      balanceReadFlights.delete(walletKey)
+    }
+  })
+  flights[key] = flight
+  return flight
+}
+
+/**
+ * Stale-while-revalidate spendable balance for latency-sensitive BRC-100 apps.
+ *
+ * Partner apps commonly ask for `getBalance` while the toolbox monitor or a
+ * history export owns IndexedDB. Waiting for a fresh read there made app load
+ * take 10+ seconds. A previously proven value returns synchronously while one
+ * deduplicated confirmed-only refresh runs in the background. A cold wallet
+ * gets only a short bounded wait; the refresh continues for the next request.
+ */
+export async function fetchFastBalanceSats(
+  wallet?: Wallet | WalletInterface,
+  _maxWaitMs = 350,
+): Promise<number> {
+  const w = wallet ?? getActiveWallet()?.wallet
+  if (!w || typeof w !== 'object') return lastKnownBalanceSats ?? 0
+
+  const key = w as object
+  // Start after this HTTP request has had a chance to serialize its cached
+  // response. Some toolbox adapters do meaningful synchronous work before
+  // returning their Promise; invoking them inline defeated a Promise timeout
+  // and previously held getBalance open for nine seconds.
+  globalThis.setTimeout(() => {
+    if (spendableBalanceRefresh.has(key)) return
+    const refresh = coalescedBalanceRead(w, { creditUnconfirmed: false })
+      .then((read) => (read.kind === 'ok' ? read.sats : null))
+      .finally(() => {
+        spendableBalanceRefresh.delete(key)
+      })
+    spendableBalanceRefresh.set(key, refresh)
+    void refresh.catch(() => {
+      /* keep the last proven value */
+    })
+  }, 0)
+
+  return spendableBalanceCache.get(key) ?? lastKnownBalanceSats ?? 0
 }
 
 /** Below this, amounts display as sats; at/above, as BSV. */

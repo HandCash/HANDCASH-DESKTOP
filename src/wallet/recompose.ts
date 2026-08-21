@@ -56,6 +56,16 @@ export function isRecomposeInFlight(): boolean {
   return inFlight != null || isRecomposeCoordinatorActive()
 }
 
+/** Join the current unlock/restore heal without starting another pass. */
+export async function whenRecomposeIdle(): Promise<void> {
+  const current = inFlight
+  if (!current) return
+  await current.then(
+    () => undefined,
+    () => undefined,
+  )
+}
+
 /**
  * Rebuild localState from BRC-39 (when configured) then Refresh from chain.
  * Serialized — concurrent unlock/restore calls share one flight.

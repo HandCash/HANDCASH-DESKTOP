@@ -2,9 +2,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import {
   decodeMessageBody,
+  decodeMarketSettlementWire,
   defaultMessageboxBase,
   deliverOutbound,
   encodeMessageBody,
+  encodeMarketSettlementWire,
   isMessageboxFileUrl,
   normalizeMessageboxBase,
   notifyPeerBrc29Payment,
@@ -14,6 +16,28 @@ import {
 } from './messageTransport'
 
 describe('message transport envelopes', () => {
+  it('round-trips bounded market settlement responses', () => {
+    const body = encodeMarketSettlementWire({
+      type: 'sign-response',
+      saleId: 'sale-1',
+      accepted: true,
+      unlockingScript: 'ab'.repeat(108),
+    })
+    expect(decodeMarketSettlementWire(body)).toMatchObject({
+      type: 'sign-response',
+      saleId: 'sale-1',
+      accepted: true,
+    })
+    expect(() =>
+      encodeMarketSettlementWire({
+        type: 'receipt',
+        saleId: 'sale-2',
+        txid: 'ab'.repeat(32),
+        atomicBeefB64: 'x'.repeat(16_000),
+      }),
+    ).toThrow(/body limit/i)
+  })
+
   it('leaves plain text readable by older clients', () => {
     expect(encodeMessageBody({ kind: 'text', text: 'hello' })).toBe('hello')
     expect(decodeMessageBody('hello')).toEqual({ kind: 'text', text: 'hello' })

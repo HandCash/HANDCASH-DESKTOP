@@ -146,6 +146,24 @@ export function decideHistoryPush(args: {
     force: args.force,
   })
   if (empty.refusePush) return empty
+
+  // A pre-metadata BRC-39 blob is still a recovery copy. Without both balance
+  // and action headers we cannot prove a thinner local wallet represents real
+  // spends rather than a partial restore, so auto paths must preserve it.
+  const protectedRemote =
+    args.remoteExists &&
+    (args.remoteBytes == null || args.remoteBytes >= MIN_REMOTE_BYTES_TO_PROTECT)
+  if (
+    !args.force &&
+    protectedRemote &&
+    (args.remoteSpendableSats == null || args.remoteActionCount == null)
+  ) {
+    return {
+      refusePush: true,
+      reason: 'refuse overwrite of remote BRC-39 with incomplete richness metadata',
+    }
+  }
+
   return decideThinHistoryOverwrite({
     localSpendableSats: args.localSpendableSats,
     localActionCount: args.localActionCount,

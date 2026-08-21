@@ -7,9 +7,13 @@ import {
   type AssetBurnUiSnapshot,
 } from '../machines/assetBurnUiMachine'
 import { burnBsv21, burnOneSat, previewBsv21Burn } from '../wallet/burn'
-import { estimateBurnEconomics, type BurnEconomics } from '../wallet/burnEconomics'
+import {
+  estimateBurnEconomics,
+  type BurnEconomics,
+} from '../wallet/burnEconomics'
 import { isCollectableModel } from '../wallet/collectableMedia'
 import {
+  abandonCollectable,
   getCachedCollectables,
   getCollectable,
   subscribeCollectables,
@@ -27,13 +31,20 @@ import {
   subscribeFungibles,
   type FungibleToken,
 } from '../wallet/fungibles'
-import { formatSecondaryFromSats, getCachedUsdPerBsv, subscribeUsdRate } from '../wallet/fx'
+import {
+  formatSecondaryFromSats,
+  getCachedUsdPerBsv,
+  subscribeUsdRate,
+} from '../wallet/fx'
 import {
   clearNavChild,
   openCollectableDetails,
   openFungibleDetails,
 } from '../wallet/navStore'
-import { isOutpointSending, subscribePaymentProgress } from '../wallet/paymentProgress'
+import {
+  isOutpointSending,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
 import { parseFungibleSendAmount } from '../wallet/sendFungible'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
@@ -88,6 +99,10 @@ function BurnShell({
   onConfirm,
   onBack,
   onCancel,
+  alternativeActionLabel,
+  alternativeActionBusy = false,
+  alternativeNote,
+  onAlternativeAction,
 }: {
   stage: Stage
   media: ReactNode
@@ -110,9 +125,17 @@ function BurnShell({
   onConfirm: () => void
   onBack: () => void
   onCancel: () => void
+  alternativeActionLabel?: string
+  alternativeActionBusy?: boolean
+  alternativeNote?: string
+  onAlternativeAction?: () => void
 }) {
-  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
-  const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
+  const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() =>
+    getCachedUsdPerBsv()
+  )
+  const [currency, setCurrency] = useState<DisplayCurrency>(() =>
+    getDisplayCurrency()
+  )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -123,7 +146,9 @@ function BurnShell({
   const recovered = economics.recoverableSats
   const net = recovered - economics.estimatedFeeSats
   const netSecondary =
-    net !== 0 ? formatSecondaryFromSats(Math.abs(net), currency, usdPerBsv) : null
+    net !== 0
+      ? formatSecondaryFromSats(Math.abs(net), currency, usdPerBsv)
+      : null
 
   return (
     <div
@@ -133,7 +158,10 @@ function BurnShell({
     >
       <div className="send-layout burn-layout">
         <header className="burn-hero" data-aeon-part="hero">
-          <span className="burn-hero-media" aria-hidden={stage === 'confirming'}>
+          <span
+            className="burn-hero-media"
+            aria-hidden={stage === 'confirming'}
+          >
             {media}
           </span>
           <div className="burn-hero-copy">
@@ -169,7 +197,9 @@ function BurnShell({
             <StatusBanner.Root tone="danger" status="burn-failed">
               <StatusBanner.Copy>
                 <StatusBanner.Title>Nothing was destroyed</StatusBanner.Title>
-                <StatusBanner.Body>{error ?? 'The burn was refused.'}</StatusBanner.Body>
+                <StatusBanner.Body>
+                  {error ?? 'The burn was refused.'}
+                </StatusBanner.Body>
               </StatusBanner.Copy>
             </StatusBanner.Root>
           ) : null}
@@ -212,6 +242,9 @@ function BurnShell({
               ? 'Destroyed on chain for good — no undo, and History backup cannot bring it back.'
               : 'Only eligible physical sats come back as wallet change. The asset itself ends here.'}
           </p>
+          {stage === 'confirming' && alternativeNote ? (
+            <p className="burn-note">{alternativeNote}</p>
+          ) : null}
 
           <div className="actions send-actions burn-actions">
             {stage === 'confirming' ? (
@@ -224,16 +257,41 @@ function BurnShell({
                   <WarningIcon size={14} />
                   {confirmActionLabel}
                 </button>
-                <button type="button" className="btn btn-ghost" onClick={onBack}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={onBack}
+                >
                   Back
                 </button>
+                {alternativeActionLabel && onAlternativeAction ? (
+                  <button
+                    type="button"
+                    className="btn btn-secondary"
+                    disabled={alternativeActionBusy}
+                    aria-busy={alternativeActionBusy || undefined}
+                    onClick={onAlternativeAction}
+                  >
+                    {alternativeActionBusy
+                      ? 'Forgetting…'
+                      : alternativeActionLabel}
+                  </button>
+                ) : null}
               </>
             ) : stage === 'failure' ? (
               <>
-                <button type="button" className="btn btn-primary" onClick={onBack}>
+                <button
+                  type="button"
+                  className="btn btn-primary"
+                  onClick={onBack}
+                >
                   Try again
                 </button>
-                <button type="button" className="btn btn-ghost" onClick={onCancel}>
+                <button
+                  type="button"
+                  className="btn btn-ghost"
+                  onClick={onCancel}
+                >
                   Keep asset
                 </button>
               </>
@@ -267,7 +325,9 @@ function BurnShell({
 }
 
 function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
-  const [token, setToken] = useState<FungibleToken | null>(() => getFungible(tokenId))
+  const [token, setToken] = useState<FungibleToken | null>(() =>
+    getFungible(tokenId)
+  )
   const [snapshot, event] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
@@ -276,7 +336,9 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
 
   useEffect(() => {
     const pick = (list: FungibleToken[]) =>
-      list.find((t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId)) ?? null
+      list.find(
+        (t) => t.tokenId === tokenId || t.tokenIds?.includes(tokenId)
+      ) ?? null
     const unsubscribe = subscribeFungibles((list) => setToken(pick(list)))
     let cancelled = false
     void listFungibles().then((list) => {
@@ -348,10 +410,10 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     token.spendKind === 'cosigned'
       ? 'This token requires a cosigner, so it cannot be burned here.'
       : token.spendKind === 'mixed'
-        ? 'This balance mixes plain and cosigned outputs — separate them first.'
-        : multiDeploy
-          ? 'This balance combines several deploy IDs. Burn each deploy separately.'
-          : null
+      ? 'This balance mixes plain and cosigned outputs — separate them first.'
+      : multiDeploy
+      ? 'This balance combines several deploy IDs. Burn each deploy separately.'
+      : null
   const tokenChange = typedUnits != null && typedUnits < heldUnits
   const preview = snapshot.context.preview
   // A real plan selects real outputs, so it replaces the estimate outright.
@@ -359,7 +421,10 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     ? {
         grossAssetSats: preview.grossSats,
         protocolOutputSats: preview.protocolOutputSats,
-        recoverableSats: Math.max(0, preview.grossSats - preview.protocolOutputSats),
+        recoverableSats: Math.max(
+          0,
+          preview.grossSats - preview.protocolOutputSats
+        ),
         estimatedFeeSats: preview.estimatedFeeSats,
         estimatedPayEffectSats:
           Math.max(0, preview.grossSats - preview.protocolOutputSats) -
@@ -377,9 +442,13 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     try {
       const { units } = parseFungibleSendAmount(typed, token)
       if (units <= 0n) throw new Error('Enter an amount to burn')
-      if (units > heldUnits) throw new Error(`You only hold ${held} ${token.sym}`)
+      if (units > heldUnits)
+        throw new Error(`You only hold ${held} ${token.sym}`)
     } catch (err) {
-      event({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      event({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
       return
     }
     event({ type: 'REVIEW' })
@@ -394,7 +463,10 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     try {
       units = parseFungibleSendAmount(typed, token).unitsStr
     } catch (err) {
-      event({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
+      event({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
       return
     }
     event({ type: 'CONFIRM' })
@@ -410,12 +482,15 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
             result.feeSatoshis != null
               ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
               : ' before fees.'
-          }`,
+          }`
         )
       })
       .catch((err) => {
         playWalletSound('error')
-        toastError('Token burn failed', err instanceof Error ? err.message : String(err))
+        toastError(
+          'Token burn failed',
+          err instanceof Error ? err.message : String(err)
+        )
       })
   }
 
@@ -436,7 +511,10 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
       amountLabel={`${typed.trim() || '0'} ${token.sym}`}
       confirmSubtitle={
         typedUnits != null && typedUnits < heldUnits
-          ? `Leaves ${formatFungibleAmount((heldUnits - typedUnits).toString(), token.dec)} ${token.sym}`
+          ? `Leaves ${formatFungibleAmount(
+              (heldUnits - typedUnits).toString(),
+              token.dec
+            )} ${token.sym}`
           : `Your whole ${token.sym} balance`
       }
       confirmActionLabel={`Burn ${typed.trim() || '0'} ${token.sym}`}
@@ -452,8 +530,12 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
               autoFocus
               value={typed}
               disabled={refusal != null}
-              placeholder={token.dec > 0 ? `0.${'0'.repeat(Math.min(token.dec, 4))}` : '0'}
-              onChange={(e) => event({ type: 'SET_AMOUNT', amount: e.target.value })}
+              placeholder={
+                token.dec > 0 ? `0.${'0'.repeat(Math.min(token.dec, 4))}` : '0'
+              }
+              onChange={(e) =>
+                event({ type: 'SET_AMOUNT', amount: e.target.value })
+              }
             />
             <button
               type="button"
@@ -484,10 +566,11 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
 
 function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   const [item, setItem] = useState<Collectable | null>(
-    () => getCachedCollectables().find((i) => i.outpoint === outpoint) ?? null,
+    () => getCachedCollectables().find((i) => i.outpoint === outpoint) ?? null
   )
   const [loading, setLoading] = useState(() => item == null)
   const [sending, setSending] = useState(() => isOutpointSending(outpoint))
+  const [forgetting, setForgetting] = useState(false)
   const [snapshot, event] = useMachine(assetBurnUiMachine)
 
   useEffect(() => {
@@ -495,8 +578,9 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   }, [event])
 
   useEffect(
-    () => subscribePaymentProgress(() => setSending(isOutpointSending(outpoint))),
-    [outpoint],
+    () =>
+      subscribePaymentProgress(() => setSending(isOutpointSending(outpoint))),
+    [outpoint]
   )
 
   useEffect(() => {
@@ -540,14 +624,17 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   const refusal = item.covenantLocked
     ? 'This tip is covenant locked, so the wallet cannot spend it.'
     : sending
-      ? 'This item is mid-send. Wait for it to settle first.'
-      : null
+    ? 'This item is mid-send. Wait for it to settle first.'
+    : null
   const economics = estimateBurnEconomics({
     inputCount: 1,
     protocolOutputCount: 0,
     recoveryOutput: true,
   })
-  const isModel = isCollectableModel({ mimeType: item.mimeType, url: item.imageUrl })
+  const isModel = isCollectableModel({
+    mimeType: item.mimeType,
+    url: item.imageUrl,
+  })
 
   const confirm = () => {
     event({ type: 'CONFIRM' })
@@ -563,13 +650,39 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
             result.feeSatoshis != null
               ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
               : ' before fees.'
-          }`,
+          }`
         )
       })
       .catch((err) => {
         playWalletSound('error')
-        toastError('Burn failed', err instanceof Error ? err.message : String(err))
+        toastError(
+          'Burn failed',
+          err instanceof Error ? err.message : String(err)
+        )
       })
+  }
+
+  const forget = () => {
+    if (forgetting || sending) return
+    event({ type: 'FORGET' })
+    setForgetting(true)
+    void abandonCollectable(item.outpoint)
+      .then(() => {
+        playWalletSound('success')
+        toastSuccess(
+          'Collectable forgotten',
+          'Removed from this wallet without broadcasting a burn transaction.'
+        )
+        clearNavChild()
+      })
+      .catch((err) => {
+        playWalletSound('error')
+        toastError(
+          'Forget failed',
+          err instanceof Error ? err.message : String(err)
+        )
+      })
+      .finally(() => setForgetting(false))
   }
 
   return (
@@ -610,6 +723,10 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
       onConfirm={confirm}
       onBack={() => event({ type: 'BACK' })}
       onCancel={() => openCollectableDetails(item.outpoint)}
+      alternativeActionLabel="Forget from wallet"
+      alternativeActionBusy={forgetting}
+      alternativeNote="Or remove it from this wallet without spending it. Nothing is broadcast, and the on-chain UTXO remains where it is."
+      onAlternativeAction={forget}
     />
   )
 }
