@@ -96,10 +96,13 @@ try {
 if (targetRoot === null || targetRoot !== thisRoot) allow()
 
 try {
-  execFileSync('node', [path.join(ROOT, 'scripts/require-version-bump.mjs')], {
-    cwd: ROOT,
-    stdio: 'ignore',
-  })
+  // process.execPath, not `node`: the hook shell has no nvm/Homebrew on PATH,
+  // so a bare `node` would exit 127 and deny every push.
+  execFileSync(
+    process.execPath,
+    [path.join(ROOT, 'scripts/require-version-bump.mjs')],
+    { cwd: ROOT, stdio: 'ignore' },
+  )
 } catch {
   deny()
 }

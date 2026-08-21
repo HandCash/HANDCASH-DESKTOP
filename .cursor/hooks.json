@@ -3,7 +3,7 @@
   "hooks": {
     "beforeShellExecution": [
       {
-        "command": "node .cursor/hooks/require-version-on-push.mjs",
+        "command": ".cursor/hooks/require-version-on-push.sh",
         "matcher": "git\\s+push",
         "failClosed": true
       }
