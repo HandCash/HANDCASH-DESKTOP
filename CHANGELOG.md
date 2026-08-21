@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.276] - 2026-08-21
+
+### Fixed
+
+- **Release builds typecheck again.** Cross-repo overlay contract tests stay in
+  `vitest` and are no longer compiled as part of the app, so CI no longer
+  requires a sibling BRC-CLOUD checkout.
+
+
 ## [1.2.275] - 2026-08-21
 
 ### Fixed
