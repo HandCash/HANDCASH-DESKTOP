@@ -38,6 +38,7 @@ import {
   type ProvenTxReqHistoryStore,
 } from './brc38HistoryRepair'
 import { decideHistoryPush } from './historyEmptyGuard'
+import { assertHistoryDocumentEncryptable } from './historyDocumentBudget'
 import { inspectLocalToolboxState } from './layers'
 
 const BRC39_MEDIA = 'application/vnd.brc39.wallet'
@@ -142,6 +143,7 @@ async function exportLiveBrc38Json(): Promise<string> {
 async function encryptLiveDocument(rootKeyHex: string, json: string): Promise<Uint8Array> {
   const secret = historyCryptoSecret(rootKeyHex)
   appendAppLog('info', `[cloud-backup] BRC-38 document ${json.length} chars — encrypting (root-key)`)
+  assertHistoryDocumentEncryptable(json)
   return asArrayBufferBytes(await encryptBrc39Document(json, secret))
 }
 
@@ -188,7 +190,9 @@ async function importBrc39Bytes(
 
 /**
  * Snapshot toolbox state under historyReplica, then encrypt outside that lock.
- * Argon2id on a ~26MB document must not block createAction / send.
+ * Argon2id on a document this size must not block createAction / send, and a
+ * document too large to encrypt at all is refused — see
+ * `historyDocumentBudget.ts`.
  *
  * `password` is only used to prove vault access when not already verified —
  * the BRC-39 ciphertext is sealed to the root key.

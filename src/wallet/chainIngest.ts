@@ -565,7 +565,7 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     { reconcileDualLayerState },
     { healGhostSentItems },
     { pruneMissingOnChainActivity, expireStaleInboundPending },
-    { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs },
+    { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs, reclaimSealedInputsNeverSpent },
     { txExistsOnChain },
     { forgetOneSatImported },
   ] = await Promise.all([
@@ -612,6 +612,9 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
           `[chain-ingest] restored ${restored} live change output(s) that were falsely marked unspendable`,
         )
       }
+      // Coins a send sealed for a transaction that never reached a node. Runs
+      // after the rehide pass so anything genuinely in flight is sealed first.
+      await reclaimSealedInputsNeverSpent()
     })(),
   ])
 

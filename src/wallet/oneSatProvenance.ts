@@ -438,6 +438,53 @@ export async function hydrateMissingPathTxs(
 }
 
 /**
+ * Re-encode a proof so it stands on its own, for a verifier that cannot fetch.
+ *
+ * A peer remittance may ship path transactions as txid-only because the
+ * receiver hydrates them ({@link fitRemittanceBeef}). A publish target such as
+ * the tm_1sat_market overlay has nobody to ask: it runs
+ * `Beef.verifyValid(false)` and refuses txid-only entries outright, so a
+ * slimmed proof that verifies here is rejected there.
+ *
+ * Hydrates every txid-only path body and returns the complete package, or null
+ * when a body cannot be recovered. The caller enforces its own size budget with
+ * the digest that verifier actually compares — omitting is allowed, truncating
+ * is not.
+ */
+export async function completeProvenanceForPublish(args: {
+  provenance: ProvenanceV2
+  getBeef: (txid: string) => Promise<Beef>
+}): Promise<ProvenanceV2 | null> {
+  const provenance = parseProvenanceV2(args.provenance)
+  if (!provenance) return null
+  try {
+    const path = provenance.path.map((point) => toUnderscore(point).toLowerCase())
+    const source = Beef.fromBinary(Array.from(base64ToBytes(provenance.beefB64)))
+    const { beef } = await hydrateMissingPathTxs(source, path, args.getBeef)
+    if (missingPathTxBodies(beef, path).length > 0) {
+      console.warn('[brc-150] cannot publish provenance — path body unavailable')
+      return null
+    }
+    // The overlay rejects a prior AtomicBEEF subject along with txid-only
+    // entries; a publish package is a plain BEEF over the whole lineage.
+    const complete = beef.clone()
+    complete.atomicTxid = undefined
+    if (!complete.verifyValid(false).valid) {
+      console.warn('[brc-150] cannot publish provenance — package does not self-verify')
+      return null
+    }
+    return {
+      ...provenance,
+      path,
+      beefB64: bytesToBase64(complete.toBinary()),
+    }
+  } catch (err) {
+    console.warn('[brc-150] cannot publish provenance', err)
+    return null
+  }
+}
+
+/**
  * Encode a verified lineage as remittance bytes, slimming when the full BEEF
  * exceeds the wire budget. Returns null when even the slim form cannot travel.
  */

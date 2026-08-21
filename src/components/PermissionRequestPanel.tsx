@@ -1,4 +1,5 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { useMachine } from '@xstate/react'
 import type { PendingPrompt } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
@@ -16,6 +17,8 @@ import {
   type AutoPaySettings,
 } from '../wallet/autoPay'
 import type { AutoPayChoice } from './ActionPermissionDialog'
+import { PermissionItemPreview } from './PermissionItemPreview'
+import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
 
 export type PermissionDecisionApi = {
   allow: () => void
@@ -27,8 +30,10 @@ export type PermissionDecisionApi = {
 
 type Props = {
   pending: PendingPrompt
-  onAllow: (autoPay?: AutoPayChoice) => void
-  onDeny: () => void
+  /** True only when this exact prompt was still current and accepted. */
+  onAllow: (autoPay?: AutoPayChoice) => boolean
+  /** True only when this exact prompt was still current and cancelled. */
+  onDeny: () => boolean
   /**
    * Mobile Activity tab: parent renders Accept/Decline in the bottom nav bar.
    * Omit (or pass null handlers via `actions="inline"`) for desktop side-column.
@@ -67,6 +72,8 @@ export function PermissionRequestPanel({
   onDecisionApi,
   actions = 'nav',
 }: Props) {
+  const [decision, sendDecision] = useMachine(permissionDecisionMachine)
+  const decisionCommittedRef = useRef(false)
   const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
@@ -74,8 +81,10 @@ export function PermissionRequestPanel({
   const inlineActions = actions === 'inline'
 
   useEffect(() => {
+    decisionCommittedRef.current = false
+    sendDecision({ type: 'RESET' })
     setIconReady(false)
-  }, [pending.id, pending.origin])
+  }, [pending.id, pending.origin, sendDecision])
 
   useEffect(() => {
     if (pending.kind !== 'action') return
@@ -97,28 +106,50 @@ export function PermissionRequestPanel({
   const parsedHours = Number.parseFloat(windowHours)
   const maxUsdValid = Number.isFinite(parsedMaxUsd) && parsedMaxUsd > 0
   const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
-  const allowDisabled = showAutoPay && autoEnabled && (!maxUsdValid || !hoursValid)
+  const committing = decision.matches('committing')
+  const allowDisabled =
+    committing || (showAutoPay && autoEnabled && (!maxUsdValid || !hoursValid))
 
   const runAllow = () => {
-    if (pending.kind === 'connect' || !showAutoPay) {
-      onAllow()
+    if (decisionCommittedRef.current || !decision.matches('pending')) return
+    decisionCommittedRef.current = true
+    const accepted =
+      pending.kind === 'connect' || !showAutoPay
+        ? onAllow()
+        : onAllow({
+            enabled: autoEnabled,
+            maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
+            windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
+          })
+    if (accepted) {
+      sendDecision({ type: 'APPROVE' })
       return
     }
-    onAllow({
-      enabled: autoEnabled,
-      maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-      windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-    })
+    // The HTTP caller may have disconnected or timed out while this panel was
+    // visible. Do not strand a stale projection in an irreversible busy state.
+    decisionCommittedRef.current = false
+    sendDecision({ type: 'RESET' })
+  }
+
+  const runDeny = () => {
+    if (decisionCommittedRef.current || !decision.matches('pending')) return
+    decisionCommittedRef.current = true
+    if (onDeny()) {
+      sendDecision({ type: 'CANCEL' })
+      return
+    }
+    decisionCommittedRef.current = false
+    sendDecision({ type: 'RESET' })
   }
 
   useEffect(() => {
     if (inlineActions || !onDecisionApi) return
     onDecisionApi({
       allow: runAllow,
-      deny: onDeny,
+      deny: runDeny,
       allowDisabled,
-      allowLabel: 'Accept',
-      denyLabel: 'Decline',
+      allowLabel: committing ? 'Approving…' : 'Accept',
+      denyLabel: 'Cancel',
     })
     return () => onDecisionApi(null)
     // runAllow closes over current allow inputs; deps below keep the nav API fresh.
@@ -131,6 +162,7 @@ export function PermissionRequestPanel({
     parsedMaxUsd,
     parsedHours,
     allowDisabled,
+    committing,
     onAllow,
     onDeny,
     onDecisionApi,
@@ -139,8 +171,13 @@ export function PermissionRequestPanel({
 
   const actionButtons = inlineActions ? (
     <div className="actions connect-actions permission-request-actions">
-      <button type="button" className="btn btn-ghost" onClick={onDeny}>
-        Deny
+      <button
+        type="button"
+        className="btn btn-ghost"
+        disabled={committing}
+        onClick={runDeny}
+      >
+        Cancel
       </button>
       <button
         type="button"
@@ -149,7 +186,11 @@ export function PermissionRequestPanel({
         disabled={allowDisabled}
         onClick={runAllow}
       >
-        {pending.kind === 'connect' ? 'Authorize' : 'Approve'}
+        {committing
+          ? 'Approving…'
+          : pending.kind === 'connect'
+            ? 'Authorize'
+            : 'Approve'}
       </button>
     </div>
   ) : null
@@ -261,6 +302,10 @@ export function PermissionRequestPanel({
           ) : null}
         </div>
       )}
+
+      {pending.itemOutpoint ? (
+        <PermissionItemPreview outpoint={pending.itemOutpoint} />
+      ) : null}
 
       <dl className="permission-meta">
         <div>

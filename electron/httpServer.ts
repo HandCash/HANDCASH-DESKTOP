@@ -225,6 +225,18 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
         const timer = setTimeout(() => {
           if (!pendingRequests.has(request_id)) return
           pendingRequests.delete(request_id)
+          // The renderer may be suspended in a permission promise. Once the
+          // HTTP deadline has elapsed there is no caller left to receive that
+          // decision, so release the prompt instead of leaving an orphaned
+          // Approving/Cancel panel on screen.
+          try {
+            windows.peek()?.webContents.send('http-request-cancelled', {
+              request_id,
+              reason: 'WALLET_BRIDGE_TIMEOUT',
+            })
+          } catch {
+            // Window teardown races the deadline — pending work is already dead.
+          }
           reject(new Error(bridgeDeadlineMessage(req.method, req.path)))
         }, bridgeDeadlineMs(req.path))
 
@@ -268,7 +280,10 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
 
       if (!canWriteResponse(res)) return
       setCorsHeaders(res)
-      res.status(httpResponse.status).send(httpResponse.body)
+      // The renderer hands us a serialized JSON body. Express would label a bare
+      // string `text/html`, which a BRC-100 client is entitled to reject before
+      // it ever parses the answer.
+      res.status(httpResponse.status).type('application/json').send(httpResponse.body)
     } catch (error) {
       if (!canWriteResponse(res)) return
       const message = error instanceof Error ? error.message : String(error)
@@ -278,19 +293,22 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
       const isPending = message.includes('WALLET_BRIDGE_PENDING')
       const isTimeout = message.includes('WALLET_BRIDGE_TIMEOUT')
       log.warn(`[HTTP] bridge error: ${message}`)
-      res.status(isBridgeUnavailable || isPending || isTimeout ? 503 : 500).send(
-        JSON.stringify({
-          status: 'error',
-          code: isPending
-            ? 'WALLET_BRIDGE_PENDING'
-            : isTimeout
-              ? 'WALLET_BRIDGE_TIMEOUT'
-              : isBridgeUnavailable
-                ? 'WALLET_BRIDGE_UNAVAILABLE'
-                : 'HTTP_BRIDGE_ERROR',
-          description: message,
-        }),
-      )
+      res
+        .status(isBridgeUnavailable || isPending || isTimeout ? 503 : 500)
+        .type('application/json')
+        .send(
+          JSON.stringify({
+            status: 'error',
+            code: isPending
+              ? 'WALLET_BRIDGE_PENDING'
+              : isTimeout
+                ? 'WALLET_BRIDGE_TIMEOUT'
+                : isBridgeUnavailable
+                  ? 'WALLET_BRIDGE_UNAVAILABLE'
+                  : 'HTTP_BRIDGE_ERROR',
+            description: message,
+          }),
+        )
     }
   })
 

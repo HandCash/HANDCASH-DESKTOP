@@ -18,6 +18,8 @@ import {
   creditUtxo,
   hideUtxo,
   isUtxoBlockedFromRestore,
+  listUtxoLocks,
+  releaseConsumedUtxo,
 } from './utxoLockManager'
 import {
   inputOutpointsFromAtomicBeef,
@@ -190,7 +192,7 @@ export async function sealSpentInputsOfSignedTx(
   }
   if (inputs.length === 0) return 0
 
-  const hidden = await hideSpentOutpoints(inputs)
+  const hidden = await hideSpentOutpoints(inputs, id)
   if (hidden > 0) {
     console.info(
       `[stale-output] sealed ${hidden} input(s) spent by ${id.slice(0, 12)} — next send cannot reselect them`,
@@ -200,14 +202,89 @@ export async function sealSpentInputsOfSignedTx(
 }
 
 /**
+ * Undo {@link sealSpentInputsOfSignedTx} for a transaction that never broadcast.
+ *
+ * The seal is placed before the broadcast, so a send that dies in transport
+ * leaves live coins retired. On an offline device every broadcaster errors and
+ * some of them report that as a double spend, so each failed attempt used to
+ * eat another handful of inputs: spendable balance fell with nothing on chain
+ * to show for it, and every later send failed "Already spent".
+ *
+ * Only call this when no service claimed the inputs are gone — a `doubleSpend`
+ * or `missingInputs` verdict means they really are spent and must stay sealed.
+ * If the transaction does turn up, chain ingest re-hides these inputs from the
+ * indexer's own view.
+ */
+export async function releaseSealedInputsOfUnsentTx(
+  txid: string | undefined,
+  atomic: number[] | undefined,
+): Promise<number> {
+  const id = txid?.trim().toLowerCase()
+  if (!id || !/^[0-9a-f]{64}$/.test(id)) return 0
+
+  let inputs: string[] = []
+  if (atomic?.length) inputs = inputOutpointsFromAtomicBeef(atomic, id)
+  if (inputs.length === 0) {
+    const raw = await loadLocalRawTx(id)
+    if (raw?.length) inputs = inputOutpointsFromRawTx(raw)
+  }
+  if (inputs.length === 0) return 0
+
+  const unique = [...new Set(inputs.map((o) => o.trim()).filter(Boolean))]
+  for (const op of unique) {
+    releaseConsumedUtxo(op, `unsent:${id.slice(0, 12)}`)
+  }
+
+  const storage = getActiveWallet()?.wallet?.storage
+  if (storage?.runAsStorageProvider) {
+    try {
+      await storage.runAsStorageProvider(async (activeSp) => {
+        const sp = activeSp as unknown as LocalStorage
+        for (const op of unique) {
+          const parsed = parseOutpoint(op)
+          if (!parsed) continue
+          const rows = await findOutputsForTxid(sp, parsed.txid)
+          const match = rows.find(
+            (row) => Number(row.vout ?? row.outputIndex) === parsed.vout,
+          )
+          const outputId = positiveId(match?.outputId)
+          if (outputId == null) continue
+          try {
+            await sp.updateOutput(outputId, { spendable: true })
+          } catch (err) {
+            console.warn('[stale-output] unseal spendable=true skipped', op, err)
+          }
+        }
+      })
+    } catch (err) {
+      console.warn('[stale-output] unseal toolbox rows skipped', err)
+    }
+  }
+
+  console.info(
+    `[stale-output] released ${unique.length} input(s) of ${id.slice(0, 12)} — never reached a node`,
+  )
+  return unique.length
+}
+
+/**
  * Hide these outpoints as `spent` and mark toolbox rows unspendable. The
  * storage row stays — Pay / restore skip `spent` overlay status.
  */
-export async function hideSpentOutpoints(outpoints: string[]): Promise<number> {
+export async function hideSpentOutpoints(
+  outpoints: string[],
+  spentBy?: string,
+): Promise<number> {
   const unique = [...new Set(outpoints.map((o) => o.trim()).filter(Boolean))]
   if (unique.length === 0) return 0
+  const spender = spentBy?.trim().toLowerCase()
+  const id = spender && /^[0-9a-f]{64}$/.test(spender) ? spender : ''
   for (const op of unique) {
-    hideUtxo(op, { spentBy: '', diagnostic: 'already-spent' })
+    // Record *which* transaction consumed the coin when we know it. A bare
+    // marker is unauditable: a coin sealed for a spend that never reached a
+    // node looks identical to one a miner really took, so nothing downstream
+    // can tell the difference and the coin stays hidden for good.
+    hideUtxo(op, { spentBy: id, diagnostic: id ? `spent-by:${id.slice(0, 12)}` : 'already-spent' })
   }
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
@@ -235,6 +312,110 @@ export async function hideSpentOutpoints(outpoints: string[]): Promise<number> {
     console.warn('[stale-output] hide toolbox rows skipped', err)
   }
   return unique.length
+}
+
+/** Sealed coins to re-check per pass, so a long-lived wallet cannot stall. */
+const RECLAIM_MAX = 40
+
+/**
+ * Give back coins sealed for a spend that never made it onto the chain.
+ *
+ * A send seals its inputs before broadcasting. When the broadcast dies in
+ * transport the coins stay retired, and on a device that was offline for a
+ * while those add up until spendable balance is visibly short and further
+ * sends fail "Already spent". {@link releaseSealedInputsOfUnsentTx} handles the
+ * attempt that is failing right now; this recovers the ones already stranded.
+ *
+ * Direction of trust matters. `isUtxo === false` is unreliable — an indexer
+ * that has not caught up with our unconfirmed change answers false, and acting
+ * on that is what destroys live coins (see this module's header). So this only
+ * moves on `isUtxo === true`: positive proof from the network that the coin was
+ * never actually spent. A sealing transaction this wallet still considers live
+ * is left alone regardless.
+ */
+export async function reclaimSealedInputsNeverSpent(): Promise<number> {
+  if (shouldYieldChainIngestToSpend()) return 0
+  const active = getActiveWallet()
+  const isUtxo = active?.services?.isUtxo
+  const storage = active?.wallet?.storage
+  if (typeof isUtxo !== 'function' || !storage?.runAsStorageProvider) return 0
+
+  const sealed = listUtxoLocks()
+    .filter((rec) => !!rec.spentBy && /^[0-9a-f]{64}$/.test(rec.spentBy))
+    .slice(0, RECLAIM_MAX)
+  if (sealed.length === 0) return 0
+
+  // A sealing tx this wallet still treats as live is a real spend in flight.
+  const liveSealers = new Set<string>()
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return
+      for (const txid of new Set(sealed.map((rec) => rec.spentBy as string))) {
+        try {
+          const rows = await sp.findTransactions({
+            partial: { txid },
+            paged: { limit: 1, offset: 0 },
+          })
+          if (rows?.some((row) => isLiveLocalTxStatus(row?.status))) liveSealers.add(txid)
+        } catch (err) {
+          // Unknown status is not permission to resurrect a coin.
+          if (!isUndefinedPartialFilterError(err)) {
+            console.warn('[stale-output] sealer status skipped', txid.slice(0, 12), err)
+          }
+          liveSealers.add(txid)
+        }
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] reclaim status sweep skipped', err)
+    return 0
+  }
+
+  const revive: string[] = []
+  for (const rec of sealed) {
+    if (shouldYieldChainIngestToSpend()) break
+    if (liveSealers.has(rec.spentBy as string)) continue
+    const parsed = parseOutpoint(rec.outpoint)
+    if (!parsed) continue
+    try {
+      const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
+      const alive =
+        result === true ||
+        (!!result && typeof result === 'object' && (result as { isUtxo?: unknown }).isUtxo === true)
+      if (alive) revive.push(rec.outpoint)
+    } catch {
+      // No answer means no evidence. Leave the coin sealed.
+    }
+  }
+  if (revive.length === 0) return 0
+
+  for (const outpoint of revive) releaseConsumedUtxo(outpoint, 'reclaim:never-spent')
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      for (const outpoint of revive) {
+        const parsed = parseOutpoint(outpoint)
+        if (!parsed) continue
+        const rows = await findOutputsForTxid(sp, parsed.txid)
+        const match = rows.find((row) => Number(row.vout ?? row.outputIndex) === parsed.vout)
+        const outputId = positiveId(match?.outputId)
+        if (outputId == null) continue
+        try {
+          await sp.updateOutput(outputId, { spendable: true, spentBy: undefined })
+        } catch (err) {
+          console.warn('[stale-output] reclaim spendable=true skipped', outpoint, err)
+        }
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] reclaim toolbox rows skipped', err)
+  }
+
+  console.info(
+    `[stale-output] reclaimed ${revive.length} sealed input(s) the indexer still reports unspent`,
+  )
+  return revive.length
 }
 
 /**

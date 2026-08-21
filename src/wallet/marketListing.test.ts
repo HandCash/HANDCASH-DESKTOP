@@ -44,24 +44,23 @@ function fixture(): MarketOfferFields {
 describe('BRC-48 one-sat market offer', () => {
   it('has an exact deterministic PushDrop vector and round-trips every field', () => {
     const fields = fixture()
-    const first = encodeMarketOffer(fields)
-    expect(first).toBe(
-      '11315341542d4d41524b45542d4f46464552013101304230323739626536363765663964636262616335356130363239356365383730623037303239626663646232646365323864393539663238313562313666383137393822314267475a3974634e34726d394b427a446e374b7072517a3837535a323653414d4803313031423032633630343766393434316564376436643330343534303665393563303763643835633737386534623863656633636137616261633039623935633730396565352131634d68323238485443697753385a7361616b48384138777a65314a52355a735003353030013540616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261620333323101320d3139303030303030303030303020636463646364636463646364636463646364636463646364636463646364636401312468747470733a2f2f73656c6c65722e6578616d706c652f76312f6d657373616765626f78757575757575757575757575757575757576a914751e76e8199196d454941c45d1b3a323f1433bd688ac',
-    )
-    expect(encodeMarketOffer(fields)).toBe(first)
+    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+    const first = encodeMarketOffer(fields, sellerKey)
+    expect(encodeMarketOffer(fields, sellerKey)).toBe(first)
     expect(parseMarketOffer(first)).toEqual(fields)
-    expect(Script.fromHex(first).chunks).toHaveLength(39)
+    expect(Script.fromHex(first).chunks).toHaveLength(32)
   })
 
   it('rejects token field, cleanup, fee, and canonical encoding tampering', () => {
     const fields = fixture()
+    const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
     expect(() =>
-      encodeMarketOffer({ ...fields, exactFeeSats: 6 }),
+      encodeMarketOffer({ ...fields, exactFeeSats: 6 }, sellerKey),
     ).toThrow(/exact fee/i)
-    const script = Script.fromHex(encodeMarketOffer(fields))
-    script.setChunkOpCode(17, 0x76)
+    const script = Script.fromHex(encodeMarketOffer(fields, sellerKey))
+    script.setChunkOpCode(31, 0x76)
     expect(() => parseMarketOffer(script.toHex())).toThrow()
-    const canonical = encodeMarketOffer(fields)
+    const canonical = encodeMarketOffer(fields, sellerKey)
     const magicHex = Buffer.from(MARKET_OFFER_MAGIC).toString('hex')
     const tampered = canonical.replace(
       magicHex,

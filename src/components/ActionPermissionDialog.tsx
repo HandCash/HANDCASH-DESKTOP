@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
+import { useMachine } from '@xstate/react'
 import { Prompt } from '@aeon-ui/react'
 import type { PendingAction } from '../wallet/permissions'
 import { appDisplayName, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
+import { PermissionItemPreview } from './PermissionItemPreview'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,
@@ -15,6 +17,7 @@ import {
   getAutoPaySettings,
   type AutoPaySettings,
 } from '../wallet/autoPay'
+import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
 
 export type AutoPayChoice = {
   enabled: boolean
@@ -24,8 +27,8 @@ export type AutoPayChoice = {
 
 type Props = {
   pending: PendingAction | null
-  onAllow: (autoPay?: AutoPayChoice) => void
-  onDeny: () => void
+  onAllow: (autoPay?: AutoPayChoice) => boolean
+  onDeny: () => boolean
 }
 
 function isBsvPaymentAction(pending: PendingAction): boolean {
@@ -51,6 +54,8 @@ function isBsvPaymentAction(pending: PendingAction): boolean {
  * Uses Aeon Prompt Amount/Meta/Actions — same compound family as update restart.
  */
 export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
+  const [decision, sendDecision] = useMachine(permissionDecisionMachine)
+  const decisionCommittedRef = useRef(false)
   const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
@@ -59,8 +64,10 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const open = Boolean(pending)
 
   useEffect(() => {
+    decisionCommittedRef.current = false
+    sendDecision({ type: 'RESET' })
     setIconReady(false)
-  }, [pending?.id, pending?.origin])
+  }, [pending?.id, pending?.origin, sendDecision])
 
   useEffect(() => {
     if (!pending) return
@@ -98,18 +105,42 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
 
   const allow = () => {
+    if (decisionCommittedRef.current || !decision.matches('pending')) return
+    decisionCommittedRef.current = true
     skipDenyRef.current = true
-    if (!pending) return
-    if (!showAutoPay) {
-      onAllow()
+    if (!pending) {
+      decisionCommittedRef.current = false
+      skipDenyRef.current = false
       return
     }
-    onAllow({
-      enabled: autoEnabled,
-      maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-      windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-    })
+    const accepted = !showAutoPay
+      ? onAllow()
+      : onAllow({
+          enabled: autoEnabled,
+          maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
+          windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
+        })
+    if (accepted) {
+      sendDecision({ type: 'APPROVE' })
+      return
+    }
+    decisionCommittedRef.current = false
+    skipDenyRef.current = false
+    sendDecision({ type: 'RESET' })
   }
+
+  const deny = () => {
+    if (decisionCommittedRef.current || !decision.matches('pending')) return
+    decisionCommittedRef.current = true
+    if (onDeny()) {
+      sendDecision({ type: 'CANCEL' })
+      return
+    }
+    decisionCommittedRef.current = false
+    sendDecision({ type: 'RESET' })
+  }
+
+  const committing = decision.matches('committing')
 
   return (
     <div
@@ -125,7 +156,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
             skipDenyRef.current = false
             return
           }
-          if (pending) onDeny()
+          if (pending) deny()
         }}
       >
         <Prompt.Portal>
@@ -168,6 +199,10 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     ) : null}
                   </Prompt.Amount>
                 )}
+
+                {pending.itemOutpoint ? (
+                  <PermissionItemPreview outpoint={pending.itemOutpoint} />
+                ) : null}
 
                 <Prompt.Meta className="permission-meta">
                   <div>
@@ -230,16 +265,20 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                 ) : null}
 
                 <Prompt.Actions className="actions connect-actions">
-                  <Prompt.Secondary className="btn btn-ghost" onClick={onDeny}>
-                    Deny
+                  <Prompt.Secondary
+                    className="btn btn-ghost"
+                    disabled={committing}
+                    onClick={deny}
+                  >
+                    Cancel
                   </Prompt.Secondary>
                   <Prompt.Primary
                     className="btn btn-primary"
                     autoFocus
-                    disabled={autoEnabled && (!maxUsdValid || !hoursValid)}
+                    disabled={committing || (autoEnabled && (!maxUsdValid || !hoursValid))}
                     onClick={allow}
                   >
-                    Approve
+                    {committing ? 'Approving…' : 'Approve'}
                   </Prompt.Primary>
                 </Prompt.Actions>
               </Prompt.Content>

@@ -157,24 +157,26 @@ export function WalletNav({
 
   const onPermissionAllow = useCallback(
     (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
-      if (!pendingPrompt) return
+      if (!pendingPrompt) return false
+      if (!resolvePermission(pendingPrompt.id, 'allow')) return false
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
-      resolvePermission(pendingPrompt.id, 'allow')
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
       } else {
         toastSuccess('Approved', pendingPrompt.title || name)
       }
+      return true
     },
     [pendingPrompt],
   )
 
   const onPermissionDeny = useCallback(() => {
-    if (!pendingPrompt) return
-    resolvePermission(pendingPrompt.id, 'deny')
+    if (!pendingPrompt) return false
+    if (!resolvePermission(pendingPrompt.id, 'deny')) return false
     playWalletSound('deny')
+    return true
   }, [pendingPrompt])
 
   const onDecisionApi = useCallback((api: PermissionDecisionApi | null) => {

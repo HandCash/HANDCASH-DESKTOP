@@ -60,6 +60,7 @@ vi.mock('./appActivity', () => ({
 vi.mock('./staleOutputRelease', () => ({
   rehideInputsOfLiveLocalTxs: () => mockRehideInputsOfLiveLocalTxs(),
   restoreLiveSpendableOutputs: () => mockRestoreLiveSpendableOutputs(),
+  reclaimSealedInputsNeverSpent: () => Promise.resolve(0),
   isUndefinedPartialFilterError: (err: unknown) =>
     /undefined.*filter|partial\.basket/i.test(
       err instanceof Error ? err.message : String(err),

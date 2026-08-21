@@ -26,9 +26,12 @@ const {
   hideSpentOutpoints,
   rehideInputsOfLiveLocalTxs,
   sealSpentInputsOfSignedTx,
+  releaseSealedInputsOfUnsentTx,
 } = await import('./staleOutputRelease')
 
-const { hideUtxo, __resetUtxoLocksForTests } = await import('./utxoLockManager')
+const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
+  './utxoLockManager'
+)
 
 describe('isAlreadySpentInputError', () => {
   it('accepts the rejections that prove an input is spent or gone', () => {
@@ -489,5 +492,37 @@ describe('sealSpentInputsOfSignedTx', () => {
       sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary()),
     ).resolves.toBe(0)
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('names the sealing transaction so the seal can be audited later', async () => {
+    const prevTxid = '44'.repeat(32)
+    const tx = await signedTx(prevTxid, 0)
+    findOutputs.mockResolvedValue([
+      { outputId: 8, txid: prevTxid, vout: 0, satoshis: 5000, spendable: true },
+    ])
+
+    await sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary())
+
+    expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(tx.id('hex'))
+  })
+
+  it('gives the coin back when the spend never reached a node', async () => {
+    const prevTxid = '55'.repeat(32)
+    const tx = await signedTx(prevTxid, 0)
+    findOutputs.mockResolvedValue([
+      { outputId: 9, txid: prevTxid, vout: 0, satoshis: 5000, spendable: true },
+    ])
+
+    await sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary())
+    expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+
+    await expect(
+      releaseSealedInputsOfUnsentTx(tx.id('hex'), tx.toBinary()),
+    ).resolves.toBe(1)
+
+    const lock = getUtxoLock(`${prevTxid}_0`)
+    expect(lock?.spendable).toBe(true)
+    expect(lock?.spentBy).toBeNull()
+    expect(updateOutput).toHaveBeenCalledWith(9, { spendable: true })
   })
 })

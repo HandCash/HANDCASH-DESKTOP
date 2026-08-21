@@ -120,6 +120,37 @@ export function hideUtxo(
   })
 }
 
+/**
+ * Un-seal a coin we retired for a transaction that never reached a node.
+ *
+ * The spend path seals inputs the moment `createAction` signs, so a burst of
+ * sends cannot reselect them. When the broadcast then fails without anybody
+ * reachable saying the input is gone, that seal is bookkeeping for a
+ * transaction that does not exist, and leaving it in place quietly removes the
+ * coin from spendable balance for good — `upsertUtxoLock` treats `spentBy` as
+ * terminal precisely so a stray restore cannot resurrect a real spend.
+ *
+ * Only call this with the inputs of a signed transaction known not to have
+ * broadcast. Chain ingest re-hides anything the indexer later reports spent.
+ */
+export function releaseConsumedUtxo(
+  outpoint: string,
+  diagnostic: string,
+): UtxoLockRecord | null {
+  const key = normalizeOutpointKey(outpoint)
+  const cur = load().get(key)
+  if (!cur) return null
+  const now = Date.now()
+  return put({
+    ...cur,
+    spendable: true,
+    spentBy: null,
+    lockOwnerId: null,
+    diagnostic,
+    updatedAt: now,
+  })
+}
+
 /** Re-offer an unspendable coin. Consumed coins stay hidden. */
 export function creditUtxo(
   outpoint: string,

@@ -2031,6 +2031,66 @@ button.wallet-detail-value.is-copied {
   font-size: 0.8rem;
 }
 
+.permission-item-preview {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr);
+  gap: 12px;
+  align-items: center;
+  margin: 10px 0 0;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, transparent);
+  border-radius: 12px;
+  background: var(--hc-hover);
+}
+
+.permission-item-preview .media-preload,
+.permission-item-preview img,
+.permission-item-preview-fallback {
+  width: 96px;
+  height: 96px;
+  border-radius: 10px;
+}
+
+.permission-item-preview img {
+  display: block;
+  object-fit: cover;
+}
+
+.permission-item-preview-fallback {
+  display: grid;
+  place-items: center;
+  color: var(--hc-muted);
+  background: var(--hc-sunken-soft);
+}
+
+.permission-item-preview-copy {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.permission-item-preview-copy > span {
+  color: var(--hc-muted);
+  font-size: 0.68rem;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.permission-item-preview-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-text);
+}
+
+.permission-item-preview-copy code {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-muted);
+  font-size: 0.7rem;
+}
+
 .auto-pay {
   margin: 10px 0 8px;
   padding: 10px 12px 12px;

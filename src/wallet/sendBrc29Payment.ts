@@ -42,6 +42,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
+  releaseSealedInputsOfUnsentTx,
   sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
@@ -167,6 +168,8 @@ export async function ensurePaymentBroadcasted(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[brc29] postBeef confirm failed', id, msg)
+    // Nothing was broadcast, so the pre-broadcast seal is holding live coins.
+    await releaseSealedInputsOfUnsentTx(id, atomic)
     if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
       throw new Error(
         'Payment was signed but the transaction body is invalid — try Send again.',
@@ -180,6 +183,11 @@ export async function ensurePaymentBroadcasted(
   console.warn('[brc29] broadcast not accepted', id, summary.detail)
   if (summary.doubleSpend || summary.missingInputs) {
     await onAlreadySpentSend({ txid: id, atomic })
+  } else {
+    // Nobody reported these inputs gone, so nothing was spent — the failure was
+    // transport. Hand the coins back rather than letting a no-network attempt
+    // shrink the spendable balance.
+    await releaseSealedInputsOfUnsentTx(id, atomic)
   }
   throw new Error(formatPostBeefFailure(summary))
 }

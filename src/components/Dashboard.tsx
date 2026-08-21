@@ -44,6 +44,7 @@ import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
+import { PermissionItemPreview } from './PermissionItemPreview'
 import {
   clearPaymentProgress,
   getPaymentProgress,
@@ -158,18 +159,34 @@ export function Dashboard({
 
   const onPermissionAllow = useCallback(
     (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
-      if (!pendingPrompt) return
+      if (!pendingPrompt) return false
+      if (!resolvePermission(pendingPrompt.id, 'allow')) return false
       if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
       const name = appDisplayName(pendingPrompt.origin)
-      // Only spends drive the Working / Sending… panel. Approving View items
-      // (listOutputs) used to set Starting… and never clear it.
+      // Mutating action requests stay represented after approval. In
+      // particular, a market listing can spend/sign/broadcast for several
+      // seconds; dropping the prompt with no Working state made Approve look
+      // non-blocking and encouraged repeat submissions.
       if (
         pendingPrompt.kind === 'action' &&
         (pendingPrompt.method === 'createAction' ||
-          pendingPrompt.method === 'signAction')
+          pendingPrompt.method === 'signAction' ||
+          pendingPrompt.method === 'createMarketListingAdvert' ||
+          pendingPrompt.method === 'createCancelMarketListingAdvert' ||
+          pendingPrompt.method === 'purchaseMarketListing')
       ) {
         setLastApproved(pendingPrompt)
-        setPaymentProgress('preparing', 'Starting…')
+        setPaymentProgress(
+          'preparing',
+          pendingPrompt.method === 'createMarketListingAdvert'
+            ? 'Preparing market listing'
+            : pendingPrompt.method === 'createCancelMarketListingAdvert'
+              ? 'Preparing listing cancellation'
+              : pendingPrompt.method === 'purchaseMarketListing'
+                ? 'Preparing market purchase'
+                : 'Starting…',
+          pendingPrompt.itemOutpoint,
+        )
       } else if (
         pendingPrompt.kind === 'action' &&
         getPaymentProgress().detail === 'Starting…'
@@ -178,21 +195,22 @@ export function Dashboard({
         clearPaymentProgress()
         setLastApproved(null)
       }
-      resolvePermission(pendingPrompt.id, 'allow')
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
       } else {
         toastSuccess('Approved', pendingPrompt.title || name)
       }
+      return true
     },
     [pendingPrompt],
   )
 
   const onPermissionDeny = useCallback(() => {
-    if (!pendingPrompt) return
-    resolvePermission(pendingPrompt.id, 'deny')
+    if (!pendingPrompt) return false
+    if (!resolvePermission(pendingPrompt.id, 'deny')) return false
     playWalletSound('deny')
+    return true
   }, [pendingPrompt])
   useEffect(() => {
     return startDeviceMesh(profile.identityKey)
@@ -745,6 +763,9 @@ export function Dashboard({
                   ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
                   : 'Broadcasting the approved payment.')}
             </p>
+            {lastApproved?.itemOutpoint ? (
+              <PermissionItemPreview outpoint={lastApproved.itemOutpoint} />
+            ) : null}
           </section>
         ) : (
           <>

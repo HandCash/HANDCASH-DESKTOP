@@ -324,7 +324,7 @@ export function App() {
               pending={pendingConnect}
               onAllow={() => {
                 if (pendingConnect) {
-                  resolvePermission(pendingConnect.id, 'allow')
+                  if (!resolvePermission(pendingConnect.id, 'allow')) return
                   playWalletSound('connect')
                   toastSuccess(
                     'Connected',
@@ -334,7 +334,7 @@ export function App() {
               }}
               onDeny={() => {
                 if (pendingConnect) {
-                  resolvePermission(pendingConnect.id, 'deny')
+                  if (!resolvePermission(pendingConnect.id, 'deny')) return
                   playWalletSound('deny')
                 }
               }}
@@ -343,22 +343,23 @@ export function App() {
             <ActionPermissionDialog
               pending={pendingAction}
               onAllow={(autoPay) => {
-                if (!pendingAction) return
+                if (!pendingAction) return false
+                if (!resolvePermission(pendingAction.id, 'allow')) return false
                 if (autoPay) {
                   setAutoPaySettings(pendingAction.origin, autoPay)
                 }
-                resolvePermission(pendingAction.id, 'allow')
                 playWalletSound('connect')
                 toastSuccess(
                   'Approved',
                   pendingAction.title || appDisplayName(pendingAction.origin),
                 )
+                return true
               }}
               onDeny={() => {
-                if (pendingAction) {
-                  resolvePermission(pendingAction.id, 'deny')
-                  playWalletSound('deny')
-                }
+                if (!pendingAction) return false
+                if (!resolvePermission(pendingAction.id, 'deny')) return false
+                playWalletSound('deny')
+                return true
               }}
             />
           </>

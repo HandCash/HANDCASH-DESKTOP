@@ -57,6 +57,12 @@ export type PendingAction = {
   details: string[]
   amountLabel?: string
   amountSats?: number
+  /**
+   * Held tip this action would sell. The prompt resolves the picture and name
+   * from the wallet's own basket — an app may name an outpoint, it never gets
+   * to describe what the user is about to approve.
+   */
+  itemOutpoint?: string
   createdAt: number
 }
 
@@ -93,6 +99,19 @@ const ACTION_METHODS = new Set([
   'revealSpecificKeyLinkage',
   'proveCertificate',
   'acquireCertificate',
+])
+
+/**
+ * Every request in this set describes a distinct signature or chain mutation.
+ * Never let one prompt authorize another waiter merely because method + origin
+ * match: two listing requests can name different items or prices.
+ */
+const NO_COALESCE_ACTIONS = new Set([
+  'createSignature',
+  'createMarketListingAdvert',
+  'createMarketPurchaseIntent',
+  'purchaseMarketListing',
+  'createCancelMarketListingAdvert',
 ])
 
 let idCounter = 1
@@ -183,7 +202,9 @@ function pumpQueue(): void {
   notify()
   syncPermissionSpendPriority()
   const focus = () => {
-    void window.handcash?.focusWindow?.()
+    if (typeof window !== 'undefined') {
+      void window.handcash?.focusWindow?.()
+    }
   }
   focus()
   // Mobile OEMs often ignore the first background startActivity; retry briefly.
@@ -410,8 +431,12 @@ export function subscribeAllowedOrigins(cb: (origins: string[]) => void): () => 
   return subscribeConnectedApps((apps) => cb(apps.map((a) => a.origin)))
 }
 
-export function resolvePermission(id: number, decision: PermissionDecision): void {
-  if (!current || current.request.id !== id) return
+export function resolvePermission(id: number, decision: PermissionDecision): boolean {
+  // Atomic decision edge. UI removal happens on React's next render, so a
+  // second tap can still call here with the stale prompt. Returning false lets
+  // every surface suppress duplicate sounds/toasts and, most importantly,
+  // prevents callers from presenting a second approval as successful.
+  if (!current || current.request.id !== id) return false
   const prompt = current.request
   const { resolve } = current
   current = null
@@ -436,6 +461,7 @@ export function resolvePermission(id: number, decision: PermissionDecision): voi
   })
   resolve(decision)
   pumpQueue()
+  return true
 }
 
 /** Drop every waiting connect/action prompt (HTTP timeout / client gone). */
@@ -500,12 +526,20 @@ function asRecord(args: unknown): Record<string, unknown> {
   return {}
 }
 
+/** Canonical `txid.vout` for a held tip, or null when the app sent nonsense. */
+function normalizeItemOutpoint(value: unknown): string | null {
+  const raw = String(value ?? '').trim().toLowerCase()
+  const match = /^([0-9a-f]{64})[._](0|[1-9]\d*)$/.exec(raw)
+  return match ? `${match[1]}.${match[2]}` : null
+}
+
 export function summarizeAction(method: string, args: unknown): {
   title: string
   summary: string
   details: string[]
   amountLabel?: string
   amountSats?: number
+  itemOutpoint?: string
 } {
   const body = asRecord(args)
   const details: string[] = []
@@ -751,6 +785,7 @@ export function summarizeAction(method: string, args: unknown): {
       summary: 'Create an on-chain BRC-48 offer for this collectable',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
+      itemOutpoint: normalizeItemOutpoint(body.outpoint) ?? undefined,
       details: [
         `Item: ${outpoint}`,
         'Re-tips the item to you and creates a one-satoshi offer token',
@@ -839,7 +874,8 @@ export function requestActionApproval(
   args: unknown,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats } = summarizeAction(method, args)
+  const { title, summary, details, amountLabel, amountSats, itemOutpoint } =
+    summarizeAction(method, args)
   const itemSpend = isItemSpendArgs(method, args) || isBsv21SpendArgs(method, args)
   const itemReceive = isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)
   const identityMint = isBsv21IdentityMintArgs(method, args)
@@ -866,10 +902,11 @@ export function requestActionApproval(
     return Promise.resolve('allow')
   }
 
-  // Coalesce method-identical prompts, except signatures: two signature payloads
-  // are distinct security decisions even when an app submits them concurrently.
+  // Coalesce only methods where one displayed decision can safely stand for
+  // another method-identical request. Signatures and market mutations bind
+  // request-specific payloads and always receive their own prompt.
   if (
-    method !== 'createSignature' &&
+    !NO_COALESCE_ACTIONS.has(method) &&
     current?.request.kind === 'action' &&
     current.request.origin === key &&
     current.request.method === method
@@ -894,7 +931,7 @@ export function requestActionApproval(
 
   const queued = queue.find(
     (item) =>
-      method !== 'createSignature' &&
+      !NO_COALESCE_ACTIONS.has(method) &&
       item.request.kind === 'action' &&
       item.request.origin === key &&
       item.request.method === method,
@@ -925,6 +962,7 @@ export function requestActionApproval(
     details,
     amountLabel,
     amountSats,
+    itemOutpoint,
     createdAt: Date.now(),
   }).then((decision) => {
     if (decision === 'allow' && isIdentityProofMethod(method)) {

@@ -30,6 +30,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
+  releaseSealedInputsOfUnsentTx,
   sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
@@ -211,6 +212,8 @@ export async function sendSatsToAddress(opts: {
               } catch (err) {
                 const msg = err instanceof Error ? err.message : String(err)
                 console.warn('[send] postBeef confirm failed', realTxid, msg)
+                // Nothing broadcast — do not leave the seal holding live coins.
+                await releaseSealedInputsOfUnsentTx(realTxid, atomic)
                 if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
                   failDualLayerSend(dualId, 'SCRIPT_INVALID', msg)
                   throw new Error(
@@ -235,6 +238,11 @@ export async function sendSatsToAddress(opts: {
                     txid: realTxid,
                     atomic,
                   })
+                } else {
+                  // Nobody claimed these inputs, so the failure was transport.
+                  // Give them back instead of shrinking the balance.
+                  failDualLayerSend(dualId, 'UNKNOWN', formatPostBeefFailure(summary))
+                  await releaseSealedInputsOfUnsentTx(realTxid, atomic)
                 }
                 throw new Error(formatPostBeefFailure(summary))
               }

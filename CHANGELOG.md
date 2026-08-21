@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.275] - 2026-08-21
+
+### Fixed
+
+- **Listing approval can no longer be clicked twice, and a timed-out request no longer stays on Approving…** One permission prompt accepts one decision. After approve, the wallet paints the processing panel before provenance work starts. A bridge timeout cancels the orphaned prompt.
+- **Market inventory shows origin-verified collectables, not only items that arrived with remittance.** The wallet projects its durable BRC-150 verdict and the origin it walked to. A minted or imported tip rebuilds a publishable proof at listing time.
+- **BRC-100 discovery is `POST /getVersion`, matching WalletClient.** Method responses are labelled `application/json`.
+- **Listings emit the overlay's 20-field signed BRC-48 PushDrop and a self-contained BRC-150 proof.** Batch-mint origins that exceed 1 MB JSON may slim to txid-only; the overlay hydrates those bodies itself within a bound.
+- **Collectable sends seal their inputs** so a later BSV send cannot pick the same coins. Sealed inputs of a transaction that never reached a node can be released, and Refresh reclaims coins the indexer still reports unspent.
+- **History backup refuses to encrypt a BRC-38 document over 64 MiB**, so a large inventory cannot OOM the renderer.
+
+
 ## [1.2.274] - 2026-08-21
 
 ### Changed

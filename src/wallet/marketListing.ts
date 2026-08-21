@@ -16,6 +16,7 @@ import { getActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   buildCollectableCustomInstructions,
+  completeProvenanceForPublish,
   parseProvenanceV2,
   tryBuildProvenanceV2,
   verifyProvenanceForHeldTip,
@@ -33,6 +34,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   encodeMarketOffer,
   MARKET_ITEM_VOUT,
+  MARKET_MAX_PROVENANCE_JSON_BYTES,
   MARKET_OFFER_DEPOSIT_SATS,
   MARKET_OFFER_VOUT,
   normalizeMarketOfferFields,
@@ -274,6 +276,26 @@ export function deterministicJson(value: unknown): string {
       .join(',')}}`
   }
   throw new Error('Value is not JSON serializable')
+}
+
+/**
+ * First proof whose canonical JSON fits the overlay's budget, in order of
+ * preference. Candidates may be null when they could not be assembled.
+ */
+export function choosePublishableProvenance(
+  candidates: Array<ProvenanceV2 | null>,
+): ProvenanceV2 | null {
+  for (const candidate of candidates) {
+    if (!candidate) continue
+    try {
+      if (hashMarketProvenance(candidate).size <= MARKET_MAX_PROVENANCE_JSON_BYTES) {
+        return candidate
+      }
+    } catch {
+      // Not serializable as canonical JSON — try the next candidate.
+    }
+  }
+  return null
 }
 
 export function hashMarketProvenance(provenance: ProvenanceV2): {
@@ -587,17 +609,33 @@ export async function createMarketListingAdvert(
 
   const custom = parseCustomInstructions(output.customInstructions)
   const origin = normalizeOriginOutpoint(custom.origin)
-  const provenance = await tryBuildProvenanceV2({
+  const built = await tryBuildProvenanceV2({
     tipOutpoint: outpoint,
     origin,
     wallet: active,
     priorProvenance: custom.provenance,
     allowLineageHydrate: true,
   })
-  if (!provenance) {
+  if (!built) {
     throw new MarketListingError(
       'ITEM_ORIGIN_UNPROVEN',
       'A complete BRC-150 proof could not be built for this item.'
+    )
+  }
+  // Prefer a self-contained package: the overlay will hydrate a txid-only path
+  // body, but only within a small bounded favour, and a proof that needs no
+  // fetch is one fewer thing that can fail at submit. A batch-mint origin is
+  // megabytes on its own, so when the complete form cannot fit the overlay's
+  // JSON budget the slim form is the correct thing to publish, not a failure.
+  const complete = await completeProvenanceForPublish({
+    provenance: built,
+    getBeef: (txid) => getBeefForTxidCached(active, txid),
+  })
+  const provenance = choosePublishableProvenance([complete, built])
+  if (!provenance) {
+    throw new MarketListingError(
+      'ITEM_PROVENANCE_TOO_LARGE',
+      'This item’s BRC-150 proof is too large for the market overlay.'
     )
   }
   const verified = await verifyProvenanceV2Async(provenance, outpoint, {
@@ -630,7 +668,8 @@ export async function createMarketListingAdvert(
     nonce,
     messagebox: args.messagebox?.trim() || defaultMessageboxBase(),
   })
-  const offerLockingScript = encodeMarketOffer(fields)
+  const offerKey = PrivateKey.fromHex(active.rootKeyHex)
+  const offerLockingScript = encodeMarketOffer(fields, offerKey)
   const itemLockingScript = new P2PKH().lock(active.address).toHex()
   const path = chooseMarketListingPath({
     itemOutpoint: outpoint,
@@ -721,7 +760,7 @@ export async function createMarketListingAdvert(
       )
     }
     tx.inputs[0]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
-      PrivateKey.fromHex(active.rootKeyHex),
+      offerKey,
       1
     )
     await tx.sign()

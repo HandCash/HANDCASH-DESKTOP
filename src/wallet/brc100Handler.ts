@@ -22,6 +22,7 @@ import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberTokenIcon, getTokenIconDataUrl } from './tokenIconCache'
 import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
+import { addMarketOriginVerdicts } from './marketInventory'
 import {
   enrichCreateActionForBsv21Issuer,
   finishBsv21IdentityMintCreateAction,
@@ -66,6 +67,36 @@ import {
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
+
+/** One market mutation per method/item, even if a browser repeats its request. */
+const inFlightMarketActions = new Set<string>()
+
+function marketActionKey(method: string, args: unknown): string {
+  const outpoint =
+    args && typeof args === 'object' && !Array.isArray(args)
+      ? String((args as { outpoint?: unknown }).outpoint ?? '').trim().toLowerCase()
+      : ''
+  return `${method}:${outpoint}`
+}
+
+/**
+ * Let React commit the permission → processing projection before wallet work.
+ *
+ * Resolving a permission wakes the suspended request in a microtask. Some
+ * provenance and BEEF operations perform meaningful synchronous work before
+ * their first await; without a frame boundary the renderer can remain painted
+ * as "Approving…" even though approval already succeeded.
+ */
+function yieldForPermissionProjection(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame !== 'function') {
+      setTimeout(resolve, 0)
+      return
+    }
+    requestAnimationFrame(() => setTimeout(resolve, 0))
+  })
+}
+
 type HttpRequestEvent = {
   method: string
   path: string
@@ -784,6 +815,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         }),
       }
     }
+    await yieldForPermissionProjection()
   }
 
   if (method === 'listOutputs') {
@@ -876,6 +908,47 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       } finally {
         clearPaymentProgress()
       }
+    } else if (
+      method === 'createMarketListingAdvert' ||
+      method === 'createCancelMarketListingAdvert' ||
+      method === 'purchaseMarketListing'
+    ) {
+      // Keep the wallet visibly busy after the permission prompt resolves.
+      // These methods sign and may broadcast, but unlike generic createAction
+      // they dispatch through the market module and previously left no wallet
+      // representation while the browser was still waiting. The market
+      // transaction/state machine remains the authority; this is UI lifecycle
+      // only and cannot alter settlement or cancellation semantics.
+      const detail =
+        method === 'createMarketListingAdvert'
+          ? 'Creating market listing'
+          : method === 'createCancelMarketListingAdvert'
+            ? 'Cancelling market listing'
+            : 'Processing market purchase'
+      const outpoint =
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? String((args as { outpoint?: unknown }).outpoint ?? '') || null
+          : null
+      const actionKey = marketActionKey(method, args)
+      if (inFlightMarketActions.has(actionKey)) {
+        return {
+          status: 409,
+          body: JSON.stringify({
+            status: 'error',
+            code: 'ACTION_IN_PROGRESS',
+            description: 'This market action is already in progress.',
+          }),
+        }
+      }
+      inFlightMarketActions.add(actionKey)
+      try {
+        setPaymentProgress('preparing', detail, outpoint)
+        result = await dispatchWalletMethod(active.wallet, method, args, originator)
+        setPaymentProgress('finishing', 'Updating market state', outpoint)
+      } finally {
+        inFlightMarketActions.delete(actionKey)
+        clearPaymentProgress()
+      }
     } else if (method === 'internalizeAction') {
       // Serialize with spends — concurrent internalize mid-broadcast can thrash outs.
       result = await runExclusiveSpend(() =>
@@ -897,6 +970,9 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
           : undefined
       if (isItemBasket(basket)) {
         result = filterItemOutputsForOrigin(originator, result, itemViewRequest)
+        if (isMarketListingOrigin(originator)) {
+          result = addMarketOriginVerdicts(result)
+        }
       }
     }
 

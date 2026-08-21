@@ -3031,6 +3031,15 @@ export async function sendCollectable(args: {
           } catch {
             /* unused funding reservations only */
           }
+          // Retire the funding coins this transfer just consumed. Every other
+          // spend path does this the moment it holds a signed transaction, and
+          // an item send that skipped it left its fee inputs reading spendable:
+          // the next BSV send reselected them, every broadcaster answered
+          // "Missing inputs", and the send failed "Already spent" while the
+          // balance dropped by whatever that attempt wrote off.
+          const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
+            await import('./staleOutputRelease')
+          await sealSpentInputsOfSignedTx(txid, atomicBeef)
 
           const settleSnap = itemChart.getSnapshot()
           try {
@@ -3090,6 +3099,11 @@ export async function sendCollectable(args: {
               if (silent) {
                 itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
               } else if (!ok) {
+                // Neither the peer nor a node holds this transfer, so the seal
+                // is retiring coins for a transaction that does not exist.
+                if (delivered.delivered !== 'cloud') {
+                  await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
+                }
                 itemChart.stop()
                 return failSend(new Error('Not sent'))
               } else {
@@ -3105,6 +3119,8 @@ export async function sendCollectable(args: {
               )
               const ok = await broadcastAtomicBeef(txid, atomicBeef)
               if (!ok) {
+                // Sender was the only route and it failed — hand the coins back.
+                await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
                 itemChart.stop()
                 return failSend(new Error('Not sent'))
               }

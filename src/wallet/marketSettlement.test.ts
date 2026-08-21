@@ -26,7 +26,8 @@ import {
 } from './walletConfig'
 
 function fixture() {
-  const seller = PrivateKey.fromHex('1'.padStart(64, '0')).toPublicKey()
+  const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
+  const seller = sellerKey.toPublicKey()
   const fee = PublicKey.fromString(MARKET_FEE_IDENTITY_KEY)
   const buyer = PrivateKey.fromHex('3'.padStart(64, '0')).toPublicKey()
   const fields: MarketOfferFields = {
@@ -48,7 +49,7 @@ function fixture() {
     depositSats: 1,
     messagebox: 'https://seller.example/v1/messagebox',
   }
-  const offerLockingScript = encodeMarketOffer(fields)
+  const offerLockingScript = encodeMarketOffer(fields, sellerKey)
   const listingTx = new Transaction()
   listingTx.addOutput({
     satoshis: 1,

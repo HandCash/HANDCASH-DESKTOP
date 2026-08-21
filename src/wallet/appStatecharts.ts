@@ -507,11 +507,13 @@ const CONNECT_PERMISSION = `stateDiagram-v2
   [*] --> idle
   idle --> loading : request
   loading --> pending : icon ready
-  pending --> idle : ALLOW
-  pending --> idle : DENY
+  pending --> committing : ALLOW
+  pending --> committing : CANCEL
+  committing --> idle : prompt resolved
   idle : Idle
   loading : Loading
   pending : Pending
+  committing : Decision locked
 `
 
 const ACTION_PERMISSION = `stateDiagram-v2
@@ -519,11 +521,13 @@ const ACTION_PERMISSION = `stateDiagram-v2
   [*] --> idle
   idle --> loading : request
   loading --> pending : icon ready
-  pending --> idle : ALLOW
-  pending --> idle : DENY / ALLOW+auto
+  pending --> committing : ALLOW
+  pending --> committing : CANCEL
+  committing --> idle : prompt resolved
   idle : Idle
   loading : Loading
   pending : Pending
+  committing : Decision locked
 `
 
 const ACTIVITY = `stateDiagram-v2
