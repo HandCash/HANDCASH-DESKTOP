@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from 'express'
 import cors from 'cors'
 import { ipcMain } from 'electron'
+import http from 'node:http'
 import https, { type Server } from 'node:https'
 import log from 'electron-log'
 import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
@@ -99,6 +100,38 @@ const REFUSAL_DESCRIPTION: Record<string, string> = {
   'app-quitting': 'wallet is quitting',
   'window-unavailable': 'wallet window could not be opened',
   'renderer-not-ready': 'wallet window is still loading',
+}
+
+/**
+ * Add ::1 listeners for both bridge ports, skipping any that will not bind.
+ *
+ * Failure here is never fatal: the IPv4 listeners are already serving, so a
+ * host with IPv6 disabled (EADDRNOTAVAIL) or something else already on the
+ * IPv6 port must not take the wallet down with it.
+ */
+async function bindIpv6Loopback(
+  app: express.Express,
+  tls: { cert: string; key: string },
+): Promise<Array<{ port: number; server: http.Server }>> {
+  const bound: Array<{ port: number; server: http.Server }> = []
+  const attempts: Array<{ port: number; make: () => http.Server }> = [
+    { port: 2121, make: () => https.createServer(tls, app) },
+    { port: 3321, make: () => http.createServer(app) },
+  ]
+  for (const { port, make } of attempts) {
+    await new Promise<void>((resolve) => {
+      const server = make()
+      server.once('error', (error: NodeJS.ErrnoException) => {
+        log.warn(`BRC-100 [::1]:${port} unavailable (${error.code ?? error.message})`)
+        resolve()
+      })
+      server.listen(port, '::1', () => {
+        bound.push({ port, server })
+        resolve()
+      })
+    })
+  }
+  return bound
 }
 
 export async function startHttpServer(windows: BridgeWindowSource): Promise<{
@@ -338,6 +371,21 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
   log.info('BRC-100 HTTPS on https://127.0.0.1:2121')
   log.info('BRC-100 HTTP  on http://127.0.0.1:3321')
 
+  /**
+   * Answer on the IPv6 loopback too, best effort.
+   *
+   * `WalletClient('auto')` from `@bsv/sdk` dials `localhost`, which resolves to
+   * ::1 before 127.0.0.1 on many hosts. Listening on IPv4 alone leaves this
+   * wallet invisible to every SDK-based app there, and a third-party app has no
+   * reason to retry by IP literal. Only the loopback is added — binding the
+   * wildcard would put the bridge on the LAN — and a host without IPv6 simply
+   * keeps the two listeners above.
+   */
+  const ipv6Servers = await bindIpv6Loopback(app, { cert, key })
+  for (const { port } of ipv6Servers) {
+    log.info(`BRC-100 also on [::1]:${port}`)
+  }
+
   return {
     httpsUrl: 'https://127.0.0.1:2121',
     httpUrl: 'http://127.0.0.1:3321',
@@ -355,6 +403,12 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
           }
           httpServer.close(() => resolve())
         }),
+        ...ipv6Servers.map(
+          ({ server: ipv6 }) =>
+            new Promise<void>((resolve) => {
+              ipv6.close(() => resolve())
+            }),
+        ),
       ])
     },
   }

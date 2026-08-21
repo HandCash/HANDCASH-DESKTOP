@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.277] - 2026-08-21
+
+### Fixed
+
+- **Apps that look for `localhost` can find the wallet.** The BRC-100 bridge now
+  also listens on the IPv6 loopback. `WalletClient('auto')` from `@bsv/sdk`
+  dials `localhost`, which resolves to `::1` before `127.0.0.1` on most hosts,
+  so a client that did not retry the IPv4 address saw no wallet at all. Only the
+  loopback is added, and a host without IPv6 keeps the existing listeners.
+
 ## [1.2.276] - 2026-08-21
 
 ### Fixed
