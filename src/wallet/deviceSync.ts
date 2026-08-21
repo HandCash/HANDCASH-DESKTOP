@@ -67,7 +67,10 @@ function pushDebounceMs(reason: string): number {
     reason === 'signAction' ||
     reason === 'send' ||
     reason === 'sendCollectable' ||
-    reason === 'internalizeAction'
+    reason === 'internalizeAction' ||
+    reason === 'market-purchase' ||
+    reason === 'market-sale' ||
+    reason === 'market-list'
   ) {
     return POST_SPEND_PUSH_DEBOUNCE_MS
   }

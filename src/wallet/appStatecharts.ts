@@ -371,7 +371,6 @@ const AUTHENTICITY = `stateDiagram-v2
   note right of proven
     Never downgrade to unproven.
     Durable projection: provenCache.v2
-    Legacy brc156 read forward as BRC-150
   end note
 `
 
@@ -446,20 +445,21 @@ const MARKET_PURCHASE = `stateDiagram-v2
   classifying --> failed : refuse / named reason
   classifying --> verifying : atomicPeerSettlement
   verifying --> reserving : VERIFIED
-  reserving --> awaitingSeller : RESERVED
-  awaitingSeller --> peerDeliver : SELLER_SIGNED / buyer signAction
-  peerDeliver --> confirmBroadcast : signed BEEF delivered to seller
-  confirmBroadcast --> done : seller confirmed broadcast
-  confirmBroadcast --> done : buyer fallback BROADCASTED
-  awaitingSeller --> aborting : TIMEOUT / DUPLICATE / COMPETING_BUYER / FAIL
-  peerDeliver --> aborting : TIMEOUT / FAIL
-  confirmBroadcast --> aborting : FAIL
+  reserving --> preSignAbortable : RESERVED / item0 + offer1
+  preSignAbortable --> sellerSigned : seller signs both inputs
+  sellerSigned --> signedUnknown : SIGNING / wallet processing begins
+  signedUnknown --> broadcast : BROADCASTED
+  signedUnknown --> recovery : unknown result / never abort
+  broadcast --> committed : COMMITTED
+  recovery --> broadcast : recovered txid
+  preSignAbortable --> aborting : TIMEOUT / DUPLICATE / COMPETING_BUYER / FAIL
+  sellerSigned --> aborting : pre-sign FAIL
   aborting --> failed : ABORTED
-  note right of peerDeliver
+  note right of signedUnknown
     Buyer-local reference never crosses wallets.
-    Seller signs only listed item vin.
-    Buyer total includes 500 bps.
-    Signed BEEF reaches seller before fallback.
+    Inputs: item0, offer1, then buyer funding.
+    Outputs: buyer item, seller price-fee+deposit, exact fee, buyer change.
+    Abort is forbidden after wallet signing starts.
   end note
 `
 
@@ -469,17 +469,21 @@ const MARKET_SELLER_SETTLEMENT = `stateDiagram-v2
   idle --> classifying : START with MarketSellerSettlePath
   classifying --> refused : refuse / named reason
   classifying --> validating : peerDeliver
-  validating --> signingItemInput : VALIDATED
-  signingItemInput --> peerDeliver : ITEM_INPUT_SIGNED
+  validating --> signingSellerInputs : VALIDATED
+  signingSellerInputs --> peerDeliver : both seller inputs signed
   peerDeliver --> awaitingBroadcast : DELIVERED
-  awaitingBroadcast --> settled : receipt BEEF validated + broadcast
+  awaitingBroadcast --> internalizingProceeds : receipt BEEF validated + broadcast
+  internalizingProceeds --> retiringItem : PROCEEDS_INTERNALIZED
+  retiringItem --> settled : ITEM_RETIRED
+  internalizingProceeds --> recovery : ingest failed
+  retiringItem --> recovery : retire failed
   validating --> refused : DUPLICATE / COMPETING_BUYER / TIMEOUT / FAIL
-  signingItemInput --> refused : TIMEOUT / FAIL
+  signingSellerInputs --> refused : TIMEOUT / FAIL
   peerDeliver --> refused : TIMEOUT / FAIL
   note right of peerDeliver
-    Validate local outpoint+nonce authorization
-    BRC-150 + every input/output before signing.
-    Seller signs the item input only.
+    Validate BRC-48 token + BRC-150 and full transaction.
+    Seller signs item and offer inputs.
+    ACK only after proceeds ingest and item retirement.
   end note
 `
 
@@ -1081,7 +1085,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'authenticity',
     label: 'Authenticity',
-    caption: 'authenticityMachine — BRC-150 ladder (legacy brc156 read as 150)',
+    caption: 'authenticityMachine — BRC-150 proof ladder',
     source: AUTHENTICITY,
   },
   {

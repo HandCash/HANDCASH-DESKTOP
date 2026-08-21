@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.273] - 2026-08-21
+
+### Fixed
+
+- **Market listings now use revocable on-chain BRC-48 offer tokens.** Listing,
+  cancellation, purchase, and seller settlement follow explicit state machines
+  with durable crash recovery.
+- **Signed settlements cannot be aborted or erased by general no-send cleanup.**
+  Buyers retain the transaction data needed to rebroadcast, and sellers ingest
+  proceeds and retire the item and offer before acknowledging a sale.
+- **Applications can no longer trigger the wallet's internal SPV bypass through
+  labels.** The exception is scoped to wallet-owned BEEF ingestion.
+
 ## [1.2.272] - 2026-08-21
 
 ### Changed

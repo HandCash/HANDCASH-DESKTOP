@@ -42,7 +42,29 @@ export async function releaseStuckNosends(
   const wallet = (active ?? getActiveWallet())?.wallet
   if (!wallet) return
   try {
-    await wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+    const listed = await wallet.listNoSendActions({ labels: [], limit: 100 }, false)
+    let protectedRefs = new Set<string>()
+    try {
+      const { protectedMarketActionReferences } = await import('./marketSettlement')
+      protectedRefs = protectedMarketActionReferences()
+    } catch {
+      /* market module optional during early boot */
+    }
+    if (protectedRefs.size === 0) {
+      await wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+    } else {
+      for (const action of listed.actions ?? []) {
+        const reference = String(
+          (action as { reference?: string }).reference ?? '',
+        ).trim()
+        if (!reference || protectedRefs.has(reference)) continue
+        try {
+          await wallet.abortAction({ reference })
+        } catch (err) {
+          console.warn('[action-review] abort nosend skipped', reference, err)
+        }
+      }
+    }
   } catch (err) {
     console.warn('[action-review] listNoSendActions abort skipped', err)
   }

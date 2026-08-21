@@ -16,7 +16,7 @@ import { appendAppLog } from './appLog'
 
 declare global {
   // Toolbox patches read this from a different @bsv/sdk copy than this module.
-  var __HANDCASH_VISIBLE_P2PKH_SWEEP: number | undefined
+  var __HANDCASH_INTERNAL_BEEF_SCOPE: string | undefined
 }
 
 /** Total provider requests one build may spend, however many outpoints it covers. */
@@ -102,7 +102,8 @@ function beefHasTxBody(beef: Beef): boolean {
  * flag those patched methods honor.
  */
 export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise<T> {
-  globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) + 1
+  const priorScope = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE
+  globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE = 'wallet-visible-p2pkh'
   const proto = Beef.prototype
   const orig = proto.verify
   proto.verify = async function (this: Beef, chainTracker, allowTxidOnly) {
@@ -117,10 +118,7 @@ export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise
     return await work()
   } finally {
     proto.verify = orig
-    globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP = Math.max(
-      0,
-      (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 1) - 1,
-    )
+    globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE = priorScope
   }
 }
 

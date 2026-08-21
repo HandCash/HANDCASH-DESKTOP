@@ -42,6 +42,12 @@
  *     broadcasts. A user retry re-enters `confirmBroadcast` with the same signed
  *     BEEF only when the original tip remains unspent; it never creates a
  *     competing spend. Remittance ± inline BEEF on `sendMessage`.
+ *   - **1Sat market** (`marketListing.ts` + `marketSettlement.ts`): listing
+ *     spends the tip into a re-tipped item + BRC-48 offer. Settlement is one
+ *     atomic tx (item0 + offer1). Abort is forbidden after `signAction`; a later
+ *     Refresh or send must not abort that nosend or overwrite the signed BEEF.
+ *     Seller internalizes proceeds and retires baskets before ACK. Merkle skip
+ *     is only the internal visible-P2PKH sweep scope — never a BRC-100 label.
  *   - Oversized remittance packages are omitted (fail unproven), never truncated.
  * - **Messagebox** → BRC-33 store-and-forward by identity key (chat/notify). Optional;
  *   not custody. BRC-CLOUD hosts a convenience box; resolve may return any box URL.
@@ -125,6 +131,11 @@ export const WALLET_LAYER_MODULES = {
     'pendingSend.ts',
     'sendPayment.ts',
     'sendBrc29Payment.ts',
+    'marketListing.ts',
+    'marketListingPath.ts',
+    'marketSettlement.ts',
+    'marketSettlementPath.ts',
+    'marketOverlayProtocol.ts',
     'ingestPaymentByTxid.ts',
     'inscriptionCache.ts',
     'provenCache.ts',

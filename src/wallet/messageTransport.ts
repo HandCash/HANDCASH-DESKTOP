@@ -51,6 +51,7 @@ export type MarketSettlementWire =
       provenance: unknown
       signableBeefB64: string
       itemVin: number
+      offerVin: number
       itemOutputIndex: number
       sellerOutputIndex: number
       feeOutputIndex: number
@@ -61,6 +62,7 @@ export type MarketSettlementWire =
       saleId: string
       accepted: boolean
       unlockingScript?: string
+      offerUnlockingScript?: string
       reason?: string
     }
   | {
@@ -618,6 +620,12 @@ export async function pollInboundTipHints(args: {
     }
     const data = (await res.json()) as { status?: string; messages?: ListedMessage[] }
     const list = Array.isArray(data.messages) ? data.messages : []
+    try {
+      const { recoverPendingMarketPurchases } = await import('./marketSettlement')
+      await recoverPendingMarketPurchases()
+    } catch {
+      /* recovery is best-effort beside inbox ingest */
+    }
     const ackIds: string[] = []
     let messages = 0
     let tipHints = 0

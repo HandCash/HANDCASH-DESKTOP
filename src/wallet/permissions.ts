@@ -748,12 +748,13 @@ export function summarizeAction(method: string, args: unknown): {
       typeof body.outpoint === 'string' ? body.outpoint : 'Unknown item'
     return {
       title: 'List item for sale',
-      summary: 'Sign a public market advert for this collectable',
+      summary: 'Create an on-chain BRC-48 offer for this collectable',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
       details: [
         `Item: ${outpoint}`,
-        'The market index cannot move the item or spend your funds',
+        'Re-tips the item to you and creates a one-satoshi offer token',
+        'The overlay indexes the token but cannot alter its terms',
       ],
     }
   }
@@ -798,7 +799,7 @@ export function summarizeAction(method: string, args: unknown): {
   if (method === 'createCancelMarketListingAdvert') {
     return {
       title: 'Cancel market listing',
-      summary: 'Revoke this wallet’s local sale authorization',
+      summary: 'Spend the on-chain offer token to cancel this listing',
       details: [
         typeof body.outpoint === 'string'
           ? `Item: ${body.outpoint}`

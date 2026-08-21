@@ -23,8 +23,9 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const pkgDir = path.join(root, 'node_modules/@bsv/wallet-toolbox-client')
 const bundles = ['out/index.client.mjs', 'out/index.client.cjs']
 
-/** Truthy only while `withVisibleOnChainBeef` (src/wallet/legacyBeef.ts) is running. */
-const SWEEPING = '(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0'
+/** Set only by the wallet's scoped unconfirmed-P2PKH ingest path. */
+const SWEEPING =
+  'globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh"'
 
 /**
  * Each edit is `find` → `replace`, applied to both bundles. `find` must be
@@ -82,7 +83,7 @@ const edits = [
       '\tif (!await beef.verify(await storage.getServices().getChainTracker(), true)) {\n' +
       '\t\tconsole.log(`verifyInputBeef failed, inputBEEF failed to verify.\\n${beef.toLogString()}\\n`);',
     replace:
-      `\tconst __handcashSkipMerkle = ${SWEEPING} || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"));\n` +
+      `\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
       '\tif (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {\n' +
       '\t\tconsole.log(`verifyInputBeef failed, inputBEEF failed to verify.\\n${beef.toLogString()}\\n`);',
   },
@@ -92,7 +93,7 @@ const edits = [
       '\t\tif (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {\n' +
       '\t\t\tconsole.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);',
     replace:
-      `\t\tconst __handcashSkipMerkle = ${SWEEPING} || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"));\n` +
+      `\t\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
       '\t\tif ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {\n' +
       '\t\t\tconsole.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);',
   },
@@ -102,7 +103,7 @@ const edits = [
       '\t\tif (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) ' +
       'throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");',
     replace:
-      `\t\tconst __handcashSkipMerkle = ${SWEEPING} || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"));\n` +
+      `\t\tconst __handcashSkipMerkle = ${SWEEPING};\n` +
       '\t\tif ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) ' +
       'throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");',
   },
@@ -136,6 +137,26 @@ for (const bundle of bundles) {
   const file = path.join(pkgDir, bundle)
   const before = fs.readFileSync(file, 'utf8')
   let source = before
+  // Migrate bundles patched by the previous label-based bypass. Labels are
+  // application-controlled BRC-100 input and therefore cannot authorize an
+  // SPV bypass; only the wallet-scoped process flag may do so.
+  source = source
+    .replaceAll(
+      '(globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0',
+      SWEEPING,
+    )
+    .replaceAll(
+      ' || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"))',
+      '',
+    )
+    .replaceAll(
+      ' || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"))',
+      '',
+    )
+    .replaceAll(
+      ' || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"))',
+      '',
+    )
 
   for (const edit of edits) {
     if (occurrences(source, edit.replace) === 1) continue // already applied

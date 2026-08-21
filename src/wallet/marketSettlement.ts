@@ -9,7 +9,10 @@ import {
 } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { createActor } from 'xstate'
-import { marketPurchaseMachine } from '../machines/marketPurchaseMachine'
+import {
+  marketPurchaseMachine,
+  mayAbortMarketPurchase,
+} from '../machines/marketPurchaseMachine'
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
 import { getBeefForTxidCached } from './beefCache'
 import {
@@ -18,6 +21,7 @@ import {
   findMarketListingAuthorizationBySaleId,
   getMarketListingAuthorization,
   marketFeePayToAddress,
+  markMarketSettlementProgress,
   MarketListingError,
   reserveMarketListingAuthorization,
   updateMarketListingAuthorization,
@@ -33,6 +37,11 @@ import {
   buildCollectableCustomInstructions,
   parseProvenanceV2,
 } from './oneSatProvenance'
+import {
+  MARKET_ITEM_VOUT,
+  MARKET_OFFER_DEPOSIT_SATS,
+  parseMarketOffer,
+} from './marketOverlayProtocol'
 import { getActiveWallet } from './session'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import {
@@ -45,6 +54,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
@@ -54,6 +64,15 @@ type PendingPurchase = {
   saleId: string
   reference: string
   itemVin: number
+  offerVin: number
+  phase:
+    | 'preSignAbortable'
+    | 'signedUnknown'
+    | 'broadcast'
+    | 'committed'
+    | 'recovery'
+  txid?: string
+  atomicBeef?: number[]
   expiresAt: number
   sellerIdentityKey: string
   intent: MarketPurchaseIntent
@@ -82,6 +101,29 @@ function savePending(record: PendingPurchase): void {
     (item) => item.saleId !== record.saleId
   )
   writePending([...records, record])
+}
+
+/** Keep signed txid/BEEF across crash phases — recovery must never wipe them. */
+export function mergePendingPurchase(
+  previous: PendingPurchase,
+  patch: Partial<PendingPurchase>,
+): PendingPurchase {
+  return {
+    ...previous,
+    ...patch,
+    txid: patch.txid ?? previous.txid,
+    atomicBeef: patch.atomicBeef ?? previous.atomicBeef,
+  }
+}
+
+/** Nosend references that a later send/refresh must not abort. */
+export function protectedMarketActionReferences(): Set<string> {
+  return new Set(
+    readJson<PendingPurchase[]>(PENDING_KEY, [])
+      .filter((item) => item.phase !== 'preSignAbortable' || Date.now() < item.expiresAt)
+      .map((item) => item.reference)
+      .filter(Boolean),
+  )
 }
 
 function removePending(saleId: string): void {
@@ -184,9 +226,12 @@ export function marketSettlementCommitment(tx: Transaction): string {
 
 export function validateMarketSettlementOutputs(args: {
   tx: Transaction
+  beef: Beef
   listing: MarketListingAdvert
   buyerIdentityKey: string
   chain: 'main' | 'test'
+  itemVin: number
+  offerVin: number
   itemOutputIndex: number
   sellerOutputIndex: number
   feeOutputIndex: number
@@ -204,6 +249,44 @@ export function validateMarketSettlementOutputs(args: {
     .lock(marketFeePayToAddress(args.listing))
     .toHex()
   const feeOutput = args.tx.outputs[args.feeOutputIndex]
+  const itemPoint = normalizeOutpoint(args.listing.outpoint)
+  const offerPoint = normalizeOutpoint(args.listing.offerOutpoint)
+  const [itemTxid, itemVout] = itemPoint.split('.')
+  const [offerTxid, offerVout] = offerPoint.split('.')
+  if (
+    args.itemVin !== 0 ||
+    args.offerVin !== 1 ||
+    args.itemOutputIndex !== MARKET_ITEM_VOUT ||
+    args.sellerOutputIndex !== 1 ||
+    args.feeOutputIndex !== 2 ||
+    String(args.tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
+    args.tx.inputs[0]?.sourceOutputIndex !== Number(itemVout) ||
+    String(args.tx.inputs[1]?.sourceTXID).toLowerCase() !== offerTxid ||
+    args.tx.inputs[1]?.sourceOutputIndex !== Number(offerVout)
+  ) {
+    throw new Error('Settlement item/offer input or output ordering is invalid')
+  }
+  const itemSource =
+    args.tx.inputs[0]?.sourceTransaction ?? args.beef.findTxid(itemTxid!)?.tx
+  const offerSource =
+    args.tx.inputs[1]?.sourceTransaction ?? args.beef.findTxid(offerTxid!)?.tx
+  const itemSourceOutput = itemSource?.outputs[Number(itemVout)]
+  const offerSourceOutput = offerSource?.outputs[Number(offerVout)]
+  if (itemSourceOutput?.satoshis !== 1 || offerSourceOutput?.satoshis !== 1) {
+    throw new Error('Settlement seller inputs must each be one satoshi')
+  }
+  const offer = parseMarketOffer(offerSourceOutput.lockingScript?.toHex() ?? '')
+  if (
+    offerSourceOutput.lockingScript?.toHex().toLowerCase() !==
+      args.listing.offerLockingScript.toLowerCase() ||
+    offer.nonce !== args.listing.nonce ||
+    offer.grossPriceSats !== args.listing.priceSats ||
+    offer.exactFeeSats !== args.listing.exactFeeSats ||
+    offer.depositSats !== MARKET_OFFER_DEPOSIT_SATS ||
+    (offer.expiresAt != null && offer.expiresAt <= Date.now())
+  ) {
+    throw new Error('Settlement offer token does not match active terms')
+  }
   if (
     !outputEquals(args.tx, args.itemOutputIndex, 1, buyerLock) ||
     !outputEquals(
@@ -218,6 +301,37 @@ export function validateMarketSettlementOutputs(args: {
       feeLock.toLowerCase()
   ) {
     throw new Error('Settlement outputs do not match listing terms')
+  }
+  for (let i = 3; i < args.tx.outputs.length; i++) {
+    const output = args.tx.outputs[i]
+    if (
+      !output ||
+      !(typeof output.satoshis === 'number' && output.satoshis > 0) ||
+      output.lockingScript?.toHex().toLowerCase() !== buyerLock.toLowerCase()
+    ) {
+      throw new Error('Settlement contains a non-buyer change output')
+    }
+  }
+  const seenInputs = new Set<string>()
+  let inputSatoshis = 0
+  for (const input of args.tx.inputs) {
+    const point = `${String(input.sourceTXID).toLowerCase()}.${input.sourceOutputIndex}`
+    if (seenInputs.has(point)) throw new Error('Duplicate settlement input')
+    seenInputs.add(point)
+    const source =
+      input.sourceTransaction ?? args.beef.findTxid(String(input.sourceTXID))?.tx
+    const sats = source?.outputs[input.sourceOutputIndex]?.satoshis
+    if (!Number.isSafeInteger(sats) || sats == null || sats < 1) {
+      throw new Error(`Settlement input source is missing: ${point}`)
+    }
+    inputSatoshis += sats
+  }
+  const outputSatoshis = args.tx.outputs.reduce(
+    (sum, output) => sum + (output.satoshis ?? 0),
+    0
+  )
+  if (inputSatoshis < outputSatoshis) {
+    throw new Error('Settlement outputs exceed all validated inputs')
   }
 }
 
@@ -283,15 +397,31 @@ export async function executeMarketPurchase(
     const buyerLock = new P2PKH().lock(active.address).toHex()
     const sellerLock = new P2PKH().lock(listing.payTo).toHex()
     const [itemTxid] = normalizeOutpoint(listing.outpoint).split('.')
+    const [offerTxid] = normalizeOutpoint(listing.offerOutpoint).split('.')
+    if (itemTxid !== offerTxid) {
+      throw new Error('Market item and offer token must come from the same listing transaction')
+    }
     const inputBeef = (await getBeefForTxidCached(active, itemTxid!)).toBinary()
     const created = await active.wallet.createAction({
       description: 'Buy market collectable',
-      labels: ['market-v2', '1sat'],
+      labels: [
+        'market-v3',
+        'brc48',
+        'brc153',
+        `brc153-correlator:${saleId}`,
+        `brc153-reference:${listing.offerOutpoint}`,
+        '1sat',
+      ],
       inputBEEF: inputBeef,
       inputs: [
         {
           outpoint: normalizeOutpoint(listing.outpoint),
           inputDescription: 'Listed market item',
+          unlockingScriptLength: 108,
+        },
+        {
+          outpoint: normalizeOutpoint(listing.offerOutpoint),
+          inputDescription: 'BRC-48 offer token',
           unlockingScriptLength: 108,
         },
       ],
@@ -331,16 +461,40 @@ export async function executeMarketPurchase(
       throw new Error('Market purchase did not return a signable transaction')
     const beef = Beef.fromBinary(signable.tx)
     const { vin: itemVin } = subjectTransaction(beef, listing.outpoint)
+    const { vin: offerVin } = subjectTransaction(beef, listing.offerOutpoint)
+    if (itemVin !== 0 || offerVin !== 1) {
+      await active.wallet.abortAction({ reference: signable.reference }).catch(() => {})
+      throw new Error('Wallet did not preserve item input0 and offer input1')
+    }
+    const settlementTx = subjectTransaction(beef, listing.outpoint).tx
+    validateMarketSettlementOutputs({
+      tx: settlementTx,
+      beef,
+      listing,
+      buyerIdentityKey: active.identityKey,
+      chain: active.chain,
+      itemVin,
+      offerVin,
+      itemOutputIndex: 0,
+      sellerOutputIndex: 1,
+      feeOutputIndex: 2,
+    })
     const sellerMessagebox = args.sellerMessagebox
     const buyerMessagebox = args.buyerMessagebox
-    const pending: PendingPurchase = {
+    let pending: PendingPurchase = {
       saleId,
       reference: signable.reference,
       itemVin,
+      offerVin,
+      phase: 'preSignAbortable',
       expiresAt: Date.now() + SETTLEMENT_TIMEOUT_MS,
       sellerIdentityKey: listing.seller,
       intent: args.intent,
       ...(sellerMessagebox ? { sellerMessagebox } : {}),
+    }
+    const remember = (patch: Partial<PendingPurchase>): void => {
+      pending = mergePendingPurchase(pending, patch)
+      savePending(pending)
     }
     savePending(pending)
     const chart = createActor(marketPurchaseMachine).start()
@@ -371,6 +525,7 @@ export async function executeMarketPurchase(
           provenance,
           signableBeefB64: b64(signable.tx),
           itemVin,
+          offerVin,
           itemOutputIndex: 0,
           sellerOutputIndex: 1,
           feeOutputIndex: 2,
@@ -383,15 +538,29 @@ export async function executeMarketPurchase(
         throw new Error(response.reason || 'Seller refused settlement')
       }
       chart.send({ type: 'SELLER_SIGNED' })
+      const offerUnlockingScript = response.offerUnlockingScript
+      if (!offerUnlockingScript) throw new Error('Seller offer-token signature missing')
+      chart.send({ type: 'SIGNING' })
+      remember({ phase: 'signedUnknown' })
       const signed = await active.wallet.signAction({
         reference: signable.reference,
-        spends: { [itemVin]: { unlockingScript: response.unlockingScript } },
-        options: { noSend: true },
+        spends: {
+          [itemVin]: { unlockingScript: response.unlockingScript },
+          [offerVin]: { unlockingScript: offerUnlockingScript },
+        },
+        options: { acceptDelayedBroadcast: false },
       })
       const txid = signed.txid
       const atomic = signed.tx ? Array.from(signed.tx) : undefined
       if (!txid || !atomic?.length)
         throw new Error('Signed market transaction missing')
+      remember({ phase: 'signedUnknown', txid, atomicBeef: atomic })
+      chart.send({ type: 'BROADCASTED' })
+      remember({
+        phase: 'broadcast',
+        txid,
+        atomicBeef: atomic,
+      })
       const receiptDelivered = await deliverMarketSettlementWire({
         recipientIdentityKey: listing.seller,
         rootKeyHex: active.rootKeyHex,
@@ -405,11 +574,9 @@ export async function executeMarketPurchase(
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
         },
       })
-      if (!receiptDelivered) throw new Error('Seller receipt delivery failed')
-      chart.send({ type: 'DELIVERED' })
-      let broadcasted = false
+      let broadcasted = true
       let receipt: MarketSettlementReceipt | undefined
-      try {
+      if (receiptDelivered) try {
         const receiptResponse = await waitForSellerResponse(
           saleId,
           'receipt-response',
@@ -420,7 +587,7 @@ export async function executeMarketPurchase(
           receiptResponse.broadcasted
         receipt = receiptResponse.receipt
       } catch {
-        // Seller received the exact signed BEEF but did not confirm in time.
+        // BRC-33 is optional. Durable recovery will accept a later seller receipt.
       }
       if (
         receipt &&
@@ -429,11 +596,13 @@ export async function executeMarketPurchase(
       ) {
         throw new Error('Seller settlement receipt signature is invalid')
       }
-      if (!broadcasted) {
-        broadcasted = await broadcastAtomicBeef(txid, atomic)
-      }
       if (!broadcasted) throw new Error('Market transaction broadcast failed')
-      chart.send({ type: 'BROADCASTED' })
+      chart.send({ type: 'COMMITTED' })
+      remember({
+        phase: 'committed',
+        txid,
+        atomicBeef: atomic,
+      })
       if (receipt) removePending(saleId)
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
@@ -466,15 +635,21 @@ export async function executeMarketPurchase(
         ...(receipt ? { receipt } : {}),
       }
     } catch (err) {
-      await active.wallet
-        .abortAction({ reference: signable.reference })
-        .catch(() => {})
-      removePending(saleId)
+      const snapshot = chart.getSnapshot()
+      if (mayAbortMarketPurchase(snapshot) && !pending.txid && !pending.atomicBeef?.length) {
+        await active.wallet
+          .abortAction({ reference: signable.reference })
+          .catch(() => {})
+        removePending(saleId)
+        chart.send({ type: 'ABORTED' })
+      } else {
+        remember({ phase: 'recovery' })
+        chart.send({ type: 'RECOVER' })
+      }
       chart.send({
         type: 'FAIL',
         error: err instanceof Error ? err.message : String(err),
       })
-      chart.send({ type: 'ABORTED' })
       throw err
     } finally {
       chart.stop()
@@ -482,17 +657,98 @@ export async function executeMarketPurchase(
   })
 }
 
+export async function recoverPendingMarketPurchases(): Promise<void> {
+  const active = getActiveWallet()
+  if (!active) return
+  for (const record of readJson<PendingPurchase[]>(PENDING_KEY, [])) {
+    if (!record.txid && Date.now() >= record.expiresAt) {
+      const listed = await active.wallet
+        .listActions({
+          labels: [`brc153-correlator:${record.saleId}`],
+          labelQueryMode: 'all',
+          includeLabels: true,
+          limit: 10,
+          seekPermission: false,
+        })
+        .catch(() => ({ actions: [] as Array<{ txid?: string; status?: string }> }))
+      const signed = listed.actions?.find(
+        (action) =>
+          /^[0-9a-f]{64}$/i.test(action.txid ?? '') &&
+          action.status !== 'failed' &&
+          action.status !== 'unsigned',
+      )
+      if (!signed) {
+        await active.wallet.abortAction({ reference: record.reference }).catch(() => {})
+        removePending(record.saleId)
+      }
+      continue
+    }
+    if (!record.txid || !record.atomicBeef?.length) continue
+    try {
+      await broadcastAtomicBeef(record.txid, record.atomicBeef)
+    } catch (err) {
+      console.warn(
+        '[market] pending purchase rebroadcast skipped',
+        record.saleId,
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  }
+}
+
 export async function recoverMarketSettlementReceipt(args: {
   intent: MarketPurchaseIntent
 }): Promise<MarketSettlementReceipt | null> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
+  await recoverPendingMarketPurchases()
   const pending = readJson<PendingPurchase[]>(PENDING_KEY, []).find(
     (item) =>
       item.saleId === args.intent.intentId &&
       item.sellerIdentityKey.toLowerCase() === args.intent.seller.toLowerCase()
   )
   if (!pending) return null
+  let txid = pending.txid
+  let atomic = pending.atomicBeef
+  if (!txid) {
+    const listed = await active.wallet.listActions({
+      labels: [`brc153-correlator:${args.intent.intentId}`],
+      labelQueryMode: 'all',
+      includeLabels: true,
+      limit: 10,
+      seekPermission: false,
+    })
+    const recovered = listed.actions.find(
+      (action) =>
+        /^[0-9a-f]{64}$/i.test(action.txid) &&
+        action.status !== 'failed' &&
+        action.status !== 'unsigned'
+    )
+    txid = recovered?.txid?.toLowerCase()
+  }
+  if (txid && !atomic?.length) {
+    try {
+      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      atomic = await getAtomicBeefBinaryForTxid(active, txid)
+    } catch {
+      atomic = undefined
+    }
+  }
+  if (txid && atomic?.length) {
+    savePending(mergePendingPurchase(pending, { phase: 'recovery', txid, atomicBeef: atomic }))
+    await deliverMarketSettlementWire({
+      recipientIdentityKey: pending.sellerIdentityKey,
+      rootKeyHex: active.rootKeyHex,
+      senderIdentityKey: active.identityKey,
+      messagebox: pending.sellerMessagebox,
+      wire: {
+        type: 'receipt',
+        saleId: pending.saleId,
+        txid,
+        atomicBeefB64: b64(atomic),
+      },
+    })
+  }
   await pollInboundTipHints({ rootKeyHex: active.rootKeyHex })
   const response = takeResponse(
     args.intent.intentId,
@@ -502,7 +758,8 @@ export async function recoverMarketSettlementReceipt(args: {
   if (
     !receipt ||
     !verifyMarketSettlementReceipt(receipt, args.intent) ||
-    receipt.settlementTxid.toLowerCase() !== response.txid.toLowerCase()
+    receipt.settlementTxid.toLowerCase() !== response.txid.toLowerCase() ||
+    (txid != null && receipt.settlementTxid.toLowerCase() !== txid)
   ) {
     return null
   }
@@ -510,10 +767,10 @@ export async function recoverMarketSettlementReceipt(args: {
   return receipt
 }
 
-async function signSellerItemInput(args: {
+async function signSellerInputs(args: {
   wire: Extract<MarketSettlementWire, { type: 'sign-request' }>
   senderIdentityKey: string
-}): Promise<string> {
+}): Promise<{ itemUnlockingScript: string; offerUnlockingScript: string }> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
   if (
@@ -557,6 +814,15 @@ async function signSellerItemInput(args: {
   const beef = Beef.fromBinary(bytes)
   const { tx, vin } = subjectTransaction(beef, listing.outpoint)
   if (vin !== args.wire.itemVin) throw new Error('Listed item vin mismatch')
+  const offerSubject = subjectTransaction(beef, listing.offerOutpoint)
+  if (
+    offerSubject.tx !== tx ||
+    offerSubject.vin !== args.wire.offerVin ||
+    vin !== 0 ||
+    offerSubject.vin !== 1
+  ) {
+    throw new Error('Listed item and offer inputs are not exact seller inputs 0/1')
+  }
   const source =
     tx.inputs[vin]?.sourceTransaction ??
     beef.findTxid(String(tx.inputs[vin]?.sourceTXID))?.tx
@@ -566,41 +832,16 @@ async function signSellerItemInput(args: {
   }
   validateMarketSettlementOutputs({
     tx,
+    beef,
     listing,
     buyerIdentityKey: args.wire.buyerIdentityKey,
     chain: active.chain,
+    itemVin: vin,
+    offerVin: offerSubject.vin,
     itemOutputIndex: args.wire.itemOutputIndex,
     sellerOutputIndex: args.wire.sellerOutputIndex,
     feeOutputIndex: args.wire.feeOutputIndex,
   })
-  const seenInputs = new Set<string>()
-  let inputSatoshis = 0
-  for (const input of tx.inputs) {
-    const point = `${String(input.sourceTXID).toLowerCase()}.${
-      input.sourceOutputIndex
-    }`
-    if (seenInputs.has(point)) throw new Error('Duplicate settlement input')
-    seenInputs.add(point)
-    const sourceTx =
-      input.sourceTransaction ?? beef.findTxid(String(input.sourceTXID))?.tx
-    const sourceOut = sourceTx?.outputs[input.sourceOutputIndex]
-    const sourceSatoshis = sourceOut?.satoshis
-    if (
-      !sourceOut ||
-      typeof sourceSatoshis !== 'number' ||
-      !Number.isSafeInteger(sourceSatoshis)
-    ) {
-      throw new Error(`Settlement input source is missing: ${point}`)
-    }
-    inputSatoshis += sourceSatoshis
-  }
-  const outputSatoshis = tx.outputs.reduce(
-    (sum, output) => sum + (output.satoshis ?? 0),
-    0
-  )
-  if (inputSatoshis < outputSatoshis) {
-    throw new Error('Settlement outputs exceed all validated inputs')
-  }
   reserveMarketListingAuthorization({
     outpoint: listing.outpoint,
     nonce: listing.nonce,
@@ -615,10 +856,21 @@ async function signSellerItemInput(args: {
     PrivateKey.fromHex(active.rootKeyHex),
     1
   )
+  const offerInput = tx.inputs[offerSubject.vin]!
+  offerInput.sourceTransaction =
+    offerInput.sourceTransaction ??
+    beef.findTxid(String(offerInput.sourceTXID))?.tx
+  offerInput.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+    PrivateKey.fromHex(active.rootKeyHex),
+    MARKET_OFFER_DEPOSIT_SATS
+  )
   await tx.sign()
-  const unlockingScript = tx.inputs[vin]!.unlockingScript?.toHex()
-  if (!unlockingScript) throw new Error('Seller item signature missing')
-  return unlockingScript
+  const itemUnlockingScript = tx.inputs[vin]!.unlockingScript?.toHex()
+  const offerUnlockingScript = tx.inputs[offerSubject.vin]!.unlockingScript?.toHex()
+  if (!itemUnlockingScript || !offerUnlockingScript) {
+    throw new Error('Seller item/offer signatures missing')
+  }
+  return { itemUnlockingScript, offerUnlockingScript }
 }
 
 export async function handleInboundMarketSettlementWire(args: {
@@ -684,21 +936,13 @@ export async function handleInboundMarketSettlementWire(args: {
       feeOutputIndex: 2,
     })
     const accepted = await broadcastAtomicBeef(args.wire.txid, atomic)
-    const responseDelivered = await deliverMarketSettlementWire({
-      wire: {
-        type: 'receipt-response',
-        saleId: args.wire.saleId,
-        txid: args.wire.txid,
-        broadcasted: accepted,
-        receipt,
-        ...(!accepted ? { reason: 'Seller broadcast failed' } : {}),
-      },
-      recipientIdentityKey: args.senderIdentityKey,
-      rootKeyHex: active.rootKeyHex,
-      senderIdentityKey: active.identityKey,
-      messagebox: args.wire.buyerMessagebox,
+    if (!accepted && authorization.settlementTxid !== args.wire.txid.toLowerCase()) {
+      return false
+    }
+    let progress = markMarketSettlementProgress({
+      saleId: args.wire.saleId,
+      settlementTxid: args.wire.txid,
     })
-    if (!accepted || !responseDelivered) return false
     const chart = createActor(marketSellerSettlementMachine).start()
     chart.send({
       type: 'START',
@@ -711,17 +955,86 @@ export async function handleInboundMarketSettlementWire(args: {
       },
     })
     chart.send({ type: 'VALIDATED' })
-    chart.send({ type: 'ITEM_INPUT_SIGNED' })
+    chart.send({ type: 'SELLER_INPUTS_SIGNED' })
     chart.send({ type: 'DELIVERED' })
     chart.send({ type: 'BROADCAST_CONFIRMED' })
-    chart.stop()
-    updateMarketListingAuthorization({
-      outpoint: authorization.outpoint,
-      nonce: authorization.nonce,
-      from: ['reserved'],
-      to: 'settled',
-      reason: args.wire.txid,
+    if (!progress.proceedsInternalized) {
+      const swept = await sweepVisibleP2pkhOutpoints(
+        active,
+        [`${args.wire.txid}.1`],
+        atomic,
+      )
+      if (!swept[0]?.success) {
+        chart.send({
+          type: 'FAIL',
+          error: swept[0]?.error ?? 'Seller proceeds ingest failed',
+        })
+        chart.stop()
+        return false
+      }
+      progress = markMarketSettlementProgress({
+        saleId: args.wire.saleId,
+        settlementTxid: args.wire.txid,
+        proceedsInternalized: true,
+      })
+    }
+    chart.send({ type: 'PROCEEDS_INTERNALIZED' })
+    if (!progress.itemRetired) {
+      const retireErrors: string[] = []
+      for (const spend of [
+        { basket: '1sat', output: listing.outpoint.replace('_', '.') },
+        { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
+      ]) {
+        try {
+          await active.wallet.relinquishOutput(spend)
+        } catch (err) {
+          const msg = err instanceof Error ? err.message : String(err)
+          if (!/not found|already|missing|must exist/i.test(msg)) {
+            retireErrors.push(msg)
+          }
+        }
+      }
+      if (retireErrors.length) {
+        chart.send({ type: 'FAIL', error: retireErrors[0]! })
+        chart.stop()
+        return false
+      }
+      progress = markMarketSettlementProgress({
+        saleId: args.wire.saleId,
+        settlementTxid: args.wire.txid,
+        itemRetired: true,
+      })
+    }
+    chart.send({ type: 'ITEM_RETIRED' })
+    if (progress.state !== 'settled') {
+      updateMarketListingAuthorization({
+        outpoint: authorization.outpoint,
+        nonce: authorization.nonce,
+        from: ['reserved'],
+        to: 'settled',
+        reason: args.wire.txid,
+      })
+    }
+    const responseDelivered = await deliverMarketSettlementWire({
+      wire: {
+        type: 'receipt-response',
+        saleId: args.wire.saleId,
+        txid: args.wire.txid,
+        broadcasted: true,
+        receipt,
+        ...(!accepted ? { reason: 'Seller broadcast failed' } : {}),
+      },
+      recipientIdentityKey: args.senderIdentityKey,
+      rootKeyHex: active.rootKeyHex,
+      senderIdentityKey: active.identityKey,
+      messagebox: args.wire.buyerMessagebox,
     })
+    if (!responseDelivered) {
+      chart.stop()
+      return false
+    }
+    chart.stop()
+    scheduleHistoryBackupPush('market-sale')
     if (listing) {
       const proceeds = calculateMarketSettlement(listing.priceSats).sellerSats
       recordAppActivity({
@@ -764,16 +1077,17 @@ export async function handleInboundMarketSettlementWire(args: {
   let response: StoredResponse
   try {
     chart.send({ type: 'VALIDATED' })
-    const unlockingScript = await signSellerItemInput({
+    const signatures = await signSellerInputs({
       wire: args.wire,
       senderIdentityKey: args.senderIdentityKey,
     })
-    chart.send({ type: 'ITEM_INPUT_SIGNED' })
+    chart.send({ type: 'SELLER_INPUTS_SIGNED' })
     response = {
       type: 'sign-response',
       saleId: args.wire.saleId,
       accepted: true,
-      unlockingScript,
+      unlockingScript: signatures.itemUnlockingScript,
+      offerUnlockingScript: signatures.offerUnlockingScript,
     }
   } catch (err) {
     chart.send({

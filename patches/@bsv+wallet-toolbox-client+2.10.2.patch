@@ -1,12 +1,12 @@
 diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
-index e1dedf2..5b1a87e 100644
+index e1dedf2..e96d6fc 100644
 --- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
 +++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
 @@ -5703,6 +5703,10 @@ function classifyReqDetails(details, swr, readyToSendReqs) {
  async function verifyMergedBeef(storage, r, readyToSendReqs, logger) {
  	if (readyToSendReqs.length === 0 || r.verified === true) return;
  	if (!await r.beef.verify(await storage.getServices().getChainTracker())) {
-+		if ((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0) {
++		if (globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh") {
 +			logger?.log('visible unconfirmed P2PKH — posting without merkle');
 +			return;
 +		}
@@ -18,7 +18,7 @@ index e1dedf2..5b1a87e 100644
  	async function validateAtomicBeef() {
  		const ab = canonicalizeAtomicBeef(vargs.tx);
 -		if (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {
-+		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"));
++		const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +		if ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {
  			console.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);
  			throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
@@ -37,7 +37,7 @@ index e1dedf2..5b1a87e 100644
  	await validateBeefTxidOnlyEntries(beef, inputsByTxid, trustSelf, storage);
  	await ensureBeefContainsAllInputTxids(beef, inputsByTxid, localKnownInputTxids, trustSelf, storage);
 -	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) {
-+	const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"));
++	const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +	if (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {
  		console.log(`verifyInputBeef failed, inputBEEF failed to verify.\n${beef.toLogString()}\n`);
  		throw new WERR_INVALID_PARAMETER("inputBEEF", "valid Beef when factoring options.trustSelf");
@@ -47,7 +47,7 @@ index e1dedf2..5b1a87e 100644
  	async validateAtomicBeef(atomicBeef) {
  		const ab = canonicalizeAtomicBeef(atomicBeef);
 -		if (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
-+		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"));
++		const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +		if ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
  		const txid = ab.atomicTxid;
  		const btx = ab.findTxid(txid);
@@ -57,7 +57,7 @@ index e1dedf2..5b1a87e 100644
  	for (const compactAction of manifest.actions) actions.push(await validateManifestAction(compactAction, state));
  	await verifyUnlockScriptsBatch(actions.map(({ action }) => action.txid), beef, storage.scriptVerifier);
 -	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
-+	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
++	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !(globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh")) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
  	return {
  		actions,
  		dependencyBeef,
@@ -73,14 +73,14 @@ index e1dedf2..5b1a87e 100644
  			return output;
  		} finally {
 diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
-index 864baf0..66a8db8 100644
+index 864baf0..d32c7b9 100644
 --- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
 +++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
 @@ -5668,6 +5668,10 @@ function classifyReqDetails(details, swr, readyToSendReqs) {
  async function verifyMergedBeef(storage, r, readyToSendReqs, logger) {
  	if (readyToSendReqs.length === 0 || r.verified === true) return;
  	if (!await r.beef.verify(await storage.getServices().getChainTracker())) {
-+		if ((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0) {
++		if (globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh") {
 +			logger?.log('visible unconfirmed P2PKH — posting without merkle');
 +			return;
 +		}
@@ -92,7 +92,7 @@ index 864baf0..66a8db8 100644
  	async function validateAtomicBeef() {
  		const ab = canonicalizeAtomicBeef(vargs.tx);
 -		if (!await ab.verify(await wallet.getServices().getChainTracker(), false) || !ab.atomicTxid) {
-+		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("brc29"));
++		const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +		if ((!__handcashSkipMerkle && !await ab.verify(await wallet.getServices().getChainTracker(), false)) || !ab.atomicTxid) {
  			console.log(`internalizeAction beef is invalid: ${ab.toLogString()}`);
  			throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
@@ -111,7 +111,7 @@ index 864baf0..66a8db8 100644
  	await validateBeefTxidOnlyEntries(beef, inputsByTxid, trustSelf, storage);
  	await ensureBeefContainsAllInputTxids(beef, inputsByTxid, localKnownInputTxids, trustSelf, storage);
 -	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) {
-+	const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(vargs.labels) && vargs.labels.includes("p2pkh-funding"));
++	const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +	if (!__handcashSkipMerkle && !await beef.verify(await storage.getServices().getChainTracker(), true)) {
  		console.log(`verifyInputBeef failed, inputBEEF failed to verify.\n${beef.toLogString()}\n`);
  		throw new WERR_INVALID_PARAMETER("inputBEEF", "valid Beef when factoring options.trustSelf");
@@ -121,7 +121,7 @@ index 864baf0..66a8db8 100644
  	async validateAtomicBeef(atomicBeef) {
  		const ab = canonicalizeAtomicBeef(atomicBeef);
 -		if (!await ab.verify(await this.storage.getServices().getChainTracker(), false) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
-+		const __handcashSkipMerkle = (globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0 || (Array.isArray(this.vargs?.labels) && this.vargs.labels.includes("brc29"));
++		const __handcashSkipMerkle = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh";
 +		if ((!__handcashSkipMerkle && !await ab.verify(await this.storage.getServices().getChainTracker(), false)) || !ab.atomicTxid) throw new WERR_INVALID_PARAMETER("tx", "valid AtomicBEEF");
  		const txid = ab.atomicTxid;
  		const btx = ab.findTxid(txid);
@@ -131,7 +131,7 @@ index 864baf0..66a8db8 100644
  	for (const compactAction of manifest.actions) actions.push(await validateManifestAction(compactAction, state));
  	await verifyUnlockScriptsBatch(actions.map(({ action }) => action.txid), beef, storage.scriptVerifier);
 -	if (!await beef.verify(await storage.getServices().getChainTracker(), true)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
-+	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !((globalThis.__HANDCASH_VISIBLE_P2PKH_SWEEP ?? 0) > 0)) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
++	if (!await beef.verify(await storage.getServices().getChainTracker(), true) && !(globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE === "wallet-visible-p2pkh")) throw new WERR_INVALID_PARAMETER("manifest", "valid dependency graph");
  	return {
  		actions,
  		dependencyBeef,

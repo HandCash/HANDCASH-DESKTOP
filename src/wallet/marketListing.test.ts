@@ -1,316 +1,125 @@
-import { afterEach, describe, expect, it } from 'vitest'
-import {
-  Beef,
-  LockingScript,
-  MerklePath,
-  PrivateKey,
-  Transaction,
-  UnlockingScript,
-  Utils,
-} from '@bsv/sdk'
-import { setActiveWallet } from './session'
+import { PrivateKey, Script } from '@bsv/sdk'
+import { createActor } from 'xstate'
+import { describe, expect, it } from 'vitest'
+import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import {
   calculateMarketSettlement,
-  createCancelMarketListingAdvert,
-  createMarketListingAdvert,
-  createMarketPurchaseIntent,
-  createMarketSettlementReceipt,
-  deterministicJson,
-  getMarketSaleStatus,
-  hashMarketProvenance,
   isMarketListingOrigin,
-  listingPreimage,
-  marketFeePayToAddress,
-  purchaseIntentPreimage,
-  settlementReceiptPreimage,
-  verifyMarketListingProvenance,
-  verifyMarketPurchaseIntent,
-  verifyMarketSettlementReceipt,
-  type MarketListingAdvert,
 } from './marketListing'
 import {
-  MARKET_FEE_BASIS_POINTS,
-  MARKET_FEE_IDENTITY_KEY,
-  MARKET_FEE_PAY_TO_ADDRESS,
-} from './walletConfig'
-import type { ProvenanceV2 } from './oneSatProvenance'
+  chooseMarketCancelPath,
+  chooseMarketListingPath,
+} from './marketListingPath'
+import {
+  encodeMarketOffer,
+  MARKET_OFFER_MAGIC,
+  parseMarketOffer,
+  type MarketOfferFields,
+} from './marketOverlayProtocol'
 
-const ORD_ENVELOPE =
-  '0063036f726451' + '0a746578742f706c61696e' + '0002' + '6869' + '68'
-
-function fixture(): { provenance: ProvenanceV2; outpoint: string } {
-  const origin = new Transaction()
-  origin.addOutput({
-    satoshis: 1,
-    lockingScript: LockingScript.fromHex(ORD_ENVELOPE),
-  })
-  const tip = new Transaction()
-  tip.addInput({
-    sourceTransaction: origin,
-    sourceOutputIndex: 0,
-    unlockingScript: new UnlockingScript(),
-  })
-  tip.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
-  const beef = new Beef()
-  const entry = beef.mergeRawTx(origin.toBinary())
-  entry.bumpIndex = beef.mergeBump(
-    new MerklePath(900_000, [
-      [
-        { offset: 0, hash: origin.id('hex'), txid: true },
-        { offset: 1, duplicate: true },
-      ],
-    ]),
-  )
-  beef.mergeRawTx(tip.toBinary())
-  const originOutpoint = `${origin.id('hex')}_0`
-  const tipOutpoint = `${tip.id('hex')}_0`
+function fixture(): MarketOfferFields {
+  const seller = PrivateKey.fromHex('1'.padStart(64, '0')).toPublicKey()
+  const fee = PrivateKey.fromHex('2'.padStart(64, '0')).toPublicKey()
   return {
-    outpoint: `${tip.id('hex')}.0`,
-    provenance: {
-      v: 2,
-      origin: originOutpoint,
-      tip: tipOutpoint,
-      path: [tipOutpoint, originOutpoint],
-      beefB64: btoa(String.fromCharCode(...beef.toBinaryAtomic(tip.id('hex')))),
-    },
+    magic: MARKET_OFFER_MAGIC,
+    version: 1,
+    itemVout: 0,
+    sellerIdentityKey: seller.toString(),
+    payTo: seller.toAddress('mainnet'),
+    grossPriceSats: 101,
+    feeIdentityKey: fee.toString(),
+    feePayTo: fee.toAddress('mainnet'),
+    feeBasisPoints: 500,
+    exactFeeSats: 5,
+    provenanceHash: 'ab'.repeat(32),
+    provenanceSize: 321,
+    provenanceVersion: 2,
+    expiresAt: 1_900_000_000_000,
+    nonce: 'cd'.repeat(16),
+    depositSats: 1,
+    messagebox: 'https://seller.example/v1/messagebox',
   }
 }
 
-function signAdvert(
-  key: PrivateKey,
-  advert: Omit<MarketListingAdvert, 'signature'>,
-): MarketListingAdvert {
-  const signature = key.sign(
-    Utils.toArray(listingPreimage(advert), 'utf8'),
-    undefined,
-    true,
-  )
-  return {
-    ...advert,
-    signature: Utils.toHex([
-      ...signature.r.toArray('be', 32),
-      ...signature.s.toArray('be', 32),
-    ]),
-  }
-}
-
-describe('market listing advert', () => {
-  afterEach(() => setActiveWallet(null))
-
-  it('builds, verifies and locally authorizes a v2 listing', async () => {
-    const { provenance, outpoint } = fixture()
-    const rootKeyHex = '1'.padStart(64, '0')
-    const privateKey = PrivateKey.fromHex(rootKeyHex)
-    const publicKey = privateKey.toPublicKey()
-    setActiveWallet({
-      wallet: {
-        listOutputs: async () => ({
-          totalOutputs: 1,
-          outputs: [
-            {
-              outpoint,
-              satoshis: 1,
-              customInstructions: JSON.stringify({
-                origin: provenance.origin,
-                provenance,
-              }),
-            },
-          ],
-        }),
-      } as never,
-      services: {} as never,
-      rootKeyHex,
-      identityKey: publicKey.toString(),
-      address: publicKey.toAddress('mainnet'),
-      handle: 'seller',
-      chain: 'main',
-    })
-
-    const result = await createMarketListingAdvert({
-      outpoint,
-      priceSats: 25_000,
-    })
-    expect(result.listing).toMatchObject({
-      outpoint: outpoint.replace('.', '_'),
-      origin: provenance.origin,
-      seller: publicKey.toString(),
-      payTo: publicKey.toAddress('mainnet'),
-      feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
-      feeBasisPoints: 500,
-      provenanceVersion: 2,
-    })
-    expect(result.listing.signature).toHaveLength(128)
-    await expect(
-      verifyMarketListingProvenance(result),
-    ).resolves.toEqual({ verified: true, reason: null })
-    const intent = await createMarketPurchaseIntent(result)
-    expect(intent).toMatchObject({
-      outpoint: result.listing.outpoint,
-      buyer: publicKey.toString(),
-      seller: publicKey.toString(),
-      priceSats: 25_000,
-      feeSats: 1_250,
-      totalSats: 25_000,
-    })
-    expect(verifyMarketPurchaseIntent(intent, result.listing)).toBe(true)
-    const receipt = createMarketSettlementReceipt({
-      intent,
-      settlementTxid: 'ab'.repeat(32),
-      sellerOutputIndex: 1,
-      feeOutputIndex: 2,
-    })
-    expect(verifyMarketSettlementReceipt(receipt, intent)).toBe(true)
-
-    const status = getMarketSaleStatus(result.listing)
-    expect(status.status).toBe('active')
-    expect(createCancelMarketListingAdvert(result.listing)).toMatchObject({
-      action: 'cancel',
-      outpoint: result.listing.outpoint,
-      nonce: result.listing.nonce,
-    })
-    expect(getMarketSaleStatus(result.listing).status).toBe('cancelled')
+describe('BRC-48 one-sat market offer', () => {
+  it('has an exact deterministic PushDrop vector and round-trips every field', () => {
+    const fields = fixture()
+    const first = encodeMarketOffer(fields)
+    expect(first).toBe(
+      '11315341542d4d41524b45542d4f46464552013101304230323739626536363765663964636262616335356130363239356365383730623037303239626663646232646365323864393539663238313562313666383137393822314267475a3974634e34726d394b427a446e374b7072517a3837535a323653414d4803313031423032633630343766393434316564376436643330343534303665393563303763643835633737386534623863656633636137616261633039623935633730396565352131634d68323238485443697753385a7361616b48384138777a65314a52355a735003353030013540616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261626162616261620333323101320d3139303030303030303030303020636463646364636463646364636463646364636463646364636463646364636401312468747470733a2f2f73656c6c65722e6578616d706c652f76312f6d657373616765626f78757575757575757575757575757575757576a914751e76e8199196d454941c45d1b3a323f1433bd688ac',
+    )
+    expect(encodeMarketOffer(fields)).toBe(first)
+    expect(parseMarketOffer(first)).toEqual(fields)
+    expect(Script.fromHex(first).chunks).toHaveLength(39)
   })
 
-  it('restricts signing to HandCash market hosts and local development', () => {
-    expect(isMarketListingOrigin('localhost:5201')).toBe(true)
-    expect(isMarketListingOrigin('preprod-market.handcash.io')).toBe(true)
-    expect(isMarketListingOrigin('https://market-v2.handcash.io')).toBe(true)
-    expect(isMarketListingOrigin('evil.example')).toBe(false)
+  it('rejects token field, cleanup, fee, and canonical encoding tampering', () => {
+    const fields = fixture()
+    expect(() =>
+      encodeMarketOffer({ ...fields, exactFeeSats: 6 }),
+    ).toThrow(/exact fee/i)
+    const script = Script.fromHex(encodeMarketOffer(fields))
+    script.setChunkOpCode(17, 0x76)
+    expect(() => parseMarketOffer(script.toHex())).toThrow()
+    const canonical = encodeMarketOffer(fields)
+    const magicHex = Buffer.from(MARKET_OFFER_MAGIC).toString('hex')
+    const tampered = canonical.replace(
+      magicHex,
+      `${'00'.repeat(MARKET_OFFER_MAGIC.length - 1)}01`,
+    )
+    expect(() => parseMarketOffer(tampered)).toThrow(/protocol/i)
   })
 
-  it('hashes canonical UTF-8 JSON and rejects tampered proof/output', async () => {
-    const { provenance, outpoint } = fixture()
-    const digest = hashMarketProvenance(provenance)
-    const sellerKey = PrivateKey.fromRandom()
+  it('classifies list and cancel paths without fallback', () => {
     expect(
-      deterministicJson({ z: 1, a: { y: 2, x: 3 } }),
-    ).toBe('{"a":{"x":3,"y":2},"z":1}')
-
-    const unsigned: Omit<MarketListingAdvert, 'signature'> = {
-      outpoint: outpoint.replace('.', '_'),
-      assetType: 'ordinal',
-      seller: sellerKey.toPublicKey().toString(),
-      payTo: 'unused',
-      priceSats: 100,
-      feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
-      feeBasisPoints: MARKET_FEE_BASIS_POINTS,
-      origin: provenance.origin,
-      provenanceHash: digest.hash,
-      provenanceSize: digest.size,
-      provenanceVersion: 2,
-      listedAt: Date.now(),
-      expiresAt: null,
-      nonce: '00'.repeat(16),
-    }
-    const base = signAdvert(sellerKey, unsigned)
-    await expect(
-      verifyMarketListingProvenance({
-        listing: base,
-        provenance: { ...provenance, contentType: 'tampered' },
+      chooseMarketListingPath({
+        itemOutpoint: `${'ab'.repeat(32)}_0`,
+        satoshis: 1,
+        ordinal: true,
+        provenanceProven: true,
+        termsValid: true,
       }),
-    ).resolves.toMatchObject({
-      verified: false,
-      reason: 'PROVENANCE_COMMITMENT_MISMATCH',
-    })
-    await expect(
-      verifyMarketListingProvenance({
-        listing: signAdvert(sellerKey, {
-          ...unsigned,
-          outpoint: `${'ab'.repeat(32)}_1`,
-        }),
-        provenance,
+    ).toMatchObject({ path: 'createOffer' })
+    expect(
+      chooseMarketListingPath({
+        itemOutpoint: 'x',
+        satoshis: 1,
+        ordinal: false,
+        provenanceProven: true,
+        termsValid: true,
       }),
-    ).resolves.toMatchObject({
-      verified: false,
-      reason: expect.stringContaining('ITEM_ORIGIN_UNPROVEN'),
-    })
+    ).toEqual({ path: 'refuse', reason: 'not-ordinal' })
+    expect(
+      chooseMarketCancelPath({
+        offerOutpoint: 'offer',
+        held: false,
+        valid: true,
+        active: true,
+      }),
+    ).toEqual({ path: 'refuse', reason: 'offer-not-held' })
   })
 
-  it('includes a 500 bps fee in buyer total with deterministic rounding', () => {
-    expect(MARKET_FEE_BASIS_POINTS).toBe(500)
-    expect(calculateMarketSettlement(100)).toEqual({
-      priceSats: 100,
-      sellerSats: 95,
-      feeSats: 5,
+  it('allows abort only before signing and routes unknown signing to recovery', () => {
+    const actor = createActor(marketListingMachine).start()
+    actor.send({
+      type: 'LIST',
+      path: { path: 'createOffer', itemOutpoint: 'item' },
     })
+    actor.send({ type: 'STAGED', reference: 'ref' })
+    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(true)
+    actor.send({ type: 'SIGNED_UNKNOWN' })
+    expect(mayAbortMarketListing(actor.getSnapshot())).toBe(false)
+    actor.send({ type: 'FAIL', error: 'lost receipt' })
+    expect(actor.getSnapshot().matches('recovery')).toBe(true)
+  })
+
+  it('refunds the one-sat offer deposit to seller and pins market origins', () => {
     expect(calculateMarketSettlement(101)).toEqual({
       priceSats: 101,
-      sellerSats: 96,
+      sellerSats: 97,
       feeSats: 5,
     })
-    expect(
-      marketFeePayToAddress({
-        feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
-        feeBasisPoints: MARKET_FEE_BASIS_POINTS,
-      }),
-    ).toBe(MARKET_FEE_PAY_TO_ADDRESS)
-  })
-
-  it('matches Worker purchase-intent and receipt preimages byte for byte', () => {
-    const intent = {
-      intentId: 'd'.repeat(32),
-      outpoint: `${'a'.repeat(64)}_0`,
-      buyer: `02${'b'.repeat(64)}`,
-      seller: `03${'c'.repeat(64)}`,
-      priceSats: 100_000,
-      feeSats: 5_000,
-      totalSats: 100_000,
-      provenanceHash: 'e'.repeat(64),
-      createdAt: 1_700_000_000_000,
-      expiresAt: 1_700_000_090_000,
-      nonce: 'deadbeefdeadbeef',
-    }
-    expect(purchaseIntentPreimage(intent)).toBe(
-      [
-        'HandCash-Market-Purchase-Intent-v1',
-        intent.intentId,
-        intent.outpoint,
-        intent.buyer,
-        intent.seller,
-        '100000',
-        '5000',
-        '100000',
-        intent.provenanceHash,
-        String(intent.createdAt),
-        String(intent.expiresAt),
-        intent.nonce,
-      ].join('\n'),
-    )
-    const receipt = {
-      receiptId: 'f'.repeat(32),
-      intentId: intent.intentId,
-      outpoint: intent.outpoint,
-      buyer: intent.buyer,
-      seller: intent.seller,
-      settlementTxid: '1'.repeat(64),
-      sellerOutputIndex: 1,
-      feeOutputIndex: 2,
-      settledAt: 1_700_000_001_000,
-    }
-    expect(settlementReceiptPreimage(receipt)).toBe(
-      [
-        'HandCash-Market-Settlement-Receipt-v1',
-        receipt.receiptId,
-        receipt.intentId,
-        receipt.outpoint,
-        receipt.buyer,
-        receipt.seller,
-        receipt.settlementTxid,
-        '1',
-        '2',
-        String(receipt.settledAt),
-      ].join('\n'),
-    )
-  })
-
-  it('stages the item as an external signable input', () => {
-    const itemInput = {
-      outpoint: `${'ab'.repeat(32)}.1`,
-      inputDescription: 'Listed market item',
-      unlockingScriptLength: 108,
-    }
-    expect(itemInput).toMatchObject({
-      unlockingScriptLength: 108,
-    })
+    expect(isMarketListingOrigin('brc-cloud.bcryderman.workers.dev')).toBe(true)
+    expect(isMarketListingOrigin('evil.workers.dev')).toBe(false)
   })
 })

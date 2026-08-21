@@ -19,11 +19,25 @@ const findOutputs = vi.fn(async () => [
   { outputId: 12, change: true, spendable: true, lockingScript: '76a914' },
 ])
 
+const {
+  abortAction,
+  listNoSendActions,
+} = vi.hoisted(() => ({
+  abortAction: vi.fn(async () => ({ aborted: true })),
+  listNoSendActions: vi.fn(async (_args?: unknown, abort = false) => ({
+    totalActions: abort ? 0 : 2,
+    actions: abort
+      ? []
+      : [{ reference: 'keep-me' }, { reference: 'stale' }],
+  })),
+}))
+
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     chain: 'main',
     wallet: {
-      listNoSendActions: async () => ({ totalActions: 0, actions: [] }),
+      listNoSendActions,
+      abortAction,
       actionBatch: { abort: async () => false },
       storage: {
         runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
@@ -38,6 +52,10 @@ vi.mock('./session', () => ({
       },
     },
   }),
+}))
+
+vi.mock('./marketSettlement', () => ({
+  protectedMarketActionReferences: () => new Set(['keep-me']),
 }))
 
 const sweepChangeScripts = vi.fn(async (_args?: unknown) => ({
@@ -135,5 +153,15 @@ describe('actionReview', () => {
     await releaseStuckNosends()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
     expect(reviewStatus).not.toHaveBeenCalled()
+  })
+
+  it('does not abort a live market nosend reference', async () => {
+    abortAction.mockClear()
+    listNoSendActions.mockClear()
+    const { releaseStuckNosends } = await import('./actionReview')
+    await releaseStuckNosends()
+    expect(listNoSendActions).toHaveBeenCalledWith({ labels: [], limit: 100 }, false)
+    expect(abortAction).toHaveBeenCalledWith({ reference: 'stale' })
+    expect(abortAction).not.toHaveBeenCalledWith({ reference: 'keep-me' })
   })
 })

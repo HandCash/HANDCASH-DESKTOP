@@ -29,4 +29,24 @@ describe('toolbox change-script hydration release floor', () => {
     const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
     expect(assertToolboxPatchPinned(root).version).toBe(installedToolboxVersion())
   })
+
+  it('gates unproven BEEF only by the internal wallet scope', () => {
+    const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..')
+    const patch = readFileSync(
+      path.join(
+        root,
+        'patches',
+        `@bsv+wallet-toolbox-client+${installedToolboxVersion()}.patch`,
+      ),
+      'utf8',
+    )
+    expect(patch).toContain('__HANDCASH_INTERNAL_BEEF_SCOPE')
+    const added = patch
+      .split('\n')
+      .filter((line) => line.startsWith('+') && !line.startsWith('+++'))
+      .join('\n')
+    expect(added).not.toMatch(
+      /labels\).*includes\("(?:p2pkh-funding|brc29)"\)/,
+    )
+  })
 })

@@ -13,8 +13,10 @@ export type MarketPurchaseEvent =
   | { type: 'VERIFIED' }
   | { type: 'RESERVED'; reference: string }
   | { type: 'SELLER_SIGNED' }
-  | { type: 'DELIVERED' }
+  | { type: 'SIGNING' }
   | { type: 'BROADCASTED' }
+  | { type: 'COMMITTED' }
+  | { type: 'RECOVER' }
   | { type: 'TIMEOUT' }
   | { type: 'DUPLICATE' }
   | { type: 'COMPETING_BUYER' }
@@ -79,34 +81,43 @@ export const marketPurchaseMachine = setup({
     },
     reserving: {
       on: {
-        RESERVED: { target: 'awaitingSeller', actions: 'rememberReference' },
+        RESERVED: { target: 'preSignAbortable', actions: 'rememberReference' },
         FAIL: { target: 'failed', actions: 'setError' },
       },
     },
-    awaitingSeller: {
+    preSignAbortable: {
       on: {
-        SELLER_SIGNED: 'peerDeliver',
+        SELLER_SIGNED: 'sellerSigned',
         TIMEOUT: { target: 'aborting', actions: 'setError' },
         DUPLICATE: { target: 'aborting', actions: 'setError' },
         COMPETING_BUYER: { target: 'aborting', actions: 'setError' },
         FAIL: { target: 'aborting', actions: 'setError' },
       },
     },
-    peerDeliver: {
+    sellerSigned: {
       on: {
-        DELIVERED: 'confirmBroadcast',
+        SIGNING: 'signedUnknown',
         TIMEOUT: { target: 'aborting', actions: 'setError' },
         FAIL: { target: 'aborting', actions: 'setError' },
       },
     },
-    confirmBroadcast: {
+    signedUnknown: {
       on: {
-        BROADCASTED: 'done',
-        FAIL: { target: 'aborting', actions: 'setError' },
+        BROADCASTED: 'broadcast',
+        RECOVER: 'recovery',
+        FAIL: { target: 'recovery', actions: 'setError' },
+      },
+    },
+    broadcast: { on: { COMMITTED: 'committed', RECOVER: 'recovery' } },
+    recovery: {
+      on: {
+        BROADCASTED: 'broadcast',
+        COMMITTED: 'committed',
+        FAIL: { actions: 'setError' },
       },
     },
     aborting: { on: { ABORTED: 'failed' } },
-    done: { on: { RESET: { target: 'idle', actions: 'clear' } } },
+    committed: { on: { RESET: { target: 'idle', actions: 'clear' } } },
     failed: { on: { RESET: { target: 'idle', actions: 'clear' } } },
   },
 })
@@ -114,6 +125,16 @@ export const marketPurchaseMachine = setup({
 export type MarketPurchaseSnapshot = SnapshotFrom<
   typeof marketPurchaseMachine
 >
+
+export function mayAbortMarketPurchase(
+  snapshot: MarketPurchaseSnapshot,
+): boolean {
+  return (
+    snapshot.matches('preSignAbortable') ||
+    snapshot.matches('sellerSigned') ||
+    snapshot.matches('aborting')
+  )
+}
 
 export function mustAbortMarketPurchase(
   snapshot: MarketPurchaseSnapshot,
@@ -124,5 +145,5 @@ export function mustAbortMarketPurchase(
 export function mayBroadcastMarketPurchase(
   snapshot: MarketPurchaseSnapshot,
 ): boolean {
-  return snapshot.matches('confirmBroadcast')
+  return snapshot.matches('signedUnknown')
 }

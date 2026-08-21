@@ -1,17 +1,24 @@
 import {
+  Beef,
   BigNumber,
   Hash,
+  P2PKH,
   PrivateKey,
   PublicKey,
   Signature,
   Utils,
 } from '@bsv/sdk'
+import { SetupClient } from '@bsv/wallet-toolbox-client'
+import { createActor } from 'xstate'
+import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import { normalizeAppHost } from './appIdentity'
 import { getActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
+  buildCollectableCustomInstructions,
   parseProvenanceV2,
   tryBuildProvenanceV2,
+  verifyProvenanceForHeldTip,
   verifyProvenanceV2Async,
   type ProvenanceV2,
 } from './oneSatProvenance'
@@ -22,8 +29,22 @@ import {
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
 import { recordWalletEvent } from './appActivity'
+import { scheduleHistoryBackupPush } from './deviceSync'
+import {
+  encodeMarketOffer,
+  MARKET_ITEM_VOUT,
+  MARKET_OFFER_DEPOSIT_SATS,
+  MARKET_OFFER_VOUT,
+  normalizeMarketOfferFields,
+  parseMarketOffer,
+  type MarketOfferFields,
+} from './marketOverlayProtocol'
+import {
+  chooseMarketCancelPath,
+  chooseMarketListingPath,
+} from './marketListingPath'
+import { defaultMessageboxBase } from './messageTransport'
 
-export const MARKET_LISTING_PROTOCOL = 'HandCash-Market-Listing-v2'
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
 export const MARKET_SETTLEMENT_RECEIPT_PROTOCOL =
@@ -33,12 +54,18 @@ const LISTING_AUTH_STORAGE_KEY = 'handcash.market.listingAuthorizations.v2'
 
 export type MarketListingAdvert = {
   outpoint: string
-  assetType: 'ordinal' | 'bsv21'
+  offerOutpoint: string
+  offerLockingScript: string
+  assetType: 'ordinal'
   seller: string
   payTo: string
   priceSats: number
   feeIdentityKey: string
+  feePayTo: string
   feeBasisPoints: number
+  exactFeeSats: number
+  depositSats: 1
+  messagebox: string
   origin: string
   provenanceHash: string
   provenanceSize: number
@@ -46,19 +73,28 @@ export type MarketListingAdvert = {
   listedAt: number
   expiresAt: number | null
   nonce: string
-  signature: string
 }
 
 export type CreateMarketListingArgs = {
   outpoint: string
-  assetType?: 'ordinal' | 'bsv21'
+  assetType?: 'ordinal'
   priceSats: number
   expiresAt?: number | null
+  messagebox?: string | null
 }
 
 export type MarketListingPostPayload = {
   listing: MarketListingAdvert
   provenance: ProvenanceV2
+  txid: string
+  beef: number[]
+  token: {
+    outpoint: string
+    outputIndex: 1
+    satoshis: 1
+    lockingScript: string
+    fields: MarketOfferFields
+  }
 }
 
 export type MarketPurchaseIntent = {
@@ -90,13 +126,11 @@ export type MarketSettlementReceipt = {
 }
 
 export type MarketCancelAdvert = {
-  protocol: typeof MARKET_LISTING_PROTOCOL
   action: 'cancel'
-  outpoint: string
-  nonce: string
-  seller: string
-  cancelledAt: number
-  signature: string
+  itemOutpoint: string
+  offerOutpoint: string
+  txid: string
+  beef: number[]
 }
 
 export type MarketListingState =
@@ -123,6 +157,9 @@ export type MarketListingAuthorization = {
   reservationUntil?: number
   reservationTxCommitment?: string
   reservationIntent?: MarketPurchaseIntent
+  settlementTxid?: string
+  proceedsInternalized?: boolean
+  itemRetired?: boolean
   listing?: MarketListingAdvert
 }
 
@@ -143,31 +180,9 @@ export function isMarketListingOrigin(origin: string | undefined): boolean {
     bare === 'www.handcash.io' ||
     bare === 'market.handcash.io' ||
     bare === 'preprod-market.handcash.io' ||
-    bare === 'market-v2.handcash.io'
+    bare === 'market-v2.handcash.io' ||
+    bare === 'brc-cloud.bcryderman.workers.dev'
   )
-}
-
-export function listingPreimage(
-  advert: Omit<MarketListingAdvert, 'signature'>
-): string {
-  return [
-    MARKET_LISTING_PROTOCOL,
-    'list',
-    advert.outpoint,
-    advert.assetType,
-    advert.seller,
-    advert.payTo,
-    String(advert.priceSats),
-    advert.feeIdentityKey,
-    String(advert.feeBasisPoints),
-    advert.origin,
-    advert.provenanceHash,
-    String(advert.provenanceSize),
-    String(advert.provenanceVersion),
-    String(advert.listedAt),
-    advert.expiresAt == null ? '' : String(advert.expiresAt),
-    advert.nonce,
-  ].join('\n')
 }
 
 /** Field order is protocol and mirrors BRC-CLOUD/src/listingAdvert.js. */
@@ -469,10 +484,39 @@ export function findMarketListingAuthorizationBySaleId(
   saleId: string
 ): MarketListingAuthorization | null {
   return (
-    readAuthorizations().find(
-      (item) => item.state === 'reserved' && item.reservationSaleId === saleId
-    ) ?? null
+    readAuthorizations().find((item) => item.reservationSaleId === saleId) ?? null
   )
+}
+
+export function markMarketSettlementProgress(args: {
+  saleId: string
+  settlementTxid: string
+  proceedsInternalized?: boolean
+  itemRetired?: boolean
+}): MarketListingAuthorization {
+  const current = findMarketListingAuthorizationBySaleId(args.saleId)
+  if (!current) {
+    throw new MarketListingError('LISTING_NOT_AUTHORIZED', 'Sale reservation not found.')
+  }
+  if (
+    current.settlementTxid &&
+    current.settlementTxid !== args.settlementTxid.toLowerCase()
+  ) {
+    throw new MarketListingError(
+      'SETTLEMENT_TX_MISMATCH',
+      'A different settlement transaction is already recorded.'
+    )
+  }
+  const next: MarketListingAuthorization = {
+    ...current,
+    settlementTxid: args.settlementTxid.toLowerCase(),
+    proceedsInternalized:
+      current.proceedsInternalized || args.proceedsInternalized || undefined,
+    itemRetired: current.itemRetired || args.itemRetired || undefined,
+    updatedAt: Date.now(),
+  }
+  saveAuthorization(next)
+  return next
 }
 
 function parseCustomInstructions(raw: unknown): Record<string, unknown> {
@@ -519,6 +563,12 @@ async function loadListedOutput(outpoint: string) {
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
+  if ((args as { assetType?: string }).assetType === 'bsv21') {
+    throw new MarketListingError(
+      'MARKET_ASSET_UNSUPPORTED',
+      'Market overlay v1 supports one-sat ordinal collectables only.'
+    )
+  }
   const outpoint = normalizeOutpoint(args.outpoint)
   const { active, output } = await loadListedOutput(outpoint)
   const priceSats = Math.trunc(Number(args.priceSats))
@@ -562,60 +612,210 @@ export async function createMarketListingAdvert(
   }
   const digest = hashMarketProvenance(provenance)
   const nonce = randomNonce()
-  const unsigned: Omit<MarketListingAdvert, 'signature'> = {
-    outpoint,
-    assetType: args.assetType === 'bsv21' ? 'bsv21' : 'ordinal',
-    seller: active.identityKey.toLowerCase(),
+  const exactFeeSats = Math.floor(
+    (priceSats * MARKET_FEE_BASIS_POINTS) / 10_000
+  )
+  const fields = normalizeMarketOfferFields({
+    sellerIdentityKey: active.identityKey,
     payTo: active.address,
-    priceSats,
-    feeIdentityKey: MARKET_FEE_IDENTITY_KEY.toLowerCase(),
+    grossPriceSats: priceSats,
+    feeIdentityKey: MARKET_FEE_IDENTITY_KEY,
+    feePayTo: MARKET_FEE_PAY_TO_ADDRESS,
     feeBasisPoints: MARKET_FEE_BASIS_POINTS,
-    origin,
+    exactFeeSats,
     provenanceHash: digest.hash,
     provenanceSize: digest.size,
     provenanceVersion: MARKET_PROVENANCE_VERSION,
-    listedAt,
     expiresAt,
     nonce,
-  }
-  const advert = {
-    ...unsigned,
-    signature: rawSignatureHex(active.rootKeyHex, listingPreimage(unsigned)),
-  }
-  saveAuthorization({
-    key: listingAuthorizationKey(outpoint, nonce),
-    outpoint,
-    nonce,
-    seller: advert.seller,
-    origin,
-    provenanceHash: digest.hash,
-    priceSats,
-    state: 'active',
-    createdAt: listedAt,
-    updatedAt: listedAt,
-    listing: advert,
+    messagebox: args.messagebox?.trim() || defaultMessageboxBase(),
   })
-  recordWalletEvent({
-    method: 'market-list',
-    note: `Listed collectable for ${priceSats.toLocaleString()} sats`,
+  const offerLockingScript = encodeMarketOffer(fields)
+  const itemLockingScript = new P2PKH().lock(active.address).toHex()
+  const path = chooseMarketListingPath({
+    itemOutpoint: outpoint,
+    satoshis: output.satoshis ?? 0,
+    ordinal: (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
+    provenanceProven: true,
+    termsValid: true,
   })
-  return { listing: advert, provenance }
-}
-
-function verifyAdvertSignature(advert: MarketListingAdvert): boolean {
+  if (path.path === 'refuse') {
+    throw new MarketListingError('MARKET_LISTING_REFUSED', path.reason)
+  }
+  const chart = createActor(marketListingMachine).start()
+  chart.send({ type: 'LIST', path })
+  const itemTxid = outpoint.slice(0, 64)
+  const inputBEEF = (await getBeefForTxidCached(active, itemTxid)).toBinary()
+  let reference: string | null = null
   try {
-    const bytes = Utils.toArray(advert.signature, 'hex')
-    if (bytes.length !== 64) return false
-    const signature = new Signature(
-      new BigNumber(bytes.slice(0, 32)),
-      new BigNumber(bytes.slice(32))
+    const created = await active.wallet.createAction({
+      description: 'Create 1Sat market offer',
+      labels: ['market-v3', 'brc48', 'brc147', 'brc150', 'brc159'],
+      inputBEEF,
+      inputs: [
+        {
+          outpoint: outpoint.replace('_', '.'),
+          inputDescription: 'Market item input zero',
+          unlockingScriptLength: 108,
+        },
+      ],
+      outputs: [
+        {
+          lockingScript: itemLockingScript,
+          satoshis: 1,
+          outputDescription: 'Held market item',
+          basket: '1sat',
+          tags: [
+            'ordinal',
+            'market-held',
+            `origin:${origin.replace('_', '.')}`,
+          ],
+          customInstructions: buildCollectableCustomInstructions({
+            origin,
+            name:
+              typeof custom.name === 'string' && custom.name.trim()
+                ? custom.name.trim()
+                : 'Market item',
+            provenance,
+          }),
+        },
+        {
+          lockingScript: offerLockingScript,
+          satoshis: MARKET_OFFER_DEPOSIT_SATS,
+          outputDescription: 'BRC-48 market offer',
+          basket: 'market-offers',
+          tags: ['brc48', `nonce:${nonce}`, `origin:${origin.replace('_', '.')}`],
+          customInstructions: JSON.stringify({ fields }),
+        },
+      ],
+      options: {
+        randomizeOutputs: false,
+        signAndProcess: false,
+        trustSelf: 'known',
+      },
+    })
+    const signable = created.signableTransaction
+    if (!signable) throw new Error('Market listing did not return a signable action')
+    reference = signable.reference
+    chart.send({ type: 'STAGED', reference })
+    const beef = Beef.fromBinary(signable.tx)
+    const tx = beef.txs.find((entry) =>
+      entry.tx?.inputs.some(
+        (input) =>
+          String(input.sourceTXID).toLowerCase() === itemTxid &&
+          input.sourceOutputIndex === Number(outpoint.split('_')[1])
+      )
+    )?.tx
+    if (!tx) throw new Error('Market listing transaction is missing item input')
+    if (
+      String(tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
+      tx.inputs[0]?.sourceOutputIndex !== Number(outpoint.split('_')[1]) ||
+      tx.outputs[MARKET_ITEM_VOUT]?.satoshis !== 1 ||
+      tx.outputs[MARKET_ITEM_VOUT]?.lockingScript?.toHex() !== itemLockingScript ||
+      tx.outputs[MARKET_OFFER_VOUT]?.satoshis !== MARKET_OFFER_DEPOSIT_SATS ||
+      tx.outputs[MARKET_OFFER_VOUT]?.lockingScript?.toHex() !== offerLockingScript
+    ) {
+      throw new MarketListingError(
+        'MARKET_LISTING_SHAPE_MISMATCH',
+        'Wallet did not preserve BRC-159 item/input and offer output ordering.'
+      )
+    }
+    tx.inputs[0]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+      PrivateKey.fromHex(active.rootKeyHex),
+      1
     )
-    return signature.verify(
-      Utils.toArray(listingPreimage(advert), 'utf8'),
-      PublicKey.fromString(advert.seller)
-    )
-  } catch {
-    return false
+    await tx.sign()
+    const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Market item signature missing')
+    chart.send({ type: 'SIGNED_UNKNOWN' })
+    const signed = await active.wallet.signAction({
+      reference,
+      spends: { 0: { unlockingScript } },
+      options: { acceptDelayedBroadcast: false },
+    })
+    const txid = signed.txid?.toLowerCase() ?? ''
+    const atomic = signed.tx ? Array.from(signed.tx) : []
+    if (!/^[0-9a-f]{64}$/.test(txid) || atomic.length === 0) {
+      chart.send({ type: 'RECOVER' })
+      throw new MarketListingError(
+        'MARKET_LISTING_BROADCAST_UNKNOWN',
+        'Listing was signed but wallet processing did not return a transaction.'
+      )
+    }
+    chart.send({ type: 'BROADCASTED', txid })
+    const listedOutpoint = `${txid}_0`
+    const offerOutpoint = `${txid}_1`
+    const advert: MarketListingAdvert = {
+      outpoint: listedOutpoint,
+      offerOutpoint,
+      offerLockingScript,
+      assetType: 'ordinal',
+      seller: fields.sellerIdentityKey,
+      payTo: fields.payTo,
+      priceSats: fields.grossPriceSats,
+      feeIdentityKey: fields.feeIdentityKey,
+      feePayTo: fields.feePayTo,
+      feeBasisPoints: fields.feeBasisPoints,
+      exactFeeSats: fields.exactFeeSats,
+      depositSats: fields.depositSats,
+      messagebox: fields.messagebox,
+      origin,
+      provenanceHash: fields.provenanceHash,
+      provenanceSize: fields.provenanceSize,
+      provenanceVersion: fields.provenanceVersion,
+      listedAt,
+      expiresAt: fields.expiresAt,
+      nonce: fields.nonce,
+    }
+    // Authorization is written only after signAction produced the processed result.
+    saveAuthorization({
+      key: listingAuthorizationKey(listedOutpoint, nonce),
+      outpoint: listedOutpoint,
+      nonce,
+      seller: advert.seller,
+      origin,
+      provenanceHash: digest.hash,
+      priceSats,
+      state: 'active',
+      createdAt: listedAt,
+      updatedAt: listedAt,
+      listing: advert,
+    })
+    chart.send({ type: 'COMMITTED' })
+    scheduleHistoryBackupPush('market-list')
+    recordWalletEvent({
+      method: 'market-list',
+      note: `Listed collectable for ${priceSats.toLocaleString()} sats`,
+    })
+    return {
+      listing: advert,
+      provenance,
+      txid,
+      beef: atomic,
+      token: {
+        outpoint: offerOutpoint,
+        outputIndex: MARKET_OFFER_VOUT,
+        satoshis: MARKET_OFFER_DEPOSIT_SATS,
+        lockingScript: offerLockingScript,
+        fields,
+      },
+    }
+  } catch (err) {
+    if (reference && mayAbortMarketListing(chart.getSnapshot())) {
+      await active.wallet.abortAction({ reference }).catch(() => {})
+      chart.send({
+        type: 'ABORTED',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    } else {
+      chart.send({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    throw err
+  } finally {
+    chart.stop()
   }
 }
 
@@ -630,8 +830,12 @@ export async function verifyMarketListingProvenance(args: {
     return fail('INVALID_PROVENANCE_VERSION')
   }
   let outpoint: string
+  let offerOutpoint: string
+  let token: MarketOfferFields
   try {
     outpoint = normalizeOutpoint(advert.outpoint)
+    offerOutpoint = normalizeOutpoint(advert.offerOutpoint)
+    token = parseMarketOffer(advert.offerLockingScript)
   } catch (err) {
     return fail(
       `INVALID_LISTED_OUTPUT: ${
@@ -639,12 +843,37 @@ export async function verifyMarketListingProvenance(args: {
       }`
     )
   }
+  if (
+    outpoint.slice(0, 64) !== offerOutpoint.slice(0, 64) ||
+    outpoint !== `${outpoint.slice(0, 64)}_0` ||
+    offerOutpoint !== `${outpoint.slice(0, 64)}_1`
+  ) {
+    return fail('OFFER_ITEM_OUTPOINT_MISMATCH')
+  }
   const digest = hashMarketProvenance(provenance)
   if (
     digest.hash !== advert.provenanceHash.toLowerCase() ||
     digest.size !== advert.provenanceSize
   ) {
     return fail('PROVENANCE_COMMITMENT_MISMATCH')
+  }
+  if (
+    token.sellerIdentityKey !== advert.seller.toLowerCase() ||
+    token.payTo !== advert.payTo ||
+    token.grossPriceSats !== advert.priceSats ||
+    token.feeIdentityKey !== advert.feeIdentityKey.toLowerCase() ||
+    token.feePayTo !== advert.feePayTo ||
+    token.feeBasisPoints !== advert.feeBasisPoints ||
+    token.exactFeeSats !== advert.exactFeeSats ||
+    token.provenanceHash !== digest.hash ||
+    token.provenanceSize !== digest.size ||
+    token.provenanceVersion !== advert.provenanceVersion ||
+    token.expiresAt !== advert.expiresAt ||
+    token.nonce !== advert.nonce.toLowerCase() ||
+    token.depositSats !== advert.depositSats ||
+    token.messagebox !== advert.messagebox
+  ) {
+    return fail('OFFER_TOKEN_TERMS_MISMATCH')
   }
   try {
     if (
@@ -670,12 +899,10 @@ export async function verifyMarketListingProvenance(args: {
   ) {
     return fail('INVALID_LISTING_TERMS')
   }
-  if (!verifyAdvertSignature(advert)) {
-    return fail('INVALID_LISTING_SIGNATURE')
-  }
   const active = getActiveWallet()
-  const verified = await verifyProvenanceV2Async(provenance, outpoint, {
-    enforceBudget: false,
+  const verified = await verifyProvenanceForHeldTip({
+    provenance,
+    heldOutpoint: outpoint,
     ...(active
       ? { getBeef: (txid: string) => getBeefForTxidCached(active, txid) }
       : {}),
@@ -699,7 +926,11 @@ export function calculateMarketSettlement(priceSats: number): {
   }
   // Fee is included in the buyer's total; remainder always belongs to seller.
   const feeSats = Math.floor((price * MARKET_FEE_BASIS_POINTS) / 10_000)
-  return { priceSats: price, sellerSats: price - feeSats, feeSats }
+  return {
+    priceSats: price,
+    sellerSats: price - feeSats + MARKET_OFFER_DEPOSIT_SATS,
+    feeSats,
+  }
 }
 
 export function marketFeePayToAddress(
@@ -855,7 +1086,7 @@ export function getMarketSaleStatus(args: { outpoint: string }): {
   }
 }
 
-export function cancelMarketListing(args: {
+function markMarketListingCancelled(args: {
   outpoint: string
   nonce: string
 }): MarketListingAuthorization {
@@ -888,40 +1119,136 @@ export function cancelMarketListing(args: {
   return cancelled
 }
 
-export function createCancelMarketListingAdvert(args: {
+export async function createCancelMarketListingAdvert(args: {
   outpoint: string
   nonce?: string
-}): MarketCancelAdvert {
+}): Promise<MarketCancelAdvert> {
   const current = getMarketListingAuthorization(args)
   if (!current) {
     throw new MarketListingError('LISTING_NOT_AUTHORIZED', 'Listing not found.')
   }
-  const cancelled = cancelMarketListing({
-    outpoint: current.outpoint,
-    nonce: current.nonce,
-  })
-  const active = getActiveWallet()!
-  const unsigned = {
-    protocol: MARKET_LISTING_PROTOCOL as typeof MARKET_LISTING_PROTOCOL,
-    action: 'cancel' as const,
-    outpoint: cancelled.outpoint,
-    nonce: cancelled.nonce,
-    seller: cancelled.seller,
-    cancelledAt: cancelled.updatedAt,
+  const active = getActiveWallet()
+  if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
+  const listing = current.listing
+  if (!listing) throw new MarketListingError('INVALID_OFFER', 'Listing token is missing.')
+  let valid = false
+  try {
+    parseMarketOffer(listing.offerLockingScript)
+    valid = true
+  } catch {
+    valid = false
   }
-  return {
-    ...unsigned,
-    signature: rawSignatureHex(
-      active.rootKeyHex,
-      [
-        unsigned.protocol,
-        unsigned.action,
-        unsigned.outpoint,
-        unsigned.nonce,
-        unsigned.seller,
-        String(unsigned.cancelledAt),
-      ].join('\n')
-    ),
+  const held = await active.wallet.listOutputs({
+    basket: 'market-offers',
+    tags: [`nonce:${current.nonce}`],
+    tagQueryMode: 'all',
+    include: 'locking scripts',
+    limit: 2,
+    seekPermission: false,
+  })
+  const offerHeld = held.outputs.some(
+    (output) => normalizeOutpoint(output.outpoint) === normalizeOutpoint(listing.offerOutpoint)
+  )
+  const path = chooseMarketCancelPath({
+    offerOutpoint: listing.offerOutpoint,
+    held: offerHeld,
+    valid,
+    active: current.state === 'active',
+  })
+  if (path.path === 'refuse') {
+    throw new MarketListingError('MARKET_CANCEL_REFUSED', path.reason)
+  }
+  const chart = createActor(marketListingMachine).start()
+  chart.send({ type: 'CANCEL', path })
+  let reference: string | null = null
+  try {
+    const offerTxid = listing.offerOutpoint.slice(0, 64)
+    const inputBEEF = (await getBeefForTxidCached(active, offerTxid)).toBinary()
+    const created = await active.wallet.createAction({
+      description: 'Cancel BRC-48 market offer',
+      labels: ['market-v3', 'brc48', 'market-cancel'],
+      inputBEEF,
+      inputs: [
+        {
+          outpoint: listing.offerOutpoint.replace('_', '.'),
+          inputDescription: 'Cancelled market offer',
+          unlockingScriptLength: 108,
+        },
+      ],
+      options: {
+        randomizeOutputs: false,
+        signAndProcess: false,
+        trustSelf: 'known',
+      },
+    })
+    const signable = created.signableTransaction
+    if (!signable) throw new Error('Cancellation did not return a signable action')
+    reference = signable.reference
+    chart.send({ type: 'STAGED', reference })
+    const beef = Beef.fromBinary(signable.tx)
+    const tx = beef.txs.find((entry) =>
+      entry.tx?.inputs.some(
+        (input) =>
+          String(input.sourceTXID).toLowerCase() === offerTxid &&
+          input.sourceOutputIndex === MARKET_OFFER_VOUT
+      )
+    )?.tx
+    if (
+      !tx ||
+      String(tx.inputs[0]?.sourceTXID).toLowerCase() !== offerTxid ||
+      tx.inputs[0]?.sourceOutputIndex !== MARKET_OFFER_VOUT
+    ) {
+      throw new Error('Cancellation must spend the offer token as input zero')
+    }
+    tx.inputs[0]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
+      PrivateKey.fromHex(active.rootKeyHex),
+      MARKET_OFFER_DEPOSIT_SATS
+    )
+    await tx.sign()
+    const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Offer cancellation signature missing')
+    chart.send({ type: 'SIGNED_UNKNOWN' })
+    const signed = await active.wallet.signAction({
+      reference,
+      spends: { 0: { unlockingScript } },
+      options: { acceptDelayedBroadcast: false },
+    })
+    const txid = signed.txid?.toLowerCase() ?? ''
+    const beefBytes = signed.tx ? Array.from(signed.tx) : []
+    if (!/^[0-9a-f]{64}$/.test(txid) || beefBytes.length === 0) {
+      chart.send({ type: 'RECOVER' })
+      throw new Error('Cancellation broadcast result is unknown')
+    }
+    chart.send({ type: 'BROADCASTED', txid })
+    markMarketListingCancelled({
+      outpoint: current.outpoint,
+      nonce: current.nonce,
+    })
+    chart.send({ type: 'COMMITTED' })
+    scheduleHistoryBackupPush('market-list')
+    return {
+      action: 'cancel',
+      itemOutpoint: current.outpoint,
+      offerOutpoint: listing.offerOutpoint,
+      txid,
+      beef: beefBytes,
+    }
+  } catch (err) {
+    if (reference && mayAbortMarketListing(chart.getSnapshot())) {
+      await active.wallet.abortAction({ reference }).catch(() => {})
+      chart.send({
+        type: 'ABORTED',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    } else {
+      chart.send({
+        type: 'FAIL',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+    throw err
+  } finally {
+    chart.stop()
   }
 }
 

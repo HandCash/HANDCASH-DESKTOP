@@ -16,9 +16,11 @@ export type MarketSellerSettlementEvent =
       path: MarketSellerSettlePath
     }
   | { type: 'VALIDATED' }
-  | { type: 'ITEM_INPUT_SIGNED' }
+  | { type: 'SELLER_INPUTS_SIGNED' }
   | { type: 'DELIVERED' }
   | { type: 'BROADCAST_CONFIRMED' }
+  | { type: 'PROCEEDS_INTERNALIZED' }
+  | { type: 'ITEM_RETIRED' }
   | { type: 'TIMEOUT' }
   | { type: 'DUPLICATE' }
   | { type: 'COMPETING_BUYER' }
@@ -78,16 +80,16 @@ export const marketSellerSettlementMachine = setup({
     },
     validating: {
       on: {
-        VALIDATED: 'signingItemInput',
+        VALIDATED: 'signingSellerInputs',
         DUPLICATE: { target: 'refused', actions: 'setError' },
         COMPETING_BUYER: { target: 'refused', actions: 'setError' },
         TIMEOUT: { target: 'refused', actions: 'setError' },
         FAIL: { target: 'refused', actions: 'setError' },
       },
     },
-    signingItemInput: {
+    signingSellerInputs: {
       on: {
-        ITEM_INPUT_SIGNED: 'peerDeliver',
+        SELLER_INPUTS_SIGNED: 'peerDeliver',
         TIMEOUT: { target: 'refused', actions: 'setError' },
         FAIL: { target: 'refused', actions: 'setError' },
       },
@@ -101,9 +103,29 @@ export const marketSellerSettlementMachine = setup({
     },
     awaitingBroadcast: {
       on: {
-        BROADCAST_CONFIRMED: 'settled',
+        BROADCAST_CONFIRMED: 'internalizingProceeds',
         TIMEOUT: { target: 'refused', actions: 'setError' },
         FAIL: { target: 'refused', actions: 'setError' },
+      },
+    },
+    internalizingProceeds: {
+      on: {
+        PROCEEDS_INTERNALIZED: 'retiringItem',
+        FAIL: { target: 'recovery', actions: 'setError' },
+      },
+    },
+    retiringItem: {
+      on: {
+        ITEM_RETIRED: 'settled',
+        FAIL: { target: 'recovery', actions: 'setError' },
+      },
+    },
+    recovery: {
+      on: {
+        BROADCAST_CONFIRMED: 'internalizingProceeds',
+        PROCEEDS_INTERNALIZED: 'retiringItem',
+        ITEM_RETIRED: 'settled',
+        FAIL: { actions: 'setError' },
       },
     },
     settled: { on: { RESET: { target: 'idle', actions: 'clear' } } },
