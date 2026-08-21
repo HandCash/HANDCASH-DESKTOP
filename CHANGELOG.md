@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.272] - 2026-08-21
+
+### Changed
+
+- Version opened so Mobile can publish an APK against a clean UI-core pin. No
+  wallet behaviour changed; the push-time version guard runs as a Node hook.
+
 ## [1.2.271] - 2026-08-21
 
 ### Fixed
@@ -28,6 +35,13 @@
 - **Phrase import can resume an item sweep** instead of starting over after a
   stop. PeerPay links open Send as a request, and a phone can open a BRC-100 app
   in the wallet's own browser when Chrome cannot reach loopback.
+- **A burn appears in Activity the moment you confirm it**, and ends there as
+  burned or as a named failure, instead of only after the spend queue and the
+  network had their turn. A burn also reuses the tip the wallet already holds,
+  so an item no longer fails to burn because an indexer was slow.
+- **You can forget an item instead of burning it.** Forget removes it from this
+  wallet without broadcasting anything; the output stays where it is on chain.
+  Listing, cancelling, buying, and selling on Market are recorded in Activity.
 
 ## [1.2.269] - 2026-08-20
 
