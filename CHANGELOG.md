@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.2.278] - 2026-08-21
+
+### Fixed
+
+- **Listing an item no longer rebuilds its origin.** Publishing inlined every
+  BRC-150 path body the proof carried by reference — for a batch-mint item, a
+  multi-megabyte origin — and inlining it is what pushed the proof past the
+  overlay's size budget, so the result was measured, discarded, and the proof
+  the wallet already held was published instead. The wallet now checks what the
+  overlay will fetch for itself before spending anything on it.
+
 ## [1.2.277] - 2026-08-21
 
 ### Fixed
