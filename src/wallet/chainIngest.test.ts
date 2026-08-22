@@ -23,6 +23,12 @@ const mockPruneMissingOnChainActivity = vi.fn(async () => 0)
 const mockExpireStaleInboundPending = vi.fn(() => 0)
 const mockRehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
 const mockRestoreLiveSpendableOutputs = vi.fn(async () => 0)
+const mockSweepChangeScripts = vi.fn(async () => ({
+  scanned: 0,
+  healed: 0,
+  quarantined: 0,
+  refused: 0,
+}))
 
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
@@ -73,6 +79,11 @@ vi.mock('./oneSatImportGuard', () => ({
 
 vi.mock('./actionReview', () => ({
   abortReservedActionBatches: vi.fn(async () => undefined),
+  releaseStuckNosends: vi.fn(async () => undefined),
+}))
+
+vi.mock('./changeScriptFate', () => ({
+  sweepChangeScripts: (...args: unknown[]) => mockSweepChangeScripts(...args),
 }))
 
 vi.mock('./oneSatImport', () => ({
@@ -121,6 +132,7 @@ function resetMaintenanceMocks(): void {
   mockExpireStaleInboundPending.mockReset()
   mockRehideInputsOfLiveLocalTxs.mockReset()
   mockRestoreLiveSpendableOutputs.mockReset()
+  mockSweepChangeScripts.mockReset()
 
   mockReconcileDualLayerState.mockResolvedValue({
     checked: 0,
@@ -133,6 +145,12 @@ function resetMaintenanceMocks(): void {
   mockExpireStaleInboundPending.mockReturnValue(0)
   mockRehideInputsOfLiveLocalTxs.mockResolvedValue(undefined)
   mockRestoreLiveSpendableOutputs.mockResolvedValue(0)
+  mockSweepChangeScripts.mockResolvedValue({
+    scanned: 0,
+    healed: 0,
+    quarantined: 0,
+    refused: 0,
+  })
 }
 
 describe('refreshFromChain pre-scan maintenance', () => {
@@ -176,9 +194,34 @@ describe('refreshFromChain pre-scan maintenance', () => {
     expect(mockHealGhostSentItems).toHaveBeenCalledTimes(1)
     expect(mockExpireStaleInboundPending).toHaveBeenCalledTimes(1)
     expect(mockPruneMissingOnChainActivity).toHaveBeenCalledTimes(1)
+    expect(mockSweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
     expect(mockRehideInputsOfLiveLocalTxs).toHaveBeenCalledTimes(1)
     expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
     expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+  })
+
+  it('rebuilds change scripts from chain before restoring spendable outputs', async () => {
+    mockSweepChangeScripts
+      .mockResolvedValueOnce({
+        scanned: 80,
+        healed: 12,
+        quarantined: 0,
+        refused: 0,
+      })
+      .mockResolvedValueOnce({
+        scanned: 68,
+        healed: 0,
+        quarantined: 0,
+        refused: 0,
+      })
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
+    expect(mockSweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
+    expect(mockSweepChangeScripts.mock.invocationCallOrder[0]).toBeLessThan(
+      mockRestoreLiveSpendableOutputs.mock.invocationCallOrder[0],
+    )
   })
 
   it('overlaps the independent steps instead of paying for each in turn', async () => {

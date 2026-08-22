@@ -640,6 +640,27 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       } catch (err) {
         console.warn('[chain-ingest] release stuck nosends skipped', err)
       }
+      // BRC-39 merges and device sync can leave change rows with satoshis but no
+      // locking script. restoreLiveSpendableOutputs skips those rows entirely, so
+      // spendable stays 0 while pendingChange credits them — funds look present but
+      // Pay cannot select them. Rebuild scripts from local raw tx first, then from
+      // chain (budgeted per pass) before the spendable restore loop.
+      try {
+        const { sweepChangeScripts } = await import('./changeScriptFate')
+        let scriptsHealed = 0
+        for (let pass = 0; pass < 4; pass += 1) {
+          const sweep = await sweepChangeScripts({ fromChain: true })
+          scriptsHealed += sweep.healed
+          if (sweep.healed === 0) break
+        }
+        if (scriptsHealed > 0) {
+          console.info(
+            `[chain-ingest] rebuilt ${scriptsHealed} change locking script(s) before spendable restore`,
+          )
+        }
+      } catch (err) {
+        console.warn('[chain-ingest] change script sweep skipped', err)
+      }
       await rehideInputsOfLiveLocalTxs()
       let restored = 0
       for (let pass = 0; pass < 5; pass += 1) {
