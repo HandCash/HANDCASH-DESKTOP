@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.281] - 2026-08-22
+
+### Fixed
+
+- **A cold launch no longer shows a balance of zero.** Unlock raced the local
+  read against a 500 ms timer that resolved to a literal zero, so an identity
+  without a stored figure entered the wallet looking empty until a later read
+  healed it. Unlock now opens on this identity's last confirmed figure when one
+  exists, waits for a real answer when it does not, and refuses rather than
+  reporting zero when the store cannot be read. A balance that is genuinely
+  zero still shows zero.
+- **Collectables stay on screen while history restores.** Recompose replaces
+  local state before pulling BRC-39, and a basket read in that window succeeded
+  against a half-restored database — so a launch holding hundreds of items
+  painted them, replaced them with none, then rebuilt to a handful, persisting
+  the empty list for next time. Only the relist that runs after local state is
+  replaced can now empty the view, and a truly empty inventory still reads as
+  empty.
+
 ## [1.2.280] - 2026-08-22
 
 ### Fixed
