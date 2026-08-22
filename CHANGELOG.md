@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.280] - 2026-08-22
+
+### Fixed
+
+- **"Internal error." when unlocking a wallet that is open elsewhere.** Chromium
+  locks the IndexedDB partition holding toolbox state, so a second copy of
+  HandCash on one profile could not read it and the unlock screen showed
+  Chromium's raw text — a correct password looked rejected and the wallet looked
+  corrupt. A second instance now focuses the running window and exits, so the
+  collision cannot happen; opening an old copy before an upgraded one was enough
+  to trigger it.
+- **An unlock failure explains itself.** A store that cannot be opened now says
+  to quit any other copy or restore with the recovery phrase, and notes that
+  coins are on-chain rather than in that file; a full disk says so instead of
+  implicating the wallet. An unreadable store opens the recovery form the way a
+  phrase mismatch already does, and the untranslated error stays in the app log
+  for support.
+
 ## [1.2.279] - 2026-08-22
 
 ### Added
