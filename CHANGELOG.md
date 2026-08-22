@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.289] - 2026-08-22
+
+### Fixed
+
+- **Refresh now rebuilds missing change scripts before restoring spendable
+  balance.** BRC-39 merges and device sync can leave change outputs with
+  satoshis but no locking script. Maintenance tried to promote those rows back
+  to spendable, skipped them as unscripted, and moved on — so spendable stayed
+  at zero while the display still credited the same coins as pending change. Pay
+  could not select them. Refresh now runs a chain-backed script rebuild (looped
+  until a pass heals nothing) before the spendable-restore loop.
+
 ## [1.2.288] - 2026-08-22
 
 ### Changed
