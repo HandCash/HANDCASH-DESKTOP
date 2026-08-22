@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.287] - 2026-08-22
+
+### Fixed
+
+- Ship the 1.2.286 stdout crash fix, whose installers never built: the new
+  test imported a relative path without a file extension, which the renderer
+  typecheck accepts but the Electron build (`nodenext`) rejects.
+
 ## [1.2.286] - 2026-08-22
 
 ### Fixed

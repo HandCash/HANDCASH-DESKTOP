@@ -1,7 +1,7 @@
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
 
-import { guardStdioWrites, isBrokenPipe } from './brokenPipe'
+import { guardStdioWrites, isBrokenPipe } from './brokenPipe.js'
 
 function errno(code: string): NodeJS.ErrnoException {
   const err = new Error(`write ${code}`) as NodeJS.ErrnoException
