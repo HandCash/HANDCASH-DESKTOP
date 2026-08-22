@@ -29,6 +29,12 @@ const OTHER_IDENTITY = '03'.repeat(33)
 const TXID = 'c1'.repeat(32)
 const TIP = `${TXID}.0`
 const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
+let recomposeActive = false
+
+vi.mock('./walletCoordinator', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./walletCoordinator')>()),
+  isRecomposeCoordinatorActive: () => recomposeActive,
+}))
 
 const active = {
   identityKey: IDENTITY,
@@ -72,6 +78,10 @@ describe('collectables across a cold open', () => {
   beforeEach(() => {
     vi.resetModules()
     store.clear()
+    recomposeActive = false
+    active.wallet.listOutputs.mockResolvedValue({
+      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] }],
+    })
   })
 
   it('paints the durable list before any basket read', async () => {
@@ -104,5 +114,52 @@ describe('collectables across a cold open', () => {
       ? (JSON.parse(raw) as { identityKey?: string }).identityKey
       : null
     expect(identityKey).toBe(IDENTITY)
+  })
+
+  it('does not replace durable cards with a temporary empty recompose store', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = true
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [],
+      totalOutputs: 0,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
+  })
+
+  it('allows the explicit post-replace relist to confirm a real empty inventory', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = true
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [],
+      totalOutputs: 0,
+    })
+    const {
+      relistCollectablesAfterLocalStateReplace,
+      getCachedCollectables,
+    } = await import('./collectables')
+
+    await relistCollectablesAfterLocalStateReplace()
+
+    expect(getCachedCollectables()).toEqual([])
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toEqual([])
+  })
+
+  it('accepts an authoritative empty basket once recompose is finished', async () => {
+    seedDurableList(IDENTITY)
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [],
+      totalOutputs: 0,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables()).toEqual([])
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toEqual([])
   })
 })

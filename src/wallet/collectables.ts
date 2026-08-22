@@ -128,7 +128,10 @@ import {
   walkGenesisLineage,
   type GenesisWalkOutcome,
 } from './oneSatGenesisProof'
-import { getWalletCoordinatorSnapshot } from './walletCoordinator'
+import {
+  getWalletCoordinatorSnapshot,
+  isRecomposeCoordinatorActive,
+} from './walletCoordinator'
 import {
   getResolvedInscription,
   isThinResolution,
@@ -459,7 +462,11 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
     invalidateLiveOneSatOutpoints()
   }
   try {
-    await listCollectables()
+    // An ordinary panel read may already be in flight against the pre-restore
+    // database. Let it settle, then perform the one read allowed to replace the
+    // stale view while the recompose coordinator is still active.
+    await listInFlight?.catch(() => undefined)
+    await listCollectablesNow(undefined, false, true)
   } catch (err) {
     console.warn('[collectables] re-list after localState replace failed', err)
   }
@@ -1779,7 +1786,8 @@ export function loadMoreCollectables(
 
 async function listCollectablesNow(
   active?: ActiveWallet | null,
-  append = false
+  append = false,
+  authoritativeAfterReplace = false
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
@@ -1821,6 +1829,23 @@ async function listCollectablesNow(
         lockingScript: lockingScript || undefined,
       }
     })
+    // Recompose replaces localState before it restores BRC-39. A basket read in
+    // that window is a successful read of a temporary or partially restored
+    // database, not proof of the holder's inventory. On a real cold launch this
+    // painted 777 durable cards, replaced them with zero, then nine. Keep the
+    // complete stale view until the explicit post-replace relist above; that
+    // answer is authoritative and may legitimately be empty.
+    if (
+      !append &&
+      cachedCollectables.length > 0 &&
+      isRecomposeCoordinatorActive() &&
+      !authoritativeAfterReplace
+    ) {
+      console.info(
+        `[collectables] kept ${cachedCollectables.length} cached item(s) while recompose localState listed ${page.length}`
+      )
+      return getCachedCollectables()
+    }
     listedOutputTotal = inferCollectableOutputTotal({
       offset: pageOffset,
       pageLength: result.outputs?.length ?? 0,
