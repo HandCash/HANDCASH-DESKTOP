@@ -2295,7 +2295,7 @@ button.wallet-detail-value.is-copied {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 14px 16px;
+  padding: 12px 14px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -2348,30 +2348,35 @@ button.wallet-detail-value.is-copied {
   display: none;
 }
 
+.wallet-nav-stage:has(.empty-state),
 .wallet-nav-stage:has(.nav-child-stage .empty-state),
 .wallet-nav-stage:has(
     .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .empty-state
   ) {
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
+.wallet-nav-stage:has(.empty-state) > .wallet-nav-panel,
 .wallet-nav-stage:has(.nav-child-stage .empty-state) > .wallet-nav-panel,
 .wallet-nav-stage:has(
     .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .empty-state
   )
   > .wallet-nav-panel {
   flex: 1 1 auto;
-  min-height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .nav-section-body:has(> .empty-state) {
   flex: 1 1 auto;
-  min-height: 100%;
+  min-height: 0;
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .nav-section-body:has(> .empty-state) > .connected-panel-head {
@@ -4225,12 +4230,12 @@ button.payment-details-item-thumb-btn:hover {
   justify-items: center;
   align-content: center;
   place-content: center;
-  gap: 10px;
+  gap: 8px;
   flex: 1 1 auto;
   width: 100%;
-  min-height: 100%;
+  min-height: 0;
   box-sizing: border-box;
-  padding: 28px 18px;
+  padding: 18px 16px;
   text-align: center;
 }
 

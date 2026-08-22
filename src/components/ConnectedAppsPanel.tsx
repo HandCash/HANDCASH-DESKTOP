@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
-import { AppBrowserLauncher } from './AppBrowserLauncher'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { SkeletonAppCard, SkeletonAppRow } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
@@ -170,7 +169,6 @@ export function ConnectedAppsPanel({ apps }: Props) {
         <h2>Connected apps</h2>
         <CollectionViewToggle label="Connected apps view" scope="apps" />
       </div>
-      <AppBrowserLauncher />
       {orderedApps.length === 0 ? (
         <EmptyState
           icon={<AppsIcon size={28} />}

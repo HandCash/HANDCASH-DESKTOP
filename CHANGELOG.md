@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.283] - 2026-08-22
+
+### Changed
+
+- **Tighter empty states and nav padding.** Empty tabs no longer scroll on
+  nothing; connected-apps drops the inline URL launcher (apps still open via
+  Scan and deep links).
+
 ## [1.2.282] - 2026-08-22
 
 ### Fixed
