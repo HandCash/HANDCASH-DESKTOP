@@ -26,25 +26,42 @@ function gt(a, b) {
   return false
 }
 
-let remoteTag = ''
-try {
-  execSync('git fetch --tags --quiet', { cwd: root, stdio: 'ignore' })
-} catch {
-  /* offline ok */
+// Ask the remote what tags it has. `git describe` reads the local tag database,
+// so the tag this push is about to create would count as already published and
+// block the `git push origin vX.Y.Z` half of a release.
+function latestRemoteTag() {
+  let out = ''
+  try {
+    out = execSync("git ls-remote --tags origin 'v*'", { cwd: root, encoding: 'utf8' })
+  } catch {
+    return null // offline: cannot prove a newer tag exists
+  }
+  let best = ''
+  let bestP = null
+  for (const line of out.split('\n')) {
+    const name = line.split('refs/tags/')[1]
+    if (!name || name.endsWith('^{}')) continue
+    const p = parse(name)
+    if (!p) continue
+    if (!bestP || gt(p, bestP)) {
+      bestP = p
+      best = name.trim()
+    }
+  }
+  return best
 }
-try {
-  remoteTag = execSync('git describe --tags --abbrev=0 origin/master 2>/dev/null || git describe --tags --abbrev=0', {
-    cwd: root,
-    encoding: 'utf8',
-  }).trim()
-} catch {
-  remoteTag = ''
-}
+
+const remoteTag = latestRemoteTag()
 
 const localP = parse(local)
 if (!localP) {
   console.error(`Invalid package.json version: ${local}`)
   process.exit(1)
+}
+
+if (remoteTag === null) {
+  console.log(`Cannot reach origin — allowing push of v${local}`)
+  process.exit(0)
 }
 
 if (!remoteTag) {
@@ -53,10 +70,6 @@ if (!remoteTag) {
 }
 
 const remoteP = parse(remoteTag)
-if (!remoteP) {
-  console.log(`Unparsed remote tag ${remoteTag} — allowing push`)
-  process.exit(0)
-}
 
 if (!gt(localP, remoteP)) {
   console.error(`
