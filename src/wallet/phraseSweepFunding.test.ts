@@ -36,6 +36,7 @@ vi.mock('./spendGuard', () => ({
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => undefined }))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({ refreshFromChain: vi.fn() }))
+vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: vi.fn() }))
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
     identityKey: '02'.repeat(33),

@@ -151,6 +151,7 @@ export const WALLET_LAYER_MODULES = {
   ],
   chainIngest: [
     'chainIngest.ts',
+    'walletProgress.ts',
     'ingestLegacyAddress.ts',
     'legacyScan.ts',
     'legacySweepPath.ts',
@@ -184,6 +185,7 @@ export const WALLET_LAYER_MODULES = {
   ],
   health: [
     'walletHealth.ts',
+    'walletProgress.ts',
     'cloudBackupHealth.ts',
     'backupStatus.ts',
     'walletRuntimeStatus.ts',

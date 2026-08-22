@@ -15,6 +15,14 @@ import {
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
+import {
+  getWalletProgress,
+  isWalletProgressBusy,
+  subscribeWalletProgress,
+  walletProgressDetail,
+  walletProgressLabel,
+  type WalletProgress,
+} from '../wallet/walletProgress'
 import { describeWalletCoordinator } from '../wallet/walletCoordinator'
 
 export type WalletSession =
@@ -53,6 +61,7 @@ function resolveStatus(
   networkOnline: boolean,
   bridgeOnline: boolean,
   payment: PaymentProgress,
+  walletProgress: WalletProgress = getWalletProgress(),
 ): StatusView {
   if (session === 'boot') {
     return { label: 'Opening', tone: 'busy', detail: 'Starting HandCash' }
@@ -78,6 +87,17 @@ function resolveStatus(
       label: 'No network',
       tone: 'error',
       detail: 'Device is offline — sends and sync need a connection',
+    }
+  }
+  // Progress bus stays honest after soft Syncing clear — never paint Synced
+  // while Refresh / 1sat / phrase import is still running.
+  if (isWalletProgressBusy(walletProgress)) {
+    return {
+      label: walletProgressLabel(walletProgress),
+      tone: 'busy',
+      detail:
+        walletProgressDetail(walletProgress) ??
+        'Still catching up with the network',
     }
   }
   // Soft in-flight sync / backup probes stay quiet — only terminal outcomes matter.
@@ -151,6 +171,16 @@ function resolveStatus(
         detail: health.message,
       }
     }
+    const stillImporting =
+      typeof health.message === 'string' &&
+      /still importing/i.test(health.message)
+    if (stillImporting) {
+      return {
+        label: 'Catching up',
+        tone: 'busy',
+        detail: health.message,
+      }
+    }
     return {
       label: 'Synced',
       tone: 'ok',
@@ -209,6 +239,9 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   const [health, setHealth] = useState<SyncHealth>(() => getSyncHealth())
   const [cloud, setCloud] = useState<CloudBackupHealth>(() => getCloudBackupHealth())
   const [payment, setPayment] = useState<PaymentProgress>(() => getPaymentProgress())
+  const [walletProgress, setWalletProgress] = useState<WalletProgress>(() =>
+    getWalletProgress(),
+  )
   const [networkOnline, setNetworkOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   )
@@ -217,6 +250,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   useEffect(() => subscribeSyncHealth(setHealth), [])
   useEffect(() => subscribeCloudBackupHealth(setCloud), [])
   useEffect(() => subscribePaymentProgress(setPayment), [])
+  useEffect(() => subscribeWalletProgress(setWalletProgress), [])
 
   useEffect(() => {
     const sync = () => setNetworkOnline(navigator.onLine)
@@ -242,9 +276,13 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     networkOnline,
     bridgeOnline,
     payment,
+    walletProgress,
   )
   const display =
-    manualBusy && health.phase !== 'syncing' && payment.phase === 'idle'
+    manualBusy &&
+    health.phase !== 'syncing' &&
+    payment.phase === 'idle' &&
+    !isWalletProgressBusy(walletProgress)
       ? {
           label: 'Syncing',
           tone: 'busy' as const,
@@ -256,7 +294,10 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   // <div> mid-session (that flipped fonts and dropped the click target).
   const tapEnabled = Boolean(onManualSync) && isUnlocked(session) && networkOnline
   const tapBusy =
-    manualBusy || health.phase === 'syncing' || payment.phase !== 'idle'
+    manualBusy ||
+    health.phase === 'syncing' ||
+    payment.phase !== 'idle' ||
+    isWalletProgressBusy(walletProgress)
 
   const handleManualSync = () => {
     if (!tapEnabled || tapBusy || !onManualSync) return

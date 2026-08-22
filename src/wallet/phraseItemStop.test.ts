@@ -21,6 +21,7 @@ vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 vi.mock('./chainIngest', () => ({
   refreshFromChain: (...a: unknown[]) => refreshFromChain(...a),
 }))
+vi.mock('./deviceSync', () => ({ scheduleHistoryBackupPush: vi.fn() }))
 vi.mock('./legacyReceiptActivity', () => ({
   recordFundingReceipts: vi.fn(),
   recordMigratedItemActivity: vi.fn(),

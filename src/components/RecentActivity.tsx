@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type RefObject } from 'react'
+import { Progress } from '@aeon-ui/react'
 import { PaymentFiltersPanel } from './PaymentFiltersPanel'
 import {
   ActivityIcon,
@@ -78,6 +79,15 @@ import {
   subscribePaymentProgress,
   type PaymentProgress,
 } from '../wallet/paymentProgress'
+import {
+  getWalletProgress,
+  showsActivityWalletProgress,
+  subscribeWalletProgress,
+  walletProgressDetail,
+  walletProgressLabel,
+  walletProgressPercent,
+  type WalletProgress,
+} from '../wallet/walletProgress'
 import { LIVE_OUTBOUND_ID, mergeLiveOutbound } from '../wallet/liveOutboundRow'
 import {
   openPaymentDetails,
@@ -99,6 +109,78 @@ import { useChunkedCount } from './useChunkedCount'
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24
+
+function WalletProgressRow({ progress }: { progress: WalletProgress }) {
+  const label = walletProgressLabel(progress)
+  const detail =
+    walletProgressDetail(progress) ??
+    (progress.status === 'done'
+      ? 'Finished'
+      : progress.status === 'failed'
+        ? 'Failed'
+        : 'Working…')
+  const percent = walletProgressPercent(progress)
+  const indeterminate = percent == null && progress.status === 'running'
+  const terminal =
+    progress.status === 'done' ||
+    progress.status === 'failed' ||
+    progress.status === 'needs-resume'
+  const countLabel =
+    progress.current != null && progress.total != null && progress.total > 0
+      ? `${progress.current.toLocaleString()}/${progress.total.toLocaleString()}`
+      : progress.current != null
+        ? `${progress.current.toLocaleString()} imported`
+        : null
+
+  return (
+    <li
+      data-aeon-scope="wallet-progress"
+      data-aeon-state={progress.status}
+      data-activity-key={`wallet-progress:${progress.kind ?? 'job'}`}
+      data-activity-pending={progress.status === 'running' ? '' : undefined}
+    >
+      <div className="history-row history-progress-row" aria-live="polite">
+        <div className="history-icon-wrap">
+          <div className="history-icon">
+            <span className="history-item-thumb-icon" aria-hidden>
+              <ActivityIcon size={18} />
+            </span>
+          </div>
+          {progress.status === 'running' ? (
+            <span
+              className="history-pending-mark"
+              aria-label="In progress"
+              title="In progress"
+            >
+              <span className="collectable-verify-spinner" aria-hidden />
+            </span>
+          ) : null}
+        </div>
+        <div className="history-body history-progress-body">
+          <strong className="history-title">{label}</strong>
+          <span className="history-when" title={detail}>
+            {detail}
+          </span>
+          <div className="history-progress-block" data-aeon-part="progress">
+            <Progress.Root
+              value={percent ?? (terminal ? 100 : 0)}
+              max={100}
+              indeterminate={indeterminate}
+              className="history-progress"
+            >
+              <Progress.Track className="history-progress-track">
+                <Progress.Range className="history-progress-range" />
+              </Progress.Track>
+            </Progress.Root>
+            {countLabel ? (
+              <span className="history-progress-count mono">{countLabel}</span>
+            ) : null}
+          </div>
+        </div>
+      </div>
+    </li>
+  )
+}
 
 function PendingPhraseImportRow({
   cursor,
@@ -651,15 +733,23 @@ export function ActivityFeed({
   const [phraseImport, setPhraseImport] = useState(() =>
     peekPhraseItemMigrateCursor()
   )
+  const [walletProgress, setWalletProgress] = useState<WalletProgress>(() =>
+    getWalletProgress(),
+  )
   const listRef = useRef<HTMLUListElement>(null)
   useScrollReveal(listRef)
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), [])
+  useEffect(() => subscribeWalletProgress(setWalletProgress), [])
   const visiblePhraseImport = phraseImportBelongsToWallet(
     phraseImport,
     getActiveWallet()?.identityKey
   )
     ? phraseImport
+    : null
+  // Collectable-import bar only (phrase / 1sat). Refresh stays pill + balance subtitle.
+  const liveWalletProgress = showsActivityWalletProgress(walletProgress)
+    ? walletProgress
     : null
 
   const filtered = useMemo(
@@ -729,7 +819,7 @@ export function ActivityFeed({
   }, [origins, filters.origin])
 
   const body =
-    filtered.length === 0 && !visiblePhraseImport ? (
+    filtered.length === 0 && !visiblePhraseImport && !liveWalletProgress ? (
       <EmptyState
         icon={<ActivityIcon size={28} />}
         title={entries.length === 0 ? emptyLabel : 'Nothing matches'}
@@ -741,6 +831,9 @@ export function ActivityFeed({
       />
     ) : (
       <ul className="history-list" ref={listRef}>
+        {liveWalletProgress ? (
+          <WalletProgressRow progress={liveWalletProgress} />
+        ) : null}
         {visiblePhraseImport ? (
           <PendingPhraseImportRow cursor={visiblePhraseImport} />
         ) : null}

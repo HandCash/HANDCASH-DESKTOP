@@ -50,6 +50,14 @@ import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import { summarizePostBeef } from './postBeefResult'
 import { isInsufficientFundsError } from './insufficientFunds'
 import { refreshFromChain } from './chainIngest'
+import { scheduleHistoryBackupPush } from './deviceSync'
+import {
+  clearWalletProgress,
+  finishWalletProgress,
+  getWalletProgress,
+  startWalletProgress,
+  updateWalletProgress,
+} from './walletProgress'
 
 const ITEM_CURSOR_KEY = 'handcash.brc100.phraseSweepItemCursor.v1'
 const GP_PAGE = 50
@@ -784,6 +792,11 @@ export async function sweepPhraseFunding(args: {
         `imported=${result.imported} failed=${result.failed} ` +
         `alreadySwept=${result.skippedKnown} moved=${moved}sats`,
     )
+    // createAction sweeps never went through brc100Handler, so archive the same
+    // way other money-moving paths do once coins actually landed here.
+    if (result.imported > 0 || moved > 0) {
+      scheduleHistoryBackupPush('phrase-sweep')
+    }
     return {
       imported: result.imported,
       failed: result.failed,
@@ -817,6 +830,8 @@ function writeItemCursor(cursor: PhraseItemMigrateCursor | null) {
 
 export function clearPhraseItemMigrateCursor(): void {
   writeItemCursor(null)
+  const snap = getWalletProgress()
+  if (snap.kind === 'phrase-import') clearWalletProgress()
 }
 
 export function peekPhraseItemMigrateCursor(): PhraseItemMigrateCursor | null {
@@ -890,6 +905,53 @@ export async function migratePhraseItemsBatch(args: {
     }
   }
 
+  const expected = args.expectedItemCount
+  const progressMessage = (
+    moved: number,
+    scanned: number,
+    failed: number,
+    skipped: number,
+  ): string => {
+    const bits = [
+      `${moved.toLocaleString()} imported`,
+      `${scanned.toLocaleString()} scanned`,
+    ]
+    if (failed > 0) bits.push(`${failed.toLocaleString()} failed`)
+    if (skipped > 0) bits.push(`${skipped.toLocaleString()} skipped`)
+    return bits.join(' · ')
+  }
+  const busy = getWalletProgress()
+  if (busy.status !== 'running' || busy.kind !== 'phrase-import') {
+    startWalletProgress({
+      kind: 'phrase-import',
+      phase: 'migrating',
+      current: cursor.moved,
+      total: expected ?? null,
+      failed: cursor.failed,
+      skipped: cursor.skipped ?? 0,
+      message: progressMessage(
+        cursor.moved,
+        cursor.offset,
+        cursor.failed,
+        cursor.skipped ?? 0,
+      ),
+    })
+  } else {
+    updateWalletProgress({
+      phase: 'migrating',
+      current: cursor.moved,
+      total: expected ?? busy.total,
+      failed: cursor.failed,
+      skipped: cursor.skipped ?? 0,
+      message: progressMessage(
+        cursor.moved,
+        cursor.offset,
+        cursor.failed,
+        cursor.skipped ?? 0,
+      ),
+    })
+  }
+
   const page = await fetchOrdinalWorkPage(
     args.candidate.address,
     active.chain,
@@ -897,6 +959,18 @@ export async function migratePhraseItemsBatch(args: {
   )
   if (page.rawCount === 0) {
     writeItemCursor(null)
+    finishWalletProgress('done', {
+      current: cursor.moved,
+      total: expected ?? cursor.moved,
+      failed: cursor.failed,
+      skipped: cursor.skipped ?? 0,
+      message: progressMessage(
+        cursor.moved,
+        cursor.offset,
+        cursor.failed,
+        cursor.skipped ?? 0,
+      ),
+    })
     return {
       moved: cursor.moved,
       failed: cursor.failed,
@@ -1039,11 +1113,49 @@ export async function migratePhraseItemsBatch(args: {
   if (done) writeItemCursor(null)
   else writeItemCursor(next)
 
+  if (done) {
+    finishWalletProgress('done', {
+      current: next.moved,
+      total: expected ?? next.moved,
+      failed: next.failed,
+      skipped: next.skipped ?? 0,
+      message: progressMessage(
+        next.moved,
+        next.offset,
+        next.failed,
+        next.skipped ?? 0,
+      ),
+    })
+  } else if (stopped === 'funds') {
+    finishWalletProgress('needs-resume', {
+      current: next.moved,
+      total: expected ?? null,
+      failed: next.failed,
+      skipped: next.skipped ?? 0,
+      message: 'Paused — add BSV to continue',
+    })
+  } else {
+    updateWalletProgress({
+      current: next.moved,
+      total: expected ?? null,
+      failed: next.failed,
+      skipped: next.skipped ?? 0,
+      message: progressMessage(
+        next.moved,
+        next.offset,
+        next.failed,
+        next.skipped ?? 0,
+      ),
+    })
+  }
+
   if (moved > 0) {
     recordMigratedItemActivity(movedItems, active.chain)
     const recent = recentlyMovedPhraseItems.get(args.candidate.address) ?? new Set<string>()
     for (const item of movedItems) recent.add(item.outpoint)
     recentlyMovedPhraseItems.set(args.candidate.address, recent)
+    // Batched createAction migrate never hit brc100Handler backup hooks.
+    scheduleHistoryBackupPush('phrase-sweep')
   }
   // Chain ingest walks the whole wallet and gets slower as items land, so a
   // refresh per batch is what made a large collection crawl. Callers refresh

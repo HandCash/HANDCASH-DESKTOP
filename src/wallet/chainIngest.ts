@@ -20,6 +20,11 @@ import { getActiveWallet, fetchBalanceSats } from './session'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
+import {
+  finishWalletProgress,
+  startWalletProgress,
+  updateWalletProgress,
+} from './walletProgress'
 import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
@@ -253,13 +258,21 @@ export async function refreshFromChainExclusive(
 
   // One short pill state for the whole pass — phased "Syncing payments / items"
   // labels overflowed the status bubble.
+  const syncMessage = fundingOnly
+    ? 'Looking for new payments on your address'
+    : 'Refreshing funds against the network'
   setSyncHealth({
     phase: 'syncing',
-    message: fundingOnly
-      ? 'Looking for new payments on your address'
-      : 'Refreshing funds against the network',
+    message: syncMessage,
   })
+  startWalletProgress({
+    kind: 'refresh',
+    phase: fundingOnly ? 'funding' : 'scanning',
+    message: syncMessage,
+  })
+  let progressTerminal: 'done' | 'failed' = 'done'
 
+  try {
   let balanceBefore = 0
   let balanceBeforeOk = false
   if (opts?.announceReceive !== false) {
@@ -344,12 +357,16 @@ export async function refreshFromChainExclusive(
           )
         })
         .catch(() => {})
-      // Soft deadline is a UI comfort: clear Syncing while beef / SPV still
-      // finish under the lock. Do not claim the network is slow — that pill
-      // stuck after every long pass even when funds were fine.
+      // Soft deadline is a UI comfort: clear the Syncing *pill phase* while
+      // beef / SPV still finish under the lock. Progress bus stays running so
+      // Activity / Catching-up chrome do not claim idle Synced.
+      updateWalletProgress({
+        phase: 'catching-up',
+        message: 'Still importing collectables…',
+      })
       setSyncHealth({
         phase: 'ok',
-        message: null,
+        message: 'Still importing collectables in the background…',
         heldOneSats: heldCount,
         pendingTips,
       })
@@ -424,6 +441,7 @@ export async function refreshFromChainExclusive(
     }
   } catch (err) {
     console.warn('[chain-ingest] legacy address ingest skipped', err)
+    progressTerminal = 'failed'
     setSyncHealth({
       phase: 'error',
       message: 'Couldn’t refresh funds — check your network connection.',
@@ -510,6 +528,7 @@ export async function refreshFromChainExclusive(
     }
   } catch (err) {
     console.warn('[chain-ingest] balance refresh failed', err)
+    progressTerminal = 'failed'
     setSyncHealth({
       phase: 'error',
       message: 'Balance refresh failed — check your network connection.',
@@ -522,6 +541,16 @@ export async function refreshFromChainExclusive(
       importedItems,
       scannedTxids,
     }
+  }
+  } finally {
+    const snapMessage =
+      progressTerminal === 'failed'
+        ? 'Refresh failed'
+        : 'Refresh complete'
+    finishWalletProgress(progressTerminal, {
+      phase: progressTerminal === 'failed' ? 'error' : 'complete',
+      message: snapMessage,
+    })
   }
 }
 

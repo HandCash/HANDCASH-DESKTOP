@@ -29,9 +29,15 @@ import {
 } from './oneSatImport'
 import { importBsv21Tokens, listFungibles } from './fungibles'
 import { getTokenIconDataUrl } from './tokenIconCache'
-import { filterNewOneSatOutpoints } from './oneSatImportGuard'
+import {
+  filterNewOneSatOutpoints,
+  forgetOneSatImported,
+  isOneSatOutpointKnown,
+} from './oneSatImportGuard'
+import { isItemAbandoned, isItemSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { updateWalletProgress } from './walletProgress'
 
 export type LegacyAddressIngestResult = {
   scan: LegacyScanResult
@@ -176,6 +182,74 @@ function emptyIngest(scan: LegacyScanResult): LegacyAddressIngestResult {
   }
 }
 
+
+/** Normalize outpoint keys the same way import guards do. */
+function outpointKey(outpoint: string): string {
+  return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+}
+
+/**
+ * Live 1-sat outs on our address that still carry durable import marks but are
+ * missing from the local `1sat` basket cannot be re-ingested until the marks
+ * are cleared. Ghost-drop / thin IDB after restart is the usual cause — Refresh
+ * then sees the tips on-chain and skips them as "already imported".
+ *
+ * Only forget when the basket list is complete (page covers totalOutputs) so a
+ * tip on a later page is never mistaken for an orphan.
+ */
+async function healOrphanOneSatImportMarks(
+  active: ActiveWallet,
+  liveOneSats: MigrationItem[],
+): Promise<number> {
+  const marked = [
+    ...new Set(
+      liveOneSats
+        .map((i) => outpointKey(i.outpoint))
+        .filter(
+          (op) =>
+            op.length > 0 &&
+            isOneSatOutpointKnown(op) &&
+            // A tip the holder forgot, or one a send just spent, is absent from
+            // the basket on purpose. Healing those marks would re-import it.
+            !isItemAbandoned(op) &&
+            !isItemSent(op),
+        ),
+    ),
+  ]
+  if (marked.length === 0) return 0
+
+  let basketKeys = new Set<string>()
+  let basketFullyListed = false
+  try {
+    const limit = Math.min(2000, Math.max(marked.length + 64, 256))
+    const listed = await active.wallet.listOutputs({
+      basket: '1sat',
+      limit,
+      includeTags: false,
+      includeCustomInstructions: false,
+      seekPermission: false,
+    })
+    for (const o of listed.outputs ?? []) {
+      basketKeys.add(outpointKey(o.outpoint))
+    }
+    const total =
+      typeof listed.totalOutputs === 'number' ? listed.totalOutputs : basketKeys.size
+    basketFullyListed = total <= basketKeys.size
+  } catch (err) {
+    console.warn('[chain-ingest] orphan 1sat mark heal skipped (basket list failed)', err)
+    return 0
+  }
+  if (!basketFullyListed) return 0
+
+  const orphans = marked.filter((op) => !basketKeys.has(op))
+  if (orphans.length === 0) return 0
+  forgetOneSatImported(orphans)
+  console.info(
+    `[chain-ingest] forgot ${orphans.length} orphan 1sat import mark(s) — live on address, missing from basket`,
+  )
+  return orphans.length
+}
+
 export async function ingestLegacyAddressUtxos(
   opts: LegacyAddressIngestOptions = {},
 ): Promise<LegacyAddressIngestResult> {
@@ -208,6 +282,12 @@ export async function ingestLegacyAddressUtxos(
       fundingOnly,
     })
 
+  // Clear durable import marks for tips still live on our address but gone from
+  // the local basket so the filter below can re-claim them on this Refresh.
+  if (!fundingOnly && oneSats.length > 0) {
+    await healOrphanOneSatImportMarks(active, oneSats)
+  }
+
   const newOneSatCandidates = oneSats.filter((i) => {
     const fresh = filterNewOneSatOutpoints([i.outpoint])
     return fresh.length > 0
@@ -236,8 +316,6 @@ export async function ingestLegacyAddressUtxos(
   // correct — only UTXOs that landed in no bucket at all are worth a warning.
   // Cloud items can name their outpoint in underscore form, so compare on a
   // normal key.
-  const outpointKey = (outpoint: string): string =>
-    outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
   const accounted = new Set<string>([
     ...funding.map((u) => outpointKey(u.outpoint)),
     ...oneSats.map((i) => outpointKey(i.outpoint)),
@@ -260,29 +338,63 @@ export async function ingestLegacyAddressUtxos(
 
   await yieldToUi()
 
+  // Large orphan re-ingests (hundreds of tips) can run for minutes. Chunk so
+  // Collect paints after each batch instead of staying on a stale 9-item cache
+  // until the entire importOneSatOrdinals call returns.
+  const ONE_SAT_IMPORT_CHUNK = 48
   if (newOneSatCandidates.length > 0) {
-    const itemResult = await importOneSatOrdinals(newOneSatCandidates, active)
-    importedItems += itemResult.imported
-    itemsFailed += itemResult.failed
-    newOneSatOutpoints.push(...(itemResult.outpoints ?? []))
-    recordItemReceipts(itemResult.outpoints ?? [], oneSats, active.chain)
-    if (itemResult.failed > 0) {
-      console.warn('[chain-ingest] 1sat import partial', itemResult)
-      partialWarn =
-        partialWarn ??
-        `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
+    const totalTips = newOneSatCandidates.length
+    if (totalTips > ONE_SAT_IMPORT_CHUNK) {
+      console.info(
+        `[chain-ingest] importing ${totalTips} 1sat tip(s) in chunks of ${ONE_SAT_IMPORT_CHUNK}`,
+      )
     }
-    // Paint the NFT as soon as the basket has it — do not wait on funding BEEF
-    // work. Authenticity walks after listCollectables paints.
-    if ((itemResult.outpoints ?? []).length > 0) {
-      void import('./collectables')
-        .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
-          rememberLiveOneSatOutpoints(scan.utxos)
-          return listCollectables(active)
-        })
-        .catch((err) => {
-          console.warn('[chain-ingest] early collectables paint failed', err)
-        })
+    updateWalletProgress({
+      kind: 'one-sat-import',
+      phase: 'importing-items',
+      current: 0,
+      total: totalTips,
+      failed: 0,
+      message: `Importing collectables 0 of ${totalTips.toLocaleString()}`,
+    })
+    for (let i = 0; i < newOneSatCandidates.length; i += ONE_SAT_IMPORT_CHUNK) {
+      const chunk = newOneSatCandidates.slice(i, i + ONE_SAT_IMPORT_CHUNK)
+      await yieldToUi()
+      const itemResult = await importOneSatOrdinals(chunk, active)
+      importedItems += itemResult.imported
+      itemsFailed += itemResult.failed
+      newOneSatOutpoints.push(...(itemResult.outpoints ?? []))
+      recordItemReceipts(itemResult.outpoints ?? [], oneSats, active.chain)
+      const processed = Math.min(i + chunk.length, totalTips)
+      const chunkIndex = Math.floor(i / ONE_SAT_IMPORT_CHUNK) + 1
+      const chunkTotal = Math.ceil(totalTips / ONE_SAT_IMPORT_CHUNK)
+      updateWalletProgress({
+        phase: 'importing-items',
+        current: processed,
+        total: totalTips,
+        failed: itemsFailed,
+        message:
+          chunkTotal > 1
+            ? `Importing collectables ${processed.toLocaleString()} of ${totalTips.toLocaleString()} (chunk ${chunkIndex} of ${chunkTotal})`
+            : `Importing collectables ${processed.toLocaleString()} of ${totalTips.toLocaleString()}`,
+      })
+      if (itemResult.failed > 0) {
+        console.warn('[chain-ingest] 1sat import partial', itemResult)
+        partialWarn =
+          partialWarn ??
+          `Some items didn’t import (${itemResult.failed}). Retrying automatically.`
+      }
+      // Paint after every chunk — do not wait on funding BEEF / remaining chunks.
+      if ((itemResult.outpoints ?? []).length > 0) {
+        void import('./collectables')
+          .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
+            rememberLiveOneSatOutpoints(scan.utxos)
+            return listCollectables(active)
+          })
+          .catch((err) => {
+            console.warn('[chain-ingest] early collectables paint failed', err)
+          })
+      }
     }
   }
 

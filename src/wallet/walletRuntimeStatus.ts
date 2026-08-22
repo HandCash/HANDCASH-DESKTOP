@@ -6,6 +6,7 @@
 import { getActivityWriteGeneration, listRecentActivity } from './appActivity'
 import { getCloudBackupHealth } from './cloudBackupHealth'
 import { getPaymentProgress } from './paymentProgress'
+import { getWalletProgress, isWalletProgressBusy } from './walletProgress'
 import { describeWalletCoordinator } from './walletCoordinator'
 import { getSyncHealth } from './walletHealth'
 
@@ -18,6 +19,9 @@ export type WalletRuntimeStatus = {
   cloudPhase: string
   paymentPhase: string
   paymentDetail: string | null
+  progressKind: string | null
+  progressStatus: string
+  progressMessage: string | null
   activityRows: number
   activityGeneration: number
   summary: string
@@ -28,6 +32,7 @@ export function getWalletRuntimeStatus(): WalletRuntimeStatus {
   const sync = getSyncHealth()
   const cloud = getCloudBackupHealth()
   const payment = getPaymentProgress()
+  const progress = getWalletProgress()
   const activityRows = listRecentActivity(200).length
   const activityGeneration = getActivityWriteGeneration()
   const syncAgeMs = sync.updatedAt > 0 ? Math.max(0, Date.now() - sync.updatedAt) : 0
@@ -35,6 +40,9 @@ export function getWalletRuntimeStatus(): WalletRuntimeStatus {
   const bits: string[] = [coordinator.summary]
   bits.push(`sync:${sync.phase}`)
   if (payment.phase !== 'idle') bits.push(`pay:${payment.phase}`)
+  if (isWalletProgressBusy(progress) || progress.status === 'needs-resume') {
+    bits.push(`progress:${progress.kind ?? 'job'}:${progress.status}`)
+  }
   if (cloud.phase !== 'off') bits.push(`backup:${cloud.phase}`)
   bits.push(`activity×${activityRows}`)
 
@@ -47,6 +55,9 @@ export function getWalletRuntimeStatus(): WalletRuntimeStatus {
     cloudPhase: cloud.phase,
     paymentPhase: payment.phase,
     paymentDetail: payment.detail,
+    progressKind: progress.kind,
+    progressStatus: progress.status,
+    progressMessage: progress.message,
     activityRows,
     activityGeneration,
     summary: bits.join(' · '),

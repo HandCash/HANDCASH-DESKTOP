@@ -1,5 +1,27 @@
 # Changelog
 
+## [1.2.282] - 2026-08-22
+
+### Fixed
+
+- **Collectables that vanished from a device now come back on Refresh.** The
+  wallet keeps a durable note of every 1-sat tip it has imported so the same
+  item is never internalized twice. That note lives outside the item database,
+  so when the database was replaced or restored thin, the note survived and
+  Refresh skipped hundreds of items as "already imported" — leaving them
+  invisible even though they were sitting unspent on the address. Refresh now
+  clears the note for any tip that is live on the address but missing from the
+  basket, and re-imports it. Items the holder deliberately forgot, and tips a
+  send just spent, are left alone.
+- **A large re-import paints as it goes.** Items are imported in batches, and
+  the inventory now refreshes after each one instead of after all of them, so a
+  recovery of several hundred items no longer looks frozen on a stale count.
+
+### Changed
+
+- Refresh reports its own progress — including the phase after the status pill
+  clears — so a long import reads as work in progress rather than as finished.
+
 ## [1.2.281] - 2026-08-22
 
 ### Fixed

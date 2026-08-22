@@ -3,6 +3,7 @@ import { pillLabel, resolveStatus } from './WalletStatusPill'
 import type { SyncHealth } from '../wallet/walletHealth'
 import type { CloudBackupHealth } from '../wallet/cloudBackupHealth'
 import type { PaymentProgress } from '../wallet/paymentProgress'
+import type { WalletProgress } from '../wallet/walletProgress'
 
 const idleCloud: CloudBackupHealth = {
   phase: 'off',
@@ -16,6 +17,18 @@ const idlePayment: PaymentProgress = {
   label: null,
   detail: null,
   outpoint: null,
+}
+
+const idleWalletProgress: WalletProgress = {
+  kind: null,
+  phase: null,
+  current: null,
+  total: null,
+  failed: 0,
+  skipped: 0,
+  status: 'idle',
+  message: null,
+  updatedAt: 0,
 }
 
 function health(patch: Partial<SyncHealth> = {}): SyncHealth {
@@ -101,9 +114,60 @@ describe('resolveStatus', () => {
   })
 
   it('shows Synced when chain is ok', () => {
-    const view = resolveStatus('ready', health(), idleCloud, true, true, idlePayment)
+    const view = resolveStatus(
+      'ready',
+      health(),
+      idleCloud,
+      true,
+      true,
+      idlePayment,
+      idleWalletProgress,
+    )
     expect(view.label).toBe('Synced')
     expect(view.tone).toBe('ok')
+  })
+
+  it('shows Catching up while progress bus is still running after soft Syncing clear', () => {
+    const view = resolveStatus(
+      'ready',
+      health({
+        phase: 'ok',
+        message: 'Still importing collectables in the background…',
+      }),
+      idleCloud,
+      true,
+      true,
+      idlePayment,
+      {
+        ...idleWalletProgress,
+        kind: 'refresh',
+        phase: 'catching-up',
+        status: 'running',
+        current: 48,
+        total: 200,
+        message: 'Still importing collectables…',
+      },
+    )
+    expect(view.label).toBe('Catching up')
+    expect(view.tone).toBe('busy')
+    expect(view.detail).toMatch(/Still importing/i)
+  })
+
+  it('does not claim Synced from soft-deadline message alone', () => {
+    const view = resolveStatus(
+      'ready',
+      health({
+        phase: 'ok',
+        message: 'Still importing collectables in the background…',
+      }),
+      idleCloud,
+      true,
+      true,
+      idlePayment,
+      idleWalletProgress,
+    )
+    expect(view.label).toBe('Catching up')
+    expect(view.tone).toBe('busy')
   })
 })
 

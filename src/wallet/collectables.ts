@@ -56,6 +56,7 @@ import {
 import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
 import { playWalletSound } from './soundService'
 import { scheduleHistoryBackupPush } from './deviceSync'
+import { forgetOneSatImported } from './oneSatImportGuard'
 import {
   buildMergedInputBeef,
   getBeefForTxidCached,
@@ -105,7 +106,9 @@ import { createActor } from 'xstate'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { scanLegacyAddress } from './legacyScan'
 import {
+  isItemAbandoned,
   isItemSent,
+  markItemAbandoned,
   markItemsSent,
   forgetItemsSent,
   type SentItemSettle,
@@ -2386,11 +2389,16 @@ async function relinquishSpentOutputs(
   wallet: ActiveWallet,
   spends: Array<{ outpoint: string; basket: string }>
 ): Promise<void> {
+  const oneSatOps: string[] = []
   for (const spend of spends) {
+    const op = normalizeOutpoint(spend.outpoint)
+    // An abandoned tip is still live on our address, so forgetting its import
+    // mark would let the next Refresh claim it straight back.
+    if (spend.basket === '1sat' && !isItemAbandoned(op)) oneSatOps.push(op)
     try {
       await wallet.wallet.relinquishOutput({
         basket: spend.basket,
-        output: normalizeOutpoint(spend.outpoint),
+        output: op,
       })
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
@@ -2403,6 +2411,11 @@ async function relinquishSpentOutputs(
       )
     }
   }
+  // Ghost-drop / send relinquish used to leave durable import marks behind, so
+  // Refresh treated the still-live tip as already internalized and never
+  // re-ingested remittance after a thin IDB. Forget marks for every 1sat tip we
+  // abandon locally — only live-on-address orphans are re-imported later.
+  if (oneSatOps.length > 0) forgetOneSatImported(oneSatOps)
 }
 
 /**
@@ -2441,6 +2454,7 @@ export async function abandonCollectable(outpointRaw: string): Promise<void> {
   )
 
   markItemsSent([{ outpoint, txid: `abandon:${outpoint}` }])
+  markItemAbandoned(outpoint)
 
   await relinquishSpentOutputs(wallet, [{ outpoint, basket: '1sat' }])
 

@@ -178,6 +178,52 @@ export function isItemSent(outpoint: string, now = Date.now()): boolean {
 }
 
 /**
+ * Tips the holder deliberately forgot, kept forever.
+ *
+ * {@link SENT_HIDE_MS} expiry is right for a send — an item that never left has
+ * to come back rather than vanish. Abandon is the opposite intent: the holder
+ * chose to drop a tip that is still live on our address (a covenant lock we
+ * cannot spend). Until the import guard learned to heal orphans, the durable
+ * "already imported" mark made that stick by accident; now that Refresh
+ * re-claims live-on-address orphans, abandon needs a record of its own or the
+ * tip walks back in a day later.
+ */
+const ABANDONED_KEY = 'handcash.collectables.abandonedOutpoints.v1'
+const MAX_ABANDONED = 2000
+
+function readAbandoned(): Set<string> {
+  try {
+    const raw = durableGetItem(ABANDONED_KEY)
+    if (!raw) return new Set()
+    const parsed = JSON.parse(raw) as unknown
+    if (!Array.isArray(parsed)) return new Set()
+    return new Set(
+      parsed.filter((x): x is string => typeof x === 'string' && x.includes('.')),
+    )
+  } catch {
+    return new Set()
+  }
+}
+
+export function markItemAbandoned(outpoint: string): void {
+  const op = key(outpoint)
+  if (!op) return
+  const abandoned = readAbandoned()
+  if (abandoned.has(op)) return
+  abandoned.add(op)
+  durableSetItem(
+    ABANDONED_KEY,
+    JSON.stringify([...abandoned].slice(-MAX_ABANDONED)),
+  )
+}
+
+export function isItemAbandoned(outpoint: string): boolean {
+  const op = key(outpoint)
+  if (!op) return false
+  return readAbandoned().has(op)
+}
+
+/**
  * What this wallet recorded when it sent the tip — who was going to broadcast,
  * and when. Callers deciding whether a stalled send may be retried or cleared
  * need the settle path: a `peerDeliver` transfer is the payee's to broadcast, so
