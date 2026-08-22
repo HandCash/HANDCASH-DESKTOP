@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.2.279] - 2026-08-22
+
+### Added
+
+- **Phrase import finds Centi funds.** Centi keeps its coins under
+  `m/44'/145'/0'/0/n`, and only coin type `236'` was ever scanned, so a Centi
+  phrase came back empty. Both Centi chains are now scanned — receive and
+  change, twenty addresses each — and every hit is signed with the child key
+  that locks it. Use Settings → Import phrase; wallet Restore still expects a
+  HandCash phrase.
+
+### Changed
+
+- **A market listing reads as a listing.** Creating an offer said "Sending…",
+  the crumb read "Activity / Activity", and the detail body showed the internal
+  method name as "ACTION: approve". A listing now says "Listing…", a
+  cancellation "Cancelling…", and a purchase "Buying…", the crumb carries the
+  row's own title, and the detail shows status and app instead of a method.
+
 ## [1.2.278] - 2026-08-21
 
 ### Fixed
