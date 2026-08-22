@@ -10,7 +10,12 @@ import {
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
-import { bootWallet, fetchBalanceSats, lastKnownBalance } from '../wallet/session'
+import {
+  bootWallet,
+  fetchBalanceRead,
+  fetchBalanceSats,
+  lastKnownBalance,
+} from '../wallet/session'
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
@@ -32,6 +37,7 @@ import {
 } from '../wallet/walletSetupApply'
 import { recomposeWallet } from '../wallet/recompose'
 import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
+import { writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { PasswordField } from './PasswordField'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
@@ -288,17 +294,47 @@ export function AuthScreen({
       // phone the fresh owned-cash scan can take >10s; racing it against a
       // literal zero made a funded wallet look empty for the whole sync.
       const cachedBalance = lastKnownBalance()
-      const confirmedBalance = fetchBalanceSats(active.wallet, {
+      const confirmedBalance = fetchBalanceRead(active.wallet, {
         creditUnconfirmed: false,
-      }).catch(
-        () => cachedBalance ?? 0,
-      )
-      const balanceSats =
-        cachedBalance ??
-        (await Promise.race([
-          confirmedBalance,
-          new Promise<number>((resolve) => setTimeout(() => resolve(0), 500)),
-        ]))
+      })
+      // If this identity has never written a trusted snapshot, wait for a real
+      // local-state answer. The old 500 ms race returned a literal zero and
+      // briefly told a funded holder their wallet was empty. A cached identity
+      // still opens immediately while the authoritative read continues.
+      const initialRead = cachedBalance == null ? await confirmedBalance : null
+      if (initialRead?.kind === 'unavailable') {
+        throw new Error(
+          'HandCash could not read this wallet’s balance yet. Your cached wallet data was not changed; try unlocking again.',
+        )
+      }
+      let balanceSats =
+        cachedBalance ?? (initialRead?.kind === 'ok' ? initialRead.sats : null)
+      if (balanceSats == null) {
+        throw new Error('HandCash could not establish this wallet’s balance.')
+      }
+      let recomposedBeforeEnter = false
+      if (cachedBalance == null && balanceSats === 0) {
+        // An empty local Toolbox on cold launch may only mean that BRC-39 has
+        // not restored this device yet. With no identity-scoped snapshot there
+        // is nothing honest to paint, so remain on "Almost ready" until the
+        // recovery path confirms the final answer. Zero is shown only if that
+        // path also says zero.
+        setSessionBackupPassword(password)
+        const restored = await recomposeWallet({ password, reason: 'unlock' })
+        if (
+          restored.spendableSats == null ||
+          (restored.spendableSats === 0 && restored.history === 'failed')
+        ) {
+          throw new Error(
+            'HandCash could not confirm an empty wallet during recovery. Your cached wallet data was not changed; check the connection and try again.',
+          )
+        }
+        balanceSats = restored.spendableSats
+        recomposedBeforeEnter = true
+      }
+      if (cachedBalance == null) {
+        writeTrustedBalance(active.identityKey, active.chain, balanceSats)
+      }
       send({ type: 'SUCCESS' })
       playWalletSound('unlock')
       clearUnlockNudge()
@@ -317,9 +353,24 @@ export function AuthScreen({
         },
         balanceSats,
       )
-      void confirmedBalance.then((fresh) => {
-        if (fresh !== balanceSats) onBalanceRefreshed(fresh)
-      })
+      if (!recomposedBeforeEnter) {
+        void confirmedBalance.then((fresh) => {
+          // This read began before recompose. Its zero is a view of the old
+          // localState, not authority to erase a funded snapshot; the final
+          // recompose result below owns that decision.
+          if (
+            fresh.kind === 'ok' &&
+            fresh.sats === 0 &&
+            cachedBalance != null &&
+            cachedBalance > 0
+          ) {
+            return
+          }
+          if (fresh.kind === 'ok' && fresh.sats !== balanceSats) {
+            onBalanceRefreshed(fresh.sats)
+          }
+        })
+      }
       // Credit live local change only after the wallet is visible. This can
       // inspect hundreds of old output rows and must never hold the unlock UI.
       void fetchBalanceSats(active.wallet)
@@ -330,11 +381,16 @@ export function AuthScreen({
           /* trusted/confirmed figure remains visible */
         })
       setSessionBackupPassword(password)
-      void recomposeWallet({ password, reason: 'unlock' }).then((result) => {
-        if (result.spendableSats != null) {
-          onBalanceRefreshed(result.spendableSats)
-        }
-      })
+      if (!recomposedBeforeEnter) {
+        void recomposeWallet({ password, reason: 'unlock' }).then((result) => {
+          if (
+            result.spendableSats != null &&
+            !(result.spendableSats === 0 && result.history === 'failed')
+          ) {
+            onBalanceRefreshed(result.spendableSats)
+          }
+        })
+      }
     } catch (err) {
       const failure = classifyUnlockFailure(err)
       setPreparing(null)

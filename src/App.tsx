@@ -37,7 +37,10 @@ import { refreshCloudBackupHealth } from './wallet/cloudBackupHealth'
 import { isVaultStoredUnsealed } from './wallet/vaultSealStatus'
 import { setSyncHealth } from './wallet/walletHealth'
 import { isRecomposeInFlight } from './wallet/recompose'
-import { shouldKeepTrustedBalance } from './wallet/balanceSnapshot'
+import {
+  shouldKeepTrustedBalance,
+  writeTrustedBalance,
+} from './wallet/balanceSnapshot'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
@@ -203,6 +206,19 @@ export function App() {
   const pendingAction = pendingPrompt?.kind === 'action' ? pendingPrompt : null
 
   const walletUnlocked = snapshot.matches('ready') || snapshot.matches('sending')
+  useEffect(() => {
+    const { profile, balanceSats } = snapshot.context
+    if (!walletUnlocked || !profile) return
+    // Persist every balance the session chart actually accepts — refreshes and
+    // sends included. Cold launch can then paint this identity's last confirmed
+    // UI value before IndexedDB/history work finishes.
+    writeTrustedBalance(profile.identityKey, profile.chain, balanceSats)
+  }, [
+    walletUnlocked,
+    snapshot.context.profile,
+    snapshot.context.balanceSats,
+  ])
+
   const handleBalanceRefresh = useCallback(
     (balanceSats: number) => {
       // A BRC-39 pull temporarily replaces local state. An empty read in that
