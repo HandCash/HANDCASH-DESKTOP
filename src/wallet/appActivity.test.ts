@@ -14,6 +14,7 @@ import {
   activityDetailLabel,
   activityEntryKey,
   activityEntryTitle,
+  activityNavLabel,
   clearAppActivity,
   hasSettledActivityTxid,
   isEventActivity,
@@ -145,6 +146,18 @@ describe('activityDetailLabel', () => {
     expect(isEventActivity(row)).toBe(true)
     expect(activityDetailLabel(row)).toBe('Activity')
     expect(activityEntryTitle(row)).toBe('Connected market.example')
+    expect(activityNavLabel(row)).toBe('Connected market.example')
+  })
+
+  it('does not repeat Activity in the nav crumb for an approval', () => {
+    const row = entry({
+      kind: 'event',
+      sats: 0,
+      method: 'approve',
+      note: 'List item for sale',
+      origin: 'brc-cloud.bcryderman.workers.dev',
+    })
+    expect(activityNavLabel(row)).toBe('List item for sale')
   })
 })
 

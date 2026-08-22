@@ -1279,6 +1279,18 @@ export function activityDetailLabel(
   return 'Transaction'
 }
 
+/**
+ * Breadcrumb for a selected row. Event rows already title themselves
+ * (“List item for sale”); repeating “Activity / Activity” is noise.
+ */
+export function activityNavLabel(entry: ActivityEntry): string {
+  if (isEventActivity(entry)) {
+    const title = activityEntryTitle(entry).trim()
+    return title || 'Activity'
+  }
+  return activityDetailLabel(entry)
+}
+
 export function clearAppActivity(origin?: string): void {
   if (!origin) {
     writeAll([])

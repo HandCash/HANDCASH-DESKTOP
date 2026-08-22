@@ -3,6 +3,7 @@ import {
   clearPaymentProgress,
   getPaymentProgress,
   isOutpointSending,
+  marketBusyCopy,
   setPaymentProgress,
 } from './paymentProgress'
 
@@ -38,5 +39,23 @@ describe('paymentProgress', () => {
 
     clearPaymentProgress()
     expect(isOutpointSending('txid_0')).toBe(false)
+  })
+
+  it('keeps a listing label across phase updates', () => {
+    setPaymentProgress('preparing', 'Creating the on-chain offer', 'aa.0', 'Listing…')
+    expect(getPaymentProgress().label).toBe('Listing…')
+    setPaymentProgress('finishing', 'Updating market state')
+    expect(getPaymentProgress().label).toBe('Listing…')
+    expect(getPaymentProgress().detail).toBe('Updating market state')
+    clearPaymentProgress()
+  })
+
+  it('names listing, cancel, and buy without calling them a send', () => {
+    expect(marketBusyCopy('createMarketListingAdvert')).toEqual({
+      label: 'Listing…',
+      detail: 'Creating the on-chain offer',
+    })
+    expect(marketBusyCopy('purchaseMarketListing')?.label).toBe('Buying…')
+    expect(marketBusyCopy('createAction')).toBeNull()
   })
 })

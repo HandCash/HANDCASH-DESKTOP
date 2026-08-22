@@ -15,7 +15,7 @@ import {
   type PendingPrompt,
 } from '../wallet/permissions'
 import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
-import { activityDetailLabel, getActivityById } from '../wallet/appActivity'
+import { activityNavLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
 import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
 import { setAutoPaySettings } from '../wallet/autoPay'
@@ -328,7 +328,7 @@ export function WalletNav({
     }
     if (child.type === 'payment') {
       const entry = getActivityById(child.entryId)
-      return [root, { label: entry ? activityDetailLabel(entry) : 'Transaction' }]
+      return [root, { label: entry ? activityNavLabel(entry) : 'Transaction' }]
     }
     return [root, { label: 'Transaction' }]
   })()

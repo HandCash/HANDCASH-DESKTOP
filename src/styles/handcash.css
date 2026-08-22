@@ -1308,6 +1308,16 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   font-size: 1.05rem;
 }
 
+.dashboard-side > .permission-side-panel--processing .send-status-sub {
+  max-width: 16rem;
+}
+
+.dashboard-side > .permission-side-panel--processing .permission-item-preview {
+  width: 100%;
+  margin-top: 14px;
+  text-align: left;
+}
+
 .what-is-bsv {
   position: relative;
   padding: 16px 14px 14px;
@@ -2071,9 +2081,7 @@ button.wallet-detail-value.is-copied {
 
 .permission-item-preview-copy > span {
   color: var(--hc-muted);
-  font-size: 0.68rem;
-  letter-spacing: 0.09em;
-  text-transform: uppercase;
+  font-size: 0.75rem;
 }
 
 .permission-item-preview-copy strong {
@@ -4555,8 +4563,12 @@ a.app-details-host:hover {
   font-weight: inherit;
   line-height: 28px;
   height: 28px;
-  display: inline-flex;
-  align-items: center;
+  display: inline-block;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
 }
 
 .nav-child-panel {

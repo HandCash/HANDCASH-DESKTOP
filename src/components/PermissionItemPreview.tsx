@@ -45,9 +45,8 @@ export function PermissionItemPreview({ outpoint }: { outpoint: string }) {
         }
       />
       <div className="permission-item-preview-copy">
-        <span>{item.proven ? 'Origin verified' : 'Item'}</span>
+        <span>{item.proven ? 'Origin verified' : 'Collectable'}</span>
         <strong title={item.name}>{item.name}</strong>
-        <code title={item.origin}>{item.origin}</code>
       </div>
     </div>
   )

@@ -48,6 +48,7 @@ import { PermissionItemPreview } from './PermissionItemPreview'
 import {
   clearPaymentProgress,
   getPaymentProgress,
+  marketBusyCopy,
   setPaymentProgress,
   subscribePaymentProgress,
   type PaymentProgress,
@@ -176,16 +177,12 @@ export function Dashboard({
           pendingPrompt.method === 'purchaseMarketListing')
       ) {
         setLastApproved(pendingPrompt)
+        const market = marketBusyCopy(pendingPrompt.method)
         setPaymentProgress(
           'preparing',
-          pendingPrompt.method === 'createMarketListingAdvert'
-            ? 'Preparing market listing'
-            : pendingPrompt.method === 'createCancelMarketListingAdvert'
-              ? 'Preparing listing cancellation'
-              : pendingPrompt.method === 'purchaseMarketListing'
-                ? 'Preparing market purchase'
-                : 'Starting…',
+          market?.detail ?? 'Starting…',
           pendingPrompt.itemOutpoint,
+          market?.label,
         )
       } else if (
         pendingPrompt.kind === 'action' &&
@@ -744,24 +741,18 @@ export function Dashboard({
         ) : sideBusy ? (
           <section
             className="panel permission-side-panel permission-side-panel--processing"
-            aria-label="Processing payment"
+            aria-label={paymentProgress.label || 'Working'}
             aria-busy="true"
           >
-            {/*
-              Mirrors the send panel's old status stage. The panel now hands
-              a send off and closes, so this column is the live view of one
-              in flight — same as a permission request, not stacked on
-              Recent activity. The Activity tab still shows the Sending… row.
-            */}
             <div className="send-spinner" aria-hidden />
             <p className="send-status-title">
-              {paymentProgress.label || 'Sending…'}
+              {paymentProgress.label || 'Working…'}
             </p>
             <p className="send-status-sub">
               {paymentProgress.detail ||
                 (lastApproved
-                  ? `Finishing ${lastApproved.title} for ${appDisplayName(lastApproved.origin)}.`
-                  : 'Broadcasting the approved payment.')}
+                  ? `${lastApproved.title} — ${appDisplayName(lastApproved.origin)}`
+                  : 'Finishing the approved request.')}
             </p>
             {lastApproved?.itemOutpoint ? (
               <PermissionItemPreview outpoint={lastApproved.itemOutpoint} />

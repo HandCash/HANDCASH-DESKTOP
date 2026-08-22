@@ -100,6 +100,17 @@ function tokenLinkId(item: ActivityItem | undefined): string | null {
   return id || null
 }
 
+function eventStatusLabel(method: string): string {
+  if (method === 'connect' || method === 'approve') return 'Approved'
+  if (method === 'connect-deny' || method === 'deny') return 'Cancelled'
+  if (method === 'disconnect') return 'Removed'
+  if (method === 'market-list') return 'Listed'
+  if (method === 'market-cancel') return 'Cancelled'
+  if (method === 'add-friend') return 'Added'
+  if (method === 'forget-collectable') return 'Forgot'
+  return 'Done'
+}
+
 export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [entry, setEntry] = useState<ActivityEntry | null>(() =>
     getActivityById(entryId),
@@ -187,14 +198,10 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         <div className="app-details-section">
           <dl className="wallet-details">
             <div className="wallet-detail">
-              <span>Type</span>
+              <span>Status</span>
               <span className="wallet-detail-value">
-                {activityDetailLabel(entry)}
+                {eventStatusLabel(entry.method)}
               </span>
-            </div>
-            <div className="wallet-detail">
-              <span>Action</span>
-              <span className="wallet-detail-value mono">{entry.method}</span>
             </div>
             {!isWallet ? (
               <div className="wallet-detail">

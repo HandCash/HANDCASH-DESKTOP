@@ -120,15 +120,40 @@ export function isOutpointSending(outpoint: string): boolean {
   return progress.outpoint === normalizeOutpointKey(outpoint)
 }
 
+const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
+  createMarketListingAdvert: {
+    label: 'Listing…',
+    detail: 'Creating the on-chain offer',
+  },
+  createCancelMarketListingAdvert: {
+    label: 'Cancelling…',
+    detail: 'Spending the offer token',
+  },
+  purchaseMarketListing: {
+    label: 'Buying…',
+    detail: 'Settling the purchase',
+  },
+}
+
+/** Copy for a market method that keeps the wallet busy after approval. */
+export function marketBusyCopy(method: string): { label: string; detail: string } | null {
+  return MARKET_BUSY[method] ?? null
+}
+
 /**
  * Start (or update) payment UI. Pass `outpoint` on collectable sends so grid /
  * details can show a per-item Sending badge after the user leaves the panel.
  * Omitting `outpoint` keeps the previous in-flight outpoint (if any).
+ *
+ * `label` overrides the default “Sending…” — a listing is not a send. Later
+ * phase updates keep that label unless a new one is passed, so the pill does
+ * not flip back to Sending mid-offer.
  */
 export function setPaymentProgress(
   phase: PaymentPhase,
   detail?: string | null,
   outpoint?: string | null,
+  label?: string | null,
 ): void {
   if (phase === 'idle') {
     progress = { phase: 'idle', label: null, detail: null, outpoint: null }
@@ -143,9 +168,15 @@ export function setPaymentProgress(
       : outpoint
         ? normalizeOutpointKey(outpoint)
         : null
+  const nextLabel =
+    label !== undefined
+      ? label?.trim() || copy.label
+      : progress.phase !== 'idle' && progress.label
+        ? progress.label
+        : copy.label
   progress = {
     phase,
-    label: copy.label,
+    label: nextLabel,
     detail: detail?.trim() || copy.detail,
     outpoint: nextOutpoint,
   }

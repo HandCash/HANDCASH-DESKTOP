@@ -63,6 +63,7 @@ import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
 import { canAutoProcessPayment } from './autoPay'
 import {
   clearPaymentProgress,
+  marketBusyCopy,
   setPaymentProgress,
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
@@ -919,12 +920,10 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       // representation while the browser was still waiting. The market
       // transaction/state machine remains the authority; this is UI lifecycle
       // only and cannot alter settlement or cancellation semantics.
-      const detail =
-        method === 'createMarketListingAdvert'
-          ? 'Creating market listing'
-          : method === 'createCancelMarketListingAdvert'
-            ? 'Cancelling market listing'
-            : 'Processing market purchase'
+      const busy = marketBusyCopy(method) ?? {
+        label: 'Working…',
+        detail: 'Processing market request',
+      }
       const outpoint =
         args && typeof args === 'object' && !Array.isArray(args)
           ? String((args as { outpoint?: unknown }).outpoint ?? '') || null
@@ -942,9 +941,9 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       }
       inFlightMarketActions.add(actionKey)
       try {
-        setPaymentProgress('preparing', detail, outpoint)
+        setPaymentProgress('preparing', busy.detail, outpoint, busy.label)
         result = await dispatchWalletMethod(active.wallet, method, args, originator)
-        setPaymentProgress('finishing', 'Updating market state', outpoint)
+        setPaymentProgress('finishing', 'Updating market state', outpoint, busy.label)
       } finally {
         inFlightMarketActions.delete(actionKey)
         clearPaymentProgress()
