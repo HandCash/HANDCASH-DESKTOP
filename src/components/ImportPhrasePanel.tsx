@@ -597,9 +597,9 @@ export function ImportPhrasePanel() {
       ) : null}
 
       <SettingsFeatureAbout tags={['BRC-75', 'BIP39', 'BIP44']}>
-        Scans BRC-75, HD master, and the Yours / RelayX / Twetch BIP44 branches — Yours keeps
-        cash and ordinals on separate paths, so both are checked. Funding uses the foreign key
-        to sign; change lands on this identity. Items are separate on-chain moves.
+        Scans BRC-75, HD master, Yours / RelayX / Twetch, and the first 20 Centi receive
+        and change addresses under m/44&apos;/145&apos;/0&apos;. Funding uses the foreign
+        key to sign; change lands on this identity. Items are separate on-chain moves.
       </SettingsFeatureAbout>
     </div>
   )

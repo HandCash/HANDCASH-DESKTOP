@@ -107,6 +107,8 @@ export function estimateItemMigrateCost(args: {
 export type PhraseScheme =
   | 'brc-75'
   | 'legacy-hd'
+  | 'centi-receive'
+  | 'centi-change'
   | 'yours-wallet'
   | 'yours-ord'
   | 'yours-relayx-ord'
@@ -162,6 +164,46 @@ const HD_BRANCHES: Array<{ scheme: PhraseScheme; label: string; path: string }> 
   { scheme: 'yours-identity', label: 'Yours identity', path: "m/0'/236'/0'/0/0" },
   { scheme: 'twetch', label: 'Twetch', path: 'm/0/0' },
 ]
+
+/**
+ * Centi tester-confirmed BIP44 account.
+ *
+ * `m/44'/145'/0'/0` is a receive *chain*, not an address: its spendable leaves
+ * are `/0`, `/1`, … and change normally lives under sibling chain `/1`. Until
+ * Centi documents a gap limit, inspect the first twenty of each explicitly.
+ * That is bounded, deterministic support rather than an unbounded derivation
+ * walk that could keep a recovery screen busy forever.
+ */
+export const CENTI_ADDRESS_COUNT = 20
+const CENTI_ACCOUNT_PATH = "m/44'/145'/0'"
+
+export function buildCentiPhraseCandidates(
+  mnemonic: string,
+  passphrase = '',
+  count = CENTI_ADDRESS_COUNT,
+): PhraseCandidate[] {
+  const limit = Math.max(0, Math.min(CENTI_ADDRESS_COUNT, Math.trunc(count)))
+  const out: PhraseCandidate[] = []
+  const branches = [
+    { scheme: 'centi-receive' as const, label: 'Centi receive', chain: 0 },
+    { scheme: 'centi-change' as const, label: 'Centi change', chain: 1 },
+  ]
+  for (const branch of branches) {
+    for (let index = 0; index < limit; index += 1) {
+      const path = `${CENTI_ACCOUNT_PATH}/${branch.chain}/${index}`
+      const derived = keyFromMnemonicHdPath(mnemonic, path, passphrase)
+      out.push({
+        scheme: branch.scheme,
+        label: `${branch.label} #${index}`,
+        path,
+        rootKeyHex: derived.rootKeyHex,
+        identityKey: derived.identityKey,
+        address: derived.address,
+      })
+    }
+  }
+  return out
+}
 
 /** Derive every address a foreign phrase might hold value on. */
 function buildPhraseCandidates(
@@ -570,11 +612,11 @@ export async function previewPhraseSweep(
   let sameAsActive = false
   const activeIdentity = active.identityKey.toLowerCase()
 
-  for (const candidate of candidates) {
+  const inspectCandidate = async (candidate: PhraseCandidate): Promise<void> => {
     await yieldToUi()
     if (candidate.identityKey.toLowerCase() === activeIdentity) {
       sameAsActive = true
-      continue
+      return
     }
     let scan: LegacyScanResult
     try {
@@ -586,15 +628,20 @@ export async function previewPhraseSweep(
           e instanceof Error ? e.message : String(e)
         }`,
       )
-      continue
+      return
     }
     const funding = scan.utxos.filter((u) => chooseLegacySweepPath(u).path === 'sweep')
     const fundingSats = funding.reduce((s, u) => s + u.satoshis, 0)
-    const items = await countOrdinalsAtLeast(
-      candidate.address,
-      active.chain,
-      PREVIEW_ITEM_CAP,
-    )
+    // An ordinal tip is still an address UTXO. Empty Centi gap leaves therefore
+    // need no GorillaPool request at all; only ask the ordinal index which
+    // one-sat outputs are items when the chain scan found at least one candidate.
+    const items = scan.utxos.some((utxo) => utxo.satoshis === 1)
+      ? await countOrdinalsAtLeast(
+          candidate.address,
+          active.chain,
+          PREVIEW_ITEM_CAP,
+        )
+      : { count: 0, capped: false }
     appendAppLog(
       'info',
       `[phrase-sweep] ${candidate.scheme} (${candidate.path}) ${candidate.address}: ` +
@@ -602,7 +649,7 @@ export async function previewPhraseSweep(
           items.capped ? '+' : ''
         }`,
     )
-    if (funding.length === 0 && items.count === 0) continue
+    if (funding.length === 0 && items.count === 0) return
     hits.push({
       candidate,
       scan,
@@ -611,6 +658,23 @@ export async function previewPhraseSweep(
       itemCountAtLeast: items.count,
       itemCountCapped: items.capped,
     })
+  }
+
+  for (const candidate of candidates) {
+    await inspectCandidate(candidate)
+  }
+
+  // Always inspect Centi too. A phrase may have been used by more than one
+  // wallet, so finding a Yours/HandCash hit is not evidence that its Centi
+  // branches are empty. Recovery favours completeness over a shorter preview.
+  const centi = buildCentiPhraseCandidates(mnemonic, passphrase)
+  candidates.push(...centi)
+  appendAppLog(
+    'info',
+    `[phrase-sweep] scanning ${centi.length} Centi address(es)`,
+  )
+  for (const candidate of centi) {
+    await inspectCandidate(candidate)
   }
 
   const scoreHit = (h: PhraseSourceHit) =>
