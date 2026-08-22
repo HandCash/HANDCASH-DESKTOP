@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.284] - 2026-08-22
+
+### Fixed
+
+- **Phrase import now auto-restores history when a cloud backup exists.** Second
+  devices with the same seed pull BRC-39 automatically instead of waiting for a
+  manual tap or showing a stale zero balance. Skip is only offered when no backup
+  is on the host. Restore uses wipe-local-then-pull; auto push still refuses to
+  overwrite a protected remote with empty or thin local state.
+
 ## [1.2.283] - 2026-08-22
 
 ### Changed

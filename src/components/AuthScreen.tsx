@@ -464,12 +464,17 @@ export function AuthScreen({
         data-aeon-state="history-recovery"
       >
         <HistoryRecoveryPanel
-          onDone={() => {
+          onDone={(balanceSats) => {
             const pending = pendingHistoryRecovery
             if (!pending) return
             setPendingHistoryRecovery(null)
             setSessionBackupPassword(pending.password)
-            onCreated(pending.profile, pending.balanceSats)
+            writeTrustedBalance(
+              pending.profile.identityKey,
+              pending.profile.chain,
+              balanceSats,
+            )
+            onCreated(pending.profile, balanceSats)
           }}
           onSkip={() => {
             const pending = pendingHistoryRecovery

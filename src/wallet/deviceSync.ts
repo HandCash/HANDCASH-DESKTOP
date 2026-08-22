@@ -20,6 +20,7 @@
 import { listFriends, mergeFriends, type Friend } from './friends'
 import {
   downloadAndRestoreBrc39Backup,
+  replaceLocalHistoryFromCloud,
   fetchRemoteBrc39Meta,
   HistoryThinOverwriteError,
   uploadBrc39Backup,
@@ -557,7 +558,11 @@ export async function autoPushHistoryBackupIfConfigured(
           '[cloud-backup] empty localState + remote BRC-39 — pulling historyReplica',
         )
         try {
-          await downloadAndRestoreBrc39Backup(password)
+          if (reason === 'restore' || reason === 'restore-url') {
+            await replaceLocalHistoryFromCloud(password)
+          } else {
+            await downloadAndRestoreBrc39Backup(password)
+          }
           result.pulled = true
           await downloadAndMergeFriendsBackup().catch(() => 0)
           await downloadAndMergeActivityBackup().catch(() => 0)
