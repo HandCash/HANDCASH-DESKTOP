@@ -204,8 +204,28 @@ describe('restoreLiveSpendableOutputs', () => {
     await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
     expect(updateOutput).toHaveBeenCalledWith(2, {
       spendable: true,
+      spentBy: undefined,
     })
     expect(isUtxo).not.toHaveBeenCalled()
+  })
+
+  it('restores change from a locally completed spend left unspendable', async () => {
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 3,
+        transactionId: 10,
+        change: true,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(3, {
+      spendable: true,
+      spentBy: undefined,
+    })
   })
 
   it('skips rows with no locking script instead of asking isUtxo', async () => {

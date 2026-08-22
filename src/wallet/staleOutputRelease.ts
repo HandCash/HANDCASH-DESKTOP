@@ -33,6 +33,7 @@ import {
   sweepChangeScripts,
   type ChangeRow,
 } from './changeScriptFate'
+import { txLivenessFromStatus } from './balanceView'
 
 /** Toolbox statuses that mean this wallet already committed the tx locally. */
 const LIVE_LOCAL_TX = new Set([
@@ -678,13 +679,16 @@ async function loadUnspendableChange(
 }
 
 /**
- * Re-enable change of a live local tx that was left `spendable: false`.
+ * Re-enable change left `spendable: false` after a local send.
  *
  * Never asks the indexer `isUtxo`. Indexer lag after a spend answers `true`
  * for coins this wallet already consumed, and restoring those inflated Pay
  * and poisoned the next createAction. Overlay-hidden and locally-spent
- * inputs stay hidden. `onlyLiveChange` is kept for callers; it is always
- * the behaviour now.
+ * inputs stay hidden.
+ *
+ * Restores change of **pending** local txs (still in flight) and **settled**
+ * txs (`completed` locally) that never got promoted back to spendable — the
+ * usual cause of `spendable=0` with a large `pendingChange` display credit.
  *
  * @returns how many outputs were restored.
  */
@@ -728,9 +732,12 @@ export async function restoreLiveSpendableOutputs(opts?: {
           outputIndex?: number
           basket?: string
           change?: boolean
+          spendable?: boolean
         }
         const outputId = positiveId(output.outputId)
         if (outputId == null) continue
+        const basket = String(output.basket ?? '').toLowerCase()
+        if (basket === '1sat' || basket === 'bsv21') continue
         const overlayKey = outpointFromOutput(output)
         if (overlayKey && isUtxoBlockedFromRestore(overlayKey)) {
           keptSpent += 1
@@ -750,10 +757,16 @@ export async function restoreLiveSpendableOutputs(opts?: {
           const creatorId = positiveId(output.transactionId)
           const creator =
             creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
+          const creatorLiveness = txLivenessFromStatus(creator?.status)
           const localChange =
             output.change === true &&
-            isLiveLocalTxStatus(creator?.status) &&
+            creatorLiveness === 'pending' &&
             spentBy == null
+          const settledChange =
+            output.change === true &&
+            creatorLiveness === 'settled' &&
+            spentBy == null &&
+            output.spendable !== true
 
           const healed = await healLockingScript(sp, output)
           if (healed == null && !hasLockingScript(output)) {
@@ -761,10 +774,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
             continue
           }
 
-          if (!localChange) continue
+          if (!localChange && !settledChange) continue
 
           await sp.updateOutput(outputId, {
             spendable: true,
+            spentBy: undefined,
             ...(healed != null ? { lockingScript: healed } : {}),
           })
           restored += 1

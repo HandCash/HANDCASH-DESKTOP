@@ -634,16 +634,30 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       }
     })(),
     (async () => {
+      try {
+        const { releaseStuckNosends } = await import('./actionReview')
+        await releaseStuckNosends()
+      } catch (err) {
+        console.warn('[chain-ingest] release stuck nosends skipped', err)
+      }
       await rehideInputsOfLiveLocalTxs()
-      const restored = await restoreLiveSpendableOutputs()
+      let restored = 0
+      for (let pass = 0; pass < 5; pass += 1) {
+        const batch = await restoreLiveSpendableOutputs()
+        if (batch === 0) break
+        restored += batch
+      }
       if (restored > 0) {
         console.info(
-          `[chain-ingest] restored ${restored} live change output(s) that were falsely marked unspendable`,
+          `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
         )
       }
       // Coins a send sealed for a transaction that never reached a node. Runs
       // after the rehide pass so anything genuinely in flight is sealed first.
-      await reclaimSealedInputsNeverSpent()
+      for (let pass = 0; pass < 3; pass += 1) {
+        const reclaimed = await reclaimSealedInputsNeverSpent()
+        if (reclaimed === 0) break
+      }
     })(),
   ])
 
