@@ -103,14 +103,14 @@ export function walletProgressPercent(
 export function walletProgressLabel(
   snapshot: WalletProgress = progress,
 ): string {
-  if (snapshot.status === 'failed') return 'Import failed'
-  if (snapshot.status === 'done') return 'Import complete'
-  if (snapshot.status === 'needs-resume') return 'Import paused'
+  if (snapshot.status === 'failed') return 'Sweep failed'
+  if (snapshot.status === 'done') return 'Sweep complete'
+  if (snapshot.status === 'needs-resume') return 'Sweep paused'
   // Soft-deadline honesty wins over import kind so pill/subtitle stay Catching up.
   if (snapshot.phase === 'catching-up' && snapshot.status === 'running') {
     return 'Catching up'
   }
-  if (snapshot.kind === 'phrase-import') return 'Importing'
+  if (snapshot.kind === 'phrase-import') return 'Sweeping'
   if (snapshot.kind === 'one-sat-import') return 'Importing'
   if (snapshot.kind === 'refresh') {
     if (snapshot.phase === 'importing-items') return 'Importing'

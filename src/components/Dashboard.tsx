@@ -62,14 +62,6 @@ import { getActiveWallet } from '../wallet/session'
 import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
-import {
-  getWalletProgress,
-  isWalletProgressBusy,
-  subscribeWalletProgress,
-  walletProgressDetail,
-  walletProgressLabel,
-  type WalletProgress,
-} from '../wallet/walletProgress'
 import { whenRecomposeIdle } from '../wallet/recompose'
 
 /**
@@ -138,9 +130,6 @@ export function Dashboard({
   const [paymentProgress, setPaymentProgressState] = useState<PaymentProgress>(() =>
     getPaymentProgress(),
   )
-  const [walletProgress, setWalletProgress] = useState<WalletProgress>(() =>
-    getWalletProgress(),
-  )
   const [lastApproved, setLastApproved] = useState<PendingAction | null>(null)
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
@@ -159,7 +148,6 @@ export function Dashboard({
     if (isMobileWalletPlatform()) return
     return subscribePaymentProgress(setPaymentProgressState)
   }, [])
-  useEffect(() => subscribeWalletProgress(setWalletProgress), [])
   useEffect(() => {
     if (pendingPrompt) setLastApproved(null)
   }, [pendingPrompt?.id])
@@ -659,19 +647,6 @@ export function Dashboard({
                   </>
                 )}
               </button>
-              {isWalletProgressBusy(walletProgress) ? (
-                <p
-                  className="wallet-balance-sync"
-                  data-aeon-part="balance-sync"
-                  data-aeon-state="catching-up"
-                  title={walletProgressDetail(walletProgress) ?? undefined}
-                >
-                  {walletProgressLabel(walletProgress)}
-                  {walletProgressDetail(walletProgress)
-                    ? ` · ${walletProgressDetail(walletProgress)}`
-                    : '…'}
-                </p>
-              ) : null}
             </div>
 
             <div className="actions wallet-actions">

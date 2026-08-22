@@ -250,7 +250,7 @@ export function ImportPhrasePanel() {
                     itemCount: ITEMS_PER_TX,
                     itemsPerTx: ITEMS_PER_TX,
                   }).feeSats,
-                )} sats. Add funds and run Import phrase again — it resumes where this stopped.`,
+                )} sats. Add funds and run Sweep again — it resumes where this stopped.`,
               )
               outOfFunds = true
               break
@@ -283,10 +283,10 @@ export function ImportPhrasePanel() {
       setPhase('done')
       setStatus('')
       playWalletSound('success')
-      toastSuccess('Import finished', 'Refresh Collect if items are still catching up.')
+      toastSuccess('Sweep finished', 'Refresh Collect if items are still catching up.')
     } catch (err) {
       playWalletSound('error')
-      toastError('Import failed', err instanceof Error ? err.message : String(err))
+      toastError('Sweep failed', err instanceof Error ? err.message : String(err))
       setPhase('preview')
     } finally {
       setBusy(false)

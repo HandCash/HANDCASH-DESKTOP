@@ -101,7 +101,7 @@ describe('walletProgress', () => {
       message: '40 imported · 43 scanned',
     })
     const snap = getWalletProgress()
-    expect(walletProgressLabel(snap)).toBe('Importing')
+    expect(walletProgressLabel(snap)).toBe('Sweeping')
     expect(snap.skipped).toBe(3)
     expect(walletProgressPercent(snap)).toBe(20)
   })
@@ -131,6 +131,6 @@ describe('walletProgress', () => {
     expect(getWalletProgress().status).toBe('needs-resume')
     vi.advanceTimersByTime(5_000)
     expect(getWalletProgress().status).toBe('needs-resume')
-    expect(walletProgressLabel()).toBe('Import paused')
+    expect(walletProgressLabel()).toBe('Sweep paused')
   })
 })

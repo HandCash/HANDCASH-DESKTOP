@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.285] - 2026-08-22
+
+### Changed
+
+- **Sweep** replaces “Import phrase” in Settings for moving another wallet in.
+- **Removed “Open a web app” URL field** on mobile (apps open via Scan / deep
+  links / connected apps). Dropped the balance hero sync subtitle.
+
 ## [1.2.284] - 2026-08-22
 
 ### Fixed

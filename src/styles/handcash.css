@@ -2841,21 +2841,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   background: color-mix(in srgb, var(--hc-danger, #e35) 80%, var(--hc-accent));
 }
 
-.wallet-balance-sync {
-  margin: 6px 0 0;
-  font-size: 0.82rem;
-  font-weight: 600;
-  color: var(--hc-muted);
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.wallet-balance-sync[data-aeon-state='catching-up'] {
-  color: color-mix(in srgb, var(--hc-accent) 70%, var(--hc-fg, inherit));
-}
-
 .key-slice-accordion {
   display: grid;
   gap: 8px;

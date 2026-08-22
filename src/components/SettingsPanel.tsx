@@ -55,7 +55,7 @@ const SETTING_GROUPS: SettingGroup[] = [
       },
       {
         id: 'import-phrase',
-        label: 'Import phrase',
+        label: 'Sweep',
         description: 'Move another wallet in here',
       },
       {
@@ -128,7 +128,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'logs') return 'Logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'device-handoff') return 'Device backup'
-  if (id === 'import-phrase') return 'Import phrase'
+  if (id === 'import-phrase') return 'Sweep'
   if (id === 'history-backup') return 'History'
   for (const group of SETTING_GROUPS) {
     const item = group.items.find((entry) => entry.id === id)
