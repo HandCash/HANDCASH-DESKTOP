@@ -77,6 +77,33 @@ const bridgeWindows = createBridgeWindowSource({
   onLog: (message) => log.info(message),
 })
 
+/**
+ * One instance per userData directory.
+ *
+ * Chromium holds an exclusive LevelDB lock on the IndexedDB partition that stores
+ * the toolbox state, so a second copy of the app — an installed build opened next
+ * to a locally packaged one, or `npm run dev` beside either — cannot open the
+ * store. Every read then fails with Chromium's raw "Internal error.", which the
+ * unlock screen shows verbatim: the wallet looks corrupt when it is only occupied.
+ * A rival instance can also leave the partition genuinely broken.
+ *
+ * Focus the window that already owns the data instead of starting a second one.
+ */
+if (!app.requestSingleInstanceLock()) {
+  log.warn('HandCash is already running for this profile — focusing it and exiting')
+  app.exit(0)
+}
+
+app.on('second-instance', () => {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+})
+
 if (process.platform === 'linux') {
   app.commandLine.appendSwitch('--enable-features', 'WaylandWindowDecorations')
 }
