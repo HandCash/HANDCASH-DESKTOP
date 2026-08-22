@@ -36,6 +36,12 @@ import {
   UI_ORIGIN,
 } from './uiServer.js'
 import { isTrustedAppUrl } from './appUrlPolicy.js'
+import { guardStdioWrites } from './brokenPipe.js'
+
+// Before any transport can write: a closed stdout must not surface as a crash.
+guardStdioWrites([process.stdout, process.stderr], (err) => {
+  log.warn('stdio write failed', err)
+})
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged

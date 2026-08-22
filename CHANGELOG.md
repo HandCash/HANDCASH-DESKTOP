@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.286] - 2026-08-22
+
+### Fixed
+
+- **A lost log stream no longer looks like a crash.** When HandCash outlived
+  whatever was reading its output — a terminal the holder closed, a launcher
+  that exited — the next diagnostic line failed with `write EPIPE`, and because
+  nothing was listening for that error it escalated into an "Uncaught Exception"
+  dialog over a wallet that was working fine. Write failures on the output
+  streams are now handled where they happen. The file log, which is what support
+  actually reads, is unaffected.
+
 ## [1.2.285] - 2026-08-22
 
 ### Changed
