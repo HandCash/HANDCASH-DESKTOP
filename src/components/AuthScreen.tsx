@@ -14,6 +14,12 @@ import { bootWallet, fetchBalanceSats, lastKnownBalance } from '../wallet/sessio
 import { UNLOCK_PASSWORD_MIN_LENGTH, validatePassword } from '../wallet/passwordPolicy'
 import { recoverRootKeyFromBrc140Shares } from '../wallet/brc140Backup'
 import { playWalletSound } from '../wallet/soundService'
+import { appendAppLog } from '../wallet/appLog'
+import {
+  classifyUnlockFailure,
+  isWalletMismatchMessage,
+  rawUnlockError,
+} from '../wallet/unlockFailure'
 import {
   clearUnlockNudge,
   subscribeUnlockNudge,
@@ -53,16 +59,6 @@ const RESTORE_METHODS: { id: RestoreMethod; label: string }[] = [
 
 function isRestoreMethod(mode: FormMode): mode is RestoreMethod {
   return mode === 'phrase' || mode === 'shares' || mode === 'key'
-}
-
-function isMismatchError(message: string | null | undefined): boolean {
-  if (!message) return false
-  return (
-    message.includes('does not match the funded') ||
-    message.includes('missing unlock keys') ||
-    message.includes('Restore with your recovery') ||
-    message.includes('Restore with a recovery')
-  )
 }
 
 function normalizeRootKeyHex(raw: string): string {
@@ -132,7 +128,7 @@ export function AuthScreen({
   useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
 
   useEffect(() => {
-    if (mode === 'locked' && isMismatchError(error)) setOfferRestoreOnLock(true)
+    if (mode === 'locked' && isWalletMismatchMessage(error)) setOfferRestoreOnLock(true)
   }, [mode, error])
 
   const showRestoreMethods =
@@ -340,15 +336,19 @@ export function AuthScreen({
         }
       })
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
+      const failure = classifyUnlockFailure(err)
       setPreparing(null)
-      if (mode === 'locked' && isMismatchError(message)) {
+      if (failure.kind !== 'other') {
+        // Chromium's own text is what support needs; the holder sees the translation.
+        appendAppLog('warn', `Unlock failed (${failure.kind}): ${rawUnlockError(err)}`)
+      }
+      if (mode === 'locked' && failure.offerRestore) {
         setOfferRestoreOnLock(true)
         setFormMode('phrase')
       }
-      send({ type: 'FAIL', error: message })
+      send({ type: 'FAIL', error: failure.message })
       playWalletSound('error')
-      onFail(message)
+      onFail(failure.message)
     }
   }
 
