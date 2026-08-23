@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import { qrScannerMachine } from '../machines/qrScannerMachine'
+import { openQrCamera } from '../wallet/qrCameraConstraints'
 import { Skeleton } from './Skeleton'
 
 type Props = {
@@ -18,19 +19,6 @@ function getBarcodeDetector(): (new (opts?: { formats: string[] }) => BarcodeDet
   return typeof ctor === 'function'
     ? (ctor as new (opts?: { formats: string[] }) => BarcodeDetectorLike)
     : null
-}
-
-async function openCamera(): Promise<MediaStream> {
-  return navigator.mediaDevices.getUserMedia({
-    audio: false,
-    video: {
-      facingMode: { ideal: 'environment' },
-      // 720p plus full-rate software decode overheats Android WebViews. QR
-      // modules remain crisp at 960×540 while cutting pixel work nearly in half.
-      width: { ideal: 960 },
-      height: { ideal: 540 },
-    },
-  })
 }
 
 /**
@@ -167,7 +155,10 @@ export function QrScanner({
 
       const Detector = getBarcodeDetector()
       try {
-        const stream = await openCamera()
+        const stream = await openQrCamera(
+          (constraints) => navigator.mediaDevices.getUserMedia(constraints),
+          window.handcash?.platform,
+        )
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
           return

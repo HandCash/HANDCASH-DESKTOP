@@ -1,4 +1,16 @@
-import { app, BrowserWindow, clipboard, dialog, ipcMain, Menu, nativeImage, nativeTheme, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  clipboard,
+  dialog,
+  ipcMain,
+  Menu,
+  nativeImage,
+  nativeTheme,
+  session,
+  shell,
+  type Session,
+} from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -36,6 +48,7 @@ import {
   UI_ORIGIN,
 } from './uiServer.js'
 import { isTrustedAppUrl } from './appUrlPolicy.js'
+import { grantsAppCameraPermission } from './cameraPermissions.js'
 import { guardStdioWrites } from './brokenPipe.js'
 
 // Before any transport can write: a closed stdout must not surface as a crash.
@@ -111,7 +124,11 @@ app.on('second-instance', () => {
 })
 
 if (process.platform === 'linux') {
-  app.commandLine.appendSwitch('--enable-features', 'WaylandWindowDecorations')
+  // Wayland window chrome + PipeWire camera capture (xdg-desktop-portal on modern Linux).
+  app.commandLine.appendSwitch(
+    '--enable-features',
+    'WaylandWindowDecorations,WebRtcPipeWireCapturer,WebRtcPipeWireCamera',
+  )
 }
 
 function getIconPath(): string | undefined {
@@ -124,6 +141,47 @@ function isAppUrl(url: string): boolean {
     packagedUiOrigin,
     distRoot: path.join(__dirname, '../dist'),
   })
+}
+
+function cameraPermissionContext(webContentsId: number) {
+  return {
+    webContentsId,
+    mainWebContentsId: mainWindow?.webContents.id,
+    isAppUrl,
+  }
+}
+
+function configureSessionCameraPermissions(sess: Session): void {
+  sess.setPermissionRequestHandler((webContents, permission, callback, details) => {
+    const media =
+      permission === 'media' && 'mediaTypes' in details
+        ? details.mediaTypes
+        : undefined
+    callback(
+      grantsAppCameraPermission({
+        ...cameraPermissionContext(webContents.id),
+        permission,
+        details: {
+          isMainFrame: details.isMainFrame,
+          requestingUrl: details.requestingUrl,
+          mediaTypes: media,
+        },
+      }),
+    )
+  })
+
+  sess.setPermissionCheckHandler((webContents, permission, requestingOrigin, details) =>
+    grantsAppCameraPermission({
+      ...cameraPermissionContext(webContents?.id ?? -1),
+      permission,
+      details: {
+        isMainFrame: details.isMainFrame,
+        // Use the page URL when present; file:// origins are opaque but requestingUrl is under dist.
+        requestingUrl: details.requestingUrl ?? requestingOrigin,
+        mediaType: details.mediaType,
+      },
+    }),
+  )
 }
 
 function isSafeExternalUrl(url: string): boolean {
@@ -326,25 +384,6 @@ function createWindow(): void {
     },
   })
 
-  mainWindow.webContents.session.setPermissionRequestHandler(
-    (webContents, permission, callback, details) => {
-      callback(
-        webContents.id === mainWindow?.webContents.id &&
-          permission === 'media' &&
-          details.isMainFrame &&
-          isAppUrl(details.requestingUrl),
-      )
-    },
-  )
-
-  mainWindow.webContents.session.setPermissionCheckHandler(
-    (webContents, permission, requestingOrigin, details) =>
-      webContents?.id === mainWindow?.webContents.id &&
-      permission === 'media' &&
-      details.isMainFrame &&
-      isAppUrl(requestingOrigin),
-  )
-
   // Packaged wallets that started life under `npm run dev` keep UTXOs in the
   // localhost IndexedDB partition — load that origin so balance is not zero.
   if (isDev) {
@@ -440,6 +479,8 @@ app.whenReady().then(async () => {
       packagedUiOrigin = null
     }
   }
+
+  configureSessionCameraPermissions(session.defaultSession)
 
   createWindow()
   installAppMenu()
