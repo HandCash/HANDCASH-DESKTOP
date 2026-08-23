@@ -5,8 +5,10 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
+const unconfirmedChangeSats = vi.fn(async () => 0)
+
 vi.mock('./balanceView', () => ({
-  unconfirmedChangeSats: async () => 0,
+  unconfirmedChangeSats: (...args: unknown[]) => unconfirmedChangeSats(...args),
 }))
 
 const BUSY = new Error('IndexedDB timed out')
@@ -30,6 +32,8 @@ function readableWallet(sats: number) {
 describe('fetchBalanceRead', () => {
   beforeEach(() => {
     vi.resetModules()
+    unconfirmedChangeSats.mockReset()
+    unconfirmedChangeSats.mockResolvedValue(0)
   })
 
   it('reports unavailable instead of zero when every strategy fails', async () => {
@@ -63,6 +67,21 @@ describe('fetchBalanceRead', () => {
     ).resolves.toBe(0)
   })
 
+  it('does not let a confirmed-only read shrink the partner-app cache', async () => {
+    unconfirmedChangeSats.mockResolvedValue(10_000)
+    const { fetchBalanceSats, fetchFastBalanceSats } = await import('./session')
+    const wallet = {
+      balance: async () => 42_000,
+      listOutputs: async () => ({ outputs: [] }),
+    }
+
+    await fetchBalanceSats(wallet as never)
+    unconfirmedChangeSats.mockResolvedValue(0)
+    await fetchBalanceSats(wallet as never, { creditUnconfirmed: false })
+
+    await expect(fetchFastBalanceSats(wallet as never)).resolves.toBe(52_000)
+  })
+
   it('returns a proven partner-app balance without waiting for its refresh', async () => {
     const { fetchBalanceSats, fetchFastBalanceSats } = await import('./session')
     let blocked = false
@@ -74,7 +93,7 @@ describe('fetchBalanceRead', () => {
       listOutputs: async () => ({ outputs: [] }),
     }
 
-    await fetchBalanceSats(wallet as never, { creditUnconfirmed: false })
+    await fetchBalanceSats(wallet as never)
     blocked = true
 
     await expect(

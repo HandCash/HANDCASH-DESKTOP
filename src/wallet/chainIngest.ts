@@ -333,6 +333,8 @@ export async function refreshFromChainExclusive(
   let importedFunding = 0
   let importedItems = 0
   let scannedTxids: string[] = []
+  let addressUnspentAfterIngest = 0
+  let fundingSkippedKnownAfterIngest = 0
 
   /** Soft UI cap — clear Syncing while beef / SPV providers still finish under the ingest lock. */
   const LEGACY_INGEST_SOFT_MS = 35_000
@@ -387,6 +389,8 @@ export async function refreshFromChainExclusive(
     partialWarn = ingest.partialWarn
     importedFunding = ingest.importedFunding
     importedItems = ingest.importedItems
+    addressUnspentAfterIngest = ingest.scan.sats
+    fundingSkippedKnownAfterIngest = ingest.fundingSkippedKnown
     // The txid inventory is only consumed by the explicit migration contract.
     // Building another 800k-entry Set on every background refresh doubled the
     // largest allocation in the ingest path for no product benefit.
@@ -482,11 +486,22 @@ export async function refreshFromChainExclusive(
 
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
+    if (addressUnspentAfterIngest > 0 && fundingSkippedKnownAfterIngest > 0) {
+      console.warn(
+        `[chain-ingest] ${addressUnspentAfterIngest.toLocaleString()} sats still on legacy address ` +
+          `(${fundingSkippedKnownAfterIngest} marked imported, toolbox ${balanceAfter.toLocaleString()}) — ` +
+          'sweep may be stuck; Refresh will retry',
+      )
+    }
     if (announceReceive) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
-      if (balanceRose) {
+      const gained = Math.max(0, balanceAfter - balanceBefore)
+      // Only toast when this Refresh pass actually swept new funding from the
+      // legacy address. A balance rise from reclaiming sealed inputs, restoring
+      // pending change, or healing a thin Toolbox is recovery — not a payment
+      // that just arrived.
+      if (balanceRose && importedFunding > 0) {
         maybeReceiveChime()
-        const gained = Math.max(0, balanceAfter - balanceBefore)
         const amountLabel =
           gained > 0 ? formatPrimaryFromSats(gained, getDisplayCurrency()) : undefined
         toastSuccess('Payment received', amountLabel)
@@ -501,6 +516,10 @@ export async function refreshFromChainExclusive(
       } else if (importedFunding > 0 && !balanceRose) {
         console.info(
           `[chain-ingest] imported ${importedFunding} legacy out(s) but balance unchanged — awaiting indexer`,
+        )
+      } else if (balanceRose && importedFunding === 0) {
+        console.info(
+          `[chain-ingest] balance rose ${balanceBefore.toLocaleString()}→${balanceAfter.toLocaleString()} without a new legacy sweep — not announcing receive`,
         )
       }
     }

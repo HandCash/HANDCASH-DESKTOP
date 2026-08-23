@@ -64,3 +64,15 @@ export function shouldKeepTrustedBalance(
 ): boolean {
   return currentSats > 0 && incomingSats === 0 && recomposeInFlight
 }
+
+/**
+ * Confirmed-only toolbox reads omit pending change from live local sends. They
+ * must not downgrade the hero or trusted snapshot when a higher display figure
+ * is already showing.
+ */
+export function shouldKeepDisplayBalanceOnConfirmedRead(
+  displayedSats: number,
+  confirmedSats: number,
+): boolean {
+  return displayedSats > 0 && confirmedSats < displayedSats
+}

@@ -12,6 +12,7 @@ vi.mock('./durableStorage', () => ({
 
 const {
   readTrustedBalance,
+  shouldKeepDisplayBalanceOnConfirmedRead,
   shouldKeepTrustedBalance,
   writeTrustedBalance,
 } = await import('./balanceSnapshot')
@@ -48,5 +49,12 @@ describe('cold-start trusted balance', () => {
     expect(shouldKeepTrustedBalance(710_091, 0, false)).toBe(false)
     expect(shouldKeepTrustedBalance(710_091, 500_000, true)).toBe(false)
     expect(shouldKeepTrustedBalance(0, 0, true)).toBe(false)
+  })
+
+  it('blocks confirmed-only reads from downgrading a higher display balance', () => {
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 3_000)).toBe(true)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 15_000)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 20_000)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(0, 0)).toBe(false)
   })
 })

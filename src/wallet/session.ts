@@ -439,9 +439,6 @@ export async function fetchBalanceRead(
     return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
 
-  if (typeof w === 'object' && w != null) {
-    spendableBalanceCache.set(w, spendable)
-  }
   if (opts?.creditUnconfirmed === false) return { kind: 'ok', sats: spendable }
 
   let pendingChange = 0
@@ -460,6 +457,11 @@ export async function fetchBalanceRead(
     )
   }
   lastKnownBalanceSats = spendable
+  if (typeof w === 'object' && w != null) {
+    // Full display total — pending change included. Must run after the credit
+    // above; partner-app fast reads return this figure synchronously.
+    spendableBalanceCache.set(w, spendable)
+  }
   if (session && w === session.wallet) {
     writeTrustedBalance(session.identityKey, session.chain, spendable)
   }

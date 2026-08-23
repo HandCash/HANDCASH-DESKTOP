@@ -39,6 +39,7 @@ import { setSyncHealth } from './wallet/walletHealth'
 import { isRecomposeInFlight } from './wallet/recompose'
 import {
   shouldKeepTrustedBalance,
+  shouldKeepDisplayBalanceOnConfirmedRead,
   writeTrustedBalance,
 } from './wallet/balanceSnapshot'
 
@@ -232,6 +233,17 @@ export function App() {
         )
       ) {
         console.info('[balance] kept trusted balance during recompose')
+        return
+      }
+      // Confirmed-only reads omit pending change from live local sends. They must
+      // not paint a lower hero while the display total still includes that change.
+      if (
+        shouldKeepDisplayBalanceOnConfirmedRead(
+          snapshot.context.balanceSats,
+          balanceSats,
+        )
+      ) {
+        console.info('[balance] kept display total — confirmed read omitted pending change')
         return
       }
       send({ type: 'REFRESHED', balanceSats })

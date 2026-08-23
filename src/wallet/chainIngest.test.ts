@@ -503,3 +503,95 @@ describe('refreshFromChain spendable review', () => {
     expect(mockReviewSpendableOutputs).not.toHaveBeenCalled()
   })
 })
+
+describe('refreshFromChain receive announcement', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    resetMaintenanceMocks()
+    mockReviewSpendableOutputs.mockReset()
+    mockReviewSpendableOutputs.mockResolvedValue({ totalOutputs: 0, outputs: [] })
+    mockFetchBalanceSats.mockReset()
+    mockScanLegacyAddress.mockReset()
+    mockClassifyLegacyUtxos.mockReset()
+    mockImportOneSatOrdinals.mockReset()
+    mockImportLegacyUtxos.mockReset()
+    mockSetSyncHealth.mockReset()
+    mockReconcilePendingSends.mockReset()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: { reviewSpendableOutputs: mockReviewSpendableOutputs },
+    })
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main',
+      sats: 0,
+      utxos: [],
+      source: 'whatsonchain',
+    })
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [],
+      oneSats: [],
+      bsv21: [],
+      heldOneSats: [],
+      heldUneconomical: [],
+      pendingTips: [],
+    })
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 0,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 0,
+      importedOutpoints: [],
+      importedReceipts: [],
+    })
+  })
+
+  it('does not toast when balance rose from recovery without a new legacy sweep', async () => {
+    mockFetchBalanceSats.mockResolvedValueOnce(1_000).mockResolvedValueOnce(5_000)
+    const { toastSuccess } = await import('./toast')
+    const { refreshFromChain } = await import('./chainIngest')
+
+    await refreshFromChain({ forceReview: true, announceReceive: true })
+
+    expect(toastSuccess).not.toHaveBeenCalled()
+  })
+
+  it('toasts only when this pass swept new legacy funding', async () => {
+    mockFetchBalanceSats.mockResolvedValueOnce(1_000).mockResolvedValueOnce(6_000)
+    mockScanLegacyAddress.mockResolvedValue({
+      address: 'addr',
+      chain: 'main',
+      sats: 5000,
+      utxos: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
+      source: 'whatsonchain',
+    })
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [{ outpoint: 'bb.0', txid: 'bb', vout: 0, satoshis: 5000 }],
+      oneSats: [],
+      bsv21: [],
+      heldOneSats: [],
+      heldUneconomical: [],
+      pendingTips: [],
+    })
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 1,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 0,
+      importedOutpoints: ['bb.0'],
+      importedReceipts: [
+        { outpoint: 'bb.0', satoshis: 5000, receiveTxid: 'bb', sweepTxid: 'cc' },
+      ],
+    })
+
+    const { toastSuccess } = await import('./toast')
+    const { refreshFromChain } = await import('./chainIngest')
+
+    await refreshFromChain({ forceReview: true, announceReceive: true })
+
+    expect(toastSuccess).toHaveBeenCalledWith('Payment received', expect.any(String))
+  })
+})

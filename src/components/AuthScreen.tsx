@@ -354,22 +354,10 @@ export function AuthScreen({
         balanceSats,
       )
       if (!recomposedBeforeEnter) {
-        void confirmedBalance.then((fresh) => {
-          // This read began before recompose. Its zero is a view of the old
-          // localState, not authority to erase a funded snapshot; the final
-          // recompose result below owns that decision.
-          if (
-            fresh.kind === 'ok' &&
-            fresh.sats === 0 &&
-            cachedBalance != null &&
-            cachedBalance > 0
-          ) {
-            return
-          }
-          if (fresh.kind === 'ok' && fresh.sats !== balanceSats) {
-            onBalanceRefreshed(fresh.sats)
-          }
-        })
+        // Do not downgrade the hero from this confirmed-only read. Pending change
+        // from a live local send is credited only on the display path below; a
+        // lower confirmed total is normal and must not paint $0.03 when the
+        // wallet still holds $0.15 including in-flight change.
       }
       // Credit live local change only after the wallet is visible. This can
       // inspect hundreds of old output rows and must never hold the unlock UI.

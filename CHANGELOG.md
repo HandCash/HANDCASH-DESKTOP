@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.291] - 2026-08-23
+
+### Fixed
+
+- **Refresh no longer toasts "Payment received" for money you already had.**
+  Any balance rise during Refresh used to announce a new payment — including
+  when sealed inputs were reclaimed, pending change was restored, or a thin
+  Toolbox was healed. The toast now fires only when this pass actually swept new
+  funding from your legacy address.
+- **The hero balance no longer drops when a confirmed-only read omits pending
+  change.** A live local send credits pending change on the display path only;
+  a lower confirmed total is normal and must not paint $0.03 when the wallet
+  still holds $0.15 including in-flight change. The partner-app balance cache
+  now keeps the full display total instead of shrinking on confirmed-only reads.
+- **Unlock no longer downgrades the hero from a confirmed-only read** while the
+  display path is still crediting pending change from live local sends.
+
 ## [1.2.290] - 2026-08-23
 
 ### Fixed
