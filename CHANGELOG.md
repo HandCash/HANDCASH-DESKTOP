@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.301] - 2026-08-23
+
+### Fixed
+
+- **BSV-21 sends no longer remain stuck on “Preparing”.** Fungible sends declared
+  custom token inputs without supplying their source BEEF, so the toolbox could
+  reserve the action and wait indefinitely while resolving them. Token sends now
+  provide the selected transactions explicitly, continue through the manual
+  signing path, and abort any preparation still stalled after 45 seconds.
+
 ## [1.2.300] - 2026-08-23
 
 ### Fixed
