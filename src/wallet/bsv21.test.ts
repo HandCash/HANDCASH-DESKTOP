@@ -340,4 +340,69 @@ describe('extractBsv21FromGp', () => {
       op: 'transfer',
     })
   })
+
+  // Regression: a transfer whose origin is an earlier transfer of the same
+  // token. Reading `amt` from the origin credited the sender's prior balance
+  // (905) instead of the 58 they actually sent.
+  it('credits the amount on the tip, not the amount at the origin', async () => {
+    const { extractBsv21FromGp: extract } = await import('./oneSatImport')
+    const tokenId = 'd4585dec7bda51d648710fc743d518beb866e52da2639c549a193ebd171515c0_0'
+    const tip = '1a985778ab19fade1eecc04558793fbb4bc1cb66062baa9bf2068d198aacb313.0'
+    const holding = extract(
+      {
+        origin: {
+          outpoint: '8768be3f641ea089ffb09b7aaffb50704dea4cd70c2b49604f11887e443a0707_1',
+          data: {
+            insc: {
+              file: { type: 'application/bsv-20' },
+              json: { p: 'bsv-20', op: 'transfer', id: tokenId, amt: '905' },
+            },
+            bsv20: { id: tokenId, op: 'transfer', amt: 905 },
+          },
+        },
+        data: {
+          insc: {
+            file: { type: 'application/bsv-20' },
+            json: { p: 'bsv-20', op: 'transfer', id: tokenId, amt: '58' },
+          },
+          bsv20: { id: tokenId, op: 'transfer', amt: 58 },
+        },
+      },
+      tip,
+    )
+    expect(holding).toMatchObject({ outpoint: tip, tokenId, amt: '58', op: 'transfer' })
+  })
+
+  it('still takes ticker and decimals from the deploy the transfer omits', async () => {
+    const { extractBsv21FromGp: extract } = await import('./oneSatImport')
+    const tokenId = 'c'.repeat(64) + '_0'
+    const tip = 'e'.repeat(64) + '.2'
+    const holding = extract(
+      {
+        origin: {
+          outpoint: tokenId,
+          data: {
+            insc: {
+              file: { type: 'application/bsv-20' },
+              json: {
+                p: 'bsv-20',
+                op: 'deploy+mint',
+                amt: '1000000',
+                sym: 'GOLD',
+                dec: 2,
+              },
+            },
+          },
+        },
+        data: {
+          insc: {
+            file: { type: 'application/bsv-20' },
+            json: { p: 'bsv-20', op: 'transfer', id: tokenId, amt: '4200' },
+          },
+        },
+      },
+      tip,
+    )
+    expect(holding).toMatchObject({ tokenId, amt: '4200', sym: 'GOLD', dec: 2 })
+  })
 })

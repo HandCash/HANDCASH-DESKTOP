@@ -8,7 +8,9 @@ import {
   scanLegacyAddress,
   importLegacyUtxos,
   type LegacyScanResult,
+  type LegacyUtxo,
 } from './legacyScan'
+import { scanAddressTokenTxos } from './tokenAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
@@ -187,6 +189,29 @@ function outpointKey(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
 
+/**
+ * Fold ordinal-index token tips into the provider scan.
+ *
+ * The two sources answer different questions, so rows only ever get added —
+ * a token the address provider already listed keeps the provider's row, and
+ * an empty token result leaves the scan untouched.
+ */
+export function mergeTokenTxos(
+  scan: LegacyScanResult,
+  tokenTxos: LegacyUtxo[],
+): LegacyScanResult {
+  if (tokenTxos.length === 0) return scan
+  const seen = new Set(scan.utxos.map((u) => outpointKey(u.outpoint)))
+  const extra = tokenTxos.filter((u) => !seen.has(outpointKey(u.outpoint)))
+  if (extra.length === 0) return scan
+
+  console.info(
+    `[chain-ingest] ordinal index added ${extra.length} token tip(s) the address scan could not see`,
+  )
+  const utxos = [...scan.utxos, ...extra]
+  return { ...scan, utxos, sats: utxos.reduce((s, u) => s + u.satoshis, 0) }
+}
+
 /** One page — same bound as Collect so large inventories heal completely. */
 const ONE_SAT_BASKET_PAGE = 1000
 
@@ -308,7 +333,18 @@ export async function ingestLegacyAddressUtxos(
     })
   }
 
-  const scan = await scanLegacyAddress(active)
+  // BSV-21 outputs are P2PKH + ord envelope, which every address provider reads
+  // as nonstandard — they are absent from the scan below even while live on the
+  // address. Ask the ordinal index alongside it. A send needs funding only, and
+  // never spends a tip, so it does not pay for this.
+  const [addressScan, tokenTxos] = await Promise.all([
+    scanLegacyAddress(active),
+    fundingOnly
+      ? Promise.resolve<LegacyUtxo[]>([])
+      : scanAddressTokenTxos(active.address, active.chain),
+  ])
+
+  const scan = mergeTokenTxos(addressScan, tokenTxos)
   if (scan.utxos.length === 0) {
     return emptyIngest(scan)
   }

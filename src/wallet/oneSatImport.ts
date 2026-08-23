@@ -46,6 +46,7 @@ import {
   tokenIdForPayload,
   type Bsv21ImportItem,
   type Bsv21Op,
+  type Bsv21Payload,
 } from './bsv21'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
@@ -552,22 +553,17 @@ export function extractBsv21FromGp(
 ): Omit<Bsv21ImportItem, 'txid' | 'vout'> | null {
   const tip = tipOutpoint.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const originData = typeof meta.origin === 'object' ? meta.origin?.data : undefined
-  const insc = originData?.insc ?? meta.data?.insc
-  const bsv20 = originData?.bsv20 ?? meta.data?.bsv20
+  const tipData = meta.data
+  const insc = tipData?.insc ?? originData?.insc
+  const bsv20 = tipData?.bsv20 ?? originData?.bsv20
   const mime = asString(insc?.file?.type)
-  const fromJson = parseBsv21Json(insc?.json)
-  const fromIndex = bsv20
-    ? parseBsv21Json({
-        p: 'bsv-20',
-        op: bsv20.op,
-        id: bsv20.id,
-        amt: bsv20.amt,
-        sym: bsv20.sym,
-        icon: bsv20.icon,
-        dec: bsv20.dec,
-      })
-    : null
-  const payload = fromJson ?? fromIndex
+  // The origin is the mint, or an earlier hop of the same token, and states the
+  // balance held *there* — reading `amt` from it credits the sender's prior
+  // total instead of what they transferred. Only this output can say what it
+  // holds, so the tip is asked first and the origin is a last resort.
+  const tipPayload = bsv21PayloadFromGpData(tipData)
+  const originPayload = bsv21PayloadFromGpData(originData)
+  const payload = tipPayload ?? originPayload
   if (!payload) {
     // Indexer marked application/bsv-20 but JSON was incomplete — still divert
     // away from the NFT basket so we do not paint fungibles as collectables.
@@ -595,6 +591,13 @@ export function extractBsv21FromGp(
   }
   const tokenId = tokenIdForPayload(payload, tip)
   if (!tokenId || !payload.amt) return null
+  // Ticker, icon and decimals are declared once at the deploy, so a transfer
+  // body legitimately omits them — unlike the balance, these are the origin's
+  // to answer. `dec` parses to 0 when absent, which reads the same as a token
+  // deployed with no decimals; either way the origin's value is correct.
+  const sym = payload.sym ?? originPayload?.sym
+  const icon = payload.icon ?? originPayload?.icon
+  const dec = payload.dec || originPayload?.dec || 0
   return {
     outpoint: tipOutpoint.includes('_')
       ? tipOutpoint.replace(/_(\d+)$/, '.$1')
@@ -602,10 +605,30 @@ export function extractBsv21FromGp(
     tokenId,
     amt: payload.amt,
     op: payload.op,
-    ...(payload.sym ? { sym: payload.sym } : {}),
-    ...(payload.icon ? { icon: payload.icon } : {}),
-    dec: payload.dec ?? 0,
+    ...(sym ? { sym } : {}),
+    ...(icon ? { icon } : {}),
+    dec,
   }
+}
+
+/** Parse the BSV-21 body of one side of a txo payload (tip or origin). */
+function bsv21PayloadFromGpData(
+  data: GpTxo['data'] | undefined,
+): Bsv21Payload | null {
+  if (!data) return null
+  const fromJson = parseBsv21Json(data.insc?.json)
+  if (fromJson) return fromJson
+  const bsv20 = data.bsv20
+  if (!bsv20) return null
+  return parseBsv21Json({
+    p: 'bsv-20',
+    op: bsv20.op,
+    id: bsv20.id,
+    amt: bsv20.amt,
+    sym: bsv20.sym,
+    icon: bsv20.icon,
+    dec: bsv20.dec,
+  })
 }
 
 /**
@@ -620,6 +643,11 @@ export async function resolveBsv21Holding(
   const tip = toDotOutpoint(txid, vout)
   const meta = await fetchGpTxo(txidVoutUnderscore(txid, vout), chain)
   if (!meta) return null
+  // Import credits a balance, so only this output's own body may set it. Until
+  // the index has parsed the tip its `origin` still answers — with the mint's
+  // amount — and banking that would corrupt token accounting. Hold instead;
+  // the next pass re-asks and imports once the real body is there.
+  if (!meta.data?.insc?.json && !meta.data?.bsv20) return null
   const holding = extractBsv21FromGp(meta, tip)
   if (!holding) return null
   return { ...holding, txid, vout }
