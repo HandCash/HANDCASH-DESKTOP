@@ -188,6 +188,58 @@ function outpointKey(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
 }
 
+/** One page — same bound as Collect so large inventories heal completely. */
+const ONE_SAT_BASKET_PAGE = 1000
+
+function inferBasketListedTotal(
+  offset: number,
+  pageLength: number,
+  pageLimit: number,
+  reportedTotal: number | undefined,
+): number {
+  const reached = offset + pageLength
+  if (pageLength < pageLimit) return reached
+  const reported = Number.isFinite(reportedTotal)
+    ? Math.max(0, Math.trunc(reportedTotal!))
+    : reached
+  return Math.max(reached, reported)
+}
+
+async function listOneSatBasketOutpointKeys(active: ActiveWallet): Promise<{
+  keys: Set<string>
+  fullyListed: boolean
+}> {
+  const keys = new Set<string>()
+  let offset = 0
+  let total: number | null = null
+
+  while (true) {
+    const listed = await active.wallet.listOutputs({
+      basket: '1sat',
+      limit: ONE_SAT_BASKET_PAGE,
+      offset: -(offset + 1),
+      includeTags: false,
+      includeCustomInstructions: false,
+      seekPermission: false,
+    })
+    const page = listed.outputs ?? []
+    for (const o of page) {
+      keys.add(outpointKey(o.outpoint))
+    }
+    total = inferBasketListedTotal(
+      offset,
+      page.length,
+      ONE_SAT_BASKET_PAGE,
+      typeof listed.totalOutputs === 'number' ? listed.totalOutputs : undefined,
+    )
+    if (page.length < ONE_SAT_BASKET_PAGE) break
+    offset += page.length
+    if (keys.size >= total) break
+  }
+
+  return { keys, fullyListed: total == null || keys.size >= total }
+}
+
 /**
  * Live 1-sat outs on our address that still carry durable import marks but are
  * missing from the local `1sat` basket cannot be re-ingested until the marks
@@ -221,20 +273,9 @@ async function healOrphanOneSatImportMarks(
   let basketKeys = new Set<string>()
   let basketFullyListed = false
   try {
-    const limit = Math.min(2000, Math.max(marked.length + 64, 256))
-    const listed = await active.wallet.listOutputs({
-      basket: '1sat',
-      limit,
-      includeTags: false,
-      includeCustomInstructions: false,
-      seekPermission: false,
-    })
-    for (const o of listed.outputs ?? []) {
-      basketKeys.add(outpointKey(o.outpoint))
-    }
-    const total =
-      typeof listed.totalOutputs === 'number' ? listed.totalOutputs : basketKeys.size
-    basketFullyListed = total <= basketKeys.size
+    const listed = await listOneSatBasketOutpointKeys(active)
+    basketKeys = listed.keys
+    basketFullyListed = listed.fullyListed
   } catch (err) {
     console.warn('[chain-ingest] orphan 1sat mark heal skipped (basket list failed)', err)
     return 0

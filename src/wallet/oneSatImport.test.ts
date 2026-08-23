@@ -67,6 +67,24 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('counts held tips still awaiting indexer identity as pendingTips', async () => {
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tips = Array.from(
+      { length: MAX_UNKNOWN_RESOLVES_PER_PASS + 2 },
+      (_, i) => utxo(`${String(i).padStart(64, 'a')}.0`, 1),
+    )
+    const result = await classifyLegacyUtxos(tips, 'main')
+
+    expect(result.heldOneSats.length).toBe(tips.length)
+    expect(result.pendingTips.length).toBe(2)
+    expect(result.pendingTips.map((u) => u.outpoint)).toEqual(
+      tips.slice(MAX_UNKNOWN_RESOLVES_PER_PASS).map((u) => u.outpoint),
+    )
+    vi.unstubAllGlobals()
+  })
+
   it('holds a 404 tip then backs off on the next poll', async () => {
     const TXID_D = 'd'.repeat(64)
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
