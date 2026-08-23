@@ -1,5 +1,23 @@
 # Changelog
 
+## [1.2.296] - 2026-08-23
+
+### Fixed
+
+- **Incoming BSV-21 tokens now arrive.** A token transfer re-inscribes its JSON, so the
+  output is P2PKH plus an ord envelope — a shape the address explorers report as
+  nonstandard and list against no address. Every provider behind the address scan missed
+  it, so tokens sent from outside the wallet never appeared. The ordinal index is now
+  asked alongside the address scan and finds them.
+- **Token balances credit the transferred amount.** Import read the amount from the
+  token's origin, which holds the mint's balance or an earlier hop's, so a transfer could
+  land showing the sender's prior total instead of what they sent.
+
+### Changed
+
+- **Collectables paint on arrival** when an app hands one over, instead of waiting for the
+  next Refresh to notice the tip.
+
 ## [1.2.295] - 2026-08-23
 
 ### Fixed
