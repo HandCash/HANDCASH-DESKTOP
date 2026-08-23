@@ -21,7 +21,13 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
-import { SettingsNavRow, SettingsSection, statusForSetting, settingIconFor, SettingsRowIcon, SETTINGS_APPLICATION_ICONS } from './settings'
+import { SettingsNavRow, SettingsGridRow, SettingsSection, statusForSetting, settingIconFor, SettingsRowIcon, SETTINGS_APPLICATION_ICONS } from './settings'
+import { CollectionViewToggle } from './CollectionViewToggle'
+import {
+  getCollectionView,
+  subscribeCollectionView,
+  type CollectionView,
+} from '../wallet/collectionView'
 
 type SettingItem = {
   id: SettingId
@@ -139,7 +145,7 @@ export function settingLabel(id: SettingId): string {
 
 export function SettingsPanel() {
   const update = useUpdate()
-  const { context, check, setMode, stateAttr } = update
+  const { context, check, setMode } = update
   const checking = context.phase === 'checking'
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
@@ -147,6 +153,7 @@ export function SettingsPanel() {
   const [logPath, setLogPath] = useState<string | null>(null)
   const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
   const [uploadingLogs, setUploadingLogs] = useState(false)
+  const [view, setView] = useState<CollectionView>(() => getCollectionView('settings'))
   const [, setStatusTick] = useState(0)
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
@@ -168,6 +175,8 @@ export function SettingsPanel() {
       }),
     [],
   )
+
+  useEffect(() => subscribeCollectionView(setView, 'settings'), [])
 
   useEffect(() => {
     const bump = () => setStatusTick((n) => n + 1)
@@ -197,29 +206,32 @@ export function SettingsPanel() {
       ref={rootRef}
       className="nav-section-body settings-nav settings-scroll"
       data-aeon-scope="settings"
-      data-aeon-state={stateAttr}
+      data-aeon-state={view}
     >
-      <div className="connected-panel-head">
+      <div className="connected-panel-head settings-panel-head">
         <h2>Settings</h2>
+        <CollectionViewToggle label="Settings view" scope="settings" />
       </div>
 
       {SETTING_GROUPS.map((group) => (
         <SettingsSection key={group.title} title={group.title}>
-          <ul className="settings-list">
+          <ul className={view === 'grid' ? 'collection-grid settings-grid' : 'settings-list'}>
             {group.items.map(({ id, label, description }) => {
               const status = statusForSetting(id)
               const { icon, tone } = settingIconFor(id)
-              return (
-                <SettingsNavRow
-                  key={id}
-                  label={label}
-                  description={description}
-                  status={status?.text}
-                  statusTone={status?.tone}
-                  icon={icon}
-                  iconTone={tone}
-                  onClick={() => openSetting(id)}
-                />
+              const rowProps = {
+                label,
+                description,
+                status: status?.text,
+                statusTone: status?.tone,
+                icon,
+                iconTone: tone,
+                onClick: () => openSetting(id),
+              }
+              return view === 'grid' ? (
+                <SettingsGridRow key={id} {...rowProps} />
+              ) : (
+                <SettingsNavRow key={id} {...rowProps} />
               )
             })}
           </ul>
@@ -394,11 +406,10 @@ export function SettingsPanel() {
             <div className="settings-update-row settings-log-upload">
               <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.logUpload}</SettingsRowIcon>
               <div className="settings-row-body settings-log-upload-body">
-              <label className="settings-row-label" htmlFor="settings-log-upload-url">
-                Upload URL
-              </label>
+              <strong className="settings-row-label">Upload logs</strong>
               <span className="settings-row-desc">
-                POST the current log file to HandCash (auto-set on first launch)
+                Send session logs when support asks. The upload address is filled in automatically —
+                change it only if you were given a different one.
               </span>
               <div className="settings-log-upload-row">
                 <input
@@ -408,7 +419,8 @@ export function SettingsPanel() {
                   inputMode="url"
                   autoComplete="off"
                   spellCheck={false}
-                  placeholder="https://brc-cloud…/v1/logs/hc-…"
+                  aria-label="Log upload URL"
+                  placeholder="https://…/v1/logs/hc-…"
                   value={logUploadUrl}
                   data-aeon-part="log-upload-url"
                   onChange={(e) => setLogUploadUrlState(e.target.value)}
@@ -424,7 +436,7 @@ export function SettingsPanel() {
                     const url = setLogUploadUrl(logUploadUrl)
                     setLogUploadUrlState(url)
                     if (!url) {
-                      toastError('Set an upload URL first')
+                      toastError('Set a log upload URL first')
                       return
                     }
                     setUploadingLogs(true)
@@ -435,12 +447,12 @@ export function SettingsPanel() {
                           toastError('Upload failed', result.error)
                           return
                         }
-                        toastSuccess('Logs sent', 'bytes' in result ? `${result.bytes} bytes` : '')
+                        toastSuccess('Logs uploaded', 'bytes' in result ? `${result.bytes} bytes` : '')
                       })
                       .finally(() => setUploadingLogs(false))
                   }}
                 >
-                  {uploadingLogs ? 'Sending…' : 'Send'}
+                  {uploadingLogs ? 'Uploading…' : 'Upload'}
                 </button>
               </div>
               </div>
@@ -450,30 +462,42 @@ export function SettingsPanel() {
       </SettingsSection>
 
       <SettingsSection title="About" part="about">
-        <ul className="settings-list">
-          <li className="settings-row">
+        <ul className={view === 'grid' ? 'collection-grid settings-grid' : 'settings-list'}>
+          <li className={view === 'grid' ? 'collection-grid-card settings-grid-card' : 'settings-row'}>
             <button
               type="button"
-              className="settings-row-main"
+              className={view === 'grid' ? 'collection-grid-main settings-grid-main' : 'settings-row-main'}
               onClick={() => {
                 playWalletSound('soft')
                 openSetting('about-handcash')
               }}
             >
               <SettingsRowIcon>{settingIconFor('about-handcash').icon}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <strong className="settings-row-label">HandCash</strong>
-                <span className="settings-row-desc">
-                  {window.handcash?.platform === 'android' ||
-                  window.handcash?.platform === 'ios'
-                    ? 'Mobile wallet'
-                    : 'Desktop wallet'}
+              {view === 'grid' ? (
+                <>
+                  <strong className="collection-grid-name">HandCash</strong>
+                  <span className="collection-grid-host settings-grid-desc">
+                    {window.handcash?.platform === 'android' ||
+                    window.handcash?.platform === 'ios'
+                      ? 'Mobile wallet'
+                      : 'Desktop wallet'}
+                  </span>
+                </>
+              ) : (
+                <span className="settings-row-body">
+                  <strong className="settings-row-label">HandCash</strong>
+                  <span className="settings-row-desc">
+                    {window.handcash?.platform === 'android' ||
+                    window.handcash?.platform === 'ios'
+                      ? 'Mobile wallet'
+                      : 'Desktop wallet'}
+                  </span>
                 </span>
-              </span>
+              )}
             </button>
           </li>
           {window.handcash?.platform !== 'android' && window.handcash?.platform !== 'ios' ? (
-          <li className="settings-row settings-row-static">
+          <li className="settings-row settings-row-static settings-grid-span">
             <div className="settings-update-row">
               <span className="settings-row-body">
                 <strong className="settings-row-label">Screenshot</strong>

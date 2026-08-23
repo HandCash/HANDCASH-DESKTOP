@@ -706,6 +706,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   box-shadow: var(--shadow-section-hover);
 }
 
+.what-is-bsv.panel,
+.what-is-bsv.panel:hover {
+  box-shadow: none;
+}
+
 .field {
   display: grid;
   gap: 8px;
@@ -1498,6 +1503,17 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   flex-shrink: 0;
   cursor: pointer;
   line-height: 0;
+  outline: none;
+  box-shadow: none;
+}
+
+.bsv-logo-btn:focus,
+.bsv-logo-btn:focus-visible,
+.bsv-logo-btn:active,
+.bsv-logo-btn:hover {
+  outline: none;
+  box-shadow: none;
+  background: transparent;
 }
 
 .bsv-logo-stack {
@@ -1526,12 +1542,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   transition: opacity 180ms ease;
 }
 
-.bsv-logo-stack .bsv-logo.is-active {
+.bsv-logo-stack .bsv-logo.is-shown {
   opacity: 1;
-}
-
-.bsv-logo-btn.is-classic .bsv-logo-stack {
-  background: #0c1a12;
 }
 
 .bsv-asset-text {
@@ -5140,6 +5152,26 @@ a.app-details-host:hover {
   gap: 4px;
 }
 
+.settings-panel-head {
+  margin-bottom: 12px;
+}
+
+.settings-grid {
+  margin-top: 2px;
+}
+
+.settings-grid-span {
+  grid-column: 1 / -1;
+}
+
+.settings-grid-desc[data-aeon-state='ok'] {
+  color: color-mix(in srgb, var(--hc-success) 78%, var(--hc-muted));
+}
+
+.settings-grid-desc[data-aeon-state='warn'] {
+  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+}
+
 .recovery-phrase-grid {
   list-style: none;
   margin: 0;
@@ -6152,7 +6184,6 @@ a.app-details-host:hover {
   border: 1px solid hsl(var(--border));
   border-radius: 10px;
   background: color-mix(in srgb, #0b1a14 92%, black);
-  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
   max-height: 220px;
   overflow: auto;
 }
@@ -9664,8 +9695,7 @@ html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
 
 /* —— Light sheet: surfaces that were authored as literal near-black ——
    .brand-logo-mark is deliberately absent: it goes fully transparent above. */
-html[data-aeon-mode='light'] .app-avatar,
-html[data-aeon-mode='light'] .bsv-logo-btn.is-classic .bsv-logo-stack {
+html[data-aeon-mode='light'] .app-avatar {
   background: hsl(var(--secondary));
 }
 

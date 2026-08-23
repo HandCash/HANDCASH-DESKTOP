@@ -55,7 +55,11 @@ import {
   isOutpointVerifying,
   subscribeVerificationProgress,
 } from '../wallet/verificationProgress'
-import bsvLogo from '../assets/brand/bsv-logo.png'
+import { bsvLogoForClassic } from '../assets/brand/bsvLogos'
+import {
+  getBsvLogoClassic,
+  subscribeBsvLogoClassic,
+} from '../wallet/bsvLogoPreference'
 import {
   DEFAULT_PAYMENT_FILTERS,
   filterPaymentActivity,
@@ -230,6 +234,7 @@ function HistoryRow({
   newest?: boolean
   verifying?: boolean
 }) {
+  const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const spent = entry.kind === 'spent'
   const event = isEventActivity(entry)
   const item = isItemActivity(entry)
@@ -239,6 +244,7 @@ function HistoryRow({
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
   const failureReason = failed ? activityFailureLabel(entry) : null
+  useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   const inventoryProven = Boolean(
     entry.item?.outpoint &&
       getCachedCollectables().some(
@@ -371,7 +377,7 @@ function HistoryRow({
             ) : (
               <img
                 className="history-asset-logo"
-                src={bsvLogo}
+                src={bsvLogoForClassic(classicBsvLogo)}
                 alt=""
                 width={32}
                 height={32}

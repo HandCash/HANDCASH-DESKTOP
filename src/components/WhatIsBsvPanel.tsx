@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Accordion } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
-import bsvLogo from '../assets/brand/bsv-logo.png'
-import bsvLogoClassic from '../assets/brand/bsv-logo-classic.png'
+import { bsvLogoClassic, bsvLogoDefault } from '../assets/brand/bsvLogos'
 import { Skeleton, SkeletonLine } from './Skeleton'
 import {
   BSV_CHART_RANGE_LABEL,
@@ -18,6 +17,11 @@ import {
   type BsvChartRange,
   type BsvMarketStats,
 } from '../wallet/bsvMarket'
+import {
+  getBsvLogoClassic,
+  registerBsvLogoTap,
+  subscribeBsvLogoClassic,
+} from '../wallet/bsvLogoPreference'
 import {
   dismissToast,
   getToasts,
@@ -73,13 +77,9 @@ export function WhatIsBsvPanel() {
   const [stats, setStats] = useState<BsvMarketStats | null>(() => getCachedBsvMarket())
   const [chartRange, setChartRange] = useState<BsvChartRange>('24h')
   const [openSections, setOpenSections] = useState<string[]>([])
-  const [classicLogo, setClassicLogo] = useState(false)
+  const [classicLogo, setClassicLogo] = useState(() => getBsvLogoClassic())
   const [logosReady, setLogosReady] = useState({ normal: false, classic: false })
   const [toast, setToast] = useState<ToastItem | null>(() => latestToast(getToasts()))
-  const logoTaps = useRef({ count: 0, timer: 0 })
-  const logosReadyRef = useRef(logosReady)
-  const pendingClassicRef = useRef<boolean | null>(null)
-  logosReadyRef.current = logosReady
 
   useEffect(() => {
     const unsub = subscribeBsvMarket(() => setStats(getCachedBsvMarket()))
@@ -88,9 +88,10 @@ export function WhatIsBsvPanel() {
     return () => {
       unsub()
       window.clearInterval(id)
-      window.clearTimeout(logoTaps.current.timer)
     }
   }, [])
+
+  useEffect(() => subscribeBsvLogoClassic(setClassicLogo), [])
 
   useEffect(() => subscribeToasts((items) => setToast(latestToast(items))), [])
 
@@ -106,41 +107,12 @@ export function WhatIsBsvPanel() {
       img.src = src
       if (img.complete && img.naturalWidth > 0) mark(key)
     }
-    load(bsvLogo, 'normal')
+    load(bsvLogoDefault, 'normal')
     load(bsvLogoClassic, 'classic')
     return () => {
       cancelled = true
     }
   }, [])
-
-  useEffect(() => {
-    if (pendingClassicRef.current == null) return
-    const wantClassic = pendingClassicRef.current
-    const ready = wantClassic ? logosReady.classic : logosReady.normal
-    if (!ready) return
-    pendingClassicRef.current = null
-    setClassicLogo(wantClassic)
-  }, [logosReady])
-
-  const onLogoTap = () => {
-    const taps = logoTaps.current
-    window.clearTimeout(taps.timer)
-    taps.count += 1
-    if (taps.count >= 3) {
-      taps.count = 0
-      const next = !classicLogo
-      const ready = next ? logosReadyRef.current.classic : logosReadyRef.current.normal
-      if (!ready) {
-        pendingClassicRef.current = next
-        return
-      }
-      setClassicLogo(next)
-      return
-    }
-    taps.timer = window.setTimeout(() => {
-      taps.count = 0
-    }, 700)
-  }
 
   const changePct = changePctForRange(stats, chartRange)
   const sparkValues = sparklineForRange(stats, chartRange)
@@ -162,8 +134,8 @@ export function WhatIsBsvPanel() {
         <div className="bsv-asset-row">
           <button
             type="button"
-            className={`bsv-logo-btn${classicLogo ? ' is-classic' : ''}`}
-            onClick={onLogoTap}
+            className="bsv-logo-btn"
+            onClick={registerBsvLogoTap}
             aria-label={classicLogo ? 'Bitcoin SV classic logo' : 'Bitcoin SV logo'}
             title="Bitcoin SV"
             tabIndex={showingToast ? -1 : undefined}
@@ -173,8 +145,8 @@ export function WhatIsBsvPanel() {
             ) : (
               <span className="bsv-logo-stack" aria-hidden>
                 <img
-                  className={`bsv-logo${classicLogo ? '' : ' is-active'}`}
-                  src={bsvLogo}
+                  className={`bsv-logo${classicLogo ? '' : ' is-shown'}`}
+                  src={bsvLogoDefault}
                   alt=""
                   width={44}
                   height={44}
@@ -182,7 +154,7 @@ export function WhatIsBsvPanel() {
                 />
                 {logosReady.classic ? (
                   <img
-                    className={`bsv-logo${classicLogo ? ' is-active' : ''}`}
+                    className={`bsv-logo${classicLogo ? ' is-shown' : ''}`}
                     src={bsvLogoClassic}
                     alt=""
                     width={44}

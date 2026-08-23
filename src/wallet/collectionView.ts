@@ -1,7 +1,7 @@
 const STORAGE_PREFIX = 'handcash.brc100.collectionView'
 
 export type CollectionView = 'list' | 'grid'
-export type CollectionViewScope = 'apps' | 'friends' | 'collectables'
+export type CollectionViewScope = 'apps' | 'friends' | 'collectables' | 'settings'
 
 type Listener = (view: CollectionView) => void
 
