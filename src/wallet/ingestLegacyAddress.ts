@@ -37,7 +37,6 @@ import {
 import { isItemAbandoned, isItemSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
-import { updateWalletProgress } from './walletProgress'
 
 export type LegacyAddressIngestResult = {
   scan: LegacyScanResult
@@ -390,14 +389,9 @@ export async function ingestLegacyAddressUtxos(
         `[chain-ingest] importing ${totalTips} 1sat tip(s) in chunks of ${ONE_SAT_IMPORT_CHUNK}`,
       )
     }
-    updateWalletProgress({
-      kind: 'one-sat-import',
-      phase: 'importing-items',
-      current: 0,
-      total: totalTips,
-      failed: 0,
-      message: `Importing collectables 0 of ${totalTips.toLocaleString()}`,
-    })
+    const candidateByOp = new Map(
+      oneSats.map((item) => [outpointKey(item.outpoint), item]),
+    )
     for (let i = 0; i < newOneSatCandidates.length; i += ONE_SAT_IMPORT_CHUNK) {
       const chunk = newOneSatCandidates.slice(i, i + ONE_SAT_IMPORT_CHUNK)
       await yieldToUi()
@@ -406,19 +400,6 @@ export async function ingestLegacyAddressUtxos(
       itemsFailed += itemResult.failed
       newOneSatOutpoints.push(...(itemResult.outpoints ?? []))
       recordItemReceipts(itemResult.outpoints ?? [], oneSats, active.chain)
-      const processed = Math.min(i + chunk.length, totalTips)
-      const chunkIndex = Math.floor(i / ONE_SAT_IMPORT_CHUNK) + 1
-      const chunkTotal = Math.ceil(totalTips / ONE_SAT_IMPORT_CHUNK)
-      updateWalletProgress({
-        phase: 'importing-items',
-        current: processed,
-        total: totalTips,
-        failed: itemsFailed,
-        message:
-          chunkTotal > 1
-            ? `Importing collectables ${processed.toLocaleString()} of ${totalTips.toLocaleString()} (chunk ${chunkIndex} of ${chunkTotal})`
-            : `Importing collectables ${processed.toLocaleString()} of ${totalTips.toLocaleString()}`,
-      })
       if (itemResult.failed > 0) {
         console.warn('[chain-ingest] 1sat import partial', itemResult)
         partialWarn =
@@ -428,14 +409,31 @@ export async function ingestLegacyAddressUtxos(
       // Paint after every chunk — do not wait on funding BEEF / remaining chunks.
       if ((itemResult.outpoints ?? []).length > 0) {
         void import('./collectables')
-          .then(({ listCollectables, rememberLiveOneSatOutpoints }) => {
+          .then(async ({ noteIngestedItem, listCollectables, rememberLiveOneSatOutpoints }) => {
             rememberLiveOneSatOutpoints(scan.utxos)
+            for (const raw of itemResult.outpoints ?? []) {
+              const op = outpointKey(raw)
+              const item = candidateByOp.get(op)
+              noteIngestedItem({
+                outpoint: op,
+                chain: active.chain,
+                origin: item?.origin,
+                name: item?.name,
+              })
+            }
+            const { announceItemsReceived } = await import('./itemArrivalToast')
+            announceItemsReceived(itemResult.outpoints ?? [])
             return listCollectables(active)
           })
           .catch((err) => {
             console.warn('[chain-ingest] early collectables paint failed', err)
           })
       }
+    }
+    if (importedItems > 0) {
+      console.info(
+        `[chain-ingest] imported ${importedItems} collectable tip(s) from address scan`,
+      )
     }
   }
 

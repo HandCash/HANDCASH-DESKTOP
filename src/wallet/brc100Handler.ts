@@ -11,6 +11,7 @@ import {
 } from './permissions'
 import {
   isItemBasket,
+  isItemReceiveArgs,
   isItemSpendArgs,
   p1SatSpendIds,
   prepareItemBasketArgs,
@@ -68,6 +69,7 @@ import {
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
+import { paintAfterInternalizeItem } from './internalizeItemPaint'
 
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
@@ -1016,18 +1018,28 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       playWalletSound('soft')
       scheduleHistoryBackupPush('signAction')
     } else if (method === 'internalizeAction') {
-      const sats = extractSatsFromArgs(method, args)
-      if (sats > 0) {
-        recordAppActivity({
-          origin: originator,
-          kind: 'earned',
-          sats,
-          method,
-          txid: extractTxid(result) ?? extractTxid(args),
-        })
+      if (isItemReceiveArgs(method, args)) {
+        paintAfterInternalizeItem(
+          active,
+          originator ?? WALLET_ACTIVITY_ORIGIN,
+          args,
+          result,
+        )
         playWalletSound('receive')
       } else {
-        playWalletSound('soft')
+        const sats = extractSatsFromArgs(method, args)
+        if (sats > 0) {
+          recordAppActivity({
+            origin: originator,
+            kind: 'earned',
+            sats,
+            method,
+            txid: extractTxid(result) ?? extractTxid(args),
+          })
+          playWalletSound('receive')
+        } else {
+          playWalletSound('soft')
+        }
       }
       scheduleHistoryBackupPush('internalizeAction')
     } else if (isActionMethod(method)) {
