@@ -401,8 +401,8 @@ export async function sendFungible(args: {
             })
             if (
               kind.kind === 'plain' &&
-              (!lockingScript ||
-                !scriptPaysAddress(lockingScript, wallet!.address))
+              lockingScript &&
+              !scriptPaysAddress(lockingScript, wallet!.address)
             ) {
               return { kind: 'unknown' } as const
             }

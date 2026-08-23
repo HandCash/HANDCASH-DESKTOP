@@ -116,7 +116,7 @@ export function planBsv21Burn(args: {
     if (kind.kind === 'cosigned') cosigned += 1
     else plain += 1
     if (
-      !tip.lockingScript ||
+      tip.lockingScript &&
       !args.ownsLockingScript(tip.lockingScript)
     ) {
       return { path: 'refuse', asset: 'bsv21', reason: 'not_owned' }

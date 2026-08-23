@@ -63,12 +63,18 @@ describe('bsv21TipKind cosign', () => {
     })
   })
 
-  it('treats a missing locking script as unknown, never plain', () => {
-    expect(classifyBsv21TipKind({})).toEqual({ kind: 'unknown' })
+  it('treats a missing locking script as plain for basket-held tips', () => {
+    expect(classifyBsv21TipKind({})).toEqual({ kind: 'plain' })
     expect(chooseBsv21SendPath(classifyBsv21TipKind({}))).toEqual({
-      path: 'refuse',
-      reason: 'unknown_lock',
+      path: 'plain',
     })
+  })
+
+  it('classifies inscribed P2PKH before or after the ord envelope as plain', () => {
+    const ord = '0063036f726451' + '176170706c69636174696f6e2f6273762d3230' + '0002' + '7b7d' + '68'
+    const p2pkh = PLAIN_P2PKH
+    expect(classifyBsv21TipKind({ lockingScript: ord + p2pkh }).kind).toBe('plain')
+    expect(classifyBsv21TipKind({ lockingScript: p2pkh + ord }).kind).toBe('plain')
   })
 
   it('classifies a whole input batch before sending', () => {

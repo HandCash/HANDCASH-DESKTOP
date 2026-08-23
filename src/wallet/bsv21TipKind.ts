@@ -4,7 +4,7 @@
  * Cosigner-gated tips (e.g. MNEE) MUST NOT fall through to plain createAction.
  * Cosign is optional — plain owner-only tips use path `plain`.
  */
-import { normalizeLockingScriptHex } from './collectableTipKind'
+import { hasSpendableP2pkhBranch, normalizeLockingScriptHex } from './collectableTipKind'
 
 /** Compressed secp256k1 pubkey hex (33 bytes). */
 const COSIGN_PUBKEY_RE = /^[0-9a-f]{66}$/i
@@ -98,10 +98,13 @@ export function classifyBsv21TipKind(args: {
   }
 
   const hex = normalizeLockingScriptHex(args.lockingScript)
-  if (!hex) return { kind: 'unknown' }
+  if (!hex) {
+    // Basket-held tips: listOutputs often omits the script (toolbox scriptOffset).
+    return { kind: 'plain' }
+  }
 
-  // Bare / inscribed P2PKH ending in CHECKSIG (not CHECKSIGVERIFY+cosign).
-  if (/76a914[0-9a-f]{40}88ac$/i.test(hex)) return { kind: 'plain' }
+  // Bare or inscribed P2PKH (ord envelope on either side) — not cosign suffix.
+  if (hasSpendableP2pkhBranch(hex)) return { kind: 'plain' }
 
   return { kind: 'unknown' }
 }
