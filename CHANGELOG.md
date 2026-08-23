@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.2.294] - 2026-08-23
+
+### Changed
+
+- **Settings rows** now use standard Material icons with a consistent leading slot.
+- **Identity tab** compacts to a hero row (QR + handle) and field list — less wasted
+  vertical space on mobile, aligned with Settings / Apps density.
+- **Light-mode skeletons** use a dark shimmer so connected-app loading states stay
+  visible on white sheets.
+
 ## [1.2.293] - 2026-08-23
 
 ### Fixed

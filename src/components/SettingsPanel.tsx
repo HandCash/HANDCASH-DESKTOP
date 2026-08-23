@@ -21,7 +21,7 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
-import { SettingsNavRow, SettingsSection, statusForSetting } from './settings'
+import { SettingsNavRow, SettingsSection, statusForSetting, settingIconFor, SettingsRowIcon, SETTINGS_APPLICATION_ICONS } from './settings'
 
 type SettingItem = {
   id: SettingId
@@ -208,6 +208,7 @@ export function SettingsPanel() {
           <ul className="settings-list">
             {group.items.map(({ id, label, description }) => {
               const status = statusForSetting(id)
+              const { icon, tone } = settingIconFor(id)
               return (
                 <SettingsNavRow
                   key={id}
@@ -215,6 +216,8 @@ export function SettingsPanel() {
                   description={description}
                   status={status?.text}
                   statusTone={status?.tone}
+                  icon={icon}
+                  iconTone={tone}
                   onClick={() => openSetting(id)}
                 />
               )
@@ -227,6 +230,7 @@ export function SettingsPanel() {
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.appearance}</SettingsRowIcon>
               <span className="settings-row-body">
                 <label className="settings-row-label" htmlFor="settings-appearance">
                   Appearance
@@ -256,6 +260,7 @@ export function SettingsPanel() {
 
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.sfx}</SettingsRowIcon>
               <span className="settings-row-body">
                 <label className="settings-row-label" htmlFor="settings-sfx-enabled">
                   Sound effects
@@ -282,6 +287,7 @@ export function SettingsPanel() {
 
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.updates}</SettingsRowIcon>
               <span className="settings-row-body">
                 <label className="settings-row-label" htmlFor="settings-update-mode">
                   Updates
@@ -309,6 +315,7 @@ export function SettingsPanel() {
 
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.version}</SettingsRowIcon>
               <span className="settings-row-body">
                 <strong className="settings-row-label">Version {runningVersion}</strong>
                 <span className="settings-row-desc">
@@ -344,6 +351,7 @@ export function SettingsPanel() {
         <ul className="settings-list">
           <li className="settings-row settings-row-static">
             <div className="settings-update-row">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.logs}</SettingsRowIcon>
               <span className="settings-row-body">
                 <strong className="settings-row-label">App logs</strong>
                 <span className="settings-row-desc">In-wallet viewer · share with support</span>
@@ -383,7 +391,9 @@ export function SettingsPanel() {
             </div>
           </li>
           <li className="settings-row settings-row-static">
-            <div className="settings-log-upload">
+            <div className="settings-update-row settings-log-upload">
+              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.logUpload}</SettingsRowIcon>
+              <div className="settings-row-body settings-log-upload-body">
               <label className="settings-row-label" htmlFor="settings-log-upload-url">
                 Upload URL
               </label>
@@ -433,6 +443,7 @@ export function SettingsPanel() {
                   {uploadingLogs ? 'Sending…' : 'Send'}
                 </button>
               </div>
+              </div>
             </div>
           </li>
         </ul>
@@ -449,6 +460,7 @@ export function SettingsPanel() {
                 openSetting('about-handcash')
               }}
             >
+              <SettingsRowIcon>{settingIconFor('about-handcash').icon}</SettingsRowIcon>
               <span className="settings-row-body">
                 <strong className="settings-row-label">HandCash</strong>
                 <span className="settings-row-desc">

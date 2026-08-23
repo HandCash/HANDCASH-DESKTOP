@@ -78,13 +78,13 @@ export function IdentityPanel({ profile }: Props) {
   }
 
   return (
-    <div className="nav-section-body identity-nav" data-aeon-scope="identity">
+    <div className="nav-section-body identity-nav identity-scroll" data-aeon-scope="identity">
       <div className="connected-panel-head">
         <h2>Identity</h2>
       </div>
 
-      <div className="identity-layout">
-        <div className="identity-qr" data-aeon-part="media">
+      <div className="identity-body">
+        <div className="identity-hero">
           <button
             type="button"
             className="identity-qr-frame identity-qr-copy"
@@ -95,41 +95,43 @@ export function IdentityPanel({ profile }: Props) {
               <img
                 src={dataUrl}
                 alt="Identity key QR code"
-                width={180}
-                height={180}
+                width={140}
+                height={140}
                 decoding="async"
               />
             ) : (
-              <SkeletonQr size={180} />
+              <SkeletonQr size={140} />
             )}
           </button>
-          <p className="identity-qr-hint">Tap QR to copy identity key</p>
+
+          <div className="identity-hero-meta">
+            <div className="identity-field">
+              <span className="identity-field-label">Handle</span>
+              {handleLabel ? (
+                <button
+                  type="button"
+                  className="identity-handle"
+                  title={`Click to copy ${handleLabel}`}
+                  onClick={() => void copyHandle()}
+                >
+                  {handleLabel}
+                </button>
+              ) : (
+                <div className="identity-handle-empty">
+                  <p className="identity-handle-missing">No handle claimed yet</p>
+                  <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
+                    Claim your $handle
+                  </button>
+                </div>
+              )}
+            </div>
+            <p className="identity-qr-hint">Tap QR to copy identity key</p>
+          </div>
         </div>
 
-        <div className="identity-info">
-          <div className="identity-nav-row identity-handle-row">
-            <span>Handle</span>
-            {handleLabel ? (
-              <button
-                type="button"
-                className="identity-handle"
-                title={`Click to copy ${handleLabel}`}
-                onClick={() => void copyHandle()}
-              >
-                {handleLabel}
-              </button>
-            ) : (
-              <div className="identity-handle-empty">
-                <p className="identity-handle-missing">No handle claimed yet</p>
-                <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
-                  Claim your $handle
-                </button>
-              </div>
-            )}
-          </div>
-
-          <div className="identity-nav-row">
-            <span>Identity key</span>
+        <ul className="identity-list">
+          <li className="identity-field">
+            <span className="identity-field-label">Identity key</span>
             <button
               type="button"
               className="mono identity-key"
@@ -138,19 +140,19 @@ export function IdentityPanel({ profile }: Props) {
             >
               {shortIdentityKey(profile.identityKey)}
             </button>
-          </div>
+          </li>
 
-          <div className="identity-nav-row">
-            <span>Network</span>
+          <li className="identity-field">
+            <span className="identity-field-label">Network</span>
             <strong className="identity-network">
               {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
             </strong>
-          </div>
+          </li>
+        </ul>
 
-          <p className="identity-key-note">
-            Your identity key is not a payment address — use Receive for BSV.
-          </p>
-        </div>
+        <p className="identity-key-note">
+          Your identity key is not a payment address — use Receive for BSV.
+        </p>
       </div>
     </div>
   )
