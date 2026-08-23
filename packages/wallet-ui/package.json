@@ -1,6 +1,6 @@
 {
   "name": "@handcash/wallet-ui",
-  "version": "1.2.297",
+  "version": "1.2.298",
   "private": true,
   "type": "module",
   "description": "HandCash wallet UI core — one renderer shared by Desktop and Mobile shells. Do not fork; change HANDCASH-DESKTOP/src and bump this version with Desktop.",

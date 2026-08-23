@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.2.298] - 2026-08-23
+
+### Changed
+
+- **Settings list or grid.** Security and About destinations match Connected apps /
+  Friends — toggle in the header; Application and Logs stay full-width rows.
+- **BSV logo easter egg everywhere.** Triple-tap the market logo for the classic dragon;
+  Recent activity follows; no selected chrome on the hidden toggle.
+- **Flatter send surfaces.** BSV panel and recipient picker drop extra box shadows.
+- **Clearer log upload copy.** “Upload logs” explains when to send and that the URL is
+  pre-filled unless support gives you another.
+
 ## [1.2.297] - 2026-08-23
 
 ### Fixed
