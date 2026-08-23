@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.295] - 2026-08-23
+
+### Fixed
+
+- **Windows OTA checksum mismatches.** CI regenerates `latest.yml` from the NSIS
+  installer before upload and verifies sha512; channel metadata publishes after
+  the `.exe`. Updater clears stale cache and retries once on checksum failure.
+
 ## [1.2.294] - 2026-08-23
 
 ### Changed
