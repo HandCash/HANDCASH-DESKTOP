@@ -17,7 +17,7 @@ function parseYml(text) {
   return {
     version: versionMatch[1].trim(),
     file: pathMatch[1].trim(),
-    sha512: shaMatches[shaMatches.length - 1]![1].trim(),
+    sha512: shaMatches[shaMatches.length - 1][1].trim(),
   }
 }
 
