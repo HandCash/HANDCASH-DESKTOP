@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.297] - 2026-08-23
+
+### Fixed
+
+- **Windows builds publish again.** The build step ran under PowerShell, which rejects
+  `rm -rf`, and the checksum verifier was unparseable by node — so no Windows installer
+  has shipped since those landed. Same app code as 1.2.296, which reached macOS and Linux
+  only.
+
 ## [1.2.296] - 2026-08-23
 
 ### Fixed
