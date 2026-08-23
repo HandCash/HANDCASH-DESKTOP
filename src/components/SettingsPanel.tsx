@@ -195,7 +195,7 @@ export function SettingsPanel() {
   return (
     <div
       ref={rootRef}
-      className="nav-section-body settings-nav settings-scroll"
+      className="nav-section-body settings-nav"
       data-aeon-scope="settings"
     >
       <div className="connected-panel-head settings-panel-head">

@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.2.303] - 2026-08-23
+
+### Fixed
+
+- **Settings scroll works on Linux.** Nested `overflow` on the settings body was
+  eating wheel events while the outer stage could not scroll. The main settings
+  list now scrolls on `wallet-nav-stage` only; detail screens scroll on
+  `nav-child-body`. Horizontal overflow from the sticky header plate is clipped.
+
 ## [1.2.302] - 2026-08-23
 
 ### Fixed

@@ -2306,7 +2306,9 @@ button.wallet-detail-value.is-copied {
 .wallet-nav-stage {
   flex: 1;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   padding: 12px 14px;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -2428,7 +2430,9 @@ button.wallet-detail-value.is-copied {
 .nav-child-body {
   flex: 1 1 auto;
   min-height: 0;
-  overflow: auto;
+  min-width: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
@@ -2457,11 +2461,10 @@ button.wallet-detail-value.is-copied {
 
 .settings-scroll {
   min-height: 0;
+  min-width: 0;
+  max-width: 100%;
   padding-bottom: 8px;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  -webkit-overflow-scrolling: touch;
+  overflow-x: hidden;
 }
 
 .settings-hint {
@@ -2516,18 +2519,6 @@ button.wallet-detail-value.is-copied {
   flex-direction: column;
   min-height: 0;
   box-sizing: border-box;
-}
-
-/* Settings detail screens live in nav-child-body; stretch like send/receive. */
-.nav-child-body:has(> .settings-scroll) {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-}
-
-.nav-child-body > .settings-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
 }
 
 .about-handcash-lead {
@@ -4070,8 +4061,8 @@ button.payment-details-item-thumb-btn:hover {
   position: absolute;
   z-index: -1;
   top: -14px;
-  right: -16px;
-  left: -16px;
+  right: -14px;
+  left: -14px;
   height: 14px;
   background: hsl(var(--card));
   pointer-events: none;
@@ -5124,7 +5115,8 @@ a.app-details-host:hover {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  /* Keep Security / backup above Application — never clip the first groups */
+  min-width: 0;
+  max-width: 100%;
   min-height: min-content;
   padding-bottom: 24px;
 }
@@ -5307,6 +5299,7 @@ a.app-details-host:hover {
   justify-content: space-between;
   gap: 12px;
   width: 100%;
+  min-width: 0;
 }
 
 .settings-control-row-actions {
@@ -10243,8 +10236,6 @@ html[data-aeon-platform='win32'] .nav-child-body,
 html[data-aeon-platform='linux'] .nav-child-body,
 html[data-aeon-platform='win32'] .history-list,
 html[data-aeon-platform='linux'] .history-list,
-html[data-aeon-platform='win32'] .settings-scroll,
-html[data-aeon-platform='linux'] .settings-scroll,
 html[data-aeon-platform='win32'] .stage,
 html[data-aeon-platform='linux'] .stage,
 html[data-aeon-platform='win32'] .aeon-scroll-hover,
@@ -10260,8 +10251,6 @@ html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar,
-html[data-aeon-platform='win32'] .settings-scroll::-webkit-scrollbar,
-html[data-aeon-platform='linux'] .settings-scroll::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .stage::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .stage::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar,
@@ -10278,8 +10267,6 @@ html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar-thumb,
-html[data-aeon-platform='win32'] .settings-scroll::-webkit-scrollbar-thumb,
-html[data-aeon-platform='linux'] .settings-scroll::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .stage::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .stage::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar-thumb,
