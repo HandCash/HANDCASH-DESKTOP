@@ -4,7 +4,9 @@
  *   manual  → only when user checks; still download then prompt restart
  *   none    → no update checks
  */
-import { shell, type BrowserWindow } from 'electron'
+import { app, shell, type BrowserWindow } from 'electron'
+import fs from 'node:fs'
+import path from 'node:path'
 import log from 'electron-log'
 import electronUpdater from 'electron-updater'
 import { durableGet, durableSet } from './durableStore.js'
@@ -174,10 +176,41 @@ function isMacCodeSignatureFailure(err: unknown): boolean {
   )
 }
 
+function isChecksumMismatch(err: unknown): boolean {
+  const raw = err instanceof Error ? err.message : String(err)
+  return (
+    /sha512|checksum|digest/i.test(raw) &&
+    (/mismatch|does not match|not match|not matched|integrity/i.test(raw) ||
+      /ERR_CHECKSUM/i.test(raw))
+  )
+}
+
+function clearUpdaterCache(): void {
+  const candidates = [
+    path.join(app.getPath('userData'), 'handcash-brc100-updater'),
+    path.join(app.getPath('temp'), 'handcash-brc100-updater'),
+    path.join(path.dirname(app.getPath('userData')), 'handcash-brc100-updater'),
+  ]
+  for (const dir of candidates) {
+    try {
+      if (fs.existsSync(dir)) {
+        fs.rmSync(dir, { recursive: true, force: true })
+        log.info('Cleared updater cache', { dir })
+      }
+    } catch (err) {
+      log.warn('Failed to clear updater cache', { dir, err })
+    }
+  }
+}
+
 /** electron-updater dumps HttpError + headers; keep Settings readable. */
 function friendlyUpdateError(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err)
   const firstLine = raw.split('\n')[0] ?? raw
+
+  if (isChecksumMismatch(err)) {
+    return 'Update download failed checksum verification. Try Check again — stale cache was cleared.'
+  }
 
   if (isMacCodeSignatureFailure(err)) {
     return MAC_DMG_HINT
@@ -448,7 +481,7 @@ export async function checkForUpdates(opts?: {
           error: null,
           canInstall: false,
         })
-        await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
+        await downloadUpdateWithChecksumRetry()
       } else if (status.phase === 'checking') {
         setStatus({
           phase: 'available',
@@ -469,6 +502,17 @@ export async function checkForUpdates(opts?: {
   })()
 
   return checkInFlight
+}
+
+async function downloadUpdateWithChecksumRetry(): Promise<void> {
+  try {
+    await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
+  } catch (err) {
+    if (!isChecksumMismatch(err)) throw err
+    log.warn('Update checksum mismatch — clearing cache and retrying once', err)
+    clearUpdaterCache()
+    await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
+  }
 }
 
 export async function downloadUpdate(): Promise<UpdateStatus> {
@@ -501,7 +545,7 @@ export async function downloadUpdate(): Promise<UpdateStatus> {
   }
   try {
     setStatus({ phase: 'downloading', percent: 0, error: null })
-    await withTimeout(autoUpdater.downloadUpdate(), CHECK_TIMEOUT_MS * 4, 'Update download')
+    await downloadUpdateWithChecksumRetry()
   } catch (err) {
     log.warn('downloadUpdate failed', err)
     applyCheckFailure(err)

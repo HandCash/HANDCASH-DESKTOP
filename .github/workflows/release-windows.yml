@@ -62,7 +62,12 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
-        run: npm run package:win -- --publish never
+        run: |
+          rm -rf release
+          npm run build
+          npx electron-builder --win nsis --publish never
+          node scripts/write-latest-yml.mjs
+          node scripts/verify-update-yml.mjs
 
       - name: Ensure GitHub Release exists
         env:
@@ -88,16 +93,19 @@ jobs:
         run: |
           TAG="${{ steps.meta.outputs.tag }}"
           shopt -s nullglob
-          files=(release/*.exe release/*.exe.blockmap release/latest.yml)
-          if [ ${#files[@]} -eq 0 ]; then
+          artifacts=(release/HandCash-Setup-*.exe release/HandCash-Setup-*.exe.blockmap)
+          metadata=release/latest.yml
+          if [ ${#artifacts[@]} -eq 0 ] || [ ! -f "$metadata" ]; then
             echo "No Windows artifacts found under release/" >&2
             ls -la release/ || true
             exit 1
           fi
-          for f in "${files[@]}"; do
+          for f in "${artifacts[@]}" "$metadata"; do
             name="$(basename "$f")"
             gh release delete-asset "$TAG" "$name" --repo "${{ github.repository }}" --yes 2>/dev/null || true
           done
-          gh release upload "$TAG" "${files[@]}" --repo "${{ github.repository }}" --clobber
+          # Installers first; channel metadata last (matches macOS release workflow).
+          gh release upload "$TAG" "${artifacts[@]}" --repo "${{ github.repository }}" --clobber
+          gh release upload "$TAG" "$metadata" --repo "${{ github.repository }}" --clobber
           echo "Uploaded to $TAG:"
-          printf '  %s\n' "${files[@]}"
+          printf '  %s\n' "${artifacts[@]}" "$metadata"
