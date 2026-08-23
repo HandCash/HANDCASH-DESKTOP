@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.2.290] - 2026-08-23
+
+### Fixed
+
+- **Collectables stranded by stale import marks heal on large inventories.**
+  Orphan 1-sat mark healing only listed the first 2000 basket rows, so wallets
+  with more items never cleared stale "already imported" marks and Refresh could
+  not re-claim tips still live on the address. Healing now pages through the
+  full basket the same way Collect does.
+- **Deposits marked imported without a sweep txid can sweep again.** Legacy v1
+  import marks and sweeps that never recorded a txid blocked every retry. When
+  the outpoint is still on the address scan, Refresh now forgets the mark and
+  sweeps again instead of leaving funds stranded behind a permanent guard.
+- **Sync health reports tips still awaiting indexer identity.** `pendingTips`
+  was always empty, so the status pill and poll cadence never reflected 1-sat
+  outs held while the indexer names them.
+
 ## [1.2.289] - 2026-08-22
 
 ### Fixed
