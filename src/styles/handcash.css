@@ -9669,6 +9669,17 @@ html[data-aeon-mode='light'] .chat-shell {
   --chat-rail: #fafbfc;
 }
 
+html[data-aeon-mode='light'] .chat-shell[data-aeon-scope='messages'] {
+  --chat-surface: var(--hc-surface);
+  --chat-raised: var(--hc-bg-elevated);
+  --chat-line: hsl(var(--border));
+  background: var(--hc-bg);
+}
+
+html[data-aeon-mode='light'] .chat-shell[data-aeon-scope='messages'] .chat-sidebar-head {
+  background: hsl(var(--secondary));
+}
+
 html[data-aeon-mode='light'] .chat-thread {
   background: var(--hc-surface);
 }

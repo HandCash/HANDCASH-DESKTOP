@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.293] - 2026-08-23
+
+### Fixed
+
+- **Light mode Messages uses the paper sheet.** Chat scope tokens for the
+  messages shell and sidebar head now follow the light brand surface instead of
+  leftover dark rail colors.
+
 ## [1.2.292] - 2026-08-23
 
 ### Fixed
