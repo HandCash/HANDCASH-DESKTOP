@@ -10227,3 +10227,58 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   flex: 0 0 auto;
   padding: 18px 12px;
 }
+
+/* —— Windows / Linux: visible scrollbars ——
+   Hover-reveal thumbs stay invisible in Electron on these platforms and read as
+   broken scroll. macOS keeps the thin overlay style above. */
+html[data-aeon-platform='win32'],
+html[data-aeon-platform='linux'] {
+  --aeon-scrollbar-size: 10px;
+}
+
+html[data-aeon-platform='win32'] .wallet-nav-stage,
+html[data-aeon-platform='linux'] .wallet-nav-stage,
+html[data-aeon-platform='win32'] .nav-child-body,
+html[data-aeon-platform='linux'] .nav-child-body,
+html[data-aeon-platform='win32'] .history-list,
+html[data-aeon-platform='linux'] .history-list,
+html[data-aeon-platform='win32'] .stage,
+html[data-aeon-platform='linux'] .stage,
+html[data-aeon-platform='win32'] .aeon-scroll-hover,
+html[data-aeon-platform='linux'] .aeon-scroll-hover,
+html[data-aeon-platform='win32'] [data-aeon-scroll='hover'],
+html[data-aeon-platform='linux'] [data-aeon-scroll='hover'] {
+  scrollbar-color: hsl(var(--muted-foreground) / 0.5) transparent;
+}
+
+html[data-aeon-platform='win32'] .wallet-nav-stage::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .wallet-nav-stage::-webkit-scrollbar,
+html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar,
+html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar,
+html[data-aeon-platform='win32'] .stage::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .stage::-webkit-scrollbar,
+html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .aeon-scroll-hover::-webkit-scrollbar,
+html[data-aeon-platform='win32'] [data-aeon-scroll='hover']::-webkit-scrollbar,
+html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar {
+  width: var(--aeon-scrollbar-size, 10px);
+  height: var(--aeon-scrollbar-size, 10px);
+}
+
+html[data-aeon-platform='win32'] .wallet-nav-stage::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .wallet-nav-stage::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] .stage::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .stage::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .aeon-scroll-hover::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] [data-aeon-scroll='hover']::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar-thumb {
+  background: hsl(var(--muted-foreground) / 0.5);
+  border-radius: 999px;
+}

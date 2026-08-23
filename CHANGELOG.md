@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.299] - 2026-08-23
+
+### Fixed
+
+- **BSV-21 sends no longer refuse as “unrecognized lock”.** `listOutputs` often
+  omits the locking script (same toolbox `scriptOffset` gap as collectables), and
+  inscribed tips can carry the ord envelope before or after the P2PKH branch.
+  Basket-held plain tips now send; foreign locks still refuse when the script is
+  present and does not pay this wallet.
+- **Windows scrollbars show and drag again.** Hover-only scrollbar thumbs stayed
+  invisible in Electron on Windows (and Linux). Nav panels, activity lists, and
+  the main stage now keep a visible thumb and a normal 10px track.
+
 ## [1.2.298] - 2026-08-23
 
 ### Changed
