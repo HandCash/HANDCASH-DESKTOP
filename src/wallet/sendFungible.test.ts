@@ -1,7 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { Beef, LockingScript, Transaction } from '@bsv/sdk'
+import { describe, expect, it, vi } from 'vitest'
 import {
+  buildFungibleInputBeef,
   parseFungibleSendAmount,
   selectFungibleTips,
+  withFungibleCreateActionTimeout,
 } from './sendFungible'
 import type { Bsv21Utxo } from './bsv21'
 import { buildBsv21TransferLockingScript } from './bsv21Inscribe'
@@ -64,6 +67,41 @@ describe('selectFungibleTips', () => {
     expect(() => selectFungibleTips([tip('10'), tip('5')], 20n)).toThrow(
       /Not enough token outputs/,
     )
+  })
+})
+
+describe('fungible createAction inputs', () => {
+  it('merges source BEEF and identifies every selected token transaction', async () => {
+    const first = new Transaction()
+    first.addOutput({ satoshis: 1, lockingScript: LockingScript.fromHex('51') })
+    const second = new Transaction()
+    second.addOutput({ satoshis: 2, lockingScript: LockingScript.fromHex('51') })
+    const byTxid = new Map(
+      [first, second].map((tx) => {
+        const beef = new Beef()
+        beef.mergeRawTx(tx.toBinary())
+        return [tx.id('hex'), beef] as const
+      }),
+    )
+    const load = vi.fn(async (_wallet, txid: string) => byTxid.get(txid)!)
+
+    const result = await buildFungibleInputBeef(
+      {} as never,
+      [`${first.id('hex')}.0`, `${second.id('hex')}_0`, `${first.id('hex')}.0`],
+      load as never,
+    )
+
+    expect(result.knownTxids).toEqual([first.id('hex'), second.id('hex')])
+    expect(load).toHaveBeenCalledTimes(2)
+    const merged = Beef.fromBinary(result.inputBEEF)
+    expect(merged.findTxid(first.id('hex'))?.tx).toBeTruthy()
+    expect(merged.findTxid(second.id('hex'))?.tx).toBeTruthy()
+  })
+
+  it('bounds a createAction that never settles', async () => {
+    await expect(
+      withFungibleCreateActionTimeout(new Promise(() => undefined), 5),
+    ).rejects.toThrow(/timed out/i)
   })
 })
 

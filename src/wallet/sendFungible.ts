@@ -69,6 +69,36 @@ import {
   type SentItemSettle,
 } from './sentItemGuard'
 
+/** A wallet action must never hold the spend coordinator indefinitely. */
+export const FUNGIBLE_CREATE_ACTION_TIMEOUT_MS = 45_000
+
+class FungibleCreateActionTimeoutError extends Error {
+  constructor() {
+    super('Token transfer preparation timed out')
+    this.name = 'FungibleCreateActionTimeoutError'
+  }
+}
+
+export async function withFungibleCreateActionTimeout<T>(
+  work: Promise<T>,
+  timeoutMs = FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new FungibleCreateActionTimeoutError()),
+          timeoutMs,
+        )
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   if (!result || typeof result !== 'object') return undefined
   const raw = (result as { tx?: unknown }).tx
@@ -82,6 +112,34 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
 function wireOutpoint(op: string): string {
   const t = op.trim().toLowerCase()
   return t.includes('.') ? t : t.replace(/_(\d+)$/, '.$1')
+}
+
+/**
+ * Supply source transactions explicitly for custom token inputs.
+ *
+ * Unlike wallet-managed change inputs, a `bsv21` basket input has a custom
+ * unlocking script. Asking createAction to discover its ancestry can reserve
+ * the action and then wait forever in some toolbox builds. Collectable sends
+ * already avoid that path by passing inputBEEF; fungibles must do the same.
+ */
+export async function buildFungibleInputBeef(
+  wallet: ActiveWallet,
+  outpoints: string[],
+  loadBeef: typeof getBeefForTxidCached = getBeefForTxidCached,
+): Promise<{ inputBEEF: number[]; knownTxids: string[] }> {
+  const knownTxids = [
+    ...new Set(
+      outpoints
+        .map((op) => wireOutpoint(op).split('.')[0])
+        .filter((txid): txid is string => Boolean(txid)),
+    ),
+  ]
+  const merged = new Beef()
+  for (const txid of knownTxids) {
+    const beef = await loadBeef(wallet, txid)
+    merged.mergeBeef(beef.toBinary())
+  }
+  return { inputBEEF: Array.from(merged.toBinary()), knownTxids }
 }
 
 async function signPlainFungibleTransfer(args: {
@@ -528,6 +586,10 @@ export async function sendFungible(args: {
           inputDescription: `${token.sym} tip`,
           unlockingScriptLength: 108,
         }))
+        const { inputBEEF, knownTxids } = await buildFungibleInputBeef(
+          wallet,
+          selected.map((tip) => tip.outpoint),
+        )
 
         setPaymentProgress(
           'signing',
@@ -542,19 +604,25 @@ export async function sendFungible(args: {
         let attemptedBatchAbort = false
         for (;;) {
           try {
-            result = await wallet.wallet.createAction({
-              description: `Send ${token.sym}`.slice(0, 50),
-              labels: [BSV21_BASKET, 'handcash-send-token'],
-              inputs,
-              outputs,
-              options: {
-                trustSelf: 'known',
-                randomizeOutputs: false,
-                signAndProcess: true,
-                noSend: true,
-              },
-            })
-            break
+            result = await withFungibleCreateActionTimeout(
+              wallet.wallet.createAction({
+                description: `Send ${token.sym}`.slice(0, 50),
+                labels: [BSV21_BASKET, 'handcash-send-token'],
+                inputBEEF,
+                inputs,
+                outputs,
+                options: {
+                  trustSelf: 'known',
+                  knownTxids,
+                  randomizeOutputs: false,
+                  signAndProcess: true,
+                  noSend: true,
+                },
+              }),
+            )
+            console.info(
+              `[fungibles] createAction done txid=${result.txid ?? 'signable'}`,
+            )
           } catch (err) {
             const { isReservedActionBatchError, abortReservedActionBatches } =
               await import('./actionReview')
@@ -562,6 +630,9 @@ export async function sendFungible(args: {
               attemptedBatchAbort = true
               await abortReservedActionBatches(wallet)
               continue
+            }
+            if (err instanceof FungibleCreateActionTimeoutError) {
+              await abortReservedActionBatches(wallet)
             }
             itemChart.send({
               type: 'FAIL',
