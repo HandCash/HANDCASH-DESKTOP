@@ -1,5 +1,26 @@
 # Changelog
 
+## [1.2.292] - 2026-08-23
+
+### Fixed
+
+- **The hero balance updates when a payment lands outside Dashboard Refresh.**
+  BRC-29 internalize, SPV tip ingest, and inbox poll now push the display balance
+  to the session chart so mobile and desktop paint the new total without waiting
+  for the next manual sync.
+- **Receive toasts fire only when the balance actually rises.** Re-internalizing
+  an already-swept payment, or crediting money that was already in the wallet,
+  no longer announces "Payment received."
+- **A failed item send releases sealed funding inputs.** After sign+seal, any
+  failure path (including inbox errors) now un-seals inputs so the balance does
+  not stay artificially low until the next maintenance pass.
+
+### Changed
+
+- **Wallet progress lives on the phrase sweep panel only.** The Activity feed no
+  longer shows a generic "Importing" row with a progress bar — that chrome is on
+  Settings → Import phrase while a sweep runs.
+
 ## [1.2.291] - 2026-08-23
 
 ### Fixed

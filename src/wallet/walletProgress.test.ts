@@ -50,7 +50,7 @@ describe('walletProgress', () => {
     expect(walletProgressPercent(snap)).toBe(50)
     expect(walletProgressLabel(snap)).toBe('Importing')
     expect(walletProgressDetail(snap)).toMatch(/Importing collectables/i)
-    expect(showsActivityWalletProgress(snap)).toBe(true)
+    expect(showsActivityWalletProgress(snap)).toBe(false)
   })
 
   it('keeps catching-up busy after soft-deadline style phase change', () => {
@@ -66,25 +66,18 @@ describe('walletProgress', () => {
     expect(showsActivityWalletProgress(snap)).toBe(false)
   })
 
-  it('shows Activity bar for import kinds only, not refresh sync', () => {
+  it('never shows Activity wallet progress — sweep panel only', () => {
     startWalletProgress({ kind: 'refresh', phase: 'scanning' })
     expect(showsActivityWalletProgress()).toBe(false)
     updateWalletProgress({ kind: 'one-sat-import', phase: 'importing-items' })
-    expect(showsActivityWalletProgress()).toBe(true)
-    expect(walletProgressLabel()).toBe('Importing')
-    updateWalletProgress({
-      phase: 'catching-up',
-      message: 'Still importing collectables…',
-    })
-    expect(walletProgressLabel()).toBe('Catching up')
-    expect(showsActivityWalletProgress()).toBe(true)
+    expect(showsActivityWalletProgress()).toBe(false)
     startWalletProgress({
       kind: 'phrase-import',
       phase: 'migrating',
       current: 1,
       total: 10,
     })
-    expect(showsActivityWalletProgress()).toBe(true)
+    expect(showsActivityWalletProgress()).toBe(false)
   })
 
   it('records phrase-import moved/offset style counters', () => {

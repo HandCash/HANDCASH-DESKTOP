@@ -2861,7 +2861,19 @@ export async function sendCollectable(args: {
             return { txid }
           }
 
+          let inputsSealedForRelease = false
+          let txid = ''
+          let atomicBeef: number[] | undefined
+
           const failSend = (err: unknown): never => {
+            if (inputsSealedForRelease && txid && atomicBeef?.length) {
+              void import('./staleOutputRelease').then(
+                ({ releaseSealedInputsOfUnsentTx }) =>
+                  releaseSealedInputsOfUnsentTx(txid, atomicBeef).catch(
+                    () => undefined,
+                  ),
+              )
+            }
             clearPendingSend(outboundPending.id)
             const formatted = formatSendError(err)
             failOutboundSendPending({
@@ -2941,8 +2953,6 @@ export async function sendCollectable(args: {
           let result:
             | Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
             | undefined
-          let txid = ''
-          let atomicBeef: number[] | undefined
           let attemptedBatchAbort = false
           for (;;) {
             try {
@@ -3079,6 +3089,7 @@ export async function sendCollectable(args: {
           const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
             await import('./staleOutputRelease')
           await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          inputsSealedForRelease = true
 
           const settleSnap = itemChart.getSnapshot()
           try {

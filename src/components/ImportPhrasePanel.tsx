@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Progress } from '@aeon-ui/react'
 import { formatBsv, formatSats, getActiveWallet } from '../wallet/session'
 import {
   clearPhraseItemMigrateCursor,
@@ -17,6 +18,13 @@ import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { unlockVault } from '../wallet/vault'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import {
+  getWalletProgress,
+  isWalletProgressBusy,
+  subscribeWalletProgress,
+  walletProgressDetail,
+  walletProgressPercent,
+} from '../wallet/walletProgress'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
 type Phase = 'enter' | 'preview' | 'working' | 'done'
@@ -60,7 +68,12 @@ export function ImportPhrasePanel() {
   )
   /** Addresses whose collectables this run will move. */
   const [itemBranches, setItemBranches] = useState<string[]>([])
+  const [sweepProgress, setSweepProgress] = useState(() => getWalletProgress())
   const abortRef = useRef(false)
+
+  useEffect(() => {
+    return subscribeWalletProgress(setSweepProgress)
+  }, [])
 
   useEffect(() => {
     const cur = peekPhraseItemMigrateCursor()
@@ -552,6 +565,33 @@ export function ImportPhrasePanel() {
         <div style={{ marginTop: 16 }}>
           <p className="settings-hint">{status || 'Working…'}</p>
           {itemProgress ? <p className="settings-row-desc">{itemProgress}</p> : null}
+          {sweepProgress.kind === 'phrase-import' &&
+          isWalletProgressBusy(sweepProgress) ? (
+            <div
+              className="history-progress-block settings-sweep-progress"
+              data-aeon-scope="phrase-import"
+              data-aeon-state={sweepProgress.status}
+            >
+              <Progress.Root
+                value={walletProgressPercent(sweepProgress) ?? 0}
+                max={100}
+                indeterminate={
+                  walletProgressPercent(sweepProgress) == null &&
+                  sweepProgress.status === 'running'
+                }
+                className="history-progress"
+              >
+                <Progress.Track className="history-progress-track">
+                  <Progress.Range className="history-progress-range" />
+                </Progress.Track>
+              </Progress.Root>
+              {walletProgressDetail(sweepProgress) ? (
+                <span className="settings-row-desc mono">
+                  {walletProgressDetail(sweepProgress)}
+                </span>
+              ) : null}
+            </div>
+          ) : null}
           <div className="actions" style={{ marginTop: 8 }}>
             <button
               type="button"

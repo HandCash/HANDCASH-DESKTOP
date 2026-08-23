@@ -29,6 +29,7 @@ import {
   completePendingSend,
 } from './pendingSend'
 import { fetchBalanceSats, getActiveWallet } from './session'
+import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import {
   describeInsufficientFunds,
   isInsufficientFundsError,
@@ -716,6 +717,8 @@ async function internalizeBrc29PaymentOnce(opts: {
     message: 'Importing BRC-29 payment',
   })
 
+  const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
+
   try {
     let atomic = opts.tx
     if (!atomic || atomic.length === 0) {
@@ -802,14 +805,22 @@ async function internalizeBrc29PaymentOnce(opts: {
     const balanceStarted = Date.now()
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
     markIngest(`balance ${Date.now() - balanceStarted}ms`)
+    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
 
     markInboundPaymentStatus(id, 'Received')
-    if (opts.announce !== false) {
-      const amountLabel =
-        satoshis > 0
-          ? formatPrimaryFromSats(satoshis, getDisplayCurrency())
-          : undefined
-      toastSuccess('Payment received', amountLabel)
+    const gained =
+      balanceBefore != null && balanceSats != null
+        ? balanceSats - balanceBefore
+        : satoshis
+    if (opts.announce !== false && gained > 0) {
+      toastSuccess(
+        'Payment received',
+        formatPrimaryFromSats(gained, getDisplayCurrency()),
+      )
+    } else if (opts.announce !== false && gained <= 0) {
+      console.info(
+        `[brc29] internalized ${id.slice(0, 12)}… without a balance rise — no receive toast`,
+      )
     }
     setSyncHealth({ phase: 'ok', message: null })
     markIngest('done')
@@ -824,6 +835,7 @@ async function internalizeBrc29PaymentOnce(opts: {
         noteInboundReceiveComplete({ txid: id, sats: satoshis })
       }
       const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+      if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
       markInboundPaymentStatus(id, 'Received')
       setSyncHealth({ phase: 'ok', message: null })
       return {

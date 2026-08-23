@@ -74,20 +74,11 @@ export function isWalletProgressBusy(
   return snapshot.status === 'running'
 }
 
-/** Activity Aeon bar — collectable import only; refresh stays pill/subtitle. */
+/** Activity feed no longer hosts wallet progress — phrase sweep panel only. */
 export function showsActivityWalletProgress(
-  snapshot: WalletProgress = progress,
+  _snapshot: WalletProgress = progress,
 ): boolean {
-  if (
-    snapshot.status !== 'running' &&
-    snapshot.status !== 'done' &&
-    snapshot.status !== 'failed'
-  ) {
-    return false
-  }
-  return (
-    snapshot.kind === 'phrase-import' || snapshot.kind === 'one-sat-import'
-  )
+  return false
 }
 
 export function walletProgressPercent(

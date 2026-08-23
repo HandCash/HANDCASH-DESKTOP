@@ -17,6 +17,7 @@
  */
 import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend } from './walletCoordinator'
 import { getActiveWallet, fetchBalanceSats } from './session'
+import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
 import { setSyncHealth } from './walletHealth'
@@ -486,6 +487,7 @@ export async function refreshFromChainExclusive(
 
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
+    publishDisplayBalanceRefresh(balanceAfter)
     if (addressUnspentAfterIngest > 0 && fundingSkippedKnownAfterIngest > 0) {
       console.warn(
         `[chain-ingest] ${addressUnspentAfterIngest.toLocaleString()} sats still on legacy address ` +
@@ -587,6 +589,7 @@ async function finishEarlyForSpend(
   let balanceSats: number | null = null
   try {
     balanceSats = await fetchBalanceSats(active.wallet)
+    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
   } catch {
     balanceSats = null
   }

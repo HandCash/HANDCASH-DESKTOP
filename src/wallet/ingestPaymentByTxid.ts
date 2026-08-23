@@ -14,6 +14,7 @@ import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
 import { isSweepableFunding } from './legacySweepPath'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { fetchBalanceSats, getActiveWallet } from './session'
+import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
@@ -69,6 +70,7 @@ export async function ingestPaymentByTxid(
   })
 
   try {
+    const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
     const beef = await getBeefForTxidCached(active, id, {
       allowUnprovenRawTx: true,
     })
@@ -113,12 +115,24 @@ export async function ingestPaymentByTxid(
     }
 
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
+    const gained =
+      balanceBefore != null && balanceSats != null
+        ? balanceSats - balanceBefore
+        : satoshis
 
     if (result.imported > 0) {
       markInboundPaymentStatus(id, 'Received')
-      const amountLabel =
-        satoshis > 0 ? formatPrimaryFromSats(satoshis, getDisplayCurrency()) : undefined
-      toastSuccess('Payment received', amountLabel)
+      if (gained > 0) {
+        toastSuccess(
+          'Payment received',
+          formatPrimaryFromSats(gained, getDisplayCurrency()),
+        )
+      } else {
+        console.info(
+          `[payment-spv] swept ${id.slice(0, 12)}… without a balance rise — no receive toast`,
+        )
+      }
       setSyncHealth({ phase: 'ok', message: null })
       return { imported: result.imported, satoshis, balanceSats }
     }

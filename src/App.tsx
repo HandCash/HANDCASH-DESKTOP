@@ -42,6 +42,7 @@ import {
   shouldKeepDisplayBalanceOnConfirmedRead,
   writeTrustedBalance,
 } from './wallet/balanceSnapshot'
+import { DISPLAY_BALANCE_REFRESH_EVENT } from './wallet/displayBalanceRefresh'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
@@ -250,6 +251,20 @@ export function App() {
     },
     [send, snapshot.context.balanceSats],
   )
+
+  useEffect(() => {
+    const onBalanceRefreshed = (event: Event) => {
+      const detail = (event as CustomEvent<{ balanceSats?: number }>).detail
+      if (typeof detail?.balanceSats !== 'number') return
+      handleBalanceRefresh(detail.balanceSats)
+    }
+    document.addEventListener(DISPLAY_BALANCE_REFRESH_EVENT, onBalanceRefreshed)
+    return () =>
+      document.removeEventListener(
+        DISPLAY_BALANCE_REFRESH_EVENT,
+        onBalanceRefreshed,
+      )
+  }, [handleBalanceRefresh])
 
   const handleManualSync = useCallback(async () => {
     if (!walletUnlocked) return
