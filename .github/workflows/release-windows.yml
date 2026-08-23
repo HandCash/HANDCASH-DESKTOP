@@ -62,6 +62,9 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        # Windows runners default to PowerShell, where `rm` is Remove-Item and
+        # rejects `-rf`. Every other step here is bash for the same reason.
+        shell: bash
         run: |
           rm -rf release
           npm run build
