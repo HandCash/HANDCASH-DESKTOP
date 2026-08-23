@@ -2458,6 +2458,10 @@ button.wallet-detail-value.is-copied {
 .settings-scroll {
   min-height: 0;
   padding-bottom: 8px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  -webkit-overflow-scrolling: touch;
 }
 
 .settings-hint {
@@ -2510,8 +2514,20 @@ button.wallet-detail-value.is-copied {
 .nav-section-body.settings-scroll {
   display: flex;
   flex-direction: column;
-  min-height: 100%;
+  min-height: 0;
   box-sizing: border-box;
+}
+
+/* Settings detail screens live in nav-child-body; stretch like send/receive. */
+.nav-child-body:has(> .settings-scroll) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.nav-child-body > .settings-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 .about-handcash-lead {
@@ -5244,24 +5260,8 @@ a.app-details-host:hover {
   background: color-mix(in srgb, hsl(var(--destructive)) 12%, transparent);
 }
 
-.settings-update-row > .settings-row-body {
+.settings-control-row > .settings-row-body {
   flex: 1 1 auto;
-  min-width: 0;
-}
-
-.settings-log-upload {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
-  align-items: flex-start;
-}
-
-.settings-log-upload-body {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  width: 100%;
   min-width: 0;
 }
 
@@ -5287,39 +5287,21 @@ a.app-details-host:hover {
 }
 
 .settings-log-path {
-  display: block;
-  max-width: min(100%, 28rem);
+  margin: 0 0 10px;
+  max-width: 100%;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   opacity: 0.85;
   font-size: 0.72rem;
-}
-
-.settings-log-upload-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  width: 100%;
-}
-
-.settings-log-upload-input {
-  flex: 1;
-  min-width: 0;
-  padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
-  background: var(--hc-sunken-strong);
-  color: var(--hc-text);
-  font: inherit;
-  font-size: 0.85rem;
+  color: var(--hc-muted);
 }
 
 .settings-row-static {
   padding: 8px;
 }
 
-.settings-update-row {
+.settings-control-row {
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
@@ -5327,8 +5309,14 @@ a.app-details-host:hover {
   width: 100%;
 }
 
-.settings-interval-select,
-.settings-check-btn {
+.settings-control-row-actions {
+  flex-wrap: wrap;
+  justify-content: flex-start;
+  gap: 8px;
+}
+
+.settings-control-input,
+.settings-action-btn {
   flex-shrink: 0;
   align-self: center;
   position: relative;
@@ -5336,8 +5324,9 @@ a.app-details-host:hover {
   pointer-events: auto;
 }
 
-.settings-interval-select {
+.settings-control-input {
   min-width: 7.5rem;
+  max-width: 12rem;
   padding: 6px 8px;
   border-radius: 8px;
   border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
@@ -5350,14 +5339,27 @@ a.app-details-host:hover {
   appearance: auto;
 }
 
-.settings-interval-select:disabled {
+.settings-control-input-block {
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: text;
+}
+
+.settings-control-input:disabled {
   opacity: 0.5;
   cursor: not-allowed;
 }
 
-.settings-interval-select option {
+.settings-control-input option {
   background: #0a0a0a;
   color: var(--hc-text);
+}
+
+.log-viewer-tools .actions {
+  flex-wrap: wrap;
 }
 
 /* App + update toasts (bottom-end) */
@@ -9699,9 +9701,8 @@ html[data-aeon-mode='light'] .app-avatar {
   background: hsl(var(--secondary));
 }
 
-html[data-aeon-mode='light'] .settings-interval-select option,
-html[data-aeon-mode='light'] .settings-log-upload-input,
-html[data-aeon-mode='light'] .settings-interval-select {
+html[data-aeon-mode='light'] .settings-control-input option,
+html[data-aeon-mode='light'] .settings-control-input {
   background: var(--hc-field);
   color: var(--hc-text);
 }
@@ -10242,6 +10243,8 @@ html[data-aeon-platform='win32'] .nav-child-body,
 html[data-aeon-platform='linux'] .nav-child-body,
 html[data-aeon-platform='win32'] .history-list,
 html[data-aeon-platform='linux'] .history-list,
+html[data-aeon-platform='win32'] .settings-scroll,
+html[data-aeon-platform='linux'] .settings-scroll,
 html[data-aeon-platform='win32'] .stage,
 html[data-aeon-platform='linux'] .stage,
 html[data-aeon-platform='win32'] .aeon-scroll-hover,
@@ -10257,6 +10260,8 @@ html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar,
+html[data-aeon-platform='win32'] .settings-scroll::-webkit-scrollbar,
+html[data-aeon-platform='linux'] .settings-scroll::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .stage::-webkit-scrollbar,
 html[data-aeon-platform='linux'] .stage::-webkit-scrollbar,
 html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar,
@@ -10273,6 +10278,8 @@ html[data-aeon-platform='win32'] .nav-child-body::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .nav-child-body::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .history-list::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .history-list::-webkit-scrollbar-thumb,
+html[data-aeon-platform='win32'] .settings-scroll::-webkit-scrollbar-thumb,
+html[data-aeon-platform='linux'] .settings-scroll::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .stage::-webkit-scrollbar-thumb,
 html[data-aeon-platform='linux'] .stage::-webkit-scrollbar-thumb,
 html[data-aeon-platform='win32'] .aeon-scroll-hover::-webkit-scrollbar-thumb,

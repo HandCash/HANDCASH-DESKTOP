@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.2.302] - 2026-08-23
+
+### Fixed
+
+- **Settings scrolls on Linux and Windows.** Detail screens now use the same flex
+  scroll container as Send/Receive; the main list no longer traps overflow.
+
+### Changed
+
+- **Settings layout simplified.** Removed list/grid toggle (inline controls do not
+  fit a grid). Sections are Security, Preferences, Support, and About. Log upload
+  and folder actions moved into the session log viewer; the index is shorter.
+
 ## [1.2.301] - 2026-08-23
 
 ### Fixed

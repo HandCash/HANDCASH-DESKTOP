@@ -14,20 +14,18 @@ import {
   subscribeAppearance,
   type AppearancePreference,
 } from '../wallet/themePrefs'
-import { getLogUploadUrl, setLogUploadUrl } from '../wallet/logUploadPrefs'
-import { shipAppLogs } from '../wallet/logShip'
 import { playWalletSound } from '../wallet/soundService'
-import { toastError, toastSuccess } from '../wallet/toast'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
-import { SettingsNavRow, SettingsGridRow, SettingsSection, statusForSetting, settingIconFor, SettingsRowIcon, SETTINGS_APPLICATION_ICONS } from './settings'
-import { CollectionViewToggle } from './CollectionViewToggle'
 import {
-  getCollectionView,
-  subscribeCollectionView,
-  type CollectionView,
-} from '../wallet/collectionView'
+  SettingsNavRow,
+  SettingsControlRow,
+  SettingsSection,
+  statusForSetting,
+  settingIconFor,
+  SETTINGS_APPLICATION_ICONS,
+} from './settings'
 
 type SettingItem = {
   id: SettingId
@@ -35,70 +33,43 @@ type SettingItem = {
   description: string
 }
 
-type SettingGroup = {
-  title: string
-  items: SettingItem[]
-}
-
-const SETTING_GROUPS: SettingGroup[] = [
+const SECURITY_ITEMS: SettingItem[] = [
   {
-    title: 'Security',
-    items: [
-      {
-        id: 'backup',
-        label: 'Key slices',
-        description: 'Any two of three recover this wallet',
-      },
-      {
-        id: 'history-backup',
-        label: 'History',
-        description: 'Required for recovery',
-      },
-      {
-        id: 'device-handoff',
-        label: 'Device backup',
-        description: 'Keep a copy on your other device',
-      },
-      {
-        id: 'import-phrase',
-        label: 'Sweep',
-        description: 'Move another wallet in here',
-      },
-      {
-        id: 'change-password',
-        label: 'Password',
-        description: '',
-      },
-    ],
+    id: 'backup',
+    label: 'Key slices',
+    description: 'Any two of three recover this wallet',
   },
   {
-    title: 'Danger zone',
-    items: [
-      {
-        id: 'wipe-wallet',
-        label: 'Wipe wallet',
-        description: 'Remove from this device',
-      },
-    ],
+    id: 'history-backup',
+    label: 'History',
+    description: 'Required for recovery',
+  },
+  {
+    id: 'device-handoff',
+    label: 'Device backup',
+    description: 'Keep a copy on your other device',
+  },
+  {
+    id: 'import-phrase',
+    label: 'Sweep',
+    description: 'Move another wallet in here',
+  },
+  {
+    id: 'change-password',
+    label: 'Password',
+    description: 'Unlock this device',
+  },
+  {
+    id: 'wipe-wallet',
+    label: 'Wipe wallet',
+    description: 'Remove from this device',
   },
 ]
 
-const UPDATE_MODES: { value: UpdateMode; label: string; description: string }[] = [
-  {
-    value: 'default',
-    label: 'Default',
-    description: 'Automatic checks',
-  },
-  {
-    value: 'manual',
-    label: 'Manual',
-    description: 'Check when asked',
-  },
-  {
-    value: 'none',
-    label: 'None',
-    description: 'Updates off',
-  },
+const UPDATE_MODES: { value: UpdateMode; label: string }[] = [
+  { value: 'default', label: 'Default' },
+  { value: 'manual', label: 'Manual' },
+  { value: 'none', label: 'Off' },
 ]
 
 const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
@@ -110,37 +81,63 @@ const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
 function phaseLabel(phase: string, error: string | null): string {
   switch (phase) {
     case 'checking':
-      return 'Checking for updates…'
+      return 'Checking…'
     case 'available':
       return 'Update available'
     case 'downloading':
-      return 'Downloading update…'
+      return 'Downloading…'
     case 'ready':
       return 'Ready to restart'
     case 'not-available':
     case 'notAvailable':
-      if (error) return error
-      return 'Up to date'
+      return error ? error : 'Up to date'
     case 'error':
-      return 'Update check failed'
+      return error ?? 'Check failed'
     default:
-      return 'Idle'
+      return ''
   }
+}
+
+function walletKindLabel(): string {
+  return window.handcash?.platform === 'android' || window.handcash?.platform === 'ios'
+    ? 'Mobile wallet'
+    : 'Desktop wallet'
 }
 
 export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
-  if (id === 'logs') return 'Logs'
+  if (id === 'logs') return 'Session logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'import-phrase') return 'Sweep'
   if (id === 'history-backup') return 'History'
-  for (const group of SETTING_GROUPS) {
-    const item = group.items.find((entry) => entry.id === id)
-    if (item) return item.label
-  }
+  const item = SECURITY_ITEMS.find((entry) => entry.id === id)
+  if (item) return item.label
   return 'Setting'
+}
+
+function SecurityRows() {
+  return (
+    <ul className="settings-list">
+      {SECURITY_ITEMS.map(({ id, label, description }) => {
+        const status = statusForSetting(id)
+        const { icon, tone } = settingIconFor(id)
+        return (
+          <SettingsNavRow
+            key={id}
+            label={label}
+            description={description}
+            status={status?.text}
+            statusTone={status?.tone}
+            icon={icon}
+            iconTone={tone}
+            onClick={() => openSetting(id)}
+          />
+        )
+      })}
+    </ul>
+  )
 }
 
 export function SettingsPanel() {
@@ -150,15 +147,22 @@ export function SettingsPanel() {
   const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
-  const [logPath, setLogPath] = useState<string | null>(null)
-  const [logUploadUrl, setLogUploadUrlState] = useState(() => getLogUploadUrl())
-  const [uploadingLogs, setUploadingLogs] = useState(false)
-  const [view, setView] = useState<CollectionView>(() => getCollectionView('settings'))
   const [, setStatusTick] = useState(0)
+  const isDesktop =
+    window.handcash?.platform !== 'android' && window.handcash?.platform !== 'ios'
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
       ? context.currentVersion
       : APP_VERSION
+  const versionDetail = [
+    phaseLabel(context.phase, context.error),
+    context.availableVersion && context.availableVersion !== runningVersion
+      ? `${context.availableVersion} available`
+      : '',
+    context.phase === 'downloading' && context.percent != null ? `${context.percent}%` : '',
+  ]
+    .filter(Boolean)
+    .join(' · ')
 
   useEffect(() => {
     rootRef.current?.scrollIntoView({ block: 'start' })
@@ -176,8 +180,6 @@ export function SettingsPanel() {
     [],
   )
 
-  useEffect(() => subscribeCollectionView(setView, 'settings'), [])
-
   useEffect(() => {
     const bump = () => setStatusTick((n) => n + 1)
     const unsubBackup = subscribeBackupConfirmed(bump)
@@ -190,332 +192,155 @@ export function SettingsPanel() {
     }
   }, [])
 
-  useEffect(() => {
-    let cancelled = false
-    void window.handcash?.getLogInfo?.().then((info) => {
-      if (cancelled) return
-      setLogPath(info?.file ?? info?.dir ?? null)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [])
-
   return (
     <div
       ref={rootRef}
       className="nav-section-body settings-nav settings-scroll"
       data-aeon-scope="settings"
-      data-aeon-state={view}
     >
       <div className="connected-panel-head settings-panel-head">
         <h2>Settings</h2>
-        <CollectionViewToggle label="Settings view" scope="settings" />
       </div>
 
-      {SETTING_GROUPS.map((group) => (
-        <SettingsSection key={group.title} title={group.title}>
-          <ul className={view === 'grid' ? 'collection-grid settings-grid' : 'settings-list'}>
-            {group.items.map(({ id, label, description }) => {
-              const status = statusForSetting(id)
-              const { icon, tone } = settingIconFor(id)
-              const rowProps = {
-                label,
-                description,
-                status: status?.text,
-                statusTone: status?.tone,
-                icon,
-                iconTone: tone,
-                onClick: () => openSetting(id),
-              }
-              return view === 'grid' ? (
-                <SettingsGridRow key={id} {...rowProps} />
-              ) : (
-                <SettingsNavRow key={id} {...rowProps} />
-              )
-            })}
-          </ul>
-        </SettingsSection>
-      ))}
-
-      <SettingsSection title="Application" part="application">
-        <ul className="settings-list">
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.appearance}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <label className="settings-row-label" htmlFor="settings-appearance">
-                  Appearance
-                </label>
-              </span>
-              <select
-                id="settings-appearance"
-                className="settings-interval-select"
-                value={appearance}
-                data-aeon-part="appearance"
-                data-aeon-state={appearance}
-                onChange={(e) => {
-                  playWalletSound('soft')
-                  const next = e.target.value as AppearancePreference
-                  setAppearancePreference(next)
-                  setAppearance(next)
-                }}
-              >
-                {APPEARANCE_OPTIONS.map((opt) => (
-                  <option key={opt.value} value={opt.value}>
-                    {opt.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </li>
-
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.sfx}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <label className="settings-row-label" htmlFor="settings-sfx-enabled">
-                  Sound effects
-                </label>
-              </span>
-              <label className="settings-sfx-toggle">
-                <input
-                  id="settings-sfx-enabled"
-                  type="checkbox"
-                  checked={sfxEnabled}
-                  data-aeon-part="sfx-enabled"
-                  data-aeon-state={sfxEnabled ? 'on' : 'off'}
-                  onChange={(e) => {
-                    const next = e.target.checked
-                    setWalletSfxEnabled(next)
-                    setSfxEnabled(next)
-                    if (next) playWalletSound('receive', { force: true })
-                  }}
-                />
-                <span>{sfxEnabled ? 'On' : 'Off'}</span>
-              </label>
-            </div>
-          </li>
-
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.updates}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <label className="settings-row-label" htmlFor="settings-update-mode">
-                  Updates
-                </label>
-              </span>
-              <select
-                id="settings-update-mode"
-                className="settings-interval-select"
-                value={context.mode}
-                data-aeon-part="update-mode"
-                data-aeon-state={context.mode}
-                onChange={(e) => {
-                  playWalletSound('soft')
-                  void setMode(e.target.value as UpdateMode)
-                }}
-              >
-                {UPDATE_MODES.map((m) => (
-                  <option key={m.value} value={m.value}>
-                    {m.label}
-                  </option>
-                ))}
-              </select>
-            </div>
-          </li>
-
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.version}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <strong className="settings-row-label">Version {runningVersion}</strong>
-                <span className="settings-row-desc">
-                  {phaseLabel(context.phase, context.error)}
-                  {context.availableVersion && context.availableVersion !== runningVersion
-                    ? ` · ${context.availableVersion} available`
-                    : ''}
-                  {context.phase === 'downloading' && context.percent != null
-                    ? ` · ${context.percent}%`
-                    : ''}
-                  {context.phase === 'error' && context.error ? ` · ${context.error}` : ''}
-                </span>
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost settings-check-btn"
-                disabled={checking || context.mode === 'none'}
-                data-aeon-part="check-updates"
-                data-aeon-state={checking ? 'checking' : context.mode}
-                onClick={() => {
-                  playWalletSound('soft')
-                  void check()
-                }}
-              >
-                {checking ? 'Checking…' : 'Check'}
-              </button>
-            </div>
-          </li>
-        </ul>
+      <SettingsSection title="Security" part="security">
+        <SecurityRows />
       </SettingsSection>
 
-      <SettingsSection title="Logs" part="logs">
+      <SettingsSection title="Preferences" part="preferences">
         <ul className="settings-list">
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.logs}</SettingsRowIcon>
-              <span className="settings-row-body">
-                <strong className="settings-row-label">App logs</strong>
-                <span className="settings-row-desc">In-wallet viewer · share with support</span>
-                {logPath ? (
-                  <span className="settings-row-desc settings-log-path mono" title={logPath}>
-                    {logPath}
-                  </span>
-                ) : null}
-              </span>
-              <button
-                type="button"
-                className="btn btn-ghost settings-check-btn"
-                data-aeon-part="view-logs"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSetting('logs')
-                }}
-              >
-                View
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost settings-check-btn"
-                data-aeon-part="open-logs"
-                disabled={!window.handcash?.openLogs}
-                onClick={() => {
-                  playWalletSound('soft')
-                  void window.handcash?.openLogs?.().then((result) => {
-                    if (result && !result.ok) {
-                      playWalletSound('error')
-                    }
-                  })
-                }}
-              >
-                Open
-              </button>
-            </div>
-          </li>
-          <li className="settings-row settings-row-static">
-            <div className="settings-update-row settings-log-upload">
-              <SettingsRowIcon>{SETTINGS_APPLICATION_ICONS.logUpload}</SettingsRowIcon>
-              <div className="settings-row-body settings-log-upload-body">
-              <strong className="settings-row-label">Upload logs</strong>
-              <span className="settings-row-desc">
-                Send session logs when support asks. The upload address is filled in automatically —
-                change it only if you were given a different one.
-              </span>
-              <div className="settings-log-upload-row">
-                <input
-                  id="settings-log-upload-url"
-                  className="settings-log-upload-input"
-                  type="url"
-                  inputMode="url"
-                  autoComplete="off"
-                  spellCheck={false}
-                  aria-label="Log upload URL"
-                  placeholder="https://…/v1/logs/hc-…"
-                  value={logUploadUrl}
-                  data-aeon-part="log-upload-url"
-                  onChange={(e) => setLogUploadUrlState(e.target.value)}
-                  onBlur={() => setLogUploadUrl(logUploadUrl)}
-                />
-                <button
-                  type="button"
-                  className="btn btn-ghost settings-check-btn"
-                  data-aeon-part="upload-logs"
-                  disabled={uploadingLogs}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    const url = setLogUploadUrl(logUploadUrl)
-                    setLogUploadUrlState(url)
-                    if (!url) {
-                      toastError('Set a log upload URL first')
-                      return
-                    }
-                    setUploadingLogs(true)
-                    void shipAppLogs(url)
-                      .then((result) => {
-                        if (!result.ok) {
-                          playWalletSound('error')
-                          toastError('Upload failed', result.error)
-                          return
-                        }
-                        toastSuccess('Logs uploaded', 'bytes' in result ? `${result.bytes} bytes` : '')
-                      })
-                      .finally(() => setUploadingLogs(false))
-                  }}
-                >
-                  {uploadingLogs ? 'Uploading…' : 'Upload'}
-                </button>
-              </div>
-              </div>
-            </div>
-          </li>
-        </ul>
-      </SettingsSection>
-
-      <SettingsSection title="About" part="about">
-        <ul className={view === 'grid' ? 'collection-grid settings-grid' : 'settings-list'}>
-          <li className={view === 'grid' ? 'collection-grid-card settings-grid-card' : 'settings-row'}>
-            <button
-              type="button"
-              className={view === 'grid' ? 'collection-grid-main settings-grid-main' : 'settings-row-main'}
-              onClick={() => {
+          <SettingsControlRow
+            icon={SETTINGS_APPLICATION_ICONS.appearance}
+            label="Appearance"
+            labelFor="settings-appearance"
+          >
+            <select
+              id="settings-appearance"
+              className="settings-control-input"
+              value={appearance}
+              data-aeon-part="appearance"
+              data-aeon-state={appearance}
+              onChange={(e) => {
                 playWalletSound('soft')
-                openSetting('about-handcash')
+                const next = e.target.value as AppearancePreference
+                setAppearancePreference(next)
+                setAppearance(next)
               }}
             >
-              <SettingsRowIcon>{settingIconFor('about-handcash').icon}</SettingsRowIcon>
-              {view === 'grid' ? (
-                <>
-                  <strong className="collection-grid-name">HandCash</strong>
-                  <span className="collection-grid-host settings-grid-desc">
-                    {window.handcash?.platform === 'android' ||
-                    window.handcash?.platform === 'ios'
-                      ? 'Mobile wallet'
-                      : 'Desktop wallet'}
-                  </span>
-                </>
-              ) : (
-                <span className="settings-row-body">
-                  <strong className="settings-row-label">HandCash</strong>
-                  <span className="settings-row-desc">
-                    {window.handcash?.platform === 'android' ||
-                    window.handcash?.platform === 'ios'
-                      ? 'Mobile wallet'
-                      : 'Desktop wallet'}
-                  </span>
-                </span>
-              )}
-            </button>
-          </li>
-          {window.handcash?.platform !== 'android' && window.handcash?.platform !== 'ios' ? (
-          <li className="settings-row settings-row-static settings-grid-span">
-            <div className="settings-update-row">
-              <span className="settings-row-body">
-                <strong className="settings-row-label">Screenshot</strong>
-                <span className="settings-row-desc">
-                  {window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
-                </span>
-              </span>
+              {APPEARANCE_OPTIONS.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label}
+                </option>
+              ))}
+            </select>
+          </SettingsControlRow>
+
+          <SettingsControlRow
+            icon={SETTINGS_APPLICATION_ICONS.sfx}
+            label="Sound effects"
+            labelFor="settings-sfx-enabled"
+          >
+            <label className="settings-sfx-toggle">
+              <input
+                id="settings-sfx-enabled"
+                type="checkbox"
+                checked={sfxEnabled}
+                data-aeon-part="sfx-enabled"
+                data-aeon-state={sfxEnabled ? 'on' : 'off'}
+                onChange={(e) => {
+                  const next = e.target.checked
+                  setWalletSfxEnabled(next)
+                  setSfxEnabled(next)
+                  if (next) playWalletSound('receive', { force: true })
+                }}
+              />
+              <span>{sfxEnabled ? 'On' : 'Off'}</span>
+            </label>
+          </SettingsControlRow>
+
+          {isDesktop ? (
+            <>
+              <SettingsControlRow
+                icon={SETTINGS_APPLICATION_ICONS.updates}
+                label="Updates"
+                labelFor="settings-update-mode"
+              >
+                <select
+                  id="settings-update-mode"
+                  className="settings-control-input"
+                  value={context.mode}
+                  data-aeon-part="update-mode"
+                  data-aeon-state={context.mode}
+                  onChange={(e) => {
+                    playWalletSound('soft')
+                    void setMode(e.target.value as UpdateMode)
+                  }}
+                >
+                  {UPDATE_MODES.map((m) => (
+                    <option key={m.value} value={m.value}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+              </SettingsControlRow>
+
+              <SettingsControlRow
+                icon={SETTINGS_APPLICATION_ICONS.version}
+                label={`Version ${runningVersion}`}
+                description={versionDetail || undefined}
+              >
+                <button
+                  type="button"
+                  className="btn btn-ghost settings-action-btn"
+                  disabled={checking || context.mode === 'none'}
+                  data-aeon-part="check-updates"
+                  data-aeon-state={checking ? 'checking' : context.mode}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void check()
+                  }}
+                >
+                  {checking ? 'Checking…' : 'Check'}
+                </button>
+              </SettingsControlRow>
+            </>
+          ) : null}
+        </ul>
+      </SettingsSection>
+
+      <SettingsSection title="Support" part="support">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="Session logs"
+            description="View, copy, and upload"
+            icon={SETTINGS_APPLICATION_ICONS.logs}
+            onClick={() => openSetting('logs')}
+          />
+          {isDesktop ? (
+            <SettingsControlRow
+              label="Screenshot"
+              description={window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
+            >
               <button
                 type="button"
-                className="btn btn-ghost settings-check-btn"
+                className="btn btn-ghost settings-action-btn"
                 data-aeon-part="copy-screenshot"
                 onClick={() => void window.handcash?.copyScreenshot?.()}
               >
                 Copy
               </button>
-            </div>
-          </li>
+            </SettingsControlRow>
           ) : null}
+        </ul>
+      </SettingsSection>
+
+      <SettingsSection title="About" part="about">
+        <ul className="settings-list">
+          <SettingsNavRow
+            label="HandCash"
+            description={walletKindLabel()}
+            icon={settingIconFor('about-handcash').icon}
+            onClick={() => openSetting('about-handcash')}
+          />
         </ul>
       </SettingsSection>
     </div>
