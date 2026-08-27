@@ -10,7 +10,7 @@ import {
   type LegacyScanResult,
   type LegacyUtxo,
 } from './legacyScan'
-import { scanAddressTokenTxos } from './tokenAddressScan'
+import { scanAddressOrdinalTxos, scanAddressTokenTxos } from './tokenAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
@@ -190,11 +190,11 @@ function outpointKey(outpoint: string): string {
 }
 
 /**
- * Fold ordinal-index token tips into the provider scan.
+ * Fold ordinal-index tips into the provider scan.
  *
- * The two sources answer different questions, so rows only ever get added —
- * a token the address provider already listed keeps the provider's row, and
- * an empty token result leaves the scan untouched.
+ * The sources answer different questions, so rows only ever get added —
+ * a tip the address provider already listed keeps the provider's row, and
+ * an empty index result leaves the scan untouched.
  */
 export function mergeTokenTxos(
   scan: LegacyScanResult,
@@ -206,7 +206,7 @@ export function mergeTokenTxos(
   if (extra.length === 0) return scan
 
   console.info(
-    `[chain-ingest] ordinal index added ${extra.length} token tip(s) the address scan could not see`,
+    `[chain-ingest] ordinal index added ${extra.length} tip(s) the address scan could not see`,
   )
   const utxos = [...scan.utxos, ...extra]
   return { ...scan, utxos, sats: utxos.reduce((s, u) => s + u.satoshis, 0) }
@@ -333,18 +333,25 @@ export async function ingestLegacyAddressUtxos(
     })
   }
 
-  // BSV-21 outputs are P2PKH + ord envelope, which every address provider reads
-  // as nonstandard — they are absent from the scan below even while live on the
-  // address. Ask the ordinal index alongside it. A send needs funding only, and
-  // never spends a tip, so it does not pay for this.
-  const [addressScan, tokenTxos] = await Promise.all([
+  // Inscribed outputs (1Sat NFT + BSV-21) are P2PKH + ord envelope, which every
+  // address provider reads as nonstandard — they are absent from the scan below
+  // even while live on the address. Ask the ordinal index for both NFT tips and
+  // BSV-21 tips. A send needs funding only, and never spends a tip, so it does
+  // not pay for this.
+  const [addressScan, tokenTxos, ordinalTxos] = await Promise.all([
     scanLegacyAddress(active),
     fundingOnly
       ? Promise.resolve<LegacyUtxo[]>([])
       : scanAddressTokenTxos(active.address, active.chain),
+    fundingOnly
+      ? Promise.resolve<LegacyUtxo[]>([])
+      : scanAddressOrdinalTxos(active.address, active.chain),
   ])
 
-  const scan = mergeTokenTxos(addressScan, tokenTxos)
+  const scan = mergeTokenTxos(
+    mergeTokenTxos(addressScan, tokenTxos),
+    ordinalTxos,
+  )
   if (scan.utxos.length === 0) {
     return emptyIngest(scan)
   }

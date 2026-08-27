@@ -1,18 +1,20 @@
 /**
- * BSV-21 tips are invisible to the address providers, so the ordinal index is
- * the only thing standing between an incoming token and a wallet that never
- * sees it. These tests pin the query that finds them and the sat guard that
- * keeps an indexer from steering real funds into the sweep.
+ * Inscribed tips are invisible to address providers, so the ordinal index is
+ * what stands between an incoming 1Sat / BSV-21 tip and a wallet that never
+ * sees it. These tests pin the queries and the sat guard that keeps an indexer
+ * from steering real funds into the sweep.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   resetTokenAddressScanCooldownForTests,
+  scanAddressOrdinalTxos,
   scanAddressTokenTxos,
 } from './tokenAddressScan'
 import { mergeTokenTxos } from './ingestLegacyAddress'
 
 const ADDRESS = '19aXSPsoR45Uuxk4LUonJ672zGFf57wfrD'
 const TXID = '1a985778ab19fade1eecc04558793fbb4bc1cb66062baa9bf2068d198aacb313'
+const NFT_TXID = '6eddee85e3470be56a295287f236d7ce63fcb09c5512d7703f7e03884c9326b9'
 
 const tokenRow = (over: Record<string, unknown> = {}) => ({
   txid: TXID,
@@ -109,6 +111,49 @@ describe('scanAddressTokenTxos', () => {
     await scanAddressTokenTxos(ADDRESS, 'main')
 
     expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('scanAddressOrdinalTxos', () => {
+  it('asks the index without bsv20 so NFT ords are included', async () => {
+    const fetchMock = vi.fn(async () => new Response('[]', { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await scanAddressOrdinalTxos(ADDRESS, 'main')
+
+    const url = String(fetchMock.mock.calls[0]?.[0])
+    expect(url).toContain(`/api/txos/address/${ADDRESS}/unspent`)
+    expect(url).not.toContain('bsv20=true')
+  })
+
+  it('returns self-sent 1Sat tips WOC cannot list', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify([
+              tokenRow({
+                txid: NFT_TXID,
+                outpoint: `${NFT_TXID}_0`,
+                height: 964166,
+              }),
+            ]),
+            { status: 200 },
+          ),
+      ),
+    )
+
+    const utxos = await scanAddressOrdinalTxos(ADDRESS, 'main')
+    expect(utxos).toEqual([
+      {
+        outpoint: `${NFT_TXID}.0`,
+        txid: NFT_TXID,
+        vout: 0,
+        satoshis: 1,
+        height: 964166,
+      },
+    ])
   })
 })
 
