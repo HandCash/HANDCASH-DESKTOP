@@ -1,7 +1,7 @@
 /**
  * 1Sat fungibles (BRC-175) — 1-sat tips that share one origin.
  *
- * Product branding: **1Sat**. Storage basket `1sat-ft` (legacy read: `colour`).
+ * Product branding: **1Sat**. Storage basket `1sat-ft`.
  * Each tip carries face value `amt` (missing ⇒ 1). Balance = Σ amt.
  * Transfers spend tips and create new 1-sat tips (payee + change) with
  * conserved amt; BRC-150 when lineage exists. No indexer for custody.
@@ -16,8 +16,6 @@ import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 export const ONESAT_FT_BASKET = '1sat-ft' as const
 export const ONESAT_FT_PROTOCOL = '1sat-ft' as const
 export const ONESAT_FT_TAG = '1sat-ft' as const
-/** Legacy HandCash alias — read-only migration. */
-export const LEGACY_COLOUR_BASKET = 'colour' as const
 
 /** @deprecated Use {@link ONESAT_FT_BASKET} */
 export const COLOUR_BASKET = ONESAT_FT_BASKET
@@ -131,8 +129,7 @@ export type ColourOriginMeta = {
 
 export function isOnesatFtBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
-  const b = basket.trim().toLowerCase()
-  return b === ONESAT_FT_BASKET || b === LEGACY_COLOUR_BASKET
+  return basket.trim().toLowerCase() === ONESAT_FT_BASKET
 }
 
 /** @deprecated Use {@link isOnesatFtBasket} */
@@ -208,7 +205,7 @@ export function parseOnesatFtOriginPolicy(
 
   const fromBody = (o: Record<string, unknown>): ColourOriginMeta | null => {
     const p = String(o.p ?? '').toLowerCase()
-    if (p && p !== ONESAT_FT_PROTOCOL && p !== LEGACY_COLOUR_BASKET) return null
+    if (p && p !== ONESAT_FT_PROTOCOL) return null
     const { supply, maxSupply } = parseSupplyFields(o)
     const schemaV =
       typeof o.v === 'number' && Number.isSafeInteger(o.v) ? o.v : undefined

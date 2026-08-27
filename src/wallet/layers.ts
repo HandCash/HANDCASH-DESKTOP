@@ -76,11 +76,11 @@
  *   self). It runs in the exclusive spend region so it never races a send, yields
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
  *   `bsv21`) live in their own baskets and are never touched.
- * - **1Sat tokens (fungible)** → basket `1sat-ft` (legacy read `colour`); Collect
- *   tip→origin face-value units (`amt` per tip; balance = Σ amt). Same BRC-150
- *   provenance branding as collectables; locked origin closes supply. Transfers
- *   spend tips and create payee (+ change) 1-sat tips — no BSV-21 re-inscription,
- *   no indexer for custody. See `colourCoins.ts` / `sendColourCoins.ts`.
+ * - **1Sat tokens (fungible)** → basket `1sat-ft`; Collect tip→origin face-value
+ *   units (`amt` per tip; balance = Σ amt). Same BRC-150 provenance branding as
+ *   collectables; locked origin supply is optional. Transfers spend tips and
+ *   create payee (+ change) 1-sat tips — no BSV-21 re-inscription, no indexer for
+ *   custody. See `colourCoins.ts` / `sendColourCoins.ts`.
  * - **Legacy tokens (BSV-21)** → basket `bsv21`; still listed under Collect as
  *   read-only. Wallet-native BSV-21 send is retired. Indexer address scan
  *   (`tokenAddressScan.ts`) is recovery-only.
@@ -227,7 +227,7 @@ export type LocalToolboxState = {
   oneSatOutputCount: number
   /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
   bsv21OutputCount: number
-  /** 1Sat fungible tips in `1sat-ft` (+ legacy `colour`). */
+  /** 1Sat fungible tips in `1sat-ft`. */
   colourOutputCount: number
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
@@ -287,9 +287,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     countOutputs('default'),
     countOutputs('1sat'),
     countOutputs('bsv21'),
-    Promise.all([countOutputs('1sat-ft'), countOutputs('colour')]).then(
-      ([a, b]) => a + b,
-    ),
+    countOutputs('1sat-ft'),
     countActions(),
   ])
 

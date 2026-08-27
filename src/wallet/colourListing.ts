@@ -1,11 +1,10 @@
 /**
- * List 1Sat fungible tips (BRC-175 basket `1sat-ft`, legacy `colour`).
+ * List 1Sat fungible tips (BRC-175 basket `1sat-ft`).
  */
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
   aggregateColourTokens,
   colourTokenAsFungible,
-  LEGACY_COLOUR_BASKET,
   ONESAT_FT_BASKET,
   ONESAT_FT_TAG,
   originFromColourTags,
@@ -46,7 +45,6 @@ function looksLikeFtTip(tags: string[]): boolean {
   const lower = tags.map((t) => String(t).toLowerCase())
   return (
     lower.includes(ONESAT_FT_TAG) ||
-    lower.includes('colour') ||
     lower.some((t) => t.startsWith('origin:'))
   )
 }
@@ -72,10 +70,7 @@ export async function listColourTips(
   wallet: ActiveWallet = getActiveWallet()!,
 ): Promise<ColourTip[]> {
   if (!wallet) return []
-  const rows = [
-    ...(await listBasketTips(wallet, ONESAT_FT_BASKET)),
-    ...(await listBasketTips(wallet, LEGACY_COLOUR_BASKET)),
-  ]
+  const rows = await listBasketTips(wallet, ONESAT_FT_BASKET)
 
   const seen = new Set<string>()
   const pending: Array<{

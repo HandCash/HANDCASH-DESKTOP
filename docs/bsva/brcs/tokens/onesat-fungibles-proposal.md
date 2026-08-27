@@ -30,7 +30,7 @@ Example: hold one tip `amt: 1000`. Send 400 to Alice, 300 to Bob → three new t
 
 ## Autodetect (not “any 1-sat”)
 
-1. List basket **`1sat-ft`** (legacy read `colour`)
+1. List basket **`1sat-ft`**
 2. Require `satoshis === 1`
 3. Tags / origin claim (`1sat-ft`, `origin:…`)
 4. **Bind** — genesis / mint-batch / BRC-150 / parent hop; reject unbound
@@ -47,7 +47,7 @@ Chain scan may surface 1-sat outs; **import into `1sat-ft` only after bind**. Pe
 | Split / change | Spend → new tips; conserve `amt`; fund dust from BSV |
 | Mint siblings | Optional same-tx batch; then prefer BRC-150 |
 | Open mint / extend | Not binding without future `auth` |
-| Basket | Write `1sat-ft`; read legacy `colour` |
+| Basket | `1sat-ft` only |
 | Markets | Identity = origin; inventory = tip UTXOs; settlement = tip spends; overlays convenience only |
 
 ## Wallet

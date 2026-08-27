@@ -17,9 +17,8 @@ export const ITEM_STORAGE_BASKET = '1sat'
 /** Storage basket for legacy BSV-21 fungibles — Collect tokens, not Pay currency. */
 export const FUNGIBLE_STORAGE_BASKET = 'bsv21'
 
-/** Storage basket for 1Sat fungibles (BRC-175). Legacy alias `colour` is read-only. */
+/** Storage basket for 1Sat fungibles (BRC-175). */
 export const COLOUR_STORAGE_BASKET = '1sat-ft'
-export const LEGACY_COLOUR_STORAGE_BASKET = 'colour'
 
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
@@ -34,7 +33,6 @@ export const ITEM_BASKETS = new Set([
   ITEM_STORAGE_BASKET,
   FUNGIBLE_STORAGE_BASKET,
   COLOUR_STORAGE_BASKET,
-  LEGACY_COLOUR_STORAGE_BASKET,
 ])
 
 export type ItemAccess = {
@@ -315,8 +313,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
 /** True when the basket is the colour-coin storage basket. */
 export function isColourBasket(value: unknown): boolean {
   if (typeof value !== 'string') return false
-  const b = value.trim().toLowerCase()
-  return b === COLOUR_STORAGE_BASKET || b === LEGACY_COLOUR_STORAGE_BASKET
+  return value.trim().toLowerCase() === COLOUR_STORAGE_BASKET
 }
 
 /**
