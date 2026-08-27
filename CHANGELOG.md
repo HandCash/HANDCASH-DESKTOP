@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.4] - 2026-08-27
+
+### Fixed
+
+- **Self-sent 1Sat ordinals now appear on Refresh.** Inscribed tips are invisible
+  to WhatsOnChain/Bitails address UTXO lists; Refresh also queries GorillaPool
+  for unfiltered 1-sat tips (alongside the existing BSV-21 `bsv20` probe) and
+  imports them into basket `1sat`.
+
 ## [1.3.3] - 2026-08-27
 
 ### Changed
