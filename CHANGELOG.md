@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.3] - 2026-08-27
+
+### Changed
+
+- **Peer remittance asset kind is `1sat-ft`.** Same id as the storage basket
+  (renamed from the brief `onesat-ft` alias).
+
 ## [1.3.2] - 2026-08-27
 
 ### Changed
