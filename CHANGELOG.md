@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.0] - 2026-08-27
+
+### Added
+
+- **1Sat fungibles (BRC-175).** Tip→origin tokens in basket `1sat-ft` with
+  face-value `amt` (balance = Σ amt). Sends spend tips and create payee + change
+  tips with conserved units; locked supply on the origin is optional.
+- **Combine tips** on token details when you hold 2+ tips — same balance, one tip,
+  small network fee (self-send, no peer notify).
+- **Device unlock factors** for vault v3 (Desktop + shared unlock settings).
+
+### Changed
+
+- Legacy BSV-21 Collect rows stay read-only; native fungible send uses the 1Sat
+  path only.
+
 ## [1.2.303] - 2026-08-23
 
 ### Fixed
