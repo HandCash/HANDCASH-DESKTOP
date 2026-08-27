@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.2] - 2026-08-27
+
+### Changed
+
+- **Peer remittance asset kind is `onesat-ft`.** Replaces wire `colour` so P2P
+  settle matches basket `1sat-ft`.
+
 ## [1.3.1] - 2026-08-27
 
 ### Changed
