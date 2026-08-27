@@ -310,15 +310,15 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   return null
 }
 
-/** True when the basket is the colour-coin storage basket. */
+/** True when the basket is the 1Sat fungible storage basket. */
 export function isColourBasket(value: unknown): boolean {
   if (typeof value !== 'string') return false
   return value.trim().toLowerCase() === COLOUR_STORAGE_BASKET
 }
 
 /**
- * True when createAction looks like colour mint (outputs only, colour basket,
- * mint label) — permission copy says "Mint token".
+ * True when createAction looks like 1Sat fungible mint (outputs only, 1sat-ft
+ * basket, mint label) — permission copy says "Mint token".
  */
 export function isColourIssuanceArgs(method: string, args: unknown): boolean {
   if (method !== 'createAction') return false
@@ -326,7 +326,7 @@ export function isColourIssuanceArgs(method: string, args: unknown): boolean {
   const labels = Array.isArray(body.labels)
     ? body.labels.filter((l): l is string => typeof l === 'string')
     : []
-  if (labels.some((l) => /handcash-mint-colour|handcash-mint-1sat-ft|1sat-ft/i.test(l))) return true
+  if (labels.some((l) => /handcash-mint-1sat-ft|1sat-ft/i.test(l))) return true
   const inputs = Array.isArray(body.inputs) ? body.inputs : []
   if (inputs.length > 0) return false
   const outputs = Array.isArray(body.outputs) ? body.outputs : []
@@ -338,11 +338,7 @@ export function isColourIssuanceArgs(method: string, args: unknown): boolean {
     if (isColourBasket(out.basket)) colourOuts += 1
     else if (
       Array.isArray(out.tags) &&
-      out.tags.some(
-        (t) =>
-          typeof t === 'string' &&
-          (/^1sat-ft$/i.test(t) || /^colour$/i.test(t)),
-      )
+      out.tags.some((t) => typeof t === 'string' && /^1sat-ft$/i.test(t))
     ) {
       colourOuts += 1
     }
@@ -350,7 +346,7 @@ export function isColourIssuanceArgs(method: string, args: unknown): boolean {
   return colourOuts > 0 && colourOuts === outputs.length
 }
 
-/** True when createAction / labels / outputs look like a colour-coin transfer. */
+/** True when createAction / labels / outputs look like a 1Sat fungible transfer. */
 export function isColourSpendArgs(method: string, args: unknown): boolean {
   if (method === 'relinquishOutput') {
     return isColourBasket(asRecord(args).basket)
@@ -363,10 +359,7 @@ export function isColourSpendArgs(method: string, args: unknown): boolean {
     : []
   if (
     labels.some(
-      (l) =>
-        /^1sat-ft$/i.test(l) ||
-        /^colour$/i.test(l) ||
-        /handcash-send-colour|handcash-send-1sat-ft/i.test(l),
+      (l) => /^1sat-ft$/i.test(l) || /handcash-send-1sat-ft|handcash-combine-1sat-ft/i.test(l),
     )
   ) {
     return true
@@ -380,14 +373,14 @@ export function isColourSpendArgs(method: string, args: unknown): boolean {
     const tags = Array.isArray(out.tags)
       ? out.tags.filter((t): t is string => typeof t === 'string')
       : []
-    if (tags.some((t) => /^1sat-ft$/i.test(t) || /^colour$/i.test(t))) return true
+    if (tags.some((t) => /^1sat-ft$/i.test(t))) return true
   }
 
   const inputs = Array.isArray(body.inputs) ? body.inputs : []
   for (const raw of inputs) {
     if (!raw || typeof raw !== 'object') continue
     const desc = (raw as { inputDescription?: unknown }).inputDescription
-    if (typeof desc === 'string' && /(colour|1sat-ft|1sat tip)/i.test(desc)) return true
+    if (typeof desc === 'string' && /(1sat-ft|1sat tip)/i.test(desc)) return true
   }
 
   return false

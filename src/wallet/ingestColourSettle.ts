@@ -31,7 +31,7 @@ import {
 } from './appActivity'
 import type { ItemTransferAsset } from './messageStore'
 
-type ColourAsset = Extract<ItemTransferAsset, { kind: 'colour' }>
+type ColourAsset = Extract<ItemTransferAsset, { kind: 'onesat-ft' }>
 
 export type IngestColourSettleResult = {
   accepted: boolean

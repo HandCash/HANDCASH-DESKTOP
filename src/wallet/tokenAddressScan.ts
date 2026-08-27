@@ -2,7 +2,7 @@
  * Recovery-only: discover legacy BSV-21 tips on the wallet receive address.
  *
  * Colour coins do **not** use this path — custody is tip→origin remittance /
- * peer settle (`colour` basket), not an indexer. Keep this scan for healing
+ * peer settle (`1sat-ft` basket), not an indexer. Keep this scan for healing
  * older BSV-21 tips that never entered `bsv21` via remittance.
  *
  * A BSV-21 transfer re-inscribes token JSON (P2PKH + ord). Address indexers

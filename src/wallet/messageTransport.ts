@@ -344,7 +344,7 @@ function validItemTransferAsset(value: unknown): value is ItemTransferAsset {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const asset = value as Partial<ItemTransferAsset>
   if (asset.kind === 'collectable') return true
-  if (asset.kind === 'colour') {
+  if (asset.kind === 'onesat-ft') {
     return (
       typeof asset.origin === 'string' &&
       asset.origin.trim().length > 0 &&
