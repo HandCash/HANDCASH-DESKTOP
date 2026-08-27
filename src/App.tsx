@@ -70,6 +70,9 @@ export function App() {
       window.clearTimeout(timer)
       timer = window.setTimeout(() => lockWallet('idle'), AUTO_LOCK_IDLE_MS)
     }
+    const onVisibility = () => {
+      if (document.visibilityState === 'hidden') lockWallet('idle')
+    }
     const events: Array<keyof WindowEventMap> = [
       'pointerdown',
       'keydown',
@@ -77,10 +80,12 @@ export function App() {
       'focus',
     ]
     for (const event of events) window.addEventListener(event, arm, { passive: true })
+    document.addEventListener('visibilitychange', onVisibility)
     arm()
     return () => {
       window.clearTimeout(timer)
       for (const event of events) window.removeEventListener(event, arm)
+      document.removeEventListener('visibilitychange', onVisibility)
     }
   }, [snapshot, lockWallet])
 

@@ -42,6 +42,7 @@ export function HistoryBackupPanel() {
   const fileRef = useRef<HTMLInputElement>(null)
   const [prefs, setPrefs] = useState(() => getHistoryBackupPrefs())
   const [password, setPassword] = useState<string | null>(null)
+  const [historyUnlocked, setHistoryUnlocked] = useState(false)
   const [busy, setBusy] = useState<
     'file' | 'upload' | 'restore' | 'import' | 'check' | 'local' | null
   >(null)
@@ -62,7 +63,7 @@ export function HistoryBackupPanel() {
 
   useEffect(() => {
     void refreshLocalArchive()
-  }, [password, exportTick])
+  }, [historyUnlocked, exportTick])
 
   const checkCloud = async () => {
     playWalletSound('soft')
@@ -97,12 +98,12 @@ export function HistoryBackupPanel() {
   }
 
   const runRestoreLocal = async (snapshotId: string) => {
-    if (!password) return
+    if (!historyUnlocked) return
     setBusy('local')
     try {
       const result = await restoreLocalBrc39Archive(password, snapshotId)
       const recomposed = await recomposeWallet({
-        password,
+        password: password ?? undefined,
         history: 'skip',
         chain: true,
       })
@@ -121,10 +122,10 @@ export function HistoryBackupPanel() {
   }
 
   const runExportFile = async () => {
-    if (!password) return
+    if (!historyUnlocked) return
     setBusy('file')
     try {
-      await exportBrc39ToFile(password)
+      await exportBrc39ToFile(password ?? '', { passwordAlreadyVerified: true })
       playWalletSound('success')
       toastSuccess('Downloaded wallet.brc39')
       markExported()
@@ -138,13 +139,16 @@ export function HistoryBackupPanel() {
   }
 
   const runUpload = async () => {
-    if (!password) return
+    if (!historyUnlocked) return
     setBusy('upload')
     try {
       ensureSuggestedHistoryBackupUrl()
       // The operator asked for this one — never make them wait out a backoff.
       clearBackupBackoff()
-      const result = await uploadBrc39Backup(password, { force: true })
+      const result = await uploadBrc39Backup(password ?? '', {
+        force: true,
+        passwordAlreadyVerified: true,
+      })
       setPrefs(getHistoryBackupPrefs())
       playWalletSound('success')
       toastSuccess('Uploaded', formatWhen(result.exportedAt))
@@ -160,7 +164,7 @@ export function HistoryBackupPanel() {
   }
 
   const runRestoreUrl = async () => {
-    if (!password) return
+    if (!historyUnlocked) return
     setBusy('restore')
     try {
       ensureSuggestedHistoryBackupUrl()
@@ -169,7 +173,7 @@ export function HistoryBackupPanel() {
       // soft-latch race left local rows that win LWW over cloud spendable outs.
       const result = await replaceLocalHistoryFromCloud(password)
       const recomposed = await recomposeWallet({
-        password,
+        password: password ?? undefined,
         history: 'skip',
         reason: 'restore-url',
       })
@@ -190,12 +194,12 @@ export function HistoryBackupPanel() {
   }
 
   const runImportFile = async (file: File | null) => {
-    if (!file || !password) return
+    if (!file || !historyUnlocked) return
     setBusy('import')
     try {
       const result = await importBrc39FromFile(file, password)
       const recomposed = await recomposeWallet({
-        password,
+        password: password ?? undefined,
         history: 'skip',
         reason: 'import-file',
       })
@@ -248,13 +252,16 @@ export function HistoryBackupPanel() {
         ) : null}
       </div>
 
-      {!password ? (
+      {!historyUnlocked ? (
         <ConfirmPasswordGate
           id="history-backup-password"
           title="Confirm it’s you"
-          lede="Your password unlocks export and restore. Backups are sealed to your wallet key."
+          lede="Confirm with device unlock or your HandCash password. Backups are sealed to your wallet key."
           actionLabel="Unlock history actions"
-          onVerified={(pw) => setPassword(pw)}
+          onVerified={(pw) => {
+            setPassword(pw)
+            setHistoryUnlocked(true)
+          }}
         />
       ) : (
         <div className="settings-form settings-form-compact">

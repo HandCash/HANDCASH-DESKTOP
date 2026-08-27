@@ -1,11 +1,24 @@
 /**
- * Vault custody: password-wrapped root key + BIP39 mnemonic, durable across origins,
- * OS-sealed at rest when Electron safeStorage is available.
+ * Vault custody: DEK-wrapped root key + BIP39 mnemonic, durable across origins.
  *
- * Lifecycle: create-once (with recovery phrase) | restore-from-phrase | unlock | rewrap-password.
+ * Unlock factors (independent wraps of the same DEK):
+ * - In-app password (PBKDF2 → AES-GCM)
+ * - Device lock (biometrics / phone PIN / Touch ID / Windows Hello via native seal)
+ *
+ * Legacy v1/v2 vaults encrypt the secret directly with the password; unlock migrates
+ * them to v3 (DEK + password wrap). OS-sealed at rest when Electron safeStorage is
+ * available (separate from the device unlock factor).
+ *
+ * Lifecycle: create-once | restore | unlock | rewrap factors.
  * Never mint a second root while toolbox UTXOs or an existing vault identity exist.
  */
 import { Hash, HD, Mnemonic, PrivateKey } from '@bsv/sdk'
+import {
+  deviceAuthClear,
+  deviceAuthEnroll,
+  deviceAuthStatus,
+  deviceAuthUnlock,
+} from './deviceAuth.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { validatePassword } from './passwordPolicy.js'
 
@@ -19,18 +32,43 @@ const TOOLBOX_DB = 'wallet-toolbox-mainnet'
 
 export type Chain = 'main' | 'test'
 
+/** Password wrap of the vault DEK (v3). */
+export type PasswordWrap = {
+  salt: string
+  iv: string
+  ciphertext: string
+}
+
+export type VaultWraps = {
+  password?: PasswordWrap
+  /** DEK lives in native device seal — not in this JSON. */
+  device?: { enrolled: true }
+}
+
 export type VaultRecord = {
-  version: 1 | 2
+  version: 1 | 2 | 3
   chain: Chain
   handle: string
   identityKey: string
   address: string
-  /** AES-GCM ciphertext — v1: rootKeyHex string; v2: JSON { rootKeyHex, mnemonic } */
+  /**
+   * AES-GCM ciphertext of the vault secret.
+   * v1/v2: encrypted directly with password-derived key.
+   * v3: encrypted with a random DEK; wraps hold factor envelopes of that DEK.
+   */
   ciphertext: string
   iv: string
-  salt: string
+  /** v1/v2 only — password salt for direct secret wrap. */
+  salt?: string
   /** Present on v2+ wallets created/restored with BIP39. */
   hasMnemonic?: boolean
+  /** v3 multi-factor wraps of the DEK. */
+  wraps?: VaultWraps
+}
+
+export type VaultUnlockFactors = {
+  password: boolean
+  device: boolean
 }
 
 export type UnlockedVault = {
@@ -293,22 +331,60 @@ async function resolveMnemonicDerivation(
   return brc75
 }
 
-async function encryptSecret(
-  password: string,
-  secret: string,
-): Promise<{ ciphertext: string; iv: string; salt: string }> {
-  const salt = crypto.getRandomValues(new Uint8Array(16))
+async function importAesKey(raw: Uint8Array): Promise<CryptoKey> {
+  return crypto.subtle.importKey('raw', toBufferSource(raw), { name: 'AES-GCM' }, false, [
+    'encrypt',
+    'decrypt',
+  ])
+}
+
+async function encryptWithKey(
+  key: CryptoKey,
+  plain: Uint8Array,
+): Promise<{ ciphertext: string; iv: string }> {
   const iv = crypto.getRandomValues(new Uint8Array(12))
-  const key = await deriveKey(password, salt)
   const ciphertext = await crypto.subtle.encrypt(
     { name: 'AES-GCM', iv },
     key,
-    new TextEncoder().encode(secret),
+    toBufferSource(plain),
   )
-  return { ciphertext: b64(ciphertext), iv: b64(iv), salt: b64(salt) }
+  return { ciphertext: b64(ciphertext), iv: b64(iv) }
 }
 
-async function decryptSecret(password: string, record: VaultRecord): Promise<string> {
+async function decryptWithKey(
+  key: CryptoKey,
+  ciphertextB64: string,
+  ivB64: string,
+): Promise<Uint8Array> {
+  const plain = await crypto.subtle.decrypt(
+    { name: 'AES-GCM', iv: toBufferSource(fromB64(ivB64)) },
+    key,
+    toBufferSource(fromB64(ciphertextB64)),
+  )
+  return new Uint8Array(plain)
+}
+
+async function wrapDekWithPassword(
+  password: string,
+  dek: Uint8Array,
+): Promise<PasswordWrap> {
+  const salt = crypto.getRandomValues(new Uint8Array(16))
+  const key = await deriveKey(password, salt)
+  const enc = await encryptWithKey(key, dek)
+  return { salt: b64(salt), iv: enc.iv, ciphertext: enc.ciphertext }
+}
+
+async function unwrapDekWithPassword(
+  password: string,
+  wrap: PasswordWrap,
+): Promise<Uint8Array> {
+  const key = await deriveKey(password, fromB64(wrap.salt))
+  return decryptWithKey(key, wrap.ciphertext, wrap.iv)
+}
+
+/** Legacy v1/v2: password encrypts the secret string directly. */
+async function decryptSecretLegacy(password: string, record: VaultRecord): Promise<string> {
+  if (!record.salt) throw new Error('Corrupt wallet vault')
   const key = await deriveKey(password, fromB64(record.salt))
   const plain = await crypto.subtle.decrypt(
     { name: 'AES-GCM', iv: toBufferSource(fromB64(record.iv)) },
@@ -316,6 +392,160 @@ async function decryptSecret(password: string, record: VaultRecord): Promise<str
     toBufferSource(fromB64(record.ciphertext)),
   )
   return new TextDecoder().decode(plain)
+}
+
+async function encryptSecretWithDek(
+  dek: Uint8Array,
+  secret: string,
+): Promise<{ ciphertext: string; iv: string }> {
+  const key = await importAesKey(dek)
+  return encryptWithKey(key, new TextEncoder().encode(secret))
+}
+
+async function decryptSecretWithDek(
+  dek: Uint8Array,
+  ciphertextB64: string,
+  ivB64: string,
+): Promise<string> {
+  const key = await importAesKey(dek)
+  const plain = await decryptWithKey(key, ciphertextB64, ivB64)
+  return new TextDecoder().decode(plain)
+}
+
+function newDek(): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(32))
+}
+
+function dekToB64(dek: Uint8Array): string {
+  return b64(dek)
+}
+
+function dekFromB64(s: string): Uint8Array {
+  const raw = fromB64(s)
+  if (raw.length !== 32) throw new Error('Invalid device unlock material')
+  return raw
+}
+
+export function readVaultUnlockFactors(): VaultUnlockFactors {
+  const raw = readVaultRaw()
+  if (!raw) return { password: false, device: false }
+  try {
+    const record = JSON.parse(raw) as VaultRecord
+    if (record.version === 3 && record.wraps) {
+      return {
+        password: Boolean(record.wraps.password),
+        device: Boolean(record.wraps.device?.enrolled),
+      }
+    }
+    // Legacy vaults are always password-wrapped.
+    return { password: true, device: false }
+  } catch {
+    return { password: false, device: false }
+  }
+}
+
+function assertAtLeastOneFactor(wraps: VaultWraps): void {
+  if (!wraps.password && !wraps.device?.enrolled) {
+    throw new Error('Wallet must keep at least one unlock method')
+  }
+}
+
+async function buildV3Record(args: {
+  chain: Chain
+  handle: string
+  identityKey: string
+  address: string
+  secret: string
+  hasMnemonic: boolean
+  password?: string
+  useDevice?: boolean
+}): Promise<VaultRecord> {
+  const hasPassword = Boolean(args.password)
+  const useDevice = Boolean(args.useDevice)
+  if (!hasPassword && !useDevice) {
+    throw new Error('Choose device unlock, a HandCash password, or both')
+  }
+  if (args.password) {
+    const pwError = validatePassword(args.password)
+    if (pwError) throw new Error(pwError)
+  }
+
+  const dek = newDek()
+  const enc = await encryptSecretWithDek(dek, args.secret)
+  const wraps: VaultWraps = {}
+  if (args.password) {
+    wraps.password = await wrapDekWithPassword(args.password, dek)
+  }
+  if (useDevice) {
+    const status = await deviceAuthStatus()
+    if (!status.available) {
+      throw new Error('Device unlock is not available on this device')
+    }
+    const enrolled = await deviceAuthEnroll(dekToB64(dek))
+    if (!enrolled.ok) throw new Error(enrolled.error)
+    wraps.device = { enrolled: true }
+  }
+  assertAtLeastOneFactor(wraps)
+
+  return {
+    version: 3,
+    chain: args.chain,
+    handle: args.handle,
+    identityKey: args.identityKey,
+    address: args.address,
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    hasMnemonic: args.hasMnemonic,
+    wraps,
+  }
+}
+
+async function migrateLegacyToV3(
+  password: string,
+  record: VaultRecord,
+  secretPlain: string,
+): Promise<VaultRecord> {
+  const dek = newDek()
+  const enc = await encryptSecretWithDek(dek, secretPlain)
+  const wraps: VaultWraps = {
+    password: await wrapDekWithPassword(password, dek),
+  }
+  const migrated: VaultRecord = {
+    version: 3,
+    chain: record.chain,
+    handle: record.handle,
+    identityKey: record.identityKey,
+    address: record.address,
+    ciphertext: enc.ciphertext,
+    iv: enc.iv,
+    hasMnemonic: Boolean(record.hasMnemonic ?? secretPlain.trim().startsWith('{')),
+    wraps,
+  }
+  persistVault(migrated, 'password')
+  return migrated
+}
+
+async function unlockWithDek(
+  dek: Uint8Array,
+  record: VaultRecord,
+): Promise<UnlockedVault> {
+  if (record.version !== 3) throw new Error('Corrupt wallet vault')
+  const plain = await decryptSecretWithDek(dek, record.ciphertext, record.iv)
+  const { rootKeyHex, mnemonic } = parseUnlockedSecret(plain)
+  const mismatch = await getVaultToolboxMismatch(record.identityKey)
+  if (mismatch?.orphanedFundsLikely) {
+    appendAudit({
+      at: Date.now(),
+      action: 'mismatch-warn',
+      identityKeyPrefix: prefixIk(record.identityKey),
+      previousIdentityKeyPrefix: prefixIk(mismatch.toolboxIdentityKeys[0]),
+      detail: 'vault-toolbox-mismatch',
+    })
+    throw new Error(
+      'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase, BRC-140 shares, or emergency key if you have them.',
+    )
+  }
+  return { rootKeyHex, mnemonic, record }
 }
 
 function parseUnlockedSecret(plain: string): { rootKeyHex: string; mnemonic: string | null } {
@@ -491,7 +721,7 @@ export async function assertSafeToRestoreVault(identityKey: string): Promise<voi
   if (hasVault()) {
     const meta = readVaultMeta()
     if (meta?.identityKey === identityKey) {
-      throw new Error('This wallet is already installed. Unlock it with your password.')
+      throw new Error('This wallet is already installed. Unlock it instead.')
     }
     throw new Error(
       'A different wallet already exists on this device. Refusing to replace its keys.',
@@ -506,54 +736,49 @@ export async function assertSafeToRestoreVault(identityKey: string): Promise<voi
 }
 
 export async function createVault(args: {
-  password: string
+  password?: string
+  useDevice?: boolean
   chain: Chain
   handle?: string
 }): Promise<UnlockedVault> {
   await assertSafeToCreateVault()
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
-  const createPwError = validatePassword(args.password)
-  if (createPwError) throw new Error(createPwError)
 
   // BRC-75 examples use 128-bit entropy → 12-word BIP39 phrase.
   const generated = Mnemonic.fromRandom(128)
   const mnemonic = generated.toString()
   const derived = rootKeyFromMnemonicBrc75(mnemonic)
   const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic }
-  const enc = await encryptSecret(args.password, JSON.stringify(secret))
-
-  const record: VaultRecord = {
-    version: 2,
+  const record = await buildV3Record({
     chain: args.chain,
     handle,
     identityKey: derived.identityKey,
     address: derived.address,
-    ciphertext: enc.ciphertext,
-    iv: enc.iv,
-    salt: enc.salt,
+    secret: JSON.stringify(secret),
     hasMnemonic: true,
-  }
+    password: args.password,
+    useDevice: args.useDevice,
+  })
   persistVault(record, 'create')
   return { rootKeyHex: derived.rootKeyHex, mnemonic, record }
 }
 
 export async function restoreVaultFromMnemonic(args: {
   mnemonic: string
-  password: string
+  password?: string
+  useDevice?: boolean
   chain: Chain
   handle?: string
   passphrase?: string
 }): Promise<UnlockedVault> {
-  const restorePwError = validatePassword(args.password)
-  if (restorePwError) throw new Error(restorePwError)
   const derived = await resolveMnemonicDerivation(args.mnemonic, args.passphrase ?? '')
 
   let allowIdentityReplace = false
   if (hasVault()) {
     const meta = readVaultMeta()
     if (meta?.identityKey === derived.identityKey) {
-      throw new Error('This wallet is already installed. Unlock it with your password.')
+      throw new Error('This wallet is already installed. Unlock it instead.')
     }
     const mismatch = meta ? await getVaultToolboxMismatch(meta.identityKey) : null
     const toolboxKeys = await listToolboxIdentityKeys()
@@ -571,19 +796,16 @@ export async function restoreVaultFromMnemonic(args: {
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
   const secret: VaultSecretV2 = { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic }
-  const enc = await encryptSecret(args.password, JSON.stringify(secret))
-
-  const record: VaultRecord = {
-    version: 2,
+  const record = await buildV3Record({
     chain: args.chain,
     handle,
     identityKey: derived.identityKey,
     address: derived.address,
-    ciphertext: enc.ciphertext,
-    iv: enc.iv,
-    salt: enc.salt,
+    secret: JSON.stringify(secret),
     hasMnemonic: true,
-  }
+    password: args.password,
+    useDevice: args.useDevice,
+  })
   persistVault(record, 'restore', { allowIdentityReplace })
   return { rootKeyHex: derived.rootKeyHex, mnemonic: derived.mnemonic, record }
 }
@@ -594,12 +816,11 @@ export async function restoreVaultFromMnemonic(args: {
  */
 export async function restoreVaultFromRootKey(args: {
   rootKeyHex: string
-  password: string
+  password?: string
+  useDevice?: boolean
   chain: Chain
   handle?: string
 }): Promise<UnlockedVault> {
-  const rootPwError = validatePassword(args.password)
-  if (rootPwError) throw new Error(rootPwError)
   const key = PrivateKey.fromHex(args.rootKeyHex.trim())
   const rootKeyHex = key.toHex()
   const identityKey = key.toPublicKey().toString()
@@ -609,7 +830,7 @@ export async function restoreVaultFromRootKey(args: {
   if (hasVault()) {
     const meta = readVaultMeta()
     if (meta?.identityKey === identityKey) {
-      throw new Error('This wallet is already installed. Unlock it with your password.')
+      throw new Error('This wallet is already installed. Unlock it instead.')
     }
     const mismatch = meta ? await getVaultToolboxMismatch(meta.identityKey) : null
     const toolboxKeys = await listToolboxIdentityKeys()
@@ -625,19 +846,16 @@ export async function restoreVaultFromRootKey(args: {
   }
 
   const handle = args.handle ? normalizeHandle(args.handle) : LOCAL_WALLET_LABEL
-  const enc = await encryptSecret(args.password, rootKeyHex)
-
-  const record: VaultRecord = {
-    version: 1,
+  const record = await buildV3Record({
     chain: args.chain,
     handle,
     identityKey,
     address,
-    ciphertext: enc.ciphertext,
-    iv: enc.iv,
-    salt: enc.salt,
+    secret: rootKeyHex,
     hasMnemonic: false,
-  }
+    password: args.password,
+    useDevice: args.useDevice,
+  })
   persistVault(record, 'restore', { allowIdentityReplace })
   return { rootKeyHex, mnemonic: null, record }
 }
@@ -647,14 +865,22 @@ export async function unlockVault(password: string): Promise<UnlockedVault> {
   if (!raw) throw new Error('No wallet found')
   const record = JSON.parse(raw) as VaultRecord
   try {
-    const plain = await decryptSecret(password, record)
+    if (record.version === 3) {
+      const wrap = record.wraps?.password
+      if (!wrap) throw new Error('This wallet has no HandCash password. Unlock with this device instead.')
+      const dek = await unwrapDekWithPassword(password, wrap)
+      return unlockWithDek(dek, record)
+    }
+
+    const plain = await decryptSecretLegacy(password, record)
+    const migrated = await migrateLegacyToV3(password, record, plain)
     const { rootKeyHex, mnemonic } = parseUnlockedSecret(plain)
-    const mismatch = await getVaultToolboxMismatch(record.identityKey)
+    const mismatch = await getVaultToolboxMismatch(migrated.identityKey)
     if (mismatch?.orphanedFundsLikely) {
       appendAudit({
         at: Date.now(),
         action: 'mismatch-warn',
-        identityKeyPrefix: prefixIk(record.identityKey),
+        identityKeyPrefix: prefixIk(migrated.identityKey),
         previousIdentityKeyPrefix: prefixIk(mismatch.toolboxIdentityKeys[0]),
         detail: 'vault-toolbox-mismatch',
       })
@@ -662,16 +888,44 @@ export async function unlockVault(password: string): Promise<UnlockedVault> {
         'This unlock key does not match the funded wallet data on this device. Do not create a new wallet. Restore with the original recovery phrase, BRC-140 shares, or emergency key if you have them.',
       )
     }
-    return { rootKeyHex, mnemonic, record }
+    return { rootKeyHex, mnemonic, record: migrated }
   } catch (err) {
     if (err instanceof Error && err.message.includes('does not match the funded')) throw err
+    if (err instanceof Error && err.message.includes('no HandCash password')) throw err
     throw new Error('Incorrect password')
   }
 }
 
-/** Reveal mnemonic after password check (Settings backup). */
-export async function revealMnemonic(password: string): Promise<string> {
-  const unlocked = await unlockVault(password)
+/** Unlock via native device factor (fingerprint / PIN / Touch ID / Hello). */
+export async function unlockVaultWithDevice(
+  reason = 'Unlock HandCash',
+): Promise<UnlockedVault> {
+  const raw = readVaultRaw()
+  if (!raw) throw new Error('No wallet found')
+  const record = JSON.parse(raw) as VaultRecord
+  if (record.version !== 3 || !record.wraps?.device?.enrolled) {
+    throw new Error('Device unlock is not enabled for this wallet')
+  }
+  const unlocked = await deviceAuthUnlock(reason)
+  if (!unlocked.ok) {
+    if (unlocked.error === 'cancelled') throw new Error('cancelled')
+    throw new Error(unlocked.error || 'Device unlock failed')
+  }
+  try {
+    const dek = dekFromB64(unlocked.secret)
+    return await unlockWithDek(dek, record)
+  } catch (err) {
+    if (err instanceof Error && err.message.includes('does not match the funded')) throw err
+    throw new Error('Device unlock failed')
+  }
+}
+
+/** Reveal mnemonic from the unlocked session — never gated on HandCash password. */
+export async function revealMnemonic(_password?: string | null): Promise<string> {
+  const active = (await import('./session.js')).getActiveWallet()
+  if (active?.mnemonic) return active.mnemonic
+  // Locked: device factor only (not the in-app password).
+  const unlocked = await unlockVaultWithDevice('Reveal recovery phrase')
   if (!unlocked.mnemonic) {
     throw new Error(
       'This wallet was created before recovery phrases. Export an emergency key backup instead.',
@@ -680,9 +934,11 @@ export async function revealMnemonic(password: string): Promise<string> {
   return unlocked.mnemonic
 }
 
-/** Emergency: reveal root key hex after password check (legacy wallets). */
-export async function revealRootKeyHex(password: string): Promise<string> {
-  const unlocked = await unlockVault(password)
+/** Reveal root key from the unlocked session — never gated on HandCash password. */
+export async function revealRootKeyHex(_password?: string | null): Promise<string> {
+  const active = (await import('./session.js')).getActiveWallet()
+  if (active?.rootKeyHex) return active.rootKeyHex
+  const unlocked = await unlockVaultWithDevice('Reveal emergency key')
   return unlocked.rootKeyHex
 }
 
@@ -698,17 +954,165 @@ export async function changeVaultPassword(
 
   const unlocked = await unlockVault(currentPassword)
   const secret = unlocked.mnemonic
-    ? JSON.stringify({ rootKeyHex: unlocked.rootKeyHex, mnemonic: unlocked.mnemonic } satisfies VaultSecretV2)
+    ? JSON.stringify({
+        rootKeyHex: unlocked.rootKeyHex,
+        mnemonic: unlocked.mnemonic,
+      } satisfies VaultSecretV2)
     : unlocked.rootKeyHex
-  const enc = await encryptSecret(newPassword, secret)
+
+  // Prefer re-wrapping the existing DEK when already on v3.
+  let dek: Uint8Array
+  let ciphertext = unlocked.record.ciphertext
+  let iv = unlocked.record.iv
+  if (unlocked.record.version === 3 && unlocked.record.wraps?.password) {
+    dek = await unwrapDekWithPassword(currentPassword, unlocked.record.wraps.password)
+  } else {
+    dek = newDek()
+    const enc = await encryptSecretWithDek(dek, secret)
+    ciphertext = enc.ciphertext
+    iv = enc.iv
+  }
+
+  const wraps: VaultWraps = {
+    ...(unlocked.record.wraps ?? {}),
+    password: await wrapDekWithPassword(newPassword, dek),
+  }
+  if (wraps.device?.enrolled) {
+    const reenroll = await deviceAuthEnroll(dekToB64(dek))
+    if (!reenroll.ok) {
+      // Keep previous device enrollment if re-seal fails — password wrap still updates.
+      console.warn('[vault] device re-enroll after password change failed', reenroll.error)
+    }
+  }
 
   const updated: VaultRecord = {
     ...unlocked.record,
-    version: unlocked.mnemonic ? 2 : unlocked.record.version,
+    version: 3,
     hasMnemonic: Boolean(unlocked.mnemonic),
-    ciphertext: enc.ciphertext,
-    iv: enc.iv,
-    salt: enc.salt,
+    ciphertext,
+    iv,
+    salt: undefined,
+    wraps,
   }
   persistVault(updated, 'password')
+}
+
+/**
+ * Add or replace the HandCash password wrap after verifying device unlock.
+ * Used when enabling password from a device-only wallet.
+ */
+export async function setVaultPasswordFromDevice(
+  newPassword: string,
+  reason = 'Confirm to set a HandCash password',
+): Promise<void> {
+  const pwError = validatePassword(newPassword)
+  if (pwError) throw new Error(pwError)
+  const raw = readVaultRaw()
+  if (!raw) throw new Error('No wallet found')
+  const record = JSON.parse(raw) as VaultRecord
+  if (record.version !== 3 || !record.wraps?.device?.enrolled) {
+    throw new Error('Device unlock is required to set a password this way')
+  }
+  const native = await deviceAuthUnlock(reason)
+  if (!native.ok) {
+    if (native.error === 'cancelled') throw new Error('cancelled')
+    throw new Error(native.error || 'Device unlock failed')
+  }
+  const dek = dekFromB64(native.secret)
+  await unlockWithDek(dek, record)
+
+  const wraps: VaultWraps = {
+    ...record.wraps,
+    password: await wrapDekWithPassword(newPassword, dek),
+    device: { enrolled: true },
+  }
+  persistVault({ ...record, version: 3, salt: undefined, wraps }, 'password')
+}
+
+/** Enable device unlock using the current password to recover the DEK. */
+export async function enableDeviceUnlock(password: string): Promise<void> {
+  const unlocked = await unlockVault(password)
+  let dek: Uint8Array
+  let record = unlocked.record
+  if (record.version === 3 && record.wraps?.password) {
+    dek = await unwrapDekWithPassword(password, record.wraps.password)
+  } else {
+    // Should already be migrated by unlockVault — belt and suspenders.
+    const secret = unlocked.mnemonic
+      ? JSON.stringify({
+          rootKeyHex: unlocked.rootKeyHex,
+          mnemonic: unlocked.mnemonic,
+        } satisfies VaultSecretV2)
+      : unlocked.rootKeyHex
+    record = await migrateLegacyToV3(password, record, secret)
+    dek = await unwrapDekWithPassword(password, record.wraps!.password!)
+  }
+
+  const status = await deviceAuthStatus()
+  if (!status.available) throw new Error('Device unlock is not available on this device')
+  const enrolled = await deviceAuthEnroll(dekToB64(dek))
+  if (!enrolled.ok) throw new Error(enrolled.error)
+
+  const wraps: VaultWraps = {
+    ...(record.wraps ?? {}),
+    password: record.wraps?.password,
+    device: { enrolled: true },
+  }
+  assertAtLeastOneFactor(wraps)
+  persistVault({ ...record, version: 3, salt: undefined, wraps }, 'password')
+}
+
+/** Turn off device unlock. Requires a password wrap to remain. */
+export async function disableDeviceUnlock(password?: string): Promise<void> {
+  const factors = readVaultUnlockFactors()
+  if (!factors.device) return
+  if (!factors.password) {
+    throw new Error('Add a HandCash password before turning off device unlock')
+  }
+  if (password) {
+    await unlockVault(password)
+  }
+  await deviceAuthClear()
+  const raw = readVaultRaw()
+  if (!raw) throw new Error('No wallet found')
+  const record = JSON.parse(raw) as VaultRecord
+  const wraps: VaultWraps = { ...(record.wraps ?? {}) }
+  delete wraps.device
+  assertAtLeastOneFactor(wraps)
+  persistVault({ ...record, version: 3, wraps }, 'password')
+}
+
+/** Remove the HandCash password wrap. Requires device unlock enrolled + keys backup. */
+export async function disableVaultPassword(password: string): Promise<void> {
+  const { isKeysBackupConfirmed } = await import('./backupStatus.js')
+  if (!isKeysBackupConfirmed()) {
+    throw new Error('Save your recovery phrase or key slices before removing the HandCash password')
+  }
+  const factors = readVaultUnlockFactors()
+  if (!factors.password) return
+  if (!factors.device) {
+    throw new Error('Turn on device unlock before removing your HandCash password')
+  }
+  const unlocked = await unlockVault(password)
+  if (unlocked.record.version !== 3 || !unlocked.record.wraps?.password) {
+    throw new Error('Password wrap missing')
+  }
+  // Ensure device seal still holds this DEK.
+  const dek = await unwrapDekWithPassword(password, unlocked.record.wraps.password)
+  const reenroll = await deviceAuthEnroll(dekToB64(dek))
+  if (!reenroll.ok) throw new Error(reenroll.error)
+
+  const wraps: VaultWraps = {
+    device: { enrolled: true },
+  }
+  assertAtLeastOneFactor(wraps)
+  persistVault(
+    {
+      ...unlocked.record,
+      version: 3,
+      salt: undefined,
+      wraps,
+    },
+    'password',
+  )
 }

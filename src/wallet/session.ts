@@ -20,6 +20,8 @@ export type ActiveWallet = {
   /** Background proof/header loop — pause during hardened sign to avoid IDB AbortError. */
   monitor?: { stopTasks?: () => void; startTasks?: () => void | Promise<void> }
   rootKeyHex: string
+  /** BIP39 phrase when this vault has one — kept only while unlocked (not for password gates). */
+  mnemonic: string | null
   identityKey: string
   address: string
   handle: string
@@ -248,6 +250,8 @@ export async function bootWallet(args: {
   rootKeyHex: string
   handle: string
   chain: Chain
+  /** Present when the vault was unlocked/created with a BIP39 phrase. */
+  mnemonic?: string | null
 }): Promise<ActiveWallet> {
   const root = PrivateKey.fromHex(args.rootKeyHex)
   const identityKey = root.toPublicKey().toString()
@@ -312,6 +316,7 @@ export async function bootWallet(args: {
         }
       : undefined,
     rootKeyHex: args.rootKeyHex,
+    mnemonic: args.mnemonic ?? null,
     identityKey: setup.identityKey || identityKey,
     address,
     handle: args.handle,

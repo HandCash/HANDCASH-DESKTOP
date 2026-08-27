@@ -1,5 +1,9 @@
-import { useState, type FormEvent } from 'react'
-import { unlockVault } from '../wallet/vault'
+import { useEffect, useState, type FormEvent } from 'react'
+import {
+  readVaultUnlockFactors,
+  unlockVault,
+  unlockVaultWithDevice,
+} from '../wallet/vault'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { PasswordField } from './PasswordField'
@@ -11,13 +15,19 @@ type Props = {
   actionLabel?: string
   /** Accessible id for the password field. */
   id?: string
-  /** Called after the unlock password verifies. */
-  onVerified: (password: string) => void | Promise<void>
+  /**
+   * Called after unlock verifies.
+   * Password is null when verification used the device factor only.
+   */
+  onVerified: (password: string | null) => void | Promise<void>
+  /** Force password path (e.g. change/remove password). */
+  requirePassword?: boolean
+  onCancel?: () => void
 }
 
 /**
- * Standard re-auth before sensitive settings work.
- * Verifies the vault unlock password, then hands it to the caller.
+ * Re-auth before sensitive settings work.
+ * Prefers device unlock when enrolled; falls back to HandCash password.
  */
 export function ConfirmPasswordGate({
   title,
@@ -25,14 +35,55 @@ export function ConfirmPasswordGate({
   actionLabel = 'Continue',
   id = 'confirm-password',
   onVerified,
+  requirePassword = false,
+  onCancel,
 }: Props) {
+  const factors = readVaultUnlockFactors()
+  const canDevice = !requirePassword && factors.device
+  const canPassword = factors.password
   const [password, setPassword] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [preferDevice, setPreferDevice] = useState(canDevice)
+
+  useEffect(() => {
+    if (!preferDevice || busy) return
+    let cancelled = false
+    ;(async () => {
+      setBusy(true)
+      setError(null)
+      try {
+        await unlockVaultWithDevice('Confirm it’s you')
+        if (cancelled) return
+        playWalletSound('unlock')
+        await onVerified(null)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : String(err)
+        if (message !== 'cancelled') {
+          playWalletSound('error')
+          setError(message)
+        }
+        if (canPassword) setPreferDevice(false)
+      } finally {
+        if (!cancelled) setBusy(false)
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Auto-prompt once when the gate opens with device preferred.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const submit = async (e: FormEvent) => {
     e.preventDefault()
     setError(null)
+    if (!canPassword) {
+      setError('No HandCash password on this wallet. Use device unlock.')
+      playWalletSound('deny')
+      return
+    }
     if (password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
       setError(`Password must be at least ${UNLOCK_PASSWORD_MIN_LENGTH} characters`)
       playWalletSound('deny')
@@ -57,32 +108,100 @@ export function ConfirmPasswordGate({
         <h3 className="confirm-password-title">{title}</h3>
         <p className="confirm-password-lede">{lede}</p>
       </div>
-      <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
-        <PasswordField
-          id={id}
-          label="Unlock password"
-          autoComplete="current-password"
-          placeholder="Your unlock password"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          autoFocus
-          disabled={busy}
-        />
-        {error ? (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        ) : null}
+
+      {preferDevice && canDevice ? (
         <div className="actions">
           <button
-            type="submit"
+            type="button"
             className="btn btn-primary"
-            disabled={busy || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+            disabled={busy}
+            onClick={() => {
+              setPreferDevice(true)
+              setBusy(true)
+              setError(null)
+              void unlockVaultWithDevice('Confirm it’s you')
+                .then(async () => {
+                  playWalletSound('unlock')
+                  await onVerified(null)
+                })
+                .catch((err) => {
+                  const message = err instanceof Error ? err.message : String(err)
+                  if (message !== 'cancelled') {
+                    playWalletSound('error')
+                    setError(message)
+                  }
+                  if (canPassword) setPreferDevice(false)
+                })
+                .finally(() => setBusy(false))
+            }}
           >
-            {busy ? 'Checking…' : actionLabel}
+            {busy ? 'Waiting…' : 'Use device unlock'}
           </button>
+          {canPassword ? (
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={busy}
+              onClick={() => setPreferDevice(false)}
+            >
+              Use HandCash password
+            </button>
+          ) : null}
+          {onCancel ? (
+            <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+              Cancel
+            </button>
+          ) : null}
         </div>
-      </form>
+      ) : (
+        <form className="settings-form settings-form-compact" onSubmit={(e) => void submit(e)}>
+          <PasswordField
+            id={id}
+            label="HandCash password"
+            autoComplete="current-password"
+            placeholder="Your unlock password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            autoFocus
+            disabled={busy || !canPassword}
+          />
+          {error ? (
+            <p className="error" role="alert">
+              {error}
+            </p>
+          ) : null}
+          <div className="actions">
+            <button
+              type="submit"
+              className="btn btn-primary"
+              disabled={busy || !canPassword || password.length < UNLOCK_PASSWORD_MIN_LENGTH}
+            >
+              {busy ? 'Checking…' : actionLabel}
+            </button>
+            {canDevice && !requirePassword ? (
+              <button
+                type="button"
+                className="btn btn-ghost"
+                disabled={busy}
+                onClick={() => setPreferDevice(true)}
+              >
+                Use device unlock
+              </button>
+            ) : null}
+            {onCancel ? (
+              <button type="button" className="btn btn-ghost" disabled={busy} onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
+          </div>
+        </form>
+      )}
+
+      {preferDevice && canDevice && error ? (
+        <p className="error" role="alert">
+          {error}
+        </p>
+      ) : null}
     </div>
   )
 }

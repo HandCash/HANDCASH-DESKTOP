@@ -25,6 +25,12 @@ import {
   listLanIpv4Addresses,
   startDevicePeerServer,
 } from './devicePeerServer.js'
+import {
+  deviceAuthClear,
+  deviceAuthEnroll,
+  deviceAuthStatus,
+  deviceAuthUnlock,
+} from './deviceAuth.js'
 import { durableGet, durableSafeStorageAvailable, durableSet, durableWipeWallet } from './durableStore.js'
 import {
   brc39ArchiveRootPath,
@@ -687,7 +693,15 @@ ipcMain.on('storage:set-sync', (event, key: unknown, value: unknown, opts: unkno
 
 ipcMain.handle('storage:safe-storage-available', () => durableSafeStorageAvailable())
 
-ipcMain.handle('storage:wipe-wallet', () => durableWipeWallet())
+ipcMain.handle('storage:wipe-wallet', () => {
+  deviceAuthClear()
+  return durableWipeWallet()
+})
+
+ipcMain.handle('device-auth:status', () => deviceAuthStatus())
+ipcMain.handle('device-auth:enroll', (_event, secret: unknown) => deviceAuthEnroll(secret))
+ipcMain.handle('device-auth:unlock', (_event, reason: unknown) => deviceAuthUnlock(reason))
+ipcMain.handle('device-auth:clear', () => deviceAuthClear())
 
 ipcMain.handle('brc39-archive:write', (_event, payload: unknown) => {
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {

@@ -10,7 +10,7 @@ const CONFIRM_WORD = 'DELETE'
 export function WipeWalletPanel() {
   const [snapshot, send] = useMachine(wipeMachine)
   const stateAttr = stateToAttr(snapshot.value)
-  const passwordReady = snapshot.context.password.length >= 8
+  const passwordReady = snapshot.context.unlocked
   const canSubmit =
     passwordReady &&
     snapshot.context.acknowledged &&
@@ -20,7 +20,7 @@ export function WipeWalletPanel() {
     if (!canSubmit || snapshot.matches('wiping')) return
     send({ type: 'SUBMIT' })
     try {
-      await wipeAllWalletData(snapshot.context.password)
+      await wipeAllWalletData(snapshot.context.password || null)
       send({ type: 'SUCCESS' })
       playWalletSound('soft')
       window.location.reload()
@@ -41,9 +41,9 @@ export function WipeWalletPanel() {
         <ConfirmPasswordGate
           id="wipe-password"
           title="Wipe this device"
-          lede="Removes the wallet from this device. You’ll need a backup to restore. Confirm with your unlock password."
+          lede="Removes the wallet from this device. You’ll need a backup to restore. Confirm with device unlock or your HandCash password."
           actionLabel="Continue"
-          onVerified={(password) => send({ type: 'CHANGE_PASSWORD', password })}
+          onVerified={(password) => send({ type: 'VERIFIED', password })}
         />
       ) : (
         <form

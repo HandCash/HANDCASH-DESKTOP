@@ -127,6 +127,13 @@ export type FungibleToken = {
    * ids (representative `tokenId` is also listed here).
    */
   tokenIds?: string[]
+  /**
+   * 1Sat fungible fields (tip→origin). When `colourSupply` is set, Collect treats
+   * this row as `1sat-ft` tips (balance = Σ tip `amt`; missing amt ⇒ 1).
+   */
+  colourSupply?: 'locked' | 'open'
+  colourMaxSupply?: number | null
+  colourProvenanceOk?: boolean
 }
 
 export function normalizeTokenId(raw: string): string | null {

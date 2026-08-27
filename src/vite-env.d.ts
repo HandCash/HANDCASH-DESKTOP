@@ -125,6 +125,19 @@ interface HandCashBridge {
     opts?: { allowVaultIdentityReplace?: boolean },
   ) => boolean
   safeStorageAvailable?: () => Promise<boolean>
+  deviceAuthStatus?: () => Promise<{
+    available: boolean
+    enrolled: boolean
+    label: string
+    strongBox?: boolean
+  }>
+  deviceAuthEnroll?: (
+    secret: string,
+  ) => Promise<{ ok: true } | { ok: false; error: string }>
+  deviceAuthUnlock?: (
+    reason?: string,
+  ) => Promise<{ ok: true; secret: string } | { ok: false; error: string }>
+  deviceAuthClear?: () => Promise<{ ok: true } | { ok: false; error: string }>
   wipeWalletStorage?: () => Promise<{ removed: number }>
   archiveBrc39Snapshot?: (payload: {
     identityKey: string

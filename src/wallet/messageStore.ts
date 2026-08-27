@@ -49,6 +49,14 @@ export type ItemTransferAsset =
       icon?: string
       issuer?: string
     }
+  | {
+      kind: 'colour'
+      origin: string
+      amount: string
+      sym: string
+      supply?: 'locked' | 'open'
+      maxSupply?: number | null
+    }
 
 export type ChatMessage = {
   id: string

@@ -304,7 +304,17 @@ function FungibleCarouselCard({
 }) {
   const amount = formatFungibleAmount(token.amt, token.dec)
   const sendBlocked =
-    token.spendKind === 'cosigned' || token.spendKind === 'mixed'
+    !token.colourSupply ||
+    token.spendKind === 'cosigned' ||
+    token.spendKind === 'mixed'
+  const supplyBadge =
+    token.colourSupply === 'locked'
+      ? token.colourMaxSupply != null
+        ? `Locked · ${token.colourMaxSupply}`
+        : 'Locked'
+      : token.colourSupply === 'open'
+        ? 'No supply cap'
+        : 'Legacy BSV-21'
   return (
     <li
       className="collect-token-card"
@@ -328,18 +338,21 @@ function FungibleCarouselCard({
         </div>
         <strong className="collect-token-card-sym">{token.sym}</strong>
         <span className="collect-token-card-amt">{amount}</span>
+        <span className="collect-token-card-meta">{supplyBadge}</span>
       </button>
       <button
         type="button"
         className="collectable-send-btn"
         title={
-          sendBlocked
-            ? token.spendKind === 'cosigned'
-              ? 'Cosigner required to send'
-              : 'Mixed plain / cosigned tips'
-            : sending
-              ? `Sending ${token.sym}`
-              : `Send ${token.sym}`
+          !token.colourSupply
+            ? 'Legacy BSV-21 tips are read-only — 1Sat tokens use face-value tip spends'
+            : sendBlocked
+              ? token.spendKind === 'cosigned'
+                ? 'Cosigner required to send'
+                : 'Mixed plain / cosigned tips'
+              : sending
+                ? `Sending ${token.sym}`
+                : `Send ${token.sym}`
         }
         aria-label={
           sending ? `Sending ${token.sym}` : `Send ${token.sym}`

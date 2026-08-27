@@ -38,11 +38,12 @@ describe('localToolboxStateLooksEmpty', () => {
     expect(await localToolboxStateLooksEmpty()).toBe(false)
   })
 
-  it('still looks empty when only chain-scanned 1sat / bsv21 dust is present', async () => {
+  it('still looks empty when only chain-scanned 1sat / bsv21 / 1sat-ft dust is present', async () => {
     balance.mockResolvedValue(0)
     listOutputs.mockImplementation(async (args: { basket?: string }) => {
       if (args.basket === '1sat') return { totalOutputs: 36, outputs: [{}] }
       if (args.basket === 'bsv21') return { totalOutputs: 3, outputs: [{}, {}, {}] }
+      if (args.basket === '1sat-ft') return { totalOutputs: 5, outputs: [{}, {}, {}, {}, {}] }
       return { totalOutputs: 0, outputs: [] }
     })
     listActions.mockResolvedValue({ totalActions: 0, actions: [] })
@@ -50,6 +51,7 @@ describe('localToolboxStateLooksEmpty', () => {
     const state = await inspectLocalToolboxState()
     expect(state.oneSatOutputCount).toBe(36)
     expect(state.bsv21OutputCount).toBe(3)
+    expect(state.colourOutputCount).toBe(5)
     expect(state.looksEmpty).toBe(true)
   })
 

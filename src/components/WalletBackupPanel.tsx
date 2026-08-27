@@ -21,7 +21,6 @@ import { playWalletSound } from '../wallet/soundService'
 import { copyText } from '../wallet/clipboard'
 import { openSetting } from '../wallet/navStore'
 import { toastError, toastSuccess } from '../wallet/toast'
-import { ConfirmPasswordGate } from './ConfirmPasswordGate'
 import { KeySliceList, type SliceHandoffMethod } from './KeySliceList'
 import { SettingsFeatureAbout } from './SettingsFeatureAbout'
 
@@ -67,7 +66,6 @@ export function WalletBackupPanel() {
   const [kind, setKind] = useState<BackupKind>('split')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
-  const [sessionPassword, setSessionPassword] = useState<string | null>(null)
   const [mnemonic, setMnemonic] = useState<string | null>(null)
   const [rootKey, setRootKey] = useState<string | null>(null)
   const [shareSet, setShareSet] = useState<Brc140ShareSet | null>(null)
@@ -84,7 +82,6 @@ export function WalletBackupPanel() {
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
-    setSessionPassword(null)
     setError(null)
   }
 
@@ -93,45 +90,40 @@ export function WalletBackupPanel() {
     setKind(next)
   }
 
-  const revealWithPassword = async (password: string) => {
+  /** Recovery material from the unlocked session — never asks for HandCash password. */
+  const revealRecovery = async () => {
     setError(null)
     setBusy(true)
     setMnemonic(null)
     setRootKey(null)
     setShareSet(null)
     try {
-      setSessionPassword(password)
       if (kind === 'phrase') {
         if (!hasPhrase) throw new Error('This wallet has no recovery phrase.')
-        setMnemonic(await revealMnemonic(password))
+        setMnemonic(await revealMnemonic())
       } else if (kind === 'key') {
-        setRootKey(await revealRootKeyHex(password))
+        setRootKey(await revealRootKeyHex())
       } else {
         clearKeysHandoffEvidence()
-        const rootKeyHex = await revealRootKeyHex(password)
+        const rootKeyHex = await revealRootKeyHex()
         setShareSet(
           createBrc140Shares(rootKeyHex, BRC140_DEFAULT_THRESHOLD, BRC140_DEFAULT_TOTAL),
         )
       }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
-      setSessionPassword(null)
-      throw err
+      playWalletSound('error')
     } finally {
       setBusy(false)
     }
   }
 
   const rotateShares = async () => {
-    if (!sessionPassword) {
-      toastError('Unlock again', 'Confirm your password to rotate slices.')
-      return
-    }
     setBusy(true)
     setRotatePromptOpen(false)
     try {
       clearKeysHandoffEvidence()
-      const rootKeyHex = await revealRootKeyHex(sessionPassword)
+      const rootKeyHex = await revealRootKeyHex()
       const next = createBrc140Shares(
         rootKeyHex,
         BRC140_DEFAULT_THRESHOLD,
@@ -274,22 +266,30 @@ export function WalletBackupPanel() {
       </div>
 
       {!revealed ? (
-        <ConfirmPasswordGate
-          key={kind}
-          id="wallet-backup-password"
-          title="Confirm it’s you"
-          lede="Enter your unlock password to reveal recovery material on this device."
-          actionLabel={
-            busy
-              ? 'Unlocking…'
-              : kind === 'split'
-                ? 'Show slices'
-                : kind === 'phrase'
-                  ? 'Show phrase'
-                  : 'Show key'
-          }
-          onVerified={revealWithPassword}
-        />
+        <div className="confirm-password-gate" data-aeon-scope="reveal-recovery">
+          <div className="confirm-password-copy">
+            <h3 className="confirm-password-title">Show recovery material</h3>
+            <p className="confirm-password-lede">
+              Your wallet is unlocked — phrase and slices are not locked behind a HandCash password.
+            </p>
+          </div>
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={busy}
+              onClick={() => void revealRecovery()}
+            >
+              {busy
+                ? 'Opening…'
+                : kind === 'split'
+                  ? 'Show slices'
+                  : kind === 'phrase'
+                    ? 'Show phrase'
+                    : 'Show key'}
+            </button>
+          </div>
+        </div>
       ) : null}
 
       {error && !revealed ? (

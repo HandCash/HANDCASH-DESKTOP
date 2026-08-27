@@ -76,14 +76,19 @@
  *   self). It runs in the exclusive spend region so it never races a send, yields
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
  *   `bsv21`) live in their own baskets and are never touched.
- * - **Tokens (BSV-21)** → basket `bsv21`; listed under Collect, never in Pay / balanceView.
- *   Holders verify their tips; issuer mint policy is trusted (no global supply-cap proof required).
+ * - **1Sat tokens (fungible)** → basket `1sat-ft` (legacy read `colour`); Collect
+ *   tip→origin face-value units (`amt` per tip; balance = Σ amt). Same BRC-150
+ *   provenance branding as collectables; locked origin closes supply. Transfers
+ *   spend tips and create payee (+ change) 1-sat tips — no BSV-21 re-inscription,
+ *   no indexer for custody. See `colourCoins.ts` / `sendColourCoins.ts`.
+ * - **Legacy tokens (BSV-21)** → basket `bsv21`; still listed under Collect as
+ *   read-only. Wallet-native BSV-21 send is retired. Indexer address scan
+ *   (`tokenAddressScan.ts`) is recovery-only.
  * - **Asset burn** → `burnPlan` + `burnMachine` + `burn`.
  *   This is an explicit, irreversible spend — never local abandon and never a
- *   send/sweep fallback. A BSV-21 burn writes the canonical burn record; a 1Sat
- *   burn packs the selected tips into a multi-sat self-payment and ends every
- *   BRC-150 origin. Only the resulting self BRC-29 wallet-payment internalize
- *   may move recovered physical sats into managed change / `balanceView`.
+ *   send/sweep fallback. A 1Sat burn ends tips (and BRC-150 origin when
+ *   applicable). Only the resulting self BRC-29 wallet-payment internalize may
+ *   move recovered physical sats into managed change / `balanceView`.
  */
 
 import { fetchBalanceSats, getActiveWallet } from './session'
@@ -104,6 +109,10 @@ export const WALLET_LAYER_MODULES = {
     'session.ts',
     'collectables.ts',
     'fungibles.ts',
+    'colourCoins.ts',
+    'colourListing.ts',
+    'onesatFtInscribe.ts',
+    'sendColourCoins.ts',
     'bsv21.ts',
     'bsv21TipKind.ts',
     'bsv21Inscribe.ts',
@@ -121,6 +130,7 @@ export const WALLET_LAYER_MODULES = {
     'spendAttempt.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
+    'ingestColourSettle.ts',
     'ingestFungibleSettle.ts',
     'bsvSendMachine.ts',
     'brc29SettlePath.ts',
@@ -217,6 +227,8 @@ export type LocalToolboxState = {
   oneSatOutputCount: number
   /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
   bsv21OutputCount: number
+  /** 1Sat fungible tips in `1sat-ft` (+ legacy `colour`). */
+  colourOutputCount: number
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
   looksEmpty: boolean
@@ -257,6 +269,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
       defaultOutputCount: 0,
       oneSatOutputCount: 0,
       bsv21OutputCount: 0,
+      colourOutputCount: 0,
       actionCount: 0,
       looksEmpty: true,
     }
@@ -267,16 +280,20 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     defaultOutputCount,
     oneSatOutputCount,
     bsv21OutputCount,
+    colourOutputCount,
     actionCount,
   ] = await Promise.all([
     fetchBalanceSats(active.wallet).catch(() => 0),
     countOutputs('default'),
     countOutputs('1sat'),
     countOutputs('bsv21'),
+    Promise.all([countOutputs('1sat-ft'), countOutputs('colour')]).then(
+      ([a, b]) => a + b,
+    ),
     countActions(),
   ])
 
-  // 1sat / bsv21 from address scan alone are not historyReplica. After restore,
+  // 1sat / bsv21 / 1sat-ft from address scan alone are not historyReplica. After restore,
   // chain ingest can land item tips before BRC-39 pull — those outs must
   // not block empty-local recovery of spendable balance + TX history.
   const looksEmpty =
@@ -287,6 +304,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     defaultOutputCount,
     oneSatOutputCount,
     bsv21OutputCount,
+    colourOutputCount,
     actionCount,
     looksEmpty,
   }

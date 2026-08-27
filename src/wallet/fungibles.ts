@@ -394,10 +394,23 @@ async function listFungiblesNow(
         ...(issuerHandle ? { issuerHandle } : {}),
       }
     })
-    setFungiblesCache(tokens)
+    let colourRows: FungibleToken[] = []
+    try {
+      const { listColourTokensAsFungibles } = await import('./colourListing')
+      colourRows = (await listColourTokensAsFungibles(wallet)) as FungibleToken[]
+    } catch (err) {
+      console.warn('[colour] list failed', err)
+    }
+    // Colour coins first; legacy BSV-21 rows keep showing as read-only send.
+    const colourIds = new Set(colourRows.map((t) => t.tokenId))
+    const merged = [
+      ...colourRows,
+      ...tokens.filter((t) => !colourIds.has(t.tokenId)),
+    ]
+    setFungiblesCache(merged)
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
-    void hydrateMissingTokenIcons(wallet, tokens)
-    return tokens
+    void hydrateMissingTokenIcons(wallet, merged)
+    return merged
   } catch (err) {
     console.warn('[bsv21] listOutputs failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.

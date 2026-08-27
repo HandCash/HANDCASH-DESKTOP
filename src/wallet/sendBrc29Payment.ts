@@ -1041,16 +1041,27 @@ export async function ingestPaymentsFromTipHints(
                     beefPurpose: 'inboundItemHint',
                   }),
               )
-            : await import('./ingestItemSettle').then(
-                ({ internalizePeerItemSettle }) =>
-                  internalizePeerItemSettle({
-                    txid: hint.txid,
-                    tx: attempt === 0 ? atomic : undefined,
-                    beefUrl: attempt === 0 ? undefined : hint.beefUrl,
-                    name: hint.itemName,
-                    beefPurpose: 'inboundItemHint',
-                  }),
-              )
+            : asset?.kind === 'colour'
+              ? await import('./ingestColourSettle').then(
+                  ({ internalizePeerColourSettle }) =>
+                    internalizePeerColourSettle({
+                      txid: hint.txid,
+                      tx: attempt === 0 ? atomic : undefined,
+                      beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+                      token: asset,
+                      beefPurpose: 'inboundItemHint',
+                    }),
+                )
+              : await import('./ingestItemSettle').then(
+                  ({ internalizePeerItemSettle }) =>
+                    internalizePeerItemSettle({
+                      txid: hint.txid,
+                      tx: attempt === 0 ? atomic : undefined,
+                      beefUrl: attempt === 0 ? undefined : hint.beefUrl,
+                      name: hint.itemName,
+                      beefPurpose: 'inboundItemHint',
+                    }),
+                )
         if (result.accepted) {
           importedTxid = hint.txid
           accepted = true

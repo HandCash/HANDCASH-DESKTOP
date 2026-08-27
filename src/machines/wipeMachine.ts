@@ -1,7 +1,10 @@
 import { setup, assign } from 'xstate'
 
 export type WipeContext = {
+  /** HandCash password when used; empty string means device factor already verified. */
   password: string
+  /** True after ConfirmPasswordGate succeeds (password or device). */
+  unlocked: boolean
   confirmText: string
   acknowledged: boolean
   error: string | null
@@ -16,6 +19,7 @@ export const wipeMachine = setup({
     context: {} as WipeContext,
     events: {} as
       | { type: 'CHANGE_PASSWORD'; password: string }
+      | { type: 'VERIFIED'; password: string | null }
       | { type: 'CHANGE_CONFIRM'; confirmText: string }
       | { type: 'TOGGLE_ACK'; acknowledged: boolean }
       | { type: 'SUBMIT' }
@@ -28,6 +32,7 @@ export const wipeMachine = setup({
   initial: 'idle',
   context: {
     password: '',
+    unlocked: false,
     confirmText: '',
     acknowledged: false,
     error: null,
@@ -38,6 +43,14 @@ export const wipeMachine = setup({
         CHANGE_PASSWORD: {
           actions: assign({
             password: ({ event }) => event.password,
+            unlocked: true,
+            error: null,
+          }),
+        },
+        VERIFIED: {
+          actions: assign({
+            password: ({ event }) => event.password ?? '',
+            unlocked: true,
             error: null,
           }),
         },
@@ -55,7 +68,7 @@ export const wipeMachine = setup({
         },
         SUBMIT: {
           guard: ({ context }) =>
-            context.password.length >= 8 &&
+            context.unlocked &&
             context.acknowledged &&
             context.confirmText.trim().toUpperCase() === 'DELETE',
           target: 'wiping',
@@ -82,6 +95,15 @@ export const wipeMachine = setup({
           target: 'idle',
           actions: assign({
             password: ({ event }) => event.password,
+            unlocked: true,
+            error: null,
+          }),
+        },
+        VERIFIED: {
+          target: 'idle',
+          actions: assign({
+            password: ({ event }) => event.password ?? '',
+            unlocked: true,
             error: null,
           }),
         },

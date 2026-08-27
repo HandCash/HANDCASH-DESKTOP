@@ -122,6 +122,23 @@ const handcash = {
   ) => ipcRenderer.sendSync('storage:set-sync', key, value, opts) as boolean,
   safeStorageAvailable: () =>
     ipcRenderer.invoke('storage:safe-storage-available') as Promise<boolean>,
+  deviceAuthStatus: () =>
+    ipcRenderer.invoke('device-auth:status') as Promise<{
+      available: boolean
+      enrolled: boolean
+      label: string
+      strongBox?: boolean
+    }>,
+  deviceAuthEnroll: (secret: string) =>
+    ipcRenderer.invoke('device-auth:enroll', secret) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  deviceAuthUnlock: (reason?: string) =>
+    ipcRenderer.invoke('device-auth:unlock', reason) as Promise<
+      { ok: true; secret: string } | { ok: false; error: string }
+    >,
+  deviceAuthClear: () =>
+    ipcRenderer.invoke('device-auth:clear') as Promise<{ ok: true }>,
   wipeWalletStorage: () =>
     ipcRenderer.invoke('storage:wipe-wallet') as Promise<{ removed: number }>,
   archiveBrc39Snapshot: (payload: {

@@ -239,8 +239,11 @@ export function downloadBrc39File(bytes: Uint8Array, filename = 'wallet.brc39'):
   URL.revokeObjectURL(url)
 }
 
-export async function exportBrc39ToFile(password: string): Promise<void> {
-  const bytes = await createBrc39BackupBytes(password)
+export async function exportBrc39ToFile(
+  password: string,
+  opts: CreateBrc39Opts = {},
+): Promise<void> {
+  const bytes = await createBrc39BackupBytes(password, opts)
   const active = getActiveWallet()
   const tag = active?.identityKey?.slice(0, 8) ?? 'wallet'
   downloadBrc39File(bytes, `wallet-${tag}.brc39`)

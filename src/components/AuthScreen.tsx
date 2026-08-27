@@ -4,12 +4,15 @@ import { useEffect, useRef, useState } from 'react'
 import { unlockMachine } from '../machines/unlockMachine'
 import {
   createVault,
+  readVaultUnlockFactors,
   restoreVaultFromMnemonic,
   restoreVaultFromRootKey,
   unlockVault,
+  unlockVaultWithDevice,
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
+import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import {
   bootWallet,
   fetchBalanceRead,
@@ -39,6 +42,7 @@ import { recomposeWallet } from '../wallet/recompose'
 import { setSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { writeTrustedBalance } from '../wallet/balanceSnapshot'
 import { PasswordField } from './PasswordField'
+import { CreateKeysBackupPanel } from './CreateKeysBackupPanel'
 import { WalletSetupConfigPanel } from './WalletSetupConfigPanel'
 import { HistoryRecoveryPanel } from './HistoryRecoveryPanel'
 
@@ -108,10 +112,17 @@ export function AuthScreen({
   const [confirmPassword, setConfirmPassword] = useState('')
   const [offerRestoreOnLock, setOfferRestoreOnLock] = useState(false)
   const [unlockNudge, setUnlockNudge] = useState(false)
+  const [deviceStatus, setDeviceStatus] = useState<DeviceAuthStatus | null>(null)
+  const [useDevice, setUseDevice] = useState(false)
+  const [usePassword, setUsePassword] = useState(true)
+  const [deviceUnlockAttempted, setDeviceUnlockAttempted] = useState(false)
   const [pendingCreated, setPendingCreated] = useState<{
     profile: WalletProfile
     balanceSats: number
     password: string
+    mnemonic: string | null
+    rootKeyHex: string
+    keysBackupDone: boolean
   } | null>(null)
   /** After key restore — pull BRC-39 before entering the wallet. */
   const [pendingHistoryRecovery, setPendingHistoryRecovery] = useState<{
@@ -134,6 +145,56 @@ export function AuthScreen({
   useEffect(() => subscribeUnlockNudge(setUnlockNudge), [])
 
   useEffect(() => {
+    let cancelled = false
+    void deviceAuthStatus().then((status) => {
+      if (cancelled) return
+      setDeviceStatus(status)
+      if (status.available) {
+        setUseDevice(true)
+        // Prefer device-only on create when the OS can seal unlock.
+        if (mode === 'onboarding') setUsePassword(false)
+      }
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [mode])
+
+  useEffect(() => {
+    if (mode !== 'locked' || formMode !== 'unlock' || deviceUnlockAttempted || preparing) return
+    const factors = readVaultUnlockFactors()
+    if (!factors.device) return
+    setDeviceUnlockAttempted(true)
+    let cancelled = false
+    ;(async () => {
+      send({ type: 'SUBMIT' })
+      setPreparing({
+        title: 'Unlocking',
+        lede: 'Confirm with this device…',
+      })
+      try {
+        const unlocked = await unlockVaultWithDevice('Unlock HandCash')
+        if (cancelled) return
+        await finishUnlock(unlocked, null)
+      } catch (err) {
+        if (cancelled) return
+        const message = err instanceof Error ? err.message : String(err)
+        setPreparing(null)
+        send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
+        if (message !== 'cancelled') {
+          playWalletSound('error')
+          if (!readVaultUnlockFactors().password) onFail(message)
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+    // Intentionally once per lock screen mount when device factor exists.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [mode, formMode])
+
+  useEffect(() => {
     if (mode === 'locked' && isWalletMismatchMessage(error)) setOfferRestoreOnLock(true)
   }, [mode, error])
 
@@ -144,7 +205,7 @@ export function AuthScreen({
 
   const finishCreated = async (
     unlocked: UnlockedVault,
-    password: string,
+    password: string | null,
     kind: 'create' | 'restore',
   ) => {
     setPreparing({
@@ -155,6 +216,7 @@ export function AuthScreen({
       rootKeyHex: unlocked.rootKeyHex,
       handle: unlocked.record.handle,
       chain: unlocked.record.chain,
+      mnemonic: unlocked.mnemonic,
     })
     // Never block create/restore on chain/cloud or the expensive unconfirmed-
     // change scan. A confirmed localState read gets a short head start;
@@ -177,12 +239,18 @@ export function AuthScreen({
       address: unlocked.record.address,
       chain: unlocked.record.chain,
     }
-    // Create only: ask for backup preferences. Restore already recovered keys —
-    // next step is history recovery (balance / activity / friends / apps).
+    // Create only: force keys backup (never password-gated), then history prefs.
     if (kind === 'create' && !getWalletConfigPrefs().mode) {
-      setPendingCreated({ profile, balanceSats, password })
+      setPendingCreated({
+        profile,
+        balanceSats,
+        password: password ?? '',
+        mnemonic: unlocked.mnemonic,
+        rootKeyHex: unlocked.rootKeyHex,
+        keysBackupDone: false,
+      })
       setPreparing(null)
-      setSessionBackupPassword(password)
+      if (password) setSessionBackupPassword(password)
       return
     }
     if (kind === 'restore') {
@@ -193,18 +261,107 @@ export function AuthScreen({
           console.warn('[auth] restore setup defaults failed', err)
         }
       }
-      setSessionBackupPassword(password)
-      setPendingHistoryRecovery({ profile, balanceSats, password })
+      if (password) setSessionBackupPassword(password)
+      setPendingHistoryRecovery({ profile, balanceSats, password: password ?? '' })
       setPreparing(null)
       return
     }
     setPreparing(null)
     onCreated(profile, balanceSats)
-    setSessionBackupPassword(password)
-    void recomposeWallet({ password, reason: kind })
+    if (password) setSessionBackupPassword(password)
+    void recomposeWallet({ password: password ?? undefined, reason: kind })
   }
 
-  const needsNewPassword = formMode === 'create' || isRestoreMethod(formMode)
+  const finishUnlock = async (unlocked: UnlockedVault, password: string | null) => {
+    setPreparing({
+      title: 'Almost ready',
+      lede: 'Opening your wallet on this device.',
+    })
+    const active = await bootWallet({
+      rootKeyHex: unlocked.rootKeyHex,
+      handle: unlocked.record.handle,
+      chain: unlocked.record.chain,
+      mnemonic: unlocked.mnemonic,
+    })
+    const cachedBalance = lastKnownBalance()
+    const confirmedBalance = fetchBalanceRead(active.wallet, {
+      creditUnconfirmed: false,
+    })
+    const initialRead = cachedBalance == null ? await confirmedBalance : null
+    if (initialRead?.kind === 'unavailable') {
+      throw new Error(
+        'HandCash could not read this wallet’s balance yet. Your cached wallet data was not changed; try unlocking again.',
+      )
+    }
+    let balanceSats =
+      cachedBalance ?? (initialRead?.kind === 'ok' ? initialRead.sats : null)
+    if (balanceSats == null) {
+      throw new Error('HandCash could not establish this wallet’s balance.')
+    }
+    let recomposedBeforeEnter = false
+    if (cachedBalance == null && balanceSats === 0) {
+      setPreparing({
+        title: 'Almost ready',
+        lede: 'Recovering wallet history…',
+      })
+      if (password) setSessionBackupPassword(password)
+      const restored = await recomposeWallet({
+        password: password ?? undefined,
+        reason: 'unlock',
+      })
+      if (
+        restored.spendableSats == null ||
+        (restored.spendableSats === 0 && restored.history === 'failed')
+      ) {
+        throw new Error(
+          'HandCash could not confirm an empty wallet during recovery. Your cached wallet data was not changed; check the connection and try again.',
+        )
+      }
+      balanceSats = restored.spendableSats
+      recomposedBeforeEnter = true
+    }
+    if (cachedBalance == null) {
+      writeTrustedBalance(active.identityKey, active.chain, balanceSats)
+    }
+    send({ type: 'SUCCESS' })
+    playWalletSound('unlock')
+    clearUnlockNudge()
+    setPreparing(null)
+    try {
+      ensureHandCashServiceDefaults()
+    } catch {
+      /* ignore */
+    }
+    onUnlocked(
+      {
+        handle: unlocked.record.handle,
+        identityKey: unlocked.record.identityKey,
+        address: unlocked.record.address,
+        chain: unlocked.record.chain,
+      },
+      balanceSats,
+    )
+    void fetchBalanceSats(active.wallet)
+      .then((fresh) => {
+        if (fresh !== balanceSats) onBalanceRefreshed(fresh)
+      })
+      .catch(() => {
+        /* trusted/confirmed figure remains visible */
+      })
+    if (password) setSessionBackupPassword(password)
+    if (!recomposedBeforeEnter) {
+      void recomposeWallet({ password: password ?? undefined, reason: 'unlock' }).then((result) => {
+        if (
+          result.spendableSats != null &&
+          !(result.spendableSats === 0 && result.history === 'failed')
+        ) {
+          onBalanceRefreshed(result.spendableSats)
+        }
+      })
+    }
+  }
+
+  const needsNewPassword = (formMode === 'create' || isRestoreMethod(formMode)) && usePassword
 
   const submit = async () => {
     if (snapshot.matches('submitting') || preparing) return
@@ -218,12 +375,21 @@ export function AuthScreen({
         onFail('Passwords do not match')
         return
       }
-    } else if (snapshot.context.password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
-      // Unlock: accept existing shorter passwords created before the policy bump.
-      onFail(`Password must be at least ${UNLOCK_PASSWORD_MIN_LENGTH} characters`)
+    } else if (formMode === 'unlock') {
+      const factors = readVaultUnlockFactors()
+      if (!factors.password) {
+        onFail('Unlock with this device, or restore from a backup.')
+        return
+      }
+      if (snapshot.context.password.length < UNLOCK_PASSWORD_MIN_LENGTH) {
+        onFail(`Password must be at least ${UNLOCK_PASSWORD_MIN_LENGTH} characters`)
+        return
+      }
+    } else if (!useDevice && !usePassword) {
+      onFail('Choose device unlock, a HandCash password, or both')
       return
     }
-    const password = snapshot.context.password
+    const password = needsNewPassword || formMode === 'unlock' ? snapshot.context.password : null
     send({ type: 'SUBMIT' })
     setPreparing(
       formMode === 'create'
@@ -242,12 +408,17 @@ export function AuthScreen({
             },
     )
     try {
+      const factorArgs = {
+        ...(password ? { password } : {}),
+        ...(useDevice ? { useDevice: true } : {}),
+      }
+
       if (formMode === 'phrase') {
         const unlocked = await restoreVaultFromMnemonic({
           mnemonic: mnemonicInput,
-          password,
           chain,
           ...(passphrase.trim() ? { passphrase: passphrase.trim() } : {}),
+          ...factorArgs,
         })
         await finishCreated(unlocked, password, 'restore')
         return
@@ -257,8 +428,8 @@ export function AuthScreen({
         const recovered = recoverRootKeyFromBrc140Shares([share1, share2])
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: recovered.rootKeyHex,
-          password,
           chain,
+          ...factorArgs,
         })
         await finishCreated(unlocked, password, 'restore')
         return
@@ -267,118 +438,21 @@ export function AuthScreen({
       if (formMode === 'key') {
         const unlocked = await restoreVaultFromRootKey({
           rootKeyHex: normalizeRootKeyHex(rootKeyInput),
-          password,
           chain,
+          ...factorArgs,
         })
         await finishCreated(unlocked, password, 'restore')
         return
       }
 
       if (formMode === 'create') {
-        const unlocked = await createVault({ password, chain })
+        const unlocked = await createVault({ chain, ...factorArgs })
         await finishCreated(unlocked, password, 'create')
         return
       }
 
-      const unlocked = await unlockVault(password)
-      setPreparing({
-        title: 'Almost ready',
-        lede: 'Opening your wallet on this device.',
-      })
-      const active = await bootWallet({
-        rootKeyHex: unlocked.rootKeyHex,
-        handle: unlocked.record.handle,
-        chain: unlocked.record.chain,
-      })
-      // Enter with the last balance actually read for this identity. On a cold
-      // phone the fresh owned-cash scan can take >10s; racing it against a
-      // literal zero made a funded wallet look empty for the whole sync.
-      const cachedBalance = lastKnownBalance()
-      const confirmedBalance = fetchBalanceRead(active.wallet, {
-        creditUnconfirmed: false,
-      })
-      // If this identity has never written a trusted snapshot, wait for a real
-      // local-state answer. The old 500 ms race returned a literal zero and
-      // briefly told a funded holder their wallet was empty. A cached identity
-      // still opens immediately while the authoritative read continues.
-      const initialRead = cachedBalance == null ? await confirmedBalance : null
-      if (initialRead?.kind === 'unavailable') {
-        throw new Error(
-          'HandCash could not read this wallet’s balance yet. Your cached wallet data was not changed; try unlocking again.',
-        )
-      }
-      let balanceSats =
-        cachedBalance ?? (initialRead?.kind === 'ok' ? initialRead.sats : null)
-      if (balanceSats == null) {
-        throw new Error('HandCash could not establish this wallet’s balance.')
-      }
-      let recomposedBeforeEnter = false
-      if (cachedBalance == null && balanceSats === 0) {
-        // An empty local Toolbox on cold launch may only mean that BRC-39 has
-        // not restored this device yet. With no identity-scoped snapshot there
-        // is nothing honest to paint, so remain on "Almost ready" until the
-        // recovery path confirms the final answer. Zero is shown only if that
-        // path also says zero.
-        setSessionBackupPassword(password)
-        const restored = await recomposeWallet({ password, reason: 'unlock' })
-        if (
-          restored.spendableSats == null ||
-          (restored.spendableSats === 0 && restored.history === 'failed')
-        ) {
-          throw new Error(
-            'HandCash could not confirm an empty wallet during recovery. Your cached wallet data was not changed; check the connection and try again.',
-          )
-        }
-        balanceSats = restored.spendableSats
-        recomposedBeforeEnter = true
-      }
-      if (cachedBalance == null) {
-        writeTrustedBalance(active.identityKey, active.chain, balanceSats)
-      }
-      send({ type: 'SUCCESS' })
-      playWalletSound('unlock')
-      clearUnlockNudge()
-      setPreparing(null)
-      try {
-        ensureHandCashServiceDefaults()
-      } catch {
-        /* ignore */
-      }
-      onUnlocked(
-        {
-          handle: unlocked.record.handle,
-          identityKey: unlocked.record.identityKey,
-          address: unlocked.record.address,
-          chain: unlocked.record.chain,
-        },
-        balanceSats,
-      )
-      if (!recomposedBeforeEnter) {
-        // Do not downgrade the hero from this confirmed-only read. Pending change
-        // from a live local send is credited only on the display path below; a
-        // lower confirmed total is normal and must not paint $0.03 when the
-        // wallet still holds $0.15 including in-flight change.
-      }
-      // Credit live local change only after the wallet is visible. This can
-      // inspect hundreds of old output rows and must never hold the unlock UI.
-      void fetchBalanceSats(active.wallet)
-        .then((fresh) => {
-          if (fresh !== balanceSats) onBalanceRefreshed(fresh)
-        })
-        .catch(() => {
-          /* trusted/confirmed figure remains visible */
-        })
-      setSessionBackupPassword(password)
-      if (!recomposedBeforeEnter) {
-        void recomposeWallet({ password, reason: 'unlock' }).then((result) => {
-          if (
-            result.spendableSats != null &&
-            !(result.spendableSats === 0 && result.history === 'failed')
-          ) {
-            onBalanceRefreshed(result.spendableSats)
-          }
-        })
-      }
+      const unlocked = await unlockVault(password!)
+      await finishUnlock(unlocked, password)
     } catch (err) {
       const failure = classifyUnlockFailure(err)
       setPreparing(null)
@@ -428,14 +502,16 @@ export function AuthScreen({
 
   const lede =
     formMode === 'phrase'
-      ? 'Enter your BRC-75 recovery phrase, then set a password for this device. Same phrase = same identity on Desktop or Mobile.'
+      ? 'Enter your BRC-75 recovery phrase, then choose how this device unlocks. Same phrase = same identity on Desktop or Mobile.'
       : formMode === 'shares'
-          ? 'Paste any two BRC-140 key slices, then set a password for this device. Same slices = same identity.'
+          ? 'Paste any two BRC-140 key slices, then choose how this device unlocks. Same slices = same identity.'
           : formMode === 'key'
-            ? 'Paste your emergency root key (64 hex chars), then set a password for this device.'
+            ? 'Paste your emergency root key (64 hex chars), then choose how this device unlocks.'
             : formMode === 'create'
-              ? 'Your keys stay on this device. Back up later with a recovery phrase or BRC-140 slices.'
-              : 'Enter your password to unlock.'
+              ? 'Your keys stay on this device. Prefer fingerprint or device lock — HandCash password is optional.'
+              : readVaultUnlockFactors().device
+                ? 'Unlock with this device, or your HandCash password.'
+                : 'Enter your HandCash password to unlock.'
 
   const submitting = snapshot.matches('submitting')
   const primaryLabel = isRestoreMethod(formMode)
@@ -477,6 +553,20 @@ export function AuthScreen({
     )
   }
 
+  if (pendingCreated && !pendingCreated.keysBackupDone && pendingCreated.mnemonic) {
+    return (
+      <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="keys-backup">
+        <CreateKeysBackupPanel
+          mnemonic={pendingCreated.mnemonic}
+          rootKeyHex={pendingCreated.rootKeyHex}
+          onDone={() => {
+            setPendingCreated({ ...pendingCreated, keysBackupDone: true })
+          }}
+        />
+      </section>
+    )
+  }
+
   if (pendingCreated) {
     return (
       <section className="auth-screen" data-aeon-scope="auth" data-aeon-state="setup-config">
@@ -492,8 +582,11 @@ export function AuthScreen({
             // Enter immediately — cloud push must never block the first unlock.
             setPreparing(null)
             onCreated(pending.profile, pending.balanceSats)
-            setSessionBackupPassword(pending.password)
-            void recomposeWallet({ password: pending.password, reason: 'create' })
+            if (pending.password) setSessionBackupPassword(pending.password)
+            void recomposeWallet({
+              password: pending.password || undefined,
+              reason: 'create',
+            })
           }}
         />
       </section>
@@ -696,31 +789,92 @@ export function AuthScreen({
           </div>
         ) : null}
 
-        <PasswordField
-          id="password"
-          label="Password"
-          placeholder={
-            formMode === 'unlock' ? 'Your password' : '10+ chars, letter and number'
-          }
-          value={snapshot.context.password}
-          onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
-          autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
-          autoFocus={formMode === 'unlock' || formMode === 'create'}
-        />
+        {(formMode === 'create' || isRestoreMethod(formMode)) && deviceStatus?.available ? (
+          <div className="auth-factor-options" style={{ display: 'grid', gap: 8, marginBottom: 8 }}>
+            <label className="field settings-check-label">
+              <input
+                type="checkbox"
+                checked={useDevice}
+                onChange={(e) => {
+                  const next = e.target.checked
+                  setUseDevice(next)
+                  if (!next && !usePassword) setUsePassword(true)
+                }}
+              />
+              <span>Unlock with {deviceStatus.label}</span>
+            </label>
+            <label className="field settings-check-label">
+              <input
+                type="checkbox"
+                checked={usePassword}
+                onChange={(e) => {
+                  const next = e.target.checked
+                  setUsePassword(next)
+                  if (!next && !useDevice) setUseDevice(true)
+                }}
+              />
+              <span>Also set a HandCash password</span>
+            </label>
+          </div>
+        ) : null}
 
-        {needsNewPassword ? (
+        {formMode === 'unlock' && readVaultUnlockFactors().device ? (
+          <div className="actions" style={{ marginBottom: 12 }}>
+            <button
+              type="button"
+              className="btn btn-primary"
+              disabled={submitting || Boolean(preparing)}
+              onClick={() => {
+                setDeviceUnlockAttempted(true)
+                send({ type: 'SUBMIT' })
+                setPreparing({ title: 'Unlocking', lede: 'Confirm with this device…' })
+                void unlockVaultWithDevice('Unlock HandCash')
+                  .then((unlocked) => finishUnlock(unlocked, null))
+                  .catch((err) => {
+                    const message = err instanceof Error ? err.message : String(err)
+                    setPreparing(null)
+                    send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
+                    if (message !== 'cancelled') {
+                      playWalletSound('error')
+                      onFail(message)
+                    }
+                  })
+              }}
+            >
+              Unlock with {deviceStatus?.label ?? 'this device'}
+            </button>
+          </div>
+        ) : null}
+
+        {(formMode === 'unlock' && readVaultUnlockFactors().password) || needsNewPassword ? (
           <>
-            <p className="password-hint">
-              This password unlocks the wallet on this device. Don’t forget it.
-            </p>
             <PasswordField
-              id="password-confirm"
-              label="Confirm password"
-              placeholder="Type it again"
-              value={confirmPassword}
-              onChange={(e) => setConfirmPassword(e.target.value)}
-              autoComplete="new-password"
+              id="password"
+              label="HandCash password"
+              placeholder={
+                formMode === 'unlock' ? 'Your password' : '10+ chars, letter and number'
+              }
+              value={snapshot.context.password}
+              onChange={(e) => send({ type: 'CHANGE', password: e.target.value })}
+              autoComplete={formMode === 'unlock' ? 'current-password' : 'new-password'}
+              autoFocus={formMode === 'unlock' || (needsNewPassword && formMode === 'create')}
             />
+
+            {needsNewPassword ? (
+              <>
+                <p className="password-hint">
+                  Optional backup unlock, separate from fingerprint or your phone/computer password.
+                </p>
+                <PasswordField
+                  id="password-confirm"
+                  label="Confirm password"
+                  placeholder="Type it again"
+                  value={confirmPassword}
+                  onChange={(e) => setConfirmPassword(e.target.value)}
+                  autoComplete="new-password"
+                />
+              </>
+            ) : null}
           </>
         ) : null}
 

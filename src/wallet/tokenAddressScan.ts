@@ -1,22 +1,14 @@
 /**
- * Discover BSV-21 tips sitting on the wallet's legacy receive address.
+ * Recovery-only: discover legacy BSV-21 tips on the wallet receive address.
  *
- * A BSV-21 transfer always re-inscribes its token JSON, so every token output is
- * P2PKH *plus* an ord envelope. Address indexers classify that shape as
- * nonstandard and expose no address for it: WhatsOnChain and Bitails answer `[]`,
- * and the toolbox lookup hashes the bare P2PKH script, which never matches. A
- * token sent from outside the wallet is therefore invisible to every provider
- * behind {@link scanLegacyAddress}, and `classifyLegacyUtxos` never gets the
- * chance to route it into basket `bsv21`.
+ * Colour coins do **not** use this path — custody is tip→origin remittance /
+ * peer settle (`colour` basket), not an indexer. Keep this scan for healing
+ * older BSV-21 tips that never entered `bsv21` via remittance.
  *
- * The ordinal index is the only source that lists these outputs, and only when
- * `bsv20=true` is passed — the default query omits token outputs entirely. The
- * two result sets are disjoint, so this is a small extra request rather than a
- * second copy of the address scan.
- *
- * HARD RULE: only 1-satoshi outputs are returned. Sweep eligibility is decided
- * by `chooseLegacySweepPath`, and a 1-sat output can only ever be held — an
- * indexer must never be able to talk this wallet into spending real funds.
+ * A BSV-21 transfer re-inscribes token JSON (P2PKH + ord). Address indexers
+ * often miss that shape; the ordinal index with `bsv20=true` is the recovery
+ * probe. HARD RULE: only 1-satoshi outputs — never spend real funds from an
+ * indexer hint.
  */
 import type { Chain } from './vault'
 import type { LegacyUtxo } from './legacyScan'

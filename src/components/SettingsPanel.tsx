@@ -56,8 +56,8 @@ const SECURITY_ITEMS: SettingItem[] = [
   },
   {
     id: 'change-password',
-    label: 'Password',
-    description: 'Unlock this device',
+    label: 'Unlock',
+    description: 'Device lock or HandCash password',
   },
   {
     id: 'wipe-wallet',
@@ -110,8 +110,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'logs') return 'Session logs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
   if (id === 'device-handoff') return 'Device backup'
-  if (id === 'import-phrase') return 'Sweep'
-  if (id === 'history-backup') return 'History'
+  if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)
   if (item) return item.label
   return 'Setting'

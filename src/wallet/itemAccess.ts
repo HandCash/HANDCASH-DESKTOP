@@ -14,8 +14,12 @@ import { normalizeAppHost } from './appIdentity'
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
 
-/** Storage basket for BSV-21 fungibles — Collect tokens, not Pay currency. */
+/** Storage basket for legacy BSV-21 fungibles — Collect tokens, not Pay currency. */
 export const FUNGIBLE_STORAGE_BASKET = 'bsv21'
+
+/** Storage basket for 1Sat fungibles (BRC-175). Legacy alias `colour` is read-only. */
+export const COLOUR_STORAGE_BASKET = '1sat-ft'
+export const LEGACY_COLOUR_STORAGE_BASKET = 'colour'
 
 /** BRC-99 permission scheme ID for 1Sat collectables. */
 export const ITEM_SCHEME = '1sat'
@@ -23,9 +27,15 @@ export const ITEM_SCHEME = '1sat'
 /** Baskets that hold collectables / tokens — not spendable under normal pay.
  * Recursive inscription content (HTML/JS that references other inscriptions)
  * still lives on 1-sat tips in basket `1sat` — same remittance + BRC-39 path.
- * BSV-21 tips live in `bsv21` and are listed under Collect, never as balance.
+ * 1Sat fungibles live in `1sat-ft` (tip→origin, face-value `amt`). Legacy BSV-21 tips live
+ * in `bsv21`. Neither is Pay / balanceView.
  */
-export const ITEM_BASKETS = new Set([ITEM_STORAGE_BASKET, FUNGIBLE_STORAGE_BASKET])
+export const ITEM_BASKETS = new Set([
+  ITEM_STORAGE_BASKET,
+  FUNGIBLE_STORAGE_BASKET,
+  COLOUR_STORAGE_BASKET,
+  LEGACY_COLOUR_STORAGE_BASKET,
+])
 
 export type ItemAccess = {
   /** Inventory visibility for this app. */
@@ -300,6 +310,90 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
     }
   }
   return null
+}
+
+/** True when the basket is the colour-coin storage basket. */
+export function isColourBasket(value: unknown): boolean {
+  if (typeof value !== 'string') return false
+  const b = value.trim().toLowerCase()
+  return b === COLOUR_STORAGE_BASKET || b === LEGACY_COLOUR_STORAGE_BASKET
+}
+
+/**
+ * True when createAction looks like colour mint (outputs only, colour basket,
+ * mint label) — permission copy says "Mint token".
+ */
+export function isColourIssuanceArgs(method: string, args: unknown): boolean {
+  if (method !== 'createAction') return false
+  const body = asRecord(args)
+  const labels = Array.isArray(body.labels)
+    ? body.labels.filter((l): l is string => typeof l === 'string')
+    : []
+  if (labels.some((l) => /handcash-mint-colour|handcash-mint-1sat-ft|1sat-ft/i.test(l))) return true
+  const inputs = Array.isArray(body.inputs) ? body.inputs : []
+  if (inputs.length > 0) return false
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  if (outputs.length === 0) return false
+  let colourOuts = 0
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as Record<string, unknown>
+    if (isColourBasket(out.basket)) colourOuts += 1
+    else if (
+      Array.isArray(out.tags) &&
+      out.tags.some(
+        (t) =>
+          typeof t === 'string' &&
+          (/^1sat-ft$/i.test(t) || /^colour$/i.test(t)),
+      )
+    ) {
+      colourOuts += 1
+    }
+  }
+  return colourOuts > 0 && colourOuts === outputs.length
+}
+
+/** True when createAction / labels / outputs look like a colour-coin transfer. */
+export function isColourSpendArgs(method: string, args: unknown): boolean {
+  if (method === 'relinquishOutput') {
+    return isColourBasket(asRecord(args).basket)
+  }
+  if (method !== 'createAction' && method !== 'signAction') return false
+
+  const body = asRecord(args)
+  const labels = Array.isArray(body.labels)
+    ? body.labels.filter((l): l is string => typeof l === 'string')
+    : []
+  if (
+    labels.some(
+      (l) =>
+        /^1sat-ft$/i.test(l) ||
+        /^colour$/i.test(l) ||
+        /handcash-send-colour|handcash-send-1sat-ft/i.test(l),
+    )
+  ) {
+    return true
+  }
+
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const out = raw as Record<string, unknown>
+    if (isColourBasket(out.basket)) return true
+    const tags = Array.isArray(out.tags)
+      ? out.tags.filter((t): t is string => typeof t === 'string')
+      : []
+    if (tags.some((t) => /^1sat-ft$/i.test(t) || /^colour$/i.test(t))) return true
+  }
+
+  const inputs = Array.isArray(body.inputs) ? body.inputs : []
+  for (const raw of inputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const desc = (raw as { inputDescription?: unknown }).inputDescription
+    if (typeof desc === 'string' && /(colour|1sat-ft|1sat tip)/i.test(desc)) return true
+  }
+
+  return false
 }
 
 /** True when the basket is the BSV-21 fungible storage basket. */

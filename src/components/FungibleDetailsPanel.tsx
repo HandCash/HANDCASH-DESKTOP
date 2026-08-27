@@ -1,6 +1,6 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { useMachine } from '@xstate/react'
-import { ListRow, StatusBanner } from '@aeon-ui/react'
+import { ListRow, Prompt, StatusBanner } from '@aeon-ui/react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -32,11 +32,14 @@ import {
   openSendFungible,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { combineColourTips } from '../wallet/sendColourCoins'
+import { toastError, toastSuccess } from '../wallet/toast'
 import {
   CollectablesIcon,
   CopyIcon,
   MintIcon,
   ReceiveIcon,
+  RefreshIcon,
   SendIcon,
   WarningIcon,
 } from './icons'
@@ -156,6 +159,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       activity: activityForFungible(initialToken, listRecentActivity(500)),
     },
   })
+  const [combineOpen, setCombineOpen] = useState(false)
+  const [combining, setCombining] = useState(false)
 
   useEffect(() => {
     const sync = () => {
@@ -202,16 +207,25 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   }
 
   const amount = formatFungibleAmount(token.amt, token.dec)
-  const sendBlocked = token.spendKind !== 'plain'
-  const issuerLabel = token.issuerHandle
-    ? `Issued by ${token.issuerHandle}`
-    : token.issuer
-      ? `Issued by ${shortIssuerLabel(token.issuer)}`
-      : 'Issuer unknown'
+  const isColour = Boolean(token.colourSupply)
+  const sendBlocked = !isColour || token.spendKind !== 'plain'
+  const canCombine = isColour && !sendBlocked && token.utxoCount >= 2
+  const issuerLabel = isColour
+    ? token.colourSupply === 'locked'
+      ? token.colourMaxSupply != null
+        ? `1Sat · supply locked at ${token.colourMaxSupply}`
+        : '1Sat · supply locked'
+      : '1Sat · no supply cap'
+    : token.issuerHandle
+      ? `Issued by ${token.issuerHandle}`
+      : token.issuer
+        ? `Issued by ${shortIssuerLabel(token.issuer)}`
+        : 'Issuer unknown'
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   const burnBlocked = sendBlocked || tokenIds.length > 1
-  const spendLabel =
-    token.spendKind === 'plain'
+  const spendLabel = !isColour
+    ? 'Legacy BSV-21 tips are read-only'
+    : token.spendKind === 'plain'
       ? 'Wallet controlled'
       : token.spendKind === 'cosigned'
         ? 'Cosigner required'
@@ -221,7 +235,39 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
     : tokenIds.length > 1
       ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
       : `Burn ${token.sym}`
-  const pageState = sendBlocked ? 'send-refused' : 'ready'
+  const pageState = combining
+    ? 'combining'
+    : sendBlocked
+      ? 'send-refused'
+      : 'ready'
+
+  const live = token
+  async function runCombine() {
+    if (!canCombine || combining) return
+    setCombining(true)
+    playWalletSound('soft')
+    try {
+      const result = await combineColourTips({
+        origin: live.tokenId,
+        sym: live.sym,
+        supply: live.colourSupply,
+        maxSupply: live.colourMaxSupply ?? null,
+      })
+      setCombineOpen(false)
+      toastSuccess(
+        'Tips combined',
+        `${result.tipsSpent} tips → 1 · balance unchanged`,
+      )
+      void listFungibles().catch(() => {})
+    } catch (err) {
+      toastError(
+        'Combine failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    } finally {
+      setCombining(false)
+    }
+  }
 
   return (
     <div
@@ -239,18 +285,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <div className="fungible-details-heading">
           <div className="fungible-details-title">
             <h2>{token.sym}</h2>
-            <span
-              className={`fungible-attest fungible-attest-${
-                token.issuerAttested ? 'ok' : 'none'
-              }`}
-              title={
-                token.issuerAttested
-                  ? 'Deploy inscription carries a Sigma signature matching the issuer address (BRC-77)'
-                  : 'No signed issuer attestation on the deploy inscription'
-              }
-            >
-              {token.issuerAttested ? 'Attested' : 'Unattested'}
-            </span>
+            {!isColour ? (
+              <span
+                className={`fungible-attest fungible-attest-${
+                  token.issuerAttested ? 'ok' : 'none'
+                }`}
+                title={
+                  token.issuerAttested
+                    ? 'Deploy inscription carries a Sigma signature matching the issuer address (BRC-77)'
+                    : 'No signed issuer attestation on the deploy inscription'
+                }
+              >
+                {token.issuerAttested ? 'Attested' : 'Unattested'}
+              </span>
+            ) : null}
           </div>
           <strong className="fungible-details-balance">{amount}</strong>
           <span className="fungible-details-issuer" title={token.issuer || undefined}>
@@ -263,7 +311,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <button
           type="button"
           className="btn btn-primary btn-icon"
-          disabled={sendBlocked}
+          disabled={sendBlocked || combining}
           title={sendBlocked ? spendLabel : `Send ${token.sym}`}
           onClick={() => {
             if (sendBlocked) return
@@ -274,6 +322,21 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           <SendIcon size={14} />
           Send token
         </button>
+        {canCombine ? (
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            disabled={combining}
+            title={`${token.utxoCount} tips → 1 · same balance · small network fee`}
+            onClick={() => {
+              playWalletSound('soft')
+              setCombineOpen(true)
+            }}
+          >
+            <RefreshIcon size={14} />
+            Combine tips
+          </button>
+        ) : null}
         <button
           type="button"
           className="btn btn-ghost btn-icon"
@@ -290,7 +353,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <button
           type="button"
           className="btn btn-ghost btn-icon asset-burn-trigger asset-burn-last"
-          disabled={burnBlocked}
+          disabled={burnBlocked || combining}
           title={burnTitle}
           onClick={() => {
             if (burnBlocked) return
@@ -302,6 +365,48 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           Burn token
         </button>
       </div>
+
+      <Prompt.Root
+        open={combineOpen}
+        status={combining ? 'pending' : combineOpen ? 'pending' : 'dismissed'}
+        onOpenChange={(open) => {
+          if (!open && !combining) setCombineOpen(false)
+        }}
+      >
+        <Prompt.Portal>
+          <Prompt.Backdrop className="permission-backdrop" />
+          <Prompt.Positioner className="permission-positioner">
+            <Prompt.Content className="panel modal permission-modal">
+              <Prompt.Title>Combine tips?</Prompt.Title>
+              <Prompt.Description>
+                {token.utxoCount} tips → 1 tip. Balance stays {amount} {token.sym}.
+                Uses a small network fee for dust and the transaction.
+              </Prompt.Description>
+              <Prompt.Actions className="actions">
+                <Prompt.Secondary
+                  type="button"
+                  className="btn btn-ghost"
+                  disabled={combining}
+                  onClick={() => {
+                    setCombineOpen(false)
+                    playWalletSound('soft')
+                  }}
+                >
+                  Cancel
+                </Prompt.Secondary>
+                <Prompt.Primary
+                  type="button"
+                  className="btn btn-primary"
+                  disabled={combining}
+                  onClick={() => void runCombine()}
+                >
+                  {combining ? 'Combining…' : 'Combine'}
+                </Prompt.Primary>
+              </Prompt.Actions>
+            </Prompt.Content>
+          </Prompt.Positioner>
+        </Prompt.Portal>
+      </Prompt.Root>
 
       {sendBlocked ? (
         <StatusBanner.Root tone="warning" status="send-refused" className="fungible-send-notice">
@@ -319,12 +424,16 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </MetricStrip.Chip>
         <MetricStrip.Chip>
           <MetricStrip.Value>{token.utxoCount}</MetricStrip.Value>
-          <MetricStrip.Label>{token.utxoCount === 1 ? 'Output' : 'Outputs'}</MetricStrip.Label>
+          <MetricStrip.Label>
+            {token.utxoCount === 1 ? 'Tip' : 'Tips'}
+          </MetricStrip.Label>
         </MetricStrip.Chip>
-        <MetricStrip.Chip>
-          <MetricStrip.Value>{tokenIds.length}</MetricStrip.Value>
-          <MetricStrip.Label>{tokenIds.length === 1 ? 'Deploy' : 'Deploys'}</MetricStrip.Label>
-        </MetricStrip.Chip>
+        {!isColour ? (
+          <MetricStrip.Chip>
+            <MetricStrip.Value>{tokenIds.length}</MetricStrip.Value>
+            <MetricStrip.Label>{tokenIds.length === 1 ? 'Deploy' : 'Deploys'}</MetricStrip.Label>
+          </MetricStrip.Chip>
+        ) : null}
       </MetricStrip.Root>
 
       <section className="fungible-details-section" data-aeon-part="metadata">
@@ -334,15 +443,22 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         </div>
         <dl className="fungible-details-meta">
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
-          <MetaRow label="Protocol" value="BSV-21" />
-          <MetaRow label="Basket" value="bsv21" />
+          <MetaRow
+            label="Protocol"
+            value={isColour ? '1Sat fungible (BRC-175)' : 'BSV-21'}
+          />
+          <MetaRow label="Basket" value={isColour ? '1sat-ft' : 'bsv21'} />
           <MetaRow label="Spend policy" value={spendLabel} />
           <MetaRow
             label="Output"
             value={token.outpoint}
             copyLabel="representative output"
           />
-          <MetaRow label="Token ID" value={token.tokenId} copyLabel="token ID" />
+          <MetaRow
+            label={isColour ? 'Origin' : 'Token ID'}
+            value={token.tokenId}
+            copyLabel={isColour ? 'origin outpoint' : 'token ID'}
+          />
           {tokenIds.length > 1
             ? tokenIds.map((id, index) => (
                 <MetaRow
@@ -365,11 +481,13 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           ) : (
             <MetaRow label="Issuer" value="Not supplied" muted />
           )}
-          <MetaRow
-            label="Attestation"
-            value={token.issuerAttested ? 'Sigma matched (BRC-77)' : 'None'}
-            muted={!token.issuerAttested}
-          />
+          {!isColour ? (
+            <MetaRow
+              label="Attestation"
+              value={token.issuerAttested ? 'Sigma matched (BRC-77)' : 'None'}
+              muted={!token.issuerAttested}
+            />
+          ) : null}
           {token.cosign?.pubkey ? (
             <MetaRow
               label="Cosigner key"

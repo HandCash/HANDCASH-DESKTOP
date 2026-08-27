@@ -102,6 +102,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const sendBlocked =
     !token ||
+    !token.colourSupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
   const canReview =
@@ -254,9 +255,11 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
             <div className="send-side">
               {sendBlocked ? (
                 <p className="error" role="status">
-                  {token.spendKind === 'cosigned'
-                    ? 'This token requires a cosigner to send.'
-                    : 'This balance mixes plain and cosigned tips — send them separately.'}
+                  {!token.colourSupply
+                    ? 'Legacy BSV-21 tips are read-only. 1Sat tokens split face-value tips under a shared origin.'
+                    : token.spendKind === 'cosigned'
+                      ? 'This token requires a cosigner to send.'
+                      : 'This balance mixes plain and cosigned tips — send them separately.'}
                 </p>
               ) : null}
 

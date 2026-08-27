@@ -58,7 +58,7 @@ import { ReceivePanel } from './ReceivePanel'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
-import { ChangePasswordPanel } from './ChangePasswordPanel'
+import { UnlockSettingsPanel } from './UnlockSettingsPanel'
 import { WalletBackupPanel } from './WalletBackupPanel'
 import { DeviceHandoffPanel } from './DeviceHandoffPanel'
 import { ImportPhrasePanel } from './ImportPhrasePanel'
@@ -426,7 +426,7 @@ export function WalletNav({
                 <BurnAssetPanel target={{ kind: 'fungible', tokenId: child.tokenId }} />
               )}
               {child.type === 'setting' && child.settingId === 'change-password' && (
-                <ChangePasswordPanel />
+                <UnlockSettingsPanel />
               )}
               {child.type === 'setting' &&
                 (child.settingId === 'backup' ||

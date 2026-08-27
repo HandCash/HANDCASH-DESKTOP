@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isBsv21SpendArgs,
+  isColourIssuanceArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemSpendArgs,
@@ -247,6 +248,28 @@ describe('telling an item mint from an item send', () => {
     }
     expect(isItemIssuanceArgs('createAction', send)).toBe(false)
     expect(isItemSpendArgs('createAction', send)).toBe(true)
+  })
+
+  it('recognizes 1sat-ft mint as issuance', () => {
+    const mint = {
+      description: 'Mint GOLD',
+      labels: ['1sat-ft', 'handcash-mint-1sat-ft'],
+      outputs: [
+        {
+          lockingScript: '00',
+          satoshis: 1,
+          basket: '1sat-ft',
+          tags: ['1sat-ft', 'ordinal'],
+        },
+        {
+          lockingScript: '00',
+          satoshis: 1,
+          basket: '1sat-ft',
+          tags: ['1sat-ft', 'ordinal'],
+        },
+      ],
+    }
+    expect(isColourIssuanceArgs('createAction', mint)).toBe(true)
   })
 
   it('recognizes BSV-21 basket transfers as token spends', () => {

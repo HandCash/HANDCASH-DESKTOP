@@ -2,7 +2,7 @@
  * Factory-reset local wallet: vault, prefs, IndexedDB UTXOs, in-memory session.
  * Requires password so an unlocked session cannot be wiped casually.
  */
-import { unlockVault } from './vault'
+import { unlockVault, unlockVaultWithDevice } from './vault'
 import { clearActiveWallet } from './session'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
@@ -99,15 +99,18 @@ export async function finishPendingWalletWipe(): Promise<void> {
 }
 
 /**
- * Destroy all local wallet data after password check, then reload into onboarding.
+ * Destroy all local wallet data after unlock verification, then reload into onboarding.
  */
-export async function wipeAllWalletData(password: string): Promise<void> {
-  if (password.length < 8) {
-    throw new Error('Password must be at least 8 characters')
+export async function wipeAllWalletData(password: string | null): Promise<void> {
+  // Prove the operator controls an unlock factor before destroying keys.
+  if (password) {
+    if (password.length < 8) {
+      throw new Error('Password must be at least 8 characters')
+    }
+    await unlockVault(password)
+  } else {
+    await unlockVaultWithDevice('Confirm wipe')
   }
-
-  // Prove the operator knows the unlock password before destroying keys.
-  await unlockVault(password)
 
   try {
     sessionStorage.setItem(PENDING_IDB_WIPE, '1')

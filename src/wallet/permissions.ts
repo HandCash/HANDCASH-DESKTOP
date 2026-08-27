@@ -7,6 +7,8 @@ import {
   DEFAULT_ITEM_ACCESS,
   isBsv21ReceiveArgs,
   isBsv21SpendArgs,
+  isColourIssuanceArgs,
+  isColourSpendArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemReceiveArgs,
@@ -604,6 +606,36 @@ export function summarizeAction(method: string, args: unknown): {
     }
   }
 
+  if (method === 'createAction' && isColourIssuanceArgs(method, args)) {
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Mint a 1Sat token'
+    const outputs = Array.isArray(body.outputs) ? body.outputs : []
+    details.push(`Tips: ${outputs.length}`)
+    details.push('Type: 1Sat')
+    details.push('Not covered by Pay or Auto-pay')
+    return {
+      title: 'Mint token',
+      summary: description,
+      details,
+    }
+  }
+
+  if (method === 'createAction' && isColourSpendArgs(method, args)) {
+    const description =
+      typeof body.description === 'string' && body.description.trim()
+        ? body.description.trim()
+        : 'Send a 1Sat token'
+    details.push('Type: 1Sat')
+    details.push('Not covered by Pay or Auto-pay')
+    return {
+      title: 'Send token',
+      summary: description,
+      details,
+    }
+  }
+
   if (method === 'createAction' && isBsv21SpendArgs(method, args)) {
     const description =
       typeof body.description === 'string' && body.description.trim()
@@ -660,6 +692,14 @@ export function summarizeAction(method: string, args: unknown): {
       amountSats: total > 0 ? total : undefined,
       amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
       details,
+    }
+  }
+
+  if (method === 'signAction' && isColourSpendArgs(method, args)) {
+    return {
+      title: 'Confirm token send',
+      summary: 'Finish signing a 1Sat token transfer',
+      details: ['Not covered by Pay or Auto-pay'],
     }
   }
 
@@ -722,6 +762,14 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Accept funds',
       summary: 'Add incoming coins to your HandCash wallet',
       details: typeof body.description === 'string' ? [body.description] : [],
+    }
+  }
+
+  if (method === 'relinquishOutput' && isColourSpendArgs(method, args)) {
+    return {
+      title: 'Remove token tip',
+      summary: 'Drop a 1Sat token tip from basket storage',
+      details: ['Does not broadcast a transaction'],
     }
   }
 
@@ -876,7 +924,11 @@ export function requestActionApproval(
   const key = normalizeOrigin(origin)
   const { title, summary, details, amountLabel, amountSats, itemOutpoint } =
     summarizeAction(method, args)
-  const itemSpend = isItemSpendArgs(method, args) || isBsv21SpendArgs(method, args)
+  const itemSpend =
+    isItemSpendArgs(method, args) ||
+    isBsv21SpendArgs(method, args) ||
+    isColourSpendArgs(method, args) ||
+    isColourIssuanceArgs(method, args)
   const itemReceive = isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)
   const identityMint = isBsv21IdentityMintArgs(method, args)
 

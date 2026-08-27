@@ -7083,6 +7083,17 @@ html[data-aeon-mode='light'] .skeleton {
   line-height: 1.15;
 }
 
+.collect-token-card-meta {
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--hc-muted);
+  font-size: 0.62rem;
+  line-height: 1.15;
+  opacity: 0.9;
+}
+
 /* Square token face — override Aeon Avatar’s always-round clip. */
 .fungible-avatar {
   width: 160px !important;
