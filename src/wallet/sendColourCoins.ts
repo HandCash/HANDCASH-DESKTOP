@@ -272,7 +272,7 @@ export async function sendColourCoins(args: {
           txid,
           itemName: sym,
           asset: {
-            kind: 'onesat-ft',
+            kind: '1sat-ft',
             origin,
             amount: String(amount),
             sym,

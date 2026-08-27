@@ -50,7 +50,7 @@ export type ItemTransferAsset =
       issuer?: string
     }
   | {
-      kind: 'onesat-ft'
+      kind: '1sat-ft'
       origin: string
       amount: string
       sym: string

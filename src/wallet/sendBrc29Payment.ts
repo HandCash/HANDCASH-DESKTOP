@@ -1041,7 +1041,7 @@ export async function ingestPaymentsFromTipHints(
                     beefPurpose: 'inboundItemHint',
                   }),
               )
-            : asset?.kind === 'onesat-ft'
+            : asset?.kind === '1sat-ft'
               ? await import('./ingestColourSettle').then(
                   ({ internalizePeerColourSettle }) =>
                     internalizePeerColourSettle({
