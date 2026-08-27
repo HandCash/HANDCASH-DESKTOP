@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.1] - 2026-08-27
+
+### Changed
+
+- **1Sat fungibles use basket `1sat-ft` only.** Removed the legacy `colour`
+  basket dual-read from list, permissions, and layer counts.
+
 ## [1.3.0] - 2026-08-27
 
 ### Added
