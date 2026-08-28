@@ -611,8 +611,8 @@ export async function sendColourCoins(args: {
         change > 0 ? change : args.skipPeerNotify ? amount : Math.max(0, selectedSum - amount)
       const keptOp =
         change > 0 ? `${txid}_1` : args.skipPeerNotify ? `${txid}_0` : undefined
-      void import('./fungibles')
-        .then(({ paintFungibleAfterSpend }) => {
+      void Promise.all([import('./fungibles'), import('./onesatFtLeftover')])
+        .then(([{ paintFungibleAfterSpend }, { rememberOnesatFtLeftover, forgetOnesatFtLeftover }]) => {
           paintFungibleAfterSpend({
             tokenId: origin,
             remainingAmt: kept,
@@ -622,6 +622,25 @@ export async function sendColourCoins(args: {
             colourMaxSupply: args.maxSupply ?? null,
             icon: args.icon,
           })
+          if (kept > 0 && keptOp) {
+            rememberOnesatFtLeftover({
+              origin,
+              amt: kept,
+              outpoint: keptOp,
+              ci: buildColourCustomInstructions({
+                origin,
+                amt: kept,
+                sym,
+                supply: args.supply,
+                maxSupply: args.maxSupply ?? null,
+              }),
+              sym,
+              supply: args.supply,
+              maxSupply: args.maxSupply ?? null,
+            })
+          } else {
+            forgetOnesatFtLeftover(origin)
+          }
         })
         .catch(() => {})
       return { txid, tipsSpent: selected.length, change }

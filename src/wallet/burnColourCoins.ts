@@ -14,7 +14,7 @@ import {
   selectColourTipsForAmount,
   tipFaceAmt,
 } from './colourCoins'
-import { listColourTipsForOrigin, listColourTokens } from './colourListing'
+import { listColourTipsForOrigin } from './colourListing'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { markItemsSent } from './sentItemGuard'
 import { stampBrc164Id } from './itemAccess'
@@ -349,17 +349,37 @@ export async function burnColourCoins(args: {
     markItemsSent(
       selected.map((tip) => ({ outpoint: wireOutpoint(tip.outpoint), txid })),
     )
-    void import('./fungibles')
-      .then(({ paintFungibleAfterSpend }) => {
+    void Promise.all([import('./fungibles'), import('./onesatFtLeftover')])
+      .then(([{ paintFungibleAfterSpend }, { rememberOnesatFtLeftover, forgetOnesatFtLeftover }]) => {
+        const keptOp = change > 0 ? `${txid}_0` : undefined
         paintFungibleAfterSpend({
           tokenId: origin,
           remainingAmt: change,
-          outpoint: change > 0 ? `${txid}_0` : undefined,
+          outpoint: keptOp,
           sym,
           colourSupply: args.supply,
           colourMaxSupply: args.maxSupply ?? null,
           icon: args.icon,
         })
+        if (change > 0 && keptOp) {
+          rememberOnesatFtLeftover({
+            origin,
+            amt: change,
+            outpoint: keptOp,
+            ci: buildColourCustomInstructions({
+              origin,
+              amt: change,
+              sym,
+              supply: args.supply,
+              maxSupply: args.maxSupply ?? null,
+            }),
+            sym,
+            supply: args.supply,
+            maxSupply: args.maxSupply ?? null,
+          })
+        } else {
+          forgetOnesatFtLeftover(origin)
+        }
       })
       .catch(() => {})
     return { txid, recoveredSatoshis: recoverSatoshis }

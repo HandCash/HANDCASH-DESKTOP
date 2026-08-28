@@ -20,6 +20,13 @@ import {
 } from './colourCoins'
 import { isItemSent } from './sentItemGuard'
 import { getTokenIconDataUrl } from './tokenIconCache'
+import {
+  healOnesatFtFromListed,
+  isOnesatFtGenesisSpent,
+  knownBurnedOnesatFtOrigins,
+  leftoverForOutpoint,
+  listOnesatFtLeftovers,
+} from './onesatFtLeftover'
 
 export type { ColourToken, ColourTip }
 
@@ -62,11 +69,27 @@ async function listBasketTips(
   }
 }
 
+function forgetBurnedFungibles(): void {
+  void import('./fungibles')
+    .then(({ forgetFungibleToken }) => {
+      for (const origin of knownBurnedOnesatFtOrigins()) {
+        forgetFungibleToken(origin)
+      }
+    })
+    .catch(() => {})
+}
+
 export async function listColourTips(
   wallet: ActiveWallet = getActiveWallet()!,
 ): Promise<ColourTip[]> {
   if (!wallet) return []
-  const rows = await listBasketTips(wallet, ONESAT_FT_BASKET)
+  const rows = [
+    ...(await listBasketTips(wallet, ONESAT_FT_BASKET)),
+    // Toolbox sometimes files our 1-sat change in default. Not basket `1sat`.
+    ...(await listBasketTips(wallet, 'default')),
+  ]
+  healOnesatFtFromListed(rows)
+  forgetBurnedFungibles()
 
   const seen = new Set<string>()
   const pending: Array<{
@@ -85,13 +108,19 @@ export async function listColourTips(
     const key = outpointUnderscore(outpoint).toLowerCase()
     if (seen.has(key)) continue
     seen.add(key)
+    if (isOnesatFtGenesisSpent(key)) continue
     if (isItemSent(key)) continue
     const satoshis = typeof o.satoshis === 'number' ? o.satoshis : 0
     if (satoshis !== 1) continue
     const tags = Array.isArray(o.tags) ? o.tags : []
     const scriptHex = lockingScriptHex(o.lockingScript)
-    const ci =
+    const listedCi =
       typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    const leftover = leftoverForOutpoint(key)
+    const ci =
+      looksLikeOnesatFtTip({ customInstructions: listedCi })
+        ? listedCi
+        : leftover?.ci ?? listedCi
     if (
       !looksLikeOnesatFtTip({
         tags,
@@ -102,6 +131,7 @@ export async function listColourTips(
       continue
     }
     const origin =
+      leftover?.origin ??
       originFromColourTags(tags) ??
       parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
         lockingScriptHex: scriptHex,
@@ -115,6 +145,19 @@ export async function listColourTips(
       tags: tags.map(String),
       ci,
       provenance: tryParseProvenanceFromCi(ci),
+    })
+  }
+
+  for (const leftover of listOnesatFtLeftovers()) {
+    if (seen.has(leftover.outpoint) || isItemSent(leftover.outpoint)) continue
+    seen.add(leftover.outpoint)
+    pending.push({
+      outpoint: leftover.outpoint,
+      origin: leftover.origin,
+      satoshis: 1,
+      tags: ['1sat-ft'],
+      ci: leftover.ci,
+      provenance: tryParseProvenanceFromCi(leftover.ci),
     })
   }
 

@@ -373,6 +373,18 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(rows[0]!.outpoint).toBe(change.outpoint)
   })
 
+  it('counts a leftover tip even when the spent mint is gone from the list', () => {
+    const change = tip(`${'cd'.repeat(32)}_1`, { amt: 69000 })
+    const rows = aggregateColourTokens(
+      [change],
+      new Map([
+        [ORIGIN, { origin: ORIGIN, supply: 'locked', maxSupply: 69420, sym: 'KING' }],
+      ]),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.balance).toBe(69000)
+  })
+
   it('still sums a same-tx mint batch', () => {
     const genesis = tip(ORIGIN, { amt: 500 })
     const sibling = tip(`${ORIGIN.split('_')[0]}_1`, { amt: 500 })

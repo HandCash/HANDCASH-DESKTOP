@@ -43,6 +43,12 @@ import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDat
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
+import {
+  getOnesatFtLeftover,
+  healOnesatFtFromListed,
+  isOnesatFtGenesisSpent,
+  KING_ORIGIN,
+} from './onesatFtLeftover'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -149,34 +155,46 @@ function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
 /** Live rows win. Keep cached colour tokens listOutputs dropped (WOC 429).
  * Drop a cache row whose tip was just sent/burned so the mint amt cannot linger. */
 
-function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]): FungibleToken[] {
+function isGenesisRow(t: Pick<FungibleToken, 'tokenId' | 'outpoint'>): boolean {
+  const tokenId = tokenKey(t)
+  const op = (t.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  return Boolean(op) && op === tokenId
+}
+
+export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]): FungibleToken[] {
   const byId = new Map<string, FungibleToken>()
   const liveIds = new Set<string>()
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
+    if (t.outpoint && isOnesatFtGenesisSpent(t.outpoint)) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
+    if (t.outpoint && isOnesatFtGenesisSpent(t.outpoint)) continue
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
-    const liveIsGenesis = t.outpoint && tokenKey({ tokenId: t.outpoint }) === k
+    const liveIsGenesis = isGenesisRow(t)
+    const priorIsLeftover = Boolean(priorRow && !isGenesisRow(priorRow))
     if (
       priorRow &&
       liveIsGenesis &&
-      priorRow.outpoint &&
-      priorRow.outpoint !== t.outpoint &&
-      Number(priorRow.amt) < Number(t.amt)
+      (priorIsLeftover || Number(priorRow.amt) < Number(t.amt))
     ) {
       // Stale mint row from listOutputs. Keep the painted leftover.
       continue
     }
     byId.set(k, t)
   }
-  // Cache-only leftovers that are 1-unit open "Collectable" rows (misfiled NFTs).
+  // Live listing is source of truth. Never keep a cache extra whose tip is
+  // the genesis (tokenId == outpoint) when it is spent or absent from live.
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
+    if (isGenesisRow(t)) {
+      byId.delete(k)
+      continue
+    }
     if (!cacheExtraLooksLikeFungible(t)) byId.delete(k)
   }
   const out = [...byId.values()]
@@ -229,6 +247,33 @@ export function paintFungibleAfterSpend(args: {
   if (durable.length > 0) {
     cached = durable
     hydrated = true
+  }
+  try {
+    healOnesatFtFromListed([])
+    const leftover = getOnesatFtLeftover(KING_ORIGIN)
+    if (leftover && leftover.amt > 0) {
+      cached = mergeLiveFungibles(
+        [
+          {
+            tokenId: leftover.origin,
+            sym: leftover.sym || 'KING',
+            amt: String(leftover.amt),
+            dec: 0,
+            utxoCount: 1,
+            outpoint: leftover.outpoint,
+            spendKind: 'plain',
+            colourSupply: leftover.supply ?? 'locked',
+            colourMaxSupply: leftover.maxSupply ?? 69420,
+            colourProvenanceOk: true,
+          },
+        ],
+        cached,
+      )
+      persistDurableList(cached)
+      hydrated = true
+    }
+  } catch {
+    /* leftover paint is best-effort */
   }
 }
 
