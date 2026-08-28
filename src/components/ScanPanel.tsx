@@ -22,12 +22,26 @@ type PendingScan = {
   identityKey: string | null
 }
 
+type Props = {
+  /**
+   * `side` — fills the dashboard BSV price slot (desktop).
+   * `nav` — classic nav-child panel (phone / narrow).
+   */
+  placement?: 'side' | 'nav'
+}
+
 /**
  * Dashboard scan — device code QR → Device backup;
  * else choose Add friend (identity keys) or Send.
  */
-export function ScanPanel() {
+export function ScanPanel({ placement = 'nav' }: Props) {
   const [pending, setPending] = useState<PendingScan | null>(null)
+  const side = placement === 'side'
+
+  const close = () => {
+    playWalletSound('soft')
+    clearNavChild()
+  }
 
   if (pending) {
     const short =
@@ -39,11 +53,24 @@ export function ScanPanel() {
 
     return (
       <div
-        className="nav-child-panel scan-panel scan-choice"
+        className={
+          side
+            ? 'panel what-is-bsv scan-side-panel scan-choice'
+            : 'nav-child-panel scan-panel scan-choice'
+        }
         data-aeon-scope="scan"
         data-aeon-state="choice"
       >
-        <p className="scan-choice-label">Scanned</p>
+        {side ? (
+          <header className="scan-side-header">
+            <h2 className="scan-side-title">Scanned</h2>
+            <button type="button" className="btn btn-ghost scan-side-close" onClick={close}>
+              Close
+            </button>
+          </header>
+        ) : (
+          <p className="scan-choice-label">Scanned</p>
+        )}
         <p className="mono scan-choice-value" title={pending.sendValue}>
           {short}
         </p>
@@ -80,29 +107,34 @@ export function ScanPanel() {
           >
             Scan again
           </button>
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => {
-              playWalletSound('soft')
-              clearNavChild()
-            }}
-          >
-            Cancel
-          </button>
+          {!side ? (
+            <button type="button" className="btn btn-ghost" onClick={close}>
+              Cancel
+            </button>
+          ) : null}
         </div>
       </div>
     )
   }
 
   return (
-    <div className="nav-child-panel scan-panel" data-aeon-scope="scan">
+    <div
+      className={side ? 'panel what-is-bsv scan-side-panel' : 'nav-child-panel scan-panel'}
+      data-aeon-scope="scan"
+      data-aeon-state="scanning"
+    >
+      {side ? (
+        <header className="scan-side-header">
+          <h2 className="scan-side-title">Scan</h2>
+          <button type="button" className="btn btn-ghost scan-side-close" onClick={close}>
+            Close
+          </button>
+        </header>
+      ) : null}
       <QrScanner
+        layout={side ? 'fill' : 'default'}
         hint="Point at a device, PeerPay, remittance, identity, or address QR"
-        onCancel={() => {
-          playWalletSound('soft')
-          clearNavChild()
-        }}
+        onCancel={close}
         onScan={(raw) => {
           const trimmed = raw.trim()
           if (!trimmed) {

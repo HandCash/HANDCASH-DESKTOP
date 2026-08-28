@@ -55,6 +55,7 @@ import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
 import { ReceivePanel } from './ReceivePanel'
+import { isPhoneShell } from '../wallet/runtimePlatform'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { StatechartsPanel } from './StatechartsPanel'
@@ -229,39 +230,42 @@ export function WalletNav({
   }, [nav.child])
 
   const child = nav.child
-  const aeonState = child ? `${nav.section}.${child.type}` : nav.section
+  // Desktop hosts Scan in the BSV price column — keep the activity feed visible.
+  const scanInSide = child?.type === 'scan' && !isPhoneShell()
+  const stageChild = scanInSide ? null : child
+  const aeonState = stageChild ? `${nav.section}.${stageChild.type}` : nav.section
 
   const crumbs = (() => {
     const root = {
       label: sectionLabel(nav.section),
       onClick: () => clearNavChild(),
     }
-    if (!child) return [{ label: root.label }]
-    if (child.type === 'app') {
-      const app = apps.find((a) => a.origin === child.origin)
-      return [root, { label: app?.name || appDisplayName(child.origin) }]
+    if (!stageChild) return [{ label: root.label }]
+    if (stageChild.type === 'app') {
+      const app = apps.find((a) => a.origin === stageChild.origin)
+      return [root, { label: app?.name || appDisplayName(stageChild.origin) }]
     }
-    if (child.type === 'permission') {
-      const app = apps.find((a) => a.origin === child.origin)
-      const scope = getPermissionScope(child.scopeId)
+    if (stageChild.type === 'permission') {
+      const app = apps.find((a) => a.origin === stageChild.origin)
+      const scope = getPermissionScope(stageChild.scopeId)
       return [
         root,
         {
-          label: app?.name || appDisplayName(child.origin),
+          label: app?.name || appDisplayName(stageChild.origin),
           onClick: () => {
-            const found = apps.find((a) => a.origin === child.origin)
+            const found = apps.find((a) => a.origin === stageChild.origin)
             if (found) openAppDetails(found)
-            else openNavChild('apps', { type: 'app', origin: child.origin })
+            else openNavChild('apps', { type: 'app', origin: stageChild.origin })
           },
         },
         { label: scope?.label ?? 'Permission' },
       ]
     }
-    if (child.type === 'send') return [root, { label: 'Send' }]
-    if (child.type === 'scan') return [root, { label: 'Scan' }]
-    if (child.type === 'receive') return [root, { label: 'Receive' }]
-    if (child.type === 'add-friend') return [root, { label: 'Add friend' }]
-    if (child.type === 'setting') {
+    if (stageChild.type === 'send') return [root, { label: 'Send' }]
+    if (stageChild.type === 'scan') return [root, { label: 'Scan' }]
+    if (stageChild.type === 'receive') return [root, { label: 'Receive' }]
+    if (stageChild.type === 'add-friend') return [root, { label: 'Add friend' }]
+    if (stageChild.type === 'setting') {
       const stack = getSettingBackStack()
       return [
         root,
@@ -269,65 +273,65 @@ export function WalletNav({
           label: settingLabel(id),
           onClick: () => popSettingTo(id),
         })),
-        { label: settingLabel(child.settingId) },
+        { label: settingLabel(stageChild.settingId) },
       ]
     }
-    if (child.type === 'friend') {
-      const friend = getFriendById(child.friendId)
+    if (stageChild.type === 'friend') {
+      const friend = getFriendById(stageChild.friendId)
       return [root, { label: friend?.label || 'Friend' }]
     }
-    if (child.type === 'messages') {
-      const friend = getFriendById(child.friendId)
+    if (stageChild.type === 'messages') {
+      const friend = getFriendById(stageChild.friendId)
       return [root, { label: friend?.label || 'Message' }]
     }
-    if (child.type === 'collectable') {
+    if (stageChild.type === 'collectable') {
       return [root, { label: collectableLabel }]
     }
-    if (child.type === 'fungible') {
+    if (stageChild.type === 'fungible') {
       return [root, { label: fungibleLabel }]
     }
-    if (child.type === 'send-collectable') {
+    if (stageChild.type === 'send-collectable') {
       return [
         root,
         {
           label: collectableLabel,
-          onClick: () => openCollectableDetails(child.outpoint),
+          onClick: () => openCollectableDetails(stageChild.outpoint),
         },
         { label: 'Send' },
       ]
     }
-    if (child.type === 'send-fungible') {
+    if (stageChild.type === 'send-fungible') {
       return [
         root,
         {
           label: fungibleLabel,
-          onClick: () => openFungibleDetails(child.tokenId),
+          onClick: () => openFungibleDetails(stageChild.tokenId),
         },
         { label: 'Send' },
       ]
     }
-    if (child.type === 'burn-collectable') {
+    if (stageChild.type === 'burn-collectable') {
       return [
         root,
         {
           label: collectableLabel,
-          onClick: () => openCollectableDetails(child.outpoint),
+          onClick: () => openCollectableDetails(stageChild.outpoint),
         },
         { label: 'Burn' },
       ]
     }
-    if (child.type === 'burn-fungible') {
+    if (stageChild.type === 'burn-fungible') {
       return [
         root,
         {
           label: fungibleLabel,
-          onClick: () => openFungibleDetails(child.tokenId),
+          onClick: () => openFungibleDetails(stageChild.tokenId),
         },
         { label: 'Burn' },
       ]
     }
-    if (child.type === 'payment') {
-      const entry = getActivityById(child.entryId)
+    if (stageChild.type === 'payment') {
+      const entry = getActivityById(stageChild.entryId)
       return [root, { label: entry ? activityNavLabel(entry) : 'Transaction' }]
     }
     return [root, { label: 'Transaction' }]
@@ -350,12 +354,12 @@ export function WalletNav({
     >
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          {child ? (
+          {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
               <NavBreadcrumb crumbs={crumbs} />
               <div className="nav-child-body">
-              {child.type === 'app' && (() => {
-                const app = apps.find((a) => a.origin === child.origin)
+              {stageChild.type === 'app' && (() => {
+                const app = apps.find((a) => a.origin === stageChild.origin)
                 if (!app) return <p className="connected-empty-line">App not found</p>
                 return (
                   <AppDetailsPanel
@@ -365,99 +369,99 @@ export function WalletNav({
                   />
                 )
               })()}
-              {child.type === 'permission' && (
-                <PermissionDetailsPanel origin={child.origin} scopeId={child.scopeId} />
+              {stageChild.type === 'permission' && (
+                <PermissionDetailsPanel origin={stageChild.origin} scopeId={stageChild.scopeId} />
               )}
-              {child.type === 'send' && (
+              {stageChild.type === 'send' && (
                 <SendPanel
                   chain={profile.chain}
                   balanceSats={balanceSats}
-                  initialRecipient={child.prefill}
+                  initialRecipient={stageChild.prefill}
                   onSent={onSent}
                   onFail={onFail}
                   onClose={() => clearNavChild()}
                 />
               )}
-              {child.type === 'scan' && <ScanPanel />}
-              {child.type === 'receive' && (
+              {stageChild.type === 'scan' && <ScanPanel placement="nav" />}
+              {stageChild.type === 'receive' && (
                 <ReceivePanel address={profile.address} identityKey={profile.identityKey} />
               )}
-              {child.type === 'payment' && (
-                <PaymentDetailsPanel entryId={child.entryId} chain={profile.chain} />
+              {stageChild.type === 'payment' && (
+                <PaymentDetailsPanel entryId={stageChild.entryId} chain={profile.chain} />
               )}
-              {child.type === 'friend' && (
-                <FriendDetailsPanel friendId={child.friendId} chain={profile.chain} />
+              {stageChild.type === 'friend' && (
+                <FriendDetailsPanel friendId={stageChild.friendId} chain={profile.chain} />
               )}
-              {child.type === 'messages' && (
+              {stageChild.type === 'messages' && (
                 <MessagesPanel
                   chain={profile.chain}
                   identityKey={profile.identityKey}
-                  peerId={child.friendId}
+                  peerId={stageChild.friendId}
                   onSent={onSent}
                 />
               )}
-              {child.type === 'add-friend' && <AddFriendPanel />}
-              {child.type === 'collectable' && (
-                <CollectableDetailsPanel outpoint={child.outpoint} />
+              {stageChild.type === 'add-friend' && <AddFriendPanel />}
+              {stageChild.type === 'collectable' && (
+                <CollectableDetailsPanel outpoint={stageChild.outpoint} />
               )}
-              {child.type === 'fungible' && (
-                <FungibleDetailsPanel tokenId={child.tokenId} />
+              {stageChild.type === 'fungible' && (
+                <FungibleDetailsPanel tokenId={stageChild.tokenId} />
               )}
-              {child.type === 'send-collectable' && (
+              {stageChild.type === 'send-collectable' && (
                 <SendCollectablePanel
-                  outpoint={child.outpoint}
+                  outpoint={stageChild.outpoint}
                   chain={profile.chain}
                   onSent={onSent}
                   onFail={onFail}
                 />
               )}
-              {child.type === 'send-fungible' && (
+              {stageChild.type === 'send-fungible' && (
                 <SendFungiblePanel
-                  tokenId={child.tokenId}
+                  tokenId={stageChild.tokenId}
                   chain={profile.chain}
                   onSent={onSent}
                   onFail={onFail}
                 />
               )}
-              {child.type === 'burn-collectable' && (
-                <BurnAssetPanel target={{ kind: 'collectable', outpoint: child.outpoint }} />
+              {stageChild.type === 'burn-collectable' && (
+                <BurnAssetPanel target={{ kind: 'collectable', outpoint: stageChild.outpoint }} />
               )}
-              {child.type === 'burn-fungible' && (
-                <BurnAssetPanel target={{ kind: 'fungible', tokenId: child.tokenId }} />
+              {stageChild.type === 'burn-fungible' && (
+                <BurnAssetPanel target={{ kind: 'fungible', tokenId: stageChild.tokenId }} />
               )}
-              {child.type === 'setting' && child.settingId === 'change-password' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'change-password' && (
                 <UnlockSettingsPanel />
               )}
-              {child.type === 'setting' &&
-                (child.settingId === 'backup' ||
-                  child.settingId === 'backup-phrase' ||
-                  child.settingId === 'split-backup') && (
+              {stageChild.type === 'setting' &&
+                (stageChild.settingId === 'backup' ||
+                  stageChild.settingId === 'backup-phrase' ||
+                  stageChild.settingId === 'split-backup') && (
                 <WalletBackupPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'device-handoff' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'device-handoff' && (
                 <DeviceHandoffPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'import-phrase' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'import-phrase' && (
                 <ImportPhrasePanel />
               )}
-              {child.type === 'setting' && child.settingId === 'history-backup' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'history-backup' && (
                 <HistoryBackupPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'logs' && <LogViewerPanel />}
-              {child.type === 'setting' && child.settingId === 'wipe-wallet' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'logs' && <LogViewerPanel />}
+              {stageChild.type === 'setting' && stageChild.settingId === 'wipe-wallet' && (
                 <WipeWalletPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'about-handcash' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'about-handcash' && (
                 <AboutHandCashPanel />
               )}
-              {child.type === 'setting' && child.settingId === 'statecharts' && (
+              {stageChild.type === 'setting' && stageChild.settingId === 'statecharts' && (
                 <StatechartsPanel />
               )}
               </div>
             </div>
           ) : null}
 
-          <div className="wallet-nav-panel" hidden={child != null && !mobileInlinePermission}>
+          <div className="wallet-nav-panel" hidden={stageChild != null && !mobileInlinePermission}>
             {(mountedLight.has('activity') || mobileInlinePermission) && (
               <div
                 className="wallet-nav-slot"

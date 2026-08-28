@@ -35,12 +35,14 @@ import {
   type PendingAction,
   type PendingPrompt,
 } from '../wallet/permissions'
-import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow, getNavState, subscribeNav } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
 import { appDisplayName } from '../wallet/appIdentity'
 import { setAutoPaySettings } from '../wallet/autoPay'
+import { warmQrCamera, releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
+import { ScanPanel } from './ScanPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
@@ -224,6 +226,20 @@ export function Dashboard({
     // First Identity tab visit used to block ~3s generating this QR on a phone.
     void identityQrDataUrl(profile.identityKey)
   }, [profile.identityKey])
+
+  const hostScanInSide = !isPhoneShell()
+  const [sideScanOpen, setSideScanOpen] = useState(
+    () => hostScanInSide && getNavState().child?.type === 'scan',
+  )
+  useEffect(() => {
+    if (!hostScanInSide) {
+      setSideScanOpen(false)
+      return
+    }
+    return subscribeNav((nav) => {
+      setSideScanOpen(nav.child?.type === 'scan')
+    })
+  }, [hostScanInSide])
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -685,8 +701,14 @@ export function Dashboard({
                 className="btn btn-ghost btn-icon"
                 aria-label="Scan QR code"
                 title="Scan PeerPay, identity, or address QR"
+                onPointerEnter={() => warmQrCamera()}
+                onFocus={() => warmQrCamera()}
+                onPointerLeave={() => {
+                  if (getNavState().child?.type !== 'scan') releaseWarmedQrCamera()
+                }}
                 onClick={() => {
                   playWalletSound('soft')
+                  warmQrCamera()
                   openScanFlow()
                 }}
               >
@@ -760,7 +782,7 @@ export function Dashboard({
           </section>
         ) : (
           <>
-            <WhatIsBsvPanel />
+            {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel />}
             <RecentActivityPanel chain={profile.chain} />
           </>
         )}
