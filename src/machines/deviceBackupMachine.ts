@@ -31,6 +31,8 @@ export type DeviceBackupContext = {
   /** This device's own code QR is revealed only on request. */
   showMyCode: boolean
   error: string | null
+  /** Where SCAN was opened from, so cancel returns to the import step. */
+  scanOrigin: 'list' | 'import'
 }
 
 export const deviceBackupMachine = setup({
@@ -39,7 +41,7 @@ export const deviceBackupMachine = setup({
     events: {} as DeviceBackupEvent,
   },
   actions: {
-    clearPeer: assign({ peerDeviceId: null, error: null }),
+    clearPeer: assign({ peerDeviceId: null, error: null, scanOrigin: 'list' as const }),
     clearError: assign({ error: null }),
     toggleMyCode: assign(({ context }) => ({ showMyCode: !context.showMyCode })),
     selectPeer: assign(({ event }) =>
@@ -49,23 +51,27 @@ export const deviceBackupMachine = setup({
     ),
     selectScanned: assign(({ event }) =>
       event.type === 'SCANNED' && event.peerDeviceId
-        ? { peerDeviceId: event.peerDeviceId, error: null }
+        ? { peerDeviceId: event.peerDeviceId, error: null, scanOrigin: 'list' as const }
         : {},
     ),
+    scanFromList: assign({ scanOrigin: 'list' as const, error: null }),
+    scanFromImport: assign({ scanOrigin: 'import' as const, error: null }),
     fail: assign(({ event }) => (event.type === 'FAIL' ? { error: event.error } : {})),
   },
   guards: {
     scannedPeer: ({ event }) => event.type === 'SCANNED' && Boolean(event.peerDeviceId),
+    fromImportScan: ({ context }) =>
+      context.scanOrigin === 'import' && Boolean(context.peerDeviceId),
   },
 }).createMachine({
   id: 'deviceBackup',
   initial: 'devices',
-  context: { peerDeviceId: null, showMyCode: false, error: null },
+  context: { peerDeviceId: null, showMyCode: false, error: null, scanOrigin: 'list' },
   states: {
     devices: {
       entry: 'clearPeer',
       on: {
-        SCAN: { target: 'scanning' },
+        SCAN: { target: 'scanning', actions: 'scanFromList' },
         TOGGLE_MY_CODE: { actions: 'toggleMyCode' },
         OPEN_DEVICE: { target: 'device', actions: 'selectPeer' },
         OPEN_RECOVERY: { target: 'recovery', actions: 'selectPeer' },
@@ -78,8 +84,14 @@ export const deviceBackupMachine = setup({
           { target: 'device', guard: 'scannedPeer', actions: 'selectScanned' },
           { target: 'devices' },
         ],
-        SCAN_CANCEL: { target: 'devices' },
-        FAIL: { target: 'devices', actions: 'fail' },
+        SCAN_CANCEL: [
+          { target: '#deviceBackup.device.importPrompt', guard: 'fromImportScan' },
+          { target: 'devices' },
+        ],
+        FAIL: [
+          { target: '#deviceBackup.device.importPrompt', guard: 'fromImportScan', actions: 'fail' },
+          { target: 'devices', actions: 'fail' },
+        ],
       },
     },
     /** One device: read its direction, or establish exactly one. */
@@ -110,7 +122,7 @@ export const deviceBackupMachine = setup({
         importPrompt: {
           on: {
             IMPORT: { target: 'importing' },
-            SCAN: { target: '#deviceBackup.scanning' },
+            SCAN: { target: '#deviceBackup.scanning', actions: 'scanFromImport' },
             BACK: { target: 'choosing', actions: 'clearError' },
           },
         },

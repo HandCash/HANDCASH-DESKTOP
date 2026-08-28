@@ -82,4 +82,23 @@ describe('deviceBackupMachine', () => {
     a.send({ type: 'UNSEAL_OK' })
     expect(a.getSnapshot().value).toEqual({ recovery: 'opened' })
   })
+
+  it('returns a cancelled import scan to the store-theirs step', () => {
+    const a = actor()
+    a.send({ type: 'OPEN_DEVICE', peerDeviceId: 'peer-1' })
+    a.send({ type: 'PROTECT_PEER' })
+    a.send({ type: 'SCAN' })
+    expect(a.getSnapshot().value).toBe('scanning')
+    expect(a.getSnapshot().context.scanOrigin).toBe('import')
+    a.send({ type: 'SCAN_CANCEL' })
+    expect(a.getSnapshot().value).toEqual({ device: 'importPrompt' })
+    expect(a.getSnapshot().context.peerDeviceId).toBe('peer-1')
+  })
+
+  it('returns a cancelled list scan to the device list', () => {
+    const a = actor()
+    a.send({ type: 'SCAN' })
+    a.send({ type: 'SCAN_CANCEL' })
+    expect(a.getSnapshot().value).toBe('devices')
+  })
 })

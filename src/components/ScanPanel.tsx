@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { clearNavChild, closeSideScan, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
 import { tryParseDeviceKeyBackupPackage } from '../wallet/deviceKeyBackup'
@@ -7,6 +7,7 @@ import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { claimBrc29SettlementUri } from '../wallet/sendBrc29Payment'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { createQrFrameAssembler, parseQrFrame } from '../wallet/qrFrames'
 import { identityKeyFromScan, QrScanner } from './QrScanner'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 
@@ -37,6 +38,8 @@ type Props = {
  */
 export function ScanPanel({ placement = 'nav' }: Props) {
   const [pending, setPending] = useState<PendingScan | null>(null)
+  const [frameHint, setFrameHint] = useState<string | null>(null)
+  const frameAssemblerRef = useRef(createQrFrameAssembler())
   const side = placement === 'side'
 
   const dismiss = () => {
@@ -44,10 +47,31 @@ export function ScanPanel({ placement = 'nav' }: Props) {
     else clearNavChild()
   }
 
+  const resetFrames = () => {
+    frameAssemblerRef.current.reset()
+    setFrameHint(null)
+  }
+
   const close = () => {
     playWalletSound('soft')
+    resetFrames()
     releaseWarmedQrCamera()
     dismiss()
+  }
+
+  const routePairOrBackup = (raw: string): boolean => {
+    const pair = tryParsePairPayload(raw)
+    const spare = tryParseDeviceKeyBackupPackage(raw)
+    if (!pair && !spare) return false
+    setPendingPairScan(raw)
+    playWalletSound('soft')
+    toastSuccess(
+      spare ? 'Sealed recovery QR' : 'Device code',
+      'Confirming in Device backup…',
+    )
+    dismiss()
+    openSetting('device-handoff')
+    return true
   }
 
   if (pending) {
@@ -110,6 +134,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
             className="btn btn-ghost"
             onClick={() => {
               playWalletSound('soft')
+              resetFrames()
               setPending(null)
             }}
           >
@@ -142,7 +167,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
       ) : null}
       <QrScanner
         layout={side ? 'fill' : 'default'}
-        hint="Point your camera at a QR code"
+        hint={frameHint ?? 'Point your camera at a QR code'}
         onCancel={close}
         onScan={(raw) => {
           const trimmed = raw.trim()
@@ -152,19 +177,20 @@ export function ScanPanel({ placement = 'nav' }: Props) {
             return
           }
 
-          const pair = tryParsePairPayload(trimmed)
-          const spare = tryParseDeviceKeyBackupPackage(trimmed)
-          if (pair || spare) {
-            setPendingPairScan(trimmed)
-            playWalletSound('soft')
-            toastSuccess(
-              spare ? 'Sealed recovery QR' : 'Device code',
-              'Confirming in Device backup…',
-            )
-            dismiss()
-            openSetting('device-handoff')
-            return
+          if (parseQrFrame(trimmed)) {
+            const result = frameAssemblerRef.current.add(trimmed)
+            if (!result?.complete) {
+              if (result) setFrameHint(`Got ${result.got} of ${result.count}`)
+              return false
+            }
+            resetFrames()
+            if (routePairOrBackup(result.payload)) return
+            playWalletSound('error')
+            toastError('Couldn’t read code', 'Those frames are not a device or backup QR.')
+            return false
           }
+
+          if (routePairOrBackup(trimmed)) return
 
           if (tryParseBrc29SettlementUri(trimmed)) {
             void (async () => {

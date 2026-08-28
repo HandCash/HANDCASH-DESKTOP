@@ -37,6 +37,7 @@ import {
   countFailedActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
+  healMisfiledOnesatFtReceives,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
   type ActivityEntry,
@@ -655,5 +656,79 @@ describe('burn activity handoff', () => {
       status: 'failed',
       failureReason: 'source transaction timed out',
     })
+  })
+})
+
+describe('healMisfiledOnesatFtReceives', () => {
+  const TX = '2a562450e7b7009e01f6924376f4081ccf43a46487a1fd06a3a975935c7dda19'
+  const ORIGIN = '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
+
+  beforeEach(() => {
+    store.clear()
+    clearAppActivity()
+  })
+
+  it('rewrites a receive-collectable KING row to receive-token', () => {
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: 'Received KING',
+      txid: TX,
+      item: {
+        name: 'KING',
+        origin: ORIGIN,
+        outpoint: `${TX}.0`,
+      },
+    })
+    expect(
+      healMisfiledOnesatFtReceives([
+        { outpoint: `${TX}.0`, origin: ORIGIN, amt: 69, name: 'KING' },
+      ]),
+    ).toBe(1)
+    const row = listRecentActivity(10).find((e) => e.txid === TX)
+    expect(row).toMatchObject({
+      method: 'receive-token',
+      note: 'Received 69 KING',
+      item: {
+        tokenId: ORIGIN,
+        amt: '69',
+      },
+    })
+  })
+
+  it('does not invent a row for a leftover-only tip', () => {
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: 'Received KING',
+      txid: TX,
+      item: {
+        name: 'KING',
+        origin: ORIGIN,
+        outpoint: `${TX}.0`,
+      },
+    })
+    healMisfiledOnesatFtReceives([
+      { outpoint: `${TX}.0`, origin: ORIGIN, amt: 69, name: 'KING' },
+    ])
+    const before = listRecentActivity(20).length
+    expect(
+      healMisfiledOnesatFtReceives([
+        {
+          outpoint: `${TX}_1`,
+          origin: ORIGIN,
+          amt: 68931,
+          name: 'KING',
+        },
+      ]),
+    ).toBe(0)
+    expect(listRecentActivity(20)).toHaveLength(before)
+    expect(listRecentActivity(20).some((e) => e.note === 'Received 68,931 KING')).toBe(
+      false,
+    )
   })
 })

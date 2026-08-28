@@ -5,7 +5,11 @@ import { releaseWarmedQrCamera, takeQrCameraStream } from '../wallet/qrCameraWar
 import { Skeleton } from './Skeleton'
 
 type Props = {
-  onScan: (value: string) => void
+  /**
+   * Return `false` to keep the camera open (animated QR frames).
+   * Void / true stops after this value, matching the previous one-shot scanner.
+   */
+  onScan: (value: string) => boolean | void
   onCancel: () => void
   hint?: string
   /** Fill parent (dashboard BSV slot) — no Cancel row; parent owns close. */
@@ -41,6 +45,7 @@ export function QrScanner({
   const zxingControlsRef = useRef<{ stop: () => void } | null>(null)
   const [snapshot, send] = useMachine(qrScannerMachine)
   const handled = useRef(false)
+  const lastValueRef = useRef('')
   const ready = snapshot.matches('ready')
   const paused = snapshot.matches('paused')
   const error = snapshot.context.error
@@ -80,14 +85,17 @@ export function QrScanner({
       if (video) video.srcObject = null
     }
 
-    const finish = (value: string) => {
+    const deliver = (value: string) => {
       if (handled.current || cancelled) return
       const trimmed = value.trim()
       if (!trimmed) return
+      if (trimmed === lastValueRef.current) return
+      lastValueRef.current = trimmed
+      const keepOpen = onScanRef.current(trimmed) === false
+      if (keepOpen) return
       handled.current = true
       send({ type: 'SCANNED' })
       stopTracks()
-      onScanRef.current(trimmed)
     }
 
     const scheduleNativeScan = () => {
@@ -112,8 +120,8 @@ export function QrScanner({
         const codes = await detector.detect(video)
         const value = codes[0]?.rawValue?.trim()
         if (value) {
-          finish(value)
-          return
+          deliver(value)
+          if (handled.current) return
         }
       } catch {
         // keep scanning
@@ -167,8 +175,8 @@ export function QrScanner({
       if (!video) return
       const controls = await reader.decodeFromStream(stream, video, (result, _err, ctrl) => {
         if (result) {
-          ctrl.stop()
-          finish(result.getText())
+          deliver(result.getText())
+          if (handled.current) ctrl.stop()
         }
       })
       zxingControlsRef.current = controls
@@ -270,4 +278,25 @@ export function identityKeyFromScan(raw: string): string {
   const text = raw.trim()
   const hex = text.match(/(02|03)[0-9a-fA-F]{64}|04[0-9a-fA-F]{128}/)?.[0]
   return hex ?? text
+}
+
+/** Inline payment/address scan used by Send To fields. Unmount releases the camera. */
+export function RecipientQrScan({
+  onValue,
+  onCancel,
+}: {
+  onValue: (value: string) => void
+  onCancel: () => void
+}) {
+  return (
+    <QrScanner
+      hint="Point at a payment QR"
+      onCancel={onCancel}
+      onScan={(raw) => {
+        const value = identityKeyFromScan(raw).trim()
+        if (!value) return
+        onValue(value)
+      }}
+    />
+  )
 }

@@ -11,7 +11,7 @@ export function DeviceHandoffPanel() {
   return (
     <div className="nav-section-body settings-scroll" data-aeon-scope="device-handoff">
       <p className="settings-hint">
-        An encrypted copy of a wallet’s keys, kept on one of your other devices. It
+        Link another device, then keep an encrypted copy of one wallet on the other. It
         travels one way only.
       </p>
 

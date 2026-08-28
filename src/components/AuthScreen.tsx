@@ -894,6 +894,22 @@ export function AuthScreen({
           </>
         ) : null}
 
+        {(error || snapshot.context.error) && (
+          <p className="error auth-error" role="alert">
+            {error || snapshot.context.error}
+          </p>
+        )}
+
+        <button
+          type="submit"
+          className="btn btn-primary auth-submit"
+          data-aeon-part="trigger"
+          data-aeon-state={stateAttr}
+          disabled={submitting}
+        >
+          {submitting ? 'Working…' : primaryLabel}
+        </button>
+
         {formMode === 'unlock' && readVaultUnlockFactors().device ? (
           <div className="auth-touchid">
             <button
@@ -923,22 +939,6 @@ export function AuthScreen({
             </button>
           </div>
         ) : null}
-
-        {(error || snapshot.context.error) && (
-          <p className="error auth-error" role="alert">
-            {error || snapshot.context.error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          className="btn btn-primary auth-submit"
-          data-aeon-part="trigger"
-          data-aeon-state={stateAttr}
-          disabled={submitting}
-        >
-          {submitting ? 'Working…' : primaryLabel}
-        </button>
 
         {mode === 'onboarding' && !recoveryOnly && formMode === 'create' ? (
           <p className="auth-alt">

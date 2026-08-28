@@ -33,6 +33,28 @@ import type { ItemTransferAsset } from './messageStore'
 
 type ColourAsset = Extract<ItemTransferAsset, { kind: '1sat-ft' }>
 
+/**
+ * Activity remittance for a 1sat-ft receive.
+ * tokenId is the mint origin (normalizeColourOrigin), never the receive outpoint.
+ */
+export function colourSettleActivityToken(
+  token: ColourAsset,
+  origin: string,
+  amount: string,
+): {
+  tokenId: string
+  amount: string
+  sym: string
+  dec: number
+} {
+  return {
+    tokenId: origin,
+    amount,
+    sym: token.sym?.trim() || 'Token',
+    dec: 0,
+  }
+}
+
 export type IngestColourSettleResult = {
   accepted: boolean
   outpoints: string[]
@@ -80,10 +102,18 @@ export async function internalizePeerColourSettle(opts: {
   if (!active) return { accepted: false, outpoints: [], reason: 'locked' }
 
   const sym = opts.token.sym?.trim() || 'Token'
+  const faceAmt = (() => {
+    const raw = opts.token.amount?.replace(/\D/g, '') ?? ''
+    const n = Number(raw)
+    return Number.isSafeInteger(n) && n > 0 ? n : 1
+  })()
+  const tokenPaint = colourSettleActivityToken(opts.token, origin, String(faceAmt))
   noteInboundReceivePending({
     txid: id,
     item: true,
     itemName: sym,
+    itemOrigin: origin,
+    token: tokenPaint,
   })
 
   let atomic = opts.tx
@@ -139,11 +169,6 @@ export async function internalizePeerColourSettle(opts: {
 
   const tipOp = `${id}.${tipVout}`
   const allOps = [tipOp]
-  const faceAmt = (() => {
-    const raw = opts.token.amount?.replace(/\D/g, '') ?? ''
-    const n = Number(raw)
-    return Number.isSafeInteger(n) && n > 0 ? n : 1
-  })()
   const claimed = beginOneSatImport(allOps)
   if (claimed.length === 0) {
     noteInboundReceiveComplete({
@@ -152,6 +177,7 @@ export async function internalizePeerColourSettle(opts: {
       itemName: sym,
       itemOrigin: origin,
       outpoint: tipOp,
+      token: tokenPaint,
     })
     return { accepted: true, outpoints: allOps, reason: 'already-imported' }
   }
@@ -194,6 +220,7 @@ export async function internalizePeerColourSettle(opts: {
       itemName: sym,
       itemOrigin: origin,
       outpoint: tipOp,
+      token: tokenPaint,
     })
     void listColourTokens(active).catch(() => {})
     console.info(`[1sat-ft-settle] accepted ${tipOp} into 1sat-ft`)
@@ -207,6 +234,7 @@ export async function internalizePeerColourSettle(opts: {
         itemName: sym,
         itemOrigin: origin,
         outpoint: tipOp,
+        token: tokenPaint,
       })
       void listColourTokens(active).catch(() => {})
       return { accepted: true, outpoints: allOps, reason: 'already-imported' }

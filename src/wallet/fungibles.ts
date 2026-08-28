@@ -83,6 +83,7 @@ function loadDurableList(): FungibleToken[] {
       .filter((t) => Boolean(t.colourSupply))
       .filter((t) => !leftoverCollectableSym(t.sym))
       .filter((t) => t.colourSupply === 'locked' || Number(t.amt) > 1)
+      .filter((t) => t.colourMaxSupply == null || !(Number(t.amt) > t.colourMaxSupply))
       .map((t) => ({
       ...t,
       dec: Number.isFinite(t.dec) ? t.dec : 0,
@@ -164,6 +165,7 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
     if (t.outpoint && isOnesatFtGenesisSpent(t.outpoint)) continue
+    if (t.colourMaxSupply != null && Number(t.amt) > t.colourMaxSupply) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
@@ -182,7 +184,39 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
       // Stale mint row from listOutputs. Keep the painted leftover.
       continue
     }
-    byId.set(k, t)
+    const priorOp = (priorRow?.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    const liveOp = (t.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    const priorAmt = Number(priorRow?.amt)
+    const liveAmt = Number(t.amt)
+    const cap = t.colourMaxSupply ?? priorRow?.colourMaxSupply
+    if (
+      priorRow &&
+      cap != null &&
+      Number.isFinite(priorAmt) &&
+      priorAmt > cap
+    ) {
+      // Inflated cache (e.g. KING 206724 / 275586). Live listing wins.
+    } else if (
+      priorRow &&
+      priorIsLeftover &&
+      !liveIsGenesis &&
+      Number.isFinite(priorAmt) &&
+      Number.isFinite(liveAmt) &&
+      liveAmt < priorAmt &&
+      priorOp &&
+      liveOp &&
+      priorOp === liveOp
+    ) {
+      // Same tip, smaller live — listOutputs drop. Keep leftover amt.
+      continue
+    }
+    // Live listing already overlays leftovers and aggregates by origin.
+    // amt comes from live. Never leftover+live across refreshes.
+    byId.set(k, {
+      ...t,
+      ...(priorRow && !t.icon && priorRow.icon ? { icon: priorRow.icon } : {}),
+      ...(priorRow && !t.iconUrl && priorRow.iconUrl ? { iconUrl: priorRow.iconUrl } : {}),
+    })
   }
   // Live listing is source of truth. Never keep a cache extra whose tip is
   // the genesis (tokenId == outpoint) when it is spent or absent from live.

@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
   getCollectable,
@@ -27,6 +28,9 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
+import { FriendsIcon, ScanQrIcon } from './icons'
+import { RecipientQrScan } from './QrScanner'
 
 type Props = {
   outpoint: string
@@ -44,6 +48,18 @@ function shortenAddress(value: string): string {
   return `${v.slice(0, 10)}…${v.slice(-8)}`
 }
 
+function resolvedRecipientName(
+  friendLabel: string | null,
+  to: string,
+  payeeIdentityKey: string | null,
+): string | null {
+  if (friendLabel) return friendLabel
+  if (payeeIdentityKey) return shortenAddress(to)
+  const trimmed = to.trim()
+  if (trimmed.length >= 26) return shortenAddress(trimmed)
+  return null
+}
+
 export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [item, setItem] = useState<Collectable | null>(null)
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
@@ -55,6 +71,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const [stage, setStage] = useState<Stage>('edit')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const [scanningTo, setScanningTo] = useState(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
 
@@ -74,6 +91,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   )
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
+  const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
   const canReview = to.trim().length > 0
 
   /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */
@@ -231,51 +249,86 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
             <div className="send-side">
               <div className="field friend-recipient-field send-to-field">
                 <label htmlFor="collectable-to">To</label>
-                <input
-                  id="collectable-to"
-                  value={recipientQuery}
-                  onChange={(e) => applyRecipientInput(e.target.value)}
-                  onFocus={() => setShowMatches(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => setShowMatches(false), 120)
-                  }}
-                  placeholder="Friend, $handle, address, or identity key"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
+                {scanningTo ? (
+                  <RecipientQrScan
+                    onCancel={() => {
+                      playWalletSound('soft')
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                    onValue={(value) => {
+                      applyRecipientInput(value)
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                  />
+                ) : (
+                  <div className="send-to-input">
+                    <input
+                      id="collectable-to"
+                      value={recipientQuery}
+                      onChange={(e) => applyRecipientInput(e.target.value)}
+                      onFocus={() => setShowMatches(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setShowMatches(false), 120)
+                      }}
+                      placeholder="Friend, $handle, address, or identity key"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="send-to-scan"
+                      aria-label="Scan address QR"
+                      title="Scan address QR"
+                      onClick={() => {
+                        playWalletSound('soft')
+                        setShowMatches(false)
+                        setScanningTo(true)
+                      }}
+                    >
+                      <ScanQrIcon size={18} />
+                    </button>
+                  </div>
+                )}
                 <p className="friend-recipient-hint send-recipient-hint">
                   Handles and identity keys resolve to a payment address on this network.
                 </p>
-                {/* Reserved so resolving a handle does not shift the buttons. */}
-                <div className="send-resolved-slot" aria-live="polite">
-                  {friendLabel ? (
-                    <p className="friend-recipient-hint">
-                      Sending to <strong>{friendLabel}</strong>
-                    </p>
-                  ) : null}
-                </div>
+                {resolvedName ? (
+                  <p className="send-resolved" aria-live="polite">
+                    Sending to <strong>{resolvedName}</strong>
+                  </p>
+                ) : null}
                 {error && stage === 'edit' ? (
                   <p className="error" role="status">
                     {error}
                   </p>
                 ) : null}
-                {showMatches && matches.length > 0 && (
+                {showMatches && matches.length > 0 ? (
                   <ul className="friend-suggest-list send-friend-suggest" role="listbox">
                     {matches.map((friend) => (
                       <li key={friend.id}>
-                        <button
+                        <ListRow.Root
+                          as="button"
                           type="button"
                           className="friend-suggest-item"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => selectFriend(friend)}
                         >
-                          <strong>{friend.label}</strong>
-                          <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
-                        </button>
+                          <ListRow.Leading className="friend-suggest-leading" aria-hidden>
+                            <FriendsIcon size={16} />
+                          </ListRow.Leading>
+                          <span className="friend-suggest-copy">
+                            <ListRow.Label>{friend.label}</ListRow.Label>
+                            <ListRow.Description className="mono">
+                              {friend.identityKey.slice(0, 16)}…
+                            </ListRow.Description>
+                          </span>
+                        </ListRow.Root>
                       </li>
                     ))}
                   </ul>
-                )}
+                ) : null}
               </div>
 
               <div className="actions send-actions">

@@ -219,6 +219,52 @@ function formatWhen(at: number): string {
   return `${years} years ago`
 }
 
+/** Subscript send/receive/mint/burn mark shared by the Activity list and detail hero. */
+export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
+  if (isEventActivity(entry)) return null
+  const spent = entry.kind === 'spent'
+  const minted = isMintTokenActivity(entry)
+  const burned = isBurnActivity(entry)
+  const failed = isFailedActivity(entry)
+  const badgeKind = failed
+    ? 'failed'
+    : burned
+    ? 'burn'
+    : minted
+    ? 'mint'
+    : spent
+    ? 'send'
+    : 'receive'
+  const badgeLabel = failed
+    ? 'Failed'
+    : burned
+    ? 'Burn'
+    : minted
+    ? 'Mint'
+    : spent
+    ? 'Send'
+    : 'Receive'
+  return (
+    <span
+      className={`history-action-badge is-${badgeKind}`}
+      aria-label={badgeLabel}
+      title={badgeLabel}
+    >
+      {failed ? (
+        <span aria-hidden>!</span>
+      ) : burned ? (
+        <FireIcon size={8} />
+      ) : minted ? (
+        <MintIcon size={8} />
+      ) : spent ? (
+        <SendIcon size={6.75} />
+      ) : (
+        <ReceiveIcon size={9} />
+      )}
+    </span>
+  )
+}
+
 function HistoryRow({
   entry,
   currency,
@@ -239,7 +285,6 @@ function HistoryRow({
   const event = isEventActivity(entry)
   const item = isItemActivity(entry)
   const token = isTokenActivity(entry)
-  const minted = isMintTokenActivity(entry)
   const burned = isBurnActivity(entry)
   const pending = isPendingActivity(entry)
   const failed = isFailedActivity(entry)
@@ -311,24 +356,6 @@ function HistoryRow({
   // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
   // never resolve into an authenticity check for the tip it just gave away.
   const showSending = Boolean(spent && !event && showPending)
-  const badgeKind = failed
-    ? 'failed'
-    : burned
-    ? 'burn'
-    : minted
-    ? 'mint'
-    : spent
-    ? 'send'
-    : 'receive'
-  const badgeLabel = failed
-    ? 'Failed'
-    : burned
-    ? 'Burn'
-    : minted
-    ? 'Mint'
-    : spent
-    ? 'Send'
-    : 'Receive'
 
   return (
     <li
@@ -398,25 +425,7 @@ function HistoryRow({
               <span className="collectable-verify-spinner" aria-hidden />
             </span>
           ) : null}
-          {!event ? (
-            <span
-              className={`history-action-badge is-${badgeKind}`}
-              aria-label={badgeLabel}
-              title={badgeLabel}
-            >
-              {failed ? (
-                <span aria-hidden>!</span>
-              ) : burned ? (
-                <FireIcon size={8} />
-              ) : minted ? (
-                <MintIcon size={8} />
-              ) : spent ? (
-                <SendIcon size={6.75} />
-              ) : (
-                <ReceiveIcon size={9} />
-              )}
-            </span>
-          ) : null}
+          <HistoryActionBadge entry={entry} />
         </div>
         <div className="history-body">
           <strong className="history-title">{title}</strong>

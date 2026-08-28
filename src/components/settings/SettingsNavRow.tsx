@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { ListRow } from '@aeon-ui/ui'
 import { playWalletSound } from '../../wallet/soundService'
 import { SettingsRowIcon, type SettingIconTone } from './settingIcons'
 
@@ -13,7 +14,7 @@ type Props = {
   trailing?: ReactNode
 }
 
-/** Navigable Settings list row with optional live status subtitle. */
+/** Navigable Settings row — ListRow button with optional live status. */
 export function SettingsNavRow({
   label,
   description,
@@ -26,32 +27,28 @@ export function SettingsNavRow({
 }: Props) {
   const desc = status || description
   return (
-    <li className="settings-row">
-      <button
-        type="button"
-        className="settings-row-main"
+    <li>
+      <ListRow.Root
         onClick={() => {
           playWalletSound('soft')
           onClick()
         }}
       >
-        {icon ? <SettingsRowIcon tone={iconTone}>{icon}</SettingsRowIcon> : null}
-        <span className="settings-row-body">
-          <strong className="settings-row-label">
-            {label}
-            {trailing}
-          </strong>
-          {desc ? (
-            <span
-              className="settings-row-desc"
-              data-aeon-part="row-status"
-              data-aeon-state={status ? statusTone : 'idle'}
-            >
-              {desc}
-            </span>
-          ) : null}
-        </span>
-      </button>
+        {icon ? (
+          <ListRow.Leading aria-hidden>
+            <SettingsRowIcon tone={iconTone}>{icon}</SettingsRowIcon>
+          </ListRow.Leading>
+        ) : null}
+        <ListRow.Label>
+          {label}
+          {trailing}
+        </ListRow.Label>
+        {desc ? (
+          <ListRow.Description data-aeon-state={status ? statusTone : 'idle'}>
+            {desc}
+          </ListRow.Description>
+        ) : null}
+      </ListRow.Root>
     </li>
   )
 }

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import QRCode from 'qrcode'
 import { useMachine } from '@xstate/react'
 import { ListRow, StatusBanner } from '@aeon-ui/react'
@@ -31,6 +31,7 @@ import {
   type DeviceBackupRoleStatus,
   type OpenedDeviceKeyBackup,
 } from '../wallet/deviceKeyBackup'
+import { createQrFrameAssembler, parseQrFrame } from '../wallet/qrFrames'
 import { deviceBackupMachine } from '../machines/deviceBackupMachine'
 import {
   backedUpToTitle,
@@ -42,6 +43,7 @@ import { copyText } from '../wallet/clipboard'
 import { UNLOCK_PASSWORD_MIN_LENGTH } from '../wallet/passwordPolicy'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { AnimatedQr } from './AnimatedQr'
 import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
 import { QrScanner } from './QrScanner'
@@ -96,8 +98,8 @@ function roleTone(role: DeviceBackupRoleStatus): 'ok' | 'warn' | 'idle' {
 }
 
 /**
- * Device backup — add a known device, then give exactly one of the two wallets
- * a sealed recovery copy. Projection of `deviceBackupMachine`.
+ * Link devices, then give exactly one of the two wallets a sealed recovery copy.
+ * Projection of `deviceBackupMachine`.
  */
 export function PairDevicePanel() {
   const [snapshot, send] = useMachine(deviceBackupMachine)
@@ -105,13 +107,15 @@ export function PairDevicePanel() {
   const [pairText, setPairText] = useState('')
   const [paste, setPaste] = useState('')
   const [password, setPassword] = useState('')
-  const [spareQrUrl, setSpareQrUrl] = useState<string | null>(null)
   const [spareText, setSpareText] = useState('')
   const [opened, setOpened] = useState<OpenedDeviceKeyBackup | null>(null)
+  const [linkedNotice, setLinkedNotice] = useState(false)
+  const [showPaste, setShowPaste] = useState(false)
   const [peers, setPeers] = useState<DeviceWallet[]>(() =>
     listDeviceWallets().filter((w) => !w.isLocal),
   )
   const [, setBackupTick] = useState(0)
+  const frameAssemblerRef = useRef(createQrFrameAssembler())
 
   useEffect(() => subscribeDeviceWallets((all) => setPeers(all.filter((w) => !w.isLocal))), [])
   useEffect(() => subscribeDeviceKeyBackups(() => setBackupTick((n) => n + 1)), [])
@@ -172,6 +176,7 @@ export function PairDevicePanel() {
         const pkg = importSealedDeviceKeyBackup(raw)
         upsertPeerFromSealedBackup(pkg)
         setPaste('')
+        setLinkedNotice(false)
         send({ type: 'SCANNED', peerDeviceId: pkg.fromDeviceId })
         toastSuccess('Copy stored', `This wallet can now restore ${pkg.fromLabel}.`)
         playWalletSound('success')
@@ -200,8 +205,9 @@ export function PairDevicePanel() {
           online: false,
         })
         setPaste('')
+        setLinkedNotice(true)
         send({ type: 'SCANNED', peerDeviceId: added.deviceId })
-        toastSuccess('Device added', 'Now pick which wallet gets backed up.')
+        toastSuccess('Linked', added.label)
         playWalletSound('success')
         return
       }
@@ -219,7 +225,8 @@ export function PairDevicePanel() {
       })
       void pollDeviceMeshOnce()
       setPaste('')
-      send({ type: 'SCANNED' })
+      setLinkedNotice(true)
+      send({ type: 'SCANNED', peerDeviceId: enriched.deviceId })
       toastSuccess('Same wallet', 'Both devices hold these keys already.')
       playWalletSound('success')
     } catch (err) {
@@ -227,6 +234,18 @@ export function PairDevicePanel() {
       send({ type: 'FAIL', error: err instanceof Error ? err.message : String(err) })
       toastError('Could not add', err instanceof Error ? err.message : String(err))
     }
+  }
+
+  const ingestScan = (raw: string): boolean => {
+    if (parseQrFrame(raw)) {
+      const result = frameAssemblerRef.current.add(raw)
+      if (!result?.complete) return false
+      frameAssemblerRef.current.reset()
+      void addFromRaw(result.payload)
+      return true
+    }
+    void addFromRaw(raw)
+    return true
   }
 
   useEffect(() => {
@@ -250,16 +269,7 @@ export function PairDevicePanel() {
         peerDeviceId: peer.deviceId,
         label: listDeviceWallets().find((w) => w.isLocal)?.label,
       })
-      const text = deviceKeyBackupToQrText(pkg)
-      setSpareText(text)
-      setSpareQrUrl(
-        await QRCode.toDataURL(text, {
-          width: 220,
-          margin: 2,
-          color: { dark: '#000000', light: '#FFFFFF' },
-          errorCorrectionLevel: 'M',
-        }),
-      )
+      setSpareText(deviceKeyBackupToQrText(pkg))
       setPassword('')
       send({ type: 'SEAL_OK' })
       playWalletSound('success')
@@ -276,6 +286,7 @@ export function PairDevicePanel() {
       const pkg = importSealedDeviceKeyBackup(paste)
       upsertPeerFromSealedBackup(pkg)
       setPaste('')
+      setShowPaste(false)
       send({ type: 'IMPORT_OK' })
       toastSuccess('Copy stored', `This wallet can now restore ${pkg.fromLabel}.`)
       playWalletSound('success')
@@ -303,9 +314,11 @@ export function PairDevicePanel() {
   const leave = () => {
     setPassword('')
     setPaste('')
-    setSpareQrUrl(null)
     setSpareText('')
     setOpened(null)
+    setLinkedNotice(false)
+    setShowPaste(false)
+    frameAssemblerRef.current.reset()
     send({ type: 'BACK' })
   }
 
@@ -316,9 +329,10 @@ export function PairDevicePanel() {
           hint="Point at the other device’s code"
           onCancel={() => {
             playWalletSound('soft')
+            frameAssemblerRef.current.reset()
             send({ type: 'SCAN_CANCEL' })
           }}
-          onScan={(raw) => void addFromRaw(raw)}
+          onScan={(raw) => ingestScan(raw)}
         />
       </div>
     )
@@ -416,11 +430,25 @@ export function PairDevicePanel() {
     return (
       <div className="device-backup" data-aeon-scope="device-backup" data-aeon-state="device">
         <header className="device-backup-head">
-          <h3>{peer.label}</h3>
+          <h3>Backup</h3>
+          <p>{peer.label}</p>
           <p data-aeon-part="direction" data-aeon-state={roleTone(role)}>
             {directionLabel(peer, role, same)}
           </p>
         </header>
+
+        {linkedNotice && choosing ? (
+          <StatusBanner.Root tone="success" status="linked">
+            <StatusBanner.Copy>
+              <StatusBanner.Title>Linked</StatusBanner.Title>
+              <StatusBanner.Body>
+                {same
+                  ? 'Same wallet on both devices — no copy needed.'
+                  : 'Pick which wallet gets backed up.'}
+              </StatusBanner.Body>
+            </StatusBanner.Copy>
+          </StatusBanner.Root>
+        ) : null}
 
         {role.direction === 'reciprocal' ? (
           <StatusBanner.Root tone="danger" status="reciprocal">
@@ -457,7 +485,10 @@ export function PairDevicePanel() {
             <li>
               <ListRow.Root
                 className="device-backup-row"
-                onClick={() => send({ type: 'PROTECT_PEER' })}
+                onClick={() => {
+                  setShowPaste(false)
+                  send({ type: 'PROTECT_PEER' })
+                }}
               >
                 <ListRow.Label>Store {peer.label}’s backup on this device</ListRow.Label>
                 <ListRow.Description>
@@ -499,19 +530,10 @@ export function PairDevicePanel() {
           </>
         ) : null}
 
-        {sealed && spareQrUrl ? (
+        {sealed && spareText ? (
           <div className="device-backup-qr">
             <p>Scan on {peer.label}</p>
-            <DeferredImage
-              src={spareQrUrl}
-              alt="Sealed recovery code"
-              width={180}
-              height={180}
-              skeletonWidth={180}
-              skeletonHeight={180}
-              skeletonRadius={4}
-              skeletonClassName="skeleton-qr"
-            />
+            <AnimatedQr value={spareText} alt="Sealed recovery code" size={180} />
             <div className="actions">
               <button
                 type="button"
@@ -531,8 +553,8 @@ export function PairDevicePanel() {
         {importing ? (
           <>
             <p className="settings-hint">
-              On {peer.label}, choose “Back up this wallet to …”, then scan the code it
-              shows.
+              On {peer.label}, choose “Back up this wallet to …”, then scan the animated
+              code it shows.
             </p>
             <div className="actions">
               <button
@@ -550,27 +572,39 @@ export function PairDevicePanel() {
                 Back
               </button>
             </div>
-            <div className="field" data-aeon-part="field">
-              <label htmlFor="spare-paste">Or paste it</label>
-              <textarea
-                id="spare-paste"
-                rows={3}
-                value={paste}
-                onChange={(e) => setPaste(e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-              />
-            </div>
-            <div className="actions">
+            {showPaste ? (
+              <>
+                <div className="field" data-aeon-part="field">
+                  <label htmlFor="spare-paste">Paste the recovery code</label>
+                  <textarea
+                    id="spare-paste"
+                    rows={3}
+                    value={paste}
+                    onChange={(e) => setPaste(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                  />
+                </div>
+                <div className="actions">
+                  <button
+                    type="button"
+                    className="btn btn-ghost"
+                    disabled={busy || !paste.trim()}
+                    onClick={() => void importForPeer()}
+                  >
+                    {busy ? 'Storing…' : 'Store copy'}
+                  </button>
+                </div>
+              </>
+            ) : (
               <button
                 type="button"
-                className="btn btn-ghost"
-                disabled={busy || !paste.trim()}
-                onClick={() => void importForPeer()}
+                className="btn btn-ghost device-backup-paste-toggle"
+                onClick={() => setShowPaste(true)}
               >
-                {busy ? 'Storing…' : 'Store copy'}
+                Paste instead
               </button>
-            </div>
+            )}
           </>
         ) : null}
 
@@ -616,6 +650,11 @@ export function PairDevicePanel() {
 
   return (
     <div className="device-backup" data-aeon-scope="device-backup" data-aeon-state="devices">
+      <header className="device-backup-head">
+        <h3>Link devices</h3>
+        <p>Scan their code or show yours, then pick a backup direction.</p>
+      </header>
+
       {error ? (
         <StatusBanner.Root tone="danger" status="add-failed">
           <StatusBanner.Copy>
@@ -624,11 +663,64 @@ export function PairDevicePanel() {
         </StatusBanner.Root>
       ) : null}
 
+      <div className="actions device-backup-link">
+        <button
+          type="button"
+          className="btn btn-primary"
+          onClick={() => {
+            playWalletSound('soft')
+            send({ type: 'SCAN' })
+          }}
+        >
+          Scan to link
+        </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          onClick={() => {
+            playWalletSound('soft')
+            send({ type: 'TOGGLE_MY_CODE' })
+          }}
+        >
+          {showMyCode ? 'Hide my code' : 'Show my code'}
+        </button>
+      </div>
+
+      {showMyCode ? (
+        <div className="device-backup-qr">
+          <p>Scan this on the other device</p>
+          {qrUrl ? (
+            <DeferredImage
+              src={qrUrl}
+              alt="This device’s code"
+              width={180}
+              height={180}
+              skeletonWidth={180}
+              skeletonHeight={180}
+              skeletonRadius={4}
+              skeletonClassName="skeleton-qr"
+            />
+          ) : (
+            <SkeletonQr size={180} />
+          )}
+          <div className="actions">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={!pairText}
+              onClick={() => void copyText(pairText, { label: 'device code' })}
+            >
+              Copy code
+            </button>
+          </div>
+        </div>
+      ) : null}
+
       {peers.length === 0 ? (
         <EmptyState
           icon={<ScanQrIcon size={22} />}
-          title="No device backups yet"
-          body="Add another device, then pick which wallet gets backed up."
+          title="No linked devices yet"
+          body="Scan the other device’s code, or show yours for them to scan."
         />
       ) : (
         <div className="device-backup-sections">
@@ -679,61 +771,6 @@ export function PairDevicePanel() {
           ) : null}
         </div>
       )}
-
-      {/* Actions sit under the state they change, and adding a device is the
-          only primary here. */}
-      <div className="actions device-backup-add">
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => {
-            playWalletSound('soft')
-            send({ type: 'SCAN' })
-          }}
-        >
-          Add a device
-        </button>
-        <button
-          type="button"
-          className="btn btn-ghost"
-          onClick={() => {
-            playWalletSound('soft')
-            send({ type: 'TOGGLE_MY_CODE' })
-          }}
-        >
-          {showMyCode ? 'Hide this device’s code' : 'Show this device’s code'}
-        </button>
-      </div>
-
-      {showMyCode ? (
-        <div className="device-backup-qr">
-          <p>Scan this on the other device</p>
-          {qrUrl ? (
-            <DeferredImage
-              src={qrUrl}
-              alt="This device’s code"
-              width={180}
-              height={180}
-              skeletonWidth={180}
-              skeletonHeight={180}
-              skeletonRadius={4}
-              skeletonClassName="skeleton-qr"
-            />
-          ) : (
-            <SkeletonQr size={180} />
-          )}
-          <div className="actions">
-            <button
-              type="button"
-              className="btn btn-ghost"
-              disabled={!pairText}
-              onClick={() => void copyText(pairText, { label: 'device code' })}
-            >
-              Copy code
-            </button>
-          </div>
-        </div>
-      ) : null}
     </div>
   )
 }

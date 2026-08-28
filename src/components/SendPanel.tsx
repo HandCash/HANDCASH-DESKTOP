@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
+import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import { sendMachine } from '../machines/sendMachine'
 import {
@@ -14,6 +15,7 @@ import {
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
+  toggleDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
@@ -41,6 +43,9 @@ import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
+import { FriendsIcon, ScanQrIcon } from './icons'
+import { RecipientQrScan } from './QrScanner'
 
 type Props = {
   chain: Chain
@@ -56,6 +61,44 @@ function shortenAddress(value: string): string {
   const v = value.trim()
   if (v.length <= 20) return v
   return `${v.slice(0, 10)}…${v.slice(-8)}`
+}
+
+function trimAmountInput(raw: number): string {
+  const formatted = raw.toFixed(8)
+  if (!formatted.includes('.')) return formatted
+  let end = formatted.length
+  while (end > 0 && formatted[end - 1] === '0') end -= 1
+  if (end > 0 && formatted[end - 1] === '.') end -= 1
+  return formatted.slice(0, end)
+}
+
+/** Keep the satoshi value when the send form swaps USD <-> BSV. */
+function amountInputFromSats(
+  sats: number,
+  currency: DisplayCurrency,
+  usdPerBsv: number | null,
+): string {
+  if (!(sats > 0)) return ''
+  const raw =
+    currency === 'usd'
+      ? usdPerBsv != null && usdPerBsv > 0
+        ? satsToUsd(sats, usdPerBsv)
+        : null
+      : sats / 1e8
+  if (raw == null || !Number.isFinite(raw) || raw <= 0) return ''
+  return trimAmountInput(raw)
+}
+
+function resolvedRecipientName(
+  friendLabel: string | null,
+  to: string,
+  payeeIdentityKey: string | null,
+): string | null {
+  if (friendLabel) return friendLabel
+  if (payeeIdentityKey) return shortenAddress(to)
+  const trimmed = to.trim()
+  if (trimmed.length >= 26) return shortenAddress(trimmed)
+  return null
 }
 
 export function SendPanel({
@@ -74,6 +117,7 @@ export function SendPanel({
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
+  const [scanningTo, setScanningTo] = useState(false)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
 
@@ -160,6 +204,22 @@ export function SendPanel({
 
   const recipientLabel =
     sendSnap.context.friendLabel || shortenAddress(sendSnap.context.to)
+  const resolvedName = resolvedRecipientName(
+    sendSnap.context.friendLabel,
+    sendSnap.context.to,
+    sendSnap.context.payeeIdentityKey,
+  )
+
+  const toggleSendCurrency = () => {
+    const next: DisplayCurrency = currency === 'usd' ? 'bsv' : 'usd'
+    const sats = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+    playWalletSound('soft')
+    if (sats > 0) {
+      const converted = amountInputFromSats(sats, next, usdPerBsv)
+      if (converted) send({ type: 'EDIT', amount: converted })
+    }
+    toggleDisplayCurrency()
+  }
 
   const selectFriend = (friend: Friend) => {
     try {
@@ -350,9 +410,19 @@ export function SendPanel({
                   aria-label={currency === 'usd' ? 'Amount in USD' : 'Amount in BSV'}
                 />
               </div>
-              <p className="send-amount-unit" aria-hidden>
+              <button
+                type="button"
+                className="send-amount-unit"
+                onClick={toggleSendCurrency}
+                aria-label={
+                  currency === 'usd'
+                    ? 'Amount in USD. Click to enter BSV.'
+                    : 'Amount in BSV. Click to enter USD.'
+                }
+                title="Click to swap currency"
+              >
                 {currency === 'usd' ? 'USD' : 'BSV'}
-              </p>
+              </button>
               {/*
                 One reserved line for whichever note applies. Mounting these as
                 they became true moved the amount under the caret while it was
@@ -377,46 +447,81 @@ export function SendPanel({
             <div className="send-side">
               <div className="field friend-recipient-field send-to-field">
                 <label htmlFor="to">To</label>
-                <input
-                  id="to"
-                  value={recipientQuery}
-                  onChange={(e) => applyRecipientInput(e.target.value)}
-                  onFocus={() => setShowFriendMatches(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => setShowFriendMatches(false), 120)
-                  }}
-                  placeholder="Friend, $handle, peerpay:, address, or identity key"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
+                {scanningTo ? (
+                  <RecipientQrScan
+                    onCancel={() => {
+                      playWalletSound('soft')
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                    onValue={(value) => {
+                      applyRecipientInput(value)
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                  />
+                ) : (
+                  <div className="send-to-input">
+                    <input
+                      id="to"
+                      value={recipientQuery}
+                      onChange={(e) => applyRecipientInput(e.target.value)}
+                      onFocus={() => setShowFriendMatches(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setShowFriendMatches(false), 120)
+                      }}
+                      placeholder="Friend, $handle, peerpay:, address, or identity key"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="send-to-scan"
+                      aria-label="Scan address QR"
+                      title="Scan address QR"
+                      onClick={() => {
+                        playWalletSound('soft')
+                        setShowFriendMatches(false)
+                        setScanningTo(true)
+                      }}
+                    >
+                      <ScanQrIcon size={18} />
+                    </button>
+                  </div>
+                )}
                 <p className="friend-recipient-hint send-recipient-hint">
                   PeerPay links, $handles, and identity keys resolve to a payment address on this network.
                 </p>
-                {/* Reserved so resolving a handle does not shift the buttons. */}
-                <div className="send-resolved-slot" aria-live="polite">
-                  {sendSnap.context.friendLabel ? (
-                    <p className="friend-recipient-hint">
-                      Sending to <strong>{sendSnap.context.friendLabel}</strong>
-                    </p>
-                  ) : null}
-                </div>
-                {showFriendMatches && friendMatches.length > 0 && (
+                {resolvedName ? (
+                  <p className="send-resolved" aria-live="polite">
+                    Sending to <strong>{resolvedName}</strong>
+                  </p>
+                ) : null}
+                {showFriendMatches && friendMatches.length > 0 ? (
                   <ul className="friend-suggest-list send-friend-suggest" role="listbox">
                     {friendMatches.map((friend) => (
                       <li key={friend.id}>
-                        <button
+                        <ListRow.Root
+                          as="button"
                           type="button"
                           className="friend-suggest-item"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => selectFriend(friend)}
                         >
-                          <strong>{friend.label}</strong>
-                          <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
-                        </button>
+                          <ListRow.Leading className="friend-suggest-leading" aria-hidden>
+                            <FriendsIcon size={16} />
+                          </ListRow.Leading>
+                          <span className="friend-suggest-copy">
+                            <ListRow.Label>{friend.label}</ListRow.Label>
+                            <ListRow.Description className="mono">
+                              {friend.identityKey.slice(0, 16)}…
+                            </ListRow.Description>
+                          </span>
+                        </ListRow.Root>
                       </li>
                     ))}
                   </ul>
-                )}
+                ) : null}
               </div>
 
               <div className="actions send-actions">
@@ -452,11 +557,9 @@ export function SendPanel({
               <p className="send-confirm-to">
                 to <strong>{recipientLabel}</strong>
               </p>
-              <div className="send-resolved-slot">
-                {sendSnap.context.friendLabel ? (
-                  <p className="mono send-confirm-address">{sendSnap.context.to}</p>
-                ) : null}
-              </div>
+              {sendSnap.context.friendLabel ? (
+                <p className="mono send-confirm-address">{sendSnap.context.to}</p>
+              ) : null}
               <div className="actions send-actions">
                 <button className="btn btn-primary" onClick={confirmSend}>
                   Confirm

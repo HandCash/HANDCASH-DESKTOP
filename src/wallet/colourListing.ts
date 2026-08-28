@@ -7,6 +7,7 @@ import {
   colourTokenAsFungible,
   looksLikeOnesatFtTip,
   ONESAT_FT_BASKET,
+  originFromColourCi,
   originFromColourTags,
   parseColourMintAttestation,
   parseColourTipAmt,
@@ -26,7 +27,11 @@ import {
   knownBurnedOnesatFtOrigins,
   leftoverForOutpoint,
   listOnesatFtLeftovers,
+  normOnesatFtOutpoint,
+  onesatFtLeftoverAmtInflated,
+  shouldOverlayOnesatFtLeftover,
 } from './onesatFtLeftover'
+import { healMisfiledOnesatFtReceives } from './appActivity'
 
 export type { ColourToken, ColourTip }
 
@@ -105,7 +110,7 @@ export async function listColourTips(
   for (const o of rows) {
     const outpoint = typeof o.outpoint === 'string' ? o.outpoint : ''
     if (!outpoint) continue
-    const key = outpointUnderscore(outpoint).toLowerCase()
+    const key = normOnesatFtOutpoint(outpoint)
     if (seen.has(key)) continue
     seen.add(key)
     if (isOnesatFtGenesisSpent(key)) continue
@@ -117,10 +122,12 @@ export async function listColourTips(
     const listedCi =
       typeof o.customInstructions === 'string' ? o.customInstructions : undefined
     const leftover = leftoverForOutpoint(key)
+    const leftoverCi =
+      leftover && !onesatFtLeftoverAmtInflated(leftover) ? leftover.ci : undefined
     const ci =
       looksLikeOnesatFtTip({ customInstructions: listedCi })
         ? listedCi
-        : leftover?.ci ?? listedCi
+        : leftoverCi ?? listedCi
     if (
       !looksLikeOnesatFtTip({
         tags,
@@ -133,6 +140,7 @@ export async function listColourTips(
     const origin =
       leftover?.origin ??
       originFromColourTags(tags) ??
+      originFromColourCi(ci) ??
       parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
         lockingScriptHex: scriptHex,
         customInstructions: ci,
@@ -149,10 +157,11 @@ export async function listColourTips(
   }
 
   for (const leftover of listOnesatFtLeftovers()) {
-    if (seen.has(leftover.outpoint) || isItemSent(leftover.outpoint)) continue
-    seen.add(leftover.outpoint)
+    const leftoverOp = normOnesatFtOutpoint(leftover.outpoint)
+    if (!shouldOverlayOnesatFtLeftover(leftover, seen)) continue
+    seen.add(leftoverOp)
     pending.push({
-      outpoint: leftover.outpoint,
+      outpoint: leftoverOp,
       origin: leftover.origin,
       satoshis: 1,
       tags: ['1sat-ft'],
@@ -232,6 +241,8 @@ export async function listColourTips(
       customInstructions: row.ci,
     })
   }
+
+  healMisfiledOnesatFtReceives(tips.map(tip => ({ outpoint: tip.outpoint, origin: tip.origin, amt: tip.amt, name: tip.name })))
 
   return tips
 }

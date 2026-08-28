@@ -653,6 +653,49 @@ export function noteInboundReceiveComplete(args: {
   })
 }
 
+function normActivityOutpoint(raw: string | undefined | null): string {
+  return (raw ?? '').trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+}
+
+/** Rewrite receive-collectable rows whose outpoint is a live 1sat-ft tip. Does not create new rows. */
+export function healMisfiledOnesatFtReceives(
+  tips: Array<{ outpoint: string; origin: string; amt: number; name?: string }>,
+): number {
+  const byOp = new Map<string, (typeof tips)[number]>()
+  for (const tip of tips) {
+    const op = normActivityOutpoint(tip.outpoint)
+    if (!op.includes('.')) continue
+    if (!tip.origin?.trim()) continue
+    byOp.set(op, tip)
+  }
+  if (byOp.size === 0) return 0
+  let healed = 0
+  for (const row of readAll()) {
+    if (row.method !== 'receive-collectable' || row.kind !== 'earned') continue
+    const op = normActivityOutpoint(row.item?.outpoint)
+    if (!op) continue
+    const tip = byOp.get(op)
+    if (!tip) continue
+    const itemOrigin = (row.item?.origin ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    const tipOrigin = tip.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    if (itemOrigin && tipOrigin && itemOrigin !== tipOrigin) continue
+    const txid = (row.txid || op.split('.')[0] || '').trim().toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(txid)) continue
+    const amt = String(Math.max(1, Math.trunc(Number(tip.amt)) || 1))
+    const sym = tip.name?.trim() || row.item?.name?.trim() || 'Token'
+    noteInboundReceiveComplete({
+      txid,
+      item: true,
+      itemName: sym,
+      itemOrigin: tipOrigin,
+      outpoint: op,
+      token: { tokenId: tipOrigin, amount: amt, sym, dec: 0 },
+    })
+    healed += 1
+  }
+  return healed
+}
+
 /** Activity row the moment an outbound send starts — survives Back / navigate away. */
 export function noteOutboundSendPending(args: {
   pendingId: string

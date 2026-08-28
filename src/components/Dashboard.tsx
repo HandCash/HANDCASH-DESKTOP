@@ -22,7 +22,16 @@ import {
   LockIcon,
   AddMoneyIcon,
   ScanQrIcon,
+  AccountCircleIcon,
 } from './icons'
+import { copyText } from '../wallet/clipboard'
+import {
+  claimedHandleForIdentity,
+  subscribeClaimedCloudHandle,
+  type ClaimedHandleState,
+} from '../wallet/handleClaim'
+import { formatHandCashHandle } from '../wallet/handleFormat'
+import { buildPeerPayUri, isCompressedIdentityKeyHex } from '../wallet/peerPayUri'
 import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
@@ -97,6 +106,17 @@ const CHAIN_POLL_PARITY_MS = 2 * 60_000
  * never turn a complete address scan into a hot loop.
  */
 const CHAIN_POLL_PENDING_MS = 30_000
+/**
+ * Stale inbox / chat tip cards must not re-run funding-only Refresh every 5s.
+ * pollInboundTipHints also dispatches `handcash:payment-hint`, so the same
+ * txids used to be chased twice per tick. New txids still ingest immediately.
+ */
+const TIP_CHASE_BACKOFF_MS = CHAIN_POLL_DESKTOP_MS
+
+function paymentHintTxid(raw: string | { txid?: string } | null | undefined): string {
+  const id = (typeof raw === 'string' ? raw : raw?.txid ?? '').trim().toLowerCase()
+  return /^[0-9a-f]{64}$/.test(id) ? id : ''
+}
 
 function nextChainPollMs(pendingTips: number): number {
   if (pendingTips > 0) return CHAIN_POLL_PENDING_MS
@@ -116,6 +136,33 @@ type Props = {
   onFail: (error: string) => void
 }
 
+function shortIdentityLabel(key: string): string {
+  const k = key.trim()
+  if (k.length <= 16) return k
+  return `${k.slice(0, 8)}…${k.slice(-6)}`
+}
+
+/** Handle, then BRC-169 identity key, then PeerPay. One label only. */
+function walletIdentityChip(
+  profile: WalletProfile,
+  claimed: ClaimedHandleState | null,
+): { label: string; copy: string } | null {
+  if (claimed?.handle) {
+    const label = formatHandCashHandle(claimed.handle, null)
+    if (label) return { label, copy: label }
+  }
+  const key = profile.identityKey.trim()
+  if (isCompressedIdentityKeyHex(key)) {
+    return { label: shortIdentityLabel(key), copy: key }
+  }
+  try {
+    const uri = buildPeerPayUri(key)
+    return { label: `peerpay:${shortIdentityLabel(key)}`, copy: uri }
+  } catch {
+    return null
+  }
+}
+
 /** One identity / one pot (BRC-75). */
 export function Dashboard({
   profile,
@@ -133,6 +180,9 @@ export function Dashboard({
     getPaymentProgress(),
   )
   const [lastApproved, setLastApproved] = useState<PendingAction | null>(null)
+  const [claimedHandle, setClaimedHandle] = useState<ClaimedHandleState | null>(() =>
+    claimedHandleForIdentity(profile.identityKey),
+  )
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
   const sideRef = useRef<HTMLElement>(null)
@@ -142,6 +192,12 @@ export function Dashboard({
   const sideApproval = !isMobileWalletPlatform() && pendingPrompt != null
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
+
+  useEffect(() => {
+    const refresh = () => setClaimedHandle(claimedHandleForIdentity(profile.identityKey))
+    refresh()
+    return subscribeClaimedCloudHandle(refresh)
+  }, [profile.identityKey])
   useEffect(() => {
     if (isMobileWalletPlatform()) return
     return subscribePermissionRequests(setPendingPrompt)
@@ -282,6 +338,34 @@ export function Dashboard({
     let pollTimer: number | null = null
     let tipHintTimer: number | null = null
     let scheduledDelayMs = 0
+    const chasedAt = new Map<string, number>()
+    const chaseHeld = new Set<string>()
+
+    const takeChaseable = (txids: Iterable<string>): string[] => {
+      const now = Date.now()
+      const out: string[] = []
+      const seen = new Set<string>()
+      for (const raw of txids) {
+        const id = paymentHintTxid(raw)
+        if (!id || seen.has(id)) continue
+        seen.add(id)
+        if (chaseHeld.has(id)) continue
+        if (now - (chasedAt.get(id) ?? 0) < TIP_CHASE_BACKOFF_MS) continue
+        chaseHeld.add(id)
+        out.push(id)
+      }
+      return out
+    }
+
+    const releaseChase = (txids: Iterable<string>, remember: boolean) => {
+      const now = Date.now()
+      for (const raw of txids) {
+        const id = paymentHintTxid(raw)
+        if (!id) continue
+        chaseHeld.delete(id)
+        if (remember) chasedAt.set(id, now)
+      }
+    }
 
     const scheduleNext = (delayMs?: number) => {
       if (cancelled) return
@@ -313,6 +397,7 @@ export function Dashboard({
       if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
         return
       }
+      let chaseable: string[] = []
       try {
         const active = getActiveWallet()
         if (!active?.rootKeyHex) return
@@ -329,21 +414,30 @@ export function Dashboard({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
         })
+        // Inbox cards already dispatch `handcash:payment-hint` inside
+        // pollInboundTipHints. Skip the 2MB chat walk on that path.
+        if (cancelled) return
+        if (hints.tipHints > 0) return
         const { ingestPaymentsFromTipHints, pendingBrc29HintsFromChat } =
           await import('../wallet/sendBrc29Payment')
         const fromChat = pendingBrc29HintsFromChat()
-        const combined =
-          hints.paymentHints.length > 0 || fromChat.length > 0
-            ? [...hints.paymentHints, ...fromChat]
-            : hints.paymentTxids
-        if (cancelled || (hints.tipHints <= 0 && fromChat.length === 0)) return
-        if (ingestInFlight) return
+        const chatOnly = fromChat.filter((h) => paymentHintTxid(h) !== '')
+        if (chatOnly.length === 0) return
+        const combined = chatOnly
+        const chaseable = takeChaseable(combined.map((h) => h.txid))
+        if (chaseable.length === 0) return
+        if (ingestInFlight) {
+          releaseChase(chaseable, false)
+          return
+        }
         ingestInFlight = true
         // SPV-first: tip/pay card hands us the txid → BEEF → sweep our outs.
         // Address scan is only the fallback / secondary verify.
         void (async () => {
           try {
-            const spv = await ingestPaymentsFromTipHints(combined)
+            const spv = await ingestPaymentsFromTipHints(
+              combined.filter((h) => chaseable.includes(paymentHintTxid(h))),
+            )
             if (cancelled) return
             if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
             if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
@@ -362,20 +456,22 @@ export function Dashboard({
               scheduleNext()
               return
             }
-            await chasePaymentIngest(hints.paymentTxids)
+            await chasePaymentIngest(chaseable)
             scheduleNext()
           } catch (err) {
             console.warn(
               '[dashboard] SPV payment ingest failed',
               err instanceof Error ? err.message : String(err),
             )
-            await chasePaymentIngest(hints.paymentTxids)
+            await chasePaymentIngest(chaseable)
             scheduleNext()
           } finally {
             ingestInFlight = false
+            releaseChase(chaseable, true)
           }
         })()
       } catch {
+        releaseChase(chaseable, false)
         /* optional accelerator */
       }
     }
@@ -395,13 +491,7 @@ export function Dashboard({
         /* ignore */
       }
 
-      const tipIds = [
-        ...new Set(
-          paymentTxids
-            .map((t) => t.trim().toLowerCase())
-            .filter((t) => /^[0-9a-f]{64}$/.test(t)),
-        ),
-      ]
+      const tipIds = [...new Set(paymentTxids.map(paymentHintTxid).filter(Boolean))]
       if (tipIds.length > 0) {
         try {
           const { ingestPaymentsFromTipHints } = await import(
@@ -564,19 +654,22 @@ export function Dashboard({
       }>).detail
       const hints = detail?.hints ?? []
       const txids = detail?.txids ?? hints.map((h) => h.txid)
+      const chaseable = takeChaseable(txids)
+      if (chaseable.length === 0) return
+      const chaseHints = hints.filter((h) => chaseable.includes(paymentHintTxid(h)))
       void (async () => {
         try {
           const { ingestPaymentsFromTipHints } = await import(
             '../wallet/sendBrc29Payment'
           )
           const spv = await ingestPaymentsFromTipHints(
-            hints.length > 0 ? hints : txids,
+            chaseHints.length > 0 ? chaseHints : chaseable,
           )
           if (cancelled) return
           if (spv.balanceSats != null) onRefreshBalance(spv.balanceSats)
           if (spv.importedTxids.length > 0 || spv.ghostTxids.length > 0) {
             const ackable = new Set([...spv.importedTxids, ...spv.ghostTxids])
-            const ids = hints
+            const ids = chaseHints
               .filter((h) => h.messageId && ackable.has(h.txid))
               .map((h) => h.messageId!)
             if (ids.length > 0) {
@@ -596,9 +689,9 @@ export function Dashboard({
         } catch {
           /* fall through */
         }
-        await chasePaymentIngest(txids)
+        await chasePaymentIngest(chaseable)
         scheduleNext()
-      })()
+      })().finally(() => releaseChase(chaseable, true))
     }
     document.addEventListener('handcash:payment-hint', onPaymentHint)
 
@@ -632,6 +725,24 @@ export function Dashboard({
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">
             <h2 className="wallet-hero-title">Your balance</h2>
+            {(() => {
+              const identity = walletIdentityChip(profile, claimedHandle)
+              if (!identity) return null
+              return (
+                <button
+                  type="button"
+                  className="wallet-hero-identity"
+                  title={`Click to copy ${identity.copy}`}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void copyText(identity.copy, { label: 'identity' })
+                  }}
+                >
+                  <AccountCircleIcon size={16} />
+                  <span>{identity.label}</span>
+                </button>
+              )
+            })()}
           </div>
           <div className="wallet-hero-main">
             <div className="wallet-balance-slot" ref={balanceSlotRef}>

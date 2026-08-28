@@ -621,7 +621,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 .auth-touchid {
   display: flex;
   justify-content: center;
-  margin: 2px 0 10px;
+  margin: 14px 0 0;
 }
 
 .auth-touchid-btn {
@@ -3199,25 +3199,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   letter-spacing: 0;
 }
 
-.settings-sfx-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-  font-size: 0.85rem;
-  font-weight: 650;
-  color: hsl(var(--foreground));
-  cursor: pointer;
-  user-select: none;
-}
-
-.settings-sfx-toggle input {
-  width: 16px;
-  height: 16px;
-  accent-color: hsl(var(--primary));
-  cursor: pointer;
-}
-
 .wallet-backup-warn {
   appearance: none;
   margin: 0;
@@ -3262,6 +3243,36 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .wallet-hero-head {
   margin-bottom: 12px;
+}
+
+.wallet-hero-identity {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: min(56%, 220px);
+  min-width: 0;
+  margin: 0;
+  padding: 0 2px 0 8px;
+  border: 0;
+  background: transparent;
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 600;
+  line-height: 28px;
+  height: 28px;
+  cursor: pointer;
+}
+
+.wallet-hero-identity span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wallet-hero-identity svg {
+  flex-shrink: 0;
+  opacity: 0.85;
 }
 
 .wallet-hero-title {
@@ -4994,6 +5005,25 @@ a.app-details-host:hover {
   margin-bottom: 16px;
 }
 
+.payment-details-hero .history-icon-wrap {
+  width: 44px;
+  height: 44px;
+  flex-shrink: 0;
+  overflow: visible;
+}
+
+.payment-details-hero .history-icon {
+  width: 44px;
+  height: 44px;
+}
+
+.payment-details-hero .history-action-badge {
+  width: 18px;
+  height: 18px;
+  right: -4px;
+  bottom: -4px;
+}
+
 .payment-details-copy {
   flex: 1;
   min-width: 0;
@@ -5285,6 +5315,63 @@ a.app-details-host:hover {
 .settings-row-desc[data-aeon-state='warn'] {
   color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
 }
+
+/* ListRow description status (Security rows). */
+[data-aeon-scope='settings'] [data-aeon-part='description'][data-aeon-state='ok'] {
+  color: color-mix(in srgb, var(--hc-success) 78%, var(--hc-muted));
+}
+
+[data-aeon-scope='settings'] [data-aeon-part='description'][data-aeon-state='warn'] {
+  color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
+}
+
+/* Appearance RadioGroup (tabsMachine) — compact trailing segments, no wrap. */
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] {
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 0.125rem;
+  padding: 2px;
+  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--hc-panel, var(--hc-surface)) 92%, transparent);
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='item'] {
+  gap: 0;
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemControl'] {
+  width: auto;
+  height: auto;
+  min-width: 2.4rem;
+  min-height: 1.55rem;
+  padding: 0.15rem 0.45rem;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemControl'][data-aeon-state='selected'] {
+  background: var(--hc-sunken-strong, hsl(var(--secondary)));
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemLabel'] {
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--hc-muted);
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='item'][data-aeon-state='selected'] [data-aeon-part='itemLabel'] {
+  color: var(--hc-text);
+}
+
+[data-aeon-scope='settings'] [data-aeon-scope='select'] {
+  min-width: 7rem;
+  max-width: 9.5rem;
+}
+
 
 .settings-lab-intro {
   margin: 0.15rem 0 0.55rem;
@@ -6036,39 +6123,28 @@ html[data-aeon-mode='light'] .shortcut-key {
 .send-layout {
   flex: 1 1 auto;
   min-height: 0;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-  /*
-   * Centre the row as a block, but top-align the two columns inside it.
-   * `align-items: center` re-centred each column on its own, so anything that
-   * changed one column's height visibly slid the other one.
-   */
-  align-content: center;
-  align-items: start;
-  gap: 14px 22px;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  justify-content: flex-start;
+  gap: 16px;
   width: 100%;
-  max-width: 820px;
+  max-width: 440px;
   margin: 0 auto;
-  padding: 8px 4px;
-  overflow: auto;
+  padding: 10px 8px 20px;
+  overflow: visible;
 }
 
 .send-layout-confirm {
-  align-items: start;
+  align-items: stretch;
 }
 
 .send-side {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   min-width: 0;
   align-content: start;
-  /*
-   * Space the friend suggestions can open into. They sit in document flow (an
-   * overlay would be clipped by the scrolling layout), so without a reservation
-   * they shove the Review / Cancel buttons a couple of hundred pixels down the
-   * moment the field takes focus.
-   */
-  min-height: min(300px, 42vh);
+  overflow: visible;
 }
 
 .send-stage-body {
@@ -6145,11 +6221,25 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .send-amount-unit {
   margin: 0;
+  padding: 2px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
   color: var(--hc-muted);
+  font: inherit;
   font-size: 0.78rem;
   font-weight: 700;
   letter-spacing: 0.14em;
+  line-height: 1.4;
   text-transform: uppercase;
+  cursor: pointer;
+}
+
+.send-amount-unit:hover,
+.send-amount-unit:focus-visible {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-accent) 14%, transparent);
+  outline: none;
 }
 
 /* One reserved line under the amount: converted value, or the rate warning. */
@@ -6174,13 +6264,15 @@ html[data-aeon-mode='light'] .shortcut-key {
   font-size: 0.78rem;
 }
 
-/* Reserved line for the resolved recipient (friend name / address). */
-.send-resolved-slot {
-  min-height: 1.15rem;
+.send-resolved {
+  margin: 6px 0 0;
+  font-size: 0.8rem;
+  color: var(--hc-text);
+  line-height: 1.35;
 }
 
-.send-resolved-slot > * {
-  margin: 0;
+.send-resolved strong {
+  font-weight: 700;
 }
 
 .send-available {
@@ -6195,6 +6287,54 @@ html[data-aeon-mode='light'] .shortcut-key {
   width: 100%;
   margin: 0;
   z-index: 2;
+}
+
+.send-to-input {
+  position: relative;
+  display: grid;
+}
+
+.send-to-input input {
+  padding-right: 44px;
+}
+
+.send-to-scan {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: none;
+  border-radius: calc(var(--radius) - 2px);
+  background: transparent;
+  color: var(--hc-muted);
+  cursor: pointer;
+}
+
+.send-to-scan:hover,
+.send-to-scan:focus-visible {
+  color: var(--hc-text);
+  background: hsl(var(--secondary) / 0.85);
+  outline: none;
+}
+
+.send-to-scan:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.send-to-field .qr-scanner {
+  margin-bottom: 0;
+}
+
+.send-to-field .qr-scanner-frame {
+  max-height: 200px;
 }
 
 .send-actions {
@@ -6233,15 +6373,13 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 /*
- * Suggestions overlay the column rather than sitting in flow. In flow they were
- * the single biggest jump on this screen — focusing the field pushed the buttons
- * down by up to a full list height. `.send-to-field` stacks above `.send-actions`,
- * so the overlay is on top of the buttons instead of behind them, and `.send-side`
- * reserves enough height that the scrolling layout does not clip it.
+ * Suggestions overlay under the recipient field so they never reserve a blank
+ * column or shove Review / Cancel down the page. `.send-to-field` stacks above
+ * `.send-actions`, so the list paints on top of the buttons.
  */
 .send-friend-suggest.friend-suggest-list {
   z-index: 6;
-  max-height: min(150px, 26vh);
+  max-height: min(180px, 32vh);
 }
 
 .send-layout-confirm .send-confirm-to,
@@ -6255,12 +6393,6 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 @container send (max-width: 520px) {
-  .send-layout {
-    grid-template-columns: 1fr;
-    align-content: start;
-    gap: 22px;
-  }
-
   .send-actions {
     justify-content: center;
   }
@@ -6386,8 +6518,9 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .friend-suggest-item {
   width: 100%;
-  display: grid;
-  gap: 2px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
   padding: 8px 10px;
   border: 0;
   border-radius: 8px;
@@ -6402,12 +6535,34 @@ html[data-aeon-mode='light'] .shortcut-key {
   background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
 }
 
-.friend-suggest-item span {
+.friend-suggest-leading {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--hc-sunken);
   color: var(--hc-muted);
-  font-size: 0.72rem;
+}
+
+.friend-suggest-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.friend-suggest-copy [data-aeon-part='label'],
+.friend-suggest-copy [data-aeon-part='description'] {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.friend-suggest-copy [data-aeon-part='description'],
+.friend-suggest-item .mono {
+  color: var(--hc-muted);
+  font-size: 0.72rem;
 }
 
 @media (max-width: 640px) {
@@ -10075,45 +10230,24 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
 }
 
-/* Burn lives in the side panel, composed like a payment: hero, breakdown,
-   one destructive action. Danger is carried by the accent, not by clutter. */
-[data-aeon-scope='asset-burn'] {
-  display: grid;
-  min-width: 0;
-  align-content: start;
-  gap: 14px;
-}
-
-[data-aeon-scope='asset-burn'] .burn-layout {
-  gap: 16px;
-}
-
-.burn-hero {
-  display: grid;
-  grid-template-columns: 64px minmax(0, 1fr);
-  align-items: center;
-  gap: 14px;
-  padding: 14px;
-  border: 1px solid color-mix(in srgb, var(--hc-danger, #ef6464) 32%, var(--hc-border));
-  border-radius: 14px;
-  background: color-mix(in srgb, var(--hc-danger, #ef6464) 7%, var(--hc-sunken-soft));
-}
-
+/* Burn inherits .send-panel / .send-layout / .send-stage. Compact stacked
+   column like spend: preview, side, Review / Confirm / Cancel. */
 .burn-hero-media {
   display: grid;
-  width: 64px;
-  height: 64px;
+  width: 48px;
+  height: 48px;
   place-items: center;
+  flex-shrink: 0;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .burn-hero-image,
 .burn-hero-media .deferred-image img {
-  width: 64px;
-  height: 64px;
+  width: 48px;
+  height: 48px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 8px;
 }
 
 .burn-hero-model {
@@ -10122,15 +10256,9 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   height: 100%;
   place-items: center;
   border: 1px solid var(--hc-border);
-  border-radius: 12px;
+  border-radius: 8px;
   background: var(--hc-sunken);
   color: var(--hc-muted);
-}
-
-.burn-hero-copy {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
 }
 
 .burn-eyebrow {
@@ -10138,45 +10266,6 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   align-items: center;
   gap: 5px;
   margin: 0;
-  color: var(--hc-danger, #ef6464);
-}
-
-.burn-hero-title,
-.burn-hero-amount {
-  min-width: 0;
-  overflow: hidden;
-  font-family: var(--hc-display);
-  line-height: 1.12;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.burn-hero-title {
-  font-size: 1.25rem;
-  font-weight: 700;
-}
-
-.burn-hero-amount {
-  color: var(--hc-danger, #ef6464);
-  font-size: clamp(1.6rem, 4.4vw, 2.2rem);
-  font-variant-numeric: tabular-nums;
-  font-weight: 700;
-}
-
-.burn-hero-sub {
-  margin: 0;
-  overflow: hidden;
-  color: var(--hc-muted);
-  font-size: 0.8rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-[data-aeon-scope='asset-burn'] .burn-side {
-  display: grid;
-  gap: 12px;
-  min-width: 0;
-  align-content: start;
 }
 
 .burn-amount-field {
@@ -10243,26 +10332,9 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   line-height: 1.45;
 }
 
-[data-aeon-scope='asset-burn'] .burn-actions {
-  margin-top: 2px;
-}
-
-[data-aeon-scope='asset-burn'][data-aeon-state='confirming'] .burn-hero {
-  border-color: color-mix(in srgb, var(--hc-danger, #ef6464) 55%, var(--hc-border));
-  background: color-mix(in srgb, var(--hc-danger, #ef6464) 12%, var(--hc-sunken-soft));
-}
-
-@media (max-width: 560px) {
-  .burn-hero {
-    grid-template-columns: 52px minmax(0, 1fr);
-  }
-
-  .burn-hero-media,
-  .burn-hero-image,
-  .burn-hero-media .deferred-image img {
-    width: 52px;
-    height: 52px;
-  }
+.burn-forget {
+  justify-self: start;
+  width: max-content;
 }
 
 .asset-burn-trigger {
@@ -10413,6 +10485,20 @@ html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
   border-radius: 4px;
   background: #ffffff;
 }
+
+.animated-qr {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+}
+
+.animated-qr-count {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.78rem;
+  font-variant-numeric: tabular-nums;
+}
+
 
 .device-backup-foot {
   margin-top: 4px;

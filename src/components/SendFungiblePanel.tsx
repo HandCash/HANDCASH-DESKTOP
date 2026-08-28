@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
   formatFungibleAmount,
@@ -32,6 +33,9 @@ import {
   sendFungible,
 } from '../wallet/sendFungible'
 import type { Chain } from '../wallet/vault'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
+import { FriendsIcon, ScanQrIcon } from './icons'
+import { RecipientQrScan } from './QrScanner'
 import { FungibleTokenFace } from './FungibleTokenFace'
 
 type Props = {
@@ -50,6 +54,18 @@ function shortenAddress(value: string): string {
   return `${v.slice(0, 10)}…${v.slice(-8)}`
 }
 
+function resolvedRecipientName(
+  friendLabel: string | null,
+  to: string,
+  payeeIdentityKey: string | null,
+): string | null {
+  if (friendLabel) return friendLabel
+  if (payeeIdentityKey) return shortenAddress(to)
+  const trimmed = to.trim()
+  if (trimmed.length >= 26) return shortenAddress(trimmed)
+  return null
+}
+
 export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const [token, setToken] = useState<FungibleToken | null>(
     () => getFungible(tokenId),
@@ -64,6 +80,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
   const [stage, setStage] = useState<Stage>('edit')
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
+  const [scanningTo, setScanningTo] = useState(false)
 
   useEffect(() => subscribeFriends(setFriends), [])
 
@@ -101,6 +118,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
     ? formatFungibleAmount(token.amt, token.dec)
     : ''
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
+  const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
   const sendBlocked =
     !token ||
     !token.colourSupply ||
@@ -293,49 +311,86 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
 
               <div className="field friend-recipient-field send-to-field">
                 <label htmlFor="fungible-to">To</label>
-                <input
-                  id="fungible-to"
-                  value={recipientQuery}
-                  disabled={sendBlocked}
-                  onChange={(e) => applyRecipientInput(e.target.value)}
-                  onFocus={() => setShowMatches(true)}
-                  onBlur={() => {
-                    window.setTimeout(() => setShowMatches(false), 120)
-                  }}
-                  placeholder="Friend, $handle, address, or identity key"
-                  autoComplete="off"
-                  spellCheck={false}
-                />
+                {scanningTo ? (
+                  <RecipientQrScan
+                    onCancel={() => {
+                      playWalletSound('soft')
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                    onValue={(value) => {
+                      applyRecipientInput(value)
+                      releaseWarmedQrCamera()
+                      setScanningTo(false)
+                    }}
+                  />
+                ) : (
+                  <div className="send-to-input">
+                    <input
+                      id="fungible-to"
+                      value={recipientQuery}
+                      disabled={sendBlocked}
+                      onChange={(e) => applyRecipientInput(e.target.value)}
+                      onFocus={() => setShowMatches(true)}
+                      onBlur={() => {
+                        window.setTimeout(() => setShowMatches(false), 120)
+                      }}
+                      placeholder="Friend, $handle, address, or identity key"
+                      autoComplete="off"
+                      spellCheck={false}
+                    />
+                    <button
+                      type="button"
+                      className="send-to-scan"
+                      aria-label="Scan address QR"
+                      title="Scan address QR"
+                      disabled={sendBlocked}
+                      onClick={() => {
+                        playWalletSound('soft')
+                        setShowMatches(false)
+                        setScanningTo(true)
+                      }}
+                    >
+                      <ScanQrIcon size={18} />
+                    </button>
+                  </div>
+                )}
                 <p className="friend-recipient-hint send-recipient-hint">
                   Handles and identity keys resolve to a payment address on this network.
                 </p>
-                <div className="send-resolved-slot" aria-live="polite">
-                  {friendLabel ? (
-                    <p className="friend-recipient-hint">
-                      Sending to <strong>{friendLabel}</strong>
-                    </p>
-                  ) : null}
-                </div>
+                {resolvedName ? (
+                  <p className="send-resolved" aria-live="polite">
+                    Sending to <strong>{resolvedName}</strong>
+                  </p>
+                ) : null}
                 {error && stage === 'edit' ? (
                   <CopyableError role="status">{error}</CopyableError>
                 ) : null}
-                {showMatches && matches.length > 0 && (
+                {showMatches && matches.length > 0 ? (
                   <ul className="friend-suggest-list send-friend-suggest" role="listbox">
                     {matches.map((friend) => (
                       <li key={friend.id}>
-                        <button
+                        <ListRow.Root
+                          as="button"
                           type="button"
                           className="friend-suggest-item"
                           onMouseDown={(e) => e.preventDefault()}
                           onClick={() => selectFriend(friend)}
                         >
-                          <strong>{friend.label}</strong>
-                          <span className="mono">{friend.identityKey.slice(0, 16)}…</span>
-                        </button>
+                          <ListRow.Leading className="friend-suggest-leading" aria-hidden>
+                            <FriendsIcon size={16} />
+                          </ListRow.Leading>
+                          <span className="friend-suggest-copy">
+                            <ListRow.Label>{friend.label}</ListRow.Label>
+                            <ListRow.Description className="mono">
+                              {friend.identityKey.slice(0, 16)}…
+                            </ListRow.Description>
+                          </span>
+                        </ListRow.Root>
                       </li>
                     ))}
                   </ul>
-                )}
+                ) : null}
               </div>
 
               <div className="actions send-actions">

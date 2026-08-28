@@ -167,4 +167,331 @@ describe('listColourTips leftover / spent genesis', () => {
     expect(tokens[0]!.sym).toBe('KING')
     expect(tokens[0]!.maxSupply).toBe(69420)
   })
+
+  it('does not reseed 9abe8bdb after leftover is 2a562450 change', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: leftover.KING_ORIGIN,
+      amt: leftover.KING_CHANGE_AMT,
+      outpoint: leftover.KING_CHANGE_OUTPOINT,
+      ci: JSON.stringify({
+        p: '1sat-ft',
+        origin: leftover.KING_ORIGIN,
+        amt: String(leftover.KING_CHANGE_AMT),
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(mockWallet({ '1sat-ft': [], default: [] }))
+    const row = tokens.find((x) => x.origin === leftover.KING_ORIGIN)
+    expect(row).toBeTruthy()
+    expect(row!.balance).toBe(68931)
+    expect(row!.outpoint).toBe(leftover.KING_CHANGE_OUTPOINT)
+    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)?.amt).toBe(68931)
+  })
+
+  it('sums leftover change 68931 with received 69 on the same KING origin', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: leftover.KING_ORIGIN,
+      amt: leftover.KING_CHANGE_AMT,
+      outpoint: leftover.KING_CHANGE_OUTPOINT,
+      ci: JSON.stringify({
+        p: '1sat-ft',
+        origin: leftover.KING_ORIGIN,
+        amt: String(leftover.KING_CHANGE_AMT),
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(
+      mockWallet({
+        '1sat-ft': [
+          {
+            outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN.replace('_0', '.0')}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '69',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+        ],
+        default: [],
+      }),
+    )
+    const kings = tokens.filter((x) => x.origin === leftover.KING_ORIGIN)
+    expect(kings).toHaveLength(1)
+    expect(kings[0]!.balance).toBe(69000)
+    expect(kings[0]!.sym).toBe('KING')
+    expect(kings[0]!.maxSupply).toBe(69420)
+    expect(tokens.some((x) => x.origin === leftover.KING_RECEIVE_OUTPOINT)).toBe(false)
+  })
+
+
+  it('does not count spent 9abe8bdb when 2a562450 change+receive are listed', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: leftover.KING_ORIGIN,
+      amt: 69000,
+      outpoint: leftover.KING_LEFTOVER_OUTPOINT,
+      ci: JSON.stringify({
+        p: '1sat-ft',
+        origin: leftover.KING_ORIGIN,
+        amt: '69000',
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(
+      mockWallet({
+        '1sat-ft': [
+          {
+            outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '69',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+          {
+            outpoint: leftover.KING_CHANGE_OUTPOINT.replace('_1', '.1'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '68931',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+          {
+            outpoint: leftover.KING_LEFTOVER_OUTPOINT,
+            satoshis: 1,
+            tags: ['1sat-ft'],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '69000',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+        ],
+        default: [],
+      }),
+    )
+    const kings = tokens.filter((x) => x.origin === leftover.KING_ORIGIN)
+    expect(kings).toHaveLength(1)
+    expect(kings[0]!.balance).toBe(69000)
+    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)?.outpoint).toBe(
+      leftover.KING_CHANGE_OUTPOINT,
+    )
+    expect(leftover.isOnesatFtGenesisSpent(leftover.KING_LEFTOVER_OUTPOINT)).toBe(true)
+  })
+
+  it('inflated leftover 206724 heals to 69000 when live has 68931+69', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    store.set(
+      'handcash.onesat-ft.leftover.v1',
+      JSON.stringify({
+        items: {
+          [leftover.KING_ORIGIN]: {
+            origin: leftover.KING_ORIGIN,
+            amt: 206724,
+            outpoint: leftover.KING_CHANGE_OUTPOINT,
+            ci: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '206724',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+            sym: 'KING',
+            supply: 'locked',
+            maxSupply: leftover.KING_MAX_SUPPLY,
+            at: 1,
+          },
+        },
+      }),
+    )
+    const { listColourTokens } = await import('./colourListing')
+    const live = {
+      '1sat-ft': [
+        {
+          outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'),
+          satoshis: 1,
+          tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+          customInstructions: JSON.stringify({
+            p: '1sat-ft',
+            origin: leftover.KING_ORIGIN,
+            amt: '69',
+            sym: 'KING',
+            supply: 'locked',
+            max: '69420',
+          }),
+        },
+        {
+          outpoint: leftover.KING_CHANGE_OUTPOINT.replace('_1', '.1'),
+          satoshis: 1,
+          tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+          customInstructions: JSON.stringify({
+            p: '1sat-ft',
+            origin: leftover.KING_ORIGIN,
+            amt: '68931',
+            sym: 'KING',
+            supply: 'locked',
+            max: '69420',
+          }),
+        },
+      ],
+      default: [],
+    }
+    const once = await listColourTokens(mockWallet(live))
+    const twice = await listColourTokens(mockWallet(live))
+    for (const tokens of [once, twice]) {
+      const kings = tokens.filter((x) => x.origin === leftover.KING_ORIGIN)
+      expect(kings).toHaveLength(1)
+      expect(kings[0]!.balance).toBe(69000)
+      expect(kings[0]!.tipCount).toBe(2)
+    }
+    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)?.amt).toBe(68931)
+    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)?.outpoint).toBe(
+      leftover.KING_CHANGE_OUTPOINT,
+    )
+  })
+
+  it('heals leftover 9abe8bdb + listed receive 69 to overlay change = 69000', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: leftover.KING_ORIGIN,
+      amt: 69000,
+      outpoint: leftover.KING_LEFTOVER_OUTPOINT,
+      ci: JSON.stringify({
+        p: '1sat-ft',
+        origin: leftover.KING_ORIGIN,
+        amt: '69000',
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: leftover.KING_MAX_SUPPLY,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(
+      mockWallet({
+        '1sat-ft': [
+          {
+            outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '69',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+        ],
+        default: [],
+      }),
+    )
+    const kings = tokens.filter((x) => x.origin === leftover.KING_ORIGIN)
+    expect(kings).toHaveLength(1)
+    expect(kings[0]!.balance).toBe(69000)
+    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)?.outpoint).toBe(
+      leftover.KING_CHANGE_OUTPOINT,
+    )
+    expect(leftover.isOnesatFtGenesisSpent(leftover.KING_LEFTOVER_OUTPOINT)).toBe(true)
+  })
+
+  it('does not overlay leftover change when that outpoint is already listed', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: leftover.KING_ORIGIN,
+      amt: leftover.KING_CHANGE_AMT,
+      outpoint: leftover.KING_CHANGE_OUTPOINT,
+      ci: JSON.stringify({
+        p: '1sat-ft',
+        origin: leftover.KING_ORIGIN,
+        amt: String(leftover.KING_CHANGE_AMT),
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: leftover.KING_MAX_SUPPLY,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(
+      mockWallet({
+        '1sat-ft': [
+          {
+            outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '69',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+          {
+            outpoint: leftover.KING_CHANGE_OUTPOINT.replace('_1', '.1'),
+            satoshis: 1,
+            tags: ['1sat-ft', `origin:${leftover.KING_ORIGIN}`],
+            customInstructions: JSON.stringify({
+              p: '1sat-ft',
+              origin: leftover.KING_ORIGIN,
+              amt: '68931',
+              sym: 'KING',
+              supply: 'locked',
+              max: '69420',
+            }),
+          },
+        ],
+        default: [],
+      }),
+    )
+    const kings = tokens.filter((x) => x.origin === leftover.KING_ORIGIN)
+    expect(kings).toHaveLength(1)
+    expect(kings[0]!.balance).toBe(69000)
+    expect(kings[0]!.balance).not.toBe(137931)
+  })
 })

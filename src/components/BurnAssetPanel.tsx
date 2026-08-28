@@ -1,7 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
 import { stateToAttr } from '@aeon-ui/core'
-import { StatusBanner } from '@aeon-ui/react'
 import {
   assetBurnUiMachine,
   type AssetBurnUiSnapshot,
@@ -52,7 +51,7 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { CollectablesIcon, WarningIcon } from './icons'
+import { CollectablesIcon, FireIcon } from './icons'
 
 /** Explicit target — a burn never guesses which protocol it is destroying. */
 export type BurnTarget =
@@ -89,7 +88,6 @@ function BurnShell({
   subtitle,
   amountLabel,
   confirmSubtitle,
-  confirmActionLabel,
   amountField,
   economics,
   grossLabel,
@@ -114,8 +112,6 @@ function BurnShell({
   amountLabel: string
   /** Second line on confirm: what survives the burn, not a repeat of the name. */
   confirmSubtitle: string
-  /** Destroy button text; an item name is too long to sit on a button. */
-  confirmActionLabel: string
   amountField?: ReactNode
   economics: BurnEconomics
   grossLabel: string
@@ -150,6 +146,63 @@ function BurnShell({
     net !== 0
       ? formatSecondaryFromSats(Math.abs(net), currency, usdPerBsv)
       : null
+  const busy = stage === 'burning'
+  const showConfirm = stage === 'confirming' || busy
+
+  const hero = (
+    <div className="send-amount-hero send-collectable-hero">
+      <div className="send-collectable-preview">
+        <span className="burn-hero-media" aria-hidden>
+          {media}
+        </span>
+        <div>
+          <p className="send-eyebrow burn-eyebrow">
+            <FireIcon size={12} />
+            {showConfirm ? 'You’re burning' : eyebrow}
+          </p>
+          <strong className="collectable-details-name">
+            {showConfirm ? amountLabel : title}
+          </strong>
+          {showConfirm ? null : (
+            <p className="collectable-details-app">{subtitle}</p>
+          )}
+        </div>
+      </div>
+    </div>
+  )
+
+  const breakdown = (
+    <dl className="burn-breakdown">
+      {showConfirm ? null : (
+        <>
+          <div>
+            <dt>{grossLabel}</dt>
+            <dd>{economics.grossAssetSats.toLocaleString()} sats</dd>
+          </div>
+          <div>
+            <dt>Protocol outputs</dt>
+            <dd>{economics.protocolOutputSats.toLocaleString()} sats</dd>
+          </div>
+        </>
+      )}
+      <div>
+        <dt>Recovered to Pay</dt>
+        <dd>{recovered.toLocaleString()} sats</dd>
+      </div>
+      <div>
+        <dt>Network fee</dt>
+        <dd>about {economics.estimatedFeeSats.toLocaleString()} sats</dd>
+      </div>
+      <div className="burn-breakdown-net">
+        <dt>Effect on Pay</dt>
+        <dd>
+          {net >= 0 ? '+' : '−'}
+          {Math.abs(net).toLocaleString()} sats
+          {netSecondary ? <em> ≈ {netSecondary}</em> : null}
+        </dd>
+      </div>
+    </dl>
+  )
 
   return (
     <div
@@ -157,181 +210,123 @@ function BurnShell({
       data-aeon-scope="asset-burn"
       data-aeon-state={stateToAttr(stage)}
     >
-      <div className="send-layout burn-layout">
-        <header className="burn-hero" data-aeon-part="hero">
-          <span
-            className="burn-hero-media"
-            aria-hidden={stage === 'confirming'}
-          >
-            {media}
-          </span>
-          <div className="burn-hero-copy">
-            <p className="send-eyebrow burn-eyebrow">
-              <WarningIcon size={12} />
-              {stage === 'confirming' ? 'You’re burning' : eyebrow}
+      {stage === 'failure' ? (
+        <div className="send-stage send-stage-failure">
+          <div className="send-stage-body send-stage-body-center">
+            <p className="send-status-title">Couldn’t burn</p>
+            <p className="error send-failure-error">
+              <CopyableError
+                as="span"
+                className="copyable-error"
+                role="alert"
+                text={error ?? 'The burn was refused.'}
+              >
+                {error ?? 'The burn was refused.'}
+              </CopyableError>
             </p>
-            {stage === 'confirming' ? (
-              <>
-                <strong className="burn-hero-amount">{amountLabel}</strong>
-                <p className="burn-hero-sub">{confirmSubtitle}</p>
-              </>
-            ) : (
-              <>
-                <strong className="burn-hero-title">{title}</strong>
-                <p className="burn-hero-sub">{subtitle}</p>
-              </>
-            )}
           </div>
-        </header>
-
-        <div className="send-side burn-side">
-          {refusal ? (
-            <StatusBanner.Root tone="warning" status="burn-refused">
-              <StatusBanner.Copy>
-                <StatusBanner.Title>Burn unavailable</StatusBanner.Title>
-                <StatusBanner.Body>
-                  <CopyableError as="span" className="copyable-error" role="status" text={refusal}>
-                    {refusal}
-                  </CopyableError>
-                </StatusBanner.Body>
-              </StatusBanner.Copy>
-            </StatusBanner.Root>
-          ) : null}
-
-          {stage === 'failure' ? (
-            <StatusBanner.Root tone="danger" status="burn-failed">
-              <StatusBanner.Copy>
-                <StatusBanner.Title>Nothing was destroyed</StatusBanner.Title>
-                <StatusBanner.Body>
-                  <CopyableError
-                    as="span"
-                    className="copyable-error"
-                    role="alert"
-                    text={error ?? 'The burn was refused.'}
-                  >
-                    {error ?? 'The burn was refused.'}
-                  </CopyableError>
-                </StatusBanner.Body>
-              </StatusBanner.Copy>
-            </StatusBanner.Root>
-          ) : null}
-
-          {stage === 'editing' && amountField ? amountField : null}
-
-          <dl className="burn-breakdown">
-            {stage === 'confirming' ? null : (
-              <>
-                <div>
-                  <dt>{grossLabel}</dt>
-                  <dd>{economics.grossAssetSats.toLocaleString()} sats</dd>
-                </div>
-                <div>
-                  <dt>Protocol outputs</dt>
-                  <dd>{economics.protocolOutputSats.toLocaleString()} sats</dd>
-                </div>
-              </>
-            )}
-            <div>
-              <dt>Recovered to Pay</dt>
-              <dd>{recovered.toLocaleString()} sats</dd>
-            </div>
-            <div>
-              <dt>Network fee</dt>
-              <dd>about {economics.estimatedFeeSats.toLocaleString()} sats</dd>
-            </div>
-            <div className="burn-breakdown-net">
-              <dt>Effect on Pay</dt>
-              <dd>
-                {net >= 0 ? '+' : '−'}
-                {Math.abs(net).toLocaleString()} sats
-                {netSecondary ? <em> ≈ {netSecondary}</em> : null}
-              </dd>
-            </div>
-          </dl>
-
-          <p className="burn-note">
-            {stage === 'confirming'
-              ? 'Destroyed on chain for good — no undo, and History backup cannot bring it back.'
-              : 'Only eligible physical sats come back as wallet change. The asset itself ends here.'}
-          </p>
-          {stage === 'confirming' && alternativeNote ? (
-            <p className="burn-note">{alternativeNote}</p>
-          ) : null}
-
-          <div className="actions send-actions burn-actions">
-            {stage === 'confirming' ? (
-              <>
+          <div className="actions send-actions">
+            <button type="button" className="btn btn-primary" onClick={onBack}>
+              Edit
+            </button>
+            <button type="button" className="btn btn-ghost" onClick={onCancel}>
+              Close
+            </button>
+          </div>
+        </div>
+      ) : showConfirm ? (
+        <div className="send-stage send-stage-confirm">
+          <div className="send-layout send-layout-confirm">
+            {hero}
+            <div className="send-side">
+              <p className="send-confirm-to">{confirmSubtitle}</p>
+              {breakdown}
+              <p className="burn-note">
+                Destroyed on chain for good — no undo, and History backup cannot
+                bring it back.
+              </p>
+              {alternativeNote ? (
+                <p className="burn-note">{alternativeNote}</p>
+              ) : null}
+              <div className="actions send-actions">
                 <button
                   type="button"
-                  className="btn btn-danger btn-icon"
+                  className="btn btn-primary"
+                  disabled={busy}
+                  aria-busy={busy || undefined}
                   onClick={onConfirm}
                 >
-                  <WarningIcon size={14} />
-                  {confirmActionLabel}
+                  {busy ? 'Burning…' : 'Confirm'}
                 </button>
                 <button
                   type="button"
                   className="btn btn-ghost"
+                  disabled={busy}
                   onClick={onBack}
                 >
                   Back
                 </button>
-                {alternativeActionLabel && onAlternativeAction ? (
-                  <button
-                    type="button"
-                    className="btn btn-secondary"
-                    disabled={alternativeActionBusy}
-                    aria-busy={alternativeActionBusy || undefined}
-                    onClick={onAlternativeAction}
-                  >
-                    {alternativeActionBusy
-                      ? 'Forgetting…'
-                      : alternativeActionLabel}
-                  </button>
-                ) : null}
-              </>
-            ) : stage === 'failure' ? (
-              <>
+              </div>
+              {alternativeActionLabel && onAlternativeAction ? (
+                <button
+                  type="button"
+                  className="btn btn-ghost burn-forget"
+                  disabled={busy || alternativeActionBusy}
+                  aria-busy={alternativeActionBusy || undefined}
+                  onClick={onAlternativeAction}
+                >
+                  {alternativeActionBusy
+                    ? 'Forgetting…'
+                    : alternativeActionLabel}
+                </button>
+              ) : null}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="send-stage send-stage-edit">
+          <div className="send-layout">
+            {hero}
+            <div className="send-side">
+              {refusal ? (
+                <CopyableError
+                  as="p"
+                  className="copyable-error"
+                  role="status"
+                  text={refusal}
+                >
+                  {refusal}
+                </CopyableError>
+              ) : null}
+              {amountField}
+              {breakdown}
+              <p className="burn-note">
+                Only eligible physical sats come back as wallet change. The
+                asset itself ends here.
+              </p>
+              <div className="actions send-actions">
                 <button
                   type="button"
                   className="btn btn-primary"
-                  onClick={onBack}
-                >
-                  Try again
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={onCancel}
-                >
-                  Keep asset
-                </button>
-              </>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  className="btn btn-danger btn-icon"
-                  disabled={!canReview || stage === 'burning'}
-                  aria-busy={stage === 'burning' || undefined}
+                  disabled={!canReview || busy}
+                  aria-busy={busy || undefined}
                   onClick={onReview}
                 >
-                  <WarningIcon size={14} />
-                  {stage === 'burning' ? 'Burning…' : 'Review burn'}
+                  {busy ? 'Burning…' : 'Review'}
                 </button>
                 <button
                   type="button"
                   className="btn btn-ghost"
-                  disabled={stage === 'burning'}
+                  disabled={busy}
                   onClick={onCancel}
                 >
-                  Keep asset
+                  Cancel
                 </button>
-              </>
-            )}
+              </div>
+            </div>
           </div>
         </div>
-      </div>
+      )}
     </div>
   )
 }
@@ -365,9 +360,9 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const typed = snapshot.context.amount
 
   // Coalesce keystrokes: the preview selects real outputs, so it must not run
-  // once per typed digit.
+  // once per typed digit. 1sat-ft only — never preview a leftover BSV-21 plan.
   useEffect(() => {
-    if (!token || !typed.trim()) return
+    if (!token || token.colourSupply == null || !typed.trim()) return
     let units: string
     try {
       units = parseFungibleSendAmount(typed, token).unitsStr
@@ -419,13 +414,15 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   }
   const multiDeploy = (token.tokenIds?.length ?? 1) > 1
   const refusal =
-    token.spendKind === 'cosigned'
-      ? 'This token requires a cosigner, so it cannot be burned here.'
-      : token.spendKind === 'mixed'
-      ? 'This balance mixes plain and cosigned outputs — separate them first.'
-      : multiDeploy
-      ? 'This balance combines several deploy IDs. Burn each deploy separately.'
-      : null
+    token.colourSupply == null
+      ? 'This wallet burns 1Sat tokens only. Legacy tips stay read-only.'
+      : token.spendKind === 'cosigned'
+        ? 'This token requires a cosigner, so it cannot be burned here.'
+        : token.spendKind === 'mixed'
+          ? 'This balance mixes plain and cosigned outputs — separate them first.'
+          : multiDeploy
+            ? 'This balance combines several deploy IDs. Burn each deploy separately.'
+            : null
   const tokenChange = typedUnits != null && typedUnits < heldUnits
   const preview = snapshot.context.preview
   // A real plan selects real outputs, so it replaces the estimate outright.
@@ -444,14 +441,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
       }
     : estimateBurnEconomics({
         inputCount: token.utxoCount,
-        protocolOutputCount:
-          token.colourSupply != null
-            ? tokenChange
-              ? 1
-              : 0
-            : tokenChange
-              ? 2
-              : 1,
+        protocolOutputCount: tokenChange ? 1 : 0,
         recoveryOutput: true,
         grossAssetSats: token.utxoCount,
       })
@@ -460,6 +450,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const review = () => {
     playWalletSound('soft')
     try {
+      if (refusal) throw new Error(refusal)
       const { units } = parseFungibleSendAmount(typed, token)
       if (units <= 0n) throw new Error('Enter an amount to burn')
       if (units > heldUnits)
@@ -481,6 +472,9 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const confirm = () => {
     let units: string
     try {
+      if (token.colourSupply == null) {
+        throw new Error('This wallet burns 1Sat tokens only.')
+      }
       units = parseFungibleSendAmount(typed, token).unitsStr
     } catch (err) {
       event({
@@ -522,11 +516,11 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
           tokenId={token.tokenId}
           sym={token.sym}
           iconUrl={token.iconUrl}
-          size={64}
+          size={48}
         />
       }
-      eyebrow="Permanent token burn"
-      title={`Burn ${token.sym}`}
+      eyebrow="Burn token"
+      title={token.sym}
       subtitle={`You hold ${held} ${token.sym}`}
       amountLabel={`${typed.trim() || '0'} ${token.sym}`}
       confirmSubtitle={
@@ -537,7 +531,6 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
             )} ${token.sym}`
           : `Your whole ${token.sym} balance`
       }
-      confirmActionLabel={`Burn ${typed.trim() || '0'} ${token.sym}`}
       amountField={
         <div className="field send-amount-field burn-amount-field">
           <label htmlFor="burn-amount">Amount to destroy</label>
@@ -607,8 +600,7 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
     let cancelled = false
     void getCollectable(outpoint)
       .then((found) => {
-        if (cancelled) return
-        setItem(found ?? null)
+        if (!cancelled) setItem(found ?? null)
       })
       .finally(() => {
         if (!cancelled) setLoading(false)
@@ -644,8 +636,8 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   const refusal = item.covenantLocked
     ? 'This tip is covenant locked, so the wallet cannot spend it.'
     : sending
-    ? 'This item is mid-send. Wait for it to settle first.'
-    : null
+      ? 'This item is mid-send. Wait for it to settle first.'
+      : null
   const economics = estimateBurnEconomics({
     inputCount: 1,
     protocolOutputCount: 0,
@@ -718,19 +710,18 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
             className="burn-hero-image"
             src={item.imageUrl}
             alt={item.name}
-            width={64}
-            height={64}
-            skeletonRadius={12}
+            width={48}
+            height={48}
+            skeletonRadius={8}
             retainDecoded
           />
         )
       }
-      eyebrow="Permanent item burn"
+      eyebrow="Burn collectable"
       title={item.name}
       subtitle={item.app ? `${item.app} · one of a kind` : 'One of a kind'}
       amountLabel={item.name}
       confirmSubtitle="This item, and its BRC-150 lineage with it"
-      confirmActionLabel="Burn this item"
       economics={economics}
       grossLabel="Asset sats selected"
       refusal={refusal}

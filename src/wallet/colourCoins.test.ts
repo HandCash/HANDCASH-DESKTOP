@@ -7,6 +7,7 @@ import {
   evaluateColourSupply,
   looksLikeOnesatFtTip,
   normalizeColourOrigin,
+  originFromColourCi,
   parseColourTipAmt,
   parseOnesatFtOriginPolicy,
   selectColourTipsForAmount,
@@ -446,4 +447,28 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(meta.sym).toBe('KING')
     expect(meta.icon).toBe(`${'ab'.repeat(32)}_1`)
   })
+  it('reads mint origin from remittance CI, not the receive outpoint', () => {
+    const mint = '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
+    const receive = '2a562450e7b7009e01f6924376f4081ccf43a46487a1fd06a3a975935c7dda19_0'
+    expect(
+      originFromColourCi(
+        JSON.stringify({ p: '1sat-ft', origin: mint, amt: '69', name: 'sixtyniine' }),
+      ),
+    ).toBe(mint)
+    expect(originFromColourCi(JSON.stringify({ p: '1sat-ft', amt: '69' }))).toBeNull()
+    const change = tip(
+      '2a562450e7b7009e01f6924376f4081ccf43a46487a1fd06a3a975935c7dda19_1',
+      { amt: 68931, origin: mint },
+    )
+    const recv = tip(receive, { amt: 69, origin: mint })
+    const rows = aggregateColourTokens(
+      [change, recv],
+      new Map([[mint, { origin: mint, supply: 'locked', maxSupply: 69420, sym: 'KING' }]]),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.origin).toBe(mint)
+    expect(rows[0]!.balance).toBe(69000)
+    expect(rows[0]!.sym).toBe('KING')
+  })
+
 })

@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Button, RadioGroup, Select, Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
 import { useUpdate } from '../wallet/updateProvider'
@@ -141,6 +142,15 @@ function SecurityRows() {
   )
 }
 
+function checkButtonStatus(
+  checking: boolean,
+  mode: UpdateMode,
+): 'idle' | 'pending' | 'disabled' {
+  if (mode === 'none') return 'disabled'
+  if (checking) return 'pending'
+  return 'idle'
+}
+
 export function SettingsPanel() {
   const update = useUpdate()
   const { context, check, setMode } = update
@@ -164,6 +174,8 @@ export function SettingsPanel() {
   ]
     .filter(Boolean)
     .join(' · ')
+  const updateModeLabel =
+    UPDATE_MODES.find((m) => m.value === context.mode)?.label ?? context.mode
 
   useEffect(() => {
     rootRef.current?.scrollIntoView({ block: 'start' })
@@ -212,50 +224,38 @@ export function SettingsPanel() {
           <SettingsControlRow
             icon={SETTINGS_APPLICATION_ICONS.appearance}
             label="Appearance"
-            labelFor="settings-appearance"
           >
-            <select
-              id="settings-appearance"
-              className="settings-control-input"
+            <RadioGroup.Root
               value={appearance}
-              data-aeon-part="appearance"
-              data-aeon-state={appearance}
-              onChange={(e) => {
+              onValueChange={(next) => {
                 playWalletSound('soft')
-                const next = e.target.value as AppearancePreference
-                setAppearancePreference(next)
-                setAppearance(next)
+                const pref = next as AppearancePreference
+                setAppearancePreference(pref)
+                setAppearance(pref)
               }}
             >
               {APPEARANCE_OPTIONS.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label}
-                </option>
+                <RadioGroup.Item key={opt.value} value={opt.value}>
+                  <RadioGroup.ItemControl>
+                    <RadioGroup.ItemLabel>{opt.label}</RadioGroup.ItemLabel>
+                  </RadioGroup.ItemControl>
+                </RadioGroup.Item>
               ))}
-            </select>
+            </RadioGroup.Root>
           </SettingsControlRow>
 
           <SettingsControlRow
             icon={SETTINGS_APPLICATION_ICONS.sfx}
             label="Sound effects"
-            labelFor="settings-sfx-enabled"
           >
-            <label className="settings-sfx-toggle">
-              <input
-                id="settings-sfx-enabled"
-                type="checkbox"
-                checked={sfxEnabled}
-                data-aeon-part="sfx-enabled"
-                data-aeon-state={sfxEnabled ? 'on' : 'off'}
-                onChange={(e) => {
-                  const next = e.target.checked
-                  setWalletSfxEnabled(next)
-                  setSfxEnabled(next)
-                  if (next) playWalletSound('receive', { force: true })
-                }}
-              />
-              <span>{sfxEnabled ? 'On' : 'Off'}</span>
-            </label>
+            <Switch.Root
+              checked={sfxEnabled}
+              onCheckedChange={(next) => {
+                setWalletSfxEnabled(next)
+                setSfxEnabled(next)
+                if (next) playWalletSound('receive', { force: true })
+              }}
+            />
           </SettingsControlRow>
 
           {isDesktop ? (
@@ -263,25 +263,25 @@ export function SettingsPanel() {
               <SettingsControlRow
                 icon={SETTINGS_APPLICATION_ICONS.updates}
                 label="Updates"
-                labelFor="settings-update-mode"
               >
-                <select
-                  id="settings-update-mode"
-                  className="settings-control-input"
+                <Select.Root
                   value={context.mode}
-                  data-aeon-part="update-mode"
-                  data-aeon-state={context.mode}
-                  onChange={(e) => {
+                  onValueChange={(next) => {
                     playWalletSound('soft')
-                    void setMode(e.target.value as UpdateMode)
+                    void setMode(next as UpdateMode)
                   }}
                 >
-                  {UPDATE_MODES.map((m) => (
-                    <option key={m.value} value={m.value}>
-                      {m.label}
-                    </option>
-                  ))}
-                </select>
+                  <Select.Trigger>
+                    <Select.ValueText>{updateModeLabel}</Select.ValueText>
+                  </Select.Trigger>
+                  <Select.Content>
+                    {UPDATE_MODES.map((m) => (
+                      <Select.Item key={m.value} value={m.value}>
+                        {m.label}
+                      </Select.Item>
+                    ))}
+                  </Select.Content>
+                </Select.Root>
               </SettingsControlRow>
 
               <SettingsControlRow
@@ -289,19 +289,17 @@ export function SettingsPanel() {
                 label={`Version ${runningVersion}`}
                 description={versionDetail || undefined}
               >
-                <button
-                  type="button"
-                  className="btn btn-ghost settings-action-btn"
-                  disabled={checking || context.mode === 'none'}
-                  data-aeon-part="check-updates"
-                  data-aeon-state={checking ? 'checking' : context.mode}
+                <Button.Root
+                  variant="ghost"
+                  size="sm"
+                  status={checkButtonStatus(checking, context.mode)}
                   onClick={() => {
                     playWalletSound('soft')
                     void check()
                   }}
                 >
                   {checking ? 'Checking…' : 'Check'}
-                </button>
+                </Button.Root>
               </SettingsControlRow>
             </>
           ) : null}
@@ -323,24 +321,21 @@ export function SettingsPanel() {
               description={
                 <>
                   Copy this window to the clipboard
-                  <ShortcutHint
-                    className="settings-shortcut-hint"
-                    keys={screenshotShortcutKeys(window.handcash?.platform)}
-                  />
+                  <ShortcutHint keys={screenshotShortcutKeys(window.handcash?.platform)} />
                 </>
               }
             >
-              <button
-                type="button"
-                className="btn btn-ghost settings-action-btn"
-                data-aeon-part="copy-screenshot"
+              <Button.Root
+                variant="ghost"
+                size="sm"
+                status="idle"
                 onClick={() => {
                   playWalletSound('soft')
                   void window.handcash?.copyScreenshot?.()
                 }}
               >
                 Copy
-              </button>
+              </Button.Root>
             </SettingsControlRow>
           ) : null}
         </ul>

@@ -183,6 +183,23 @@ export function originFromColourTags(tags: unknown): string | null {
   return null
 }
 
+/** Mint origin from remittance CI (`origin` on the 1sat-ft body). */
+export function originFromColourCi(customInstructions: unknown): string | null {
+  const ci = asRecord(customInstructions)
+  if (!ci) return null
+  const nested =
+    ci.colour && typeof ci.colour === 'object' && !Array.isArray(ci.colour)
+      ? (ci.colour as Record<string, unknown>)
+      : ci
+  const raw = typeof nested.origin === 'string' ? nested.origin : ''
+  if (!raw.trim()) return null
+  try {
+    return normalizeColourOrigin(raw)
+  } catch {
+    return null
+  }
+}
+
 /**
  * True when a listed output is a 1Sat fungible tip.
  * Wallet tags are not proof — reclaim used to stamp `1sat-ft` on collectables.

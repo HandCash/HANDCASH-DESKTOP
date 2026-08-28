@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ReceiveIcon, SendIcon } from './icons'
+import { HistoryActionBadge } from './RecentActivity'
 import { SkeletonLine } from './Skeleton'
 import { appDisplayName } from '../wallet/appIdentity'
 import {
@@ -169,17 +170,19 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
         data-aeon-state="event"
       >
         <div className="payment-details-hero">
-          <div className="history-icon">
-            {isWallet ? (
-              <ReceiveIcon size={16} />
-            ) : (
-              <AppAvatar
-                origin={entry.origin}
-                name={appDisplayName(entry.origin)}
-                size="sm"
-                onReady={() => setIconReady(true)}
-              />
-            )}
+          <div className="history-icon-wrap">
+            <div className="history-icon">
+              {isWallet ? (
+                <ReceiveIcon size={16} />
+              ) : (
+                <AppAvatar
+                  origin={entry.origin}
+                  name={appDisplayName(entry.origin)}
+                  size="sm"
+                  onReady={() => setIconReady(true)}
+                />
+              )}
+            </div>
           </div>
           <div className="payment-details-copy">
             <div className="payment-details-title-row">
@@ -354,15 +357,30 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
       data-aeon-state={ready ? undefined : 'loading'}
     >
       <div className="payment-details-hero">
-        <div className="history-icon">
-          {item && shownItem?.imageUrl ? (
-            openItem ? (
-              <button
-                type="button"
-                className="payment-details-item-thumb-btn"
-                onClick={openItem}
-                aria-label={`Open ${shownItem.name}`}
-              >
+        <div className="history-icon-wrap">
+          <div className="history-icon">
+            {item && shownItem?.imageUrl ? (
+              openItem ? (
+                <button
+                  type="button"
+                  className="payment-details-item-thumb-btn"
+                  onClick={openItem}
+                  aria-label={`Open ${shownItem.name}`}
+                >
+                  <DeferredImage
+                    className="history-item-thumb"
+                    src={shownItem.imageUrl}
+                    alt=""
+                    width={32}
+                    height={32}
+                    skeletonWidth={32}
+                    skeletonHeight={32}
+                    skeletonRadius={6}
+                    retainDecoded
+                    decoding="async"
+                  />
+                </button>
+              ) : (
                 <DeferredImage
                   className="history-item-thumb"
                   src={shownItem.imageUrl}
@@ -375,35 +393,23 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   retainDecoded
                   decoding="async"
                 />
-              </button>
+              )
+            ) : isWallet ? (
+              spent ? (
+                <SendIcon size={16} />
+              ) : (
+                <ReceiveIcon size={16} />
+              )
             ) : (
-              <DeferredImage
-                className="history-item-thumb"
-                src={shownItem.imageUrl}
-                alt=""
-                width={32}
-                height={32}
-                skeletonWidth={32}
-                skeletonHeight={32}
-                skeletonRadius={6}
-                retainDecoded
-                decoding="async"
+              <AppAvatar
+                origin={entry.origin}
+                name={appDisplayName(entry.origin)}
+                size="sm"
+                onReady={() => setIconReady(true)}
               />
-            )
-          ) : isWallet ? (
-            spent ? (
-              <SendIcon size={16} />
-            ) : (
-              <ReceiveIcon size={16} />
-            )
-          ) : (
-            <AppAvatar
-              origin={entry.origin}
-              name={appDisplayName(entry.origin)}
-              size="sm"
-              onReady={() => setIconReady(true)}
-            />
-          )}
+            )}
+          </div>
+          <HistoryActionBadge entry={entry} />
         </div>
         {ready ? (
           <div className="payment-details-copy">
