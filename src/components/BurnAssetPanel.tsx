@@ -6,11 +6,12 @@ import {
   assetBurnUiMachine,
   type AssetBurnUiSnapshot,
 } from '../machines/assetBurnUiMachine'
-import { burnBsv21, burnOneSat, previewBsv21Burn } from '../wallet/burn'
+import { burnBsv21, burnOneSat, previewFungibleBurn } from '../wallet/burn'
 import {
   estimateBurnEconomics,
   type BurnEconomics,
 } from '../wallet/burnEconomics'
+import { CopyableError } from './CopyableError'
 import { isCollectableModel } from '../wallet/collectableMedia'
 import {
   abandonCollectable,
@@ -188,7 +189,11 @@ function BurnShell({
             <StatusBanner.Root tone="warning" status="burn-refused">
               <StatusBanner.Copy>
                 <StatusBanner.Title>Burn unavailable</StatusBanner.Title>
-                <StatusBanner.Body>{refusal}</StatusBanner.Body>
+                <StatusBanner.Body>
+                  <CopyableError as="span" className="copyable-error" role="status" text={refusal}>
+                    {refusal}
+                  </CopyableError>
+                </StatusBanner.Body>
               </StatusBanner.Copy>
             </StatusBanner.Root>
           ) : null}
@@ -198,7 +203,14 @@ function BurnShell({
               <StatusBanner.Copy>
                 <StatusBanner.Title>Nothing was destroyed</StatusBanner.Title>
                 <StatusBanner.Body>
-                  {error ?? 'The burn was refused.'}
+                  <CopyableError
+                    as="span"
+                    className="copyable-error"
+                    role="alert"
+                    text={error ?? 'The burn was refused.'}
+                  >
+                    {error ?? 'The burn was refused.'}
+                  </CopyableError>
                 </StatusBanner.Body>
               </StatusBanner.Copy>
             </StatusBanner.Root>
@@ -365,7 +377,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     }
     let cancelled = false
     const timer = window.setTimeout(() => {
-      void previewBsv21Burn({ tokenId: token.tokenId, amount: units })
+      void previewFungibleBurn({ tokenId: token.tokenId, amount: units })
         .then((preview) => {
           if (cancelled) return
           event({
@@ -432,8 +444,16 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
       }
     : estimateBurnEconomics({
         inputCount: token.utxoCount,
-        protocolOutputCount: tokenChange ? 2 : 1,
-        recoveryOutput: token.utxoCount > (tokenChange ? 2 : 1),
+        protocolOutputCount:
+          token.colourSupply != null
+            ? tokenChange
+              ? 1
+              : 0
+            : tokenChange
+              ? 2
+              : 1,
+        recoveryOutput: true,
+        grossAssetSats: token.utxoCount,
       })
 
   /** Pre-flight the amount while it can still be edited, as Send does. */

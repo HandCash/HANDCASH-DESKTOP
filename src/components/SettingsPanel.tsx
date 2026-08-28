@@ -25,6 +25,8 @@ import {
   statusForSetting,
   settingIconFor,
   SETTINGS_APPLICATION_ICONS,
+  ShortcutHint,
+  screenshotShortcutKeys,
 } from './settings'
 
 type SettingItem = {
@@ -316,14 +318,26 @@ export function SettingsPanel() {
           />
           {isDesktop ? (
             <SettingsControlRow
+              icon={SETTINGS_APPLICATION_ICONS.screenshot}
               label="Screenshot"
-              description={window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
+              description={
+                <>
+                  Copy this window to the clipboard
+                  <ShortcutHint
+                    className="settings-shortcut-hint"
+                    keys={screenshotShortcutKeys(window.handcash?.platform)}
+                  />
+                </>
+              }
             >
               <button
                 type="button"
                 className="btn btn-ghost settings-action-btn"
                 data-aeon-part="copy-screenshot"
-                onClick={() => void window.handcash?.copyScreenshot?.()}
+                onClick={() => {
+                  playWalletSound('soft')
+                  void window.handcash?.copyScreenshot?.()
+                }}
               >
                 Copy
               </button>

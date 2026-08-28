@@ -35,11 +35,11 @@ import {
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { openCollectableDetails, openSendCollectable, openFungibleDetails, openSendFungible } from '../wallet/navStore'
+import { openCollectableDetails, openSendCollectable, openFungibleDetails, openSendFungible, openBurnFungible } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { CollectablesIcon, SendIcon } from './icons'
+import { CollectablesIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
   formatFungibleAmount,
@@ -314,11 +314,13 @@ function FungibleCarouselCard({
         : 'Locked'
       : token.colourSupply === 'open'
         ? 'No supply cap'
-        : 'Legacy BSV-21'
+        : 'Legacy · burn only'
+  const isLegacy = !token.colourSupply
   return (
     <li
       className="collect-token-card"
       data-sending={sending ? 'true' : undefined}
+      data-legacy={isLegacy ? 'true' : undefined}
     >
       <button
         type="button"
@@ -328,46 +330,59 @@ function FungibleCarouselCard({
           openFungibleDetails(token.tokenId)
         }}
       >
-        <div className="collect-token-card-media">
-          <FungibleTokenFace
-            tokenId={token.tokenId}
-            sym={token.sym}
-            iconUrl={token.iconUrl}
-            size={56}
-          />
-        </div>
+        <FungibleTokenFace
+          tokenId={token.tokenId}
+          sym={token.sym}
+          iconUrl={token.iconUrl}
+          size={56}
+        />
         <strong className="collect-token-card-sym">{token.sym}</strong>
         <span className="collect-token-card-amt">{amount}</span>
         <span className="collect-token-card-meta">{supplyBadge}</span>
       </button>
-      <button
-        type="button"
-        className="collectable-send-btn"
-        title={
-          !token.colourSupply
-            ? 'Legacy BSV-21 tips are read-only — 1Sat tokens use face-value tip spends'
-            : sendBlocked
+      {isLegacy ? (
+        <button
+          type="button"
+          className="collectable-send-btn collectable-burn-btn"
+          title={`Burn legacy BSV-21 ${token.sym}`}
+          aria-label={`Burn ${token.sym}`}
+          onClick={(e) => {
+            e.stopPropagation()
+            playWalletSound('soft')
+            openBurnFungible(token.tokenId)
+          }}
+        >
+          <FireIcon size={14} />
+          Burn
+        </button>
+      ) : (
+        <button
+          type="button"
+          className="collectable-send-btn"
+          title={
+            sendBlocked
               ? token.spendKind === 'cosigned'
                 ? 'Cosigner required to send'
                 : 'Mixed plain / cosigned tips'
               : sending
                 ? `Sending ${token.sym}`
                 : `Send ${token.sym}`
-        }
-        aria-label={
-          sending ? `Sending ${token.sym}` : `Send ${token.sym}`
-        }
-        disabled={sending || sendBlocked}
-        onClick={(e) => {
-          e.stopPropagation()
-          if (sendBlocked) return
-          playWalletSound('soft')
-          openSendFungible(token.tokenId)
-        }}
-      >
-        <SendIcon size={14} />
-        {sending ? 'Sending' : 'Send'}
-      </button>
+          }
+          aria-label={
+            sending ? `Sending ${token.sym}` : `Send ${token.sym}`
+          }
+          disabled={sending || sendBlocked}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (sendBlocked) return
+            playWalletSound('soft')
+            openSendFungible(token.tokenId)
+          }}
+        >
+          <SendIcon size={14} />
+          {sending ? 'Sending' : 'Send'}
+        </button>
+      )}
     </li>
   )
 }
@@ -508,19 +523,21 @@ export function InventoryPanel() {
       {tokens.length > 0 ? (
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
-          <div className="collect-token-carousel" role="region" aria-label="Token carousel">
-            <ul className="collect-token-carousel-track">
-              {tokens.map((token) => (
-                <FungibleCarouselCard
-                  key={token.tokenId}
-                  token={token}
-                  sending={
-                    sendingOutpoint != null && isOutpointSending(token.outpoint)
-                  }
-                />
-              ))}
-            </ul>
-          </div>
+          <ul
+            className="collect-token-carousel"
+            role="list"
+            aria-label="Token carousel"
+          >
+            {tokens.map((token) => (
+              <FungibleCarouselCard
+                key={token.tokenId}
+                token={token}
+                sending={
+                  sendingOutpoint != null && isOutpointSending(token.outpoint)
+                }
+              />
+            ))}
+          </ul>
         </section>
       ) : null}
 

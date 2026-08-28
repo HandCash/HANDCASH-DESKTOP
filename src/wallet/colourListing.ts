@@ -5,8 +5,8 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   aggregateColourTokens,
   colourTokenAsFungible,
+  looksLikeOnesatFtTip,
   ONESAT_FT_BASKET,
-  ONESAT_FT_TAG,
   originFromColourTags,
   parseColourMintAttestation,
   parseColourTipAmt,
@@ -18,6 +18,7 @@ import {
   type ColourToken,
 } from './colourCoins'
 import { isItemSent } from './sentItemGuard'
+import { getTokenIconDataUrl } from './tokenIconCache'
 
 export type { ColourToken, ColourTip }
 
@@ -41,14 +42,6 @@ function outpointUnderscore(op: string): string {
   return op.includes('.') ? op.replace(/\.(\d+)$/, '_$1') : op
 }
 
-function looksLikeFtTip(tags: string[]): boolean {
-  const lower = tags.map((t) => String(t).toLowerCase())
-  return (
-    lower.includes(ONESAT_FT_TAG) ||
-    lower.some((t) => t.startsWith('origin:'))
-  )
-}
-
 async function listBasketTips(
   wallet: ActiveWallet,
   basket: string,
@@ -59,6 +52,7 @@ async function listBasketTips(
       limit: 1000,
       include: 'locking scripts',
       includeCustomInstructions: true,
+      includeTags: true,
     })) as { outputs?: ListedOutput[] }
     return listed.outputs ?? []
   } catch {
@@ -93,21 +87,32 @@ export async function listColourTips(
     const satoshis = typeof o.satoshis === 'number' ? o.satoshis : 0
     if (satoshis !== 1) continue
     const tags = Array.isArray(o.tags) ? o.tags : []
-    if (!looksLikeFtTip(tags.map(String))) continue
+    const scriptHex = lockingScriptHex(o.lockingScript)
+    const ci =
+      typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    if (
+      !looksLikeOnesatFtTip({
+        tags,
+        customInstructions: ci,
+        lockingScriptHex: scriptHex,
+      })
+    ) {
+      continue
+    }
     const origin =
       originFromColourTags(tags) ??
       parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
-        lockingScriptHex: lockingScriptHex(o.lockingScript),
-        customInstructions: o.customInstructions,
+        lockingScriptHex: scriptHex,
+        customInstructions: ci,
       }).origin
     pending.push({
       outpoint: key,
       origin,
       satoshis,
-      scriptHex: lockingScriptHex(o.lockingScript),
+      scriptHex,
       tags: tags.map(String),
-      ci: typeof o.customInstructions === 'string' ? o.customInstructions : undefined,
-      provenance: tryParseProvenanceFromCi(o.customInstructions),
+      ci,
+      provenance: tryParseProvenanceFromCi(ci),
     })
   }
 
@@ -210,8 +215,23 @@ export async function listColourTokens(
 export async function listColourTokensAsFungibles(
   wallet?: ActiveWallet | null,
 ): Promise<ReturnType<typeof colourTokenAsFungible>[]> {
-  const tokens = await listColourTokens(wallet)
-  return tokens.map(colourTokenAsFungible)
+  const active = wallet ?? getActiveWallet()
+  const tokens = await listColourTokens(active)
+  const { resolveTokenIconDataUrl } = await import('./tokenIconResolve')
+  const out: ReturnType<typeof colourTokenAsFungible>[] = []
+  for (const token of tokens) {
+    let iconUrl =
+      token.iconUrl ?? (token.icon ? getTokenIconDataUrl(token.icon) : undefined)
+    if (token.icon && !iconUrl && active) {
+      iconUrl = await resolveTokenIconDataUrl(token.icon, active)
+    }
+    out.push(
+      colourTokenAsFungible(
+        iconUrl ? { ...token, iconUrl } : token,
+      ),
+    )
+  }
+  return out
 }
 
 export async function listColourTipsForOrigin(

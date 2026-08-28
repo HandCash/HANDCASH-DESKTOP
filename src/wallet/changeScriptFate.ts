@@ -48,7 +48,7 @@ const PAGE = 200
 /** Ceiling so a corrupt row count cannot stall a send forever. */
 const MAX_PAGES = 40
 /** Chain lookups per pass. Local storage hydration is unbounded; network is not. */
-const CHAIN_FETCH_MAX = 25
+const CHAIN_FETCH_MAX = 12
 
 export function hasLockingScript(row: ChangeRow): boolean {
   const script = row.lockingScript
@@ -123,6 +123,7 @@ async function readRawTx(
   cache: Map<string, number[] | null>,
   fromChain: boolean,
   budget: { chainFetches: number },
+  opts?: { spendable?: boolean },
 ): Promise<number[] | null> {
   const cached = cache.get(txid)
   if (cached !== undefined) return cached
@@ -138,6 +139,19 @@ async function readRawTx(
   }
 
   if (!rawTx && fromChain && budget.chainFetches < CHAIN_FETCH_MAX) {
+    // Already-quarantined rows: if a prior Refresh confirmed the body missing,
+    // do not spend another chain slot re-asking (global miss TTL covers this).
+    if (opts?.spendable === false) {
+      try {
+        const { peekRawTxLookup } = await import('./oneSatImport')
+        if (peekRawTxLookup(txid) === 'miss') {
+          cache.set(txid, null)
+          return null
+        }
+      } catch {
+        // import / cache probe failed — fall through to a budgeted fetch
+      }
+    }
     budget.chainFetches += 1
     try {
       const { fetchRawTxHex } = await import('./oneSatImport')
@@ -205,7 +219,9 @@ export async function sweepChangeScripts(args?: {
 
     const txid = (row.txid ?? '').trim().toLowerCase()
     const rawTx = /^[0-9a-f]{64}$/.test(txid)
-      ? await readRawTx(active, txid, rawTxCache, args?.fromChain === true, budget)
+      ? await readRawTx(active, txid, rawTxCache, args?.fromChain === true, budget, {
+          spendable: row.spendable === true,
+        })
       : null
     const fate = classifyChangeScript(row, rawTx)
 

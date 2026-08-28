@@ -873,6 +873,15 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   margin: 0 0 8px;
 }
 
+.copyable-error {
+  cursor: copy;
+}
+
+.copyable-error:focus-visible {
+  outline: 2px solid hsl(var(--destructive) / 0.45);
+  outline-offset: 2px;
+}
+
 .balance {
   font-family: var(--hc-display);
   font-size: clamp(1.55rem, 3.4vw, 2.2rem);
@@ -3881,6 +3890,10 @@ a.history-row-link:hover .history-tx-hint {
   background: #c9852a;
 }
 
+.history-action-badge.is-burn {
+  background: #c44747;
+}
+
 .history-action-badge.is-failed {
   background: #c44747;
   font-size: 10px;
@@ -5349,6 +5362,57 @@ a.app-details-host:hover {
 .settings-control-input option {
   background: #0a0a0a;
   color: var(--hc-text);
+}
+
+/* OS keycaps — Screenshot and other accelerator hints. */
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+.settings-shortcut-hint {
+  display: flex;
+  margin-top: 5px;
+}
+
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35em;
+  height: 1.45em;
+  padding: 0 0.38em;
+  border: 1px solid color-mix(in srgb, hsl(var(--border)) 85%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, white 8%, var(--hc-panel)) 0%,
+      color-mix(in srgb, black 6%, var(--hc-panel)) 100%
+    );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
+  color: var(--hc-fg, var(--hc-text));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+html[data-aeon-mode='light'] .shortcut-key {
+  background:
+    linear-gradient(
+      180deg,
+      #fff 0%,
+      color-mix(in srgb, black 4%, #f3f4f6) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 0 color-mix(in srgb, black 6%, transparent);
 }
 
 .log-viewer-tools .actions {
@@ -6991,8 +7055,15 @@ html[data-aeon-mode='light'] .skeleton {
 
 /* One-row horizontal token carousel (Collect). */
 .collect-token-carousel {
+  list-style: none;
   margin: 0 -4px;
   padding: 0 4px 6px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 4px;
+  width: auto;
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -7001,33 +7072,18 @@ html[data-aeon-mode='light'] .skeleton {
   scrollbar-width: thin;
 }
 
-.collect-token-carousel-track {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 8px;
-  width: max-content;
-  min-width: 100%;
-}
-
 .collect-token-card {
   flex: 0 0 auto;
-  width: 104px;
+  width: 96px;
   scroll-snap-align: start;
-  border-radius: calc(var(--hc-radius) + 2px);
-  border: 1px solid hsl(var(--border));
-  background: rgba(255, 255, 255, 0.02);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-radius: calc(var(--hc-radius) + 2px);
+  background: transparent;
 }
 
 .collect-token-card:hover {
-  border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
-  background: rgba(87, 255, 151, 0.04);
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
 }
 
 .collect-token-card[data-sending='true'] {
@@ -7035,8 +7091,8 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collect-token-card .collectable-send-btn {
-  margin: 0 8px 8px;
-  width: calc(100% - 16px);
+  margin: 0 6px 8px;
+  width: calc(100% - 12px);
 }
 
 .collect-token-card-main {
@@ -7045,7 +7101,7 @@ html[data-aeon-mode='light'] .skeleton {
   gap: 6px;
   width: 100%;
   margin: 0;
-  padding: 10px 8px 10px;
+  padding: 8px 6px 8px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -7054,13 +7110,10 @@ html[data-aeon-mode='light'] .skeleton {
   cursor: pointer;
 }
 
-.collect-token-card-media {
-  width: 56px;
-  height: 56px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--hc-hover);
-  border: 1px solid hsl(var(--border));
+.collect-token-card-main .fungible-avatar {
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 8px !important;
 }
 
 .collect-token-card-sym {
@@ -7172,10 +7225,6 @@ html[data-aeon-mode='light'] .skeleton {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--hc-border);
-  border-radius: 14px;
-  background: var(--hc-sunken-soft);
 }
 
 /* The avatar size buckets round 72 up to 112, which used to overflow the hero
@@ -7412,6 +7461,12 @@ html[data-aeon-mode='light'] .skeleton {
   border: 1px solid var(--hc-border);
   border-radius: 10px;
   background: var(--hc-sunken);
+}
+
+.fungible-activity-icon.is-burn {
+  color: #fff;
+  border-color: #c44747;
+  background: #c44747;
 }
 
 .fungible-activity-copy {

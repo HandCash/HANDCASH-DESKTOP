@@ -12,6 +12,7 @@ import {
   LockIcon,
   PaletteIcon,
   RefreshIcon,
+  ScreenshotIcon,
   SystemUpdateIcon,
   VolumeUpIcon,
   WarningIcon,
@@ -64,6 +65,7 @@ export const SETTINGS_APPLICATION_ICONS = {
   version: <InfoIcon size={ICON_SIZE} />,
   logs: <FileIcon size={ICON_SIZE} />,
   logUpload: <CloudUploadIcon size={ICON_SIZE} />,
+  screenshot: <ScreenshotIcon size={ICON_SIZE} />,
 } as const
 
 export function SettingsRowIcon({

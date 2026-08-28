@@ -48,6 +48,7 @@ import {
   type Bsv21Op,
   type Bsv21Payload,
 } from './bsv21'
+import { isOnesatFtMime } from './colourCoins'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 
@@ -398,11 +399,13 @@ export const IMPORT_TX_CONCURRENCY = 3
 /**
  * A mined transaction body never changes, so fetching one twice is pure latency.
  * Item resolve and provenance walks often ask for the same tip / origin bodies
- * in one sync pass. Successes are held long enough to cover a whole pass; misses
- * are held briefly so a transient outage does not pin a wrong answer.
+ * in one sync pass. Successes are held for a whole session window; confirmed
+ * misses (404 from every provider) are held long enough that Refresh /
+ * change-script sweeps do not re-hammer Bitails / JungleBus / WhatsOnChain.
  */
 const RAW_TX_CACHE_TTL_MS = 10 * 60_000
-const RAW_TX_MISS_TTL_MS = 10_000
+/** Ghost / never-mined txids — stop the Refresh 404 storm across passes. */
+const RAW_TX_MISS_TTL_MS = 30 * 60_000
 const RAW_TX_CACHE_MAX = 400
 const rawTxCache = new Map<string, { at: number; hex: string | null }>()
 const rawTxInflight = new Map<string, Promise<string | null>>()
@@ -439,6 +442,18 @@ export function peekRawTxHex(txid: string): string | null {
   return readRawTxCache(txid)?.hex ?? null
 }
 
+/**
+ * Distinguish a remembered miss from "never asked".
+ *
+ * `peekRawTxHex` returns null for both; change-script sweeps need the miss so
+ * already-quarantined rows skip another chain round-trip.
+ */
+export function peekRawTxLookup(txid: string): 'hit' | 'miss' | 'unknown' {
+  const cached = readRawTxCache(txid)
+  if (!cached) return 'unknown'
+  return cached.hex ? 'hit' : 'miss'
+}
+
 export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string | null> {
   const cached = readRawTxCache(txid)
   if (cached) return cached.hex
@@ -458,11 +473,12 @@ export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string 
 }
 
 /**
- * A storage host that accepts the socket and never answers must not be able to
- * wedge a whole sync pass. Every caller below has a public fallback, so bounding
- * the provider costs nothing except the wait we skip.
+ * Toolbox `getRawTx` already walks Bitails → JungleBus → WhatsOnChain (each up
+ * to ~8s). Bound the whole walk so a hung host cannot wedge Refresh, but give
+ * enough room for three fast 404s — the old 6s ceiling timed out mid-walk and
+ * forced a duplicate public Bitails/WoC fan-out.
  */
-const PROVIDER_TIMEOUT_MS = 6_000
+const PROVIDER_TIMEOUT_MS = 20_000
 const BEEF_TIMEOUT_MS = 10_000
 
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
@@ -482,17 +498,20 @@ async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
 async function fetchRawTxHexUncached(txid: string, chain: Chain): Promise<string | null> {
   // Prefer the toolbox provider: it has raw-transaction failover installed and
   // verifies the body hashes to the txid.
-  try {
-    const services = getActiveWallet()?.services
-    const raw = services
-      ? await withTimeout(services.getRawTx(txid), PROVIDER_TIMEOUT_MS)
-      : null
-    const bytes = raw?.rawTx
-    if (bytes && bytes.length > 0) {
-      return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+  const services = getActiveWallet()?.services
+  if (services) {
+    try {
+      const raw = await withTimeout(services.getRawTx(txid), PROVIDER_TIMEOUT_MS)
+      const bytes = raw?.rawTx
+      if (bytes && bytes.length > 0) {
+        return bytes.map((b) => b.toString(16).padStart(2, '0')).join('')
+      }
+      // Empty result means every registered provider already said "nothing" —
+      // do not fan out Bitails/WoC again (that was the console 404 storm).
+      return null
+    } catch {
+      // Timed out / threw — try public endpoints once below.
     }
-  } catch {
-    // Fall through to public endpoints.
   }
   const bitails = bitailsBase(chain)
   if (bitails) {
@@ -813,17 +832,98 @@ export const MAX_TRANSFER_PROBES_PER_PASS = 12
 
 type OrdinalTransferProbe = 'item' | 'bsv21' | 'unknown'
 
+/** Inscribed parent tip shape — bare needs a further hop. */
+type OnesatParentShape = 'nft' | 'ft' | 'bare' | 'other'
+
+/** Bound the FT-vs-NFT lineage walk on bare transfer tips. */
+const BARE_LINEAGE_DEPTH = 6
+
+function shapeOfOnesatLock(
+  scriptHex: string | undefined,
+  satoshis: number | undefined,
+): OnesatParentShape {
+  if (satoshis !== 1) return 'other'
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (envelope) {
+    if (isOnesatFtMime(envelope.contentType)) return 'ft'
+    if (isBsv21Mime(envelope.contentType)) return 'other'
+    return 'nft'
+  }
+  if (hasOrdEnvelope(scriptHex)) return 'other'
+  return 'bare'
+}
+
+/**
+ * Bare 1-sat tips are used by both NFT transfers and 1Sat FT transfers.
+ * "Parent is also 1 sat" is therefore not enough to paint a collectable —
+ * walk to an inscribed ancestor: FT mime ⇒ hold (not NFT); other ord ⇒ item.
+ */
+async function lineageOfBareOnesatSpend(
+  tx: Transaction,
+  chain: Chain,
+  depth: number,
+  seen: Set<string>,
+): Promise<'item' | 'ft' | 'unknown'> {
+  if (depth <= 0) return 'unknown'
+
+  let sawFt = false
+  let sawNft = false
+
+  for (const input of tx.inputs.slice(0, VIN_PROBE_LIMIT)) {
+    const sourceTxid = input.sourceTXID?.trim().toLowerCase()
+    const sourceVout = input.sourceOutputIndex
+    if (!sourceTxid || !Number.isInteger(sourceVout)) continue
+    if (seen.has(`${sourceTxid}:${sourceVout}`)) continue
+    seen.add(`${sourceTxid}:${sourceVout}`)
+
+    const parentHex = await fetchRawTxHex(sourceTxid, chain)
+    if (!parentHex) continue
+    let parentTx: Transaction
+    try {
+      parentTx = Transaction.fromHex(parentHex)
+    } catch {
+      continue
+    }
+    const parentOut = parentTx.outputs[sourceVout!]
+    const shape = shapeOfOnesatLock(
+      parentOut?.lockingScript?.toHex(),
+      parentOut?.satoshis,
+    )
+    if (shape === 'ft') {
+      sawFt = true
+      continue
+    }
+    if (shape === 'nft') {
+      sawNft = true
+      continue
+    }
+    if (shape === 'bare') {
+      const nested = await lineageOfBareOnesatSpend(
+        parentTx,
+        chain,
+        depth - 1,
+        seen,
+      )
+      if (nested === 'ft') sawFt = true
+      if (nested === 'item') sawNft = true
+    }
+  }
+
+  // FT lineage wins: never auto-import a fungible tip into basket `1sat`.
+  if (sawFt) return 'ft'
+  if (sawNft) return 'item'
+  return 'unknown'
+}
+
 /**
  * Instant-ingest evidence for an unknown 1-sat, without an indexer.
  *
  * By 1Sat rules an NFT transfer moves an existing 1-sat tip, so its settle
  * transaction spends a 1-sat input and pays bare P2PKH; a mint carries the ord
  * envelope in the output itself; a valid BSV-21 fungible always re-inscribes
- * its token JSON, so a bare 1-sat can never be a BSV-21 holding. A couple of
- * cached rawtx fetches therefore decide "ordinal transfer or stray dust" — the
- * same evidence grade the removed latch dust provided (discovery, not
- * authentication). Authentication stays with the BRC-150 tip→origin proof,
- * which runs after the card paints.
+ * its token JSON, so a bare 1-sat can never be a BSV-21 holding. 1Sat FT
+ * transfers use the same bare tip shape — parent lineage (not "any 1-sat
+ * parent") decides NFT vs hold-for-FT. Authentication stays with BRC-150.
  */
 async function probeOrdinalTransfer(
   txid: string,
@@ -845,28 +945,33 @@ async function probeOrdinalTransfer(
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
     // Inscribed at this outpoint — a mint, so tip-as-origin is literally
-    // correct. BSV-21 fungibles belong in basket `bsv21` via the indexer.
-    return isBsv21Mime(envelope.contentType) ? 'bsv21' : 'item'
+    // correct. BSV-21 → basket `bsv21`. 1Sat FT → basket `1sat-ft` (not NFT).
+    if (isBsv21Mime(envelope.contentType)) return 'bsv21'
+    if (isOnesatFtMime(envelope.contentType)) return 'unknown'
+    // Image sibling in a 1sat-ft genesis tx is a ticker icon, not a collectable.
+    const mime = (envelope.contentType ?? '').toLowerCase().split(';')[0]!.trim()
+    if (mime.startsWith('image/')) {
+      for (let i = 0; i < tx.outputs.length; i++) {
+        if (i === vout) continue
+        const sibling = tx.outputs[i]
+        if (!sibling || sibling.satoshis !== 1) continue
+        const sibEnv = parseOrdEnvelope(sibling.lockingScript?.toHex())
+        if (sibEnv && isOnesatFtMime(sibEnv.contentType)) return 'unknown'
+      }
+    }
+    return 'item'
   }
   // Envelope structure we cannot parse a mime out of: let the indexer decide.
   if (hasOrdEnvelope(scriptHex)) return 'unknown'
 
-  // Bare P2PKH: an NFT transfer if the tx spends an existing 1-sat tip.
-  for (const input of tx.inputs.slice(0, VIN_PROBE_LIMIT)) {
-    const sourceTxid = input.sourceTXID
-    const sourceVout = input.sourceOutputIndex
-    if (!sourceTxid || !Number.isInteger(sourceVout)) continue
-    const parentHex = await fetchRawTxHex(sourceTxid, chain)
-    if (!parentHex) continue
-    try {
-      if (Transaction.fromHex(parentHex).outputs[sourceVout]?.satoshis === 1) {
-        return 'item'
-      }
-    } catch {
-      // Keep probing the remaining inputs.
-    }
-  }
-  return 'unknown'
+  // Bare P2PKH: NFT only when lineage reaches a non-FT ordinal inscription.
+  const lineage = await lineageOfBareOnesatSpend(
+    tx,
+    chain,
+    BARE_LINEAGE_DEPTH,
+    new Set(),
+  )
+  return lineage === 'item' ? 'item' : 'unknown'
 }
 
 /**

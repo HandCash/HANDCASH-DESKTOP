@@ -16,6 +16,13 @@ import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 export const ONESAT_FT_BASKET = '1sat-ft' as const
 export const ONESAT_FT_PROTOCOL = '1sat-ft' as const
 export const ONESAT_FT_TAG = '1sat-ft' as const
+export const ONESAT_FT_MIME = 'application/1sat-ft+json' as const
+
+/** True for the BRC-175 inscription content type. */
+export function isOnesatFtMime(mime: string | undefined | null): boolean {
+  if (!mime) return false
+  return mime.trim().toLowerCase().split(';')[0]!.trim() === ONESAT_FT_MIME
+}
 
 /** @deprecated Use {@link ONESAT_FT_BASKET} */
 export const COLOUR_BASKET = ONESAT_FT_BASKET
@@ -56,6 +63,8 @@ export type ColourToken = {
   provenanceOk: boolean
   outpoint: string
   name?: string
+  /** Icon inscription outpoint when remittance carries one. */
+  icon?: string
   iconUrl?: string
 }
 
@@ -123,6 +132,8 @@ export type ColourOriginMeta = {
   maxSupply: number | null
   sym?: string
   name?: string
+  /** Decorative icon inscription (`txid_vout`) — remittance only, not binding. */
+  icon?: string
   /** Schema version on origin body when known. */
   schemaV?: number
 }
@@ -156,6 +167,53 @@ export function originFromColourTags(tags: unknown): string | null {
     }
   }
   return null
+}
+
+/**
+ * True when a listed output looks like a 1Sat fungible tip.
+ * Prefer tags, but also accept CI / ord MIME so listOutputs without
+ * `includeTags` (or a tip that lost tags) still paints in Collect.
+ */
+export function looksLikeOnesatFtTip(args: {
+  tags?: unknown
+  customInstructions?: unknown
+  lockingScriptHex?: string
+}): boolean {
+  if (Array.isArray(args.tags)) {
+    const lower = args.tags
+      .filter((t): t is string => typeof t === 'string')
+      .map((t) => t.toLowerCase())
+    if (lower.includes(ONESAT_FT_TAG)) return true
+    if (lower.some((t) => t.startsWith('origin:'))) return true
+  }
+
+  const ci = asRecord(args.customInstructions)
+  if (ci) {
+    const nested =
+      ci.colour && typeof ci.colour === 'object' && !Array.isArray(ci.colour)
+        ? (ci.colour as Record<string, unknown>)
+        : ci
+    const p = String(nested.p ?? '').toLowerCase()
+    if (p === ONESAT_FT_PROTOCOL) return true
+  }
+
+  if (args.lockingScriptHex) {
+    const env = parseOrdEnvelope(args.lockingScriptHex)
+    const mime = (env?.contentType ?? '').toLowerCase().split(';')[0]?.trim()
+    if (mime === ONESAT_FT_MIME) return true
+    if (env?.body?.length) {
+      try {
+        const json = asRecord(JSON.parse(decoder.decode(env.body)))
+        if (json && String(json.p ?? '').toLowerCase() === ONESAT_FT_PROTOCOL) {
+          return true
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+
+  return false
 }
 
 function asRecord(raw: unknown): Record<string, unknown> | null {
@@ -192,6 +250,9 @@ function parseSupplyFields(o: Record<string, unknown>): {
 
 /**
  * Parse BRC-175 origin policy from an ord envelope body (preferred) or CI.
+ * Remittance-only fields (`icon` / `iconVout`) overlay from CI even when the
+ * on-chain FT JSON already supplied supply/sym — icon is never part of the
+ * contract envelope.
  */
 export function parseOnesatFtOriginPolicy(
   origin: string,
@@ -217,6 +278,23 @@ export function parseOnesatFtOriginPolicy(
       typeof o.name === 'string' && o.name.trim()
         ? o.name.trim().slice(0, 80)
         : undefined
+    let icon: string | undefined
+    if (typeof o.icon === 'string' && o.icon.trim()) {
+      const raw = o.icon.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+      if (/^[0-9a-f]{64}_\d+$/.test(raw)) icon = raw
+    }
+    // Same-tx sibling: `iconVout: 1` on genesis CI → `<originTx>_<vout>`.
+    if (
+      !icon &&
+      typeof o.iconVout === 'number' &&
+      Number.isSafeInteger(o.iconVout) &&
+      o.iconVout >= 0
+    ) {
+      const tipTx = base.origin.split('_')[0]
+      if (tipTx && /^[0-9a-f]{64}$/i.test(tipTx)) {
+        icon = `${tipTx.toLowerCase()}_${o.iconVout}`
+      }
+    }
     return {
       origin: base.origin,
       supply,
@@ -224,8 +302,12 @@ export function parseOnesatFtOriginPolicy(
       ...(schemaV != null ? { schemaV } : {}),
       ...(sym ? { sym } : {}),
       ...(name ? { name } : {}),
+      ...(icon ? { icon } : {}),
     }
   }
+
+  let meta: ColourOriginMeta = base
+  let fromOrd = false
 
   if (args.lockingScriptHex) {
     const env = parseOrdEnvelope(args.lockingScriptHex)
@@ -235,7 +317,10 @@ export function parseOnesatFtOriginPolicy(
         const o = asRecord(json)
         if (o) {
           const parsed = fromBody(o)
-          if (parsed) return parsed
+          if (parsed) {
+            meta = parsed
+            fromOrd = true
+          }
         }
       } catch {
         // fall through to CI
@@ -249,11 +334,44 @@ export function parseOnesatFtOriginPolicy(
       ci.colour && typeof ci.colour === 'object' && !Array.isArray(ci.colour)
         ? (ci.colour as Record<string, unknown>)
         : ci
-    const parsed = fromBody(nested)
-    if (parsed) return parsed
+    // Remittance overlay: icon / iconVout live in CI, never in the FT envelope.
+    let icon: string | undefined
+    if (typeof nested.icon === 'string' && nested.icon.trim()) {
+      const raw = nested.icon.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+      if (/^[0-9a-f]{64}_\d+$/.test(raw)) icon = raw
+    }
+    if (
+      !icon &&
+      typeof nested.iconVout === 'number' &&
+      Number.isSafeInteger(nested.iconVout) &&
+      nested.iconVout >= 0
+    ) {
+      const tipTx = base.origin.split('_')[0]
+      if (tipTx && /^[0-9a-f]{64}$/i.test(tipTx)) {
+        icon = `${tipTx.toLowerCase()}_${nested.iconVout}`
+      }
+    }
+    if (icon) meta = { ...meta, icon }
+
+    if (!fromOrd) {
+      const parsed = fromBody(nested)
+      if (parsed) {
+        meta = {
+          ...parsed,
+          icon: icon ?? parsed.icon ?? meta.icon,
+        }
+      }
+    } else {
+      if (!meta.sym && typeof nested.sym === 'string' && nested.sym.trim()) {
+        meta = { ...meta, sym: nested.sym.trim().slice(0, 32) }
+      }
+      if (!meta.name && typeof nested.name === 'string' && nested.name.trim()) {
+        meta = { ...meta, name: nested.name.trim().slice(0, 80) }
+      }
+    }
   }
 
-  return base
+  return meta
 }
 
 /** @deprecated Prefer {@link parseOnesatFtOriginPolicy} */
@@ -272,6 +390,13 @@ export function buildColourCustomInstructions(args: {
   amt?: number
   supply?: ColourSupply
   maxSupply?: number | null
+  /** Decorative icon inscription outpoint. */
+  icon?: string
+  /**
+   * Relative icon vout in the genesis tx (same tx as tip). Wallets expand to
+   * `<tipTx>_<iconVout>` when absolute `icon` is absent.
+   */
+  iconVout?: number
   provenance?: ProvenanceV2 | null
   mintBatchVout?: number
   /** @deprecated Interop ignores extend for binding. */
@@ -287,6 +412,16 @@ export function buildColourCustomInstructions(args: {
   if (args.sym) body.sym = args.sym
   if (args.amt != null && Number.isSafeInteger(args.amt) && args.amt > 0) {
     body.amt = String(args.amt)
+  }
+  if (args.icon?.trim()) {
+    const icon = args.icon.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    if (/^[0-9a-f]{64}_\d+$/.test(icon)) body.icon = icon
+  } else if (
+    typeof args.iconVout === 'number' &&
+    Number.isSafeInteger(args.iconVout) &&
+    args.iconVout >= 0
+  ) {
+    body.iconVout = args.iconVout
   }
   // Locked supply is optional — only echo when the origin defines it.
   if (args.supply === 'locked') {
@@ -411,8 +546,6 @@ export function verifyColourTipProvenance(args: {
   const origin = normalizeColourOrigin(args.claimedOrigin)
   const tip = toUnderscore(args.tipOutpoint).toLowerCase()
   const attest = parseColourMintAttestation(args.customInstructions)
-  const meta = args.originMeta ?? null
-  const locked = meta?.supply === 'locked'
 
   if (tip === origin) {
     if (args.lockingScriptHex && !hasOrdEnvelope(args.lockingScriptHex)) {
@@ -467,11 +600,17 @@ export function verifyColourTipProvenance(args: {
     return { ok: true, reason: null, via: 'parent' }
   }
 
-  if (attest.parent && args.parentBound == null) {
-    if (locked) {
-      return { ok: false, reason: 'Locked tip needs batch, provenance, or proven parent' }
+  // Parent attestation without a proven parent is never enough — open or locked.
+  // Callers must pass parentBound after walking a locally held, already-bound parent
+  // (or attach BRC-150). Soft "parent-unverified" would let a forged parent tag bind.
+  if (attest.parent) {
+    return {
+      ok: false,
+      reason:
+        args.parentBound === false
+          ? 'Parent tip not proven'
+          : 'Parent hop requires proven parent or BRC-150',
     }
-    return { ok: true, reason: null, via: 'parent-unverified' }
   }
 
   if (!args.provenance) {
@@ -562,6 +701,7 @@ export function aggregateColourTokens(
       provenanceOk,
       outpoint: list[0]!.outpoint,
       name: meta.name,
+      ...(meta.icon ? { icon: meta.icon } : {}),
     })
   }
 
@@ -582,6 +722,7 @@ export function colourTokenAsFungible(token: ColourToken): {
   utxoCount: number
   outpoint: string
   spendKind: 'plain'
+  icon?: string
   iconUrl?: string
   colourSupply: ColourSupply
   colourMaxSupply: number | null
@@ -595,7 +736,8 @@ export function colourTokenAsFungible(token: ColourToken): {
     utxoCount: token.tipCount,
     outpoint: token.outpoint,
     spendKind: 'plain',
-    iconUrl: token.iconUrl,
+    ...(token.icon ? { icon: token.icon } : {}),
+    ...(token.iconUrl ? { iconUrl: token.iconUrl } : {}),
     colourSupply: token.supply,
     colourMaxSupply: token.maxSupply,
     colourProvenanceOk: token.provenanceOk,

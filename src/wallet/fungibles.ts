@@ -401,7 +401,7 @@ async function listFungiblesNow(
     } catch (err) {
       console.warn('[colour] list failed', err)
     }
-    // Colour coins first; legacy BSV-21 rows keep showing as read-only send.
+    // Colour coins first; legacy BSV-21 stays listed only so Burn can clear them.
     const colourIds = new Set(colourRows.map((t) => t.tokenId))
     const merged = [
       ...colourRows,
@@ -526,14 +526,29 @@ export async function importBsv21Tokens(
   const errors: string[] = []
   const outpoints: string[] = []
 
+  let deferRemaining = false
   for (const [txid, group] of byTxid) {
     const groupOps = group.map((g) => g.outpoint)
+    if (deferRemaining) {
+      releaseOneSatImport(groupOps)
+      continue
+    }
     try {
-      if (!wallet.services?.getBeefForTxid) {
-        throw new Error('Wallet services unavailable for BEEF fetch')
+      // A token send must not wait behind legacy BSV-21 beef / chaintracks.
+      const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+      if (shouldYieldChainIngestToSpend()) {
+        console.info(
+          `[bsv21] deferring tip imports — send is waiting (${groupOps.length}+)`,
+        )
+        releaseOneSatImport(groupOps)
+        deferRemaining = true
+        continue
       }
       await yieldToUi()
-      const beef = await wallet.services.getBeefForTxid(txid)
+      // Prefer the session BEEF cache (8s cap). Raw chaintracks getBeefForTxid
+      // has no deadline and was wedging Refresh behind Babbage timeouts.
+      const { getBeefForTxidCached } = await import('./beefCache')
+      const beef = await getBeefForTxidCached(wallet, txid)
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)

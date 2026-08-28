@@ -4,7 +4,13 @@
  *
  * Combine = spend all tips for an origin into one self tip (same path, no peer).
  */
-import { Beef, P2PKH } from '@bsv/sdk'
+import {
+  Beef,
+  P2PKH,
+  PrivateKey,
+  type SignableTransaction,
+  type Transaction,
+} from '@bsv/sdk'
 import {
   assertColourAmtConservation,
   buildColourCustomInstructions,
@@ -21,11 +27,16 @@ import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
 } from './appActivity'
-import { getBeefForTxidCached, rememberBeefTree } from './beefCache'
+import {
+  buildMergedInputBeef,
+  getBeefForTxidCached,
+  rememberBeefTree,
+} from './beefCache'
 import { normalizeOutpoint } from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import { stampBrc164Id } from './itemAccess'
+import { isCovenantLockedScript } from './collectableTipKind'
 import { tryBuildProvenanceForSend } from './oneSatProvenance'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
@@ -35,7 +46,11 @@ import {
   completePendingSend,
 } from './pendingSend'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
-import { getActiveWallet } from './session'
+import {
+  FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+  withFungibleCreateActionTimeout,
+} from './sendFungible'
+import { getActiveWallet, type ActiveWallet } from './session'
 import { markItemsSent } from './sentItemGuard'
 import { runExclusiveSpend } from './spendGuard'
 
@@ -53,6 +68,151 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   return undefined
 }
 
+/**
+ * BRC-100 auto-signs managed change only. Inscribed 1sat-ft tips come back as
+ * signable — unlock with the root key, same as collectables.
+ */
+export async function signColourTipTransfer(args: {
+  wallet: ActiveWallet
+  signable: SignableTransaction
+  outpoints: string[]
+}): Promise<{ txid: string; atomicBeef: number[] }> {
+  const targets = new Map<string, number>()
+  for (const op of args.outpoints) {
+    const [txidIn, voutRaw] = wireOutpoint(op).split('.')
+    targets.set(`${txidIn?.toLowerCase()}.${Number(voutRaw)}`, Number(voutRaw))
+  }
+
+  rememberBeefTree(
+    Array.isArray(args.signable.tx)
+      ? args.signable.tx
+      : Array.from(args.signable.tx),
+  )
+  const beef = Beef.fromBinary(args.signable.tx)
+  let unsigned: Transaction | undefined
+  const vins: number[] = []
+  for (const btx of beef.txs ?? []) {
+    if (!btx.tx) continue
+    for (let i = 0; i < btx.tx.inputs.length; i++) {
+      const input = btx.tx.inputs[i]
+      const key = `${String(input?.sourceTXID).toLowerCase()}.${
+        input?.sourceOutputIndex
+      }`
+      if (targets.has(key)) {
+        unsigned = btx.tx
+        vins.push(i)
+      }
+    }
+    if (unsigned && vins.length === targets.size) break
+  }
+  if (!unsigned || vins.length === 0) {
+    throw new Error('Token tip missing from the signable transaction')
+  }
+
+  for (const vin of vins) {
+    const input = unsigned.inputs[vin]!
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    if (!input.sourceTransaction && input.sourceTXID) {
+      try {
+        const extra = await getBeefForTxidCached(
+          args.wallet,
+          String(input.sourceTXID),
+        )
+        beef.mergeBeef(extra.toBinary())
+        input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
+      } catch (err) {
+        console.warn('[1sat-ft] source tx hydrate failed', input.sourceTXID, err)
+      }
+    }
+    const locking =
+      input.sourceTransaction?.outputs[
+        input.sourceOutputIndex
+      ]?.lockingScript?.toHex()
+    if (isCovenantLockedScript(locking)) {
+      throw new Error(
+        'This token tip is covenant-locked and cannot be spent with a P2PKH unlock.',
+      )
+    }
+  }
+
+  const rootKey = PrivateKey.fromHex(args.wallet.rootKeyHex)
+  const spends: Record<number, { unlockingScript: string }> = {}
+  for (const vin of vins) {
+    const input = unsigned.inputs[vin]!
+    input.sourceTransaction ??= beef.findTxid(String(input.sourceTXID))?.tx
+    const sourceOut =
+      input.sourceTransaction?.outputs[input.sourceOutputIndex]
+    const satoshis = sourceOut?.satoshis
+    const lockingScript = sourceOut?.lockingScript
+    if (typeof satoshis !== 'number' || !lockingScript) {
+      throw new Error('Token tip is missing its source transaction')
+    }
+    // Tips are inscription ‖ P2PKH — sighash scriptCode must be the full locking
+    // script. SetupClient.getUnlockP2PKH only hashes bare P2PKH and fails
+    // CHECKSIG ("top stack element must be truthy") on ordinal tips.
+    input.unlockingScriptTemplate = new P2PKH().unlock(
+      rootKey,
+      'all',
+      false,
+      satoshis,
+      lockingScript,
+    )
+  }
+  await unsigned.sign()
+  for (const vin of vins) {
+    const unlockingScript = unsigned.inputs[vin]?.unlockingScript?.toHex()
+    if (!unlockingScript) throw new Error('Could not sign the token transfer')
+    spends[vin] = { unlockingScript }
+  }
+
+  let signed
+  try {
+    signed = await args.wallet.wallet.signAction({
+      reference: args.signable.reference,
+      spends,
+      options: { noSend: true },
+    })
+  } catch (err) {
+    const {
+      isReviewActionsError,
+      formatReviewActionsError,
+      recoverFromReviewActions,
+    } = await import('./actionReview')
+    if (isReviewActionsError(err)) {
+      await recoverFromReviewActions({
+        err,
+        reference: args.signable.reference,
+        tipOutpoints: [...args.outpoints],
+        active: args.wallet,
+      })
+      throw new Error(formatReviewActionsError(err))
+    }
+    throw err
+  }
+
+  const txid =
+    typeof signed.txid === 'string' ? signed.txid.trim().toLowerCase() : ''
+  if (!txid) throw new Error('Token transfer returned no txid after signing')
+
+  let atomicBeef = atomicBeefFromWalletResult(signed)
+  if (!atomicBeef?.length) {
+    const wrap = new Beef()
+    wrap.mergeBeef(args.signable.tx)
+    wrap.mergeTransaction(unsigned)
+    wrap.atomicTxid = undefined
+    try {
+      atomicBeef = wrap.toBinaryAtomic(txid)
+    } catch {
+      atomicBeef = wrap.toBinary()
+    }
+  }
+  if (!atomicBeef?.length) {
+    throw new Error('Token transfer returned no signed BEEF')
+  }
+  rememberBeefTree(atomicBeef, txid)
+  return { txid, atomicBeef }
+}
+
 export async function sendColourCoins(args: {
   origin: string
   /** Face-value units to send. */
@@ -63,6 +223,8 @@ export async function sendColourCoins(args: {
   sym?: string
   supply?: 'locked' | 'open'
   maxSupply?: number | null
+  /** Decorative icon inscription to echo into child remittance. */
+  icon?: string
   /**
    * Spend exactly these tips (e.g. combine). When omitted, greedy-cover
    * `amount` from listed tips.
@@ -136,12 +298,19 @@ export async function sendColourCoins(args: {
   })
 
   try {
-    return await runExclusiveSpend(async () => {
+    return await runExclusiveSpend(
+      async () => {
       assertOnlineForPayment()
       const wallet = getActiveWallet()
       if (!wallet) throw new Error('Wallet locked')
       {
-        const { abortReservedActionBatches } = await import('./actionReview')
+        // Stuck noSend from a prior hang leaves TaskSendWaiting + reserved
+        // funding — the next createAction then sits forever. Clear both first.
+        const {
+          abortReservedActionBatches,
+          releaseStuckNosends,
+        } = await import('./actionReview')
+        await releaseStuckNosends(wallet)
         await abortReservedActionBatches(wallet)
       }
 
@@ -165,13 +334,50 @@ export async function sendColourCoins(args: {
           ? null
           : args.recipientIdentityKey?.trim().toLowerCase() || null
       const parentRef = primary.outpoint
+      const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
+      const knownTxids = [
+        ...new Set(
+          spendOutpoints
+            .map((op) => op.split('.')[0]?.toLowerCase())
+            .filter((txid): txid is string => Boolean(txid)),
+        ),
+      ]
+
+      // Same as collectables: feed tip BEEF + trustSelf so createAction does not
+      // block on chainTracker for a freshly minted (still-unconfirmed) tip.
+      setPaymentProgress(
+        'building',
+        'Loading tip proofs…',
+        primary.outpoint,
+      )
+      let inputBEEF: number[]
+      try {
+        inputBEEF = await buildMergedInputBeef(
+          wallet,
+          spendOutpoints,
+          wireOutpoint,
+        )
+      } catch (err) {
+        throw new Error(
+          err instanceof Error
+            ? err.message.replace(/collectable/i, 'token tip')
+            : 'Could not load the transaction that holds this token tip. Refresh, then send again.',
+        )
+      }
+
       const provenance = await tryBuildProvenanceForSend({
         tipOutpoint: wireOutpoint(primary.outpoint),
         origin,
         wallet,
         priorProvenance: primary.provenance,
+        inputBeef: inputBEEF,
       })
-      const tags = stampBrc164Id(colourTags(origin, [`name:${sym.slice(0, 80)}`]))
+      const tags = stampBrc164Id(
+        colourTags(origin, [
+          `name:${sym.slice(0, 80)}`,
+          ...(args.icon ? [`icon:${args.icon}`] : []),
+        ]),
+      )
       const baseCi = {
         origin,
         sym,
@@ -180,6 +386,7 @@ export async function sendColourCoins(args: {
         maxSupply: args.maxSupply ?? null,
         provenance: provenance ?? primary.provenance ?? null,
         parent: parentRef,
+        ...(args.icon ? { icon: args.icon } : {}),
       }
 
       const outputs: Array<{
@@ -216,29 +423,106 @@ export async function sendColourCoins(args: {
         })
       }
 
-      const created = await wallet.wallet.createAction({
-        description: actionDescription,
-        inputs: selected.map((tip) => ({
-          outpoint: wireOutpoint(tip.outpoint),
-          inputDescription: '1Sat tip',
-          unlockingScriptLength: 108,
-        })),
-        outputs,
-        options: {
-          noSend: true,
-          randomizeOutputs: false,
-          signAndProcess: true,
-        },
-        labels: [ONESAT_FT_BASKET, actionLabel],
-      })
+      setPaymentProgress(
+        'signing',
+        args.skipPeerNotify ? 'Signing combined tip…' : 'Signing 1Sat tip…',
+        primary.outpoint,
+      )
+      console.info(
+        `[1sat-ft] createAction start tips=${selected.length} amount=${amount} change=${change}`,
+      )
+      let actionReference: string | undefined
+      try {
+      let created: Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
+      try {
+        created = await withFungibleCreateActionTimeout(
+          wallet.wallet.createAction({
+            description: actionDescription,
+            inputBEEF,
+            inputs: selected.map((tip) => ({
+              outpoint: wireOutpoint(tip.outpoint),
+              inputDescription: '1Sat tip',
+              unlockingScriptLength: 108,
+            })),
+            outputs,
+            options: {
+              trustSelf: 'known',
+              ...(knownTxids.length > 0 ? { knownTxids } : {}),
+              noSend: true,
+              randomizeOutputs: false,
+              signAndProcess: true,
+            },
+            labels: [ONESAT_FT_BASKET, actionLabel],
+          }),
+          FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+        )
+      } catch (err) {
+        const { isReservedActionBatchError, abortReservedActionBatches } =
+          await import('./actionReview')
+        if (isReservedActionBatchError(err)) {
+          await abortReservedActionBatches(wallet)
+          created = await withFungibleCreateActionTimeout(
+            wallet.wallet.createAction({
+              description: actionDescription,
+              inputBEEF,
+              inputs: selected.map((tip) => ({
+                outpoint: wireOutpoint(tip.outpoint),
+                inputDescription: '1Sat tip',
+                unlockingScriptLength: 108,
+              })),
+              outputs,
+              options: {
+                trustSelf: 'known',
+                ...(knownTxids.length > 0 ? { knownTxids } : {}),
+                noSend: true,
+                randomizeOutputs: false,
+                signAndProcess: true,
+              },
+              labels: [ONESAT_FT_BASKET, actionLabel],
+            }),
+            FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+          )
+        } else {
+          throw err
+        }
+      }
 
-      const txid =
+      actionReference =
+        typeof created.signableTransaction?.reference === 'string'
+          ? created.signableTransaction.reference
+          : undefined
+
+      let txid =
         typeof created.txid === 'string' && /^[0-9a-f]{64}$/i.test(created.txid)
           ? created.txid.toLowerCase()
           : ''
-      if (!txid) throw new Error('Token transfer produced no txid')
-
       let atomic = atomicBeefFromWalletResult(created)
+
+      if (!txid) {
+        const signable = created.signableTransaction as
+          | SignableTransaction
+          | undefined
+        if (!signable) {
+          throw new Error('Token transfer produced no txid')
+        }
+        actionReference = signable.reference
+        console.info('[1sat-ft] createAction returned signable — unlocking tip(s)')
+        setPaymentProgress(
+          'signing',
+          'Signing token tip…',
+          primary.outpoint,
+        )
+        const signed = await signColourTipTransfer({
+          wallet,
+          signable,
+          outpoints: spendOutpoints,
+        })
+        txid = signed.txid
+        atomic = signed.atomicBeef
+        actionReference = undefined
+      }
+      console.info(`[1sat-ft] createAction done txid=${txid}`)
+
       if (!atomic?.length) {
         try {
           const beef = await getBeefForTxidCached(wallet, txid)
@@ -259,7 +543,24 @@ export async function sendColourCoins(args: {
       }
       rememberBeefTree(atomic, txid)
 
+      try {
+        await wallet.wallet.actionBatch.abort()
+      } catch {
+        /* unused funding reservations only */
+      }
+
+      const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
+        await import('./staleOutputRelease')
+      await sealSpentInputsOfSignedTx(txid, atomic)
+      // Signed — settle owns broadcast; do not abort this reference on peer miss.
+      actionReference = undefined
+
       if (peerKey) {
+        setPaymentProgress(
+          'finishing',
+          'Delivering token to recipient',
+          primary.outpoint,
+        )
         const { notifyPeerItemIncoming } = await import('./messageTransport')
         const friend = listFriends().find(
           (f) => f.identityKey.toLowerCase() === peerKey,
@@ -283,7 +584,12 @@ export async function sendColourCoins(args: {
         })
       }
 
-      await broadcastAtomicBeef(txid, atomic)
+      setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
+      const ok = await broadcastAtomicBeef(txid, atomic)
+      if (!ok) {
+        await releaseSealedInputsOfUnsentTx(txid, atomic)
+        throw new Error('Token transfer was not accepted by the network')
+      }
 
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
       markItemsSent(spent.map((outpoint) => ({ outpoint, txid })))
@@ -301,7 +607,29 @@ export async function sendColourCoins(args: {
       scheduleHistoryBackupPush('sendColourCoins')
       void listColourTokens(wallet).catch(() => {})
       return { txid, tipsSpent: selected.length, change }
-    })
+      } finally {
+        if (actionReference) {
+          try {
+            await wallet.wallet.abortAction({ reference: actionReference })
+          } catch {
+            /* best-effort — outer catch also releaseStuckNosends */
+          }
+          try {
+            await wallet.wallet.actionBatch.abort()
+          } catch {
+            /* unused funding */
+          }
+        }
+      }
+    },
+      () => {
+        setPaymentProgress(
+          'building',
+          args.skipPeerNotify ? 'Combining tips…' : 'Preparing 1Sat tip…',
+          primary.outpoint,
+        )
+      },
+    )
   } catch (err) {
     clearPendingSend(outboundPending.id)
     failOutboundSendPending({
@@ -309,6 +637,20 @@ export async function sendColourCoins(args: {
       reason: err instanceof Error ? err.message : String(err),
     })
     clearPaymentProgress()
+    // Failed create/sign leaves the tip spent inside a noSend action — abort so
+    // Collect still lists KING (chain tip is unspent; only local state was dirty).
+    try {
+      const active = getActiveWallet()
+      if (active) {
+        const { releaseStuckNosends, abortReservedActionBatches } =
+          await import('./actionReview')
+        await releaseStuckNosends(active)
+        await abortReservedActionBatches(active)
+        void listColourTokens(active).catch(() => {})
+      }
+    } catch (recoverErr) {
+      console.warn('[1sat-ft] tip restore after failed send skipped', recoverErr)
+    }
     throw err
   }
 }

@@ -26,6 +26,7 @@ import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
+import { CopyableError } from './CopyableError'
 import {
   parseFungibleSendAmount,
   sendFungible,
@@ -254,13 +255,13 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
 
             <div className="send-side">
               {sendBlocked ? (
-                <p className="error" role="status">
+                <CopyableError role="status">
                   {!token.colourSupply
                     ? 'Legacy BSV-21 tips are read-only. 1Sat tokens split face-value tips under a shared origin.'
                     : token.spendKind === 'cosigned'
                       ? 'This token requires a cosigner to send.'
                       : 'This balance mixes plain and cosigned tips — send them separately.'}
-                </p>
+                </CopyableError>
               ) : null}
 
               <div className="field send-amount-field">
@@ -316,9 +317,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                   ) : null}
                 </div>
                 {error && stage === 'edit' ? (
-                  <p className="error" role="status">
-                    {error}
-                  </p>
+                  <CopyableError role="status">{error}</CopyableError>
                 ) : null}
                 {showMatches && matches.length > 0 && (
                   <ul className="friend-suggest-list send-friend-suggest" role="listbox">

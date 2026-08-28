@@ -5,6 +5,7 @@ import {
   buildColourCustomInstructions,
   buildOnesatFtOriginInscriptionJson,
   evaluateColourSupply,
+  looksLikeOnesatFtTip,
   normalizeColourOrigin,
   parseColourTipAmt,
   parseOnesatFtOriginPolicy,
@@ -218,6 +219,45 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(check.via).toBe('parent')
   })
 
+  it('fails closed when parent is attested but not proven (open or locked)', () => {
+    const parent = `${'ab'.repeat(32)}_1`
+    const tipOut = `${'cd'.repeat(32)}_0`
+    for (const supply of ['open', 'locked'] as const) {
+      const ci = buildColourCustomInstructions({
+        origin: ORIGIN,
+        supply,
+        ...(supply === 'locked' ? { maxSupply: 10 } : {}),
+        amt: 4,
+        parent,
+      })
+      const meta = {
+        origin: ORIGIN,
+        supply,
+        maxSupply: supply === 'locked' ? 10 : null,
+      }
+      expect(
+        verifyColourTipProvenance({
+          tipOutpoint: tipOut,
+          claimedOrigin: ORIGIN,
+          provenance: null,
+          customInstructions: ci,
+          originMeta: meta,
+          parentBound: false,
+        }).ok,
+      ).toBe(false)
+      expect(
+        verifyColourTipProvenance({
+          tipOutpoint: tipOut,
+          claimedOrigin: ORIGIN,
+          provenance: null,
+          customInstructions: ci,
+          originMeta: meta,
+          // omitted parentBound — never soft-bind
+        }).ok,
+      ).toBe(false)
+    }
+  })
+
   it('aggregates balance as Σ amt (missing amt ⇒ 1)', () => {
     const tips = [
       tip(ORIGIN, { amt: 1000 }),
@@ -284,5 +324,63 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(() => assertColourAmtConservation([1000], [400, 500])).toThrow(
       /not conserved/,
     )
+  })
+
+  it('recognizes FT tips from tags, CI, or ord MIME (not tags alone)', () => {
+    expect(looksLikeOnesatFtTip({ tags: [] })).toBe(false)
+    expect(looksLikeOnesatFtTip({ tags: ['1sat-ft', 'ordinal'] })).toBe(true)
+    expect(
+      looksLikeOnesatFtTip({
+        customInstructions: JSON.stringify({
+          p: '1sat-ft',
+          amt: '69420',
+          sym: 'KING',
+        }),
+      }),
+    ).toBe(true)
+    const { lockingScript } = buildOnesatFtMintLockingScript({
+      address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+      sym: 'KING',
+      amt: 69420,
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    expect(looksLikeOnesatFtTip({ lockingScriptHex: lockingScript })).toBe(true)
+  })
+
+  it('resolves iconVout on genesis to same-tx icon outpoint', () => {
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        amt: '100',
+        sym: 'KING',
+        iconVout: 1,
+      }),
+    })
+    expect(meta.icon).toBe(`${'ab'.repeat(32)}_1`)
+    expect(meta.sym).toBe('KING')
+  })
+
+  it('overlays CI iconVout when ord envelope already supplied policy', () => {
+    const { lockingScript } = buildOnesatFtMintLockingScript({
+      address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+      sym: 'KING',
+      amt: 69420,
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      lockingScriptHex: lockingScript,
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        amt: '69420',
+        sym: 'KING',
+        iconVout: 1,
+      }),
+    })
+    expect(meta.supply).toBe('locked')
+    expect(meta.maxSupply).toBe(69420)
+    expect(meta.sym).toBe('KING')
+    expect(meta.icon).toBe(`${'ab'.repeat(32)}_1`)
   })
 })

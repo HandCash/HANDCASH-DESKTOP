@@ -175,6 +175,7 @@ export async function sendFungible(args: {
       sym: token.sym,
       supply: token.colourSupply,
       maxSupply: token.colourMaxSupply ?? null,
+      ...(token.icon ? { icon: token.icon } : {}),
     })
     return { txid: result.txid }
   }

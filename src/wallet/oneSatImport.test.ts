@@ -5,6 +5,7 @@ import {
   classifyLegacyUtxos,
   fetchRawTxHex,
   peekRawTxHex,
+  peekRawTxLookup,
   resolveInscriptionPreferringOrigin,
   resolveOneSatInscription,
 } from './oneSatImport'
@@ -178,10 +179,33 @@ describe('classifyLegacyUtxos', () => {
     }
   }
 
-  it('paints a bare tip instantly when its tx spends a 1-sat input — no indexer', async () => {
-    // Instant ingest, deferred verify: this is the BRC-150 replacement for the
-    // latch fast path. Discovery is the transfer shape (spends an existing
-    // 1-sat tip); the real origin/name settle after paint.
+  it('paints a bare tip when lineage reaches a non-FT ordinal inscription', async () => {
+    // Instant ingest, deferred verify: discovery is inscribed NFT ancestry, not
+    // merely "spent a 1-sat parent" (1Sat FT transfers share that shape).
+    const mint = buildTx([{ scriptHex: ORD_ENVELOPE + P2PKH_HEX, satoshis: 1 }])
+    const transfer = buildTx(
+      [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
+      [{ txid: mint.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(mint, transfer)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${transfer.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats.map((i) => i.outpoint)).toEqual([tipOutpoint])
+    expect(result.oneSats[0]!.origin).toBe(`${transfer.id('hex')}_0`)
+    expect(result.heldOneSats).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('does not paint bare tips that only spend another bare 1-sat', async () => {
+    // Without an inscribed ancestor this is indistinguishable from 1sat-ft
+    // hop dust — hold rather than invent a collectable.
     const parent = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 1 }])
     const transfer = buildTx(
       [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
@@ -194,10 +218,38 @@ describe('classifyLegacyUtxos', () => {
     const tipOutpoint = `${transfer.id('hex')}.0`
     const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
 
-    expect(result.oneSats.map((i) => i.outpoint)).toEqual([tipOutpoint])
-    expect(result.oneSats[0]!.origin).toBe(`${transfer.id('hex')}_0`)
-    expect(result.heldOneSats).toEqual([])
-    expect(fetchMock).not.toHaveBeenCalled()
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('never paints a bare 1sat-ft transfer tip as an NFT', async () => {
+    const mimeHex = Array.from(new TextEncoder().encode('application/1sat-ft+json'))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const ftEnvelope =
+      '0063036f726451' +
+      mimeHex.length.toString(16).padStart(2, '0') +
+      mimeHex +
+      '0002' +
+      '7b7d' +
+      '68'
+    const mint = buildTx([{ scriptHex: ftEnvelope + P2PKH_HEX, satoshis: 1 }])
+    const transfer = buildTx(
+      [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
+      [{ txid: mint.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(mint, transfer)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${transfer.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
 
     activeWallet = null
     vi.unstubAllGlobals()
@@ -423,9 +475,36 @@ describe('fetchRawTxHex', () => {
     expect(third).toBe(tx.toHex())
     expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(peekRawTxHex(txid)).toBe(tx.toHex())
+    expect(peekRawTxLookup(txid)).toBe('hit')
   })
 
   it('reports no cached body for a transaction it has never fetched', () => {
     expect(peekRawTxHex('f'.repeat(64))).toBeNull()
+    expect(peekRawTxLookup('f'.repeat(64))).toBe('unknown')
+  })
+
+  it('caches a toolbox miss and does not fan out Bitails/WoC again', async () => {
+    // Unique per run — the process-global miss map outlives individual tests.
+    const txid = Array.from({ length: 64 }, (_, i) =>
+      ((Date.now() + i) % 16).toString(16),
+    ).join('')
+    expect(peekRawTxLookup(txid)).toBe('unknown')
+
+    const getRawTx = vi.fn(async () => ({ rawTx: undefined }))
+    activeWallet = { services: { getRawTx } }
+    const fetchMock = vi.fn(async () => new Response('nope', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const first = await fetchRawTxHex(txid, 'main')
+    const second = await fetchRawTxHex(txid, 'main')
+    vi.unstubAllGlobals()
+    activeWallet = null
+
+    expect(first).toBeNull()
+    expect(second).toBeNull()
+    expect(getRawTx).toHaveBeenCalledTimes(1)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(peekRawTxLookup(txid)).toBe('miss')
+    expect(peekRawTxHex(txid)).toBeNull()
   })
 })

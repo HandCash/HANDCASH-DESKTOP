@@ -10,18 +10,15 @@ import {
   type LegacyScanResult,
   type LegacyUtxo,
 } from './legacyScan'
-import { scanAddressOrdinalTxos, scanAddressTokenTxos } from './tokenAddressScan'
+import { scanAddressOrdinalTxos } from './tokenAddressScan'
 import { forgetLegacyImported } from './legacyImportGuard'
 import { retryableStuckSweeps } from './legacyStuckSweep'
 import { recordFundingReceipts } from './legacyReceiptActivity'
 import type { Chain } from './vault'
 import {
-  hasActivityItemOutpoint,
   hasSettledActivityItemOutpoint,
-  recordAppActivity,
   upsertAppActivity,
   WALLET_ACTIVITY_ORIGIN,
-  formatActivityTokenAmt,
 } from './appActivity'
 import {
   classifyLegacyUtxos,
@@ -29,8 +26,6 @@ import {
   importOneSatOrdinals,
   type MigrationItem,
 } from './oneSatImport'
-import { importBsv21Tokens, listFungibles } from './fungibles'
-import { getTokenIconDataUrl } from './tokenIconCache'
 import {
   filterNewOneSatOutpoints,
   forgetOneSatImported,
@@ -103,63 +98,6 @@ function recordItemReceipts(
       },
     })
   }
-}
-
-/** Activity rows for newly internalized BSV-21 fungible tips. */
-function recordTokenReceipts(
-  importedOutpoints: string[],
-  candidates: import('./bsv21').Bsv21ImportItem[],
-): void {
-  if (importedOutpoints.length === 0) return
-  const byOp = new Map(
-    candidates.map((item) => [
-      item.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
-      item,
-    ]),
-  )
-  for (const raw of importedOutpoints) {
-    const op = raw.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
-    if (!op || hasActivityItemOutpoint(op)) continue
-    const tip = byOp.get(op)
-    const receiveTxid =
-      tip?.txid?.trim().toLowerCase() || op.split(/[._]/)[0]
-    const tokenId =
-      tip?.tokenId?.trim().toLowerCase() ||
-      op.replace(/\.(\d+)$/, '_$1')
-    const name = tip?.sym?.trim() || shortTokenLabelSafe(tokenId)
-    const icon = tip?.icon ? tip.icon.trim().toLowerCase().replace('.', '_') : undefined
-    const iconUrl = icon ? getTokenIconDataUrl(icon) : undefined
-    const isMint = tip?.op === 'mint' || tip?.op === 'deploy+mint'
-    const qty =
-      tip?.amt && /^\d+$/.test(tip.amt)
-        ? formatActivityTokenAmt(tip.amt, tip.dec ?? 0)
-        : null
-    const verb = isMint ? 'Minted' : 'Received'
-    recordAppActivity({
-      origin: WALLET_ACTIVITY_ORIGIN,
-      kind: 'earned',
-      sats: 1,
-      method: isMint ? 'mint-token' : 'receive-token',
-      note: qty ? `${verb} ${qty} ${name}` : `${verb} ${name}`,
-      txid: receiveTxid || undefined,
-      item: {
-        name,
-        origin: tokenId,
-        outpoint: op,
-        tokenId,
-        ...(tip?.amt && /^\d+$/.test(tip.amt) ? { amt: tip.amt } : {}),
-        ...(typeof tip?.dec === 'number' ? { dec: tip.dec } : {}),
-        ...(icon ? { icon } : {}),
-        ...(iconUrl ? { imageUrl: iconUrl } : {}),
-      },
-    })
-  }
-}
-
-function shortTokenLabelSafe(tokenId: string): string {
-  const id = tokenId.trim().toLowerCase()
-  if (id.length < 12) return id || 'Token'
-  return `${id.slice(0, 6)}…${id.slice(-4)}`
 }
 
 /**
@@ -333,25 +271,17 @@ export async function ingestLegacyAddressUtxos(
     })
   }
 
-  // Inscribed outputs (1Sat NFT + BSV-21) are P2PKH + ord envelope, which every
-  // address provider reads as nonstandard — they are absent from the scan below
-  // even while live on the address. Ask the ordinal index for both NFT tips and
-  // BSV-21 tips. A send needs funding only, and never spends a tip, so it does
-  // not pay for this.
-  const [addressScan, tokenTxos, ordinalTxos] = await Promise.all([
+  // Inscribed outputs (1Sat NFT) are P2PKH + ord envelope — absent from the
+  // plain address scan. Ordinal index covers NFT tips. Legacy BSV-21 is
+  // burn-only for tips already in basket `bsv21` — do not re-scan / import more.
+  const [addressScan, ordinalTxos] = await Promise.all([
     scanLegacyAddress(active),
-    fundingOnly
-      ? Promise.resolve<LegacyUtxo[]>([])
-      : scanAddressTokenTxos(active.address, active.chain),
     fundingOnly
       ? Promise.resolve<LegacyUtxo[]>([])
       : scanAddressOrdinalTxos(active.address, active.chain),
   ])
 
-  const scan = mergeTokenTxos(
-    mergeTokenTxos(addressScan, tokenTxos),
-    ordinalTxos,
-  )
+  const scan = mergeTokenTxos(addressScan, ordinalTxos)
   if (scan.utxos.length === 0) {
     return emptyIngest(scan)
   }
@@ -375,7 +305,13 @@ export async function ingestLegacyAddressUtxos(
     const fresh = filterNewOneSatOutpoints([i.outpoint])
     return fresh.length > 0
   })
-  const newBsv21 = bsv21.filter((i) => filterNewOneSatOutpoints([i.outpoint]).length > 0)
+  // Never auto-import BSV-21 into Collect. Hold on-address tips so Refresh
+  // does not sweep them as funding; burn uses basket tips already held.
+  if (bsv21.length > 0 && !fundingOnly) {
+    console.info(
+      `[chain-ingest] holding ${bsv21.length} legacy BSV-21 tip(s) — burn-only (not importing)`,
+    )
+  }
 
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.
   if (heldOneSats.length > 0 && !fundingOnly) {
@@ -387,11 +323,6 @@ export async function ingestLegacyAddressUtxos(
   if (heldUneconomical.length > 0) {
     console.info(
       `[chain-ingest] holding ${heldUneconomical.length} uneconomical out(s) — not a sweep path`,
-    )
-  }
-  if (newBsv21.length > 0) {
-    console.info(
-      `[chain-ingest] routing ${newBsv21.length} BSV-21 tip(s) to basket bsv21 (Collect tokens)`,
     )
   }
 
@@ -477,25 +408,6 @@ export async function ingestLegacyAddressUtxos(
       console.info(
         `[chain-ingest] imported ${importedItems} collectable tip(s) from address scan`,
       )
-    }
-  }
-
-  if (newBsv21.length > 0 && !fundingOnly) {
-    await yieldToUi()
-    const ftResult = await importBsv21Tokens(newBsv21, active)
-    importedItems += ftResult.imported
-    itemsFailed += ftResult.failed
-    recordTokenReceipts(ftResult.outpoints ?? [], newBsv21)
-    if (ftResult.failed > 0) {
-      console.warn('[chain-ingest] bsv21 import partial', ftResult)
-      partialWarn =
-        partialWarn ??
-        `Some tokens didn’t import (${ftResult.failed}). Retrying automatically.`
-    }
-    if ((ftResult.outpoints ?? []).length > 0) {
-      void listFungibles(active).catch((err) => {
-        console.warn('[chain-ingest] early fungibles paint failed', err)
-      })
     }
   }
 

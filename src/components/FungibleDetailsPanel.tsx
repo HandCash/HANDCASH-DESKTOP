@@ -41,6 +41,7 @@ import {
   ReceiveIcon,
   RefreshIcon,
   SendIcon,
+  FireIcon,
   WarningIcon,
 } from './icons'
 import { EmptyState } from './EmptyState'
@@ -129,9 +130,12 @@ function TokenActivityRow({ entry }: { entry: ActivityEntry }) {
         openPaymentDetails(entry.id)
       }}
     >
-      <ListRow.Leading className="fungible-activity-icon" aria-hidden>
+      <ListRow.Leading
+        className={`fungible-activity-icon${burned ? ' is-burn' : ''}`}
+        aria-hidden
+      >
         {failed ? '!' : burned ? (
-          <WarningIcon size={14} />
+          <FireIcon size={14} />
         ) : minted ? (
           <MintIcon size={15} />
         ) : spent ? (
@@ -222,19 +226,23 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         ? `Issued by ${shortIssuerLabel(token.issuer)}`
         : 'Issuer unknown'
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
-  const burnBlocked = sendBlocked || tokenIds.length > 1
+  // Legacy BSV-21 tips are read-only except Burn (cleanup path).
+  const burnBlocked =
+    (isColour && token.spendKind !== 'plain') || tokenIds.length > 1
   const spendLabel = !isColour
-    ? 'Legacy BSV-21 tips are read-only'
+    ? 'Legacy BSV-21 — burn only'
     : token.spendKind === 'plain'
       ? 'Wallet controlled'
       : token.spendKind === 'cosigned'
         ? 'Cosigner required'
         : 'Mixed plain and cosigned outputs'
-  const burnTitle = sendBlocked
-    ? `${spendLabel}; burn unavailable`
-    : tokenIds.length > 1
-      ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
-      : `Burn ${token.sym}`
+  const burnTitle = burnBlocked
+    ? isColour && token.spendKind !== 'plain'
+      ? `${spendLabel}; burn unavailable`
+      : tokenIds.length > 1
+        ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
+        : `Burn ${token.sym}`
+    : `Burn ${token.sym}`
   const pageState = combining
     ? 'combining'
     : sendBlocked
@@ -308,20 +316,22 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       </header>
 
       <div className="fungible-details-actions" data-aeon-part="actions">
-        <button
-          type="button"
-          className="btn btn-primary btn-icon"
-          disabled={sendBlocked || combining}
-          title={sendBlocked ? spendLabel : `Send ${token.sym}`}
-          onClick={() => {
-            if (sendBlocked) return
-            playWalletSound('soft')
-            openSendFungible(token.tokenId)
-          }}
-        >
-          <SendIcon size={14} />
-          Send token
-        </button>
+        {isColour ? (
+          <button
+            type="button"
+            className="btn btn-primary btn-icon"
+            disabled={sendBlocked || combining}
+            title={sendBlocked ? spendLabel : `Send ${token.sym}`}
+            onClick={() => {
+              if (sendBlocked) return
+              playWalletSound('soft')
+              openSendFungible(token.tokenId)
+            }}
+          >
+            <SendIcon size={14} />
+            Send token
+          </button>
+        ) : null}
         {canCombine ? (
           <button
             type="button"
@@ -352,7 +362,11 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         {/* Destructive action is always last, on tokens and on items. */}
         <button
           type="button"
-          className="btn btn-ghost btn-icon asset-burn-trigger asset-burn-last"
+          className={
+            isColour
+              ? 'btn btn-ghost btn-icon asset-burn-trigger asset-burn-last'
+              : 'btn btn-primary btn-icon asset-burn-trigger asset-burn-last'
+          }
           disabled={burnBlocked || combining}
           title={burnTitle}
           onClick={() => {
@@ -445,10 +459,13 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
-            value={isColour ? '1Sat fungible (BRC-175)' : 'BSV-21'}
+            value={isColour ? '1Sat fungible (BRC-175)' : 'Legacy BSV-21 (burn only)'}
           />
           <MetaRow label="Basket" value={isColour ? '1sat-ft' : 'bsv21'} />
-          <MetaRow label="Spend policy" value={spendLabel} />
+          <MetaRow
+            label="Spend policy"
+            value={isColour ? spendLabel : 'Burn cleanup only — sends retired'}
+          />
           <MetaRow
             label="Output"
             value={token.outpoint}

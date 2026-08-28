@@ -6,6 +6,10 @@ export {
   SettingsRowIcon,
   SETTINGS_APPLICATION_ICONS,
 } from './settingIcons'
+export {
+  ShortcutHint,
+  screenshotShortcutKeys,
+} from './ShortcutHint'
 export { HistoryBackupUrlField } from './HistoryBackupUrlField'
 export {
   statusForSetting,

@@ -291,6 +291,26 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
+  // Failed 1sat-ft / item creates leave tips spent inside noSend. Free them
+  // *before* legacy BSV-21 beef work — chaintracks timeouts must not strand KING.
+  if (forceReview) {
+    try {
+      const { releaseStuckNosends, abortReservedActionBatches } =
+        await import('./actionReview')
+      await releaseStuckNosends(active)
+      await abortReservedActionBatches(active)
+      console.info('[chain-ingest] released stuck noSend / action batches before ingest')
+    } catch (err) {
+      console.warn('[chain-ingest] early nosend release skipped', err)
+    }
+    try {
+      const { listColourTokens } = await import('./colourListing')
+      void listColourTokens(active).catch(() => {})
+    } catch {
+      /* optional */
+    }
+  }
+
   // Pay first: dual-layer / restore / ordinal work must not hold the spend region.
   if (shouldYieldChainIngestToSpend()) {
     return finishEarlyForSpend(active, {

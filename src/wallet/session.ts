@@ -98,18 +98,60 @@ function installHeightFailover(services: Services, chain: Chain): void {
 function installHeaderFailover(services: Services, chain: Chain): void {
   try {
     const chaintracks = services.options.chaintracks as
-      | { findHeaderForHeight?: (height: number) => Promise<unknown> }
+      | {
+          findHeaderForHeight?: (height: number) => Promise<unknown>
+          findHeaderForBlockHash?: (hash: string) => Promise<unknown>
+        }
       | undefined
     if (typeof chaintracks?.findHeaderForHeight !== 'function') return
     const original = chaintracks.findHeaderForHeight.bind(chaintracks)
+    const withTimeout = async <T,>(work: Promise<T>, ms: number): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        return await Promise.race([
+          work,
+          new Promise<T>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timeout')), ms)
+          }),
+        ])
+      } finally {
+        if (timer != null) clearTimeout(timer)
+      }
+    }
     chaintracks.findHeaderForHeight = async (height: number) => {
       try {
-        const header = await original(height)
+        const header = await withTimeout(original(height), 3_000)
         if (header != null) return header
       } catch {
         // Same treatment as a miss: ask someone who can actually answer.
       }
       return (await fetchBlockHeaderForHeight(chain, height)) ?? undefined
+    }
+
+    // Merkle-path assembly asks hash→header after Bitails/WoC proofs; same hang.
+    if (typeof chaintracks.findHeaderForBlockHash === 'function') {
+      const originalHash = chaintracks.findHeaderForBlockHash.bind(chaintracks)
+      chaintracks.findHeaderForBlockHash = async (hash: string) => {
+        try {
+          const header = await withTimeout(originalHash(hash), 3_000)
+          if (header != null) return header
+        } catch {
+          /* public below */
+        }
+        if (chain !== 'main' || !/^[0-9a-f]{64}$/i.test(hash)) return undefined
+        try {
+          const res = await fetch(`https://api.bitails.io/block/${hash}`, {
+            signal: AbortSignal.timeout(8_000),
+            headers: { Accept: 'application/json' },
+          })
+          if (!res.ok) return undefined
+          const body = (await res.json()) as { height?: number }
+          if (typeof body.height !== 'number') return undefined
+          return (await fetchBlockHeaderForHeight(chain, body.height)) ?? undefined
+        } catch {
+          return undefined
+        }
+      }
     }
   } catch (err) {
     console.warn('[chaintracker] could not install header failover', err)
@@ -140,10 +182,9 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
- * Broadcast: Taal / GorillaPool ARC first, then public Bitails / WoC.
- * Arcade stays out of the BRC wallet path (Cloud may still use it).
- * Soft timeouts must stay long enough for ordinal BEEFs — 2.5s races caused
- * false failures and delayed paths that returned ghost txids (WoC 404).
+ * Broadcast: public ARC / Bitails before Taal.
+ * Taal ARC returns 401 without a product API key — trying it first only adds
+ * console noise, then soft-timeout rotation still succeeds elsewhere.
  */
 function installPostBeefPreferFast(services: Services): void {
   try {
@@ -153,10 +194,10 @@ function installPostBeefPreferFast(services: Services): void {
       }
     ).postBeefServices
     preferServiceOrder(collection, [
-      'TaalArcBeef',
       'GorillaPoolArcBeef',
       'Bitails',
       'WhatsOnChain',
+      'TaalArcBeef',
     ])
     const s = services as Services & {
       postBeefUntilSuccessSoftTimeoutMs?: number
@@ -187,9 +228,23 @@ function installTipHeaderFailover(services: Services, chain: Chain): void {
     if (typeof chaintracks?.findChainTipHeader !== 'function') return
     const original = chaintracks.findChainTipHeader.bind(chaintracks)
     let logged = false
+    const withTimeout = async <T,>(work: Promise<T>, ms: number): Promise<T> => {
+      let timer: ReturnType<typeof setTimeout> | undefined
+      try {
+        return await Promise.race([
+          work,
+          new Promise<T>((_, reject) => {
+            timer = setTimeout(() => reject(new Error('timeout')), ms)
+          }),
+        ])
+      } finally {
+        if (timer != null) clearTimeout(timer)
+      }
+    }
     chaintracks.findChainTipHeader = async () => {
       try {
-        const tip = await original()
+        // Browser ERR_TIMED_OUT on Chaintracks is ~30s; fail over in 3s.
+        const tip = await withTimeout(original(), 3_000)
         if (tip != null) return tip
       } catch {
         // Public tip below.
