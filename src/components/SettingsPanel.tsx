@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Button, RadioGroup, Select, Switch } from '@aeon-ui/ui'
+import { Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
 import { useUpdate } from '../wallet/updateProvider'
@@ -16,12 +16,21 @@ import {
   type AppearancePreference,
 } from '../wallet/themePrefs'
 import { playWalletSound } from '../wallet/soundService'
+import {
+  BlockIcon,
+  DarkModeIcon,
+  LightModeIcon,
+  MonitorIcon,
+  RepeatIcon,
+  TouchAppIcon,
+} from './icons'
 import { subscribeBackupConfirmed } from '../wallet/backupStatus'
 import { subscribeDeviceWallets } from '../wallet/deviceWallets'
 import { subscribeDeviceKeyBackups } from '../wallet/deviceKeyBackup'
 import {
   SettingsNavRow,
   SettingsControlRow,
+  SettingsIconToggle,
   SettingsSection,
   statusForSetting,
   settingIconFor,
@@ -69,17 +78,6 @@ const SECURITY_ITEMS: SettingItem[] = [
   },
 ]
 
-const UPDATE_MODES: { value: UpdateMode; label: string }[] = [
-  { value: 'default', label: 'Default' },
-  { value: 'manual', label: 'Manual' },
-  { value: 'none', label: 'Off' },
-]
-
-const APPEARANCE_OPTIONS: { value: AppearancePreference; label: string }[] = [
-  { value: 'system', label: 'System' },
-  { value: 'light', label: 'Light' },
-  { value: 'dark', label: 'Dark' },
-]
 
 function phaseLabel(phase: string, error: string | null): string {
   switch (phase) {
@@ -174,9 +172,6 @@ export function SettingsPanel() {
   ]
     .filter(Boolean)
     .join(' · ')
-  const updateModeLabel =
-    UPDATE_MODES.find((m) => m.value === context.mode)?.label ?? context.mode
-
   useEffect(() => {
     rootRef.current?.scrollIntoView({ block: 'start' })
     const stage = rootRef.current?.closest('.wallet-nav-stage')
@@ -225,23 +220,20 @@ export function SettingsPanel() {
             icon={SETTINGS_APPLICATION_ICONS.appearance}
             label="Appearance"
           >
-            <RadioGroup.Root
+            <SettingsIconToggle
+              ariaLabel="Appearance"
               value={appearance}
-              onValueChange={(next) => {
+              onChange={(pref) => {
                 playWalletSound('soft')
-                const pref = next as AppearancePreference
                 setAppearancePreference(pref)
                 setAppearance(pref)
               }}
-            >
-              {APPEARANCE_OPTIONS.map((opt) => (
-                <RadioGroup.Item key={opt.value} value={opt.value}>
-                  <RadioGroup.ItemControl>
-                    <RadioGroup.ItemLabel>{opt.label}</RadioGroup.ItemLabel>
-                  </RadioGroup.ItemControl>
-                </RadioGroup.Item>
-              ))}
-            </RadioGroup.Root>
+              options={[
+                { value: 'system', label: 'System', icon: <MonitorIcon size={16} /> },
+                { value: 'dark', label: 'Dark', icon: <DarkModeIcon size={16} /> },
+                { value: 'light', label: 'Light', icon: <LightModeIcon size={16} /> },
+              ]}
+            />
           </SettingsControlRow>
 
           <SettingsControlRow
@@ -264,24 +256,19 @@ export function SettingsPanel() {
                 icon={SETTINGS_APPLICATION_ICONS.updates}
                 label="Updates"
               >
-                <Select.Root
+                <SettingsIconToggle
+                  ariaLabel="Updates"
                   value={context.mode}
-                  onValueChange={(next) => {
+                  onChange={(next) => {
                     playWalletSound('soft')
-                    void setMode(next as UpdateMode)
+                    void setMode(next)
                   }}
-                >
-                  <Select.Trigger>
-                    <Select.ValueText>{updateModeLabel}</Select.ValueText>
-                  </Select.Trigger>
-                  <Select.Content>
-                    {UPDATE_MODES.map((m) => (
-                      <Select.Item key={m.value} value={m.value}>
-                        {m.label}
-                      </Select.Item>
-                    ))}
-                  </Select.Content>
-                </Select.Root>
+                  options={[
+                    { value: 'default', label: 'Automatic', icon: <RepeatIcon size={16} /> },
+                    { value: 'manual', label: 'Manual', icon: <TouchAppIcon size={16} /> },
+                    { value: 'none', label: 'Off', icon: <BlockIcon size={16} /> },
+                  ]}
+                />
               </SettingsControlRow>
 
               <SettingsControlRow
@@ -289,17 +276,17 @@ export function SettingsPanel() {
                 label={`Version ${runningVersion}`}
                 description={versionDetail || undefined}
               >
-                <Button.Root
-                  variant="ghost"
-                  size="sm"
-                  status={checkButtonStatus(checking, context.mode)}
+                <button
+                  type="button"
+                  className="btn btn-primary settings-action-btn"
+                  disabled={checkButtonStatus(checking, context.mode) !== 'idle'}
                   onClick={() => {
                     playWalletSound('soft')
                     void check()
                   }}
                 >
-                  {checking ? 'Checking…' : 'Check'}
-                </Button.Root>
+                  {checking ? 'Checking…' : 'Check update'}
+                </button>
               </SettingsControlRow>
             </>
           ) : null}
@@ -318,24 +305,24 @@ export function SettingsPanel() {
             <SettingsControlRow
               icon={SETTINGS_APPLICATION_ICONS.screenshot}
               label="Screenshot"
-              description={
-                <>
-                  Copy this window to the clipboard
-                  <ShortcutHint keys={screenshotShortcutKeys(window.handcash?.platform)} />
-                </>
-              }
+              description="Copy this window to the clipboard"
             >
-              <Button.Root
-                variant="ghost"
-                size="sm"
-                status="idle"
-                onClick={() => {
-                  playWalletSound('soft')
-                  void window.handcash?.copyScreenshot?.()
-                }}
-              >
-                Copy
-              </Button.Root>
+              <span className="settings-action-stack">
+                <button
+                  type="button"
+                  className="btn btn-primary settings-action-btn"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void window.handcash?.copyScreenshot?.()
+                  }}
+                >
+                  Take screenshot
+                </button>
+                <ShortcutHint
+                  className="settings-shortcut-hint"
+                  keys={screenshotShortcutKeys(window.handcash?.platform)}
+                />
+              </span>
             </SettingsControlRow>
           ) : null}
         </ul>

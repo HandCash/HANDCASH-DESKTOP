@@ -16,6 +16,10 @@ vi.mock('./sentItemGuard', () => ({
 
 const ORIGIN = `${'ab'.repeat(32)}_0`
 const LEFTOVER = `${'cd'.repeat(32)}_1`
+const KING_ORIGIN =
+  '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
+const LIVE_CHANGE = `46fe5d93${'aa'.repeat(28)}_1`
+const RECEIVE_A = `11${'bb'.repeat(31)}_0`
 
 function row(opts: { tokenId: string; amt: string; outpoint: string }) {
   return {
@@ -42,11 +46,11 @@ describe('mergeLiveFungibles', () => {
     const leftover = await import('./onesatFtLeftover')
     leftover.markOnesatFtGenesisSpent(ORIGIN)
     const { mergeLiveFungibles } = await import('./fungibles')
-    const prior = [row({ tokenId: ORIGIN, amt: '69000', outpoint: LEFTOVER })]
+    const prior = [row({ tokenId: ORIGIN, amt: '68862', outpoint: LEFTOVER })]
     const live = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
     const merged = mergeLiveFungibles(live, prior)
     expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('69000')
+    expect(merged[0]!.amt).toBe('68862')
     expect(merged[0]!.outpoint).toBe(LEFTOVER)
   })
 
@@ -66,45 +70,43 @@ describe('mergeLiveFungibles', () => {
     expect(merged).toHaveLength(0)
   })
 
-  it('uses live aggregated amt — leftover 68931 + live 69000 is 69000 not 137931', async () => {
-    const leftover = await import('./onesatFtLeftover')
+  it('uses live aggregated amt — leftover 68862 + live 69000 is 69000 not 137862', async () => {
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       row({
-        tokenId: leftover.KING_ORIGIN,
-        amt: '68931',
-        outpoint: leftover.KING_CHANGE_OUTPOINT,
+        tokenId: KING_ORIGIN,
+        amt: '68862',
+        outpoint: LIVE_CHANGE,
       }),
     ]
     const live = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '69000',
-        outpoint: leftover.KING_RECEIVE_OUTPOINT,
+        outpoint: RECEIVE_A,
       }),
     ]
     const merged = mergeLiveFungibles(live, prior)
     expect(merged).toHaveLength(1)
     expect(merged[0]!.amt).toBe('69000')
-    expect(merged[0]!.amt).not.toBe('137931')
-    expect(merged[0]!.tokenId).toBe(leftover.KING_ORIGIN)
+    expect(merged[0]!.amt).not.toBe('137862')
+    expect(merged[0]!.tokenId).toBe(KING_ORIGIN)
   })
 
-  it('second merge of leftover 68931 + live 69000 stays 69000', async () => {
-    const leftover = await import('./onesatFtLeftover')
+  it('second merge of leftover 68862 + live 69000 stays 69000', async () => {
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       row({
-        tokenId: leftover.KING_ORIGIN,
-        amt: '68931',
-        outpoint: leftover.KING_CHANGE_OUTPOINT,
+        tokenId: KING_ORIGIN,
+        amt: '68862',
+        outpoint: LIVE_CHANGE,
       }),
     ]
     const live = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '69000',
-        outpoint: leftover.KING_RECEIVE_OUTPOINT,
+        outpoint: RECEIVE_A,
       }),
     ]
     const once = mergeLiveFungibles(live, prior)
@@ -115,38 +117,36 @@ describe('mergeLiveFungibles', () => {
     expect(twice[0]!.amt).toBe('69000')
   })
 
-  it('keeps leftover amt when live is a smaller same outpoint', async () => {
-    const leftover = await import('./onesatFtLeftover')
+  it('live listing aggregate wins over a smaller same-outpoint prior leftover', async () => {
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       row({
-        tokenId: leftover.KING_ORIGIN,
-        amt: '68931',
-        outpoint: leftover.KING_CHANGE_OUTPOINT,
+        tokenId: KING_ORIGIN,
+        amt: '68862',
+        outpoint: LIVE_CHANGE,
       }),
     ]
     const live = [
       row({
-        tokenId: leftover.KING_ORIGIN,
-        amt: '1',
-        outpoint: leftover.KING_CHANGE_OUTPOINT,
+        tokenId: KING_ORIGIN,
+        amt: '69000',
+        outpoint: LIVE_CHANGE,
       }),
     ]
     const merged = mergeLiveFungibles(live, prior)
     expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('68931')
-    expect(merged[0]!.outpoint).toBe(leftover.KING_CHANGE_OUTPOINT)
+    expect(merged[0]!.amt).toBe('69000')
+    expect(merged[0]!.outpoint).toBe(LIVE_CHANGE)
   })
 
   it('preserves prior icon when live listing lacks it', async () => {
-    const leftover = await import('./onesatFtLeftover')
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       {
         ...row({
-          tokenId: leftover.KING_ORIGIN,
-          amt: '68931',
-          outpoint: leftover.KING_CHANGE_OUTPOINT,
+          tokenId: KING_ORIGIN,
+          amt: '68862',
+          outpoint: LIVE_CHANGE,
         }),
         icon: 'icon-op',
         iconUrl: 'data:image/png;base64,xx',
@@ -154,9 +154,9 @@ describe('mergeLiveFungibles', () => {
     ]
     const live = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '69000',
-        outpoint: leftover.KING_RECEIVE_OUTPOINT,
+        outpoint: RECEIVE_A,
       }),
     ]
     const merged = mergeLiveFungibles(live, prior)
@@ -166,20 +166,19 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('does not keep inflated prior 275586 over live 69000', async () => {
-    const leftover = await import('./onesatFtLeftover')
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '275586',
-        outpoint: leftover.KING_RECEIVE_OUTPOINT,
+        outpoint: RECEIVE_A,
       }),
     ]
     const live = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '69000',
-        outpoint: leftover.KING_RECEIVE_OUTPOINT,
+        outpoint: RECEIVE_A,
       }),
     ]
     const merged = mergeLiveFungibles(live, prior)
@@ -190,16 +189,29 @@ describe('mergeLiveFungibles', () => {
 
   it('drops inflated cache-only KING when live is empty', async () => {
     const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(leftover.KING_ORIGIN)
+    leftover.markOnesatFtGenesisSpent(KING_ORIGIN)
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [
       row({
-        tokenId: leftover.KING_ORIGIN,
+        tokenId: KING_ORIGIN,
         amt: '206724',
-        outpoint: leftover.KING_CHANGE_OUTPOINT,
+        outpoint: LIVE_CHANGE,
       }),
     ]
     const merged = mergeLiveFungibles([], prior)
     expect(merged).toHaveLength(0)
   })
 })
+
+  it('leftover floor 68862 does not clobber a 69000 cache with more tips', async () => {
+    const { leftoverFloorWouldClobber } = await import('./fungibles')
+    expect(
+      leftoverFloorWouldClobber(
+        { amt: '69000', utxoCount: 3 },
+        { amt: '68862', utxoCount: 1 },
+      ),
+    ).toBe(true)
+    expect(
+      leftoverFloorWouldClobber(undefined, { amt: '68862', utxoCount: 1 }),
+    ).toBe(false)
+  })

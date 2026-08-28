@@ -11,6 +11,25 @@ vi.mock('./durableStorage', () => ({
 }))
 
 const ORIGIN = `${'ab'.repeat(32)}_0`
+const CHANGE = `${'cd'.repeat(32)}_1`
+const KING_ORIGIN =
+  '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
+const SPENT_CHANGE =
+  '2a562450e7b7009e01f6924376f4081ccf43a46487a1fd06a3a975935c7dda19_1'
+const LIVE_CHANGE = `46fe5d93${'aa'.repeat(28)}_1`
+const RECEIVE_A = `11${'bb'.repeat(31)}_0`
+const LEGACY = '9abe8bdb97f608b05ccf920768cea178315072d665027636a00fac38e0bb9c90_1'
+
+function kingCi(amt: number) {
+  return JSON.stringify({
+    p: '1sat-ft',
+    origin: KING_ORIGIN,
+    amt: String(amt),
+    sym: 'KING',
+    supply: 'locked',
+    max: '69420',
+  })
+}
 
 describe('onesatFtLeftover', () => {
   beforeEach(() => {
@@ -18,25 +37,24 @@ describe('onesatFtLeftover', () => {
     vi.resetModules()
   })
 
-  it('remembers leftover remittance and forgets a spent-down origin', async () => {
-    const { rememberOnesatFtLeftover, listOnesatFtLeftovers, forgetOnesatFtLeftover } =
+  it('remembers leftover remittance keyed by outpoint', async () => {
+    const { rememberOnesatFtLeftover, leftoverForOutpoint, listOnesatFtLeftovers } =
       await import('./onesatFtLeftover')
     rememberOnesatFtLeftover({
       origin: ORIGIN,
-      amt: 69000,
-      outpoint: `${'cd'.repeat(32)}_1`,
+      amt: 68862,
+      outpoint: CHANGE,
       ci: '',
       sym: 'KING',
       supply: 'locked',
       maxSupply: 69420,
     })
-    const rows = listOnesatFtLeftovers()
-    expect(rows).toHaveLength(1)
-    expect(rows[0]!.amt).toBe(69000)
-    expect(rows[0]!.origin).toBe(ORIGIN)
-    expect(JSON.parse(rows[0]!.ci).p).toBe('1sat-ft')
-    forgetOnesatFtLeftover(ORIGIN)
-    expect(listOnesatFtLeftovers()).toHaveLength(0)
+    const row = leftoverForOutpoint(CHANGE.replace('_1', '.1'))
+    expect(row?.amt).toBe(68862)
+    expect(row?.outpoint).toBe(CHANGE)
+    expect(row?.origin).toBe(ORIGIN)
+    expect(JSON.parse(row!.ci).p).toBe('1sat-ft')
+    expect(listOnesatFtLeftovers()).toHaveLength(1)
   })
 
   it('forgets leftover remittance on a full burn (remaining 0)', async () => {
@@ -44,12 +62,13 @@ describe('onesatFtLeftover', () => {
       rememberOnesatFtLeftover,
       forgetOnesatFtLeftover,
       listOnesatFtLeftovers,
+      leftoverForOutpoint,
       isOnesatFtGenesisSpent,
     } = await import('./onesatFtLeftover')
     rememberOnesatFtLeftover({
       origin: ORIGIN,
-      amt: 69000,
-      outpoint: `${'cd'.repeat(32)}_1`,
+      amt: 68862,
+      outpoint: CHANGE,
       ci: '',
       sym: 'KING',
       supply: 'locked',
@@ -57,6 +76,7 @@ describe('onesatFtLeftover', () => {
     })
     forgetOnesatFtLeftover(ORIGIN)
     expect(listOnesatFtLeftovers()).toHaveLength(0)
+    expect(leftoverForOutpoint(CHANGE)).toBeNull()
     expect(isOnesatFtGenesisSpent(ORIGIN)).toBe(true)
   })
 
@@ -69,293 +89,136 @@ describe('onesatFtLeftover', () => {
     expect(isOnesatFtGenesisSpent(ORIGIN.replace('_0', '.0'))).toBe(true)
   })
 
-  it('seeds KING leftover remittance even when listOutputs dropped the tip', async () => {
-    const {
-      healOnesatFtFromListed,
-      getOnesatFtLeftover,
-      isOnesatFtGenesisSpent,
-      KING_ORIGIN,
-      KING_LEFTOVER_OUTPOINT,
-      BURNED_ONESAT_FT_ORIGINS,
-    } = await import('./onesatFtLeftover')
-
-    const miss = healOnesatFtFromListed([])
-    expect(miss.seededLeftover).toBe(true)
-    expect(getOnesatFtLeftover(KING_ORIGIN)?.amt).toBe(69000)
-    expect(isOnesatFtGenesisSpent(KING_ORIGIN)).toBe(true)
-    for (const burned of BURNED_ONESAT_FT_ORIGINS) {
-      expect(isOnesatFtGenesisSpent(burned)).toBe(true)
-    }
-
-    const hit = healOnesatFtFromListed([
-      { outpoint: KING_LEFTOVER_OUTPOINT.replace('_1', '.1'), satoshis: 1 },
-    ])
-    expect(hit.seededLeftover).toBe(true)
-    const leftover = getOnesatFtLeftover(KING_ORIGIN)
-    expect(leftover?.amt).toBe(69000)
-    expect(leftover?.outpoint).toBe(KING_LEFTOVER_OUTPOINT)
-    expect(JSON.parse(leftover!.ci)).toMatchObject({
-      p: '1sat-ft',
-      origin: KING_ORIGIN,
-      amt: '69000',
-      sym: 'KING',
-      supply: 'locked',
-      max: '69420',
-    })
+  it('never re-seeds hardcoded leftover outpoints', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    const miss = leftover.healOnesatFtFromListed([])
+    expect(miss.seededLeftover).toBe(false)
+    expect(leftover.listOnesatFtLeftovers()).toHaveLength(0)
+    expect(leftover.leftoverForOutpoint(LEGACY)).toBeNull()
+    expect(leftover.leftoverForOutpoint(SPENT_CHANGE)).toBeNull()
+    expect(leftover.leftoverForOutpoint(LIVE_CHANGE)).toBeNull()
   })
 
-  it('forgets leftover remittance for the two burned KING origins', async () => {
-    const {
-      rememberOnesatFtLeftover,
-      healOnesatFtFromListed,
-      getOnesatFtLeftover,
-      BURNED_ONESAT_FT_ORIGINS,
-    } = await import('./onesatFtLeftover')
-    const burned = BURNED_ONESAT_FT_ORIGINS[0]!
-    rememberOnesatFtLeftover({
-      origin: burned,
-      amt: 69420,
-      outpoint: burned,
-      ci: '',
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    const result = healOnesatFtFromListed([])
-    expect(result.forgotten).toContain(burned)
-    expect(getOnesatFtLeftover(burned)).toBeNull()
-  })
-
-  it('does not reset leftover to 69000 after 2a562450 change is remembered', async () => {
-    const {
-      rememberOnesatFtLeftover,
-      healOnesatFtFromListed,
-      getOnesatFtLeftover,
-      KING_ORIGIN,
-      KING_CHANGE_OUTPOINT,
-      KING_CHANGE_AMT,
-      KING_LEFTOVER_OUTPOINT,
-    } = await import('./onesatFtLeftover')
-    rememberOnesatFtLeftover({
-      origin: KING_ORIGIN,
-      amt: KING_CHANGE_AMT,
-      outpoint: KING_CHANGE_OUTPOINT,
-      ci: JSON.stringify({
-        p: '1sat-ft',
-        origin: KING_ORIGIN,
-        amt: String(KING_CHANGE_AMT),
-        sym: 'KING',
-        supply: 'locked',
-        max: '69420',
-      }),
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    const result = healOnesatFtFromListed([])
-    expect(result.seededLeftover).toBe(false)
-    const leftover = getOnesatFtLeftover(KING_ORIGIN)
-    expect(leftover?.amt).toBe(68931)
-    expect(leftover?.outpoint).toBe(KING_CHANGE_OUTPOINT)
-    expect(leftover?.outpoint).not.toBe(KING_LEFTOVER_OUTPOINT)
-  })
-
-  it('seeds 2a562450 change leftover when 9abe8bdb is sent', async () => {
+  it('drops leftover when that outpoint is sent', async () => {
     const { markItemsSent } = await import('./sentItemGuard')
-    const {
-      healOnesatFtFromListed,
-      getOnesatFtLeftover,
-      KING_ORIGIN,
-      KING_CHANGE_OUTPOINT,
-      KING_LEFTOVER_OUTPOINT,
-    } = await import('./onesatFtLeftover')
-    markItemsSent([KING_LEFTOVER_OUTPOINT])
-    const result = healOnesatFtFromListed([])
-    expect(result.seededLeftover).toBe(true)
-    const leftover = getOnesatFtLeftover(KING_ORIGIN)
-    expect(leftover?.amt).toBe(68931)
-    expect(leftover?.outpoint).toBe(KING_CHANGE_OUTPOINT)
-  })
-
-  it('does not seed receive 69 as leftover when listOutputs already has it', async () => {
-    const {
-      healOnesatFtFromListed,
-      getOnesatFtLeftover,
-      KING_ORIGIN,
-      KING_RECEIVE_OUTPOINT,
-      KING_CHANGE_OUTPOINT,
-      KING_LEFTOVER_OUTPOINT,
-    } = await import('./onesatFtLeftover')
-    const result = healOnesatFtFromListed([
-      { outpoint: KING_RECEIVE_OUTPOINT.replace('_0', '.0'), satoshis: 1 },
-    ])
-    expect(result.seededLeftover).toBe(true)
-    const leftover = getOnesatFtLeftover(KING_ORIGIN)
-    expect(leftover?.outpoint).toBe(KING_CHANGE_OUTPOINT)
-    expect(leftover?.amt).toBe(68931)
-    expect(leftover?.outpoint).not.toBe(KING_RECEIVE_OUTPOINT)
-    expect(leftover?.outpoint).not.toBe(KING_LEFTOVER_OUTPOINT)
-  })
-
-  it('does not re-seed 69000 on 9abe8bdb after that tip is sent', async () => {
     const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(leftover.KING_LEFTOVER_OUTPOINT)
     leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
-      amt: leftover.KING_CHANGE_AMT,
-      outpoint: leftover.KING_CHANGE_OUTPOINT,
-      ci: '',
+      origin: KING_ORIGIN,
+      amt: 68931,
+      outpoint: SPENT_CHANGE,
+      ci: kingCi(68931),
       sym: 'KING',
       supply: 'locked',
       maxSupply: 69420,
     })
-    leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
-      amt: 69000,
-      outpoint: leftover.KING_LEFTOVER_OUTPOINT,
-      ci: '',
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
+    expect(leftover.leftoverForOutpoint(SPENT_CHANGE)?.amt).toBe(68931)
+    markItemsSent([SPENT_CHANGE])
     const result = leftover.healOnesatFtFromListed([])
-    expect(result.seededLeftover).toBe(false)
-    const row = leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)
-    expect(row?.amt).toBe(68931)
-    expect(row?.outpoint).toBe(leftover.KING_CHANGE_OUTPOINT)
-    expect(leftover.isOnesatFtGenesisSpent(leftover.KING_LEFTOVER_OUTPOINT)).toBe(true)
+    expect(result.forgotten).toContain(SPENT_CHANGE)
+    expect(leftover.leftoverForOutpoint(SPENT_CHANGE)).toBeNull()
+    expect(leftover.getOnesatFtLeftover(KING_ORIGIN)).toBeNull()
   })
 
-  it('does not remember receive 69 as leftover', async () => {
+  it('keeps send remittance leftover 46fe5d93_1 68862 and forgets spent 2a562450_1', async () => {
+    const { markItemsSent } = await import('./sentItemGuard')
     const leftover = await import('./onesatFtLeftover')
     leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
-      amt: 69,
-      outpoint: leftover.KING_RECEIVE_OUTPOINT,
-      ci: '',
+      origin: KING_ORIGIN,
+      amt: 68931,
+      outpoint: SPENT_CHANGE,
+      ci: kingCi(68931),
       sym: 'KING',
       supply: 'locked',
       maxSupply: 69420,
     })
-    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)).toBeNull()
+    leftover.rememberOnesatFtLeftover({
+      origin: KING_ORIGIN,
+      amt: 68862,
+      outpoint: LIVE_CHANGE,
+      ci: kingCi(68862),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    markItemsSent([SPENT_CHANGE])
+    leftover.healOnesatFtFromListed([])
+    expect(leftover.leftoverForOutpoint(SPENT_CHANGE)).toBeNull()
+    expect(leftover.leftoverForOutpoint(LIVE_CHANGE)?.amt).toBe(68862)
+    leftover.healOnesatFtFromListed([])
+    expect(leftover.leftoverForOutpoint(LIVE_CHANGE)?.amt).toBe(68862)
+    expect(leftover.leftoverForOutpoint(LEGACY)).toBeNull()
   })
 
-  it('overlays leftover outpoint once and skips spent 9abe8bdb beside 2a562450', async () => {
+  it('overlays leftover change even when a receive of the same origin is listed', async () => {
     const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(leftover.KING_LEFTOVER_OUTPOINT)
+    leftover.rememberOnesatFtLeftover({
+      origin: KING_ORIGIN,
+      amt: 68862,
+      outpoint: LIVE_CHANGE,
+      ci: kingCi(68862),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const row = leftover.leftoverForOutpoint(LIVE_CHANGE)!
     expect(
-      leftover.shouldOverlayOnesatFtLeftover(
-        { origin: leftover.KING_ORIGIN, outpoint: leftover.KING_LEFTOVER_OUTPOINT },
-        [leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0'), leftover.KING_CHANGE_OUTPOINT],
-      ),
-    ).toBe(false)
-    expect(
-      leftover.shouldOverlayOnesatFtLeftover(
-        { origin: leftover.KING_ORIGIN, outpoint: leftover.KING_RECEIVE_OUTPOINT },
-        [leftover.KING_RECEIVE_OUTPOINT],
-      ),
-    ).toBe(false)
-    expect(
-      leftover.shouldOverlayOnesatFtLeftover(
-        { origin: leftover.KING_ORIGIN, outpoint: leftover.KING_CHANGE_OUTPOINT },
-        [leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0')],
-      ),
+      leftover.shouldOverlayOnesatFtLeftover(row, [RECEIVE_A.replace('_0', '.0')]),
     ).toBe(true)
     expect(
-      leftover.shouldOverlayOnesatFtLeftover(
-        { origin: leftover.KING_ORIGIN, outpoint: leftover.KING_CHANGE_OUTPOINT },
-        [leftover.KING_CHANGE_OUTPOINT.replace('_1', '.1')],
-      ),
+      leftover.shouldOverlayOnesatFtLeftover(row, [LIVE_CHANGE.replace('_1', '.1')]),
     ).toBe(false)
   })
 
-  it('wipes leftover amt over 69420 and reseeds KING change 68931', async () => {
+  it('does not remember leftover whose outpoint is already sent', async () => {
+    const { markItemsSent } = await import('./sentItemGuard')
     const leftover = await import('./onesatFtLeftover')
-    store.set(
-      'handcash.onesat-ft.leftover.v1',
-      JSON.stringify({
-        items: {
-          [leftover.KING_ORIGIN]: {
-            origin: leftover.KING_ORIGIN,
-            amt: 206724,
-            outpoint: leftover.KING_CHANGE_OUTPOINT,
-            ci: JSON.stringify({
-              p: '1sat-ft',
-              origin: leftover.KING_ORIGIN,
-              amt: '206724',
-              sym: 'KING',
-              supply: 'locked',
-              max: '69420',
-            }),
-            sym: 'KING',
-            supply: 'locked',
-            maxSupply: leftover.KING_MAX_SUPPLY,
-            at: 1,
-          },
-        },
-      }),
-    )
-    const result = leftover.healOnesatFtFromListed([])
-    expect(result.seededLeftover).toBe(true)
-    const row = leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)
-    expect(row?.amt).toBe(68931)
-    expect(row?.outpoint).toBe(leftover.KING_CHANGE_OUTPOINT)
-    expect(JSON.parse(row!.ci).amt).toBe('68931')
-  })
-
-  it('replaces leftover 9abe8bdb with change 68931 when receive 69 is listed', async () => {
-    const leftover = await import('./onesatFtLeftover')
+    markItemsSent([SPENT_CHANGE])
     leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
-      amt: 69000,
-      outpoint: leftover.KING_LEFTOVER_OUTPOINT,
-      ci: '',
+      origin: KING_ORIGIN,
+      amt: 68931,
+      outpoint: SPENT_CHANGE,
+      ci: kingCi(68931),
       sym: 'KING',
       supply: 'locked',
-      maxSupply: leftover.KING_MAX_SUPPLY,
+      maxSupply: 69420,
     })
-    const result = leftover.healOnesatFtFromListed([
-      { outpoint: leftover.KING_RECEIVE_OUTPOINT.replace('_0', '.0') },
-    ])
-    expect(result.seededLeftover).toBe(true)
-    const row = leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)
-    expect(row?.outpoint).toBe(leftover.KING_CHANGE_OUTPOINT)
-    expect(row?.amt).toBe(leftover.KING_CHANGE_AMT)
-    expect(row?.outpoint).not.toBe(leftover.KING_LEFTOVER_OUTPOINT)
-    expect(row?.outpoint).not.toBe(leftover.KING_RECEIVE_OUTPOINT)
-  })
-
-  it('does not overlay leftover when that outpoint is already listed', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
-      amt: leftover.KING_CHANGE_AMT,
-      outpoint: leftover.KING_CHANGE_OUTPOINT,
-      ci: '',
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: leftover.KING_MAX_SUPPLY,
-    })
-    const row = leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)!
-    expect(
-      leftover.shouldOverlayOnesatFtLeftover(row, [
-        leftover.KING_CHANGE_OUTPOINT.replace('_1', '.1'),
-        leftover.KING_RECEIVE_OUTPOINT,
-      ]),
-    ).toBe(false)
+    expect(leftover.leftoverForOutpoint(SPENT_CHANGE)).toBeNull()
   })
 
   it('refuses to remember leftover amt over the origin cap', async () => {
     const leftover = await import('./onesatFtLeftover')
     leftover.rememberOnesatFtLeftover({
-      origin: leftover.KING_ORIGIN,
+      origin: KING_ORIGIN,
       amt: 206724,
-      outpoint: leftover.KING_CHANGE_OUTPOINT,
+      outpoint: LIVE_CHANGE,
       ci: '',
       sym: 'KING',
       supply: 'locked',
-      maxSupply: leftover.KING_MAX_SUPPLY,
+      maxSupply: 69420,
     })
-    expect(leftover.getOnesatFtLeftover(leftover.KING_ORIGIN)).toBeNull()
+    expect(leftover.leftoverForOutpoint(LIVE_CHANGE)).toBeNull()
+  })
+
+  it('migrates origin-keyed store to outpoint keys', async () => {
+    store.set(
+      'handcash.onesat-ft.leftover.v1',
+      JSON.stringify({
+        items: {
+          [KING_ORIGIN]: {
+            origin: KING_ORIGIN,
+            amt: 68862,
+            outpoint: LIVE_CHANGE,
+            ci: kingCi(68862),
+            sym: 'KING',
+            supply: 'locked',
+            maxSupply: 69420,
+            at: 1,
+          },
+        },
+      }),
+    )
+    const leftover = await import('./onesatFtLeftover')
+    expect(leftover.leftoverForOutpoint(LIVE_CHANGE)?.amt).toBe(68862)
+    expect(leftover.getOnesatFtLeftover(KING_ORIGIN)?.outpoint).toBe(LIVE_CHANGE)
   })
 })

@@ -98,7 +98,7 @@ export function wasItemReceivedAnnounced(outpoint: string): boolean {
  * tips. Call from the collectables cache once the card is on the list — not
  * from address classify / ingest.
  */
-export function announceItemsReceived(outpoints: string[]): void {
+export function announceItemsReceived(outpoints: string[]): boolean {
   const fresh: string[] = []
   for (const op of outpoints) {
     if (!noteItemReceived(op)) continue
@@ -118,7 +118,7 @@ export function announceItemsReceived(outpoints: string[]): void {
       noteInboundReceivePending({ txid, item: true, outpoint: key })
     }
   }
-  if (fresh.length === 0) return
+  if (fresh.length === 0) return false
   const allProven = fresh.every(
     (op) => isItemProven(op) || verifiedThisSession.has(op),
   )
@@ -132,6 +132,7 @@ export function announceItemsReceived(outpoints: string[]): void {
         ? 'Verifying authenticity…'
         : `${fresh.length} collectables`,
   )
+  return true
 }
 
 /**

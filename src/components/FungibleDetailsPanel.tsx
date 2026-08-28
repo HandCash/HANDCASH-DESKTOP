@@ -26,6 +26,7 @@ import {
   activityForFungible,
 } from '../machines/fungibleDetailsMachine'
 import { shortIssuerLabel } from '../wallet/bsv21'
+import { shortOriginLabel } from '../wallet/colourCoins'
 import {
   openBurnFungible,
   openPaymentDetails,
@@ -214,17 +215,18 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const isColour = Boolean(token.colourSupply)
   const sendBlocked = !isColour || token.spendKind !== 'plain'
   const canCombine = isColour && !sendBlocked && token.utxoCount >= 2
-  const issuerLabel = isColour
+  const supplyLabel = isColour
     ? token.colourSupply === 'locked'
       ? token.colourMaxSupply != null
         ? `1Sat · max supply ${token.colourMaxSupply}`
         : '1Sat · supply locked'
       : '1Sat · no supply cap'
-    : token.issuerHandle
-      ? `Issued by ${token.issuerHandle}`
-      : token.issuer
-        ? `Issued by ${shortIssuerLabel(token.issuer)}`
-        : 'Issuer unknown'
+    : null
+  const issuerLabel = token.issuerHandle
+    ? token.issuerHandle
+    : token.issuer
+      ? shortIssuerLabel(token.issuer)
+      : null
   const tokenIds = token.tokenIds?.length ? token.tokenIds : [token.tokenId]
   // Legacy BSV-21 tips are read-only except Burn (cleanup path).
   const burnBlocked =
@@ -308,10 +310,18 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          <strong className="fungible-details-balance">{amount}</strong>
-          <span className="fungible-details-issuer" title={token.issuer || undefined}>
-            {issuerLabel}
+          <span className="fungible-details-origin" title={token.tokenId}>
+            {shortOriginLabel(token.tokenId)}
           </span>
+          {issuerLabel ? (
+            <span className="fungible-details-origin" title={token.issuer || undefined}>
+              {issuerLabel}
+            </span>
+          ) : null}
+          <strong className="fungible-details-balance">{amount}</strong>
+          {supplyLabel ? (
+            <span className="fungible-details-issuer">{supplyLabel}</span>
+          ) : null}
         </div>
       </header>
 
@@ -495,9 +505,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               value={token.issuerHandle ? `${token.issuerHandle} · ${token.issuer}` : token.issuer}
               copyLabel="issuer identity key"
             />
-          ) : (
-            <MetaRow label="Issuer" value="Not supplied" muted />
-          )}
+          ) : null}
           {!isColour ? (
             <MetaRow
               label="Attestation"

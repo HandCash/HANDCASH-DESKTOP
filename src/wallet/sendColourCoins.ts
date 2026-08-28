@@ -14,6 +14,7 @@ import {
 import {
   assertColourAmtConservation,
   buildColourCustomInstructions,
+  issuerFromColourTags,
   ONESAT_FT_BASKET,
   colourTags,
   normalizeColourOrigin,
@@ -373,10 +374,26 @@ export async function sendColourCoins(args: {
         priorProvenance: primary.provenance,
         inputBeef: inputBEEF,
       })
+      const issuer = (() => {
+        for (const tip of selected) {
+          const fromTags = issuerFromColourTags(tip.tags)
+          if (fromTags) return fromTags
+          try {
+            const o = JSON.parse(String(tip.customInstructions ?? '')) as {
+              issuer?: unknown
+            }
+            if (typeof o.issuer === 'string' && o.issuer.trim()) return o.issuer.trim()
+          } catch {
+            /* next tip */
+          }
+        }
+        return undefined
+      })()
       const tags = stampBrc164Id(
         colourTags(origin, [
           `name:${sym.slice(0, 80)}`,
           ...(args.icon ? [`icon:${args.icon}`] : []),
+          ...(issuer ? [`issuer:${issuer}`] : []),
         ]),
       )
       const baseCi = {
@@ -388,6 +405,7 @@ export async function sendColourCoins(args: {
         provenance: provenance ?? primary.provenance ?? null,
         parent: parentRef,
         ...(args.icon ? { icon: args.icon } : {}),
+        ...(issuer ? { issuer } : {}),
       }
 
       const outputs: Array<{
@@ -633,6 +651,7 @@ export async function sendColourCoins(args: {
                 sym,
                 supply: args.supply,
                 maxSupply: args.maxSupply ?? null,
+                issuer,
               }),
               sym,
               supply: args.supply,

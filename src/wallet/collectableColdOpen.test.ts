@@ -131,6 +131,26 @@ describe('collectables across a cold open', () => {
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(1)
   })
 
+  it('paints new 1sat tips listed during recompose instead of hiding them', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = true
+    const extra = `${'d2'.repeat(32)}.0`
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [
+        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] },
+        { outpoint: extra, satoshis: 1, tags: ['ordinal'] },
+      ],
+      totalOutputs: 2,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    const ops = getCachedCollectables().map((c) => c.outpoint)
+    expect(ops).toEqual(expect.arrayContaining([TIP, extra]))
+    expect(ops).toHaveLength(2)
+  })
+
   it('allows the explicit post-replace relist to confirm a real empty inventory', async () => {
     seedDurableList(IDENTITY)
     recomposeActive = true

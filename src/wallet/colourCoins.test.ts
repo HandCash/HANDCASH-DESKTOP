@@ -35,6 +35,60 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(normalizeColourOrigin(`${'ab'.repeat(32)}.0`)).toBe(ORIGIN)
   })
 
+
+  it('parses issuer identity key from origin JSON and leftover CI', () => {
+    const issuer =
+      '0365ee5b1907426b54e10ef9e4474c26f12329e67bdc63657ec61e9ed9c230b43d'
+    const json = buildOnesatFtOriginInscriptionJson({
+      supply: 'locked',
+      maxSupply: 10,
+      sym: 'GOLD',
+      issuer,
+    })
+    expect(json.issuer).toBe(issuer)
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        origin: ORIGIN,
+        amt: '10',
+        sym: 'GOLD',
+        issuer,
+      }),
+    })
+    expect(meta.issuer).toBe(issuer)
+    const ci = buildColourCustomInstructions({
+      origin: ORIGIN,
+      amt: 7,
+      sym: 'GOLD',
+      issuer,
+    })
+    expect(JSON.parse(ci).issuer).toBe(issuer)
+  })
+
+  it('reads issuer from wallet tags when origin JSON omitted it', () => {
+    const issuer =
+      '0365ee5b1907426b54e10ef9e4474c26f12329e67bdc63657ec61e9ed9c230b43d'
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        origin: ORIGIN,
+        amt: '10',
+        sym: 'GOLD',
+      }),
+      tags: ['1sat-ft', `issuer:${issuer}`],
+    })
+    expect(meta.issuer).toBe(issuer)
+    const missing = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        origin: ORIGIN,
+        amt: '69420',
+        sym: 'KING',
+      }),
+    })
+    expect(missing.issuer).toBeUndefined()
+  })
+
   it('builds origin inscription with optional lock', () => {
     const locked = buildOnesatFtOriginInscriptionJson({
       supply: 'locked',

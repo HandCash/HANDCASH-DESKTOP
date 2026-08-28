@@ -387,6 +387,15 @@ export function VolumeUpIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `repeat` */
+export function RepeatIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M7 7h10v3l4-4-4-4v3H5v6h2V7zm10 10H7v-3l-4 4 4 4v-3h12v-6h-2v4z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `system_update` */
 export function SystemUpdateIcon(props: IconProps) {
   return (
@@ -476,3 +485,49 @@ export function FingerprintIcon(props: IconProps) {
     </Icon>
   )
 }
+
+/** Material Icons — `monitor` */
+export function MonitorIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M20 3H4c-1.1 0-2 .9-2 2v11c0 1.1.9 2 2 2h3l-1 1v2h12v-2l-1-1h3c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 13H4V5h16v11z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `dark_mode` */
+export function DarkModeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 3c-4.97 0-9 4.03-9 9s4.03 9 9 9 9-4.03 9-9c0-.46-.04-.92-.1-1.36-.98 1.37-2.58 2.26-4.4 2.26-2.98 0-5.4-2.42-5.4-5.4 0-1.81.89-3.42 2.26-4.4-.44-.06-.9-.1-1.36-.1z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `wb_sunny` */
+export function LightModeIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M6.76 4.84 4.96 3.05 3.55 4.46l1.79 1.79 1.42-1.41zM4 10.5H1v2h3v-2zm9-9.95h-2V3.5h2V.55zm7.45 3.91-1.41-1.41-1.79 1.79 1.41 1.41 1.79-1.79zm-3.21 13.7 1.79 1.8 1.41-1.41-1.8-1.79-1.4 1.4zM20 10.5v2h3v-2h-3zm-8-5c-3.31 0-6 2.69-6 6s2.69 6 6 6 6-2.69 6-6-2.69-6-6-6zm-1 16.95h2V19.5h-2v2.95zm-7.45-3.91 1.41 1.41 1.79-1.8-1.41-1.41-1.79 1.8z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `touch_app` */
+export function TouchAppIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M9 11.24V7.5a2.5 2.5 0 0 1 5 0v3.74c1.21-.81 2-2.18 2-3.74C16 5.01 13.99 3 11.5 3S7 5.01 7 7.5c0 1.56.79 2.93 2 3.74zm9.84 4.63-4.54-2.26c-.17-.07-.35-.11-.54-.11H13v-6c0-.83-.67-1.5-1.5-1.5S10 6.67 10 7.5v10.74l-3.43-.72c-.08-.01-.15-.03-.24-.03-.31 0-.59.13-.79.33l-.79.8 4.94 4.94c.27.27.65.44 1.06.44h6.79c.75 0 1.33-.55 1.44-1.28l.75-5.27c.01-.07.02-.14.02-.2 0-.62-.38-1.16-.93-1.38z" />
+    </Icon>
+  )
+}
+
+/** Material Icons — `block` */
+export function BlockIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zM4 12c0-4.42 3.58-8 8-8 1.85 0 3.55.63 4.9 1.69L5.69 16.9C4.63 15.55 4 13.85 4 12zm8 8c-1.85 0-3.55-.63-4.9-1.69L18.31 7.1C19.37 8.45 20 10.15 20 12c0 4.42-3.58 8-8 8z" />
+    </Icon>
+  )
+}
+

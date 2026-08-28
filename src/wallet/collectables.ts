@@ -341,7 +341,7 @@ function persistDurableList(items: Collectable[]): void {
 // Paint last session's inventory immediately — do not wait on listOutputs.
 {
   const durable = loadDurableList().filter(
-    (item) => !isItemSent(item.outpoint) && !isBareOriginCollectable(item),
+    (item) => !isItemSent(item.outpoint),
   )
   if (durable.length > 0) {
     cachedCollectables = durable
@@ -394,10 +394,12 @@ function setCollectablesCache(
       skipArrivalToast.delete(op)
     }
   }
-  const visible = items.filter((i) => !isBareOriginCollectable(i))
-  cachedCollectables = visible
+  // Keep origin-named unverified 1sat tips on the list. Filtering "bare origin"
+  // hid them until BRC-150 / the indexer filled a name, so Collect stayed empty
+  // during device sync.
+  cachedCollectables = items
   collectablesHydrated = true
-  persistDurableList(visible)
+  persistDurableList(items)
   // Activity Verifying… must not disagree with Collect. Held tips are ingested;
   // proven tips must not keep a pending Activity spinner.
   reconcilePendingActivityWithHeldItems(
@@ -411,14 +413,15 @@ function setCollectablesCache(
   for (const item of items) {
     if (item.proven) clearAwaitingVerification(item.outpoint)
   }
-  notifyCollectables(visible)
+  notifyCollectables(items)
   // Toast / chime / OS banner only once the card is on the list. Ingest used
   // to announce first; self-send then showed "Item received" on an empty grid.
   // Durable dedupe in announceItemsReceived skips unlock rediscovery.
   if (arrived.length === 0 || options.announceArrivals === false) return
   if (pauseCollectableArrivalToasts > 0) return
   void yieldToUi().then(() => {
-    announceItemsReceived(arrived)
+    const toasted = announceItemsReceived(arrived)
+    if (!toasted) return
     try {
       playWalletSound('receive')
       document.dispatchEvent(
@@ -481,7 +484,7 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
 }
 
 export function getCachedCollectables(): Collectable[] {
-  return cachedCollectables.filter((i) => !isBareOriginCollectable(i))
+  return cachedCollectables
 }
 
 export function getCollectablePageStatus(): {
@@ -1271,8 +1274,8 @@ async function proveHeldGenesis(
           getBeef: async (txid) => {
             await yieldToUi()
             const local = await getLocalBeefForTxid(wallet, txid)
-            if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
-            return local
+            if (local) return local
+            return getBeefForTxidCached(wallet, txid)
           },
           // Abandoning mid-walk costs one retry; finishing it while somebody is
           // waiting on the panel costs a `listOutputs` timeout. Never abort the
@@ -1890,8 +1893,12 @@ async function listCollectablesNow(
       !append &&
       cachedCollectables.length > 0 &&
       isRecomposeCoordinatorActive() &&
-      !authoritativeAfterReplace
+      !authoritativeAfterReplace &&
+      page.length < cachedCollectables.length
     ) {
+      // Partial restore (0 or a short page) must not wipe a complete cache.
+      // A *longer* live page is new 1sat tips arriving during sync — paint them
+      // unverified rather than hiding them until recompose finishes.
       console.info(
         `[collectables] kept ${cachedCollectables.length} cached item(s) while recompose localState listed ${page.length}`
       )

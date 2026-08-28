@@ -372,6 +372,19 @@ export async function burnColourCoins(args: {
               sym,
               supply: args.supply,
               maxSupply: args.maxSupply ?? null,
+              issuer: (() => {
+                for (const tip of selected) {
+                  try {
+                    const o = JSON.parse(String(tip.customInstructions ?? '')) as {
+                      issuer?: unknown
+                    }
+                    if (typeof o.issuer === 'string' && o.issuer.trim()) return o.issuer
+                  } catch {
+                    /* next tip */
+                  }
+                }
+                return undefined
+              })(),
             }),
             sym,
             supply: args.supply,

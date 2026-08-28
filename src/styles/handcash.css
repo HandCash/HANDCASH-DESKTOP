@@ -5325,51 +5325,52 @@ a.app-details-host:hover {
   color: color-mix(in srgb, var(--hc-warn, #ffc857) 70%, var(--hc-muted));
 }
 
-/* Appearance RadioGroup (tabsMachine) — compact trailing segments, no wrap. */
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] {
-  flex-direction: row;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 0.125rem;
-  padding: 2px;
-  border: 1px solid color-mix(in srgb, var(--hc-muted) 35%, transparent);
+/* items-market ProfileSheet theme toggle: icon-only segmented pill. */
+.settings-icon-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
   border-radius: 8px;
-  background: color-mix(in srgb, var(--hc-panel, var(--hc-surface)) 92%, transparent);
+  background: color-mix(in srgb, var(--hc-text) 10%, transparent);
 }
 
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='item'] {
-  gap: 0;
-}
-
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemControl'] {
-  width: auto;
-  height: auto;
-  min-width: 2.4rem;
-  min-height: 1.55rem;
-  padding: 0.15rem 0.45rem;
-  border: none;
+.settings-icon-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  margin: 0;
+  padding: 0;
+  border: 0;
   border-radius: 6px;
   background: transparent;
-}
-
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemControl'][data-aeon-state='selected'] {
-  background: var(--hc-sunken-strong, hsl(var(--secondary)));
-  color: var(--hc-text);
-}
-
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='itemLabel'] {
-  font-size: 0.72rem;
-  font-weight: 600;
   color: var(--hc-muted);
+  cursor: pointer;
+  transition: color 0.15s ease, background 0.15s ease, box-shadow 0.15s ease;
 }
 
-[data-aeon-scope='settings'] [data-aeon-scope='radioGroup'] [data-aeon-part='item'][data-aeon-state='selected'] [data-aeon-part='itemLabel'] {
+.settings-icon-toggle-btn:hover {
   color: var(--hc-text);
 }
 
-[data-aeon-scope='settings'] [data-aeon-scope='select'] {
-  min-width: 7rem;
-  max-width: 9.5rem;
+.settings-icon-toggle-btn[data-selected] {
+  background: var(--hc-panel, var(--hc-surface));
+  color: var(--hc-text);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
+}
+
+.settings-icon-toggle-btn svg {
+  display: block;
+}
+
+html[data-aeon-mode='light'] .settings-icon-toggle {
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
+  background: #fff;
 }
 
 
@@ -5535,6 +5536,13 @@ a.app-details-host:hover {
   flex-wrap: wrap;
   justify-content: flex-start;
   gap: 8px;
+}
+
+.settings-action-stack {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
 }
 
 .settings-control-input,
@@ -7439,6 +7447,17 @@ html[data-aeon-mode='light'] .skeleton {
   opacity: 0.9;
 }
 
+.collect-token-card-id {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: nowrap;
+  color: var(--hc-muted);
+  font-size: 0.62rem;
+  line-height: 1.15;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.9;
+}
+
 /* Square token face — override Aeon Avatar’s always-round clip. */
 .fungible-avatar {
   width: 160px !important;
@@ -7528,9 +7547,21 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .fungible-details-heading {
-  display: grid;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
   gap: 2px;
   min-width: 0;
+}
+
+.fungible-details-origin {
+  display: block;
+  max-width: 100%;
+  overflow: hidden;
+  color: var(--hc-muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
 }
 
 /* Symbol and the one authenticity badge share a line so the hero stays three

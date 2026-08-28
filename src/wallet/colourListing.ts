@@ -19,12 +19,11 @@ import {
   type ColourTip,
   type ColourToken,
 } from './colourCoins'
-import { isItemSent } from './sentItemGuard'
 import { getTokenIconDataUrl } from './tokenIconCache'
 import {
   healOnesatFtFromListed,
   isOnesatFtGenesisSpent,
-  knownBurnedOnesatFtOrigins,
+  spentOnesatFtGenesisOrigins,
   leftoverForOutpoint,
   listOnesatFtLeftovers,
   normOnesatFtOutpoint,
@@ -55,15 +54,20 @@ function outpointUnderscore(op: string): string {
   return op.includes('.') ? op.replace(/\.(\d+)$/, '_$1') : op
 }
 
+function hasOnesatFtTag(tags: string[]): boolean {
+  return tags.some((t) => String(t).trim().toLowerCase() === '1sat-ft')
+}
+
 async function listBasketTips(
   wallet: ActiveWallet,
   basket: string,
+  opts: { scripts?: boolean } = {},
 ): Promise<ListedOutput[]> {
   try {
     const listed = (await wallet.wallet.listOutputs({
       basket,
       limit: 1000,
-      include: 'locking scripts',
+      ...(opts.scripts === false ? {} : { include: 'locking scripts' }),
       includeCustomInstructions: true,
       includeTags: true,
       seekPermission: false,
@@ -74,10 +78,18 @@ async function listBasketTips(
   }
 }
 
-function forgetBurnedFungibles(): void {
+function forgetBurnedFungibles(keepOrigins: Iterable<string>): void {
+  const keep = new Set(
+    [...keepOrigins].map(normOnesatFtOutpoint).filter(Boolean),
+  )
+  for (const row of listOnesatFtLeftovers()) {
+    const origin = normOnesatFtOutpoint(row.origin)
+    if (origin) keep.add(origin)
+  }
   void import('./fungibles')
     .then(({ forgetFungibleToken }) => {
-      for (const origin of knownBurnedOnesatFtOrigins()) {
+      for (const origin of spentOnesatFtGenesisOrigins()) {
+        if (keep.has(normOnesatFtOutpoint(origin))) continue
         forgetFungibleToken(origin)
       }
     })
@@ -88,13 +100,11 @@ export async function listColourTips(
   wallet: ActiveWallet = getActiveWallet()!,
 ): Promise<ColourTip[]> {
   if (!wallet) return []
-  const rows = [
-    ...(await listBasketTips(wallet, ONESAT_FT_BASKET)),
-    // Toolbox sometimes files our 1-sat change in default. Not basket `1sat`.
-    ...(await listBasketTips(wallet, 'default')),
-  ]
+  // Tokens live in `1sat-ft` only. Do not scan `1sat` (NFT / BRC-147 auto-sync)
+  // or `default` (hangs boot on every BSV UTXO). Leftover change is overlaid
+  // from send remittance.
+  const rows = [...(await listBasketTips(wallet, ONESAT_FT_BASKET))]
   healOnesatFtFromListed(rows)
-  forgetBurnedFungibles()
 
   const seen = new Set<string>()
   const pending: Array<{
@@ -114,7 +124,8 @@ export async function listColourTips(
     if (seen.has(key)) continue
     seen.add(key)
     if (isOnesatFtGenesisSpent(key)) continue
-    if (isItemSent(key)) continue
+    // Do not hide 1sat-ft self-send receives behind collectables sent-guard.
+    // Spent leftover outpoints are dropped by leftover heal, not this skip.
     const satoshis = typeof o.satoshis === 'number' ? o.satoshis : 0
     if (satoshis !== 1) continue
     const tags = Array.isArray(o.tags) ? o.tags : []
@@ -124,27 +135,34 @@ export async function listColourTips(
     const leftover = leftoverForOutpoint(key)
     const leftoverCi =
       leftover && !onesatFtLeftoverAmtInflated(leftover) ? leftover.ci : undefined
+    const listedFt = looksLikeOnesatFtTip({
+      tags,
+      customInstructions: listedCi,
+      lockingScriptHex: scriptHex,
+    })
+    // Keep a 1-sat output if it has 1sat-ft CI/tags OR leftover remittance.
+    if (!listedFt && !hasOnesatFtTag(tags) && !leftover) continue
+    // Overlay leftover remittance onto bare P2PKH change so amt is visible.
     const ci =
       looksLikeOnesatFtTip({ customInstructions: listedCi })
         ? listedCi
         : leftoverCi ?? listedCi
-    if (
-      !looksLikeOnesatFtTip({
-        tags,
-        customInstructions: ci,
-        lockingScriptHex: scriptHex,
-      })
-    ) {
-      continue
-    }
-    const origin =
+    let origin =
       leftover?.origin ??
       originFromColourTags(tags) ??
       originFromColourCi(ci) ??
       parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
         lockingScriptHex: scriptHex,
         customInstructions: ci,
+        tags,
       }).origin
+    if (!leftover && origin) {
+      const sameOriginLeftover = listOnesatFtLeftovers().find(
+        (row) => normOnesatFtOutpoint(row.origin) === normOnesatFtOutpoint(origin),
+      )
+      if (sameOriginLeftover?.origin) origin = sameOriginLeftover.origin
+    }
+    // Spent genesis means the mint UTXO is gone, not leftover change of that origin.
     pending.push({
       outpoint: key,
       origin,
@@ -158,6 +176,8 @@ export async function listColourTips(
 
   for (const leftover of listOnesatFtLeftovers()) {
     const leftoverOp = normOnesatFtOutpoint(leftover.outpoint)
+    // Overlay leftover change even when a receive of the same origin is listed.
+    // Genesis spent is expected (the mint UTXO moved); do not hide leftover.
     if (!shouldOverlayOnesatFtLeftover(leftover, seen)) continue
     seen.add(leftoverOp)
     pending.push({
@@ -170,6 +190,8 @@ export async function listColourTips(
     })
   }
 
+  forgetBurnedFungibles(pending.map((row) => row.origin).filter(Boolean))
+
   // Origin policy: prefer genesis tip's inscription.
   const metaByOrigin = new Map<string, ColourOriginMeta>()
   for (const row of pending) {
@@ -179,6 +201,7 @@ export async function listColourTips(
       parseOnesatFtOriginPolicy(row.origin, {
         lockingScriptHex: row.scriptHex,
         customInstructions: row.ci,
+        tags: row.tags,
       }),
     )
   }
@@ -189,6 +212,7 @@ export async function listColourTips(
       parseOnesatFtOriginPolicy(row.origin, {
         lockingScriptHex: row.scriptHex,
         customInstructions: row.ci,
+        tags: row.tags,
       }),
     )
   }
@@ -239,6 +263,7 @@ export async function listColourTips(
       proven,
       name: metaByOrigin.get(row.origin)?.name,
       customInstructions: row.ci,
+      tags: row.tags,
     })
   }
 
@@ -262,6 +287,7 @@ export async function listColourTokens(
       parseOnesatFtOriginPolicy(tip.origin, {
         lockingScriptHex: genesis?.lockingScript ?? tip.lockingScript,
         customInstructions: genesis?.customInstructions ?? tip.customInstructions,
+        tags: genesis?.tags ?? tip.tags,
       }),
     )
   }

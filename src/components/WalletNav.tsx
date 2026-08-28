@@ -102,7 +102,7 @@ const SECTIONS: {
 }[] = [
   { value: 'activity', label: 'Activity', shortLabel: 'Activity', Icon: ActivityIcon },
   { value: 'apps', label: 'Connect', shortLabel: 'Connect', Icon: AppsIcon },
-  { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
+  { value: 'collectables', label: 'Collectables', shortLabel: 'Collectables', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },
   { value: 'settings', label: 'Settings', shortLabel: 'Set', Icon: SettingsIcon },

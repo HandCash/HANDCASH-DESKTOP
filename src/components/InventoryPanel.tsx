@@ -48,6 +48,8 @@ import {
   subscribeFungibles,
   type FungibleToken,
 } from '../wallet/fungibles'
+import { shortIssuerLabel } from '../wallet/bsv21'
+import { shortOriginLabel } from '../wallet/colourCoins'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -337,6 +339,17 @@ function FungibleCarouselCard({
           size={56}
         />
         <strong className="collect-token-card-sym">{token.sym}</strong>
+        <span className="collect-token-card-id" title={token.tokenId}>
+          {shortOriginLabel(token.tokenId)}
+        </span>
+        {token.issuer ? (
+          <span
+            className="collect-token-card-id"
+            title={token.issuerHandle ? `${token.issuerHandle} · ${token.issuer}` : token.issuer}
+          >
+            {token.issuerHandle || shortIssuerLabel(token.issuer)}
+          </span>
+        ) : null}
         <span className="collect-token-card-amt">{amountLabel}</span>
         {supplyBadge ? (
           <span className="collect-token-card-meta">{supplyBadge}</span>
@@ -518,7 +531,7 @@ export function InventoryPanel() {
       data-aeon-state={view}
     >
       <div className="connected-panel-head">
-        <h2>Collect</h2>
+        <h2>Collectables</h2>
         <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
 

@@ -22,7 +22,6 @@ import {
   LockIcon,
   AddMoneyIcon,
   ScanQrIcon,
-  AccountCircleIcon,
 } from './icons'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -738,7 +737,6 @@ export function Dashboard({
                     void copyText(identity.copy, { label: 'identity' })
                   }}
                 >
-                  <AccountCircleIcon size={16} />
                   <span>{identity.label}</span>
                 </button>
               )

@@ -17,3 +17,4 @@ export {
   historyStatus,
   deviceHandoffStatus,
 } from './settingsStatus'
+export { SettingsIconToggle } from './SettingsIconToggle'

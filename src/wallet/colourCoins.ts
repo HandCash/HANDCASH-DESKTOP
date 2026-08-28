@@ -38,6 +38,14 @@ export const COLOUR_TAG = ONESAT_FT_TAG
 const ORIGIN_RE = /^[0-9a-f]{64}_\d+$/i
 const decoder = new TextDecoder()
 
+/** Identity key on mint JSON / CI. Compressed or uncompressed hex. Not Sigma. */
+function colourIssuerKey(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined
+  const key = raw.trim().toLowerCase().replace(/^0x/, '')
+  if (!/^[0-9a-f]{64,130}$/.test(key)) return undefined
+  return key
+}
+
 function toUnderscore(outpoint: string): string {
   const s = outpoint.trim()
   return s.includes('.') ? s.replace(/\.(\d+)$/, '_$1') : s
@@ -70,6 +78,8 @@ export type ColourToken = {
   /** Icon inscription outpoint when remittance carries one. */
   icon?: string
   iconUrl?: string
+  /** BRC-169 identity key on the origin inscription, when present. */
+  issuer?: string
 }
 
 export type ColourTip = {
@@ -83,6 +93,7 @@ export type ColourTip = {
   provenance?: ProvenanceV2
   proven: boolean
   customInstructions?: string
+  tags?: string[]
 }
 
 /** Parse tip face value; missing / invalid ⇒ 1 (legacy tip-count rows). */
@@ -150,6 +161,8 @@ export type ColourOriginMeta = {
   icon?: string
   /** Schema version on origin body when known. */
   schemaV?: number
+  /** Wallet identity key (lowercase hex) when the origin JSON/CI carries issuer. */
+  issuer?: string
 }
 
 export function isOnesatFtBasket(basket: unknown): boolean {
@@ -181,6 +194,19 @@ export function originFromColourTags(tags: unknown): string | null {
     }
   }
   return null
+}
+
+/** BRC-169 identity key from `issuer:<hex>` wallet tags. */
+export function issuerFromColourTags(tags: unknown): string | undefined {
+  if (!Array.isArray(tags)) return undefined
+  for (const t of tags) {
+    if (typeof t !== 'string') continue
+    const raw = t.trim()
+    if (!raw.toLowerCase().startsWith('issuer:')) continue
+    const key = colourIssuerKey(raw.slice('issuer:'.length))
+    if (key) return key
+  }
+  return undefined
 }
 
 /** Mint origin from remittance CI (`origin` on the 1sat-ft body). */
@@ -279,7 +305,7 @@ function parseSupplyFields(o: Record<string, unknown>): {
  */
 export function parseOnesatFtOriginPolicy(
   origin: string,
-  args: { lockingScriptHex?: string; customInstructions?: unknown },
+  args: { lockingScriptHex?: string; customInstructions?: unknown; tags?: unknown },
 ): ColourOriginMeta {
   const base: ColourOriginMeta = {
     origin: normalizeColourOrigin(origin),
@@ -318,6 +344,7 @@ export function parseOnesatFtOriginPolicy(
         icon = `${tipTx.toLowerCase()}_${o.iconVout}`
       }
     }
+    const issuer = colourIssuerKey(o.issuer)
     return {
       origin: base.origin,
       supply,
@@ -326,6 +353,7 @@ export function parseOnesatFtOriginPolicy(
       ...(sym ? { sym } : {}),
       ...(name ? { name } : {}),
       ...(icon ? { icon } : {}),
+      ...(issuer ? { issuer } : {}),
     }
   }
 
@@ -392,6 +420,15 @@ export function parseOnesatFtOriginPolicy(
         meta = { ...meta, name: nested.name.trim().slice(0, 80) }
       }
     }
+    if (!meta.issuer) {
+      const issuer = colourIssuerKey(nested.issuer)
+      if (issuer) meta = { ...meta, issuer }
+    }
+  }
+
+  if (!meta.issuer) {
+    const fromTags = issuerFromColourTags(args.tags)
+    if (fromTags) meta = { ...meta, issuer: fromTags }
   }
 
   return meta
@@ -422,6 +459,8 @@ export function buildColourCustomInstructions(args: {
   iconVout?: number
   provenance?: ProvenanceV2 | null
   mintBatchVout?: number
+  /** Identity key to echo on leftover remittance. */
+  issuer?: string
   /** @deprecated Interop ignores extend for binding. */
   mintExtend?: boolean
   parent?: string
@@ -466,6 +505,8 @@ export function buildColourCustomInstructions(args: {
     }
   }
   if (args.provenance) body.provenance = args.provenance
+  const issuer = colourIssuerKey(args.issuer)
+  if (issuer) body.issuer = issuer
   return JSON.stringify(body)
 }
 
@@ -482,6 +523,8 @@ export function buildOnesatFtOriginInscriptionJson(args: {
   /** Optional: lock total units at genesis. */
   supply?: ColourSupply
   maxSupply?: number | null
+  /** Wallet identity key — the person who issued this origin. */
+  issuer?: string
 }): Record<string, string | number> {
   const sym = args.sym.trim().slice(0, 32)
   if (!sym) throw new Error('Symbol required')
@@ -518,6 +561,8 @@ export function buildOnesatFtOriginInscriptionJson(args: {
     json.supply = 'open'
   }
   if (args.name?.trim()) json.name = args.name.trim().slice(0, 80)
+  const issuer = colourIssuerKey(args.issuer)
+  if (issuer) json.issuer = issuer
   return json
 }
 
@@ -730,6 +775,7 @@ export function aggregateColourTokens(
       outpoint: counted[0]!.outpoint,
       name: meta.name,
       ...(meta.icon ? { icon: meta.icon } : {}),
+      ...(meta.issuer ? { issuer: meta.issuer } : {}),
     })
   }
 
@@ -740,6 +786,13 @@ export function aggregateColourTokens(
 export function shortColourLabel(origin: string): string {
   const o = origin.toLowerCase()
   return o.length >= 10 ? `${o.slice(0, 6)}…${o.slice(-4)}` : o
+}
+
+/** Middle-ellipsis origin so the vout tail stays readable. */
+export function shortOriginLabel(origin: string): string {
+  const o = origin.trim().toLowerCase()
+  if (o.length <= 22) return o
+  return `${o.slice(0, 8)}…${o.slice(-10)}`
 }
 
 export function colourTokenAsFungible(token: ColourToken): {
@@ -755,6 +808,7 @@ export function colourTokenAsFungible(token: ColourToken): {
   colourSupply: ColourSupply
   colourMaxSupply: number | null
   colourProvenanceOk: boolean
+  issuer?: string
 } {
   return {
     tokenId: token.origin,
@@ -769,6 +823,7 @@ export function colourTokenAsFungible(token: ColourToken): {
     colourSupply: token.supply,
     colourMaxSupply: token.maxSupply,
     colourProvenanceOk: token.provenanceOk,
+    ...(token.issuer ? { issuer: token.issuer } : {}),
   }
 }
 

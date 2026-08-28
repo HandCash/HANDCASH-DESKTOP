@@ -42,10 +42,9 @@ import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
 import {
-  getOnesatFtLeftover,
   healOnesatFtFromListed,
   isOnesatFtGenesisSpent,
-  KING_ORIGIN,
+  listOnesatFtLeftovers,
 } from './onesatFtLeftover'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
@@ -174,42 +173,6 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
-    const liveIsGenesis = isGenesisRow(t)
-    const priorIsLeftover = Boolean(priorRow && !isGenesisRow(priorRow))
-    if (
-      priorRow &&
-      liveIsGenesis &&
-      (priorIsLeftover || Number(priorRow.amt) < Number(t.amt))
-    ) {
-      // Stale mint row from listOutputs. Keep the painted leftover.
-      continue
-    }
-    const priorOp = (priorRow?.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-    const liveOp = (t.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
-    const priorAmt = Number(priorRow?.amt)
-    const liveAmt = Number(t.amt)
-    const cap = t.colourMaxSupply ?? priorRow?.colourMaxSupply
-    if (
-      priorRow &&
-      cap != null &&
-      Number.isFinite(priorAmt) &&
-      priorAmt > cap
-    ) {
-      // Inflated cache (e.g. KING 206724 / 275586). Live listing wins.
-    } else if (
-      priorRow &&
-      priorIsLeftover &&
-      !liveIsGenesis &&
-      Number.isFinite(priorAmt) &&
-      Number.isFinite(liveAmt) &&
-      liveAmt < priorAmt &&
-      priorOp &&
-      liveOp &&
-      priorOp === liveOp
-    ) {
-      // Same tip, smaller live — listOutputs drop. Keep leftover amt.
-      continue
-    }
     // Live listing already overlays leftovers and aggregates by origin.
     // amt comes from live. Never leftover+live across refreshes.
     byId.set(k, {
@@ -269,7 +232,23 @@ export function paintFungibleAfterSpend(args: {
     colourProvenanceOk: prior?.colourProvenanceOk ?? true,
     ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
     ...(prior?.iconUrl ? { iconUrl: prior.iconUrl } : {}),
+    ...(prior?.issuer ? { issuer: prior.issuer } : {}),
+    ...(prior?.issuerHandle ? { issuerHandle: prior.issuerHandle } : {}),
   })
+}
+
+/** Leftover remittance is a floor, not the full origin balance. */
+export function leftoverFloorWouldClobber(
+  prior: Pick<FungibleToken, 'amt' | 'utxoCount'> | undefined,
+  floor: Pick<FungibleToken, 'amt' | 'utxoCount'>,
+): boolean {
+  if (!prior) return false
+  const priorAmt = Number(prior.amt)
+  const floorAmt = Number(floor.amt)
+  if (Number.isFinite(priorAmt) && Number.isFinite(floorAmt) && priorAmt > floorAmt) {
+    return true
+  }
+  return (prior.utxoCount ?? 0) > (floor.utxoCount ?? 1)
 }
 
 // Paint last session's tokens immediately — same pattern as collectables.
@@ -281,27 +260,40 @@ export function paintFungibleAfterSpend(args: {
   }
   try {
     healOnesatFtFromListed([])
-    const leftover = getOnesatFtLeftover(KING_ORIGIN)
-    if (leftover && leftover.amt > 0) {
-      cached = mergeLiveFungibles(
-        [
-          {
+    const leftoverRows = listOnesatFtLeftovers()
+    if (leftoverRows.length > 0) {
+      const floors = leftoverRows
+        .map((leftover) => {
+          let issuer: string | undefined
+          try {
+            const o = JSON.parse(leftover.ci) as { issuer?: unknown }
+            if (typeof o.issuer === 'string' && o.issuer.trim()) issuer = o.issuer.trim()
+          } catch {
+            /* remittance may omit issuer */
+          }
+          return {
             tokenId: leftover.origin,
-            sym: leftover.sym || 'KING',
+            sym: leftover.sym || 'Token',
             amt: String(leftover.amt),
             dec: 0,
             utxoCount: 1,
             outpoint: leftover.outpoint,
-            spendKind: 'plain',
+            spendKind: 'plain' as const,
             colourSupply: leftover.supply ?? 'locked',
-            colourMaxSupply: leftover.maxSupply ?? 69420,
+            colourMaxSupply: leftover.maxSupply ?? null,
             colourProvenanceOk: true,
-          },
-        ],
-        cached,
-      )
-      persistDurableList(cached)
-      hydrated = true
+            ...(issuer ? { issuer } : {}),
+          }
+        })
+        .filter((floor) => {
+          const prior = cached.find((t) => tokenKey(t) === tokenKey(floor))
+          return !leftoverFloorWouldClobber(prior, floor)
+        })
+      if (floors.length > 0) {
+        cached = mergeLiveFungibles(floors, cached)
+        persistDurableList(cached)
+        hydrated = true
+      }
     }
   } catch {
     /* leftover paint is best-effort */
