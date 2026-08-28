@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.10] - 2026-08-28
+
+### Fixed
+
+- **Sync no longer beeps without a toast.** Rediscovered 1sat items stay silent unless a new receive actually toasts.
+- **Unverified 1sat cards stay on Collectables during sync.** A longer live list wins over a shorter cache; BRC-150 can fetch BEEF from the network instead of hiding on a local miss.
+- **Issuer row is omitted when the mint has none.** No "Not supplied". Leftover remittance still copies `issuer:` when the origin JSON had it.
+
+### Changed
+
+- Nav and inventory say Collectables. Dashboard identity chip has no pfp next to the balance.
+- Settings appearance and updates are icon pills (Monitor / Moon / Sun, Repeat / Touch / Block).
+- Screenshot is a real **Take screenshot** button with the shortcut under it. Check update is a real button.
+
+
 ## [1.3.9] - 2026-08-28
 
 ### Fixed
