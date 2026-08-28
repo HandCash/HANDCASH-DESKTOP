@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.6] - 2026-08-28
+
+### Fixed
+
+- **Tokens list is 1sat-ft only.** Durable cache drops leftover Collectable / FOX / Pixel Foxes rows so they cannot return on reload.
+- **Refresh no longer hammers WhatsOnChain `/unspent/all`.** Spendable indexer review is report-only and is skipped (WOC 429 + CORS were stalling sync).
+- **CoinGecko / WhatsOnChain FX cools down for 15 minutes after a 429.** Price panel keeps the last cached rate instead of retrying in a loop.
+
+### Changed
+
+- Collect stays 1sat collectables. Tokens stays BRC-175 `1sat-ft`. BSV-21 / FOX is leftover and is not listed.
+- Desktop Scan lives off main nav. Touch ID circle sits under the password field.
+
 ## [1.3.5] - 2026-08-28
 
 ### Fixed
