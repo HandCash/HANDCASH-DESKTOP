@@ -138,19 +138,27 @@ async function readRawTx(
     console.warn('[change-script] local rawTx lookup skipped', txid, err)
   }
 
+  if (!rawTx) {
+    try {
+      const { getLocalBeefForTxid } = await import('./beefCache')
+      const beef = await getLocalBeefForTxid(active, txid)
+      const tx = beef?.findTxid(txid)?.tx
+      if (tx) rawTx = tx.toBinary()
+    } catch {
+      // local BEEF optional
+    }
+  }
+
   if (!rawTx && fromChain && budget.chainFetches < CHAIN_FETCH_MAX) {
-    // Already-quarantined rows: if a prior Refresh confirmed the body missing,
-    // do not spend another chain slot re-asking (global miss TTL covers this).
-    if (opts?.spendable === false) {
-      try {
-        const { peekRawTxLookup } = await import('./oneSatImport')
-        if (peekRawTxLookup(txid) === 'miss') {
-          cache.set(txid, null)
-          return null
-        }
-      } catch {
-        // import / cache probe failed — fall through to a budgeted fetch
+    // Known-missing ghosts (Bitails 404) — do not re-ask, spendable or not.
+    try {
+      const { peekRawTxLookup } = await import('./oneSatImport')
+      if (peekRawTxLookup(txid) === 'miss') {
+        cache.set(txid, null)
+        return null
       }
+    } catch {
+      // import / cache probe failed — fall through to a budgeted fetch
     }
     budget.chainFetches += 1
     try {

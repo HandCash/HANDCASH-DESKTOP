@@ -174,6 +174,14 @@ export async function auditSpendableOutputs(force = false): Promise<SpendableRev
   }
 
   try {
+    // Report-only. WhatsOnChain /unspent/all 429s Refresh, so stay off the wire.
+    const REVIEW_SPENDABLE_ON_INGEST = false
+    if (!REVIEW_SPENDABLE_ON_INGEST) {
+      console.info('[chain-ingest] skipped spendable indexer review (WOC 429)')
+      lastSpendableReviewAt = Date.now()
+      return { suspect: 0, skipped: true }
+    }
+
     let result
     if (allBasketReviewSupported) {
       try {
@@ -361,6 +369,10 @@ export async function refreshFromChainExclusive(
   const LEGACY_INGEST_SOFT_MS = 35_000
 
   try {
+    if (!fundingOnly) {
+      const { setCollectableVerifyWalkDeferred } = await import('./collectables')
+      setCollectableVerifyWalkDeferred(true)
+    }
     const ingestPromise = ingestLegacyAddressUtxos({
       active,
       knownItems: opts?.knownItems,
@@ -448,25 +460,33 @@ export async function refreshFromChainExclusive(
         } else {
           invalidateLiveOneSatOutpoints()
         }
-        // Heal FT tips that older probes painted into basket `1sat`, then paint.
-        void import('./reclaimMisfiledOnesatFt')
-          .then(({ reclaimMisfiledOnesatFtTips }) =>
-            reclaimMisfiledOnesatFtTips(active),
+        // Tokens from basket 1sat-ft only. Do not scan basket 1sat for FTs.
+        void import('./collectables')
+          .then(({ setCollectableVerifyWalkDeferred }) => {
+            setCollectableVerifyWalkDeferred(true)
+          })
+          .then(() =>
+            import('./fungibles').then(({ listFungibles }) => listFungibles(active)),
+          )
+          .then(() =>
+            import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>
+              healMisfiledCollectables(active),
+            ),
           )
           .then(() => listCollectables(active))
+          .finally(() => {
+            void import('./collectables').then(
+              ({ setCollectableVerifyWalkDeferred, resumeCollectableVerifyWalk }) => {
+                setCollectableVerifyWalkDeferred(false)
+                resumeCollectableVerifyWalk()
+              },
+            )
+          })
           .catch((err) => {
             console.warn('[chain-ingest] collectables refresh failed', err)
           })
       } catch (err) {
         console.warn('[chain-ingest] collectables refresh skipped', err)
-      }
-      try {
-        const { listFungibles } = await import('./fungibles')
-        void listFungibles(active).catch((err) => {
-          console.warn('[chain-ingest] fungibles refresh failed', err)
-        })
-      } catch (err) {
-        console.warn('[chain-ingest] fungibles refresh skipped', err)
       }
     }
   } catch (err) {

@@ -31,6 +31,15 @@ import {
   forgetOneSatImported,
   isOneSatOutpointKnown,
 } from './oneSatImportGuard'
+import {
+  applyCollectableRemittance,
+  collectableKeySet,
+  keepCollectablesOutOfTokenRoute,
+  skipTokenImportForBasketHeld,
+  wireCollectableOutpoint,
+  type CollectableRemittance,
+} from './oneSatCollectableGuard'
+import { ONESAT_FT_BASKET } from './colourCoins'
 import { isItemAbandoned, isItemSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
@@ -167,17 +176,23 @@ function inferBasketListedTotal(
   return Math.max(reached, reported)
 }
 
-async function listOneSatBasketOutpointKeys(active: ActiveWallet): Promise<{
+async function listBasketOutpointKeys(
+  active: ActiveWallet,
+  basket: string,
+): Promise<{
   keys: Set<string>
   fullyListed: boolean
 }> {
+  if (typeof active.wallet.listOutputs !== 'function') {
+    return { keys: new Set(), fullyListed: false }
+  }
   const keys = new Set<string>()
   let offset = 0
   let total: number | null = null
 
   while (true) {
     const listed = await active.wallet.listOutputs({
-      basket: '1sat',
+      basket,
       limit: ONE_SAT_BASKET_PAGE,
       offset: -(offset + 1),
       includeTags: false,
@@ -202,6 +217,13 @@ async function listOneSatBasketOutpointKeys(active: ActiveWallet): Promise<{
   return { keys, fullyListed: total == null || keys.size >= total }
 }
 
+async function listOneSatBasketOutpointKeys(active: ActiveWallet): Promise<{
+  keys: Set<string>
+  fullyListed: boolean
+}> {
+  return listBasketOutpointKeys(active, '1sat')
+}
+
 /**
  * Live 1-sat outs on our address that still carry durable import marks but are
  * missing from the local `1sat` basket cannot be re-ingested until the marks
@@ -214,6 +236,8 @@ async function listOneSatBasketOutpointKeys(active: ActiveWallet): Promise<{
 async function healOrphanOneSatImportMarks(
   active: ActiveWallet,
   liveOneSats: MigrationItem[],
+  prelisted?: { keys: Set<string>; fullyListed: boolean } | null,
+  heldElsewhere?: Set<string> | null,
 ): Promise<number> {
   const marked = [
     ...new Set(
@@ -234,23 +258,74 @@ async function healOrphanOneSatImportMarks(
 
   let basketKeys = new Set<string>()
   let basketFullyListed = false
-  try {
-    const listed = await listOneSatBasketOutpointKeys(active)
-    basketKeys = listed.keys
-    basketFullyListed = listed.fullyListed
-  } catch (err) {
-    console.warn('[chain-ingest] orphan 1sat mark heal skipped (basket list failed)', err)
-    return 0
+  if (prelisted) {
+    basketKeys = prelisted.keys
+    basketFullyListed = prelisted.fullyListed
+  } else {
+    try {
+      const listed = await listOneSatBasketOutpointKeys(active)
+      basketKeys = listed.keys
+      basketFullyListed = listed.fullyListed
+    } catch (err) {
+      console.warn('[chain-ingest] orphan 1sat mark heal skipped (basket list failed)', err)
+      return 0
+    }
   }
   if (!basketFullyListed) return 0
 
-  const orphans = marked.filter((op) => !basketKeys.has(op))
+  const elsewhere = heldElsewhere ?? new Set<string>()
+  const orphans = marked.filter(
+    (op) => !basketKeys.has(op) && !elsewhere.has(op),
+  )
   if (orphans.length === 0) return 0
   forgetOneSatImported(orphans)
   console.info(
     `[chain-ingest] forgot ${orphans.length} orphan 1sat import mark(s) — live on address, missing from basket`,
   )
   return orphans.length
+}
+
+
+async function loadCollectableRemittance(): Promise<Map<string, CollectableRemittance>> {
+  const byOp = new Map<string, CollectableRemittance>()
+  try {
+    const { getCachedCollectables } = await import('./collectables')
+    for (const item of getCachedCollectables()) {
+      const op = wireCollectableOutpoint(item.outpoint)
+      if (!op) continue
+      byOp.set(op, {
+        outpoint: op,
+        origin: item.origin,
+        name: item.name,
+        app: item.app,
+        collectionId: item.collectionId,
+      })
+    }
+  } catch {
+    // Cache is optional — marks + basket still latch the outpoint.
+  }
+  try {
+    const { getResolvedInscription } = await import('./inscriptionCache')
+    const { getProvenVerdict } = await import('./provenCache')
+    for (const [op, row] of byOp) {
+      const proven = getProvenVerdict(op)
+      const resolved = getResolvedInscription(op)
+      const origin = proven?.origin?.trim() || resolved?.origin || row.origin
+      const name = row.name || resolved?.name
+      const app = row.app || resolved?.app
+      const collectionId = row.collectionId || resolved?.collectionId
+      byOp.set(op, {
+        outpoint: op,
+        ...(origin ? { origin } : {}),
+        ...(name ? { name } : {}),
+        ...(app ? { app } : {}),
+        ...(collectionId ? { collectionId } : {}),
+      })
+    }
+  } catch {
+    /* remittance from the collectable cache is enough */
+  }
+  return byOp
 }
 
 export async function ingestLegacyAddressUtxos(
@@ -274,11 +349,23 @@ export async function ingestLegacyAddressUtxos(
   // Inscribed outputs (1Sat NFT) are P2PKH + ord envelope — absent from the
   // plain address scan. Ordinal index covers NFT tips. Legacy BSV-21 is
   // burn-only for tips already in basket `bsv21` — do not re-scan / import more.
-  const [addressScan, ordinalTxos] = await Promise.all([
+  const [addressScan, ordinalTxos, basketListed, ftBasketListed] = await Promise.all([
     scanLegacyAddress(active),
     fundingOnly
       ? Promise.resolve<LegacyUtxo[]>([])
       : scanAddressOrdinalTxos(active.address, active.chain),
+    fundingOnly
+      ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
+      : listOneSatBasketOutpointKeys(active).catch((err) => {
+          console.warn('[chain-ingest] 1sat basket list failed', err)
+          return null
+        }),
+    fundingOnly
+      ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
+      : listBasketOutpointKeys(active, ONESAT_FT_BASKET).catch((err) => {
+          console.warn('[chain-ingest] 1sat-ft basket list failed', err)
+          return null
+        }),
   ])
 
   const scan = mergeTokenTxos(addressScan, ordinalTxos)
@@ -290,26 +377,103 @@ export async function ingestLegacyAddressUtxos(
     return emptyIngest(scan)
   }
 
-  const { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips } =
+  const remittanceByOutpoint = await loadCollectableRemittance()
+  const ftHeld = ftBasketListed?.keys ?? new Set<string>()
+  const { isBareOriginCollectable } = await import('./collectables')
+  if (ftHeld.size > 0) {
+    for (const op of ftHeld) remittanceByOutpoint.delete(op)
+  }
+  for (const [op, rem] of [...remittanceByOutpoint]) {
+    if (isBareOriginCollectable(rem)) remittanceByOutpoint.delete(op)
+  }
+  const knownCollectableOutpoints = collectableKeySet([
+    ...remittanceByOutpoint.keys(),
+    ...(basketListed?.keys ?? []),
+    ...scan.utxos
+      .filter(
+        (u) =>
+          u.satoshis === 1 &&
+          isOneSatOutpointKnown(u.outpoint) &&
+          !ftHeld.has(outpointKey(u.outpoint)),
+      )
+      .map((u) => u.outpoint),
+  ])
+
+  let { funding, oneSats, bsv21, onesatFt, heldOneSats, heldUneconomical, pendingTips } =
     await classifyLegacyUtxos(scan.utxos, active.chain, opts.knownItems ?? [], {
       fundingOnly,
+      knownCollectableOutpoints,
+      collectableRemittance: remittanceByOutpoint,
     })
+
+  const latched = keepCollectablesOutOfTokenRoute(
+    oneSats,
+    bsv21,
+    knownCollectableOutpoints,
+    remittanceByOutpoint,
+  )
+  oneSats = latched.oneSats
+  bsv21 = latched.tokenTips
+  if (latched.rescued.length > 0) {
+    console.info(
+      `[chain-ingest] kept ${latched.rescued.length} 1sat collectable(s) out of BSV-21 / NFT`,
+    )
+  }
+  if (basketListed?.keys) {
+    const skipped = skipTokenImportForBasketHeld(bsv21, basketListed.keys)
+    bsv21 = skipped.tokenTips
+    if (skipped.skipped.length > 0) {
+      console.info(
+        `[chain-ingest] skipped token import for ${skipped.skipped.length} tip(s) already in basket 1sat`,
+      )
+    }
+  }
+
+  // Leftover 1sat-FT / bare-origin tips must not be collectables — hide or FT.
+  oneSats = oneSats.filter((i) => {
+    const op = outpointKey(i.outpoint)
+    if (ftHeld.has(op)) return false
+    return !isBareOriginCollectable(i)
+  })
 
   // Clear durable import marks for tips still live on our address but gone from
   // the local basket so the filter below can re-claim them on this Refresh.
+  // Reimport stays basket `1sat` + remittance — classify already latched them.
+  // Never forget leftover / 1sat-ft marks — that is the reimport loop.
   if (!fundingOnly && oneSats.length > 0) {
-    await healOrphanOneSatImportMarks(active, oneSats)
+    await healOrphanOneSatImportMarks(active, oneSats, basketListed, ftHeld)
   }
 
-  const newOneSatCandidates = oneSats.filter((i) => {
-    const fresh = filterNewOneSatOutpoints([i.outpoint])
-    return fresh.length > 0
-  })
-  // Never auto-import BSV-21 into Collect. Hold on-address tips so Refresh
-  // does not sweep them as funding; burn uses basket tips already held.
+  const basketHeld = basketListed?.fullyListed ? basketListed.keys : null
+  const newOneSatCandidates = oneSats
+    .filter((i) => {
+      const op = wireCollectableOutpoint(i.outpoint)
+      if (basketHeld?.has(op)) return false
+      if (ftHeld.has(op)) return false
+      if (isBareOriginCollectable(i)) return false
+      return filterNewOneSatOutpoints([i.outpoint]).length > 0
+    })
+    .map((i) =>
+      applyCollectableRemittance(
+        i,
+        remittanceByOutpoint.get(wireCollectableOutpoint(i.outpoint)),
+      ),
+    )
+  let importedItems = 0
+  let itemsFailed = 0
+  let newOneSatOutpoints: string[] = []
+  let partialWarn: string | null = null
+
+  // BSV-21 ingress is ripped. Classified bsv-20 tips are not imported.
   if (bsv21.length > 0 && !fundingOnly) {
     console.info(
-      `[chain-ingest] holding ${bsv21.length} legacy BSV-21 tip(s) — burn-only (not importing)`,
+      `[chain-ingest] skipped ${bsv21.length} BSV-21 tip(s) — Collect is 1sat-ft only`,
+    )
+  }
+
+  if (!fundingOnly && onesatFt.length > 0) {
+    console.info(
+      `[chain-ingest] ${onesatFt.length} address 1sat-ft tip(s) stay until they are in basket 1sat-ft — not recovered from 1sat`,
     )
   }
 
@@ -345,10 +509,6 @@ export async function ingestLegacyAddressUtxos(
     )
   }
 
-  let importedItems = 0
-  let itemsFailed = 0
-  let newOneSatOutpoints: string[] = []
-  let partialWarn: string | null = null
 
   await yieldToUi()
 

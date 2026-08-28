@@ -8,8 +8,10 @@ vi.mock('./session', () => ({
 }))
 
 const fetchRawTxHex = vi.fn()
+const peekRawTxLookup = vi.fn(() => 'unknown' as 'hit' | 'miss' | 'unknown')
 vi.mock('./oneSatImport', () => ({
   fetchRawTxHex: (txid: string, chain: string) => fetchRawTxHex(txid, chain),
+  peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
 const { classifyChangeScript, hasLockingScript, sweepChangeScripts } =
@@ -94,6 +96,8 @@ describe('sweepChangeScripts', () => {
     getProvenOrRawTx.mockReset()
     updateOutput.mockReset()
     fetchRawTxHex.mockReset()
+    peekRawTxLookup.mockReset()
+    peekRawTxLookup.mockReturnValue('unknown')
     getProvenOrRawTx.mockResolvedValue({})
     updateOutput.mockResolvedValue(1)
     mockGetActiveWallet.mockReset()
@@ -227,6 +231,26 @@ describe('sweepChangeScripts', () => {
       spendable: false,
       spentBy: undefined,
     })
+  })
+
+  it('does not refetch a known miss for spendable rows', async () => {
+    const tx = fixtureTx(500)
+    peekRawTxLookup.mockReturnValue('miss')
+    pageOnce([
+      {
+        outputId: 16,
+        change: true,
+        spendable: true,
+        txid: tx.id('hex'),
+        vout: 0,
+        satoshis: 500,
+      },
+    ])
+
+    const r = await sweepChangeScripts({ fromChain: true })
+
+    expect(fetchRawTxHex).not.toHaveBeenCalled()
+    expect(r.quarantined).toBe(1)
   })
 
   it('does nothing without an unlocked wallet', async () => {

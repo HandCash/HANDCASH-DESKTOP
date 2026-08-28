@@ -1,5 +1,7 @@
 import {
   formatUsd,
+  isFxRateLimited,
+  noteFxRateLimited,
   refreshUsdPerBsv,
 } from '../wallet/fx'
 
@@ -168,6 +170,10 @@ export { OFFICIAL_URL, TOTAL_SUPPLY }
 async function fetchMinedSupply(): Promise<number | null> {
   try {
     const res = await fetch('https://api.whatsonchain.com/v1/bsv/main/circulatingsupply')
+    if (res.status === 429) {
+      noteFxRateLimited()
+      return null
+    }
     if (!res.ok) return null
     const text = await res.text()
     const n = Number.parseFloat(text)
@@ -195,6 +201,10 @@ async function fetchCoinGecko(): Promise<{
         'https://api.coingecko.com/api/v3/coins/bitcoin-cash-sv/market_chart?vs_currency=usd&days=30',
       ),
     ])
+    if (coinRes.status === 429 || chartRes.status === 429) {
+      noteFxRateLimited()
+      return null
+    }
     if (!coinRes.ok) return null
     const coin = (await coinRes.json()) as {
       market_data?: {
@@ -260,6 +270,7 @@ async function fetchCoinGecko(): Promise<{
 
 export async function refreshBsvMarket(force = false): Promise<BsvMarketStats | null> {
   const cached = readCache()
+  if (isFxRateLimited()) return cached
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) return cached
 
   const [gecko, minedWoc, priceFallback] = await Promise.all([

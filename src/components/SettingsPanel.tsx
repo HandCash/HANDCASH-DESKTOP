@@ -38,8 +38,8 @@ type SettingItem = {
 const SECURITY_ITEMS: SettingItem[] = [
   {
     id: 'backup',
-    label: 'Key slices',
-    description: 'Any two of three recover this wallet',
+    label: 'Recovery backup',
+    description: 'Phrase or key slices — Settings nags until done',
   },
   {
     id: 'history-backup',
@@ -110,7 +110,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Session logs'
-  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
+  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)

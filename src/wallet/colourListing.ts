@@ -10,6 +10,7 @@ import {
   originFromColourTags,
   parseColourMintAttestation,
   parseColourTipAmt,
+  tipCountsTowardBalance,
   parseOnesatFtOriginPolicy,
   tryParseProvenanceFromCi,
   verifyColourTipProvenance,
@@ -53,6 +54,7 @@ async function listBasketTips(
       include: 'locking scripts',
       includeCustomInstructions: true,
       includeTags: true,
+      seekPermission: false,
     })) as { outputs?: ListedOutput[] }
     return listed.outputs ?? []
   } catch {
@@ -217,13 +219,19 @@ export async function listColourTokensAsFungibles(
 ): Promise<ReturnType<typeof colourTokenAsFungible>[]> {
   const active = wallet ?? getActiveWallet()
   const tokens = await listColourTokens(active)
-  const { resolveTokenIconDataUrl } = await import('./tokenIconResolve')
+  const { resolveOnesatFtIconDataUrl } = await import('./tokenIconResolve')
   const out: ReturnType<typeof colourTokenAsFungible>[] = []
   for (const token of tokens) {
+    const realFt = token.supply === 'locked' || token.balance > 1
     let iconUrl =
       token.iconUrl ?? (token.icon ? getTokenIconDataUrl(token.icon) : undefined)
-    if (token.icon && !iconUrl && active) {
-      iconUrl = await resolveTokenIconDataUrl(token.icon, active)
+    if (!iconUrl && active && realFt) {
+      iconUrl = await resolveOnesatFtIconDataUrl({
+        origin: token.origin,
+        icon: token.icon,
+        tipOutpoint: token.outpoint,
+        wallet: active,
+      })
     }
     out.push(
       colourTokenAsFungible(
@@ -242,5 +250,5 @@ export async function listColourTipsForOrigin(
   const want = origin.includes('.')
     ? origin.replace(/\.(\d+)$/, '_$1').toLowerCase()
     : origin.toLowerCase()
-  return tips.filter((t) => t.origin === want && t.proven)
+  return tips.filter((t) => t.origin === want && tipCountsTowardBalance(t))
 }

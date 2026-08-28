@@ -16,6 +16,7 @@ import {
 } from './colourCoins'
 import { listColourTipsForOrigin, listColourTokens } from './colourListing'
 import { scheduleHistoryBackupPush } from './deviceSync'
+import { markItemsSent } from './sentItemGuard'
 import { stampBrc164Id } from './itemAccess'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -345,7 +346,22 @@ export async function burnColourCoins(args: {
     })
     console.info(`[1sat-ft-burn] complete txid=${txid}`)
     scheduleHistoryBackupPush('burnColourCoins')
-    void listColourTokens(active).catch(() => {})
+    markItemsSent(
+      selected.map((tip) => ({ outpoint: wireOutpoint(tip.outpoint), txid })),
+    )
+    void import('./fungibles')
+      .then(({ paintFungibleAfterSpend }) => {
+        paintFungibleAfterSpend({
+          tokenId: origin,
+          remainingAmt: change,
+          outpoint: change > 0 ? `${txid}_0` : undefined,
+          sym,
+          colourSupply: args.supply,
+          colourMaxSupply: args.maxSupply ?? null,
+          icon: args.icon,
+        })
+      })
+      .catch(() => {})
     return { txid, recoveredSatoshis: recoverSatoshis }
   })
 }

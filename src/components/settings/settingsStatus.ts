@@ -1,7 +1,9 @@
 import {
   isHistoryBackupConfirmed,
   isKeysBackupConfirmed,
+  isKeysBackupDeferred,
 } from '../../wallet/backupStatus'
+import { getDeviceLockMode, inferDeviceLockMode } from '../../wallet/deviceLockPrefs'
 import {
   getHistoryBackupPrefs,
   resolveHistoryBackupBaseUrl,
@@ -18,7 +20,24 @@ export type SettingRowStatus = {
 
 export function keysStatus(): SettingRowStatus {
   if (isKeysBackupConfirmed()) return { text: 'Confirmed on this device', tone: 'ok' }
+  if (isKeysBackupDeferred()) return { text: 'Do this later — still needed', tone: 'warn' }
   return { text: 'Not backed up', tone: 'warn' }
+}
+
+export function unlockStatus(): SettingRowStatus {
+  const mode = getDeviceLockMode() ?? inferDeviceLockMode()
+  switch (mode) {
+    case 'none':
+      return { text: 'No lock on this device', tone: 'muted' }
+    case 'password':
+      return { text: 'Password', tone: 'ok' }
+    case 'device':
+      return { text: 'Touch ID', tone: 'ok' }
+    case 'both':
+      return { text: 'Password + Touch ID', tone: 'ok' }
+    default:
+      return { text: 'Not set', tone: 'warn' }
+  }
 }
 
 export function historyStatus(): SettingRowStatus {
@@ -69,6 +88,8 @@ export function statusForSetting(id: SettingId): SettingRowStatus | null {
       return historyStatus()
     case 'device-handoff':
       return deviceHandoffStatus()
+    case 'change-password':
+      return unlockStatus()
     default:
       return null
   }

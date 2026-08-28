@@ -20,7 +20,9 @@ import {
   clearBackupConfirmed,
   isBackupConfirmed,
   markHistoryBackupConfirmed,
+  isKeysBackupDeferred,
   markKeysBackupConfirmed,
+  markKeysBackupDeferred,
   noteHistoryBackupExport,
   noteKeysBackupHandoff,
 } from './backupStatus'
@@ -83,5 +85,14 @@ describe('backupStatus evidence gates', () => {
     noteHistoryBackupExport()
     markHistoryBackupConfirmed()
     expect(isBackupConfirmed()).toBe(true)
+  })
+
+  it('defers keys backup without confirming', () => {
+    expect(isKeysBackupDeferred()).toBe(false)
+    markKeysBackupDeferred()
+    expect(isKeysBackupDeferred()).toBe(true)
+    noteKeysBackupHandoff()
+    expect(markKeysBackupConfirmed('phrase')).toBe(true)
+    expect(isKeysBackupDeferred()).toBe(false)
   })
 })

@@ -58,7 +58,8 @@ function wireOutpoint(op: string): string {
 export async function buildFungibleInputBeef(
   wallet: ActiveWallet,
   outpoints: string[],
-  loadBeef: typeof getBeefForTxidCached = getBeefForTxidCached,
+  loadBeef: typeof getBeefForTxidCached = (wallet, txid, opts) =>
+    getBeefForTxidCached(wallet, txid, { ...opts, needProof: true }),
 ): Promise<{ inputBEEF: number[]; knownTxids: string[] }> {
   const knownTxids = [
     ...new Set(

@@ -217,7 +217,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const issuerLabel = isColour
     ? token.colourSupply === 'locked'
       ? token.colourMaxSupply != null
-        ? `1Sat · supply locked at ${token.colourMaxSupply}`
+        ? `1Sat · max supply ${token.colourMaxSupply}`
         : '1Sat · supply locked'
       : '1Sat · no supply cap'
     : token.issuerHandle

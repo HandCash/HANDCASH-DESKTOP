@@ -304,6 +304,36 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('never routes a latched 1sat collectable to bsv21 even if the indexer answers', async () => {
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const remittance = new Map([
+      [`${TXID_A}.0`, { origin: `${TXID_A}_0`, name: 'Pixel Fox', app: 'Market' }],
+    ])
+    const result = await classifyLegacyUtxos(
+      [utxo(`${TXID_A}.0`, 1)],
+      'main',
+      [],
+      {
+        knownCollectableOutpoints: [`${TXID_A}_0`],
+        collectableRemittance: remittance,
+      },
+    )
+
+    expect(result.oneSats).toEqual([
+      expect.objectContaining({
+        outpoint: `${TXID_A}.0`,
+        origin: `${TXID_A}_0`,
+        name: 'Pixel Fox',
+        app: 'Market',
+      }),
+    ])
+    expect(result.bsv21).toEqual([])
+    expect(result.heldOneSats).toEqual([])
+    expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
   it('keeps a cloud-named outpoint that really is one satoshi', async () => {
     const result = await classifyLegacyUtxos(
       [utxo(`${TXID_A}.0`, 1)],

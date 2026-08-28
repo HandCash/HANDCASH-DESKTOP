@@ -401,7 +401,7 @@ export async function executeMarketPurchase(
     if (itemTxid !== offerTxid) {
       throw new Error('Market item and offer token must come from the same listing transaction')
     }
-    const inputBeef = (await getBeefForTxidCached(active, itemTxid!)).toBinary()
+    const inputBeef = (await getBeefForTxidCached(active, itemTxid!, { needProof: true })).toBinary()
     const created = await active.wallet.createAction({
       description: 'Buy market collectable',
       labels: [

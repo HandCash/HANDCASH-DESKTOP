@@ -1,10 +1,14 @@
 /**
  * 1Sat fungibles (BRC-175) — 1-sat tips that share one origin.
  *
- * Product branding: **1Sat**. Storage basket `1sat-ft`.
- * Each tip carries face value `amt` (missing ⇒ 1). Balance = Σ amt.
- * Transfers spend tips and create new 1-sat tips (payee + change) with
- * conserved amt; BRC-150 when lineage exists. No indexer for custody.
+ * Scan order for every list / icon / balance / reclaim path:
+ *   1. Must be 1 sat.
+ *   2. Must be 1sat-ft — MIME `application/1sat-ft+json` or CI/body `p: 1sat-ft`.
+ *      Wallet tags are not proof. If this fails, it is Collect. Stop.
+ *   3. Only then list it, walk an icon, or count balance.
+ *
+ * Balance = Σ amt on live tips. A later-tx tip means the mint UTXO was spent
+ * (listOutputs can lag); count the leftover, not the mint inscription.
  *
  * Spec: BRCs/tokens/0175.md · docs/bsva/brcs/tokens/onesat-fungibles-proposal.md
  */
@@ -125,6 +129,16 @@ export function tipFaceAmt(tip: Pick<ColourTip, 'amt'>): number {
   return Number.isSafeInteger(tip.amt) && tip.amt > 0 ? tip.amt : 1
 }
 
+/** Proven 1sat-ft tips, or send/burn change whose CI is actually 1sat-ft. */
+export function tipCountsTowardBalance(tip: ColourTip): boolean {
+  if (tip.satoshis !== 1 || tipFaceAmt(tip) <= 0) return false
+  return looksLikeOnesatFtTip({
+    customInstructions: tip.customInstructions,
+    lockingScriptHex: tip.lockingScript,
+  })
+}
+
+
 /** Durable policy from origin inscription (BRC-175). */
 export type ColourOriginMeta = {
   origin: string
@@ -170,23 +184,15 @@ export function originFromColourTags(tags: unknown): string | null {
 }
 
 /**
- * True when a listed output looks like a 1Sat fungible tip.
- * Prefer tags, but also accept CI / ord MIME so listOutputs without
- * `includeTags` (or a tip that lost tags) still paints in Collect.
+ * True when a listed output is a 1Sat fungible tip.
+ * Wallet tags are not proof — reclaim used to stamp `1sat-ft` on collectables.
+ * Require the protocol on CI or the on-chain inscription (`p` / MIME).
  */
 export function looksLikeOnesatFtTip(args: {
   tags?: unknown
   customInstructions?: unknown
   lockingScriptHex?: string
 }): boolean {
-  if (Array.isArray(args.tags)) {
-    const lower = args.tags
-      .filter((t): t is string => typeof t === 'string')
-      .map((t) => t.toLowerCase())
-    if (lower.includes(ONESAT_FT_TAG)) return true
-    if (lower.some((t) => t.startsWith('origin:'))) return true
-  }
-
   const ci = asRecord(args.customInstructions)
   if (ci) {
     const nested =
@@ -266,7 +272,7 @@ export function parseOnesatFtOriginPolicy(
 
   const fromBody = (o: Record<string, unknown>): ColourOriginMeta | null => {
     const p = String(o.p ?? '').toLowerCase()
-    if (p && p !== ONESAT_FT_PROTOCOL) return null
+    if (p !== ONESAT_FT_PROTOCOL) return null
     const { supply, maxSupply } = parseSupplyFields(o)
     const schemaV =
       typeof o.v === 'number' && Number.isSafeInteger(o.v) ? o.v : undefined
@@ -670,7 +676,7 @@ export function aggregateColourTokens(
 ): ColourToken[] {
   const groups = new Map<string, ColourTip[]>()
   for (const tip of tips) {
-    if (tip.satoshis !== 1 || !tip.proven) continue
+    if (!tipCountsTowardBalance(tip)) continue
     const origin = normalizeColourOrigin(tip.origin)
     const list = groups.get(origin) ?? []
     list.push(tip)
@@ -684,22 +690,27 @@ export function aggregateColourTokens(
       supply: 'open' as const,
       maxSupply: null,
     }
-    const balance = list.reduce((sum, t) => sum + tipFaceAmt(t), 0)
+    const originTx = origin.split('_')[0] ?? ''
+    const later = list.filter((t) => (t.outpoint.split('_')[0] ?? '') !== originTx)
+    // Same-tx extras are a mint batch (all live). A later tx means the mint
+    // was spent — listOutputs may still return it; do not add mint amt.
+    const counted = later.length > 0 ? later : list
+    const balance = counted.reduce((sum, t) => sum + tipFaceAmt(t), 0)
     const supplyEval = evaluateColourSupply({
       meta,
       heldUnits: balance,
     })
-    const provenanceOk = list.every((t) => t.proven) && !supplyEval.localExceedsCap
+    const provenanceOk = counted.every((t) => t.proven) && !supplyEval.localExceedsCap
     const sym = meta.sym || meta.name || shortColourLabel(origin)
     out.push({
       origin,
       sym,
-      tipCount: list.length,
+      tipCount: counted.length,
       balance,
       supply: supplyEval.supply,
       maxSupply: supplyEval.maxSupply,
       provenanceOk,
-      outpoint: list[0]!.outpoint,
+      outpoint: counted[0]!.outpoint,
       name: meta.name,
       ...(meta.icon ? { icon: meta.icon } : {}),
     })
@@ -762,7 +773,7 @@ export function selectColourTipsForAmount(
     throw new Error('Amount must be a positive whole number of units')
   }
   const usable = tips
-    .filter((t) => t.satoshis === 1 && t.proven && tipFaceAmt(t) > 0)
+    .filter((t) => tipCountsTowardBalance(t))
     .sort((a, b) => tipFaceAmt(b) - tipFaceAmt(a))
   const selected: ColourTip[] = []
   let selectedSum = 0

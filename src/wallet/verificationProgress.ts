@@ -183,17 +183,21 @@ export function isOutpointVerifying(
 ): boolean {
   if (!outpoint) return false
   const key = normalize(outpoint)
-  // Self-heal: a durable proven tip must never keep a stale awaiting spinner.
+  // Read-only. Callers hit this during render (ActivityFeed / Collect cards).
+  // Schedule the self-heal so we never emit mid-render.
+  const later = (fn: () => void) => {
+    queueMicrotask(fn)
+  }
   if (isItemProven(key)) {
     if (awaitingVerify.has(key) || current.outpoint === key) {
-      clearAwaitingVerification(key)
+      later(() => clearAwaitingVerification(key))
     }
     return false
   }
   const since = awaitingVerify.get(key)
   if (since != null) {
     if (now - since > AWAITING_VERIFY_MAX_MS) {
-      clearAwaitingVerification(key)
+      later(() => clearAwaitingVerification(key))
       return current.phase === 'verifying' && current.outpoint === key
     }
     return true

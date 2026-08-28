@@ -3,6 +3,16 @@ import type { DisplayCurrency } from './displayCurrency'
 
 const CACHE_KEY = 'handcash.brc100.bsvUsd'
 const CACHE_TTL_MS = 5 * 60_000
+const RATE_BACKOFF_MS = 15 * 60_000
+let rateBackoffUntil = 0
+
+export function noteFxRateLimited(): void {
+  rateBackoffUntil = Date.now() + RATE_BACKOFF_MS
+}
+
+export function isFxRateLimited(): boolean {
+  return Date.now() < rateBackoffUntil
+}
 
 type RateCache = {
   usdPerBsv: number
@@ -40,6 +50,10 @@ function writeCache(usdPerBsv: number): void {
 
 async function fetchFromWhatsOnChain(): Promise<number> {
   const res = await fetch('https://api.whatsonchain.com/v1/bsv/main/exchangerate')
+  if (res.status === 429) {
+    noteFxRateLimited()
+    throw new Error('rate 429')
+  }
   if (!res.ok) throw new Error(`rate ${res.status}`)
   const data = (await res.json()) as { rate?: number; currency?: string }
   if (typeof data.rate !== 'number' || !(data.rate > 0)) throw new Error('bad rate')
@@ -50,6 +64,10 @@ async function fetchFromCoinGecko(): Promise<number> {
   const res = await fetch(
     'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
   )
+  if (res.status === 429) {
+    noteFxRateLimited()
+    throw new Error('coingecko 429')
+  }
   if (!res.ok) throw new Error(`coingecko ${res.status}`)
   const data = (await res.json()) as { 'bitcoin-cash-sv'?: { usd?: number } }
   const rate = data['bitcoin-cash-sv']?.usd
@@ -72,6 +90,7 @@ export function subscribeUsdRate(cb: (rate: number | null) => void): () => void 
 
 export async function refreshUsdPerBsv(force = false): Promise<number | null> {
   const cached = readCache()
+  if (isFxRateLimited()) return cached?.usdPerBsv ?? null
   if (!force && cached && Date.now() - cached.fetchedAt < CACHE_TTL_MS) {
     return cached.usdPerBsv
   }

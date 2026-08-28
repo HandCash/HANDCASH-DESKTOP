@@ -132,7 +132,8 @@ async function signBurnInputs(args: {
     if (!input.sourceTransaction && input.sourceTXID) {
       const sourceBeef = await getBeefForTxidCached(
         args.active,
-        String(input.sourceTXID)
+        String(input.sourceTXID),
+        { needProof: true }
       )
       beef.mergeBeef(sourceBeef.toBinary())
       input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
@@ -508,7 +509,7 @@ async function hydrateBsv21Scripts(
       const vout = Number(voutRaw)
       if (!txid || !Number.isInteger(vout) || vout < 0) return tip
       try {
-        const beef = await getBeefForTxidCached(active, txid)
+        const beef = await getBeefForTxidCached(active, txid, { needProof: true })
         const lockingScript = beef
           .findTxid(txid)
           ?.tx?.outputs[vout]?.lockingScript?.toHex()
@@ -806,7 +807,7 @@ export async function burnOneSat(
             return { outpoint, satoshis: 0, lockingScript: undefined }
           }
           try {
-            const beef = await getBeefForTxidCached(active, txid)
+            const beef = await getBeefForTxidCached(active, txid, { needProof: true })
             const output = beef.findTxid(txid)?.tx?.outputs[vout]
             return {
               outpoint,

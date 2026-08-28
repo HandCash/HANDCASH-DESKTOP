@@ -618,6 +618,48 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   animation: none;
 }
 
+.auth-touchid {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 10px;
+}
+
+.auth-touchid-btn {
+  appearance: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--border));
+  background: color-mix(in srgb, var(--hc-surface-2) 88%, var(--hc-accent));
+  color: var(--hc-text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.auth-touchid-btn:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
+.auth-touchid-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.auth-touchid-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.auth-touchid-btn:focus-visible {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
 .auth-error {
   margin: 4px 0 0;
 }
@@ -1231,30 +1273,32 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   min-height: 280px;
   height: 100%;
   max-height: 100%;
-  padding: 0;
-  gap: 0;
+  padding: 14px 16px 16px;
+  gap: 12px;
   display: flex;
   flex-direction: column;
   overflow: hidden;
   box-sizing: border-box;
 }
 
-.scan-side-header {
+.scan-side-header,
+.scan-nav-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   flex: 0 0 auto;
-  padding: 10px 12px;
-  border-bottom: 1px solid hsl(var(--border) / 0.55);
+  min-height: 28px;
 }
 
 .scan-side-title {
   margin: 0;
-  font-family: var(--hc-display);
-  font-size: 0.95rem;
-  font-weight: 700;
-  letter-spacing: 0.02em;
+  font-family: var(--hc-font);
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 28px;
+  color: var(--hc-text);
 }
 
 .scan-side-close {
@@ -1269,36 +1313,43 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   margin: 0;
   display: flex;
   flex-direction: column;
-  gap: 0;
+  gap: 10px;
 }
 
 .scan-side-panel .qr-scanner--fill .qr-scanner-frame {
   flex: 1 1 auto;
   min-height: 0;
   aspect-ratio: auto;
-  border: 0;
-  border-radius: 0;
+  border-radius: calc(var(--hc-radius) + 2px);
 }
 
 .scan-side-panel .qr-scanner--fill .qr-scanner-hint {
   flex: 0 0 auto;
   margin: 0;
-  padding: 8px 12px 10px;
+  padding: 0 4px;
   font-size: 0.78rem;
-  line-height: 1.35;
+  line-height: 1.4;
+  text-wrap: pretty;
 }
 
 .scan-side-panel.scan-choice {
-  padding: 0 0 12px;
-  gap: 10px;
+  gap: 12px;
+}
+
+.scan-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
 }
 
 .scan-side-panel.scan-choice .scan-choice-value {
-  margin: 0 12px;
+  margin: 0;
 }
 
 .scan-side-panel.scan-choice .scan-choice-actions {
-  margin: 0 12px;
+  margin: 0;
   display: flex;
   flex-direction: column;
   gap: 8px;
@@ -5923,6 +5974,10 @@ html[data-aeon-mode='light'] .shortcut-key {
   font-size: 0.78rem;
   line-height: 1.4;
   text-align: center;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  max-width: 36ch;
+  justify-self: center;
 }
 
 .friend-label {
@@ -7661,14 +7716,28 @@ html[data-aeon-mode='light'] .skeleton {
   max-width: 100%;
 }
 
+.scan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.nav-child-body:has(.scan-panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .scan-choice {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
-  min-height: 100%;
-  padding: 20px 8px;
+  min-height: 0;
 }
 
 .scan-choice-label {
@@ -7681,14 +7750,17 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .scan-choice-value {
-  margin: 0 0 8px;
+  margin: 0;
   padding: 12px 14px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
   background: var(--hc-sunken);
   color: var(--hc-text);
+  font-family: var(--hc-font);
   font-size: 0.85rem;
-  word-break: break-all;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .scan-choice-actions {
@@ -10423,4 +10495,20 @@ html[data-aeon-platform='win32'] [data-aeon-scroll='hover']::-webkit-scrollbar-t
 html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar-thumb {
   background: hsl(var(--muted-foreground) / 0.5);
   border-radius: 999px;
+}
+
+
+/* Onboarding — backup later + protect this device */
+[data-aeon-scope='create-keys-backup'] .actions,
+[data-aeon-scope='onboard-protect'] .auth-actions {
+  display: grid;
+  gap: 8px;
+}
+
+[data-aeon-scope='create-keys-backup'] [data-aeon-part='backup-later'] {
+  width: 100%;
+}
+
+[data-aeon-scope='onboard-protect'] .wallet-setup-option input {
+  margin-top: 3px;
 }

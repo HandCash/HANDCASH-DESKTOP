@@ -34,7 +34,7 @@ describe('beefCache', () => {
       services: { getBeefForTxid },
     } as unknown as ActiveWallet
 
-    const first = await getBeefForTxidCached(wallet, txid)
+    const first = await getBeefForTxidCached(wallet, txid, { needProof: true })
     const second = await getBeefForTxidCached(wallet, txid)
     const merged = await buildMergedInputBeef(wallet, [`${txid}.0`], (op) => op)
 
@@ -63,8 +63,8 @@ describe('beefCache', () => {
       services: { getBeefForTxid },
     } as unknown as ActiveWallet
 
-    const a = getBeefForTxidCached(wallet, txid)
-    const b = getBeefForTxidCached(wallet, txid)
+    const a = getBeefForTxidCached(wallet, txid, { needProof: true })
+    const b = getBeefForTxidCached(wallet, txid, { needProof: true })
     // Storage probe is async — wait until the shared indexer call is armed.
     await vi.waitFor(() => {
       expect(getBeefForTxid).toHaveBeenCalledTimes(1)
@@ -189,8 +189,8 @@ describe('beefCache', () => {
         services: { getBeefForTxid },
       } as unknown as ActiveWallet
 
-      // No allowUnprovenRawTx — this is the BRC-150 proof path.
-      const beef = await getBeefForTxidCached(wallet, txid)
+      // Explicit proof — this is the BRC-150 send path.
+      const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
       expect(beef.findTxid(txid)?.tx).toBeTruthy()
       expect(beef.findTxid(parentId)?.isTxidOnly).toBeFalsy()
       expect(fetchSpy).toHaveBeenCalled()
@@ -219,13 +219,37 @@ describe('beefCache', () => {
         services: { getBeefForTxid },
       } as unknown as ActiveWallet
 
-      await expect(getBeefForTxidCached(wallet, 'a'.repeat(64))).rejects.toThrow(
-        /timed out/i,
-      )
+      await expect(
+        getBeefForTxidCached(wallet, 'a'.repeat(64), { needProof: true }),
+      ).rejects.toThrow(/timed out/i)
     } finally {
       fetchSpy.mockRestore()
     }
   }, 15_000)
+
+  it('does not hit the indexer unless the caller asks for a proof', async () => {
+    const { getBeefForTxidCached, resetBeefCacheForTests } = await import('./beefCache')
+    resetBeefCacheForTests()
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called')
+    })
+    const fetchSpy = vi
+      .spyOn(globalThis, 'fetch')
+      .mockResolvedValue(new Response('nope', { status: 404 }))
+    try {
+      const wallet = {
+        wallet: { storage: { isActiveStorageProvider: () => false } },
+        services: { getBeefForTxid },
+      } as unknown as ActiveWallet
+      await expect(getBeefForTxidCached(wallet, 'a'.repeat(64))).rejects.toThrow(
+        /offline/i,
+      )
+      expect(getBeefForTxid).not.toHaveBeenCalled()
+      expect(fetchSpy).not.toHaveBeenCalled()
+    } finally {
+      fetchSpy.mockRestore()
+    }
+  })
 
   it('uses caller-ready BEEF without fetching when already broadcast-safe', async () => {
     const { hydrateInputBeef, resetBeefCacheForTests } = await import('./beefCache')

@@ -637,7 +637,7 @@ export async function createMarketListingAdvert(
       ? null
       : await completeProvenanceForPublish({
           provenance: built,
-          getBeef: (txid) => getBeefForTxidCached(active, txid),
+          getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
         })
   const provenance = choosePublishableProvenance([complete, built])
   if (!provenance) {
@@ -648,7 +648,7 @@ export async function createMarketListingAdvert(
   }
   const verified = await verifyProvenanceV2Async(provenance, outpoint, {
     enforceBudget: false,
-    getBeef: (txid) => getBeefForTxidCached(active, txid),
+    getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
   })
   if (!verified.proven) {
     throw new MarketListingError(
@@ -692,7 +692,7 @@ export async function createMarketListingAdvert(
   const chart = createActor(marketListingMachine).start()
   chart.send({ type: 'LIST', path })
   const itemTxid = outpoint.slice(0, 64)
-  const inputBEEF = (await getBeefForTxidCached(active, itemTxid)).toBinary()
+  const inputBEEF = (await getBeefForTxidCached(active, itemTxid, { needProof: true })).toBinary()
   let reference: string | null = null
   try {
     const created = await active.wallet.createAction({
@@ -951,7 +951,7 @@ export async function verifyMarketListingProvenance(args: {
     provenance,
     heldOutpoint: outpoint,
     ...(active
-      ? { getBeef: (txid: string) => getBeefForTxidCached(active, txid) }
+      ? { getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true }) }
       : {}),
   })
   return verified.proven
@@ -1210,7 +1210,7 @@ export async function createCancelMarketListingAdvert(args: {
   let reference: string | null = null
   try {
     const offerTxid = listing.offerOutpoint.slice(0, 64)
-    const inputBEEF = (await getBeefForTxidCached(active, offerTxid)).toBinary()
+    const inputBEEF = (await getBeefForTxidCached(active, offerTxid, { needProof: true })).toBinary()
     const created = await active.wallet.createAction({
       description: 'Cancel BRC-48 market offer',
       labels: ['market-v3', 'brc48', 'market-cancel'],

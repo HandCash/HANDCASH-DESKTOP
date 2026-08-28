@@ -117,6 +117,7 @@ export async function signColourTipTransfer(args: {
         const extra = await getBeefForTxidCached(
           args.wallet,
           String(input.sourceTXID),
+          { needProof: true },
         )
         beef.mergeBeef(extra.toBinary())
         input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
@@ -525,12 +526,12 @@ export async function sendColourCoins(args: {
 
       if (!atomic?.length) {
         try {
-          const beef = await getBeefForTxidCached(wallet, txid)
+          const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
           atomic = Array.from(beef.toBinaryAtomic(txid))
         } catch {
           try {
             const wrap = Beef.fromBinary(
-              Array.from((await getBeefForTxidCached(wallet, txid)).toBinary()),
+              Array.from((await getBeefForTxidCached(wallet, txid, { needProof: true })).toBinary()),
             )
             atomic = wrap.toBinaryAtomic(txid)
           } catch {
@@ -605,7 +606,24 @@ export async function sendColourCoins(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendColourCoins')
-      void listColourTokens(wallet).catch(() => {})
+      const selectedSum = selected.reduce((s, tip) => s + tipFaceAmt(tip), 0)
+      const kept =
+        change > 0 ? change : args.skipPeerNotify ? amount : Math.max(0, selectedSum - amount)
+      const keptOp =
+        change > 0 ? `${txid}_1` : args.skipPeerNotify ? `${txid}_0` : undefined
+      void import('./fungibles')
+        .then(({ paintFungibleAfterSpend }) => {
+          paintFungibleAfterSpend({
+            tokenId: origin,
+            remainingAmt: kept,
+            outpoint: keptOp,
+            sym,
+            colourSupply: args.supply,
+            colourMaxSupply: args.maxSupply ?? null,
+            icon: args.icon,
+          })
+        })
+        .catch(() => {})
       return { txid, tipsSpent: selected.length, change }
       } finally {
         if (actionReference) {

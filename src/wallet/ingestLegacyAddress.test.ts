@@ -273,7 +273,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     vi.useRealTimers()
   })
 
-  it('holds on-address BSV-21 tips without importing or activity', async () => {
+  it('does not import classified on-address BSV-21 fungibles into basket bsv21', async () => {
     const tipOp = `${'aa'.repeat(32)}.0`
     const tokenId = `${'aa'.repeat(32)}_0`
     mockScanLegacyAddress.mockResolvedValue({

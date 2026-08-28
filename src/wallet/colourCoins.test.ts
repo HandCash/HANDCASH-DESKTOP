@@ -24,6 +24,7 @@ function tip(outpoint: string, opts: Partial<ColourTip> = {}): ColourTip {
     satoshis: 1,
     amt: 1,
     proven: true,
+    customInstructions: JSON.stringify({ p: '1sat-ft', origin: ORIGIN }),
     ...opts,
   }
 }
@@ -260,9 +261,13 @@ describe('1Sat fungibles (BRC-175)', () => {
 
   it('aggregates balance as Σ amt (missing amt ⇒ 1)', () => {
     const tips = [
-      tip(ORIGIN, { amt: 1000 }),
+      tip(`${'11'.repeat(32)}_0`, { amt: 1000 }),
       tip(`${'cd'.repeat(32)}_0`, { amt: 1 }),
-      tip(`${'ef'.repeat(32)}_0`, { proven: false, amt: 50 }),
+      tip(`${'ef'.repeat(32)}_0`, {
+        proven: false,
+        amt: 50,
+        customInstructions: JSON.stringify({ name: 'Collectable' }),
+      }),
     ]
     const meta = new Map([
       [
@@ -326,9 +331,15 @@ describe('1Sat fungibles (BRC-175)', () => {
     )
   })
 
-  it('recognizes FT tips from tags, CI, or ord MIME (not tags alone)', () => {
+  it('recognizes FT tips from CI or ord MIME, not tags alone', () => {
     expect(looksLikeOnesatFtTip({ tags: [] })).toBe(false)
-    expect(looksLikeOnesatFtTip({ tags: ['1sat-ft', 'ordinal'] })).toBe(true)
+    expect(looksLikeOnesatFtTip({ tags: ['1sat-ft', 'ordinal'] })).toBe(false)
+    expect(
+      looksLikeOnesatFtTip({
+        tags: ['1sat-ft', 'ordinal'],
+        customInstructions: JSON.stringify({ name: 'Pixel Foxes' }),
+      }),
+    ).toBe(false)
     expect(
       looksLikeOnesatFtTip({
         customInstructions: JSON.stringify({
@@ -346,6 +357,46 @@ describe('1Sat fungibles (BRC-175)', () => {
       maxSupply: 69420,
     })
     expect(looksLikeOnesatFtTip({ lockingScriptHex: lockingScript })).toBe(true)
+  })
+
+  it('counts leftover after send, not the spent mint', () => {
+    const mint = tip(ORIGIN, { amt: 69420 })
+    const change = tip(`${'cd'.repeat(32)}_1`, { amt: 69000 })
+    const rows = aggregateColourTokens(
+      [mint, change],
+      new Map([
+        [ORIGIN, { origin: ORIGIN, supply: 'locked', maxSupply: 69420, sym: 'KING' }],
+      ]),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.balance).toBe(69000)
+    expect(rows[0]!.outpoint).toBe(change.outpoint)
+  })
+
+  it('still sums a same-tx mint batch', () => {
+    const genesis = tip(ORIGIN, { amt: 500 })
+    const sibling = tip(`${ORIGIN.split('_')[0]}_1`, { amt: 500 })
+    const rows = aggregateColourTokens(
+      [genesis, sibling],
+      new Map([
+        [ORIGIN, { origin: ORIGIN, supply: 'locked', maxSupply: 1000, sym: 'BATCH' }],
+      ]),
+    )
+    expect(rows[0]!.balance).toBe(1000)
+    expect(rows[0]!.tipCount).toBe(2)
+  })
+
+  it('ignores collectable JSON that has no 1sat-ft protocol', () => {
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        name: 'Pixel Foxes',
+        amt: 1,
+      }),
+    })
+    expect(meta.sym).toBeUndefined()
+    expect(meta.name).toBeUndefined()
+    expect(meta.supply).toBe('open')
+    expect(meta.maxSupply).toBeNull()
   })
 
   it('resolves iconVout on genesis to same-tx icon outpoint', () => {

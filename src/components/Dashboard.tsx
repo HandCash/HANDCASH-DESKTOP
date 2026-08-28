@@ -35,12 +35,12 @@ import {
   type PendingAction,
   type PendingPrompt,
 } from '../wallet/permissions'
-import { openReceiveFlow, openScanFlow, openSendFlow, getNavState, subscribeNav } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow, getSideScanOpen, subscribeSideScan } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
 import { appDisplayName } from '../wallet/appIdentity'
 import { setAutoPaySettings } from '../wallet/autoPay'
-import { warmQrCamera, releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
 import { ScanPanel } from './ScanPanel'
 import { WalletNav } from './WalletNav'
@@ -229,15 +229,16 @@ export function Dashboard({
 
   const hostScanInSide = !isPhoneShell()
   const [sideScanOpen, setSideScanOpen] = useState(
-    () => hostScanInSide && getNavState().child?.type === 'scan',
+    () => hostScanInSide && getSideScanOpen(),
   )
   useEffect(() => {
     if (!hostScanInSide) {
       setSideScanOpen(false)
       return
     }
-    return subscribeNav((nav) => {
-      setSideScanOpen(nav.child?.type === 'scan')
+    return subscribeSideScan((open) => {
+      setSideScanOpen(open)
+      if (!open) releaseWarmedQrCamera()
     })
   }, [hostScanInSide])
 
@@ -700,15 +701,9 @@ export function Dashboard({
                 type="button"
                 className="btn btn-ghost btn-icon"
                 aria-label="Scan QR code"
-                title="Scan PeerPay, identity, or address QR"
-                onPointerEnter={() => warmQrCamera()}
-                onFocus={() => warmQrCamera()}
-                onPointerLeave={() => {
-                  if (getNavState().child?.type !== 'scan') releaseWarmedQrCamera()
-                }}
+                title="Scan QR code"
                 onClick={() => {
                   playWalletSound('soft')
-                  warmQrCamera()
                   openScanFlow()
                 }}
               >

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { clearNavChild, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
+import { clearNavChild, closeSideScan, openAddFriend, openSendFlow, openSetting } from '../wallet/navStore'
 import { tryParsePairPayload } from '../wallet/deviceWallets'
 import { tryParseDeviceKeyBackupPackage } from '../wallet/deviceKeyBackup'
 import { setPendingPairScan } from '../wallet/pendingPairScan'
@@ -8,6 +8,7 @@ import { claimBrc29SettlementUri } from '../wallet/sendBrc29Payment'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { identityKeyFromScan, QrScanner } from './QrScanner'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 
 const IDENTITY_KEY_RE = /^(02|03)[0-9a-fA-F]{64}$|^04[0-9a-fA-F]{128}$/
 
@@ -38,9 +39,15 @@ export function ScanPanel({ placement = 'nav' }: Props) {
   const [pending, setPending] = useState<PendingScan | null>(null)
   const side = placement === 'side'
 
+  const dismiss = () => {
+    if (side) closeSideScan()
+    else clearNavChild()
+  }
+
   const close = () => {
     playWalletSound('soft')
-    clearNavChild()
+    releaseWarmedQrCamera()
+    dismiss()
   }
 
   if (pending) {
@@ -55,7 +62,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
       <div
         className={
           side
-            ? 'panel what-is-bsv scan-side-panel scan-choice'
+            ? 'panel scan-side-panel scan-choice'
             : 'nav-child-panel scan-panel scan-choice'
         }
         data-aeon-scope="scan"
@@ -63,24 +70,24 @@ export function ScanPanel({ placement = 'nav' }: Props) {
       >
         {side ? (
           <header className="scan-side-header">
-            <h2 className="scan-side-title">Scanned</h2>
+            <h2 className="scan-side-title">Scan</h2>
             <button type="button" className="btn btn-ghost scan-side-close" onClick={close}>
               Close
             </button>
           </header>
-        ) : (
-          <p className="scan-choice-label">Scanned</p>
-        )}
-        <p className="mono scan-choice-value" title={pending.sendValue}>
-          {short}
-        </p>
-        <div className="actions scan-choice-actions">
+        ) : null}
+        <div className="scan-choice-body">
+          <p className="scan-choice-value" title={pending.sendValue}>
+            {short}
+          </p>
+          <div className="actions scan-choice-actions">
           {pending.identityKey ? (
             <button
               type="button"
               className="btn btn-primary"
               onClick={() => {
                 playWalletSound('soft')
+                dismiss()
                 openAddFriend({ identityKey: pending.identityKey! })
               }}
             >
@@ -92,6 +99,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
             className={pending.identityKey ? 'btn btn-ghost' : 'btn btn-primary'}
             onClick={() => {
               playWalletSound('soft')
+              dismiss()
               openSendFlow(pending.sendValue)
             }}
           >
@@ -112,6 +120,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
               Cancel
             </button>
           ) : null}
+          </div>
         </div>
       </div>
     )
@@ -119,7 +128,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
 
   return (
     <div
-      className={side ? 'panel what-is-bsv scan-side-panel' : 'nav-child-panel scan-panel'}
+      className={side ? 'panel scan-side-panel' : 'nav-child-panel scan-panel'}
       data-aeon-scope="scan"
       data-aeon-state="scanning"
     >
@@ -133,7 +142,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
       ) : null}
       <QrScanner
         layout={side ? 'fill' : 'default'}
-        hint="Point at a device, PeerPay, remittance, identity, or address QR"
+        hint="Point your camera at a QR code"
         onCancel={close}
         onScan={(raw) => {
           const trimmed = raw.trim()
@@ -152,6 +161,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
               spare ? 'Sealed recovery QR' : 'Device code',
               'Confirming in Device backup…',
             )
+            dismiss()
             openSetting('device-handoff')
             return
           }
@@ -163,7 +173,7 @@ export function ScanPanel({ placement = 'nav' }: Props) {
                 if (result.accepted) {
                   playWalletSound('soft')
                   toastSuccess('Payment claimed', 'BRC-29 remittance internalized (SPV)')
-                  clearNavChild()
+                  dismiss()
                   return
                 }
                 playWalletSound('error')

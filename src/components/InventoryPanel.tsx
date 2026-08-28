@@ -307,15 +307,15 @@ function FungibleCarouselCard({
     !token.colourSupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
-  const supplyBadge =
-    token.colourSupply === 'locked'
-      ? token.colourMaxSupply != null
-        ? `Locked · ${token.colourMaxSupply}`
-        : 'Locked'
-      : token.colourSupply === 'open'
-        ? 'No supply cap'
-        : 'Legacy · burn only'
   const isLegacy = !token.colourSupply
+  const cap =
+    token.colourSupply === 'locked' && token.colourMaxSupply != null
+      ? formatFungibleAmount(String(token.colourMaxSupply), token.dec)
+      : token.colourSupply
+        ? '∞'
+        : null
+  const amountLabel = cap != null ? `${amount} / ${cap}` : amount
+  const supplyBadge = isLegacy ? 'Legacy · burn only' : null
   return (
     <li
       className="collect-token-card"
@@ -337,8 +337,10 @@ function FungibleCarouselCard({
           size={56}
         />
         <strong className="collect-token-card-sym">{token.sym}</strong>
-        <span className="collect-token-card-amt">{amount}</span>
-        <span className="collect-token-card-meta">{supplyBadge}</span>
+        <span className="collect-token-card-amt">{amountLabel}</span>
+        {supplyBadge ? (
+          <span className="collect-token-card-meta">{supplyBadge}</span>
+        ) : null}
       </button>
       {isLegacy ? (
         <button

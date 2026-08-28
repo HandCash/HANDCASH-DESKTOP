@@ -38,6 +38,7 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { isBsv21Mime } from './bsv21'
+import { isOnesatFtMime, ONESAT_FT_TAG } from './colourCoins'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
@@ -60,6 +61,7 @@ import { forgetOneSatImported } from './oneSatImportGuard'
 import {
   buildMergedInputBeef,
   getBeefForTxidCached,
+  getLocalBeefForTxid,
   rememberBeefBinary,
   rememberBeefTree,
 } from './beefCache'
@@ -338,7 +340,9 @@ function persistDurableList(items: Collectable[]): void {
 
 // Paint last session's inventory immediately — do not wait on listOutputs.
 {
-  const durable = loadDurableList().filter((item) => !isItemSent(item.outpoint))
+  const durable = loadDurableList().filter(
+    (item) => !isItemSent(item.outpoint) && !isBareOriginCollectable(item),
+  )
   if (durable.length > 0) {
     cachedCollectables = durable
     collectablesHydrated = true
@@ -390,9 +394,10 @@ function setCollectablesCache(
       skipArrivalToast.delete(op)
     }
   }
-  cachedCollectables = items
+  const visible = items.filter((i) => !isBareOriginCollectable(i))
+  cachedCollectables = visible
   collectablesHydrated = true
-  persistDurableList(items)
+  persistDurableList(visible)
   // Activity Verifying… must not disagree with Collect. Held tips are ingested;
   // proven tips must not keep a pending Activity spinner.
   reconcilePendingActivityWithHeldItems(
@@ -406,7 +411,7 @@ function setCollectablesCache(
   for (const item of items) {
     if (item.proven) clearAwaitingVerification(item.outpoint)
   }
-  notifyCollectables(items)
+  notifyCollectables(visible)
   // Toast / chime / OS banner only once the card is on the list. Ingest used
   // to announce first; self-send then showed "Item received" on an empty grid.
   // Durable dedupe in announceItemsReceived skips unlock rediscovery.
@@ -476,7 +481,7 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
 }
 
 export function getCachedCollectables(): Collectable[] {
-  return cachedCollectables.slice()
+  return cachedCollectables.filter((i) => !isBareOriginCollectable(i))
 }
 
 export function getCollectablePageStatus(): {
@@ -516,6 +521,21 @@ export function shortOrigin(origin: string): string {
   const [txid, vout] = underscored.split('_')
   if (!txid) return origin
   return `${txid.slice(0, 8)}…_${vout ?? '?'}`
+}
+
+/** Hashed origin card with no collection/name — leftover 1sat-FT NFT misfile. */
+export function isBareOriginCollectable(item: {
+  name?: string
+  origin?: string
+  collectionId?: string
+  app?: string
+}): boolean {
+  if (item.collectionId?.trim() || item.app?.trim()) return false
+  const origin = (item.origin ?? '').trim()
+  const name = (item.name ?? '').trim()
+  if (!origin) return false
+  if (!name || name === shortOrigin(origin)) return true
+  return /^[0-9a-f]{6,8}…_\d+$/i.test(name)
 }
 
 function tagValue(
@@ -983,6 +1003,9 @@ function isListableItem(o: ItemOutput): boolean {
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false
   if (o.tags?.includes('bsv21')) return false
+  // 1sat-FT leftovers belong in basket 1sat-ft (or hidden), not NFT cards.
+  if (isOnesatFtMime(resolved?.mimeType)) return false
+  if (o.tags?.some((tag) => tag === ONESAT_FT_TAG || tag.startsWith('1sat-ft'))) return false
   return true
 }
 
@@ -1247,7 +1270,9 @@ async function proveHeldGenesis(
           // UI shares this thread.
           getBeef: async (txid) => {
             await yieldToUi()
-            return await getBeefForTxidCached(wallet, txid)
+            const local = await getLocalBeefForTxid(wallet, txid)
+            if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
+            return local
           },
           // Abandoning mid-walk costs one retry; finishing it while somebody is
           // waiting on the panel costs a `listOutputs` timeout. Never abort the
@@ -1628,7 +1653,11 @@ export async function verifyItemAuthenticity(
       const remittance = await verifyProvenanceForHeldTip({
         provenance,
         heldOutpoint: target,
-        getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+        getBeef: async (txid) => {
+          const local = await getLocalBeefForTxid(wallet, txid)
+          if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
+          return local
+        },
       })
       if (remittance.proven) {
         authenticity = { tier: 'brc150', proven: true, reason: null }
@@ -1653,7 +1682,11 @@ export async function verifyItemAuthenticity(
     if (!authenticity.proven) {
       const proof = await proveGenesisLineage({
         tipOutpoint: target,
-        getBeef: (txid) => getBeefForTxidCached(wallet, txid),
+        getBeef: async (txid) => {
+          const local = await getLocalBeefForTxid(wallet, txid)
+          if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
+          return local
+        },
       }).catch((err) => {
         console.warn('[brc-150] lineage walk failed', target, err)
         return null
@@ -1744,6 +1777,21 @@ function applyAuthenticityResult(
       c.outpoint === target ? { ...c, proven: true, authenticity: 'brc150' } : c
     )
   )
+}
+
+/** Skip the BRC-150 verify-all walk during FT catch-up Refresh. Details still verify. */
+let collectableVerifyWalkDeferred = false
+
+export function setCollectableVerifyWalkDeferred(deferred: boolean): void {
+  collectableVerifyWalkDeferred = deferred
+}
+
+/** Refresh skipped the BRC-150 walk — start it now that FT heal is done. */
+export function resumeCollectableVerifyWalk(): void {
+  collectableVerifyWalkDeferred = false
+  const wallet = getActiveWallet()
+  if (!wallet) return
+  void proveHeldGenesis(wallet, listInFlight)
 }
 
 /**
@@ -1991,7 +2039,12 @@ async function listCollectablesNow(
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.
   const ownRead = listInFlight
-  void resolveUnknownOrigins().then(() => proveHeldGenesis(wallet, ownRead))
+  if (collectableVerifyWalkDeferred) {
+    // Refresh is healing FTs — do not walk 800 collectables this pass.
+    void resolveUnknownOrigins()
+  } else {
+    void resolveUnknownOrigins().then(() => proveHeldGenesis(wallet, ownRead))
+  }
   return deduped
 }
 
@@ -2250,7 +2303,8 @@ async function signOrdinalTransfer(args: {
       try {
         const extra = await getBeefForTxidCached(
           args.wallet,
-          String(input.sourceTXID)
+          String(input.sourceTXID),
+          { needProof: true }
         )
         beef.mergeBeef(extra.toBinary())
         input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
@@ -2656,7 +2710,8 @@ export async function sendCollectable(args: {
               if (originTxid?.length === 64 && Number.isInteger(originVout)) {
                 const originBeef = await getBeefForTxidCached(
                   wallet,
-                  originTxid
+                  originTxid,
+                  { needProof: true }
                 )
                 const scriptHex =
                   originBeef
@@ -3199,12 +3254,12 @@ export async function sendCollectable(args: {
           // known so the next send reuses tip-named proof (no hydrate).
           if (txid && provenance && parseProvenanceV2(provenance)) {
             try {
-              const tipBeef = await getBeefForTxidCached(wallet, txid)
+              const tipBeef = await getBeefForTxidCached(wallet, txid, { needProof: true })
               const extended = await extendProvenanceV2({
                 prior: provenance,
                 heldOutpoint: `${txid.trim().toLowerCase()}_0`,
                 tipBeef,
-                getBeef: (hop) => getBeefForTxidCached(wallet, hop),
+                getBeef: (hop) => getBeefForTxidCached(wallet, hop, { needProof: true }),
               })
               if (extended) {
                 rememberProvenanceRemittance(extended)

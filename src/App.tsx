@@ -43,6 +43,7 @@ import {
   writeTrustedBalance,
 } from './wallet/balanceSnapshot'
 import { DISPLAY_BALANCE_REFRESH_EVENT } from './wallet/displayBalanceRefresh'
+import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
@@ -65,6 +66,7 @@ export function App() {
     // Never interrupt a legal spend phase. Once the chart returns to ready, a
     // fresh idle window begins and unattended keys are removed from memory.
     if (!snapshot.matches('ready')) return
+    if (shouldAutoUnlock()) return
     let timer = 0
     let hideTimer = 0
     const arm = () => {

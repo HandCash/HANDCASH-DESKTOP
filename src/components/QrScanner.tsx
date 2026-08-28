@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import { qrScannerMachine } from '../machines/qrScannerMachine'
-import { takeQrCameraStream } from '../wallet/qrCameraWarm'
+import { releaseWarmedQrCamera, takeQrCameraStream } from '../wallet/qrCameraWarm'
 import { Skeleton } from './Skeleton'
 
 type Props = {
@@ -52,10 +52,12 @@ export function QrScanner({
 
   useEffect(() => {
     const onVisibility = () => {
-      send({ type: document.visibilityState === 'hidden' ? 'PAUSE' : 'RESUME' })
+      if (document.visibilityState === 'hidden') send({ type: 'PAUSE' })
+      else send({ type: 'RESUME' })
     }
     document.addEventListener('visibilitychange', onVisibility)
-    onVisibility()
+    // Do not fire on mount — RESUME restarts the machine/session and re-opens
+    // getUserMedia in a loop while Scan is still painting.
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [send])
 
@@ -226,6 +228,7 @@ export function QrScanner({
     return () => {
       cancelled = true
       stopTracks()
+      releaseWarmedQrCamera()
     }
   }, [paused, send, snapshot.context.session])
 
