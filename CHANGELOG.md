@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.7] - 2026-08-28
+
+### Fixed
+
+- **Tokens balances match the live UTXO set.** After send/burn, leftover 1sat-ft tips show remaining `amt` (KING `69000 / 69420`) instead of the spent mint total.
+- **Spent genesis burns stay hidden.** Burned KING origins are marked spent-forever and cannot come back from cache.
+- **Bare leftover change still lists.** Toolbox often drops the 1-sat P2PKH change; leftover remittance is seeded so Tokens still paints the held tip.
+
 ## [1.3.6] - 2026-08-28
 
 ### Fixed
