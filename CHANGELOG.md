@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.9] - 2026-08-28
+
+### Fixed
+
+- **KING leftover follows the live tip.** After send `2a562450`, remittance is change `68931` — never re-seed spent `9abe8bdb` `69000`.
+- **Dashboard tip-chase backs off.** Stale inbox/chat hints no longer re-run funding-only Refresh every 5s; new txids still ingest immediately.
+- **Animated QR no longer burns CPU.** Frame assembly is incremental instead of a full redraw chase.
+
+### Changed
+
+- Settings uses Aeon controls. Send, burn, camera, and QR share the same sheet language.
+- Identity chip shows handle, then BRC-169 key, then PeerPay — one label.
+- Collect stays 1sat. Tokens stays 1sat-ft. FOX / BSV-21 is dead.
+
 ## [1.3.8] - 2026-08-28
 
 ### Fixed
