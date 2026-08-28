@@ -9,7 +9,6 @@
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import {
-  aggregateFungibles,
   buildBsv21CustomInstructions,
   BSV21_BASKET,
   bsv21Tags,
@@ -31,7 +30,6 @@ import {
   type FungibleToken,
 } from './bsv21'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { formatHandCashHandle } from './handleFormat'
 import {
   beginOneSatImport,
   markOneSatImportFailed,
@@ -56,7 +54,6 @@ export { formatFungibleAmount, BSV21_BASKET }
 type Listener = (tokens: FungibleToken[]) => void
 
 const LIST_CACHE_KEY = 'handcash.fungibles.list.v1'
-const LIST_TIMEOUT_MS = 20_000
 
 let cached: FungibleToken[] = []
 let hydrated = false

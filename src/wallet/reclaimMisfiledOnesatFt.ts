@@ -310,7 +310,10 @@ async function paintImportedFungible(
       utxoCount: 1,
       outpoint,
       spendKind: 'plain',
-      colourSupply: binding.supply,
+      colourSupply:
+        binding.supply === 'locked' || binding.supply === 'open'
+          ? binding.supply
+          : undefined,
       colourMaxSupply: binding.maxSupply,
       colourProvenanceOk: true,
       ...(binding.icon ? { icon: binding.icon } : {}),
@@ -342,7 +345,7 @@ export async function importUnheldOnesatFtTips(
       includeCustomInstructions: true,
       includeTags: true,
       seekPermission: false,
-    })) as { outputs?: Array<Record<string, unknown>> }
+    })) as unknown as { outputs?: Array<Record<string, unknown>> }
     for (const o of listed.outputs ?? []) {
       const script = lockingScriptHex(o.lockingScript)
       const env = parseOrdEnvelope(script)
@@ -504,7 +507,7 @@ export async function reclaimMisfiledOnesatFtTips(
         new Promise<never>((_, reject) =>
           setTimeout(() => reject(new Error('listOutputs timed out')), 8000),
         ),
-      ])) as { outputs?: Array<Record<string, unknown>> }
+      ])) as unknown as { outputs?: Array<Record<string, unknown>> }
     } catch (err) {
       console.warn('[1sat-ft-reclaim] listOutputs skipped', err)
       return { outputs: [] }
@@ -566,7 +569,7 @@ export async function reclaimMisfiledOnesatFtTips(
   }> = []
 
   for (const row of nftRows) {
-    const op = wireOutpoint(row.outpoint)
+    const op = wireOutpoint(String(row.outpoint ?? ''))
     if (ftOps.has(op)) {
       dropOps.push(op)
       continue

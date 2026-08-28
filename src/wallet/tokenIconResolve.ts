@@ -53,21 +53,19 @@ function resolveIconMime(declared: string | undefined, body: Uint8Array): string
 }
 
 function scriptHexOf(out: { lockingScript?: unknown } | undefined): string | undefined {
-  const s = out?.lockingScript as
-    | { toHex?: () => string; toBinary?: () => number[]; hex?: string }
-    | string
-    | number[]
-    | undefined
+  const s = out?.lockingScript
   if (!s) return undefined
   if (typeof s === 'string') return s
-  if (Array.isArray(s) && s.length) {
+  if (Array.isArray(s)) {
+    if (!s.length) return undefined
     return s.map((b) => Number(b).toString(16).padStart(2, '0')).join('')
   }
-  if (s && typeof s === 'object') {
-    if (typeof s.toHex === 'function') return s.toHex()
-    if (typeof s.hex === 'string' && s.hex) return s.hex
-    if (typeof s.toBinary === 'function') {
-      const bin = s.toBinary()
+  if (typeof s === 'object') {
+    const o = s as { toHex?: () => string; toBinary?: () => number[]; hex?: string }
+    if (typeof o.toHex === 'function') return o.toHex()
+    if (typeof o.hex === 'string' && o.hex) return o.hex
+    if (typeof o.toBinary === 'function') {
+      const bin = o.toBinary()
       if (bin?.length) return bin.map((b) => Number(b).toString(16).padStart(2, '0')).join('')
     }
   }

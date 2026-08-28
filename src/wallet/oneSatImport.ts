@@ -563,7 +563,6 @@ export async function fetchRawTxHex(txid: string, chain: Chain): Promise<string 
  * forced a duplicate public Bitails/WoC fan-out.
  */
 const PROVIDER_TIMEOUT_MS = 20_000
-const BEEF_TIMEOUT_MS = 10_000
 
 async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined

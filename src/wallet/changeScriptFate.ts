@@ -123,7 +123,7 @@ async function readRawTx(
   cache: Map<string, number[] | null>,
   fromChain: boolean,
   budget: { chainFetches: number },
-  opts?: { spendable?: boolean },
+  _opts?: { spendable?: boolean },
 ): Promise<number[] | null> {
   const cached = cache.get(txid)
   if (cached !== undefined) return cached
