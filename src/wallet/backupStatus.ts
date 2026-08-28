@@ -2,6 +2,7 @@ import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStor
 
 const KEYS_KEY = 'handcash.brc100.backupConfirmed'
 const HISTORY_KEY = 'handcash.brc100.historyBackupConfirmed'
+const BACKUP_LATER_KEY = 'handcash.brc100.backupDeferred'
 
 export type BackupStep = 'keys' | 'history'
 
@@ -23,6 +24,23 @@ function notify() {
 export function isKeysBackupConfirmed(): boolean {
   return durableGetItem(KEYS_KEY) === '1'
 }
+
+export function isKeysBackupDeferred(): boolean {
+  return durableGetItem(BACKUP_LATER_KEY) === '1' && !isKeysBackupConfirmed()
+}
+
+/** Onboarding "I'll do this later" — Settings still nags until confirmed. */
+export function markKeysBackupDeferred(): void {
+  if (isKeysBackupConfirmed()) return
+  durableSetItem(BACKUP_LATER_KEY, '1')
+  notify()
+}
+
+export function clearKeysBackupDeferred(): void {
+  durableRemoveItem(BACKUP_LATER_KEY)
+  notify()
+}
+
 
 export function isHistoryBackupConfirmed(): boolean {
   return durableGetItem(HISTORY_KEY) === '1'
@@ -92,6 +110,7 @@ export function canConfirmKeysBackup(kind: 'split' | 'phrase' | 'key'): boolean 
 export function markKeysBackupConfirmed(kind: 'split' | 'phrase' | 'key'): boolean {
   if (!canConfirmKeysBackup(kind)) return false
   durableSetItem(KEYS_KEY, '1')
+  durableRemoveItem(BACKUP_LATER_KEY)
   notify()
   return true
 }
@@ -115,6 +134,7 @@ export function markHistoryBackupConfirmed(): boolean {
 export function clearBackupConfirmed(): void {
   durableRemoveItem(KEYS_KEY)
   durableRemoveItem(HISTORY_KEY)
+  durableRemoveItem(BACKUP_LATER_KEY)
   keysHandoffs = 0
   keysHandoffSliceIndices.clear()
   keysSingleHandoff = false

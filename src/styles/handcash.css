@@ -618,6 +618,48 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   animation: none;
 }
 
+.auth-touchid {
+  display: flex;
+  justify-content: center;
+  margin: 2px 0 10px;
+}
+
+.auth-touchid-btn {
+  appearance: none;
+  width: 52px;
+  height: 52px;
+  padding: 0;
+  border-radius: 50%;
+  border: 1px solid hsl(var(--border));
+  background: color-mix(in srgb, var(--hc-surface-2) 88%, var(--hc-accent));
+  color: var(--hc-text);
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  box-shadow: 0 1px 2px hsl(0 0% 0% / 0.18);
+  transition: border-color 160ms ease, box-shadow 160ms ease, transform 160ms ease;
+}
+
+.auth-touchid-btn:hover:not(:disabled) {
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
+.auth-touchid-btn:active:not(:disabled) {
+  transform: scale(0.96);
+}
+
+.auth-touchid-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.auth-touchid-btn:focus-visible {
+  outline: none;
+  border-color: hsl(var(--primary) / 0.55);
+  box-shadow: 0 0 0 3px hsl(var(--primary) / 0.15);
+}
+
 .auth-error {
   margin: 4px 0 0;
 }
@@ -871,6 +913,15 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   color: hsl(var(--destructive));
   font-size: 0.9rem;
   margin: 0 0 8px;
+}
+
+.copyable-error {
+  cursor: copy;
+}
+
+.copyable-error:focus-visible {
+  outline: 2px solid hsl(var(--destructive) / 0.45);
+  outline-offset: 2px;
 }
 
 .balance {
@@ -1215,6 +1266,93 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 .dashboard-side > .what-is-bsv {
   flex: 1.15 1 0;
   min-height: 280px;
+}
+
+.dashboard-side > .scan-side-panel {
+  flex: 1.15 1 0;
+  min-height: 280px;
+  height: 100%;
+  max-height: 100%;
+  padding: 14px 16px 16px;
+  gap: 12px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-sizing: border-box;
+}
+
+.scan-side-header,
+.scan-nav-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  flex: 0 0 auto;
+  min-height: 28px;
+}
+
+.scan-side-title {
+  margin: 0;
+  font-family: var(--hc-font);
+  font-size: 0.88rem;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+  line-height: 28px;
+  color: var(--hc-text);
+}
+
+.scan-side-close {
+  flex: 0 0 auto;
+  min-height: 2rem;
+  padding-inline: 10px;
+}
+
+.scan-side-panel .qr-scanner--fill {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.scan-side-panel .qr-scanner--fill .qr-scanner-frame {
+  flex: 1 1 auto;
+  min-height: 0;
+  aspect-ratio: auto;
+  border-radius: calc(var(--hc-radius) + 2px);
+}
+
+.scan-side-panel .qr-scanner--fill .qr-scanner-hint {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0 4px;
+  font-size: 0.78rem;
+  line-height: 1.4;
+  text-wrap: pretty;
+}
+
+.scan-side-panel.scan-choice {
+  gap: 12px;
+}
+
+.scan-choice-body {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+.scan-side-panel.scan-choice .scan-choice-value {
+  margin: 0;
+}
+
+.scan-side-panel.scan-choice .scan-choice-actions {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 
 .dashboard-side > .history-panel {
@@ -3881,6 +4019,10 @@ a.history-row-link:hover .history-tx-hint {
   background: #c9852a;
 }
 
+.history-action-badge.is-burn {
+  background: #c44747;
+}
+
 .history-action-badge.is-failed {
   background: #c44747;
   font-size: 10px;
@@ -5351,6 +5493,57 @@ a.app-details-host:hover {
   color: var(--hc-text);
 }
 
+/* OS keycaps — Screenshot and other accelerator hints. */
+.shortcut-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+  vertical-align: middle;
+}
+
+.settings-shortcut-hint {
+  display: flex;
+  margin-top: 5px;
+}
+
+.shortcut-key {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.35em;
+  height: 1.45em;
+  padding: 0 0.38em;
+  border: 1px solid color-mix(in srgb, hsl(var(--border)) 85%, transparent);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background:
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, white 8%, var(--hc-panel)) 0%,
+      color-mix(in srgb, black 6%, var(--hc-panel)) 100%
+    );
+  box-shadow: inset 0 1px 0 color-mix(in srgb, white 10%, transparent);
+  color: var(--hc-fg, var(--hc-text));
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.68rem;
+  font-weight: 650;
+  letter-spacing: 0.02em;
+  line-height: 1;
+}
+
+html[data-aeon-mode='light'] .shortcut-key {
+  background:
+    linear-gradient(
+      180deg,
+      #fff 0%,
+      color-mix(in srgb, black 4%, #f3f4f6) 100%
+    );
+  box-shadow:
+    inset 0 1px 0 #fff,
+    0 1px 0 color-mix(in srgb, black 6%, transparent);
+}
+
 .log-viewer-tools .actions {
   flex-wrap: wrap;
 }
@@ -5727,6 +5920,10 @@ a.app-details-host:hover {
   margin-bottom: 16px;
 }
 
+.qr-scanner--fill {
+  margin-bottom: 0;
+}
+
 .qr-scanner-frame {
   position: relative;
   overflow: hidden;
@@ -5777,6 +5974,10 @@ a.app-details-host:hover {
   font-size: 0.78rem;
   line-height: 1.4;
   text-align: center;
+  text-wrap: pretty;
+  overflow-wrap: anywhere;
+  max-width: 36ch;
+  justify-self: center;
 }
 
 .friend-label {
@@ -6991,8 +7192,15 @@ html[data-aeon-mode='light'] .skeleton {
 
 /* One-row horizontal token carousel (Collect). */
 .collect-token-carousel {
+  list-style: none;
   margin: 0 -4px;
   padding: 0 4px 6px;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: stretch;
+  gap: 4px;
+  width: auto;
+  max-width: 100%;
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
@@ -7001,33 +7209,18 @@ html[data-aeon-mode='light'] .skeleton {
   scrollbar-width: thin;
 }
 
-.collect-token-carousel-track {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: stretch;
-  gap: 8px;
-  width: max-content;
-  min-width: 100%;
-}
-
 .collect-token-card {
   flex: 0 0 auto;
-  width: 104px;
+  width: 96px;
   scroll-snap-align: start;
-  border-radius: calc(var(--hc-radius) + 2px);
-  border: 1px solid hsl(var(--border));
-  background: rgba(255, 255, 255, 0.02);
-  overflow: hidden;
   display: flex;
   flex-direction: column;
+  border-radius: calc(var(--hc-radius) + 2px);
+  background: transparent;
 }
 
 .collect-token-card:hover {
-  border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
-  background: rgba(87, 255, 151, 0.04);
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
 }
 
 .collect-token-card[data-sending='true'] {
@@ -7035,8 +7228,8 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collect-token-card .collectable-send-btn {
-  margin: 0 8px 8px;
-  width: calc(100% - 16px);
+  margin: 0 6px 8px;
+  width: calc(100% - 12px);
 }
 
 .collect-token-card-main {
@@ -7045,7 +7238,7 @@ html[data-aeon-mode='light'] .skeleton {
   gap: 6px;
   width: 100%;
   margin: 0;
-  padding: 10px 8px 10px;
+  padding: 8px 6px 8px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -7054,13 +7247,10 @@ html[data-aeon-mode='light'] .skeleton {
   cursor: pointer;
 }
 
-.collect-token-card-media {
-  width: 56px;
-  height: 56px;
-  border-radius: 8px;
-  overflow: hidden;
-  background: var(--hc-hover);
-  border: 1px solid hsl(var(--border));
+.collect-token-card-main .fungible-avatar {
+  width: 56px !important;
+  height: 56px !important;
+  border-radius: 8px !important;
 }
 
 .collect-token-card-sym {
@@ -7172,10 +7362,6 @@ html[data-aeon-mode='light'] .skeleton {
   grid-template-columns: 72px minmax(0, 1fr);
   align-items: center;
   gap: 14px;
-  padding: 14px;
-  border: 1px solid var(--hc-border);
-  border-radius: 14px;
-  background: var(--hc-sunken-soft);
 }
 
 /* The avatar size buckets round 72 up to 112, which used to overflow the hero
@@ -7414,6 +7600,12 @@ html[data-aeon-mode='light'] .skeleton {
   background: var(--hc-sunken);
 }
 
+.fungible-activity-icon.is-burn {
+  color: #fff;
+  border-color: #c44747;
+  background: #c44747;
+}
+
 .fungible-activity-copy {
   display: grid;
   min-width: 0;
@@ -7524,14 +7716,28 @@ html[data-aeon-mode='light'] .skeleton {
   max-width: 100%;
 }
 
+.scan-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+.nav-child-body:has(.scan-panel) {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
 .scan-choice {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 12px;
-  min-height: 100%;
-  padding: 20px 8px;
+  min-height: 0;
 }
 
 .scan-choice-label {
@@ -7544,14 +7750,17 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .scan-choice-value {
-  margin: 0 0 8px;
+  margin: 0;
   padding: 12px 14px;
   border-radius: var(--hc-radius);
   border: 1px solid hsl(var(--border));
   background: var(--hc-sunken);
   color: var(--hc-text);
+  font-family: var(--hc-font);
   font-size: 0.85rem;
-  word-break: break-all;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .scan-choice-actions {
@@ -10286,4 +10495,20 @@ html[data-aeon-platform='win32'] [data-aeon-scroll='hover']::-webkit-scrollbar-t
 html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar-thumb {
   background: hsl(var(--muted-foreground) / 0.5);
   border-radius: 999px;
+}
+
+
+/* Onboarding — backup later + protect this device */
+[data-aeon-scope='create-keys-backup'] .actions,
+[data-aeon-scope='onboard-protect'] .auth-actions {
+  display: grid;
+  gap: 8px;
+}
+
+[data-aeon-scope='create-keys-backup'] [data-aeon-part='backup-later'] {
+  width: 100%;
+}
+
+[data-aeon-scope='onboard-protect'] .wallet-setup-option input {
+  margin-top: 3px;
 }

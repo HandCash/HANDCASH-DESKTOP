@@ -5,11 +5,12 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import {
   aggregateColourTokens,
   colourTokenAsFungible,
+  looksLikeOnesatFtTip,
   ONESAT_FT_BASKET,
-  ONESAT_FT_TAG,
   originFromColourTags,
   parseColourMintAttestation,
   parseColourTipAmt,
+  tipCountsTowardBalance,
   parseOnesatFtOriginPolicy,
   tryParseProvenanceFromCi,
   verifyColourTipProvenance,
@@ -18,6 +19,7 @@ import {
   type ColourToken,
 } from './colourCoins'
 import { isItemSent } from './sentItemGuard'
+import { getTokenIconDataUrl } from './tokenIconCache'
 
 export type { ColourToken, ColourTip }
 
@@ -41,14 +43,6 @@ function outpointUnderscore(op: string): string {
   return op.includes('.') ? op.replace(/\.(\d+)$/, '_$1') : op
 }
 
-function looksLikeFtTip(tags: string[]): boolean {
-  const lower = tags.map((t) => String(t).toLowerCase())
-  return (
-    lower.includes(ONESAT_FT_TAG) ||
-    lower.some((t) => t.startsWith('origin:'))
-  )
-}
-
 async function listBasketTips(
   wallet: ActiveWallet,
   basket: string,
@@ -59,6 +53,8 @@ async function listBasketTips(
       limit: 1000,
       include: 'locking scripts',
       includeCustomInstructions: true,
+      includeTags: true,
+      seekPermission: false,
     })) as { outputs?: ListedOutput[] }
     return listed.outputs ?? []
   } catch {
@@ -93,21 +89,32 @@ export async function listColourTips(
     const satoshis = typeof o.satoshis === 'number' ? o.satoshis : 0
     if (satoshis !== 1) continue
     const tags = Array.isArray(o.tags) ? o.tags : []
-    if (!looksLikeFtTip(tags.map(String))) continue
+    const scriptHex = lockingScriptHex(o.lockingScript)
+    const ci =
+      typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    if (
+      !looksLikeOnesatFtTip({
+        tags,
+        customInstructions: ci,
+        lockingScriptHex: scriptHex,
+      })
+    ) {
+      continue
+    }
     const origin =
       originFromColourTags(tags) ??
       parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
-        lockingScriptHex: lockingScriptHex(o.lockingScript),
-        customInstructions: o.customInstructions,
+        lockingScriptHex: scriptHex,
+        customInstructions: ci,
       }).origin
     pending.push({
       outpoint: key,
       origin,
       satoshis,
-      scriptHex: lockingScriptHex(o.lockingScript),
+      scriptHex,
       tags: tags.map(String),
-      ci: typeof o.customInstructions === 'string' ? o.customInstructions : undefined,
-      provenance: tryParseProvenanceFromCi(o.customInstructions),
+      ci,
+      provenance: tryParseProvenanceFromCi(ci),
     })
   }
 
@@ -210,8 +217,29 @@ export async function listColourTokens(
 export async function listColourTokensAsFungibles(
   wallet?: ActiveWallet | null,
 ): Promise<ReturnType<typeof colourTokenAsFungible>[]> {
-  const tokens = await listColourTokens(wallet)
-  return tokens.map(colourTokenAsFungible)
+  const active = wallet ?? getActiveWallet()
+  const tokens = await listColourTokens(active)
+  const { resolveOnesatFtIconDataUrl } = await import('./tokenIconResolve')
+  const out: ReturnType<typeof colourTokenAsFungible>[] = []
+  for (const token of tokens) {
+    const realFt = token.supply === 'locked' || token.balance > 1
+    let iconUrl =
+      token.iconUrl ?? (token.icon ? getTokenIconDataUrl(token.icon) : undefined)
+    if (!iconUrl && active && realFt) {
+      iconUrl = await resolveOnesatFtIconDataUrl({
+        origin: token.origin,
+        icon: token.icon,
+        tipOutpoint: token.outpoint,
+        wallet: active,
+      })
+    }
+    out.push(
+      colourTokenAsFungible(
+        iconUrl ? { ...token, iconUrl } : token,
+      ),
+    )
+  }
+  return out
 }
 
 export async function listColourTipsForOrigin(
@@ -222,5 +250,5 @@ export async function listColourTipsForOrigin(
   const want = origin.includes('.')
     ? origin.replace(/\.(\d+)$/, '_$1').toLowerCase()
     : origin.toLowerCase()
-  return tips.filter((t) => t.origin === want && t.proven)
+  return tips.filter((t) => t.origin === want && tipCountsTowardBalance(t))
 }

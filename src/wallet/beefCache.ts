@@ -22,6 +22,33 @@ export type GetBeefOpts = {
    * Indexer `getBeefForTxid` often exceeds 8s; remittance does not need merkle.
    */
   allowUnprovenRawTx?: boolean
+  /**
+   * Signing / broadcast: after a local miss, fetch indexer / WoC proof.
+   * Token icons, Collect paint, change-script heal, and Refresh omit this.
+   */
+  needProof?: boolean
+}
+
+function callerWantsNetwork(opts?: GetBeefOpts): boolean {
+  return opts?.needProof === true || opts?.allowUnprovenRawTx === true
+}
+
+async function isKnownRawTxMiss(txid: string): Promise<boolean> {
+  try {
+    const { peekRawTxLookup } = await import('./oneSatImport')
+    return peekRawTxLookup(txid) === 'miss'
+  } catch {
+    return false
+  }
+}
+
+async function rememberRawTxMiss(txid: string): Promise<void> {
+  try {
+    const { rememberRawTxMiss: note } = await import('./oneSatImport')
+    note(txid)
+  } catch {
+    /* optional */
+  }
 }
 
 export type AtomicBeefPurpose = 'default' | 'inboundItemHint'
@@ -176,11 +203,82 @@ export function rememberBeefBinary(txid: string, binary: number[]): void {
   rememberBeefTree(binary, txid)
 }
 
-/**
- * Prefer local proven_tx / proven_tx_req before hitting WhatsOnChain.
- * When the indexer is unreachable this is the only path that still works for
- * tips the wallet itself created (fresh deploy → mint).
- */
+function indexBeefTree(beef: Beef): void {
+  try {
+    rememberBeefTree(beef.toBinary())
+  } catch {
+    /* session index is best-effort */
+  }
+}
+
+/** Any cached BEEF whose tree already contains this tx — no network. */
+function findSessionBeef(txid: string): Beef | null {
+  const key = keyOf(txid)
+  const direct = read(key)
+  if (direct?.findTxid(key)?.tx) return direct
+  for (const [cachedKey, hit] of cache) {
+    if (cachedKey === key) continue
+    if (Date.now() - hit.at >= TTL_MS) {
+      cache.delete(cachedKey)
+      continue
+    }
+    try {
+      const beef = Beef.fromBinary(hit.binary)
+      if (beef.findTxid(key)?.tx) {
+        write(key, beef)
+        return beef
+      }
+    } catch {
+      /* skip a corrupt cache row */
+    }
+  }
+  return null
+}
+
+/** Durable created BEEF keyed by tip — scan the tree for genesis / parents. */
+function findDurableBeef(txid: string): Beef | null {
+  const key = keyOf(txid)
+  const direct = readDurableBeef(key)
+  if (direct?.findTxid(key)?.tx) return direct
+  try {
+    const raw = durableGetItem(DURABLE_INDEX_KEY)
+    const index = raw ? (JSON.parse(raw) as string[]) : []
+    if (!Array.isArray(index)) return null
+    for (const id of index) {
+      if (id === key) continue
+      const beef = readDurableBeef(id)
+      if (beef?.findTxid(key)?.tx) {
+        indexBeefTree(beef)
+        return beef
+      }
+    }
+  } catch {
+    /* ignore */
+  }
+  return null
+}
+
+/** Session cache + durable created BEEF + toolbox storage. No network. */
+export async function getLocalBeefForTxid(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<Beef | null> {
+  const key = keyOf(txid)
+  const cached = findSessionBeef(key)
+  if (cached) return cached
+  const durable = findDurableBeef(key)
+  if (durable) {
+    indexBeefTree(durable)
+    return durable
+  }
+  const local = await getBeefFromLocalStorage(wallet, key)
+  if (local) {
+    indexBeefTree(local)
+    return local
+  }
+  return null
+}
+
 async function getBeefFromLocalStorage(
   wallet: ActiveWallet,
   txid: string,
@@ -287,6 +385,7 @@ async function getBeefFromRawTx(
     /* try Bitails next */
   }
   if (!raw?.length) {
+    if (await isKnownRawTxMiss(key)) return null
     const hex = await fetchBitailsRawTx(key)
     if (hex?.length) raw = hex
   }
@@ -334,7 +433,9 @@ export async function warmBeefCache(
   txids: string[],
 ): Promise<void> {
   const cold = [...new Set(txids.map(keyOf))].filter((txid) => !read(txid))
-  await Promise.allSettled(cold.map((txid) => getBeefForTxidCached(wallet, txid)))
+  await Promise.allSettled(
+    cold.map((txid) => getBeefForTxidCached(wallet, txid, { needProof: true })),
+  )
 }
 
 export async function getBeefForTxidCached(
@@ -343,26 +444,30 @@ export async function getBeefForTxidCached(
   opts?: GetBeefOpts,
 ): Promise<Beef> {
   const key = keyOf(txid)
-  const cached = read(txid)
-  if (cached) {
-    // Tip-only raw must not stick in cache — soft-latch internalize needs parents.
-    if (incompleteProofTxids(cached).length === 0) return cached
+  const localHeld = await getLocalBeefForTxid(wallet, key)
+  if (localHeld) {
+    const incomplete = incompleteProofTxids(localHeld).length > 0
+    // Paint / heal / icons accept a body. Signing upgrades an incomplete proof.
+    if (!incomplete || !opts?.needProof) return localHeld
     cache.delete(key)
   }
 
-  const durable = readDurableBeef(txid)
-  if (durable) return durable
+  if (!callerWantsNetwork(opts)) {
+    throw new Error(
+      'Cannot prove the collectable input offline. Try again when connected.',
+    )
+  }
+
+  if (await isKnownRawTxMiss(key)) {
+    throw new Error(
+      'Cannot prove the collectable input offline. Try again when connected.',
+    )
+  }
 
   const pending = inflight.get(key)
   if (pending) return pending
 
   const request = (async () => {
-    const local = await getBeefFromLocalStorage(wallet, txid)
-    if (local) {
-      write(txid, local)
-      return local
-    }
-
     // Prefer indexer / proven BEEF before raw. Raw tip-only used to run first,
     // get cached, then soft-latch internalize failed forever (0 BUMPS / missing
     // parents) — Desktop could not receive mobile→desktop item settles.
@@ -414,6 +519,7 @@ export async function getBeefForTxidCached(
       }
     }
 
+    await rememberRawTxMiss(key)
     throw new Error(
       'Cannot prove the collectable input offline. Try again when connected.',
     )
@@ -451,8 +557,14 @@ export async function getAtomicBeefBinaryForTxid(
 
   const request = (async () => {
     try {
+      const localAtomic = await getLocalBeefForTxid(wallet, key)
+      if (localAtomic && beefIsAtomicReady(localAtomic, key)) {
+        atomicFailUntil.delete(key)
+        return Array.from(localAtomic.toBinaryAtomic(key))
+      }
       const beef = await getBeefForTxidCached(wallet, key, {
         allowUnprovenRawTx: true,
+        needProof: true,
       })
       if (beefIsAtomicReady(beef, key)) {
         atomicFailUntil.delete(key)
@@ -595,7 +707,7 @@ export async function hydrateInputBeef(
       for (const txid of need) {
         if (Date.now() >= deadline) break
         try {
-          const proved = await getBeefForTxidCached(wallet, txid)
+          const proved = await getBeefForTxidCached(wallet, txid, { needProof: true })
           // mergeBeef upgrades an existing txidOnly entry when raw+proof arrives.
           work.mergeBeef(proved.toBinary())
           work.atomicTxid = undefined
@@ -659,7 +771,7 @@ export async function buildMergedInputBeef(
   const fetched = await Promise.all(
     txids.map(async (txid) => {
       try {
-        return await getBeefForTxidCached(wallet, txid)
+        return await getBeefForTxidCached(wallet, txid, { needProof: true })
       } catch (err) {
         console.warn('[beef] inputBEEF fetch failed', txid, err)
         return null

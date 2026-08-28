@@ -1,9 +1,9 @@
 /**
- * BSV-21 fungibles in basket `bsv21` (BRC-163 draft) — Collect, not currency.
+ * Tokens list: 1sat-ft only (BRC-175). Basket `1sat-ft`.
+ * Collect is 1sat collectables. BSV-21 / FOX is leftover and is not listed.
  *
- * Balance is summed from live tips' inscription `amt` (indexer + remittance).
- * Tip authenticity is local; issuer mint policy is trusted. Never included in
- * fetchBalanceSats / Pay.
+ * Balance is summed from live 1sat-ft tips' inscription `amt`.
+ * Never included in fetchBalanceSats / Pay.
  */
 
 import { getActiveWallet, type ActiveWallet } from './session'
@@ -39,7 +39,7 @@ import {
   releaseOneSatImport,
 } from './oneSatImportGuard'
 import { getTokenIconDataUrl } from './tokenIconCache'
-import { cacheTokenIconFromBeef, resolveTokenIconDataUrl } from './tokenIconResolve'
+import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
@@ -75,7 +75,12 @@ function loadDurableList(): FungibleToken[] {
     if (!raw) return []
     const parsed = JSON.parse(raw) as { items?: unknown }
     if (!Array.isArray(parsed?.items)) return []
-    return parsed.items.filter(isFungibleShape).map((t) => ({
+    return parsed.items
+      .filter(isFungibleShape)
+      .filter((t) => Boolean(t.colourSupply))
+      .filter((t) => !leftoverCollectableSym(t.sym))
+      .filter((t) => t.colourSupply === 'locked' || Number(t.amt) > 1)
+      .map((t) => ({
       ...t,
       dec: Number.isFinite(t.dec) ? t.dec : 0,
       spendKind:
@@ -107,6 +112,9 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
+          ...(t.colourSupply ? { colourSupply: t.colourSupply } : {}),
+          ...(t.colourMaxSupply != null ? { colourMaxSupply: t.colourMaxSupply } : {}),
+          ...(t.colourProvenanceOk != null ? { colourProvenanceOk: t.colourProvenanceOk } : {}),
         })),
       }),
     )
@@ -115,11 +123,104 @@ function persistDurableList(items: FungibleToken[]): void {
   }
 }
 
+function leftoverCollectableSym(sym: string | undefined): boolean {
+  const s = (sym ?? '').trim()
+  return s === 'Collectable' || s === 'FOX' || s.startsWith('Pixel Foxes')
+}
+
+function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
+  if (leftoverCollectableSym(t.sym)) return false
+  if (t.colourSupply === 'locked') return true
+  const amt = Number(t.amt)
+  return t.colourSupply != null && Number.isFinite(amt) && amt > 1
+}
+
 function setFungiblesCache(items: FungibleToken[]): void {
-  cached = items
+  cached = items.filter(cacheExtraLooksLikeFungible)
   hydrated = true
-  persistDurableList(items)
+  persistDurableList(cached)
   notify()
+}
+
+function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
+  return t.tokenId.trim().toLowerCase()
+}
+
+/** Live rows win. Keep cached colour tokens listOutputs dropped (WOC 429).
+ * Drop a cache row whose tip was just sent/burned so the mint amt cannot linger. */
+
+function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]): FungibleToken[] {
+  const byId = new Map<string, FungibleToken>()
+  const liveIds = new Set<string>()
+  for (const t of prior) {
+    if (t.outpoint && isItemSent(t.outpoint)) continue
+    byId.set(tokenKey(t), t)
+  }
+  for (const t of live) {
+    if (t.outpoint && isItemSent(t.outpoint)) continue
+    const k = tokenKey(t)
+    liveIds.add(k)
+    const priorRow = byId.get(k)
+    const liveIsGenesis = t.outpoint && tokenKey({ tokenId: t.outpoint }) === k
+    if (
+      priorRow &&
+      liveIsGenesis &&
+      priorRow.outpoint &&
+      priorRow.outpoint !== t.outpoint &&
+      Number(priorRow.amt) < Number(t.amt)
+    ) {
+      // Stale mint row from listOutputs. Keep the painted leftover.
+      continue
+    }
+    byId.set(k, t)
+  }
+  // Cache-only leftovers that are 1-unit open "Collectable" rows (misfiled NFTs).
+  for (const [k, t] of [...byId.entries()]) {
+    if (liveIds.has(k)) continue
+    if (!cacheExtraLooksLikeFungible(t)) byId.delete(k)
+  }
+  const out = [...byId.values()]
+  out.sort((a, b) => Number(b.amt) - Number(a.amt) || a.sym.localeCompare(b.sym))
+  return out
+}
+
+export function rememberFungibleToken(token: FungibleToken): void {
+  setFungiblesCache(mergeLiveFungibles([token], cached))
+}
+
+export function forgetFungibleToken(tokenId: string): void {
+  const k = tokenId.trim().toLowerCase()
+  setFungiblesCache(cached.filter((t) => tokenKey(t) !== k))
+}
+
+export function paintFungibleAfterSpend(args: {
+  tokenId: string
+  remainingAmt: number
+  outpoint?: string
+  sym?: string
+  colourSupply?: FungibleToken['colourSupply']
+  colourMaxSupply?: number | null
+  icon?: string
+}): void {
+  if (!Number.isFinite(args.remainingAmt) || args.remainingAmt <= 0) {
+    forgetFungibleToken(args.tokenId)
+    return
+  }
+  const prior = cached.find((t) => tokenKey(t) === args.tokenId.trim().toLowerCase())
+  rememberFungibleToken({
+    tokenId: args.tokenId,
+    sym: args.sym || prior?.sym || 'Token',
+    amt: String(args.remainingAmt),
+    dec: 0,
+    utxoCount: 1,
+    outpoint: args.outpoint || prior?.outpoint || args.tokenId,
+    spendKind: 'plain',
+    colourSupply: args.colourSupply ?? prior?.colourSupply,
+    colourMaxSupply: args.colourMaxSupply ?? prior?.colourMaxSupply ?? null,
+    colourProvenanceOk: prior?.colourProvenanceOk ?? true,
+    ...(args.icon || prior?.icon ? { icon: args.icon || prior?.icon } : {}),
+    ...(prior?.iconUrl ? { iconUrl: prior.iconUrl } : {}),
+  })
 }
 
 // Paint last session's tokens immediately — same pattern as collectables.
@@ -135,15 +236,22 @@ function notify() {
   for (const cb of listeners) cb(cached)
 }
 
-async function hydrateMissingTokenIcons(
+export async function hydrateCachedTokenIcons(
   wallet: ActiveWallet,
-  tokens: FungibleToken[],
+  tokens: FungibleToken[] = cached,
 ): Promise<void> {
   let changed = false
   for (const token of tokens) {
-    const icon = token.icon
-    if (!icon || token.iconUrl) continue
-    const url = await resolveTokenIconDataUrl(icon, wallet)
+    if (token.iconUrl) continue
+    if (!cacheExtraLooksLikeFungible(token)) continue
+    const url =
+      (await resolveOnesatFtIconDataUrl({
+        origin: token.tokenId,
+        icon: token.icon,
+        tipOutpoint: token.outpoint,
+        wallet,
+      })) ??
+      (token.icon ? await resolveTokenIconDataUrl(token.icon, wallet) : undefined)
     if (!url) continue
     const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
     if (idx < 0) continue
@@ -153,6 +261,13 @@ async function hydrateMissingTokenIcons(
   if (changed) {
     setFungiblesCache([...cached])
   }
+}
+
+async function hydrateMissingTokenIcons(
+  wallet: ActiveWallet,
+  tokens: FungibleToken[],
+): Promise<void> {
+  await hydrateCachedTokenIcons(wallet, tokens)
 }
 
 export function getCachedFungibles(): FungibleToken[] {
@@ -273,127 +388,6 @@ async function listFungiblesNow(
 
   try {
     await yieldToUi()
-    const listed = await Promise.race([
-      wallet.wallet.listOutputs({
-        basket: BSV21_BASKET,
-        limit: 1000,
-        includeCustomInstructions: true,
-        includeTags: true,
-        include: 'locking scripts',
-        seekPermission: false,
-      }),
-      new Promise<never>((_, reject) =>
-        setTimeout(() => reject(new Error('listOutputs timed out')), LIST_TIMEOUT_MS),
-      ),
-    ])
-    await yieldToUi()
-    const selfKey = wallet.identityKey.toLowerCase()
-    const utxos: Bsv21Utxo[] = []
-    /** Metadata from any tip (incl. deploy+auth / auth) keyed by token id. */
-    const metaById = new Map<
-      string,
-      { sym?: string; icon?: string; dec?: number; issuer?: string }
-    >()
-    for (const row of listed.outputs ?? []) {
-      const raw = row as {
-        outpoint?: string
-        satoshis?: number
-        tags?: string[]
-        customInstructions?: string
-        lockingScript?: string
-      }
-      if (raw.outpoint && isItemSent(raw.outpoint)) continue
-      const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
-      let loose: {
-        op?: string
-        sym?: string
-        icon?: string
-        id?: string
-        dec?: number
-        issuer?: string
-      } = {}
-      if (raw.customInstructions) {
-        try {
-          const o = JSON.parse(raw.customInstructions) as Record<string, unknown>
-          if (typeof o.op === 'string') loose.op = o.op.trim().toLowerCase()
-          if (typeof o.sym === 'string' && o.sym.trim()) loose.sym = o.sym.trim()
-          if (typeof o.icon === 'string') {
-            loose.icon = normalizeTokenId(o.icon) ?? undefined
-          }
-          if (typeof o.id === 'string') {
-            loose.id = normalizeTokenId(o.id) ?? undefined
-          }
-          if (typeof o.dec === 'string' && /^\d{1,2}$/.test(o.dec)) {
-            loose.dec = Number(o.dec)
-          } else if (typeof o.dec === 'number' && Number.isInteger(o.dec)) {
-            loose.dec = o.dec
-          }
-          if (typeof o.issuer === 'string') {
-            loose.issuer =
-              issuerFromRemittance({ customInstructions: raw.customInstructions }) ??
-              undefined
-          }
-        } catch {
-          // ignore
-        }
-      }
-      const op = (fromCi?.op ?? loose.op ?? tagValue(raw.tags, 'op:') ?? '') as string
-      const tipId = tokenIdForListedTip({
-        outpoint: (raw.outpoint ?? '').trim().toLowerCase(),
-        op,
-        id: fromCi?.id ?? loose.id,
-        idTag: tokenIdFromBsv21Tags(raw.tags),
-      })
-      if (tipId) {
-        const prev = metaById.get(tipId) ?? {}
-        const sym =
-          fromCi?.sym ?? loose.sym ?? tagValue(raw.tags, 'sym:') ?? prev.sym
-        const icon = fromCi?.icon ?? loose.icon ?? prev.icon
-        const dec = fromCi?.dec ?? loose.dec ?? prev.dec
-        const issuer =
-          issuerFromRemittance({
-            customInstructions: raw.customInstructions,
-            tags: raw.tags,
-          }) ??
-          loose.issuer ??
-          prev.issuer
-        metaById.set(tipId, {
-          ...(sym ? { sym } : {}),
-          ...(icon ? { icon } : {}),
-          ...(dec != null ? { dec } : {}),
-          ...(issuer ? { issuer } : {}),
-        })
-      }
-      const parsed = parseListedOutput(raw, selfKey)
-      if (parsed) utxos.push(parsed)
-    }
-    for (const u of utxos) {
-      const meta = metaById.get(u.tokenId)
-      if (!meta) continue
-      if (!u.sym && meta.sym) u.sym = meta.sym
-      if (!u.icon && meta.icon) u.icon = meta.icon
-      if (u.dec === 0 && meta.dec != null && meta.dec > 0) u.dec = meta.dec
-      if (!u.issuer && meta.issuer) u.issuer = meta.issuer
-    }
-    const selfHandle = wallet.handle
-      ? formatHandCashHandle(wallet.handle.replace(/^[$@]/, ''), null)
-      : ''
-    const tokens = aggregateFungibles(utxos).map((t) => {
-      const iconOrigin =
-        t.icon ??
-        utxos.find((u) => u.tokenId === t.tokenId)?.icon ??
-        metaById.get(t.tokenId)?.icon
-      const issuerHandle =
-        t.issuer && t.issuer === selfKey && selfHandle ? selfHandle : undefined
-      const iconUrl = iconOrigin ? getTokenIconDataUrl(iconOrigin) : undefined
-      return {
-        ...t,
-        sym: t.sym || shortTokenLabel(t.tokenId),
-        ...(iconUrl ? { iconUrl } : {}),
-        ...(iconOrigin ? { icon: iconOrigin } : {}),
-        ...(issuerHandle ? { issuerHandle } : {}),
-      }
-    })
     let colourRows: FungibleToken[] = []
     try {
       const { listColourTokensAsFungibles } = await import('./colourListing')
@@ -401,18 +395,13 @@ async function listFungiblesNow(
     } catch (err) {
       console.warn('[colour] list failed', err)
     }
-    // Colour coins first; legacy BSV-21 rows keep showing as read-only send.
-    const colourIds = new Set(colourRows.map((t) => t.tokenId))
-    const merged = [
-      ...colourRows,
-      ...tokens.filter((t) => !colourIds.has(t.tokenId)),
-    ]
+    const merged = mergeLiveFungibles(colourRows, cached)
     setFungiblesCache(merged)
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
     return merged
   } catch (err) {
-    console.warn('[bsv21] listOutputs failed', err)
+    console.warn('[1sat-ft] list failed', err)
     // Keep prior cache — do not hydrate as empty on transient failures.
     return getCachedFungibles()
   }
@@ -526,14 +515,29 @@ export async function importBsv21Tokens(
   const errors: string[] = []
   const outpoints: string[] = []
 
+  let deferRemaining = false
   for (const [txid, group] of byTxid) {
     const groupOps = group.map((g) => g.outpoint)
+    if (deferRemaining) {
+      releaseOneSatImport(groupOps)
+      continue
+    }
     try {
-      if (!wallet.services?.getBeefForTxid) {
-        throw new Error('Wallet services unavailable for BEEF fetch')
+      // A token send must not wait behind legacy BSV-21 beef / chaintracks.
+      const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+      if (shouldYieldChainIngestToSpend()) {
+        console.info(
+          `[bsv21] deferring tip imports — send is waiting (${groupOps.length}+)`,
+        )
+        releaseOneSatImport(groupOps)
+        deferRemaining = true
+        continue
       }
       await yieldToUi()
-      const beef = await wallet.services.getBeefForTxid(txid)
+      // Prefer the session BEEF cache (8s cap). Raw chaintracks getBeefForTxid
+      // has no deadline and was wedging Refresh behind Babbage timeouts.
+      const { getBeefForTxidCached } = await import('./beefCache')
+      const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)
       const sourceTx = beef.findAtomicTransaction(txid)

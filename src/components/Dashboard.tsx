@@ -35,12 +35,14 @@ import {
   type PendingAction,
   type PendingPrompt,
 } from '../wallet/permissions'
-import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow, getSideScanOpen, subscribeSideScan } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
 import { appDisplayName } from '../wallet/appIdentity'
 import { setAutoPaySettings } from '../wallet/autoPay'
+import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { WhatIsBsvPanel } from './WhatIsBsvPanel'
+import { ScanPanel } from './ScanPanel'
 import { WalletNav } from './WalletNav'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
@@ -224,6 +226,21 @@ export function Dashboard({
     // First Identity tab visit used to block ~3s generating this QR on a phone.
     void identityQrDataUrl(profile.identityKey)
   }, [profile.identityKey])
+
+  const hostScanInSide = !isPhoneShell()
+  const [sideScanOpen, setSideScanOpen] = useState(
+    () => hostScanInSide && getSideScanOpen(),
+  )
+  useEffect(() => {
+    if (!hostScanInSide) {
+      setSideScanOpen(false)
+      return
+    }
+    return subscribeSideScan((open) => {
+      setSideScanOpen(open)
+      if (!open) releaseWarmedQrCamera()
+    })
+  }, [hostScanInSide])
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -684,7 +701,7 @@ export function Dashboard({
                 type="button"
                 className="btn btn-ghost btn-icon"
                 aria-label="Scan QR code"
-                title="Scan PeerPay, identity, or address QR"
+                title="Scan QR code"
                 onClick={() => {
                   playWalletSound('soft')
                   openScanFlow()
@@ -760,7 +777,7 @@ export function Dashboard({
           </section>
         ) : (
           <>
-            <WhatIsBsvPanel />
+            {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel />}
             <RecentActivityPanel chain={profile.chain} />
           </>
         )}

@@ -11,6 +11,10 @@
  * The toolbox hashes every returned body and rejects one that isn't the
  * transaction it asked for, so a bad host can cost a round trip but cannot
  * corrupt a BEEF.
+ *
+ * A 404 from any host is treated as "this txid is not on the public indexers"
+ * for 30 minutes. Later providers in the same walk (and later Refresh walks)
+ * skip instead of Bitails → JungleBus → WoC 404 triplets that 429 WhatsOnChain.
  */
 import { Utils } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
@@ -20,40 +24,67 @@ import { preferServiceOrder } from './serviceOrder'
 import type { Chain } from './vault'
 
 const REQUEST_TIMEOUT_MS = 8_000
+const MISSING_TTL_MS = 30 * 60_000
+
+/** txids any public host already answered 404. */
+const missingTxids = new Map<string, number>()
+
+function isMissingTxid(txid: string): boolean {
+  const key = txid.trim().toLowerCase()
+  const at = missingTxids.get(key)
+  if (at == null) return false
+  if (Date.now() - at >= MISSING_TTL_MS) {
+    missingTxids.delete(key)
+    return false
+  }
+  return true
+}
+
+function markMissingTxid(txid: string): void {
+  missingTxids.set(txid.trim().toLowerCase(), Date.now())
+}
 
 /** What `Services.getRawTx` expects back from a registered provider. */
 type RawTxResult = { name: string; txid: string; rawTx?: number[] }
 
+type FetchResult = number[] | null | 'missing'
+
 type RawTxSource = {
   name: string
-  fetch: (txid: string) => Promise<number[] | null>
+  fetch: (txid: string) => Promise<FetchResult>
 }
 
-async function fetchWithTimeout(url: string, accept: string): Promise<Response | null> {
+async function fetchWithTimeout(
+  url: string,
+  accept: string,
+): Promise<{ res: Response; status: number } | { res: null; status: number }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS)
   try {
     const res = await fetch(url, { signal: controller.signal, headers: { Accept: accept } })
-    return res.ok ? res : null
+    if (res.ok) return { res, status: res.status }
+    return { res: null, status: res.status }
   } catch {
     // A blocked host and a slow one look the same from here, and both mean
     // "ask someone else" — never "this transaction does not exist".
-    return null
+    return { res: null, status: 0 }
   } finally {
     clearTimeout(timer)
   }
 }
 
-async function fetchHexTx(url: string): Promise<number[] | null> {
-  const res = await fetchWithTimeout(url, 'text/plain')
+async function fetchHexTx(url: string): Promise<FetchResult> {
+  const { res, status } = await fetchWithTimeout(url, 'text/plain')
+  if (status === 404) return 'missing'
   if (res == null) return null
   const hex = (await res.text()).trim()
   if (!/^[0-9a-fA-F]+$/.test(hex) || hex.length % 2 !== 0) return null
   return Utils.toArray(hex, 'hex')
 }
 
-async function fetchJungleBusTx(url: string): Promise<number[] | null> {
-  const res = await fetchWithTimeout(url, 'application/json')
+async function fetchJungleBusTx(url: string): Promise<FetchResult> {
+  const { res, status } = await fetchWithTimeout(url, 'application/json')
+  if (status === 404) return 'missing'
   if (res == null) return null
   const body: unknown = await res.json().catch(() => null)
   const base64 = (body as { transaction?: unknown } | null)?.transaction
@@ -120,7 +151,12 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
       collection.add({
         name: source.name,
         service: async (txid: string): Promise<RawTxResult> => {
+          if (isMissingTxid(txid)) return { name: source.name, txid }
           const rawTx = await source.fetch(txid)
+          if (rawTx === 'missing') {
+            markMissingTxid(txid)
+            return { name: source.name, txid }
+          }
           // No bytes is reported as "this provider has nothing", which rotates
           // to the next one; only an empty collection is a hard failure.
           if (rawTx == null || rawTx.length === 0) return { name: source.name, txid }
@@ -142,6 +178,19 @@ export function installRawTxFallback(services: Services, chain: Chain): void {
       collection,
       extras.map((s) => s.name).concat(['WhatsOnChain']),
     )
+
+    // Toolbox still calls its default WhatsOnChain after our extras return
+    // empty. If Bitails already 404'd, skip that last hit so we do not 429.
+    for (const entry of collection.services ?? []) {
+      if (entry.name !== 'WhatsOnChain') continue
+      const raw = entry as { name: string; service?: (txid: string) => Promise<RawTxResult> }
+      const inner = raw.service
+      if (typeof inner !== 'function') continue
+      raw.service = async (txid: string): Promise<RawTxResult> => {
+        if (isMissingTxid(txid)) return { name: 'WhatsOnChain', txid }
+        return inner(txid)
+      }
+    }
   } catch (err) {
     console.warn('[rawtx] could not install raw transaction failover', err)
   }

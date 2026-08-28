@@ -38,12 +38,31 @@ type HeaderSource = {
 }
 
 const REQUEST_TIMEOUT_MS = 8_000
+/**
+ * Chaintracks often hangs until the browser fires `net::ERR_TIMED_OUT` (~30s+).
+ * Fail over to Bitails / WoC long before that so ingest and verify stay live.
+ */
+const CHAINTRACKS_FAST_FAIL_MS = 3_000
 /** A tip moves every ~10 minutes; re-asking more often than this buys nothing. */
 const TIP_CACHE_MS = 30_000
 /** Don't re-probe a source that just failed on every single root. */
 const SOURCE_COOLDOWN_MS = 60_000
 /** Roots are immutable per height, so verdicts are cached — but bounded. */
 const VERDICT_CACHE_MAX = 500
+
+async function withTimeout<T>(work: Promise<T>, ms: number): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work,
+      new Promise<T>((_, reject) => {
+        timer = setTimeout(() => reject(new Error('timeout')), ms)
+      }),
+    ])
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+}
 
 async function fetchJson(url: string): Promise<unknown | null> {
   const controller = new AbortController()
@@ -112,7 +131,10 @@ function primarySource(primary: ChainTracker): {
   const tip = async (): Promise<number | null> => {
     if (cachedTip != null && Date.now() - cachedTip.at < TIP_CACHE_MS) return cachedTip.height
     try {
-      const height = await primary.currentHeight()
+      const height = await withTimeout(
+        primary.currentHeight(),
+        CHAINTRACKS_FAST_FAIL_MS,
+      )
       if (!Number.isFinite(height)) return null
       cachedTip = { height, at: Date.now() }
       return height
@@ -236,7 +258,10 @@ export function createFallbackChainTracker(
     async currentHeight(): Promise<number> {
       if (first != null && usable(first.name)) {
         try {
-          const height = await primary!.currentHeight()
+          const height = await withTimeout(
+            primary!.currentHeight(),
+            CHAINTRACKS_FAST_FAIL_MS,
+          )
           if (Number.isFinite(height)) return height
         } catch {
           noteUnreachable(first.name)

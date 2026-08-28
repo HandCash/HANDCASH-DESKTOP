@@ -4,6 +4,7 @@ import {
   clearKeysHandoffEvidence,
   getKeysSplitHandoffProgress,
   markKeysBackupConfirmed,
+  markKeysBackupDeferred,
   noteKeysBackupHandoff,
 } from '../wallet/backupStatus'
 import {
@@ -112,8 +113,8 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
     <div className="wallet-setup-config" data-aeon-scope="create-keys-backup">
       <h2>Save your recovery backup</h2>
       <p className="auth-lede">
-        Device unlock is not a backup. If this device is wiped, only a phrase or key slices recover
-        your funds. This step is never locked behind a HandCash password.
+        Recommended now. Write your recovery phrase or save two key slices. You can use the wallet
+        first — Settings will keep reminding you until this is done.
       </p>
 
       <div className="actions" style={{ marginBottom: 12 }}>
@@ -200,7 +201,22 @@ export function CreateKeysBackupPanel({ mnemonic, rootKeyHex, onDone }: Props) {
         <button type="button" className="btn btn-primary" disabled={!canConfirm} onClick={confirm}>
           I’ve saved my backup — continue
         </button>
+        <button
+          type="button"
+          className="btn btn-ghost"
+          data-aeon-part="backup-later"
+          onClick={() => {
+            markKeysBackupDeferred()
+            playWalletSound('soft')
+            onDone()
+          }}
+        >
+          I’ll do this later
+        </button>
       </div>
+      <p className="auth-lede" style={{ marginTop: 8 }}>
+        Later is fine. Don’t skip forever — this is the only way back if the device is wiped.
+      </p>
     </div>
   )
 }

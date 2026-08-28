@@ -66,7 +66,7 @@ export function rememberTokenIcon(
   if (!key || body.length === 0) return
   const mimeSafe = (mime || 'application/octet-stream').split(';')[0]!.trim() || 'application/octet-stream'
   // Cap ~96 KiB — ticker icons should stay small; refuse huge blobs.
-  if (body.length > 96 * 1024) return
+  if (body.length > 512 * 1024) return
   const store = readStore()
   store[key] = { mime: mimeSafe, b64: bytesToB64(body), at: Date.now() }
   writeStore(store)

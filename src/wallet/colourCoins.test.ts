@@ -5,6 +5,7 @@ import {
   buildColourCustomInstructions,
   buildOnesatFtOriginInscriptionJson,
   evaluateColourSupply,
+  looksLikeOnesatFtTip,
   normalizeColourOrigin,
   parseColourTipAmt,
   parseOnesatFtOriginPolicy,
@@ -23,6 +24,7 @@ function tip(outpoint: string, opts: Partial<ColourTip> = {}): ColourTip {
     satoshis: 1,
     amt: 1,
     proven: true,
+    customInstructions: JSON.stringify({ p: '1sat-ft', origin: ORIGIN }),
     ...opts,
   }
 }
@@ -218,11 +220,54 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(check.via).toBe('parent')
   })
 
+  it('fails closed when parent is attested but not proven (open or locked)', () => {
+    const parent = `${'ab'.repeat(32)}_1`
+    const tipOut = `${'cd'.repeat(32)}_0`
+    for (const supply of ['open', 'locked'] as const) {
+      const ci = buildColourCustomInstructions({
+        origin: ORIGIN,
+        supply,
+        ...(supply === 'locked' ? { maxSupply: 10 } : {}),
+        amt: 4,
+        parent,
+      })
+      const meta = {
+        origin: ORIGIN,
+        supply,
+        maxSupply: supply === 'locked' ? 10 : null,
+      }
+      expect(
+        verifyColourTipProvenance({
+          tipOutpoint: tipOut,
+          claimedOrigin: ORIGIN,
+          provenance: null,
+          customInstructions: ci,
+          originMeta: meta,
+          parentBound: false,
+        }).ok,
+      ).toBe(false)
+      expect(
+        verifyColourTipProvenance({
+          tipOutpoint: tipOut,
+          claimedOrigin: ORIGIN,
+          provenance: null,
+          customInstructions: ci,
+          originMeta: meta,
+          // omitted parentBound — never soft-bind
+        }).ok,
+      ).toBe(false)
+    }
+  })
+
   it('aggregates balance as Σ amt (missing amt ⇒ 1)', () => {
     const tips = [
-      tip(ORIGIN, { amt: 1000 }),
+      tip(`${'11'.repeat(32)}_0`, { amt: 1000 }),
       tip(`${'cd'.repeat(32)}_0`, { amt: 1 }),
-      tip(`${'ef'.repeat(32)}_0`, { proven: false, amt: 50 }),
+      tip(`${'ef'.repeat(32)}_0`, {
+        proven: false,
+        amt: 50,
+        customInstructions: JSON.stringify({ name: 'Collectable' }),
+      }),
     ]
     const meta = new Map([
       [
@@ -284,5 +329,109 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(() => assertColourAmtConservation([1000], [400, 500])).toThrow(
       /not conserved/,
     )
+  })
+
+  it('recognizes FT tips from CI or ord MIME, not tags alone', () => {
+    expect(looksLikeOnesatFtTip({ tags: [] })).toBe(false)
+    expect(looksLikeOnesatFtTip({ tags: ['1sat-ft', 'ordinal'] })).toBe(false)
+    expect(
+      looksLikeOnesatFtTip({
+        tags: ['1sat-ft', 'ordinal'],
+        customInstructions: JSON.stringify({ name: 'Pixel Foxes' }),
+      }),
+    ).toBe(false)
+    expect(
+      looksLikeOnesatFtTip({
+        customInstructions: JSON.stringify({
+          p: '1sat-ft',
+          amt: '69420',
+          sym: 'KING',
+        }),
+      }),
+    ).toBe(true)
+    const { lockingScript } = buildOnesatFtMintLockingScript({
+      address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+      sym: 'KING',
+      amt: 69420,
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    expect(looksLikeOnesatFtTip({ lockingScriptHex: lockingScript })).toBe(true)
+  })
+
+  it('counts leftover after send, not the spent mint', () => {
+    const mint = tip(ORIGIN, { amt: 69420 })
+    const change = tip(`${'cd'.repeat(32)}_1`, { amt: 69000 })
+    const rows = aggregateColourTokens(
+      [mint, change],
+      new Map([
+        [ORIGIN, { origin: ORIGIN, supply: 'locked', maxSupply: 69420, sym: 'KING' }],
+      ]),
+    )
+    expect(rows).toHaveLength(1)
+    expect(rows[0]!.balance).toBe(69000)
+    expect(rows[0]!.outpoint).toBe(change.outpoint)
+  })
+
+  it('still sums a same-tx mint batch', () => {
+    const genesis = tip(ORIGIN, { amt: 500 })
+    const sibling = tip(`${ORIGIN.split('_')[0]}_1`, { amt: 500 })
+    const rows = aggregateColourTokens(
+      [genesis, sibling],
+      new Map([
+        [ORIGIN, { origin: ORIGIN, supply: 'locked', maxSupply: 1000, sym: 'BATCH' }],
+      ]),
+    )
+    expect(rows[0]!.balance).toBe(1000)
+    expect(rows[0]!.tipCount).toBe(2)
+  })
+
+  it('ignores collectable JSON that has no 1sat-ft protocol', () => {
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        name: 'Pixel Foxes',
+        amt: 1,
+      }),
+    })
+    expect(meta.sym).toBeUndefined()
+    expect(meta.name).toBeUndefined()
+    expect(meta.supply).toBe('open')
+    expect(meta.maxSupply).toBeNull()
+  })
+
+  it('resolves iconVout on genesis to same-tx icon outpoint', () => {
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        amt: '100',
+        sym: 'KING',
+        iconVout: 1,
+      }),
+    })
+    expect(meta.icon).toBe(`${'ab'.repeat(32)}_1`)
+    expect(meta.sym).toBe('KING')
+  })
+
+  it('overlays CI iconVout when ord envelope already supplied policy', () => {
+    const { lockingScript } = buildOnesatFtMintLockingScript({
+      address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
+      sym: 'KING',
+      amt: 69420,
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, {
+      lockingScriptHex: lockingScript,
+      customInstructions: JSON.stringify({
+        p: '1sat-ft',
+        amt: '69420',
+        sym: 'KING',
+        iconVout: 1,
+      }),
+    })
+    expect(meta.supply).toBe('locked')
+    expect(meta.maxSupply).toBe(69420)
+    expect(meta.sym).toBe('KING')
+    expect(meta.icon).toBe(`${'ab'.repeat(32)}_1`)
   })
 })

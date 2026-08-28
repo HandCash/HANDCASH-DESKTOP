@@ -9,6 +9,9 @@ vi.mock('./durableStorage.js', () => ({
     else durable.set(key, value)
     return true
   },
+  durableRemoveItem: (key: string) => {
+    durable.delete(key)
+  },
 }))
 
 const deviceStore = { secret: null as string | null }

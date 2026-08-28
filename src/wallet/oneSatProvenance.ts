@@ -1135,7 +1135,7 @@ async function hydrateLineageForSend(
     // the wire. Aborting mid-walk left Pixel Foxes sends bare forever.
     const proof = await proveGenesisLineage({
       tipOutpoint: tip,
-      getBeef: (hop) => getBeefForTxidCached(wallet, hop),
+      getBeef: (hop) => getBeefForTxidCached(wallet, hop, { needProof: true }),
       shouldStop: opts?.shouldStop,
       includeBeef: true,
     })
@@ -1223,7 +1223,7 @@ export async function tryBuildProvenanceV2(args: {
 
   try {
     const { getBeefForTxidCached } = await import('./beefCache')
-    const getBeef = (hop: string) => getBeefForTxidCached(args.wallet, hop)
+    const getBeef = (hop: string) => getBeefForTxidCached(args.wallet, hop, { needProof: true })
 
     const remembered = getRememberedProvenanceRemittance(tipKey)
     if (remembered) {

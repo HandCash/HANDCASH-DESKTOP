@@ -1,13 +1,16 @@
 import { useEffect, useRef } from 'react'
 import { useMachine } from '@xstate/react'
 import { qrScannerMachine } from '../machines/qrScannerMachine'
-import { openQrCamera } from '../wallet/qrCameraConstraints'
+import { releaseWarmedQrCamera, takeQrCameraStream } from '../wallet/qrCameraWarm'
 import { Skeleton } from './Skeleton'
 
 type Props = {
   onScan: (value: string) => void
   onCancel: () => void
   hint?: string
+  /** Fill parent (dashboard BSV slot) — no Cancel row; parent owns close. */
+  layout?: 'default' | 'fill'
+  showCancel?: boolean
 }
 
 type BarcodeDetectorLike = {
@@ -29,6 +32,8 @@ export function QrScanner({
   onScan,
   onCancel,
   hint = 'Point your camera at a QR code',
+  layout = 'default',
+  showCancel,
 }: Props) {
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const streamRef = useRef<MediaStream | null>(null)
@@ -39,6 +44,7 @@ export function QrScanner({
   const ready = snapshot.matches('ready')
   const paused = snapshot.matches('paused')
   const error = snapshot.context.error
+  const cancelVisible = showCancel ?? layout !== 'fill'
 
   useEffect(() => {
     onScanRef.current = onScan
@@ -46,10 +52,12 @@ export function QrScanner({
 
   useEffect(() => {
     const onVisibility = () => {
-      send({ type: document.visibilityState === 'hidden' ? 'PAUSE' : 'RESUME' })
+      if (document.visibilityState === 'hidden') send({ type: 'PAUSE' })
+      else send({ type: 'RESUME' })
     }
     document.addEventListener('visibilitychange', onVisibility)
-    onVisibility()
+    // Do not fire on mount — RESUME restarts the machine/session and re-opens
+    // getUserMedia in a loop while Scan is still painting.
     return () => document.removeEventListener('visibilitychange', onVisibility)
   }, [send])
 
@@ -113,6 +121,30 @@ export function QrScanner({
       scheduleNativeScan()
     }
 
+    const attachVideo = async (stream: MediaStream) => {
+      const video = videoRef.current
+      if (!video) {
+        stream.getTracks().forEach((t) => t.stop())
+        return
+      }
+      streamRef.current = stream
+      video.srcObject = stream
+      // Mark ready as soon as metadata arrives — don't wait on play() settling.
+      const markReady = () => {
+        if (cancelled || handled.current) return
+        send({ type: 'CAMERA_READY' })
+      }
+      if (video.readyState >= 2) markReady()
+      else {
+        video.addEventListener('loadeddata', markReady, { once: true })
+      }
+      try {
+        await video.play()
+      } catch {
+        // Autoplay policies rarely block muted inline; keep scanning anyway.
+      }
+    }
+
     const startWithZxing = async (stream: MediaStream) => {
       const [{ BrowserMultiFormatReader }, { BarcodeFormat, DecodeHintType }] =
         await Promise.all([import('@zxing/browser'), import('@zxing/library')])
@@ -122,19 +154,17 @@ export function QrScanner({
         delayBetweenScanAttempts: 120,
         delayBetweenScanSuccess: 500,
       })
-      const video = videoRef.current
-      if (!video || cancelled) {
+      if (cancelled) {
         stream.getTracks().forEach((t) => t.stop())
         return
       }
-      streamRef.current = stream
-      video.srcObject = stream
-      await video.play()
+      await attachVideo(stream)
       if (cancelled) {
         stopTracks()
         return
       }
-      send({ type: 'CAMERA_READY' })
+      const video = videoRef.current
+      if (!video) return
       const controls = await reader.decodeFromStream(stream, video, (result, _err, ctrl) => {
         if (result) {
           ctrl.stop()
@@ -155,10 +185,7 @@ export function QrScanner({
 
       const Detector = getBarcodeDetector()
       try {
-        const stream = await openQrCamera(
-          (constraints) => navigator.mediaDevices.getUserMedia(constraints),
-          window.handcash?.platform,
-        )
+        const stream = await takeQrCameraStream()
         if (cancelled) {
           stream.getTracks().forEach((t) => t.stop())
           return
@@ -167,17 +194,11 @@ export function QrScanner({
         if (Detector) {
           try {
             detector = new Detector({ formats: ['qr_code'] })
-            streamRef.current = stream
-            const video = videoRef.current
-            if (video) {
-              video.srcObject = stream
-              await video.play()
-            }
+            await attachVideo(stream)
             if (cancelled) {
               stopTracks()
               return
             }
-            send({ type: 'CAMERA_READY' })
             scheduleNativeScan()
             return
           } catch {
@@ -207,12 +228,13 @@ export function QrScanner({
     return () => {
       cancelled = true
       stopTracks()
+      releaseWarmedQrCamera()
     }
   }, [paused, send, snapshot.context.session])
 
   return (
     <div
-      className="qr-scanner"
+      className={`qr-scanner${layout === 'fill' ? ' qr-scanner--fill' : ''}`}
       data-aeon-scope="qr-scanner"
       data-aeon-state={snapshot.value}
     >
@@ -222,6 +244,7 @@ export function QrScanner({
           className="qr-scanner-video"
           muted
           playsInline
+          autoPlay
           disablePictureInPicture
           aria-hidden={!ready}
         />
@@ -231,11 +254,13 @@ export function QrScanner({
         {ready ? <div className="qr-scanner-reticle" aria-hidden /> : null}
       </div>
       <p className="qr-scanner-hint">{error ?? (paused ? 'Camera paused' : hint)}</p>
-      <div className="actions">
-        <button type="button" className="btn btn-ghost" onClick={onCancel}>
-          Cancel
-        </button>
-      </div>
+      {cancelVisible ? (
+        <div className="actions">
+          <button type="button" className="btn btn-ghost" onClick={onCancel}>
+            Cancel
+          </button>
+        </div>
+      ) : null}
     </div>
   )
 }

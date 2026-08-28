@@ -13,6 +13,12 @@ import {
   type VaultUnlockFactors,
 } from '../wallet/vault'
 import { validatePassword } from '../wallet/passwordPolicy'
+import {
+  clearOpenUnlockSecret,
+  getOpenUnlockSecret,
+  isNoDeviceLock,
+  setDeviceLockMode,
+} from '../wallet/deviceLockPrefs'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { ConfirmPasswordGate } from './ConfirmPasswordGate'
@@ -100,7 +106,15 @@ export function UnlockSettingsPanel() {
     }
     setBusy(true)
     try {
-      await setVaultPasswordFromDevice(newPassword)
+      const openSecret = getOpenUnlockSecret()
+      if (openSecret) {
+        await changeVaultPassword(openSecret, newPassword)
+        clearOpenUnlockSecret()
+        setDeviceLockMode('password')
+      } else {
+        await setVaultPasswordFromDevice(newPassword)
+        setDeviceLockMode(readVaultUnlockFactors().device ? 'both' : 'password')
+      }
       playWalletSound('success')
       toastSuccess('HandCash password added')
       resetForm()
@@ -234,6 +248,61 @@ export function UnlockSettingsPanel() {
     )
   }
 
+  if (mode === 'enable-device' && isNoDeviceLock()) {
+    return (
+      <div className="settings-detail settings-detail-compact settings-scroll" data-aeon-scope="settings-unlock">
+        <div className="confirm-password-copy">
+          <h3 className="confirm-password-title">Turn on device unlock</h3>
+          <p className="confirm-password-lede">
+            Seal unlock with {device?.label ?? 'this device'}. You can add a HandCash password later.
+          </p>
+        </div>
+        {error ? (
+          <p className="error" role="alert">
+            {error}
+          </p>
+        ) : null}
+        <div className="actions">
+          <button
+            type="button"
+            className="btn btn-primary"
+            disabled={busy}
+            onClick={() => {
+              const openSecret = getOpenUnlockSecret()
+              if (!openSecret) return
+              void (async () => {
+                setBusy(true)
+                try {
+                  await enableDeviceUnlock(openSecret)
+                  clearOpenUnlockSecret()
+                  setDeviceLockMode('device')
+                  playWalletSound('success')
+                  toastSuccess('Device unlock on')
+                  resetForm()
+                  await refresh()
+                } catch (err) {
+                  playWalletSound('error')
+                  const message = err instanceof Error ? err.message : String(err)
+                  if (message !== 'cancelled') {
+                    setError(message)
+                    toastError('Couldn’t enable device unlock', message)
+                  }
+                } finally {
+                  setBusy(false)
+                }
+              })()
+            }}
+          >
+            {busy ? 'Saving…' : 'Enable'}
+          </button>
+          <button type="button" className="btn btn-ghost" disabled={busy} onClick={resetForm}>
+            Back
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (mode === 'enable-device') {
     return (
       <div className="settings-detail settings-detail-compact settings-scroll" data-aeon-scope="settings-unlock">
@@ -244,10 +313,18 @@ export function UnlockSettingsPanel() {
           requirePassword
           actionLabel="Enable"
           onVerified={async (password) => {
-            if (!password) return
+            const openSecret = getOpenUnlockSecret()
+            const used = password || openSecret
+            if (!used) return
             setBusy(true)
             try {
-              await enableDeviceUnlock(password)
+              await enableDeviceUnlock(used)
+              if (openSecret && used === openSecret) {
+                clearOpenUnlockSecret()
+                setDeviceLockMode('device')
+              } else {
+                setDeviceLockMode('both')
+              }
               playWalletSound('success')
               toastSuccess('Device unlock on')
               resetForm()
@@ -342,7 +419,9 @@ export function UnlockSettingsPanel() {
       <div className="confirm-password-copy">
         <h3 className="confirm-password-title">Unlock</h3>
         <p className="confirm-password-lede">
-          Use this device’s fingerprint or lock screen, a HandCash password, or both. Keep at least one.
+          {isNoDeviceLock()
+            ? 'This device opens the wallet without a prompt. Add a password or Touch ID any time.'
+            : 'Use this device’s fingerprint or lock screen, a HandCash password, or both. Keep at least one.'}
         </p>
       </div>
 
@@ -374,7 +453,7 @@ export function UnlockSettingsPanel() {
               <button
                 type="button"
                 className="btn btn-primary"
-                disabled={!factors.password}
+                disabled={!factors.password && !isNoDeviceLock()}
                 onClick={() => setMode('enable-device')}
               >
                 Turn on
@@ -386,10 +465,18 @@ export function UnlockSettingsPanel() {
           <div className="settings-row-copy">
             <span className="settings-row-label">HandCash password</span>
             <span className="settings-row-description">
-              {factors.password ? 'On · separate from device lock' : 'Off'}
+              {isNoDeviceLock()
+                ? 'Off · no prompt on this device'
+                : factors.password
+                  ? 'On · separate from device lock'
+                  : 'Off'}
             </span>
           </div>
-          {factors.password ? (
+          {isNoDeviceLock() ? (
+            <button type="button" className="btn btn-primary" onClick={() => setMode('set-password')}>
+              Add
+            </button>
+          ) : factors.password ? (
             <div className="actions" style={{ gap: 8 }}>
               <button type="button" className="btn btn-ghost" onClick={() => setMode('change-password')}>
                 Change

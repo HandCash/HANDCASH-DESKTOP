@@ -16,9 +16,11 @@ export function buildQrCameraConstraints(platform?: string): MediaStreamConstrai
         }
       : {
           // Laptops/desktops only expose a front camera; `environment` often fails on Linux/Windows.
+          // Prefer a modest ideal so getUserMedia returns sooner than 720p renegotiation.
           facingMode: { ideal: 'user' },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
+          width: { ideal: 960 },
+          height: { ideal: 540 },
+          frameRate: { ideal: 24, max: 30 },
         },
   }
 }

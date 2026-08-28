@@ -43,6 +43,7 @@ import {
   writeTrustedBalance,
 } from './wallet/balanceSnapshot'
 import { DISPLAY_BALANCE_REFRESH_EVENT } from './wallet/displayBalanceRefresh'
+import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
@@ -65,13 +66,25 @@ export function App() {
     // Never interrupt a legal spend phase. Once the chart returns to ready, a
     // fresh idle window begins and unattended keys are removed from memory.
     if (!snapshot.matches('ready')) return
+    if (shouldAutoUnlock()) return
     let timer = 0
+    let hideTimer = 0
     const arm = () => {
       window.clearTimeout(timer)
       timer = window.setTimeout(() => lockWallet('idle'), AUTO_LOCK_IDLE_MS)
     }
+    // Locking on every hide (alt-tab / close) remounts the lock screen which
+    // auto-prompts Touch ID — fingerprint while the user is leaving. Grace the
+    // hide; idle timeout still covers a long background.
+    const HIDE_LOCK_GRACE_MS = 5 * 60 * 1000
     const onVisibility = () => {
-      if (document.visibilityState === 'hidden') lockWallet('idle')
+      if (document.visibilityState === 'hidden') {
+        window.clearTimeout(hideTimer)
+        hideTimer = window.setTimeout(() => lockWallet('idle'), HIDE_LOCK_GRACE_MS)
+        return
+      }
+      window.clearTimeout(hideTimer)
+      arm()
     }
     const events: Array<keyof WindowEventMap> = [
       'pointerdown',
@@ -84,6 +97,7 @@ export function App() {
     arm()
     return () => {
       window.clearTimeout(timer)
+      window.clearTimeout(hideTimer)
       for (const event of events) window.removeEventListener(event, arm)
       document.removeEventListener('visibilitychange', onVisibility)
     }

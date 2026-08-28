@@ -9,7 +9,7 @@ import {
   MintIcon,
   ReceiveIcon,
   SendIcon,
-  WarningIcon,
+  FireIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
@@ -407,7 +407,7 @@ function HistoryRow({
               {failed ? (
                 <span aria-hidden>!</span>
               ) : burned ? (
-                <WarningIcon size={8} />
+                <FireIcon size={8} />
               ) : minted ? (
                 <MintIcon size={8} />
               ) : spent ? (

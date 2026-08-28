@@ -1,5 +1,6 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
+import { isPhoneShell } from './runtimePlatform'
 
 export type NavSection =
   | 'activity'
@@ -117,7 +118,40 @@ export function openSendFlow(prefill?: string) {
   })
 }
 
+/** Desktop Scan lives in the side column and must not change the main tab. */
+let sideScanOpen = false
+const sideScanListeners = new Set<(open: boolean) => void>()
+
+function emitSideScan() {
+  for (const cb of sideScanListeners) cb(sideScanOpen)
+}
+
+export function getSideScanOpen(): boolean {
+  return sideScanOpen
+}
+
+export function subscribeSideScan(cb: (open: boolean) => void): () => void {
+  sideScanListeners.add(cb)
+  cb(sideScanOpen)
+  return () => {
+    sideScanListeners.delete(cb)
+  }
+}
+
+export function closeSideScan() {
+  if (!sideScanOpen) return
+  sideScanOpen = false
+  emitSideScan()
+}
+
 export function openScanFlow() {
+  // Phone: Scan is a full nav child under Activity.
+  // Desktop: overlay the side column only — keep Collect / Settings / etc.
+  if (!isPhoneShell()) {
+    sideScanOpen = true
+    emitSideScan()
+    return
+  }
   openNavChild('activity', { type: 'scan' })
 }
 

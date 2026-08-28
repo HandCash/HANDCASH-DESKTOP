@@ -39,6 +39,11 @@ vi.mock('./oneSatImport', () => ({
   contentUrlForOrigin: (origin: string) => `https://example.test/content/${origin}`,
 }))
 
+vi.mock('./tokenAddressScan', () => ({
+  scanAddressOrdinalTxos: vi.fn(async () => []),
+  scanAddressTokenTxos: vi.fn(async () => []),
+}))
+
 vi.mock('./fungibles', () => ({
   importBsv21Tokens: vi.fn(async (items: Array<{ outpoint: string }>) => ({
     imported: items.length,
@@ -268,7 +273,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     vi.useRealTimers()
   })
 
-  it('writes a Received activity row for newly imported BSV-21 tips', async () => {
+  it('does not import classified on-address BSV-21 fungibles into basket bsv21', async () => {
     const tipOp = `${'aa'.repeat(32)}.0`
     const tokenId = `${'aa'.repeat(32)}_0`
     mockScanLegacyAddress.mockResolvedValue({
@@ -306,23 +311,14 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
       importedReceipts: [],
     })
 
+    const { importBsv21Tokens } = await import('./fungibles')
     const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
     await ingestLegacyAddressUtxos({ active })
 
-    const { listRecentActivity, isTokenActivity } = await import('./appActivity')
-    const tokenRow = listRecentActivity(10).find((e) => e.method === 'mint-token')
-    expect(tokenRow).toMatchObject({
-      kind: 'earned',
-      method: 'mint-token',
-      note: 'Minted 1,000 DEMO',
-      txid: 'aa'.repeat(32),
-      item: expect.objectContaining({
-        name: 'DEMO',
-        tokenId,
-        outpoint: tipOp,
-        amt: '1000',
-      }),
-    })
-    expect(tokenRow && isTokenActivity(tokenRow)).toBe(true)
+    expect(importBsv21Tokens).not.toHaveBeenCalled()
+    const { listRecentActivity } = await import('./appActivity')
+    expect(
+      listRecentActivity(10).some((e) => e.method === 'mint-token'),
+    ).toBe(false)
   })
 })

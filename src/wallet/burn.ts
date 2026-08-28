@@ -132,7 +132,8 @@ async function signBurnInputs(args: {
     if (!input.sourceTransaction && input.sourceTXID) {
       const sourceBeef = await getBeefForTxidCached(
         args.active,
-        String(input.sourceTXID)
+        String(input.sourceTXID),
+        { needProof: true }
       )
       beef.mergeBeef(sourceBeef.toBinary())
       input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
@@ -354,31 +355,64 @@ async function executeBurnPlan(args: {
   let signed:
     | { txid: string; atomicBeef: number[]; feeSatoshis?: number }
     | undefined
+  const spendOutpoints = args.plan.inputs.map((input) =>
+    wireOutpoint(input.outpoint),
+  )
+  const knownTxids = [
+    ...new Set(
+      spendOutpoints
+        .map((op) => op.split('.')[0]?.toLowerCase())
+        .filter((txid): txid is string => Boolean(txid)),
+    ),
+  ]
+  let inputBEEF: number[] | undefined
+  try {
+    const { buildMergedInputBeef } = await import('./beefCache')
+    inputBEEF = await buildMergedInputBeef(
+      args.active,
+      spendOutpoints,
+      wireOutpoint,
+    )
+  } catch (err) {
+    console.warn('[burn] inputBEEF hydrate failed — createAction may stall', err)
+  }
+
   const result = await executeBurnLifecycle(args.plan, {
     build: async () => {
-      const created = await args.active.wallet.createAction({
-        description:
-          args.plan.path === 'burnBsv21'
-            ? 'Burn BSV-21 token'
-            : 'Burn collectables',
-        labels: ['handcash-burn', args.plan.asset],
-        inputs: args.plan.inputs.map((input) => ({
-          outpoint: wireOutpoint(input.outpoint),
-          inputDescription: `${args.plan.asset} burn input`,
-          unlockingScriptLength: 108,
-        })),
-        outputs,
-        options: {
-          trustSelf: 'known',
-          randomizeOutputs: false,
-          signAndProcess: true,
-          noSend: true,
-        },
-      })
+      const { withFungibleCreateActionTimeout, FUNGIBLE_CREATE_ACTION_TIMEOUT_MS } =
+        await import('./sendFungible')
+      console.info(
+        `[burn] createAction start asset=${args.plan.asset} inputs=${args.plan.inputs.length}`,
+      )
+      const created = await withFungibleCreateActionTimeout(
+        args.active.wallet.createAction({
+          description:
+            args.plan.path === 'burnBsv21'
+              ? 'Burn BSV-21 token'
+              : 'Burn collectables',
+          labels: ['handcash-burn', args.plan.asset],
+          ...(inputBEEF?.length ? { inputBEEF } : {}),
+          inputs: args.plan.inputs.map((input) => ({
+            outpoint: wireOutpoint(input.outpoint),
+            inputDescription: `${args.plan.asset} burn input`,
+            unlockingScriptLength: 108,
+          })),
+          outputs,
+          options: {
+            trustSelf: 'known',
+            ...(knownTxids.length > 0 ? { knownTxids } : {}),
+            randomizeOutputs: false,
+            signAndProcess: true,
+            noSend: true,
+          },
+        }),
+        FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
+      )
       signable = created.signableTransaction as SignableTransaction | undefined
       if (!signable)
         throw new Error('Burn did not return a signable transaction')
       rememberBeefTree(Array.from(signable.tx))
+      console.info(`[burn] createAction signable reference=${signable.reference}`)
       return { reference: signable.reference }
     },
     sign: async () => {
@@ -475,7 +509,7 @@ async function hydrateBsv21Scripts(
       const vout = Number(voutRaw)
       if (!txid || !Number.isInteger(vout) || vout < 0) return tip
       try {
-        const beef = await getBeefForTxidCached(active, txid)
+        const beef = await getBeefForTxidCached(active, txid, { needProof: true })
         const lockingScript = beef
           .findTxid(txid)
           ?.tx?.outputs[vout]?.lockingScript?.toHex()
@@ -523,6 +557,22 @@ export async function previewBsv21Burn(args: {
   })
 }
 
+/** Route burn preview to BSV-21 plan or 1Sat FT tip selection. */
+export async function previewFungibleBurn(args: {
+  tokenId: string
+  amount: string
+}): Promise<BurnEconomics> {
+  const tokenId = normalizeTokenId(args.tokenId)
+  if (!tokenId) throw new Error('Invalid token id')
+  const token = getFungible(tokenId)
+  if (!token) throw new Error('Token not found')
+  if (token.colourSupply != null) {
+    const { previewColourBurn } = await import('./burnColourCoins')
+    return previewColourBurn({ origin: token.tokenId, amount: args.amount })
+  }
+  return previewBsv21Burn(args)
+}
+
 export async function burnBsv21(args: {
   tokenId: string
   amount: string
@@ -553,7 +603,10 @@ export async function burnBsv21(args: {
     method: 'burn-token',
     note: `Burning ${token.sym}`,
     item,
-    burn: { asset: 'bsv21', destroyedAmount: args.amount },
+    burn: {
+      asset: token.colourSupply != null ? '1sat' : 'bsv21',
+      destroyedAmount: args.amount,
+    },
     status: 'pending',
     pendingId,
   })
@@ -561,11 +614,53 @@ export async function burnBsv21(args: {
     `[burn] queued token=${tokenId.slice(0, 16)}… pending=${pendingId}`
   )
 
+  // 1Sat FT burns destroy face-value tips (no BSV-21 burn inscription).
+  if (token.colourSupply != null) {
+    try {
+      const { burnColourCoins } = await import('./burnColourCoins')
+      const result = await burnColourCoins({
+        origin: token.tokenId,
+        amount: args.amount,
+        sym: token.sym,
+        supply: token.colourSupply,
+        maxSupply: token.colourMaxSupply ?? null,
+        icon: token.icon,
+        pendingId,
+        item,
+      })
+      return result
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error)
+      upsertAppActivity({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        kind: 'spent',
+        sats: 1,
+        method: 'burn-token',
+        note: `${token.sym} was not burned`,
+        item,
+        burn: { asset: '1sat', destroyedAmount: args.amount },
+        status: 'failed',
+        pendingId,
+        failureReason: reason,
+      })
+      console.warn(`[burn] failed token=${tokenId.slice(0, 16)}…`, reason)
+      throw error
+    }
+  }
+
   try {
     return await runExclusiveSpend(async () => {
       assertOnlineForPayment()
       const active = getActiveWallet()
       if (!active) throw new Error('Wallet locked')
+      {
+        const {
+          abortReservedActionBatches,
+          releaseStuckNosends,
+        } = await import('./actionReview')
+        await releaseStuckNosends(active)
+        await abortReservedActionBatches(active)
+      }
       const tips = await hydrateBsv21Scripts(
         active,
         (
@@ -680,6 +775,14 @@ export async function burnOneSat(
       assertOnlineForPayment()
       const active = getActiveWallet()
       if (!active) throw new Error('Wallet locked')
+      {
+        const {
+          abortReservedActionBatches,
+          releaseStuckNosends,
+        } = await import('./actionReview')
+        await releaseStuckNosends(active)
+        await abortReservedActionBatches(active)
+      }
       const heldByOutpoint = new Map(
         getCachedCollectables().map((held) => [
           wireOutpoint(held.outpoint),
@@ -704,7 +807,7 @@ export async function burnOneSat(
             return { outpoint, satoshis: 0, lockingScript: undefined }
           }
           try {
-            const beef = await getBeefForTxidCached(active, txid)
+            const beef = await getBeefForTxidCached(active, txid, { needProof: true })
             const output = beef.findTxid(txid)?.tx?.outputs[vout]
             return {
               outpoint,

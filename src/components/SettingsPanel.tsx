@@ -25,6 +25,8 @@ import {
   statusForSetting,
   settingIconFor,
   SETTINGS_APPLICATION_ICONS,
+  ShortcutHint,
+  screenshotShortcutKeys,
 } from './settings'
 
 type SettingItem = {
@@ -36,8 +38,8 @@ type SettingItem = {
 const SECURITY_ITEMS: SettingItem[] = [
   {
     id: 'backup',
-    label: 'Key slices',
-    description: 'Any two of three recover this wallet',
+    label: 'Recovery backup',
+    description: 'Phrase or key slices — Settings nags until done',
   },
   {
     id: 'history-backup',
@@ -108,7 +110,7 @@ export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Session logs'
-  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Key slices'
+  if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
   const item = SECURITY_ITEMS.find((entry) => entry.id === id)
@@ -316,14 +318,26 @@ export function SettingsPanel() {
           />
           {isDesktop ? (
             <SettingsControlRow
+              icon={SETTINGS_APPLICATION_ICONS.screenshot}
               label="Screenshot"
-              description={window.handcash?.platform === 'darwin' ? '⌘⇧S' : 'Ctrl+Shift+S'}
+              description={
+                <>
+                  Copy this window to the clipboard
+                  <ShortcutHint
+                    className="settings-shortcut-hint"
+                    keys={screenshotShortcutKeys(window.handcash?.platform)}
+                  />
+                </>
+              }
             >
               <button
                 type="button"
                 className="btn btn-ghost settings-action-btn"
                 data-aeon-part="copy-screenshot"
-                onClick={() => void window.handcash?.copyScreenshot?.()}
+                onClick={() => {
+                  playWalletSound('soft')
+                  void window.handcash?.copyScreenshot?.()
+                }}
               >
                 Copy
               </button>
