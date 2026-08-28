@@ -310,7 +310,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          <span className="fungible-details-origin" title={token.tokenId}>
+          <span className="fungible-details-origin" title={`Origin ${token.tokenId}`}>
             {shortOriginLabel(token.tokenId)}
           </span>
           {issuerLabel ? (
@@ -360,14 +360,14 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         <button
           type="button"
           className="btn btn-ghost btn-icon"
-          title={`Copy token ID\n${token.tokenId}`}
+          title={isColour ? `Copy origin\n${token.tokenId}` : `Copy token ID\n${token.tokenId}`}
           onClick={() => {
             playWalletSound('soft')
-            void copyText(token.tokenId, { label: 'token ID' })
+            void copyText(token.tokenId, { label: isColour ? 'origin' : 'token ID' })
           }}
         >
           <CopyIcon size={14} />
-          Copy ID
+          {isColour ? 'Copy origin' : 'Copy ID'}
         </button>
         {/* Destructive action is always last, on tokens and on items. */}
         <button
@@ -462,10 +462,15 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
 
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">
-          <h3>Token details</h3>
-          <span>Wallet-local</span>
+          <h3>{isColour ? 'Origin' : 'Token details'}</h3>
+          <span>{isColour ? 'Same everywhere' : 'Wallet-local'}</span>
         </div>
         <dl className="fungible-details-meta">
+          <MetaRow
+            label={isColour ? 'Origin' : 'Token ID'}
+            value={token.tokenId}
+            copyLabel={isColour ? 'origin' : 'token ID'}
+          />
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
@@ -477,14 +482,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             value={isColour ? spendLabel : 'Burn cleanup only — sends retired'}
           />
           <MetaRow
-            label="Output"
+            label="Held tip"
             value={token.outpoint}
-            copyLabel="representative output"
-          />
-          <MetaRow
-            label={isColour ? 'Origin' : 'Token ID'}
-            value={token.tokenId}
-            copyLabel={isColour ? 'origin outpoint' : 'token ID'}
+            copyLabel="held tip"
           />
           {tokenIds.length > 1
             ? tokenIds.map((id, index) => (

@@ -17,6 +17,7 @@ import {
   listCollectables,
   loadMoreCollectables,
   subscribeCollectables,
+  collectableIsOnesatFt,
   type Collectable,
 } from '../wallet/collectables'
 import {
@@ -339,7 +340,7 @@ function FungibleCarouselCard({
           size={56}
         />
         <strong className="collect-token-card-sym">{token.sym}</strong>
-        <span className="collect-token-card-id" title={token.tokenId}>
+        <span className="collect-token-card-id" title={`Origin ${token.tokenId}`}>
           {shortOriginLabel(token.tokenId)}
         </span>
         {token.issuer ? (
@@ -520,9 +521,13 @@ export function InventoryPanel() {
     }
   }, [])
 
-  const showLoading = (awaitingFirst || !ready) && items.length === 0 && tokens.length === 0
-  const { groups, loose } = useMemo(() => groupCollectables(items), [items])
-  const empty = items.length === 0 && tokens.length === 0 && ready && tokensReady
+  const visibleItems = useMemo(
+    () => items.filter((item) => !collectableIsOnesatFt(item)),
+    [items, tokens],
+  )
+  const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
+  const { groups, loose } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
+  const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
 
   return (
     <div
@@ -556,7 +561,7 @@ export function InventoryPanel() {
         </section>
       ) : null}
 
-      {items.length > 0 ? (
+      {visibleItems.length > 0 ? (
         <section className="collect-items-section" aria-label="Items">
           {tokens.length > 0 ? <h3 className="collect-section-title">Items</h3> : null}
 

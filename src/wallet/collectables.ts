@@ -38,7 +38,9 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { isBsv21Mime } from './bsv21'
-import { isOnesatFtMime, ONESAT_FT_TAG } from './colourCoins'
+import { isOnesatFtMime, ONESAT_FT_TAG, looksLikeOnesatFtTip, originFromColourCi } from './colourCoins'
+import { isOnesatFtCollectableMisfile, normOnesatFtOutpoint } from './onesatFtLeftover'
+import { getCachedFungibles } from './fungibles'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
@@ -79,7 +81,7 @@ import {
   authenticityResultToVerdict,
   type AuthenticityResult,
 } from './oneSatAuthenticity'
-import { scriptPaysAddress } from './ordinalOwnership'
+import { hasOrdEnvelope, scriptPaysAddress } from './ordinalOwnership'
 import { resolveDerivativeContent } from './derivativeContentResolve'
 import {
   liveOneSatKeys,
@@ -341,7 +343,7 @@ function persistDurableList(items: Collectable[]): void {
 // Paint last session's inventory immediately — do not wait on listOutputs.
 {
   const durable = loadDurableList().filter(
-    (item) => !isItemSent(item.outpoint),
+    (item) => !isItemSent(item.outpoint) && !collectableIsOnesatFt(item),
   )
   if (durable.length > 0) {
     cachedCollectables = durable
@@ -394,9 +396,9 @@ function setCollectablesCache(
       skipArrivalToast.delete(op)
     }
   }
-  // Keep origin-named unverified 1sat tips on the list. Filtering "bare origin"
-  // hid them until BRC-150 / the indexer filled a name, so Collect stayed empty
-  // during device sync.
+  // Drop leftover 1sat-ft and hashed origin-only cards. Those are Tokens, not
+  // Items. Named 1sat still paints during sync.
+  items = items.filter((item) => !collectableIsOnesatFt(item))
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
@@ -526,6 +528,36 @@ export function shortOrigin(origin: string): string {
   return `${txid.slice(0, 8)}…_${vout ?? '?'}`
 }
 
+
+export function collectableIsOnesatFt(item: {
+  outpoint: string
+  origin?: string
+  mimeType?: string
+  name?: string
+  collectionId?: string
+  app?: string
+}): boolean {
+  // Hashed origin-only cards are leftover 1sat-ft (or unnamed FT genesis),
+  // not collectables. Real 1sat items have a name, collection, or app.
+  if (isBareOriginCollectable(item)) return true
+  if (isOnesatFtMime(item.mimeType)) return true
+  if (isOnesatFtCollectableMisfile(item.outpoint)) return true
+  if (item.origin && isOnesatFtCollectableMisfile(item.origin)) return true
+  const op = normOnesatFtOutpoint(item.outpoint)
+  const origin = item.origin ? normOnesatFtOutpoint(item.origin) : ''
+  try {
+    for (const tok of getCachedFungibles()) {
+      const id = normOnesatFtOutpoint(tok.tokenId)
+      const tip = normOnesatFtOutpoint(tok.outpoint)
+      if (id && (id === op || (origin && id === origin))) return true
+      if (tip && tip === op) return true
+    }
+  } catch {
+    // Tokens cache not ready
+  }
+  return false
+}
+
 /** Hashed origin card with no collection/name — leftover 1sat-FT NFT misfile. */
 export function isBareOriginCollectable(item: {
   name?: string
@@ -538,7 +570,7 @@ export function isBareOriginCollectable(item: {
   const name = (item.name ?? '').trim()
   if (!origin) return false
   if (!name || name === shortOrigin(origin)) return true
-  return /^[0-9a-f]{6,8}…_\d+$/i.test(name)
+  return /^[0-9a-f]{6,8}…([0-9a-f]{4,8}_)?\d+$/i.test(name)
 }
 
 function tagValue(
@@ -713,6 +745,7 @@ type ItemOutput = {
   satoshis: number
   tags?: string[]
   lockingScript?: string
+  customInstructions?: string
 }
 
 /** Kept so a late resolution can rebuild the list without re-listing outputs. */
@@ -1006,9 +1039,24 @@ function isListableItem(o: ItemOutput): boolean {
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false
   if (o.tags?.includes('bsv21')) return false
-  // 1sat-FT leftovers belong in basket 1sat-ft (or hidden), not NFT cards.
+  // 1sat-FT leftovers belong in Tokens (basket 1sat-ft), not NFT cards.
+  // Bare leftover change is 1-sat P2PKH — no MIME until CI/leftover says so.
   if (isOnesatFtMime(resolved?.mimeType)) return false
+  if (
+    looksLikeOnesatFtTip({
+      tags: o.tags,
+      customInstructions: o.customInstructions,
+      lockingScriptHex: o.lockingScript,
+    })
+  ) {
+    return false
+  }
   if (o.tags?.some((tag) => tag === ONESAT_FT_TAG || tag.startsWith('1sat-ft'))) return false
+  // Bare P2PKH 1-sats are leftover FT change / funds, not inscribed items.
+  if (o.lockingScript && !hasOrdEnvelope(o.lockingScript)) return false
+  const origin = tagValue(o.tags, 'origin:') ?? originFromColourCi(o.customInstructions) ?? undefined
+  if (origin && isOnesatFtCollectableMisfile(origin)) return false
+  if (isOnesatFtCollectableMisfile(o.outpoint)) return false
   return true
 }
 
@@ -1031,13 +1079,13 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
   const items: Collectable[] = []
   for (const o of outputs) {
     if (!isListableItem(o)) continue
-    items.push(
-      toCollectable(
-        o,
-        chain,
-        getResolvedInscription(normalizeOutpoint(o.outpoint))
-      )
+    const item = toCollectable(
+      o,
+      chain,
+      getResolvedInscription(normalizeOutpoint(o.outpoint))
     )
+    if (collectableIsOnesatFt(item)) continue
+    items.push(item)
   }
   return dedupeByOrigin(
     items,
@@ -1275,7 +1323,10 @@ async function proveHeldGenesis(
             await yieldToUi()
             const local = await getLocalBeefForTxid(wallet, txid)
             if (local) return local
-            return getBeefForTxidCached(wallet, txid)
+            // Parents of imported / history-less tips are not in local storage.
+            // needProof lets WhatsOnChain / indexer fill the hop; siblings then
+            // share that cached origin tx instead of walking it again.
+            return getBeefForTxidCached(wallet, txid, { needProof: true })
           },
           // Abandoning mid-walk costs one retry; finishing it while somebody is
           // waiting on the panel costs a `listOutputs` timeout. Never abort the
@@ -1658,8 +1709,8 @@ export async function verifyItemAuthenticity(
         heldOutpoint: target,
         getBeef: async (txid) => {
           const local = await getLocalBeefForTxid(wallet, txid)
-          if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
-          return local
+          if (local) return local
+          return getBeefForTxidCached(wallet, txid, { needProof: true })
         },
       })
       if (remittance.proven) {
@@ -1687,8 +1738,8 @@ export async function verifyItemAuthenticity(
         tipOutpoint: target,
         getBeef: async (txid) => {
           const local = await getLocalBeefForTxid(wallet, txid)
-          if (!local) throw new Error(`local BEEF miss ${txid.slice(0, 8)}`)
-          return local
+          if (local) return local
+          return getBeefForTxidCached(wallet, txid, { needProof: true })
         },
       }).catch((err) => {
         console.warn('[brc-150] lineage walk failed', target, err)

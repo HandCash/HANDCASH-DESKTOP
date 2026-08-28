@@ -8,6 +8,7 @@ import {
   looksLikeOnesatFtTip,
   normalizeColourOrigin,
   originFromColourCi,
+  shortOriginLabel,
   parseColourTipAmt,
   parseOnesatFtOriginPolicy,
   selectColourTipsForAmount,
@@ -523,6 +524,13 @@ describe('1Sat fungibles (BRC-175)', () => {
     expect(rows[0]!.origin).toBe(mint)
     expect(rows[0]!.balance).toBe(69000)
     expect(rows[0]!.sym).toBe('KING')
+  })
+
+  it('condenses origin so the vout tail stays readable', () => {
+    const mint =
+      '9c385c416f708fad7627db3dc2ab4f8b28acca7062dfb2dfe56db20e5f961ac4_0'
+    expect(shortOriginLabel(mint)).toBe('9c385c41…5f961ac4_0')
+    expect(shortOriginLabel(mint.replace('_0', '.0'))).toBe('9c385c41…5f961ac4_0')
   })
 
 })

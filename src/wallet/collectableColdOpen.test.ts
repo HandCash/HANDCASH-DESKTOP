@@ -42,7 +42,7 @@ const active = {
   chain: 'main' as const,
   wallet: {
     listOutputs: vi.fn(async () => ({
-      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] }],
+      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
     })),
   },
 }
@@ -80,7 +80,7 @@ describe('collectables across a cold open', () => {
     store.clear()
     recomposeActive = false
     active.wallet.listOutputs.mockResolvedValue({
-      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] }],
+      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] }],
     })
   })
 
@@ -137,8 +137,8 @@ describe('collectables across a cold open', () => {
     const extra = `${'d2'.repeat(32)}.0`
     active.wallet.listOutputs.mockResolvedValueOnce({
       outputs: [
-        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] },
-        { outpoint: extra, satoshis: 1, tags: ['ordinal'] },
+        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] },
+        { outpoint: extra, satoshis: 1, tags: ['ordinal', 'name:Pixel'] },
       ],
       totalOutputs: 2,
     })
@@ -181,5 +181,59 @@ describe('collectables across a cold open', () => {
 
     expect(getCachedCollectables()).toEqual([])
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toEqual([])
+  })
+
+  it('does not paint leftover 1sat-ft origins as collectables', async () => {
+    const ftOrigin = `${'ee'.repeat(32)}_0`
+    const ftTip = `${'ff'.repeat(32)}.1`
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: ftOrigin,
+      amt: 69,
+      outpoint: ftTip.replace('.', '_'),
+      ci: JSON.stringify({ p: '1sat-ft', origin: ftOrigin, amt: '69' }),
+      sym: 'OLD',
+      supply: 'locked',
+      maxSupply: 100,
+    })
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [
+        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] },
+        {
+          outpoint: ftTip,
+          satoshis: 1,
+          tags: ['ordinal', `origin:${ftOrigin.replace('_0', '.0')}`],
+        },
+      ],
+      totalOutputs: 2,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+    await listCollectables(active as never)
+    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
+  })
+
+  it('drops hashed origin-only cards from the durable list', async () => {
+    store.set(
+      LIST_CACHE_KEY,
+      JSON.stringify({
+        at: Date.now(),
+        identityKey: IDENTITY,
+        items: [
+          {
+            outpoint: TIP,
+            origin: TIP.replace('.', '_'),
+            name: 'c1c1c1c1…_0',
+            imageUrl: '',
+            satoshis: 1,
+            traits: [],
+            extras: [],
+            proven: false,
+            authenticity: 'unproven',
+          },
+        ],
+      }),
+    )
+    const { getCachedCollectables } = await import('./collectables')
+    expect(getCachedCollectables()).toEqual([])
   })
 })

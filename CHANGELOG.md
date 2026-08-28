@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.11] - 2026-08-28
+
+### Fixed
+
+- **Leftover 1sat-ft no longer lists under Collectables.** Hashed origin-only cards and misfiled FT tips stay on Tokens. Named 1sat items still paint during sync.
+- **Fungible identity is the origin.** Cards, details, and send show the 1sat-ft origin (middle-ellipsis `txid…txid_vout`), not the local held outpoint.
+- **History-less 1sat items can finish BRC-150.** Parent hops fetch WhatsOnChain / indexer BEEF when local storage misses. Same-origin siblings reuse that cached origin tx; each tip still proves its own hops down to origin.
+
 ## [1.3.10] - 2026-08-28
 
 ### Fixed

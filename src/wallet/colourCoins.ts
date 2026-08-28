@@ -788,11 +788,13 @@ export function shortColourLabel(origin: string): string {
   return o.length >= 10 ? `${o.slice(0, 6)}…${o.slice(-4)}` : o
 }
 
-/** Middle-ellipsis origin so the vout tail stays readable. */
+/** Condensed origin (`txid_vout`). Ellipsis in the middle; `_vout` stays. */
 export function shortOriginLabel(origin: string): string {
-  const o = origin.trim().toLowerCase()
-  if (o.length <= 22) return o
-  return `${o.slice(0, 8)}…${o.slice(-10)}`
+  const o = origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const [txid, vout] = o.split('_')
+  if (!txid) return o
+  if (txid.length <= 16) return o
+  return `${txid.slice(0, 8)}…${txid.slice(-8)}_${vout ?? '?'}`
 }
 
 export function colourTokenAsFungible(token: ColourToken): {

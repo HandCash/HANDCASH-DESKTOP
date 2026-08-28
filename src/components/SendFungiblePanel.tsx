@@ -37,6 +37,7 @@ import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 import { FungibleTokenFace } from './FungibleTokenFace'
+import { shortOriginLabel } from '../wallet/colourCoins'
 
 type Props = {
   tokenId: string
@@ -266,6 +267,9 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
                 <div>
                   <p className="send-eyebrow">Send token</p>
                   <strong className="collectable-details-name">{token.sym}</strong>
+                  <p className="collectable-details-app" title={`Origin ${token.tokenId}`}>
+                    {shortOriginLabel(token.tokenId)}
+                  </p>
                   <p className="collectable-details-app">Balance {balanceLabel}</p>
                 </div>
               </div>

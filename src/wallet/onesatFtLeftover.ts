@@ -196,6 +196,15 @@ export function listOnesatFtLeftovers(): OnesatFtLeftover[] {
   )
 }
 
+
+/** True when this origin/outpoint is leftover or spent 1sat-ft — not a Collect item. */
+export function isOnesatFtCollectableMisfile(originOrOutpoint: string): boolean {
+  const k = normOnesatFtOutpoint(originOrOutpoint)
+  if (!k) return false
+  if (isOnesatFtGenesisSpent(k)) return true
+  return getOnesatFtLeftover(k) != null
+}
+
 export function getOnesatFtLeftover(originOrOutpoint: string): OnesatFtLeftover | null {
   const k = normOnesatFtOutpoint(originOrOutpoint)
   if (!k) return null

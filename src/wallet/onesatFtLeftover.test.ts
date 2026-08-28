@@ -221,4 +221,20 @@ describe('onesatFtLeftover', () => {
     expect(leftover.leftoverForOutpoint(LIVE_CHANGE)?.amt).toBe(68862)
     expect(leftover.getOnesatFtLeftover(KING_ORIGIN)?.outpoint).toBe(LIVE_CHANGE)
   })
+
+  it('marks leftover origin and change as collectable misfiles', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: ORIGIN,
+      amt: 69,
+      outpoint: CHANGE,
+      ci: JSON.stringify({ p: '1sat-ft', origin: ORIGIN, amt: '69' }),
+      sym: 'OLD',
+      supply: 'locked',
+      maxSupply: 100,
+    })
+    expect(leftover.isOnesatFtCollectableMisfile(ORIGIN)).toBe(true)
+    expect(leftover.isOnesatFtCollectableMisfile(CHANGE)).toBe(true)
+    expect(leftover.isOnesatFtCollectableMisfile(`${'11'.repeat(32)}_0`)).toBe(false)
+  })
 })
