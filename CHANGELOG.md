@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.5] - 2026-08-28
+
+### Fixed
+
+- **1Sat FT tips unlock correctly on send/burn.** Inscribed tip sighash uses the
+  full locking script (inscription ‖ P2PKH), matching collectables / BSV-21.
+- **Bare FT transfer tips are no longer painted as collectables.** Address scan
+  walks tip lineage; `application/1sat-ft+json` ancestors hold instead of basket
+  `1sat` (stops “Received ITEM” spam after FT sends).
+- **Chaintracks hangs fail over in ~3s** to Bitails/public headers; Taal ARC is
+  demoted so 401 noise is not first on every broadcast.
+
+### Changed
+
+- Colour (1sat-ft) burn path + amount preview; click-to-copy error banners on
+  burn/send fungible.
+- Docs: BRC-175 mirror + BRC-147 bare-transfer coexistence notes.
+
+
 ## [1.3.4] - 2026-08-27
 
 ### Fixed
