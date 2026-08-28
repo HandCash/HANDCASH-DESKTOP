@@ -448,10 +448,15 @@ export async function refreshFromChainExclusive(
         } else {
           invalidateLiveOneSatOutpoints()
         }
-        // Paint NFTs + tokens off the ingest critical path (parallel listOutputs).
-        void listCollectables(active).catch((err) => {
-          console.warn('[chain-ingest] collectables refresh failed', err)
-        })
+        // Heal FT tips that older probes painted into basket `1sat`, then paint.
+        void import('./reclaimMisfiledOnesatFt')
+          .then(({ reclaimMisfiledOnesatFtTips }) =>
+            reclaimMisfiledOnesatFtTips(active),
+          )
+          .then(() => listCollectables(active))
+          .catch((err) => {
+            console.warn('[chain-ingest] collectables refresh failed', err)
+          })
       } catch (err) {
         console.warn('[chain-ingest] collectables refresh skipped', err)
       }

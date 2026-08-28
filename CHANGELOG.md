@@ -9,6 +9,10 @@
 - **Bare FT transfer tips are no longer painted as collectables.** Address scan
   walks tip lineage; `application/1sat-ft+json` ancestors hold instead of basket
   `1sat` (stops “Received ITEM” spam after FT sends).
+- **Misfiled FT tips reclaim into `1sat-ft`.** Refresh drops NFT duplicates and
+  moves bare FT-lineage tips out of basket `1sat`.
+- **Touch ID no longer prompts on window close / alt-tab.** Hide locks after a
+  grace period; device unlock waits until the lock screen is visible again.
 - **Chaintracks hangs fail over in ~3s** to Bitails/public headers; Taal ARC is
   demoted so 401 noise is not first on every broadcast.
 

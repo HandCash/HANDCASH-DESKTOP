@@ -164,29 +164,54 @@ export function AuthScreen({
     if (mode !== 'locked' || formMode !== 'unlock' || deviceUnlockAttempted || preparing) return
     const factors = readVaultUnlockFactors()
     if (!factors.device) return
-    setDeviceUnlockAttempted(true)
+
+    // Never Touch-ID prompt while the window is hidden (close / alt-tab). Wait
+    // until the user is looking at the lock screen again.
     let cancelled = false
-    ;(async () => {
-      send({ type: 'SUBMIT' })
-      setPreparing({
-        title: 'Unlocking',
-        lede: 'Confirm with this device…',
-      })
-      try {
-        const unlocked = await unlockVaultWithDevice('Unlock HandCash')
-        if (cancelled) return
-        await finishUnlock(unlocked, null)
-      } catch (err) {
-        if (cancelled) return
-        const message = err instanceof Error ? err.message : String(err)
-        setPreparing(null)
-        send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
-        if (message !== 'cancelled') {
-          playWalletSound('error')
-          if (!readVaultUnlockFactors().password) onFail(message)
+    const run = () => {
+      if (cancelled) return
+      if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+        return
+      }
+      setDeviceUnlockAttempted(true)
+      ;(async () => {
+        send({ type: 'SUBMIT' })
+        setPreparing({
+          title: 'Unlocking',
+          lede: 'Confirm with this device…',
+        })
+        try {
+          const unlocked = await unlockVaultWithDevice('Unlock HandCash')
+          if (cancelled) return
+          await finishUnlock(unlocked, null)
+        } catch (err) {
+          if (cancelled) return
+          const message = err instanceof Error ? err.message : String(err)
+          setPreparing(null)
+          send({ type: 'FAIL', error: message === 'cancelled' ? '' : message })
+          if (message !== 'cancelled') {
+            playWalletSound('error')
+            if (!readVaultUnlockFactors().password) onFail(message)
+          }
+        }
+      })()
+    }
+
+    if (typeof document !== 'undefined' && document.visibilityState !== 'visible') {
+      const onVis = () => {
+        if (document.visibilityState === 'visible') {
+          document.removeEventListener('visibilitychange', onVis)
+          run()
         }
       }
-    })()
+      document.addEventListener('visibilitychange', onVis)
+      return () => {
+        cancelled = true
+        document.removeEventListener('visibilitychange', onVis)
+      }
+    }
+
+    run()
     return () => {
       cancelled = true
     }
