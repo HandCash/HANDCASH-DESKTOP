@@ -237,6 +237,11 @@ export function WhatIsBsvPanel() {
           className="bsv-toast-cover"
           data-aeon-part="toast-cover"
           data-tone={toast.tone}
+          style={
+            toast.tone === 'error'
+              ? { background: '#8b1e1e', color: '#f5f5f5' }
+              : { background: '#c8ffe0', color: '#0a0a0a' }
+          }
           aria-live={toast.tone === 'error' ? 'assertive' : 'polite'}
           aria-atomic="true"
           title="Dismiss"
