@@ -265,6 +265,47 @@ export function looksLikeOnesatFtTip(args: {
   return false
 }
 
+
+/** Mint origin from a 1sat-ft envelope body. Missing origin ⇒ this tip is the mint. */
+export function originFromOnesatFtLock(scriptHex?: string): string | null {
+  if (!scriptHex) return null
+  const env = parseOrdEnvelope(scriptHex)
+  if (!env) return null
+  const mime = (env.contentType ?? '').toLowerCase().split(';')[0]?.trim()
+  if (mime !== ONESAT_FT_MIME && !looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) {
+    return null
+  }
+  if (!env.body?.length) return null
+  try {
+    const json = asRecord(JSON.parse(decoder.decode(env.body)))
+    const raw = typeof json?.origin === 'string' ? json.origin : ''
+    if (!raw.trim()) return null
+    return normalizeColourOrigin(raw)
+  } catch {
+    return null
+  }
+}
+
+
+/** True when the envelope is a leftover hop: MIME FT and body is only `amt`. */
+export function isOnesatFtAmtHop(scriptHex?: string): boolean {
+  if (!scriptHex) return false
+  const env = parseOrdEnvelope(scriptHex)
+  if (!env) return false
+  const mime = (env.contentType ?? '').toLowerCase().split(';')[0]?.trim()
+  if (mime !== ONESAT_FT_MIME) return false
+  if (!env.body?.length) return false
+  try {
+    const json = asRecord(JSON.parse(decoder.decode(env.body)))
+    if (!json) return false
+    const keys = Object.keys(json).map((k) => k.toLowerCase())
+    if (!keys.includes('amt')) return false
+    return keys.every((k) => k === 'amt' || k === 'sym')
+  } catch {
+    return false
+  }
+}
+
 function asRecord(raw: unknown): Record<string, unknown> | null {
   let v = raw
   if (typeof v === 'string') {
@@ -848,6 +889,10 @@ export function selectColourTipsForAmount(
   }
   const usable = tips
     .filter((t) => tipCountsTowardBalance(t))
+    .filter(
+      (t) =>
+        !(t.tags ?? []).some((tag) => String(tag).toLowerCase() === 'market-held'),
+    )
     .sort((a, b) => tipFaceAmt(b) - tipFaceAmt(a))
   const selected: ColourTip[] = []
   let selectedSum = 0

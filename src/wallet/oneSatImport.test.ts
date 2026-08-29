@@ -9,6 +9,10 @@ import {
   resolveInscriptionPreferringOrigin,
   resolveOneSatInscription,
 } from './oneSatImport'
+import {
+  buildOnesatFtMintLockingScript,
+  buildOnesatFtTransferLockingScript,
+} from './onesatFtInscribe'
 import { shouldResolveInscription } from './inscriptionCache'
 import type { LegacyUtxo } from './legacyScan'
 
@@ -297,6 +301,42 @@ describe('classifyLegacyUtxos', () => {
       }),
     ])
     expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('files an amt-inscribed leftover by walking to the mint, like 1sat', async () => {
+    const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
+    const mintLock = buildOnesatFtMintLockingScript({
+      address: addr,
+      sym: 'KING',
+      amt: 69000,
+    }).lockingScript
+    const hopLock = buildOnesatFtTransferLockingScript({
+      address: addr,
+      amt: 9000,
+    }).lockingScript
+    const mint = buildTx([{ scriptHex: mintLock, satoshis: 1 }])
+    const transfer = buildTx(
+      [{ scriptHex: hopLock, satoshis: 1 }],
+      [{ txid: mint.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(mint, transfer)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${transfer.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats).toEqual([])
+    expect(result.onesatFt).toEqual([
+      expect.objectContaining({
+        outpoint: tipOutpoint,
+        origin: `${mint.id('hex')}_0`,
+      }),
+    ])
 
     activeWallet = null
     vi.unstubAllGlobals()

@@ -37,6 +37,7 @@ import { normalizeOutpoint } from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import { stampBrc164Id } from './itemAccess'
+import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 import { isCovenantLockedScript } from './collectableTipKind'
 import { tryBuildProvenanceForSend } from './oneSatProvenance'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -325,8 +326,17 @@ export async function sendColourCoins(args: {
       let payeeLock: string
       let changeLock: string
       try {
-        payeeLock = new P2PKH().lock(to).toHex()
-        changeLock = new P2PKH().lock(wallet.address).toHex()
+        payeeLock = buildOnesatFtTransferLockingScript({
+          address: to,
+          amt: amount,
+        }).lockingScript
+        changeLock =
+          change > 0
+            ? buildOnesatFtTransferLockingScript({
+                address: wallet.address,
+                amt: change,
+              }).lockingScript
+            : new P2PKH().lock(wallet.address).toHex()
       } catch {
         throw new Error('Invalid recipient address or identity key')
       }

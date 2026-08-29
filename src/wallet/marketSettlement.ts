@@ -38,6 +38,11 @@ import {
   parseProvenanceV2,
 } from './oneSatProvenance'
 import {
+  ONESAT_FT_BASKET,
+  buildColourCustomInstructions,
+  colourTags,
+} from './colourCoins'
+import {
   MARKET_ITEM_VOUT,
   MARKET_OFFER_DEPOSIT_SATS,
   parseMarketOffer,
@@ -430,13 +435,23 @@ export async function executeMarketPurchase(
           lockingScript: buyerLock,
           satoshis: 1,
           outputDescription: 'Market item to buyer',
-          basket: '1sat',
-          tags: ['ordinal', `origin:${listing.origin.replace('_', '.')}`],
-          customInstructions: buildCollectableCustomInstructions({
-            origin: listing.origin,
-            name: 'Market item',
-            provenance,
-          }),
+          basket: listing.assetType === '1sat-ft' ? ONESAT_FT_BASKET : '1sat',
+          tags:
+            listing.assetType === '1sat-ft'
+              ? colourTags(listing.origin)
+              : ['ordinal', `origin:${listing.origin.replace('_', '.')}`],
+          customInstructions:
+            listing.assetType === '1sat-ft'
+              ? buildColourCustomInstructions({
+                  origin: listing.origin,
+                  amt: listing.amt,
+                  provenance,
+                })
+              : buildCollectableCustomInstructions({
+                  origin: listing.origin,
+                  name: 'Market item',
+                  provenance,
+                }),
         },
         {
           lockingScript: sellerLock,

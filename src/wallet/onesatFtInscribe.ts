@@ -85,4 +85,23 @@ export function buildOnesatFtMintLockingScript(args: {
   }
 }
 
+
+/** Leftover tip: amt on chain. Origin is the BRC-150 / spend-chain walk, like 1sat. */
+export function buildOnesatFtTransferLockingScript(args: {
+  address: string
+  amt: number
+}): { lockingScript: string; json: Record<string, string> } {
+  if (!Number.isSafeInteger(args.amt) || args.amt <= 0) {
+    throw new Error('Transfer amt must be a positive integer')
+  }
+  const json: Record<string, string> = { amt: String(args.amt) }
+  const body = encoder.encode(JSON.stringify(json))
+  return {
+    lockingScript: (
+      ordEnvelopeHex(MIME, body) + p2pkhScriptHex(args.address)
+    ).toLowerCase(),
+    json,
+  }
+}
+
 export { ONESAT_FT_PROTOCOL, MIME as ONESAT_FT_MIME }

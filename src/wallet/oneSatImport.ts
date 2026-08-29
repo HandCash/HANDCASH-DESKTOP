@@ -54,8 +54,11 @@ import {
   buildColourCustomInstructions,
   colourTags,
   isOnesatFtMime,
+  isOnesatFtAmtHop,
   looksLikeOnesatFtTip,
   normalizeColourOrigin,
+  originFromOnesatFtLock,
+  parseColourTipAmt,
 } from './colourCoins'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
@@ -924,7 +927,7 @@ export const MAX_TRANSFER_PROBES_PER_PASS = 12
 type OrdinalTransferProbe = 'item' | 'bsv21' | 'ft' | 'unknown'
 
 /** Inscribed parent tip shape — bare needs a further hop. */
-type OnesatParentShape = 'nft' | 'ft' | 'bare' | 'other'
+type OnesatParentShape = 'nft' | 'ft' | 'ftHop' | 'bare' | 'other'
 
 /** Bound the FT-vs-NFT lineage walk on bare transfer tips. */
 const BARE_LINEAGE_DEPTH = 6
@@ -934,10 +937,13 @@ function shapeOfOnesatLock(
   satoshis: number | undefined,
 ): OnesatParentShape {
   if (satoshis !== 1) return 'other'
+  if (isOnesatFtAmtHop(scriptHex)) return 'ftHop'
   if (looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) return 'ft'
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
-    if (isOnesatFtMime(envelope.contentType)) return 'ft'
+    if (isOnesatFtMime(envelope.contentType)) {
+      return isOnesatFtAmtHop(scriptHex) ? 'ftHop' : 'ft'
+    }
     if (isBsv21Mime(envelope.contentType)) return 'other'
     return 'nft'
   }
@@ -991,7 +997,7 @@ async function lineageOfBareOnesatSpend(
       sawNft = true
       continue
     }
-    if (shape === 'bare') {
+    if (shape === 'bare' || shape === 'ftHop') {
       const nested = await lineageOfBareOnesatSpend(
         parentTx,
         chain,
@@ -1048,6 +1054,18 @@ async function probeOrdinalTransfer(
       isOnesatFtMime(envelope.contentType) ||
       looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })
     ) {
+      const named = originFromOnesatFtLock(scriptHex)
+      if (named) return { kind: 'ft', origin: named }
+      if (isOnesatFtAmtHop(scriptHex)) {
+        const lineage = await lineageOfBareOnesatSpend(
+          tx,
+          chain,
+          BARE_LINEAGE_DEPTH,
+          new Set(),
+        )
+        if (lineage.kind === 'ft') return { kind: 'ft', origin: lineage.origin }
+        return { kind: 'unknown' }
+      }
       return { kind: 'ft', origin: txidVoutUnderscore(txid, vout) }
     }
     // Image sibling in a 1sat-ft genesis tx is a ticker icon, not a collectable.
@@ -1495,15 +1513,22 @@ export async function importOnesatFtTips(
       await yieldToUi()
       const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
       await yieldToUi()
+      const beef = Beef.fromBinary(atomic)
+      const sourceTx = beef.findAtomicTransaction(txid)
       const remittanceOutputs = group.map((item) => {
         const origin = normalizeColourOrigin(item.origin ?? txidVoutUnderscore(txid, item.vout!))
+        const scriptHex = sourceTx?.outputs?.[item.vout!]?.lockingScript?.toHex()
+        const amt = parseColourTipAmt({ lockingScriptHex: scriptHex })
         return {
           outputIndex: item.vout!,
           protocol: 'basket insertion' as const,
           insertionRemittance: {
             basket: ONESAT_FT_BASKET,
             tags: stampBrc164Id(colourTags(origin)),
-            customInstructions: buildColourCustomInstructions({ origin }),
+            customInstructions: buildColourCustomInstructions({
+              origin,
+              ...(amt > 0 ? { amt } : {}),
+            }),
           },
         }
       })

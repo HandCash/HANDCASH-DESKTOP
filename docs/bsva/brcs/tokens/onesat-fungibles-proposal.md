@@ -19,7 +19,7 @@ Why not BSV-21: less indexer-bound discovery/settlement; same tip-move path as 1
 | Concept          | Rule                                                                                                                             |
 | ---------------- | -------------------------------------------------------------------------------------------------------------------------------- |
 | Carrier          | Every tip is still `satoshis === 1`. Face value is **not** sat count.                                                            |
-| `amt`            | Positive integer units on the tip (inscription and/or remittance).                                                               |
+| `amt`            | Positive integer units on the tip. On-chain on the mint and on every new colour tip. Remittance is a fast path only.             |
 | Balance          | Sum of `amt` on bound tips held for that origin.                                                                                 |
 | `supply` / `max` | **Optional.** When `supply: locked`, `max` is total units; genesis Σ `amt` SHOULD equal `max`.                                   |
 | Mint             | MAY be **one tip** with large `amt`, or several tips. Locked mint: Σ genesis `amt` = `max`.                                      |
@@ -38,7 +38,7 @@ Example: hold one tip `amt: 1000`. Send 400 to Alice, 300 to Bob → three new t
 4. **Bind** — genesis / mint-batch / BRC-150 / **proven** parent hop; reject unbound (a bare `parent` claim never binds)
 5. Balance = Σ `amt` (missing `amt` ⇒ `1`)
 
-Chain scan may surface 1-sat outs; **import into `1sat-ft` only after bind**. Peer remittance remains a first-class ingest path.
+Chain scan may surface 1-sat outs; **import into `1sat-ft` only after bind**. Read origin + amt from the tip inscription when present. Peer remittance is a fast path only.
 
 ## Gap fill (non-objectionable)
 
@@ -59,13 +59,15 @@ Chain scan may surface 1-sat outs; **import into `1sat-ft` only after bind**. Pe
 
 Normative text: [BRC-175](./0175.md) §Chain scan and basket separation / §Security, and [BRC-147](./0147.md) Compatibility.
 
-Transfer tips are **bare P2PKH** (same custody shape as NFT tip moves). Wallets that treat “bare 1-sat spending a 1-sat parent ⇒ NFT” will **misfile** FT payee/change tips into basket `1sat`. Re-inscribing transfers does **not** help those clients — unknown ord mimes still become collectables.
+New colour tips are **inscribed** (`application/1sat-ft+json` with `origin` + `amt`). Remittance is a fast path, same as NFT. Legacy bare leftovers still exist; walk lineage and do not invent `amt`.
+
+Wallets that treat “bare 1-sat spending a 1-sat parent ⇒ NFT” will misfile those legacy leftovers. Wallets that treat unknown `ord` mimes as collectables may misfile inscribed tips — that is an old-client bug.
 
 **Avoidance:**
 
-1. **Receive (this client):** never auto-NFT on bare+1sat-parent alone — walk to an inscribed ancestor; FT mime ⇒ hold / `1sat-ft` bind, not `1sat`.
-2. **Send:** remittance + prefer peers that advertise `1sat-ft` / BRC-175; warn or block bare-address sends to unknown clients.
-3. **Cannot** patch old binaries — recipients must update; until then tips are at burn-as-NFT risk if they treat misfiled cards as junk.
+1. **Receive (this client):** never auto-NFT on bare+1sat-parent alone — walk to an inscribed ancestor; FT mime ⇒ `1sat-ft`, not `1sat`.
+2. **Send:** inscribe origin + amt on payee and change. Remittance is optional speed-up.
+3. **Cannot** patch old binaries — recipients must update.
 
 
 ## Wallet

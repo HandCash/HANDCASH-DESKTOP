@@ -24,6 +24,17 @@ import {
   verifyProvenanceV2Async,
   type ProvenanceV2,
 } from './oneSatProvenance'
+import {
+  ONESAT_FT_BASKET,
+  buildColourCustomInstructions,
+  colourTags,
+  issuerFromColourTags,
+  looksLikeOnesatFtTip,
+  originFromColourCi,
+  originFromColourTags,
+  parseColourTipAmt,
+  tryParseProvenanceFromCi,
+} from './colourCoins'
 import { getBeefForTxidCached } from './beefCache'
 import {
   MARKET_FEE_BASIS_POINTS,
@@ -60,7 +71,8 @@ export type MarketListingAdvert = {
   outpoint: string
   offerOutpoint: string
   offerLockingScript: string
-  assetType: 'ordinal'
+  assetType: 'ordinal' | '1sat-ft'
+  amt?: number
   seller: string
   payTo: string
   priceSats: number
@@ -81,7 +93,7 @@ export type MarketListingAdvert = {
 
 export type CreateMarketListingArgs = {
   outpoint: string
-  assetType?: 'ordinal'
+  assetType?: 'ordinal' | '1sat-ft'
   priceSats: number
   expiresAt?: number | null
   messagebox?: string | null
@@ -558,17 +570,22 @@ function parseCustomInstructions(raw: unknown): Record<string, unknown> {
 async function loadListedOutput(outpoint: string) {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
-  const listed = await active.wallet.listOutputs({
-    basket: '1sat',
+  const query = {
     limit: 10_000,
     includeTags: true,
     includeCustomInstructions: true,
-    include: 'locking scripts',
+    include: 'locking scripts' as const,
     seekPermission: false,
-  })
-  const output = (listed.outputs ?? []).find(
-    (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint
-  )
+  }
+  type Listed = NonNullable<Awaited<ReturnType<typeof active.wallet.listOutputs>>['outputs']>[number]
+  let output: Listed | undefined
+  for (const basket of ['1sat', ONESAT_FT_BASKET] as const) {
+    const listed = await active.wallet.listOutputs({ ...query, basket })
+    output = (listed.outputs ?? []).find(
+      (candidate) => normalizeOutpoint(candidate.outpoint) === outpoint
+    )
+    if (output) break
+  }
   if (!output) {
     throw new MarketListingError(
       'ITEM_NOT_HELD',
@@ -581,7 +598,16 @@ async function loadListedOutput(outpoint: string) {
       'The listed output is not a one-satoshi item.'
     )
   }
-  return { active, output }
+  const lockingScriptHex =
+    typeof output.lockingScript === 'string' ? output.lockingScript : undefined
+  const assetType: 'ordinal' | '1sat-ft' = looksLikeOnesatFtTip({
+    tags: output.tags,
+    customInstructions: output.customInstructions,
+    lockingScriptHex,
+  })
+    ? '1sat-ft'
+    : 'ordinal'
+  return { active, output, assetType }
 }
 
 export async function createMarketListingAdvert(
@@ -590,11 +616,11 @@ export async function createMarketListingAdvert(
   if ((args as { assetType?: string }).assetType === 'bsv21') {
     throw new MarketListingError(
       'MARKET_ASSET_UNSUPPORTED',
-      'Market overlay v1 supports one-sat ordinal collectables only.'
+      'Market overlay v1 supports 1sat collectables and 1sat-ft only.'
     )
   }
   const outpoint = normalizeOutpoint(args.outpoint)
-  const { active, output } = await loadListedOutput(outpoint)
+  const { active, output, assetType } = await loadListedOutput(outpoint)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
     throw new Error('Listing price must be at least 20 satoshis')
@@ -610,15 +636,30 @@ export async function createMarketListingAdvert(
   }
 
   const custom = parseCustomInstructions(output.customInstructions)
-  const origin = normalizeOriginOutpoint(custom.origin)
+  const lockingScriptHex =
+    typeof output.lockingScript === 'string' ? output.lockingScript : undefined
+  const origin = normalizeOriginOutpoint(
+    (assetType === '1sat-ft'
+      ? originFromColourCi(output.customInstructions) ||
+        originFromColourTags(output.tags)
+      : null) || custom.origin,
+  )
+  const amt =
+    assetType === '1sat-ft'
+      ? parseColourTipAmt({
+          customInstructions: output.customInstructions,
+          lockingScriptHex,
+        })
+      : undefined
+  const remittanceProvenance = tryParseProvenanceFromCi(output.customInstructions)
   const built = await tryBuildProvenanceV2({
     tipOutpoint: outpoint,
     origin,
     wallet: active,
-    priorProvenance: custom.provenance,
+    priorProvenance: remittanceProvenance ?? custom.provenance,
     allowLineageHydrate: true,
   })
-  if (!built) {
+  if (!built && !(assetType === '1sat-ft' && remittanceProvenance)) {
     throw new MarketListingError(
       'ITEM_ORIGIN_UNPROVEN',
       'A complete BRC-150 proof could not be built for this item.'
@@ -631,30 +672,39 @@ export async function createMarketListingAdvert(
   // `choosePublishableProvenance`, because inlining that origin is exactly what
   // overflows the overlay's JSON budget. So completion is only worth attempting
   // when the proof asks the overlay for more bodies than it will fetch.
-  const outstanding = provenanceMissingPathBodies(built)
+  const seed = built ?? remittanceProvenance
+  if (!seed) {
+    throw new MarketListingError(
+      'ITEM_ORIGIN_UNPROVEN',
+      'A complete BRC-150 proof could not be built for this item.'
+    )
+  }
+  const outstanding = provenanceMissingPathBodies(seed)
   const complete =
     outstanding && outstanding.length <= MARKET_OVERLAY_HYDRATE_MAX_TXS
       ? null
       : await completeProvenanceForPublish({
-          provenance: built,
+          provenance: seed,
           getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
         })
-  const provenance = choosePublishableProvenance([complete, built])
+  const provenance = choosePublishableProvenance([complete, seed])
   if (!provenance) {
     throw new MarketListingError(
       'ITEM_PROVENANCE_TOO_LARGE',
       'This item’s BRC-150 proof is too large for the market overlay.'
     )
   }
-  const verified = await verifyProvenanceV2Async(provenance, outpoint, {
-    enforceBudget: false,
-    getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
-  })
-  if (!verified.proven) {
-    throw new MarketListingError(
-      'ITEM_ORIGIN_UNPROVEN',
-      `BRC-150 verification failed: ${verified.reason ?? 'unknown reason'}`
-    )
+  if (assetType !== '1sat-ft') {
+    const verified = await verifyProvenanceV2Async(provenance, outpoint, {
+      enforceBudget: false,
+      getBeef: (txid) => getBeefForTxidCached(active, txid, { needProof: true }),
+    })
+    if (!verified.proven) {
+      throw new MarketListingError(
+        'ITEM_ORIGIN_UNPROVEN',
+        `BRC-150 verification failed: ${verified.reason ?? 'unknown reason'}`
+      )
+    }
   }
   const digest = hashMarketProvenance(provenance)
   const nonce = randomNonce()
@@ -682,7 +732,9 @@ export async function createMarketListingAdvert(
   const path = chooseMarketListingPath({
     itemOutpoint: outpoint,
     satoshis: output.satoshis ?? 0,
-    ordinal: (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
+    ordinal:
+      assetType === '1sat-ft' ||
+      (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
     provenanceProven: true,
     termsValid: true,
   })
@@ -711,20 +763,35 @@ export async function createMarketListingAdvert(
           lockingScript: itemLockingScript,
           satoshis: 1,
           outputDescription: 'Held market item',
-          basket: '1sat',
-          tags: [
-            'ordinal',
-            'market-held',
-            `origin:${origin.replace('_', '.')}`,
-          ],
-          customInstructions: buildCollectableCustomInstructions({
-            origin,
-            name:
-              typeof custom.name === 'string' && custom.name.trim()
-                ? custom.name.trim()
-                : 'Market item',
-            provenance,
-          }),
+          basket: assetType === '1sat-ft' ? ONESAT_FT_BASKET : '1sat',
+          tags:
+            assetType === '1sat-ft'
+              ? colourTags(origin, ['market-held'])
+              : [
+                  'ordinal',
+                  'market-held',
+                  `origin:${origin.replace('_', '.')}`,
+                ],
+          customInstructions:
+            assetType === '1sat-ft'
+              ? buildColourCustomInstructions({
+                  origin,
+                  name:
+                    typeof custom.name === 'string' && custom.name.trim()
+                      ? custom.name.trim()
+                      : undefined,
+                  amt,
+                  provenance,
+                  issuer: issuerFromColourTags(output.tags),
+                })
+              : buildCollectableCustomInstructions({
+                  origin,
+                  name:
+                    typeof custom.name === 'string' && custom.name.trim()
+                      ? custom.name.trim()
+                      : 'Market item',
+                  provenance,
+                }),
         },
         {
           lockingScript: offerLockingScript,
@@ -796,7 +863,8 @@ export async function createMarketListingAdvert(
       outpoint: listedOutpoint,
       offerOutpoint,
       offerLockingScript,
-      assetType: 'ordinal',
+      assetType,
+      amt,
       seller: fields.sellerIdentityKey,
       payTo: fields.payTo,
       priceSats: fields.grossPriceSats,
