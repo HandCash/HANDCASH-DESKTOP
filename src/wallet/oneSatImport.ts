@@ -937,7 +937,7 @@ function shapeOfOnesatLock(
   if (looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) return 'ft'
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
-    if (isOnesatFtMime(envelope.contentType) || looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) return { kind: 'ft', origin: txidVoutUnderscore(txid, vout) }
+    if (isOnesatFtMime(envelope.contentType)) return 'ft'
     if (isBsv21Mime(envelope.contentType)) return 'other'
     return 'nft'
   }
