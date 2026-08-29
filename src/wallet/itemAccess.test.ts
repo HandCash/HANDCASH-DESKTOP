@@ -1,21 +1,32 @@
 import { describe, expect, it } from 'vitest'
 import {
   isBsv21SpendArgs,
+  isColourBasket,
   isColourIssuanceArgs,
   isItemBasket,
   isItemIssuanceArgs,
   isItemSpendArgs,
+  isThirdPartyOriginator,
+  isTokenViewBasket,
   isUnsupportedPBasket,
   itemViewGranted,
   mergeItemViewGrant,
+  mergeTokenViewGrant,
   normalizeItemAccess,
   outputMatchesItemAccess,
+  outputMatchesTokenAccess,
   parseItemViewRequest,
   parsePBasket,
+  parseTokenViewRequest,
   p1SatSpendIds,
   prepareItemBasketArgs,
   stampBrc164Id,
+  tokenViewGranted,
+  grantableCollectionIdsFromOutputs,
+  grantableTokensFromOutputs,
+  shouldRefuseColourList,
   DEFAULT_ITEM_ACCESS,
+  DEFAULT_TOKEN_ACCESS,
 } from './itemAccess'
 
 describe('BRC-99 p 1sat baskets', () => {
@@ -297,6 +308,117 @@ describe('telling an item mint from an item send', () => {
         description: 'Pay',
         outputs: [{ lockingScript: '00', satoshis: 5000 }],
       }),
+    ).toBe(false)
+  })
+})
+
+describe('third-party item and token view', () => {
+  const allRequest = parseItemViewRequest({ basket: 'p 1sat all' })
+
+  it('does not treat bsv21 as an item basket covered by 1sat all', () => {
+    expect(isItemBasket('bsv21')).toBe(false)
+    expect(isItemBasket('p bsv21 all')).toBe(false)
+    expect(isTokenViewBasket('bsv21')).toBe(true)
+    expect(isTokenViewBasket('p bsv21 all')).toBe(true)
+    expect(isUnsupportedPBasket('p bsv21 all')).toBe(false)
+    const itemAll = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, allRequest)
+    expect(itemAll.view).toBe('all')
+    expect(
+      tokenViewGranted(DEFAULT_TOKEN_ACCESS, parseTokenViewRequest({ basket: 'bsv21' })),
+    ).toBe(false)
+  })
+
+  it('refuses view=all for third-party grants and keeps a filtered ceiling', () => {
+    expect(isThirdPartyOriginator('market.handcash.io')).toBe(true)
+    expect(isThirdPartyOriginator(undefined)).toBe(false)
+    const access = mergeItemViewGrant(
+      DEFAULT_ITEM_ACCESS,
+      { ...allRequest, wantsAll: true, collections: ['alpha'] },
+      { allowAll: false },
+    )
+    expect(access.view).toBe('filtered')
+    expect(access.view).not.toBe('all')
+    expect(access.collections).toEqual(['alpha'])
+  })
+
+  it('lets a filtered grant satisfy a later p 1sat all and filters results', () => {
+    const access = mergeItemViewGrant(DEFAULT_ITEM_ACCESS, {
+      scope: 'collection',
+      collections: ['alpha'],
+      apps: [],
+      creators: [],
+      ids: [],
+      wantsAll: false,
+    })
+    expect(itemViewGranted(access, allRequest)).toBe(true)
+    expect(
+      outputMatchesItemAccess(access, ['collection:alpha', 'name:Ace'], undefined, allRequest),
+    ).toBe(true)
+    expect(
+      outputMatchesItemAccess(access, ['collection:other', 'name:Zed'], undefined, allRequest),
+    ).toBe(false)
+    expect(
+      outputMatchesItemAccess(access, ['1sat-ft', 'name:FOX'], undefined, allRequest),
+    ).toBe(false)
+  })
+
+  it('returns empty colour lists for third parties', () => {
+    expect(isColourBasket('1sat-ft')).toBe(true)
+    expect(shouldRefuseColourList('market.handcash.io', '1sat-ft')).toBe(true)
+    expect(shouldRefuseColourList(undefined, '1sat-ft')).toBe(false)
+    expect(shouldRefuseColourList('market.handcash.io', '1sat')).toBe(false)
+  })
+
+  it('does not put 1sat-ft leftover or unnamed rows in the collection picker', () => {
+    const { collections, apps } = grantableCollectionIdsFromOutputs([
+      { tags: ['collection:alpha', 'name:Ace'] },
+      { tags: ['1sat-ft', 'name:FOX'], customInstructions: JSON.stringify({ p: '1sat-ft' }) },
+      { tags: [], customInstructions: JSON.stringify({ p: '1sat-ft', amt: '69000' }) },
+      { tags: ['origin:aa.0'] },
+    ])
+    expect(collections).toEqual(['alpha'])
+    expect(apps).toEqual([])
+  })
+
+  it('still hides leftover FOX when an old grant is view=all', () => {
+    const access = { ...DEFAULT_ITEM_ACCESS, view: 'all' as const }
+    expect(
+      outputMatchesItemAccess(
+        access,
+        ['collection:fox', 'name:FOX'],
+        JSON.stringify({ p: '1sat-ft', amt: '69000' }),
+      ),
+    ).toBe(false)
+    expect(outputMatchesItemAccess(access, ['collection:alpha', 'name:Ace'])).toBe(true)
+    expect(outputMatchesItemAccess(access, ['origin:aa.0'])).toBe(false)
+  })
+
+  it('grants only live 162 token ids, not leftover FOX', () => {
+    const origin = `${'ab'.repeat(32)}_0`
+    const tokens = grantableTokensFromOutputs([
+      {
+        tags: ['bsv21', `bsv21:${origin}`, 'sym:KING'],
+        customInstructions: JSON.stringify({ p: 'bsv-20', id: origin, sym: 'KING', amt: '40' }),
+      },
+      {
+        tags: ['1sat-ft', 'name:FOX'],
+        customInstructions: JSON.stringify({ p: '1sat-ft', amt: '69000' }),
+      },
+    ])
+    expect(tokens).toEqual([{ id: origin, ticker: 'KING' }])
+    const access = mergeTokenViewGrant(
+      DEFAULT_TOKEN_ACCESS,
+      { scope: 'id', ids: [origin], wantsAll: false },
+      { allowAll: false },
+    )
+    expect(access.view).toBe('filtered')
+    const allTokens = parseTokenViewRequest({ basket: 'p bsv21 all' })
+    expect(tokenViewGranted(access, allTokens)).toBe(true)
+    expect(
+      outputMatchesTokenAccess(access, ['bsv21', `bsv21:${origin}`], undefined, allTokens),
+    ).toBe(true)
+    expect(
+      outputMatchesTokenAccess(access, ['bsv21', `bsv21:${'cd'.repeat(32)}_0`], undefined, allTokens),
     ).toBe(false)
   })
 })

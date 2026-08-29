@@ -2249,6 +2249,25 @@ button.wallet-detail-value.is-copied {
   font-size: 0.7rem;
 }
 
+.dashboard-side .permission-item-preview,
+.permission-side-panel .permission-item-preview {
+  grid-template-columns: 56px minmax(0, 1fr);
+  gap: 10px;
+  margin: 8px 0 0;
+  padding: 8px;
+}
+
+.dashboard-side .permission-item-preview .media-preload,
+.dashboard-side .permission-item-preview img,
+.dashboard-side .permission-item-preview-fallback,
+.permission-side-panel .permission-item-preview .media-preload,
+.permission-side-panel .permission-item-preview img,
+.permission-side-panel .permission-item-preview-fallback {
+  width: 56px;
+  height: 56px;
+  border-radius: 8px;
+}
+
 .auto-pay {
   margin: 10px 0 8px;
   padding: 10px 12px 12px;

@@ -116,7 +116,7 @@ function persistDurableList(items: FungibleToken[]): void {
 
 function leftoverCollectableSym(sym: string | undefined): boolean {
   const s = (sym ?? '').trim()
-  return s === 'Collectable' || s === 'FOX' || s.startsWith('Pixel Foxes')
+  return s === 'Collectable' || s.startsWith('Pixel Foxes')
 }
 
 function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {

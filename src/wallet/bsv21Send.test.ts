@@ -196,6 +196,20 @@ describe('bsv21Send remittance', () => {
     expect(remit.tags).toContain('amt:60')
   })
 
+  it('carries icon outpoint on 163 remittance', () => {
+    const tokenId = `${'ab'.repeat(32)}_7`
+    const icon = `${'cd'.repeat(32)}_1`
+    const remit = buildBsv21SendRemittance({
+      tokenId,
+      amt: 60n,
+      sym: 'GOLD',
+      icon,
+    })
+    const ci = JSON.parse(remit.customInstructions) as { icon?: string }
+    expect(ci.icon).toBe(icon)
+    expect(remit.tags).toContain(`icon:${icon}`)
+  })
+
   it('decodes a 162 listed script as a spendable tip', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
     const script = buildBsv21ValueLock({

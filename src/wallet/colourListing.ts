@@ -237,3 +237,38 @@ export async function listColourTipsForOrigin(
       : origin.toLowerCase())
   return tips.filter((t) => t.origin === want && t.satoshis === 1 && t.amt > 0)
 }
+
+/** Stamp icon:<outpoint> on listed 162 rows when the deploy payload names one. */
+export function stampBsv21IconOnListedOutputs(result: unknown): unknown {
+  if (!result || typeof result !== 'object') return result
+  const body = result as { outputs?: unknown[] }
+  if (!Array.isArray(body.outputs)) return result
+  return {
+    ...body,
+    outputs: body.outputs.map((raw) => {
+      if (!raw || typeof raw !== 'object') return raw
+      const row = raw as ListedOutput
+      const tip = decodeListedBsv21Tip(row)
+      if (!tip?.icon) return raw
+      const tags = Array.isArray(row.tags) ? [...row.tags.map(String)] : []
+      if (!tags.some((t) => t.toLowerCase().startsWith('icon:'))) {
+        tags.push(`icon:${tip.icon}`)
+      }
+      let custom = row.customInstructions
+      if (typeof custom === 'string' && custom.trim()) {
+        try {
+          const o = JSON.parse(custom) as Record<string, unknown>
+          if (o && typeof o === 'object' && typeof o.icon !== 'string') {
+            o.icon = tip.icon
+            custom = JSON.stringify(o)
+          }
+        } catch {
+          /* keep original CI */
+        }
+      } else {
+        custom = JSON.stringify({ p: 'bsv-20', icon: tip.icon, id: tip.tokenId, amt: tip.amt })
+      }
+      return { ...raw, tags, customInstructions: custom }
+    }),
+  }
+}

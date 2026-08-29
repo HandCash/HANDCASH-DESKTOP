@@ -410,6 +410,7 @@ export function recordAppActivity(args: {
   txid?: string
   item?: ActivityItem
   status?: ActivityStatus
+  failureReason?: string
 }): void {
   upsertAppActivity(args)
 }
@@ -1174,6 +1175,10 @@ export function recordWalletEvent(args: {
   origin?: string
   method: string
   note: string
+  txid?: string
+  item?: ActivityItem
+  status?: ActivityStatus
+  failureReason?: string
 }): void {
   recordAppActivity({
     origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
@@ -1181,7 +1186,35 @@ export function recordWalletEvent(args: {
     sats: 0,
     method: args.method,
     note: args.note.trim().slice(0, 160),
+    ...(args.txid ? { txid: args.txid } : {}),
+    ...(args.item ? { item: args.item } : {}),
+    ...(args.status ? { status: args.status } : {}),
+    ...(args.failureReason ? { failureReason: args.failureReason } : {}),
   })
+}
+
+/** Overlay refused a listing that already has a txid. Rewrite that row as failed. */
+export function failMarketListingActivity(args: {
+  txid?: string
+  reason: string
+}): void {
+  const txid = args.txid?.trim().toLowerCase()
+  if (!txid) return
+  const reason = args.reason.trim().slice(0, 280) || 'Could not publish listing'
+  writeAll(
+    readAll().map((entry) => {
+      if (entry.method !== 'market-list') return entry
+      if ((entry.txid || '').toLowerCase() !== txid) return entry
+      return {
+        ...entry,
+        status: 'failed' as const,
+        failureReason: reason,
+        note: entry.note?.startsWith('Listed ')
+          ? `Failed: ${entry.note}`
+          : entry.note || 'Listing failed',
+      }
+    }),
+  )
 }
 
 /** True when the row is a permission / friend / other non-money action. */
@@ -1436,9 +1469,15 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     if (entry.item?.name) return `${entry.item.name} not sent`
     return 'Send failed'
   }
-  if (entry.status === 'pending' && entry.kind === 'spent') {
+  if (entry.status === 'pending' && (entry.kind === 'spent' || entry.method === 'market-list' || entry.method === 'market-cancel')) {
     if (isBurnActivity(entry)) {
       return entry.item?.name ? `Burning ${entry.item.name}…` : 'Burning…'
+    }
+    if (entry.method === 'market-list') {
+      return entry.item?.name ? `Listing ${entry.item.name}…` : 'Listing…'
+    }
+    if (entry.method === 'market-cancel') {
+      return entry.item?.name ? `Cancelling ${entry.item.name}…` : 'Cancelling…'
     }
     if (entry.item?.name) return `Sending ${entry.item.name}…`
     return 'Sending…'
@@ -1448,6 +1487,12 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     return 'Receiving…'
   }
   if (entry.kind === 'event') {
+    if (entry.method === 'market-list' && entry.item?.name?.trim() && entry.item.name !== 'Collectable') {
+      const price = entry.note?.match(/for ([\d,]+) sats/)?.[1]
+      return price
+        ? `Listed ${entry.item.name} for ${price} sats`
+        : `Listed ${entry.item.name}`
+    }
     return entry.note?.trim() || entry.method || 'Activity'
   }
   if (entry.item?.tokenId || isTokenActivity(entry)) {

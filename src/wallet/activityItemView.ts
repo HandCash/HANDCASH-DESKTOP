@@ -50,10 +50,16 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   }
 
   const outpoint = item.outpoint ? asOutpoint(item.outpoint) : null
-  if (!outpoint) return item
+  const originKey = item.origin ? asOrigin(item.origin) : null
+  if (!outpoint && !originKey) return item
 
   // A tip still held has already been through the list's repair pass.
-  const held = getCachedCollectables().find((c) => asOutpoint(c.outpoint) === outpoint)
+  // After a market list the held tip moves, so also match the 1sat origin.
+  const held = getCachedCollectables().find(
+    (c) =>
+      (outpoint && asOutpoint(c.outpoint) === outpoint) ||
+      (originKey && asOrigin(c.origin) === originKey),
+  )
   if (held) {
     const chain = getActiveWallet()?.chain ?? 'main'
     return {
@@ -72,7 +78,7 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   // outlives the output it judged, so a lineage proof earned while the item was
   // still held keeps repairing the record of the transfer that sent it away —
   // which is the only trace of it left in this wallet.
-  const resolved = getResolvedInscription(outpoint)
+  const resolved = outpoint ? getResolvedInscription(outpoint) : null
   const usable = resolved && !isThinResolution(resolved) ? resolved : null
   const previousOrigin = item.origin ? asOrigin(item.origin) : null
   const origin =

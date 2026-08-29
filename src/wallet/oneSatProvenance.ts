@@ -1291,21 +1291,44 @@ export async function tryBuildProvenanceV2(args: {
       // it is what sent proven items out bare and made the receiver repeat the
       // walk we had already paid for.
       const known = knownProvenPath(tip, origin)
-      if (!known && !args.allowLineageHydrate) {
+      if (known) {
+        const { warmBeefCache } = await import('./beefCache')
+        const txids = known.map((point) => point.split('_')[0]!)
+        await warmBeefCache(args.wallet, txids)
+        console.info(
+          `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
+        )
+        const replayed = new Beef()
+        let replayOk = true
+        for (const txid of [...new Set(txids)]) {
+          try {
+            replayed.mergeBeef((await getBeef(txid)).toBinary())
+          } catch {
+            replayOk = false
+            break
+          }
+        }
+        if (replayOk) {
+          const replayCheck = verifyLineageInBeef({
+            beef: replayed,
+            origin,
+            tip,
+            path: known,
+            heldOutpoint: tipDot,
+          })
+          if (replayCheck.proven) {
+            path = known
+            assembled = replayed
+          }
+        }
+      }
+    }
+    if (!path || path[0] !== tip || path[path.length - 1] !== origin) {
+      if (!args.allowLineageHydrate) {
         console.info(
           '[brc-150] omit provenance — no tip-local path (skip lineage hydrate on send)',
         )
         return null
-      }
-      if (known) {
-        const { warmBeefCache } = await import('./beefCache')
-        await warmBeefCache(
-          args.wallet,
-          known.map((point) => point.split('_')[0]!),
-        )
-        console.info(
-          `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
-        )
       }
       const hydrated = await hydrateLineageForSend(args.wallet, tip)
       if (!hydrated || hydrated.origin !== origin) {

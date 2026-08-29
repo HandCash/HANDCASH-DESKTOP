@@ -24,9 +24,10 @@ import {
 } from '../wallet/verificationProgress'
 import { getGenesisFailure } from '../wallet/provenCache'
 import {
-  isOutpointSending,
+  isOutpointSending, inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
+
 import {
   clearNavChild,
   openBurnCollectable,
@@ -319,7 +320,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               }
             />
           )}
-          <CollectableSendingMark sending={sending} />
+          <CollectableSendingMark sending={sending} verb={inFlightVerb(item.outpoint) ?? 'Sending'} />
         </div>
         <div className="collectable-details-copy">
           <h3 className="collectable-details-name">{item.name}</h3>

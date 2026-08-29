@@ -6,6 +6,7 @@ import {
   PrivateKey,
   PublicKey,
   Signature,
+  UnlockingScript,
   Utils,
 } from '@bsv/sdk'
 import { SetupClient } from '@bsv/wallet-toolbox-client'
@@ -31,12 +32,17 @@ import { prove } from './bsv21Prove'
 import { parseBsv21CustomInstructions } from './bsv21'
 import { buildBsv21SendRemittance, buildBsv21ValueLock } from './bsv21Send'
 import { getBeefForTxidCached } from './beefCache'
+import { mergeIconTxIntoBeef } from './tokenIconResolve'
+import { getProvenVerdict } from './provenCache'
 import {
   MARKET_FEE_BASIS_POINTS,
   MARKET_FEE_IDENTITY_KEY,
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
-import { recordWalletEvent } from './appActivity'
+import { failMarketListingActivity, recordWalletEvent } from './appActivity'
+import { getCachedCollectables } from './collectables'
+import { getTokenIconDataUrl } from './tokenIconCache'
+import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   encodeMarketOffer,
@@ -90,6 +96,8 @@ export type CreateMarketListingArgs = {
   outpoint: string
   assetType?: 'ordinal' | 'bsv21'
   priceSats: number
+  /** BSV-21 units to list. Defaults to the whole tip. Remainder is 162 change. */
+  listAmt?: number
   expiresAt?: number | null
   messagebox?: string | null
 }
@@ -297,6 +305,46 @@ export function assertNoOnesatFtRemittance(customInstructions: string): void {
   }
 }
 
+
+function tagName(tags: string[] | undefined): string | undefined {
+  const raw = (tags ?? []).find((tag) => tag.toLowerCase().startsWith('name:'))
+  const name = raw ? raw.slice(raw.indexOf(':') + 1).trim() : ''
+  return name || undefined
+}
+
+function listedActivityIdentity(args: {
+  inputOutpoint: string
+  origin: string
+  listedAsset: MarketAssetType
+  customName?: string
+  tags?: string[]
+  sym?: string
+  icon?: string
+}): { name: string; imageUrl?: string; app?: string } {
+  const input = args.inputOutpoint.trim().toLowerCase().replace(/_/g, '.')
+  const origin = args.origin.trim().toLowerCase().replace(/\./g, '_')
+  const held = getCachedCollectables().find((c) => {
+    const op = c.outpoint.trim().toLowerCase().replace(/_/g, '.')
+    const og = c.origin.trim().toLowerCase().replace(/\./g, '_')
+    return op === input || og === origin
+  })
+  if (args.listedAsset === 'bsv21') {
+    const name = args.sym?.trim() || held?.name?.trim() || 'Token'
+    const imageUrl = (args.icon ? getTokenIconDataUrl(args.icon) : undefined) || held?.imageUrl
+    return { name, ...(imageUrl ? { imageUrl } : {}) }
+  }
+  const name =
+    args.customName?.trim() ||
+    held?.name?.trim() ||
+    tagName(args.tags) ||
+    'Collectable'
+  return {
+    name,
+    ...(held?.imageUrl ? { imageUrl: held.imageUrl } : {}),
+    ...(held?.app ? { app: held.app } : {}),
+  }
+}
+
 /** Classify a held tip. 1sat-ft leftovers are refused; 162 / bsv21 is the fungible path. */
 export function classifyMarketListingAsset(args: {
   outpoint: string
@@ -345,6 +393,7 @@ export function buildMarketHeldRemittance(args: {
   origin: string
   amt?: number
   name?: string
+  icon?: string
   provenance?: ProvenanceV2
   extraTags?: string[]
 }): { basket: string; tags: string[]; customInstructions: string } {
@@ -358,6 +407,7 @@ export function buildMarketHeldRemittance(args: {
     const remit = buildBsv21SendRemittance({
       tokenId: args.origin,
       amt: BigInt(args.amt),
+      icon: args.icon,
     })
     assertNoOnesatFtRemittance(remit.customInstructions)
     return {
@@ -434,6 +484,35 @@ export function settlementReceiptPreimage(
     String(receipt.feeOutputIndex),
     String(receipt.settledAt),
   ].join('\n')
+}
+
+
+function tagPrefixValue(tags: string[] | undefined, prefix: string): string | undefined {
+  if (!tags) return undefined
+  const needle = prefix.toLowerCase()
+  for (const tag of tags) {
+    if (tag.toLowerCase().startsWith(needle)) {
+      const value = tag.slice(prefix.length).trim()
+      if (value) return value
+    }
+  }
+  return undefined
+}
+
+/**
+ * Origin a 1sat listing binds. Inventory eligibility uses the durable BRC-150
+ * verdict; listing must use that same origin, not a remittance claim. Minted
+ * and imported tips often have no customInstructions.origin at all.
+ */
+export function resolveOrdinalListingOrigin(args: {
+  outpoint: string
+  customOrigin?: unknown
+  tags?: string[]
+}): string {
+  const verdict = getProvenVerdict(args.outpoint)
+  return normalizeOriginOutpoint(
+    verdict?.origin ?? args.customOrigin ?? tagPrefixValue(args.tags, 'origin:'),
+  )
 }
 
 function normalizeOutpoint(value: unknown): string {
@@ -847,14 +926,43 @@ export async function createMarketListingAdvert(
   }
 
   const custom = parseCustomInstructions(output.customInstructions)
-  const origin = normalizeOriginOutpoint(
-    (assetType === 'bsv21' ? tokenId : null) || custom.origin,
+  const lockingScriptHex =
+    typeof output.lockingScript === 'string' ? output.lockingScript : undefined
+  const lockTip = lockingScriptHex
+    ? decodeListedBsv21Tip({
+        outpoint,
+        satoshis: output.satoshis ?? 1,
+        tags: output.tags,
+        customInstructions: output.customInstructions,
+        lockingScript: lockingScriptHex,
+      })
+    : null
+  const lockIsBsv21 = Boolean(
+    assetType === 'bsv21' ||
+      lockTip ||
+      (lockingScriptHex && decodeBsv21Binary(lockingScriptHex)),
   )
+  const askedBsv21 = args.assetType === 'bsv21'
+  const listedAsset: MarketAssetType =
+    askedBsv21 || lockIsBsv21 ? 'bsv21' : 'ordinal'
+  if (askedBsv21 && !lockIsBsv21) {
+    throw new MarketListingError(
+      'MARKET_ASSET_UNSUPPORTED',
+      'BSV-21 listing requires a 162 value lock.',
+    )
+  }
+  const origin =
+    listedAsset === 'bsv21'
+      ? normalizeOriginOutpoint(tokenId || lockTip?.tokenId || custom.origin)
+      : resolveOrdinalListingOrigin({
+          outpoint,
+          customOrigin: custom.origin,
+          tags: output.tags,
+        })
   let provenance: ProvenanceV2 | Bsv21ListingProof
-  let amt = assetType === 'bsv21' ? classifiedAmt : undefined
-  if (assetType === 'bsv21') {
-    const lockingScriptHex =
-      typeof output.lockingScript === 'string' ? output.lockingScript : undefined
+  let amt = listedAsset === 'bsv21' ? classifiedAmt : undefined
+  let tipAmt = classifiedAmt
+  if (listedAsset === 'bsv21') {
     if (!lockingScriptHex) {
       throw new MarketListingError(
         'MARKET_ASSET_UNSUPPORTED',
@@ -881,7 +989,15 @@ export async function createMarketListingAdvert(
         'BSV-21 listing requires a 162 amount.',
       )
     }
-    amt = provenAmt
+    tipAmt = provenAmt
+    const requested = args.listAmt == null ? provenAmt : Math.trunc(Number(args.listAmt))
+    if (!Number.isSafeInteger(requested) || requested < 1) {
+      throw new Error('List at least 1 unit')
+    }
+    if (requested > provenAmt) {
+      throw new Error(`This tip only holds ${provenAmt} units`)
+    }
+    amt = requested
   } else {
     const remittanceProvenance = tryParseProvenanceFromCi(output.customInstructions)
     const built = await tryBuildProvenanceV2({
@@ -948,7 +1064,7 @@ export async function createMarketListingAdvert(
   const offerKey = PrivateKey.fromHex(active.rootKeyHex)
   const offerLockingScript = encodeMarketOffer(fields, offerKey)
   const itemLockingScript =
-    assetType === 'bsv21'
+    listedAsset === 'bsv21'
       ? buildBsv21ValueLock({
           tokenId: origin,
           amount: BigInt(amt!),
@@ -959,7 +1075,7 @@ export async function createMarketListingAdvert(
     itemOutpoint: outpoint,
     satoshis: output.satoshis ?? 0,
     ordinal:
-      assetType === 'bsv21' ||
+      listedAsset === 'bsv21' ||
       (output.tags ?? []).some((tag) => tag.toLowerCase() === 'ordinal'),
     provenanceProven: true,
     termsValid: true,
@@ -970,7 +1086,11 @@ export async function createMarketListingAdvert(
   const chart = createActor(marketListingMachine).start()
   chart.send({ type: 'LIST', path })
   const itemTxid = outpoint.slice(0, 64)
-  const inputBEEF = (await getBeefForTxidCached(active, itemTxid, { needProof: true })).toBinary()
+  const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
+  if (listedAsset === 'bsv21' && lockTip?.icon) {
+    await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
+  }
+  const inputBEEF = listingBeef.toBinary()
   let reference: string | null = null
   try {
     const created = await active.wallet.createAction({
@@ -990,14 +1110,15 @@ export async function createMarketListingAdvert(
           satoshis: 1,
           outputDescription: 'Held market item',
           ...buildMarketHeldRemittance({
-            assetType,
+            assetType: listedAsset,
             origin,
             amt,
+            icon: listedAsset === 'bsv21' ? lockTip?.icon : undefined,
             name:
               typeof custom.name === 'string' && custom.name.trim()
                 ? custom.name.trim()
                 : undefined,
-            ...(assetType === 'ordinal' && 'origin' in provenance
+            ...(listedAsset === 'ordinal' && 'origin' in provenance
               ? { provenance: provenance }
               : {}),
             extraTags: ['market-held'],
@@ -1011,6 +1132,25 @@ export async function createMarketListingAdvert(
           tags: ['brc48', `nonce:${nonce}`, `origin:${origin.replace('_', '.')}`],
           customInstructions: JSON.stringify({ fields }),
         },
+        ...(listedAsset === 'bsv21' && tipAmt != null && amt != null && tipAmt > amt
+          ? [
+              {
+                lockingScript: buildBsv21ValueLock({
+                  tokenId: origin,
+                  amount: BigInt(tipAmt - amt),
+                  address: active.address,
+                }),
+                satoshis: 1,
+                outputDescription: 'BSV-21 listing change',
+                ...buildBsv21SendRemittance({
+                  tokenId: origin,
+                  amt: BigInt(tipAmt - amt),
+                  icon: lockTip?.icon,
+                  ...(lockTip?.sym ? { sym: lockTip.sym } : {}),
+                }),
+              },
+            ]
+          : []),
       ],
       options: {
         randomizeOutputs: false,
@@ -1044,10 +1184,27 @@ export async function createMarketListingAdvert(
         'Wallet did not preserve BRC-159 item/input and offer output ordering.'
       )
     }
-    tx.inputs[0]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
-      offerKey,
-      1
-    )
+    {
+      const vin = tx.inputs[0]!
+      vin.sourceTransaction ??=
+        listingBeef.findTxid(String(vin.sourceTXID))?.tx ??
+        beef.findTxid(String(vin.sourceTXID))?.tx
+      const sourceOut = vin.sourceTransaction?.outputs[vin.sourceOutputIndex]
+      const satoshis = sourceOut?.satoshis
+      const lockingScript = sourceOut?.lockingScript
+      if (typeof satoshis !== 'number' || !lockingScript) {
+        throw new Error('Listing input is missing its source locking script')
+      }
+      // 162 and 1sat tips are prefix ‖ P2PKH. getUnlockP2PKH hashes bare P2PKH
+      // and fails CHECKSIG ("top stack element must be truthy").
+      vin.unlockingScriptTemplate = new P2PKH().unlock(
+        offerKey,
+        'all',
+        false,
+        satoshis,
+        lockingScript,
+      )
+    }
     await tx.sign()
     const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
     if (!unlockingScript) throw new Error('Market item signature missing')
@@ -1073,7 +1230,7 @@ export async function createMarketListingAdvert(
       outpoint: listedOutpoint,
       offerOutpoint,
       offerLockingScript,
-      assetType,
+      assetType: listedAsset,
       amt,
       seller: fields.sellerIdentityKey,
       payTo: fields.payTo,
@@ -1108,9 +1265,38 @@ export async function createMarketListingAdvert(
     })
     chart.send({ type: 'COMMITTED' })
     scheduleHistoryBackupPush('market-list')
+    rememberGhostTx(txid)
+    const identity = listedActivityIdentity({
+      inputOutpoint: outpoint,
+      origin,
+      listedAsset,
+      customName: typeof custom.name === 'string' ? custom.name : undefined,
+      tags: output.tags,
+      sym: lockTip?.sym,
+      icon: lockTip?.icon,
+    })
+    const listedNote =
+      listedAsset === 'bsv21' && amt != null
+        ? `Listed ${amt.toLocaleString()} ${identity.name} for ${priceSats.toLocaleString()} sats`
+        : `Listed ${identity.name} for ${priceSats.toLocaleString()} sats`
     recordWalletEvent({
       method: 'market-list',
-      note: `Listed collectable for ${priceSats.toLocaleString()} sats`,
+      note: listedNote,
+      txid,
+      item: {
+        name: identity.name,
+        origin,
+        outpoint: listedOutpoint.replace('_', '.'),
+        ...(identity.imageUrl ? { imageUrl: identity.imageUrl } : {}),
+        ...(identity.app ? { app: identity.app } : {}),
+        ...(listedAsset === 'bsv21'
+          ? {
+              tokenId: origin,
+              ...(amt != null ? { amt: String(amt) } : {}),
+              ...(lockTip?.icon ? { icon: lockTip.icon } : {}),
+            }
+          : {}),
+      },
     })
     return {
       listing: advert,
@@ -1126,18 +1312,30 @@ export async function createMarketListingAdvert(
       },
     }
   } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
     if (reference && mayAbortMarketListing(chart.getSnapshot())) {
       await active.wallet.abortAction({ reference }).catch(() => {})
       chart.send({
         type: 'ABORTED',
-        error: err instanceof Error ? err.message : String(err),
+        error: reason,
       })
     } else {
       chart.send({
         type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
+        error: reason,
       })
     }
+    recordWalletEvent({
+      method: 'market-cancel',
+      note: `Cancel failed`,
+      status: 'failed',
+      failureReason: reason,
+      item: {
+        name: listing.assetType === 'bsv21' ? 'Token' : 'Collectable',
+        origin: listing.origin,
+        outpoint: listing.outpoint,
+      },
+    })
     throw err
   } finally {
     chart.stop()
@@ -1427,9 +1625,33 @@ export function getMarketSaleStatus(args: { outpoint: string }): {
   }
 }
 
+
+/** Offer lock is <pubkey> OP_CHECKSIG + PushDrop fields. Unlock is sig-only. */
+function checksigOnlyUnlock(
+  privateKey: PrivateKey,
+  satoshis: number,
+  lockingScript: { toHex?: () => string } | unknown,
+) {
+  const p2pkh = new P2PKH().unlock(
+    privateKey,
+    'all',
+    false,
+    satoshis,
+    lockingScript as Parameters<P2PKH['unlock']>[4],
+  )
+  return {
+    sign: async (tx: Parameters<typeof p2pkh.sign>[0], inputIndex: number) => {
+      const full = await p2pkh.sign(tx, inputIndex)
+      return new UnlockingScript(full.chunks.slice(0, 1))
+    },
+    estimateLength: async () => 73,
+  }
+}
+
 function markMarketListingCancelled(args: {
   outpoint: string
   nonce: string
+  txid?: string
 }): MarketListingAuthorization {
   const active = getActiveWallet()
   if (!active) throw new MarketListingError('WALLET_LOCKED', 'Wallet locked')
@@ -1453,9 +1675,21 @@ function markMarketListingCancelled(args: {
     reason: 'seller-cancelled',
   }
   saveAuthorization(cancelled)
+  const listed = current.listing
   recordWalletEvent({
     method: 'market-cancel',
-    note: 'Cancelled collectable listing',
+    note:
+      listed?.assetType === 'bsv21'
+        ? 'Cancelled token listing'
+        : 'Cancelled listing',
+    ...(args.txid ? { txid: args.txid } : {}),
+    item: listed
+      ? {
+          name: listed.assetType === 'bsv21' ? 'Token' : 'Collectable',
+          origin: listed.origin,
+          outpoint: listed.outpoint,
+        }
+      : undefined,
   })
   return cancelled
 }
@@ -1513,7 +1747,7 @@ export async function createCancelMarketListingAdvert(args: {
         {
           outpoint: listing.offerOutpoint.replace('_', '.'),
           inputDescription: 'Cancelled market offer',
-          unlockingScriptLength: 108,
+          unlockingScriptLength: 73,
         },
       ],
       options: {
@@ -1541,10 +1775,21 @@ export async function createCancelMarketListingAdvert(args: {
     ) {
       throw new Error('Cancellation must spend the offer token as input zero')
     }
-    tx.inputs[0]!.unlockingScriptTemplate = SetupClient.getUnlockP2PKH(
-      PrivateKey.fromHex(active.rootKeyHex),
-      MARKET_OFFER_DEPOSIT_SATS
-    )
+    {
+      const vin = tx.inputs[0]!
+      vin.sourceTransaction ??= beef.findTxid(String(vin.sourceTXID))?.tx
+      const sourceOut = vin.sourceTransaction?.outputs[vin.sourceOutputIndex]
+      const satoshis = sourceOut?.satoshis
+      const lockingScript = sourceOut?.lockingScript
+      if (typeof satoshis !== 'number' || !lockingScript) {
+        throw new Error('Cancel input is missing its source locking script')
+      }
+      vin.unlockingScriptTemplate = checksigOnlyUnlock(
+        PrivateKey.fromHex(active.rootKeyHex),
+        satoshis,
+        lockingScript,
+      )
+    }
     await tx.sign()
     const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
     if (!unlockingScript) throw new Error('Offer cancellation signature missing')
@@ -1564,6 +1809,7 @@ export async function createCancelMarketListingAdvert(args: {
     markMarketListingCancelled({
       outpoint: current.outpoint,
       nonce: current.nonce,
+      txid,
     })
     chart.send({ type: 'COMMITTED' })
     scheduleHistoryBackupPush('market-list')
@@ -1619,4 +1865,15 @@ export async function getMarketSettlementReceipt(args: {
 }): Promise<MarketSettlementReceipt | null> {
   const { recoverMarketSettlementReceipt } = await import('./marketSettlement')
   return recoverMarketSettlementReceipt(args)
+}
+
+
+export function markMarketListingPublishFailed(args: {
+  txid?: string
+  reason?: string
+}): void {
+  failMarketListingActivity({
+    txid: args.txid,
+    reason: args.reason || 'Could not publish listing',
+  })
 }

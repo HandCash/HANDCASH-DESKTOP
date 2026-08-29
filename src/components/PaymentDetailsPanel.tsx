@@ -56,6 +56,10 @@ import {
   type SpendAttemptFate,
 } from '../wallet/spendAttempt'
 import { toastError, toastSuccess } from '../wallet/toast'
+import {
+  createCancelMarketListingAdvert,
+  getMarketListingAuthorization,
+} from '../wallet/marketListing'
 
 type Props = {
   entryId: string
@@ -159,6 +163,12 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   if (!entry) {
     return <p className="connected-empty-line">Transaction not found</p>
+  }
+
+  if (entry.method === 'market-list' || entry.method === 'market-cancel') {
+    return (
+      <ListingActivityDetails entry={entry} chain={chain} />
+    )
   }
 
   if (isEventActivity(entry)) {
@@ -626,6 +636,209 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
           ) : null}
         </>
       )}
+    </div>
+  )
+}
+
+
+function priceFromNote(note: string | undefined): number | null {
+  const match = note?.match(/for\s+([\d,]+)\s+sats/i)
+  if (!match) return null
+  const n = Number(match[1].replace(/,/g, ''))
+  return Number.isSafeInteger(n) && n > 0 ? n : null
+}
+
+function listingOutpointFor(entry: ActivityEntry): string | null {
+  const fromItem = entry.item?.outpoint?.trim()
+  if (fromItem) return fromItem.replace('.', '_')
+  const txid = entry.txid?.trim().toLowerCase()
+  if (txid && /^[0-9a-f]{64}$/.test(txid)) return `${txid}_0`
+  return null
+}
+
+function ListingActivityDetails({
+  entry,
+  chain,
+}: {
+  entry: ActivityEntry
+  chain: Chain
+}) {
+  const [cancelling, setCancelling] = useState(false)
+  const [cancelError, setCancelError] = useState<string | null>(null)
+  const shown = entry.item ? viewActivityItem(entry.item) : undefined
+  const outpoint = listingOutpointFor(entry)
+  const auth = outpoint ? getMarketListingAuthorization({ outpoint }) : null
+  const origin = shown?.origin || auth?.origin
+  const held = origin
+    ? getCachedCollectables().find(
+        (c) =>
+          c.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') ===
+          origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1'),
+      )
+    : undefined
+  const name =
+    (shown?.name && shown.name !== 'Collectable' ? shown.name : undefined) ||
+    held?.name ||
+    shown?.name ||
+    'Collectable'
+  const imageUrl = shown?.imageUrl || held?.imageUrl
+  const app = shown?.app || held?.app
+  const priceSats = auth?.priceSats ?? priceFromNote(entry.note)
+  const listed = entry.method === 'market-list' && auth?.state !== 'cancelled'
+  const explorer = isExplorerTxid(entry.txid) ? txExplorerUrl(entry.txid!, chain) : null
+  const viewed = { ...entry, item: shown ? { ...shown, name } : { name, origin: origin || '', outpoint: outpoint || undefined, ...(imageUrl ? { imageUrl } : {}) } }
+  const title = activityEntryTitle(viewed)
+
+  const cancelListing = async () => {
+    if (!outpoint || cancelling) return
+    setCancelling(true)
+    setCancelError(null)
+    try {
+      await createCancelMarketListingAdvert({ outpoint })
+      toastSuccess('Listing cancelled', name)
+      playWalletSound('success')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setCancelError(message)
+      toastError('Could not cancel listing', message)
+      playWalletSound('error')
+    } finally {
+      setCancelling(false)
+    }
+  }
+
+  return (
+    <div
+      className="nav-child-panel payment-details"
+      data-aeon-scope="payment-details"
+      data-aeon-state="listing"
+    >
+      <div className="payment-details-hero">
+        <div className="history-icon-wrap">
+          <div className="history-icon">
+            {imageUrl ? (
+              <DeferredImage
+                className="history-item-thumb"
+                src={imageUrl}
+                alt=""
+                width={32}
+                height={32}
+                skeletonWidth={32}
+                skeletonHeight={32}
+                skeletonRadius={6}
+                retainDecoded
+                decoding="async"
+              />
+            ) : (
+              <ReceiveIcon size={16} />
+            )}
+          </div>
+        </div>
+        <div className="payment-details-copy">
+          <div className="payment-details-title-row">
+            <strong className="payment-details-title">{title}</strong>
+            {explorer ? (
+              <button
+                type="button"
+                className="payment-details-woc"
+                onClick={() => openExplorer(explorer)}
+              >
+                Open in WhatsOnChain
+              </button>
+            ) : null}
+          </div>
+          <p className="history-when">
+            {new Date(entry.at).toLocaleString(undefined, {
+              dateStyle: 'medium',
+              timeStyle: 'short',
+            })}
+          </p>
+        </div>
+      </div>
+
+      {imageUrl ? (
+        <div className="payment-details-item-media collectable-media collectable-media-md">
+          <DeferredImage
+            src={imageUrl}
+            alt={name}
+            skeletonRadius={8}
+            skeletonClassName="skeleton-qr"
+            decoding="async"
+          />
+        </div>
+      ) : null}
+
+      <div className="payment-details-amount">
+        <strong>{name}</strong>
+        <span className="payment-details-secondary">
+          {priceSats != null
+            ? `Listed for ${priceSats.toLocaleString()} sats`
+            : app || 'On-chain market offer'}
+        </span>
+      </div>
+
+      <dl className="payment-details-meta">
+        <dt>Status</dt>
+        <dd>
+          {entry.status === 'failed'
+            ? 'Failed'
+            : listed
+              ? 'Listed'
+              : eventStatusLabel(entry.method)}
+        </dd>
+        {entry.status === 'failed' && entry.failureReason ? (
+          <>
+            <dt>Error</dt>
+            <dd>{entry.failureReason}</dd>
+          </>
+        ) : null}
+        {priceSats != null ? (
+          <>
+            <dt>Price</dt>
+            <dd>{priceSats.toLocaleString()} sats</dd>
+          </>
+        ) : null}
+        {app ? (
+          <>
+            <dt>Collection</dt>
+            <dd>{app}</dd>
+          </>
+        ) : null}
+        {origin ? (
+          <>
+            <dt>Origin</dt>
+            <dd className="mono">{origin}</dd>
+          </>
+        ) : null}
+        {outpoint ? (
+          <>
+            <dt>Listing</dt>
+            <dd className="mono">{outpoint.replace('_', '.')}</dd>
+          </>
+        ) : null}
+        {entry.txid ? (
+          <>
+            <dt>Txid</dt>
+            <dd className="mono">{entry.txid}</dd>
+          </>
+        ) : null}
+      </dl>
+
+      {listed && outpoint && entry.status !== 'failed' ? (
+        <section className="payment-attempt-actions">
+          {cancelError ? <p className="form-error">{cancelError}</p> : null}
+          <div className="payment-attempt-buttons">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={cancelling}
+              onClick={() => void cancelListing()}
+            >
+              {cancelling ? 'Cancelling…' : 'Cancel listing'}
+            </button>
+          </div>
+        </section>
+      ) : null}
     </div>
   )
 }

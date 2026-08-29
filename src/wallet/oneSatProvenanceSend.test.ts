@@ -7,6 +7,7 @@ import {
 } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetBeefCacheForTests } from './beefCache'
+import { rememberProvenVerdict, resetProvenCacheForTests } from './provenCache'
 import { tryBuildProvenanceV2, verifyProvenanceV2 } from './oneSatProvenance'
 import type { ActiveWallet } from './session'
 
@@ -68,6 +69,7 @@ function walletServing(txs: Transaction[]) {
 describe('tryBuildProvenanceV2', () => {
   beforeEach(() => {
     resetBeefCacheForTests()
+    resetProvenCacheForTests()
   })
 
   it('skips lineage hydrate on the send hot path by default', async () => {
@@ -154,4 +156,31 @@ describe('tryBuildProvenanceV2', () => {
 
     expect(provenance).toBeNull()
   })
+  it('replays a proven path over the BEEF cache without a cold lineage walk', async () => {
+    const origin = inscription()
+    const hop = transfer(origin)
+    const tip = transfer(hop)
+    const { wallet } = walletServing([origin, hop, tip])
+    const originPoint = `${origin.id('hex')}_0`
+    const hopPoint = `${hop.id('hex')}_0`
+    const tipPoint = `${tip.id('hex')}_0`
+    rememberProvenVerdict(tipPoint, {
+      tier: 'brc150',
+      origin: originPoint,
+      path: [tipPoint, hopPoint, originPoint],
+      verifiedAt: Date.now(),
+    })
+
+    const provenance = await tryBuildProvenanceV2({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      origin: originPoint,
+      wallet,
+      inputBeef: minedBeef(tip, 900_002).toBinary(),
+    })
+
+    expect(provenance).not.toBeNull()
+    expect(provenance?.path).toEqual([tipPoint, hopPoint, originPoint])
+    expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).proven).toBe(true)
+  })
+
 })

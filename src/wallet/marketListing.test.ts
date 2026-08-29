@@ -11,11 +11,12 @@ import {
   createMarketListingAdvert,
   isMarketListingOrigin,
   MarketListingError,
+  resolveOrdinalListingOrigin,
 } from './marketListing'
+import { rememberProvenVerdict } from './provenCache'
 import { decodeBsv21Binary } from './bsv21Binary'
 import { buildBsv21ValueLock } from './bsv21Send'
 import { buildColourCustomInstructions } from './colourCoins'
-import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 import {
   chooseMarketCancelPath,
   chooseMarketListingPath,
@@ -224,14 +225,10 @@ describe('market 162 listing remittance', () => {
     expect(() => assertNoOnesatFtRemittance(leftover)).toThrow(MarketListingError)
     expect(() => assertNoOnesatFtRemittance(leftover)).toThrow(/1sat-ft remittance/i)
 
-    const leftoverScript = buildOnesatFtTransferLockingScript({
-      address,
-      amt: 68862,
-    }).lockingScript
     const classified = classifyMarketListingAsset({
       outpoint: tip,
       satoshis: 1,
-      lockingScriptHex: leftoverScript,
+      lockingScriptHex: `76a914${'11'.repeat(20)}88ac`,
       tags: ['1sat-ft'],
       customInstructions: leftover,
     })
@@ -351,5 +348,51 @@ describe('162 market list createAction lock', () => {
       }),
     })
     expect(classified.assetType).not.toBe('bsv21')
+  })
+})
+
+
+describe('ordinal listing origin', () => {
+  const proven = `${'a1'.repeat(32)}_0`
+  const claimed = `${'c1'.repeat(32)}_9`
+
+  it('prefers the durable BRC-150 origin over remittance metadata', () => {
+    const tip = `${'e1'.repeat(32)}_1`
+    rememberProvenVerdict(tip, {
+      tier: 'brc150',
+      origin: proven,
+      path: [tip, proven],
+      verifiedAt: Date.now(),
+    })
+    expect(
+      resolveOrdinalListingOrigin({
+        outpoint: tip,
+        customOrigin: claimed,
+        tags: [`origin:${claimed}`],
+      }),
+    ).toBe(proven)
+  })
+
+  it('falls back to customInstructions then the origin tag', () => {
+    const tip = `${'e2'.repeat(32)}_1`
+    expect(
+      resolveOrdinalListingOrigin({
+        outpoint: tip,
+        customOrigin: claimed,
+        tags: [`origin:${proven}`],
+      }),
+    ).toBe(claimed)
+    expect(
+      resolveOrdinalListingOrigin({
+        outpoint: `${'e3'.repeat(32)}_2`,
+        tags: [`origin:${proven}`],
+      }),
+    ).toBe(proven)
+  })
+
+  it('refuses a 1sat list with no proven, remittance, or tag origin', () => {
+    expect(() =>
+      resolveOrdinalListingOrigin({ outpoint: `${'e4'.repeat(32)}_3` }),
+    ).toThrow(/no valid BRC-150 origin/i)
   })
 })

@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.18] - 2026-08-29
+
+### Fixed
+
+- Market list/buy/cancel: 162 unlock hashes the full script, overlay listings carry the offer PushDrop, failed overlay publish marks Activity failed, cancel logs a failed row instead of dying silent.
+- List/send approve and the Working panel show the same item card (collectable or token) in the side column.
+
+### Changed
+
+- Permission list title uses ticker/units. Duplicate generic "List item for sale" Activity rows are gone.
+
 ## [1.3.17] - 2026-08-29
 
 ### Changed

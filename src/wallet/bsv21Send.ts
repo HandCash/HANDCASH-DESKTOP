@@ -7,6 +7,11 @@
  * underscore token id and decimal amt. Subject outputs carry a 176 BEEF.
  *
  * Does not emit application/1sat-ft+json or BRC-161 JSON inscriptions.
+ *
+ * BRC delta (draft, not posted): 163 remittance MUST carry `icon` when the
+ * deploy named one. 176 BEEF MUST include the icon's B-protocol tx (same-tx
+ * 4-byte vout is already in the deploy body; a 36-byte pointer is a second
+ * tx). Overlay and market decode the image from that BEEF — no indexer.
  */
 import { Beef, type Transaction } from '@bsv/sdk'
 import {
@@ -43,6 +48,7 @@ export type Bsv21SendTip = {
   lockingScript?: string
   tags?: string[]
   customInstructions?: string
+  icon?: string
 }
 
 export type Bsv21SendPlan = {
@@ -149,6 +155,7 @@ export function buildBsv21SendRemittance(args: {
   sym?: string
   dec?: number
   issuer?: string
+  icon?: string
 }): { basket: typeof BSV21_BASKET; tags: string[]; customInstructions: string } {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -156,6 +163,7 @@ export function buildBsv21SendRemittance(args: {
   if (!/^\d+$/.test(amt) || args.amt <= 0n) {
     throw new Error('BRC-163 amt must be a positive decimal integer')
   }
+  const icon = args.icon ? normalizeTokenId(args.icon) ?? args.icon.trim() : undefined
   return {
     basket: BSV21_BASKET,
     tags: stampBrc164Id(
@@ -163,6 +171,7 @@ export function buildBsv21SendRemittance(args: {
         tokenId,
         amt,
         sym: args.sym,
+        icon,
         issuer: args.issuer,
         op: 'transfer',
       }),
@@ -172,6 +181,7 @@ export function buildBsv21SendRemittance(args: {
       amt,
       op: 'transfer',
       sym: args.sym,
+      icon,
       dec: args.dec,
       issuer: args.issuer,
     }),
@@ -187,6 +197,7 @@ export function buildBsv21SendOutputs(args: {
   sym?: string
   dec?: number
   issuer?: string
+  icon?: string
 }): Bsv21SendOutput[] {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -203,6 +214,7 @@ export function buildBsv21SendOutputs(args: {
     sym: args.sym,
     dec: args.dec,
     issuer: args.issuer,
+    icon: args.icon,
   })
   const outputs: Bsv21SendOutput[] = [
     {
@@ -225,6 +237,7 @@ export function buildBsv21SendOutputs(args: {
       sym: args.sym,
       dec: args.dec,
       issuer: args.issuer,
+      icon: args.icon,
     })
     outputs.push({
       role: 'change',

@@ -283,6 +283,12 @@ describe('bsv21 parse', () => {
     expect(tokenIdFromBsv21Tags([`id:${MNEE}`])).toBe(MNEE) // legacy read
   })
 
+  it('tags icon outpoint when remittance names one', () => {
+    const icon = `${'cd'.repeat(32)}_1`
+    const tags = bsv21Tags({ tokenId: MNEE, amt: '1', icon })
+    expect(tags).toContain(`icon:${icon}`)
+  })
+
   it('tags and CI carry issuer mirror', () => {
     const issuer = '02' + 'ab'.repeat(32)
     const tags = bsv21Tags({

@@ -10,6 +10,7 @@
  */
 
 import { normalizeAppHost } from './appIdentity'
+import { decodeBsv21Binary } from './bsv21Binary'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
@@ -35,6 +36,9 @@ export const ITEM_BASKETS = new Set([
   COLOUR_STORAGE_BASKET,
 ])
 
+/** BRC-99 permission scheme ID for BSV-21 tokens. */
+export const TOKEN_SCHEME = 'bsv21'
+
 export type ItemAccess = {
   /** Inventory visibility for this app. */
   view: 'none' | 'all' | 'filtered'
@@ -57,6 +61,27 @@ export const DEFAULT_ITEM_ACCESS: ItemAccess = {
   creators: [],
   ids: [],
   canReceive: false,
+}
+
+/** Inventory visibility for BSV-21 tokens — never implied by item view. */
+export type TokenAccess = {
+  view: 'none' | 'all' | 'filtered'
+  /** Allowed token ids (deploy outpoints) when view === 'filtered'. */
+  ids: string[]
+}
+
+export const DEFAULT_TOKEN_ACCESS: TokenAccess = {
+  view: 'none',
+  ids: [],
+}
+
+export type TokenViewScope = 'plain' | 'all' | 'id'
+
+export type TokenViewRequest = {
+  scope: TokenViewScope
+  ids: string[]
+  /** True for plain `bsv21` or `p bsv21 all`. */
+  wantsAll: boolean
 }
 
 export type ItemViewScope = 'plain' | 'all' | 'collection' | 'app' | 'creator' | 'id'
@@ -149,16 +174,37 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
   if (!raw.startsWith('p ')) return false
   const parsed = parsePBasket(raw)
   if (!parsed) return true
-  return parsed.scheme.toLowerCase() !== ITEM_SCHEME
+  const scheme = parsed.scheme.toLowerCase()
+  return scheme !== ITEM_SCHEME && scheme !== TOKEN_SCHEME
 }
 
-/** True for plain `1sat` or BRC-99 `p 1sat <scope>`. */
+/**
+ * Collectable view / spend basket: plain `1sat` or BRC-99 `p 1sat <scope>`.
+ * `bsv21` and `1sat-ft` are not item view — they have their own gates.
+ */
 export function isItemBasket(basket: unknown): boolean {
   if (typeof basket !== 'string') return false
   const t = basket.trim()
-  if (ITEM_BASKETS.has(t.toLowerCase())) return true
+  if (t.toLowerCase() === ITEM_STORAGE_BASKET) return true
   const p = parsePBasket(t)
   return !!p && p.scheme.toLowerCase() === ITEM_SCHEME
+}
+
+/** Token view basket: plain `bsv21` or BRC-99 `p bsv21 <scope>`. */
+export function isTokenViewBasket(basket: unknown): boolean {
+  if (typeof basket !== 'string') return false
+  const t = basket.trim()
+  if (t.toLowerCase() === FUNGIBLE_STORAGE_BASKET) return true
+  const p = parsePBasket(t)
+  return !!p && p.scheme.toLowerCase() === TOKEN_SCHEME
+}
+
+/**
+ * HTTP BRC-100 callers with an originator are third-party.
+ * Missing originator is the wallet's own Collect / internal path.
+ */
+export function isThirdPartyOriginator(origin: string | undefined): boolean {
+  return typeof origin === 'string' && origin.trim().length > 0
 }
 
 export function parseItemViewRequest(args: unknown): ItemViewRequest {
@@ -189,6 +235,28 @@ export function parseItemViewRequest(args: unknown): ItemViewRequest {
   }
 }
 
+export function parseTokenViewRequest(args: unknown): TokenViewRequest {
+  const body = asRecord(args)
+  const tags = Array.isArray(body.tags)
+    ? body.tags.filter((t): t is string => typeof t === 'string')
+    : []
+  const p = parsePBasket(body.basket)
+  if (p && p.scheme.toLowerCase() === TOKEN_SCHEME) {
+    const rest = p.rest.toLowerCase()
+    const scope: TokenViewScope = rest === 'id' ? 'id' : 'all'
+    return {
+      scope,
+      ids: scope === 'id' ? [...new Set([...tagValues(tags, ['id:']), ...tagValues(tags, ['bsv21:'])])] : [],
+      wantsAll: scope !== 'id',
+    }
+  }
+  return {
+    scope: 'plain',
+    ids: [],
+    wantsAll: true,
+  }
+}
+
 /**
  * Rewrite BRC-99 `p 1sat …` baskets to the storage basket `1sat`, merging
  * scope into listOutputs tags. Rejects unsupported `p` schemes.
@@ -197,6 +265,7 @@ export function prepareItemBasketArgs(args: unknown): {
   args: unknown
   error?: { code: string; description: string }
    itemViewRequest?: ItemViewRequest
+   tokenViewRequest?: TokenViewRequest
 } {
   if (args == null || typeof args !== 'object' || Array.isArray(args)) {
     return { args }
@@ -216,6 +285,7 @@ export function prepareItemBasketArgs(args: unknown): {
   const body = { ...(args as Record<string, unknown>) }
   let changed = false
    let itemViewRequest: ItemViewRequest | undefined
+   let tokenViewRequest: TokenViewRequest | undefined
 
   if (typeof body.basket === 'string' && isItemBasket(body.basket)) {
     const p = parsePBasket(body.basket)
@@ -253,6 +323,36 @@ export function prepareItemBasketArgs(args: unknown): {
       } else {
          itemViewRequest = parseItemViewRequest(body)
     }
+  } else if (typeof body.basket === 'string' && isTokenViewBasket(body.basket)) {
+    const p = parsePBasket(body.basket)
+    if (p) {
+      const scope = p.rest.toLowerCase()
+      const allowedScopes = new Set(['all', 'id'])
+      if (!allowedScopes.has(scope) || p.rest !== scope) {
+        return {
+          args,
+          error: {
+            code: 'INVALID_PBSV21_SCOPE',
+            description: 'Use exactly "p bsv21 all|id"; filter values belong in tags.',
+          },
+        }
+      }
+      tokenViewRequest = parseTokenViewRequest(body)
+      if (scope === 'id' && tokenViewRequest.ids.length === 0) {
+        return {
+          args,
+          error: {
+            code: 'MISSING_PBSV21_SCOPE_TAG',
+            description: 'Basket "p bsv21 id" requires at least one "id:<tokenId>" or "bsv21:<tokenId>" tag.',
+          },
+        }
+      }
+      body.basket = FUNGIBLE_STORAGE_BASKET
+      body.includeTags = true
+      changed = true
+    } else {
+      tokenViewRequest = parseTokenViewRequest(body)
+    }
   }
 
   if (Array.isArray(body.outputs)) {
@@ -280,14 +380,14 @@ export function prepareItemBasketArgs(args: unknown): {
     })
   }
 
-  return { args: changed ? body : args, itemViewRequest }
+  return { args: changed ? body : args, itemViewRequest, tokenViewRequest }
 }
 
 function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only scheme "1sat" is implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat" and "bsv21" are implemented.`
     }
     return null
   }
@@ -301,7 +401,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (typeof value === 'object') {
     for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
       if (key === 'basket' && typeof child === 'string' && isUnsupportedPBasket(child)) {
-        return `Unsupported permission basket "${child}". Only scheme "1sat" is implemented.`
+        return `Unsupported permission basket "${child}". Only schemes "1sat" and "bsv21" are implemented.`
       }
       const err = findUnsupportedPBasket(child, depth + 1)
       if (err) return err
@@ -618,8 +718,13 @@ export function normalizeItemAccess(raw: unknown): ItemAccess {
 export function mergeItemViewGrant(
   current: ItemAccess,
   request: ItemViewRequest,
+  opts?: { allowAll?: boolean },
 ): ItemAccess {
-  if (request.wantsAll || current.view === 'all') {
+  const allowAll = opts?.allowAll !== false
+  if (allowAll && (request.wantsAll || current.view === 'all')) {
+    return { ...current, view: 'all' }
+  }
+  if (current.view === 'all' && allowAll) {
     return { ...current, view: 'all' }
   }
   const collections = [...new Set([...current.collections, ...request.collections])]
@@ -640,7 +745,9 @@ export function mergeItemViewGrant(
 export function itemViewGranted(access: ItemAccess, request: ItemViewRequest): boolean {
   if (access.view === 'none') return false
   if (access.view === 'all') return true
-  if (request.wantsAll) return false
+  // Filtered grant is the ceiling: a later `p 1sat all` is allowed and then
+  // filtered, instead of re-prompting forever.
+  if (request.wantsAll) return access.view === 'filtered'
   if (request.scope === 'collection') {
     return request.collections.every((value) => access.collections.includes(value))
   }
@@ -661,8 +768,10 @@ export function outputMatchesItemAccess(
   tags: string[] | undefined,
   customInstructions?: string,
   request?: ItemViewRequest,
+  lockingScript?: unknown,
 ): boolean {
   if (access.view === 'none') return false
+  if (isLeftoverThirdPartyItem({ tags, customInstructions, lockingScript })) return false
 
   const tagList = tags ?? []
   let app: string | undefined
@@ -689,7 +798,16 @@ export function outputMatchesItemAccess(
     }
   }
 
-  if (!request || request.wantsAll) return access.view === 'all'
+  if (!request || request.wantsAll) {
+    if (access.view === 'all') return true
+    if (access.view !== 'filtered') return false
+    return (
+      (!!collectionId && access.collections.includes(collectionId)) ||
+      (!!app && access.apps.includes(app)) ||
+      (!!creator && access.creators.includes(creator)) ||
+      (!!id && access.ids.includes(id))
+    )
+  }
   if (request.scope === 'collection') {
     return !!collectionId && request.collections.includes(collectionId)
   }
@@ -704,3 +822,325 @@ export function outputMatchesItemAccess(
 export function itemAccessOriginKey(origin: string | undefined): string {
   return normalizeAppHost(origin)
 }
+
+export function normalizeTokenAccess(raw: unknown): TokenAccess {
+  if (!raw || typeof raw !== 'object') return { ...DEFAULT_TOKEN_ACCESS }
+  const o = raw as Partial<TokenAccess>
+  const view =
+    o.view === 'all' || o.view === 'filtered' || o.view === 'none' ? o.view : 'none'
+  return {
+    view,
+    ids: Array.isArray(o.ids)
+      ? o.ids.filter((c): c is string => typeof c === 'string' && !!c.trim())
+      : [],
+  }
+}
+
+export function mergeTokenViewGrant(
+  current: TokenAccess,
+  request: TokenViewRequest,
+  opts?: { allowAll?: boolean },
+): TokenAccess {
+  const allowAll = opts?.allowAll !== false
+  if (allowAll && (request.wantsAll || current.view === 'all')) {
+    return { ...current, view: 'all' }
+  }
+  const ids = [...new Set([...current.ids, ...request.ids])]
+  return {
+    ...current,
+    view: 'filtered',
+    ids,
+  }
+}
+
+export function tokenViewGranted(access: TokenAccess, request: TokenViewRequest): boolean {
+  if (access.view === 'none') return false
+  if (access.view === 'all') return true
+  if (request.wantsAll) return access.view === 'filtered'
+  if (request.scope === 'id') {
+    return request.ids.length > 0 && request.ids.every((value) => access.ids.includes(value))
+  }
+  return false
+}
+
+function normalizeOutpointId(value: string): string | undefined {
+  const raw = value.trim().toLowerCase().replace('.', '_')
+  return /^[0-9a-f]{64}_\d+$/.test(raw) ? raw : undefined
+}
+
+function tokenIdFromOutput(
+  tags: string[] | undefined,
+  customInstructions?: string,
+  lockingScript?: unknown,
+  outpoint?: string,
+): string | undefined {
+  const tagList = tags ?? []
+  for (const t of tagList) {
+    if (t.toLowerCase().startsWith('bsv21:') && t.length > 6) {
+      const id = normalizeOutpointId(t.slice(6))
+      if (id) return id
+    }
+    if (t.toLowerCase().startsWith('id:') && t.length > 3) {
+      const id = normalizeOutpointId(t.slice(3))
+      if (id) return id
+    }
+  }
+  if (customInstructions) {
+    try {
+      const o = JSON.parse(customInstructions) as Record<string, unknown>
+      if (typeof o.id === 'string' && o.id.trim()) {
+        const id = normalizeOutpointId(o.id)
+        if (id) return id
+      }
+    } catch {
+      // ignore
+    }
+  }
+  const decoded = decodeBsv21Binary(lockingScript)
+  if (decoded?.tokenId) return decoded.tokenId
+  if (decoded?.role === 'deploy' && outpoint) return normalizeOutpointId(outpoint)
+  return undefined
+}
+
+export function outputMatchesTokenAccess(
+  access: TokenAccess,
+  tags: string[] | undefined,
+  customInstructions?: string,
+  request?: TokenViewRequest,
+  lockingScript?: unknown,
+  outpoint?: string,
+): boolean {
+  if (access.view === 'none') return false
+  const tokenId = tokenIdFromOutput(tags, customInstructions, lockingScript, outpoint)
+  if (access.view === 'all') {
+    if (!request || request.wantsAll) return true
+    if (request.scope === 'id') return !!tokenId && request.ids.includes(tokenId)
+    return true
+  }
+  if (!tokenId) return false
+  // Filtered third-party grant means "tokens", not a frozen id snapshot.
+  // New 162 tips (KING) must show without reconnecting.
+  if (!request || request.wantsAll) return true
+  if (request.scope === 'id') {
+    return request.ids.includes(tokenId) && access.ids.includes(tokenId)
+  }
+  return access.ids.includes(tokenId)
+}
+
+const ONESAT_FT_MIME_HEX = '6170706c69636174696f6e2f317361742d66742b6a736f6e'
+
+function lockingScriptHexOf(raw: unknown): string {
+  if (typeof raw === 'string') return raw.toLowerCase()
+  if (raw && typeof raw === 'object' && typeof (raw as { toHex?: () => string }).toHex === 'function') {
+    return String((raw as { toHex: () => string }).toHex() || '').toLowerCase()
+  }
+  return ''
+}
+
+function looksLikeOnesatFtOutput(
+  tags: string[],
+  customInstructions?: string,
+  lockingScript?: unknown,
+): boolean {
+  if (customInstructions) {
+    try {
+      const o = JSON.parse(customInstructions) as Record<string, unknown>
+      const nested =
+        o.colour && typeof o.colour === 'object' && !Array.isArray(o.colour)
+          ? (o.colour as Record<string, unknown>)
+          : o
+      if (String(nested.p ?? o.p ?? '').toLowerCase() === '1sat-ft') return true
+    } catch {
+      // ignore
+    }
+  }
+  const hex = lockingScriptHexOf(lockingScript)
+  if (hex.includes(ONESAT_FT_MIME_HEX)) return true
+  return tags.some((t) => t.toLowerCase() === '1sat-ft' || t.toLowerCase().startsWith('1sat-ft:'))
+}
+
+function itemDisplayFields(tags: string[], customInstructions?: string): {
+  collection?: string
+  app?: string
+  name?: string
+  content?: string
+} {
+  const collection = tagValueOf(tags, 'collection:')
+  const app = tagValueOf(tags, 'app:')
+  const name = tagValueOf(tags, 'name:')
+  const content = tagValueOf(tags, 'content:')
+  const out = { collection, app, name, content }
+  if (customInstructions && (!collection || !app || !name || !content)) {
+    try {
+      const o = JSON.parse(customInstructions) as Record<string, unknown>
+      if (!out.collection && typeof o.collectionId === 'string') out.collection = o.collectionId
+      if (!out.app && typeof o.app === 'string') out.app = o.app
+      if (!out.name && typeof o.name === 'string') out.name = o.name
+      if (!out.content && typeof o.content === 'string') out.content = o.content
+    } catch {
+      // ignore
+    }
+  }
+  return out
+}
+
+/**
+ * Leftover 1sat-ft (FOX) and unnamed Collectable · hex / Uncollected dust.
+ * Third-party inventory drops these even when an old grant set view=all.
+ */
+export function isOnesatFtLeftoverRow(raw: {
+  tags?: unknown
+  customInstructions?: unknown
+  lockingScript?: unknown
+}): boolean {
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.filter((t): t is string => typeof t === 'string')
+    : []
+  const custom = typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined
+  return looksLikeOnesatFtOutput(tags, custom, raw.lockingScript)
+}
+
+export function isLeftoverThirdPartyItem(raw: {
+  tags?: unknown
+  customInstructions?: unknown
+  lockingScript?: unknown
+}): boolean {
+  const tags = Array.isArray(raw.tags)
+    ? raw.tags.filter((t): t is string => typeof t === 'string')
+    : []
+  const custom = typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined
+  if (isOnesatFtLeftoverRow(raw)) return true
+  const fields = itemDisplayFields(tags, custom)
+  const id = tagValueOf(tags, 'id:')
+  return !fields.collection && !fields.app && !fields.name && !fields.content && !id
+}
+
+function tagValueOf(tags: string[], prefix: string): string | undefined {
+  const needle = prefix.toLowerCase()
+  for (const tag of tags) {
+    if (tag.toLowerCase().startsWith(needle)) {
+      const v = tag.slice(prefix.length).trim()
+      if (v) return v
+    }
+  }
+  return undefined
+}
+
+/**
+ * Named collections/apps a third-party filtered grant may include.
+ * FOX leftover / 1sat-ft / unnamed ordinals never appear.
+ */
+export function grantableCollectionsFromOutputs(outputs: unknown[]): Array<{ id: string; name: string }> {
+  const byId = new Map<string, string>()
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as { tags?: unknown; customInstructions?: unknown; lockingScript?: unknown }
+    const tags = Array.isArray(o.tags)
+      ? o.tags.filter((t): t is string => typeof t === 'string')
+      : []
+    const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    if (isLeftoverThirdPartyItem(o)) continue
+    const collection = tagValueOf(tags, 'collection:')
+    const app = tagValueOf(tags, 'app:')
+    const name = tagValueOf(tags, 'name:')
+    const content = tagValueOf(tags, 'content:')
+    if (!collection && !app && !name && !content) continue
+    if (collection) {
+      if (!byId.has(collection)) byId.set(collection, name || collection)
+      continue
+    }
+    if (app) {
+      const key = `app:${app}`
+      if (!byId.has(key)) byId.set(key, app)
+    }
+  }
+  return [...byId.entries()].map(([id, name]) => ({
+    id: id.startsWith('app:') ? id.slice(4) : id,
+    name,
+  })).filter((row) => row.id)
+}
+
+export function grantableCollectionIdsFromOutputs(outputs: unknown[]): {
+  collections: string[]
+  apps: string[]
+} {
+  const collections: string[] = []
+  const apps: string[] = []
+  const seenC = new Set<string>()
+  const seenA = new Set<string>()
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as { tags?: unknown; customInstructions?: unknown; lockingScript?: unknown }
+    const tags = Array.isArray(o.tags)
+      ? o.tags.filter((t): t is string => typeof t === 'string')
+      : []
+    const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    if (isLeftoverThirdPartyItem(o)) continue
+    const collection = tagValueOf(tags, 'collection:')
+    const app = tagValueOf(tags, 'app:')
+    const name = tagValueOf(tags, 'name:')
+    const content = tagValueOf(tags, 'content:')
+    if (!collection && !app && !name && !content) continue
+    if (collection) {
+      if (!seenC.has(collection)) {
+        seenC.add(collection)
+        collections.push(collection)
+      }
+      continue
+    }
+    if (app && !seenA.has(app)) {
+      seenA.add(app)
+      apps.push(app)
+    }
+  }
+  return { collections, apps }
+}
+
+/** Live 162 tips only. Leftover 1sat-ft FOX is not a token. */
+export function grantableTokensFromOutputs(outputs: unknown[]): Array<{ id: string; ticker: string }> {
+  const byId = new Map<string, string>()
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const o = raw as { tags?: unknown; customInstructions?: unknown; lockingScript?: unknown }
+    const tags = Array.isArray(o.tags)
+      ? o.tags.filter((t): t is string => typeof t === 'string')
+      : []
+    const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
+    if (looksLikeOnesatFtOutput(tags, custom, o.lockingScript)) continue
+    let proto = ''
+    let sym: string | undefined
+    if (custom) {
+      try {
+        const parsed = JSON.parse(custom) as Record<string, unknown>
+        proto = String(parsed.p ?? '').toLowerCase()
+        if (typeof parsed.sym === 'string' && parsed.sym.trim()) sym = parsed.sym.trim()
+      } catch {
+        // ignore
+      }
+    }
+    if (proto === '1sat-ft') continue
+    const tagged = tags.includes('bsv21') || tags.some((t) => t.toLowerCase().startsWith('bsv21:'))
+    const lockLooks = lockingScriptHexOf(o.lockingScript).includes('4253563231')
+    if (proto !== 'bsv-20' && proto !== 'bsv21' && !tagged && !lockLooks) continue
+    const outpoint = typeof (o as { outpoint?: unknown }).outpoint === 'string'
+      ? (o as { outpoint: string }).outpoint
+      : undefined
+    const id = tokenIdFromOutput(tags, custom, o.lockingScript, outpoint)
+    if (!id) continue
+    const ticker = sym || tagValueOf(tags, 'sym:') || id.slice(0, 8)
+    if (!byId.has(id)) byId.set(id, ticker)
+  }
+  return [...byId.entries()].map(([id, ticker]) => ({ id, ticker }))
+}
+
+export function emptyListOutputsResult(): { outputs: unknown[]; totalOutputs: number } {
+  return { outputs: [], totalOutputs: 0 }
+}
+
+export function shouldRefuseColourList(
+  origin: string | undefined,
+  basket: unknown,
+): boolean {
+  return isThirdPartyOriginator(origin) && isColourBasket(basket)
+}
+

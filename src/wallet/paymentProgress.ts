@@ -120,6 +120,21 @@ export function isOutpointSending(outpoint: string): boolean {
   return progress.outpoint === normalizeOutpointKey(outpoint)
 }
 
+/** Verb for an in-flight outpoint: Listing, Cancelling, Buying, or Sending. */
+export function inFlightVerb(outpoint: string): string | null {
+  if (!isOutpointSending(outpoint)) return null
+  const label = (progress.label || 'Sending').replace(/…/g, '').trim()
+  if (/^list/i.test(label)) return 'Listing'
+  if (/^cancel/i.test(label)) return 'Cancelling'
+  if (/^buy/i.test(label)) return 'Buying'
+  return 'Sending'
+}
+
+export function isMarketBusy(): boolean {
+  const label = (progress.label || '').replace(/…/g, '').trim()
+  return progress.phase !== 'idle' && /^(Listing|Cancelling|Buying)$/i.test(label)
+}
+
 const MARKET_BUSY: Record<string, { label: string; detail: string }> = {
   createMarketListingAdvert: {
     label: 'Listing…',

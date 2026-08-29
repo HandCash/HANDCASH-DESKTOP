@@ -291,6 +291,10 @@ export function PermissionRequestPanel({
         </div>
       </div>
 
+      {pending.kind === 'action' && (pending.itemOutpoint || pending.tokenId) ? (
+        <PermissionItemPreview outpoint={pending.itemOutpoint} tokenId={pending.tokenId} />
+      ) : null}
+
       {(amountPrimary || pending.amountLabel) && (
         <div className="action-amount">
           <span>Amount</span>
@@ -302,10 +306,6 @@ export function PermissionRequestPanel({
           ) : null}
         </div>
       )}
-
-      {pending.itemOutpoint ? (
-        <PermissionItemPreview outpoint={pending.itemOutpoint} />
-      ) : null}
 
       <dl className="permission-meta">
         <div>

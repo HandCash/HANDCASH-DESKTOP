@@ -1,19 +1,24 @@
 /**
- * Corner / media overlay while a collectable send is in flight (including after
- * the user leaves the send screen).
+ * Corner / media overlay while a collectable send or listing is in flight.
  */
-export function CollectableSendingMark({ sending }: { sending: boolean }) {
+export function CollectableSendingMark({
+  sending,
+  verb = 'Sending',
+}: {
+  sending: boolean
+  verb?: string
+}) {
   if (!sending) return null
 
   return (
     <span
       className="collectable-sending-mark"
       aria-live="polite"
-      aria-label="Sending"
-      title="Sending"
+      aria-label={verb}
+      title={verb}
     >
       <span className="collectable-verify-spinner" aria-hidden />
-      <span className="collectable-sending-mark-label">Sending</span>
+      <span className="collectable-sending-mark-label">{verb}</span>
     </span>
   )
 }

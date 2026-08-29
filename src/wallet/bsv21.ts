@@ -534,6 +534,7 @@ export function bsv21Tags(args: {
   tokenId: string
   amt: string
   sym?: string
+  icon?: string
   cosign?: Bsv21Cosign
   issuer?: string
   op?: string
@@ -541,12 +542,14 @@ export function bsv21Tags(args: {
   const pubkey = args.cosign ? normalizeCosignPubKey(args.cosign.pubkey) : null
   const issuer = normalizeIssuerPubKey(args.issuer)
   const tokenId = normalizeTokenId(args.tokenId) ?? args.tokenId
+  const icon = args.icon ? normalizeTokenId(args.icon) ?? args.icon.trim() : ''
   return [
     'bsv21',
     `bsv21:${tokenId}`,
     `amt:${args.amt}`,
     ...(args.op ? [`op:${args.op}`] : []),
     ...(args.sym ? [`sym:${args.sym.slice(0, 32).toLowerCase()}`] : []),
+    ...(icon ? [`icon:${icon}`] : []),
     ...(issuer ? [`issuer:${issuer}`] : []),
     ...(pubkey ? [`cosign:${pubkey}`] : []),
   ]

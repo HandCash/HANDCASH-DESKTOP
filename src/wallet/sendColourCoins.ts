@@ -29,6 +29,7 @@ import {
   type Bsv21SendTip,
 } from './bsv21Send'
 import { listBsv21BinaryTips, listBsv21BinaryTokens } from './colourListing'
+import { mergeIconTxIntoBeef } from './tokenIconResolve'
 import {
   failOutboundSendPending,
   noteOutboundSendComplete,
@@ -363,6 +364,9 @@ export async function sendColourCoins(args: {
         }
         return undefined
       })()
+      const icon =
+        args.icon ||
+        listed162.find((t) => t.tokenId === origin && t.icon)?.icon
       let plannedOutputs
       try {
         plannedOutputs = buildBsv21SendOutputs({
@@ -374,6 +378,7 @@ export async function sendColourCoins(args: {
           sym,
           dec: 0,
           issuer,
+          icon,
         })
       } catch {
         throw new Error('Invalid recipient address or identity key')
@@ -406,6 +411,11 @@ export async function sendColourCoins(args: {
           spendOutpoints,
           wireOutpoint,
         )
+        if (icon) {
+          const beef = Beef.fromBinary(inputBEEF)
+          await mergeIconTxIntoBeef(wallet, beef, icon)
+          inputBEEF = beef.toBinary()
+        }
       } catch (err) {
         throw new Error(
           err instanceof Error

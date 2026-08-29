@@ -3,26 +3,36 @@ import { Beef, Transaction } from '@bsv/sdk'
 import { getActiveWallet, fetchFastBalanceSats } from './session'
 import {
   filterItemOutputsForOrigin,
+  filterTokenOutputsForOrigin,
   gateOriginAccess,
   isActionMethod,
   normalizeOrigin,
   requestActionApproval,
   requestItemViewApproval,
+  requestTokenViewApproval,
 } from './permissions'
 import {
+  emptyListOutputsResult,
+  isColourBasket,
   isItemBasket,
   isItemReceiveArgs,
   isItemSpendArgs,
   isColourIssuanceArgs,
+  isThirdPartyOriginator,
+  isTokenViewBasket,
   p1SatSpendIds,
   prepareItemBasketArgs,
+  shouldRefuseColourList,
   type ItemViewRequest,
+  type TokenViewRequest,
 } from './itemAccess'
 import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN, formatActivityTokenAmt, hasActivityItemOutpoint } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { rememberTokenIcon, getTokenIconDataUrl } from './tokenIconCache'
+import { resolveBsv21IconDataUrl } from './tokenIconResolve'
+import { stampBsv21IconOnListedOutputs } from './colourListing'
 import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
 import { addMarketOriginVerdicts } from './marketInventory'
 import {
@@ -53,6 +63,7 @@ import {
   getMarketSettlementReceipt,
   getMarketSaleStatus,
   isMarketListingOrigin,
+  markMarketListingPublishFailed,
   MarketListingError,
   purchaseMarketListing,
   verifyMarketListingProvenance,
@@ -677,6 +688,20 @@ async function dispatchWalletMethod(
       return listMigrationTxids()
     case 'createMarketListingAdvert':
       return createMarketListingAdvert((args ?? {}) as CreateMarketListingArgs)
+    case 'getTokenIcon': {
+      const body =
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? (args as { icon?: unknown; origin?: unknown; outpoint?: unknown })
+          : {}
+      const icon = typeof body.icon === 'string' ? body.icon.trim() : ''
+      const origin = typeof body.origin === 'string' ? body.origin.trim() : ''
+      const dataUrl = await resolveBsv21IconDataUrl({
+        icon: icon || undefined,
+        origin: origin || (typeof body.outpoint === 'string' ? body.outpoint : undefined),
+        wallet: getActiveWallet(),
+      })
+      return { dataUrl: dataUrl ?? null }
+    }
     case 'createMarketPurchaseIntent':
       return createMarketPurchaseIntent(
         (args ?? {}) as Parameters<typeof createMarketPurchaseIntent>[0]
@@ -701,6 +726,11 @@ async function dispatchWalletMethod(
       return getMarketSaleStatus(
         (args ?? {}) as Parameters<typeof getMarketSaleStatus>[0],
       )
+    case 'markMarketListingPublishFailed':
+      markMarketListingPublishFailed(
+        (args ?? {}) as { txid?: string; reason?: string },
+      )
+      return { ok: true }
     case 'claimCloudHandle':
       return claimCloudHandlePayload(
         args && typeof args === 'object' && !Array.isArray(args)
@@ -805,6 +835,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
 
   let args: unknown = undefined
   let itemViewRequest: ItemViewRequest | undefined
+  let tokenViewRequest: TokenViewRequest | undefined
   if (event.body) {
     try {
       args = JSON.parse(event.body)
@@ -828,6 +859,7 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
     args = prepared.args
     itemViewRequest = prepared.itemViewRequest
+    tokenViewRequest = prepared.tokenViewRequest
   }
 
   const originator = parseOrigin(event.headers)
@@ -883,6 +915,8 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       'getMarketSettlementReceipt',
       'createCancelMarketListingAdvert',
       'getMarketListingStatus',
+      'markMarketListingPublishFailed',
+      'getTokenIcon',
     ].includes(method) &&
     !isMarketListingOrigin(originator)
   ) {
@@ -987,7 +1021,25 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
       args && typeof args === 'object' && !Array.isArray(args)
         ? (args as { basket?: unknown }).basket
         : undefined
-    if (isItemBasket(basket)) {
+    if (shouldRefuseColourList(originator, basket) || (isColourBasket(basket) && isThirdPartyOriginator(originator))) {
+      return {
+        status: 200,
+        body: JSON.stringify(emptyListOutputsResult()),
+      }
+    }
+    if (isTokenViewBasket(basket)) {
+      const viewDecision = await requestTokenViewApproval(originator, args, tokenViewRequest)
+      if (viewDecision !== 'allow') {
+        return {
+          status: 403,
+          body: JSON.stringify({
+            status: 'error',
+            code: 'TOKEN_VIEW_DENIED',
+            description: 'You denied this app access to view tokens.',
+          }),
+        }
+      }
+    } else if (isItemBasket(basket)) {
       const viewDecision = await requestItemViewApproval(originator, args, itemViewRequest)
       if (viewDecision !== 'allow') {
         return {
@@ -1130,7 +1182,13 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
         args && typeof args === 'object' && !Array.isArray(args)
           ? (args as { basket?: unknown }).basket
           : undefined
-      if (isItemBasket(basket)) {
+      if (isColourBasket(basket) && isThirdPartyOriginator(originator)) {
+        result = emptyListOutputsResult()
+      } else if (isTokenViewBasket(basket)) {
+        result = stampBsv21IconOnListedOutputs(
+          filterTokenOutputsForOrigin(originator, result, tokenViewRequest),
+        )
+      } else if (isItemBasket(basket)) {
         result = filterItemOutputsForOrigin(originator, result, itemViewRequest)
         if (isMarketListingOrigin(originator)) {
           result = addMarketOriginVerdicts(result)

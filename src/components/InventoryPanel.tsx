@@ -33,6 +33,7 @@ import {
 } from '../wallet/verificationProgress'
 import {
   getPaymentProgress,
+  inFlightVerb,
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
@@ -64,6 +65,7 @@ function CollectableGridItem({
   verifying: boolean
   sending: boolean
 }) {
+  const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   return (
     <li
       className="collection-grid-card collectable-card"
@@ -94,7 +96,7 @@ function CollectableGridItem({
               </span>
             }
           />
-          <CollectableSendingMark sending={sending} />
+          <CollectableSendingMark sending={sending} verb={verb} />
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <strong className="collection-grid-name" title={item.name}>
@@ -109,8 +111,8 @@ function CollectableGridItem({
       <button
         type="button"
         className="collectable-send-btn"
-        title={sending ? `Sending ${item.name}` : `Send ${item.name}`}
-        aria-label={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        title={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
+        aria-label={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
         disabled={sending}
         onClick={(e) => {
           e.stopPropagation()
@@ -119,7 +121,7 @@ function CollectableGridItem({
         }}
       >
         <SendIcon size={14} />
-        {sending ? 'Sending' : 'Send'}
+        {sending ? verb : 'Send'}
       </button>
     </li>
   )
@@ -134,6 +136,7 @@ function CollectableListItem({
   verifying: boolean
   sending: boolean
 }) {
+  const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   return (
     <li
       className="connected-app-row collectable-row"
@@ -164,7 +167,7 @@ function CollectableListItem({
               </span>
             }
           />
-          <CollectableSendingMark sending={sending} />
+          <CollectableSendingMark sending={sending} verb={verb} />
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <div className="connected-app-body">
@@ -177,8 +180,8 @@ function CollectableListItem({
       <button
         type="button"
         className="collectable-send-btn collectable-send-btn--row"
-        title={sending ? `Sending ${item.name}` : `Send ${item.name}`}
-        aria-label={sending ? `Sending ${item.name}` : `Send ${item.name}`}
+        title={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
+        aria-label={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
         disabled={sending}
         onClick={() => {
           playWalletSound('soft')
@@ -186,7 +189,7 @@ function CollectableListItem({
         }}
       >
         <SendIcon size={14} />
-        {sending ? 'Sending' : 'Send'}
+        {sending ? verb : 'Send'}
       </button>
     </li>
   )

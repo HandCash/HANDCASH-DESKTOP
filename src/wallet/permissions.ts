@@ -5,6 +5,10 @@ import {
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
   DEFAULT_ITEM_ACCESS,
+  DEFAULT_TOKEN_ACCESS,
+  grantableCollectionIdsFromOutputs,
+  grantableCollectionsFromOutputs,
+  grantableTokensFromOutputs,
   isBsv21ReceiveArgs,
   isBsv21SpendArgs,
   isColourIssuanceArgs,
@@ -13,19 +17,30 @@ import {
   isItemIssuanceArgs,
   isItemReceiveArgs,
   isItemSpendArgs,
+  isThirdPartyOriginator,
+  isTokenViewBasket,
   itemViewGranted,
   mergeItemViewGrant,
+  mergeTokenViewGrant,
   normalizeItemAccess,
+  normalizeTokenAccess,
+  isLeftoverThirdPartyItem,
+  isOnesatFtLeftoverRow,
   outputMatchesItemAccess,
+  outputMatchesTokenAccess,
   parseItemViewRequest,
+  parseTokenViewRequest,
+  tokenViewGranted,
   type ItemAccess,
   type ItemViewRequest,
+  type TokenAccess,
+  type TokenViewRequest,
 } from './itemAccess'
+import { formatBsvSignificant, getActiveWallet } from './session'
 import {
   bsv21IdentityMintHints,
   isBsv21IdentityMintArgs,
 } from './bsv21Issuer'
-import { formatBsvSignificant } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 
@@ -39,6 +54,8 @@ export type ConnectedApp = {
   connectedAt: number
   /** Collectable / NFT capabilities — never implied by Pay. */
   itemAccess?: ItemAccess
+  /** BSV-21 token view — never implied by item view. */
+  tokenAccess?: TokenAccess
 }
 
 export type PendingPermission = {
@@ -65,6 +82,8 @@ export type PendingAction = {
    * to describe what the user is about to approve.
    */
   itemOutpoint?: string
+  /** BSV-21 token id when this action spends or lists a fungible tip. */
+  tokenId?: string
   createdAt: number
 }
 
@@ -148,6 +167,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           name: typeof a.name === 'string' && a.name ? a.name : appDisplayName(a.origin),
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
+          tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -358,6 +378,7 @@ export function allowOrigin(origin: string | undefined): void {
       connectedAt: prior?.connectedAt ?? Date.now(),
       // Connect does not grant item view/send/receive — those are approved per request.
       itemAccess: prior?.itemAccess,
+      tokenAccess: prior?.tokenAccess,
     },
     ...existing,
   ])
@@ -368,6 +389,12 @@ export function getItemAccess(origin: string | undefined): ItemAccess {
   const key = normalizeOrigin(origin)
   const app = readConnected().find((a) => a.origin === key)
   return normalizeItemAccess(app?.itemAccess)
+}
+
+export function getTokenAccess(origin: string | undefined): TokenAccess {
+  const key = normalizeOrigin(origin)
+  const app = readConnected().find((a) => a.origin === key)
+  return normalizeTokenAccess(app?.tokenAccess)
 }
 
 function patchItemAccess(
@@ -381,6 +408,21 @@ function patchItemAccess(
   const next = patch(normalizeItemAccess(apps[idx]!.itemAccess))
   const copy = [...apps]
   copy[idx] = { ...copy[idx]!, itemAccess: next }
+  writeConnected(copy)
+  return next
+}
+
+function patchTokenAccess(
+  origin: string | undefined,
+  patch: (current: TokenAccess) => TokenAccess,
+): TokenAccess {
+  const key = normalizeOrigin(origin)
+  const apps = readConnected()
+  const idx = apps.findIndex((a) => a.origin === key)
+  if (idx < 0) return DEFAULT_TOKEN_ACCESS
+  const next = patch(normalizeTokenAccess(apps[idx]!.tokenAccess))
+  const copy = [...apps]
+  copy[idx] = { ...copy[idx]!, tokenAccess: next }
   writeConnected(copy)
   return next
 }
@@ -453,8 +495,19 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       })
       return
     }
-    // The row already carries the verdict (Allowed / Denied) and the origin, so
-    // the note names only what was requested.
+    // Market list/buy/cancel already write their own activity row with the
+    // item. A second "Approved / App BRC Cloud" event hides the failure.
+    if (
+      prompt.kind === 'action' &&
+      [
+        'createMarketListingAdvert',
+        'createCancelMarketListingAdvert',
+        'purchaseMarketListing',
+        'createMarketPurchaseIntent',
+      ].includes(prompt.method)
+    ) {
+      return
+    }
     recordWalletEvent({
       origin: prompt.origin,
       method: decision === 'allow' ? 'approve' : 'deny',
@@ -535,6 +588,38 @@ function normalizeItemOutpoint(value: unknown): string | null {
   return match ? `${match[1]}.${match[2]}` : null
 }
 
+function firstInputOutpoint(body: Record<string, unknown>): string | undefined {
+  const inputs = Array.isArray(body.inputs) ? body.inputs : []
+  for (const raw of inputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const outpoint = (raw as { outpoint?: unknown }).outpoint
+    if (typeof outpoint === 'string' && outpoint.trim()) {
+      return normalizeItemOutpoint(outpoint) ?? undefined
+    }
+  }
+  return undefined
+}
+
+function tokenIdFromBody(body: Record<string, unknown>): string | undefined {
+  const direct = body.origin ?? body.tokenId
+  if (typeof direct === 'string' && direct.trim()) {
+    return direct.trim().toLowerCase().replace('.', '_')
+  }
+  const outputs = Array.isArray(body.outputs) ? body.outputs : []
+  for (const raw of outputs) {
+    if (!raw || typeof raw !== 'object') continue
+    const tags = Array.isArray((raw as { tags?: unknown }).tags)
+      ? (raw as { tags: unknown[] }).tags
+      : []
+    for (const tag of tags) {
+      if (typeof tag !== 'string') continue
+      const m = /^origin:([0-9a-f]{64}[._]\d+)$/i.exec(tag.trim())
+      if (m) return m[1].toLowerCase().replace('.', '_')
+    }
+  }
+  return undefined
+}
+
 export function summarizeAction(method: string, args: unknown): {
   title: string
   summary: string
@@ -542,6 +627,7 @@ export function summarizeAction(method: string, args: unknown): {
   amountLabel?: string
   amountSats?: number
   itemOutpoint?: string
+  tokenId?: string
 } {
   const body = asRecord(args)
   const details: string[] = []
@@ -633,6 +719,8 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Send token',
       summary: description,
       details,
+      itemOutpoint: firstInputOutpoint(body),
+      tokenId: tokenIdFromBody(body),
     }
   }
 
@@ -649,6 +737,8 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Send token',
       summary: description,
       details,
+      itemOutpoint: firstInputOutpoint(body),
+      tokenId: tokenIdFromBody(body),
     }
   }
 
@@ -665,6 +755,7 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Send item',
       summary: description,
       details,
+      itemOutpoint: firstInputOutpoint(body),
     }
   }
 
@@ -828,16 +919,28 @@ export function summarizeAction(method: string, args: unknown): {
     const price = Math.max(0, Math.trunc(Number(body.priceSats) || 0))
     const outpoint =
       typeof body.outpoint === 'string' ? body.outpoint : 'Unknown item'
+    const isToken = body.assetType === 'bsv21'
+    const label =
+      (typeof body.sym === 'string' && body.sym.trim()) ||
+      (typeof body.name === 'string' && body.name.trim()) ||
+      (isToken ? 'token' : 'item')
+    const units =
+      isToken && Number.isSafeInteger(Number(body.listAmt))
+        ? `${Number(body.listAmt).toLocaleString()} `
+        : ''
     return {
-      title: 'List item for sale',
-      summary: 'Create an on-chain BRC-48 offer for this collectable',
+      title: `List ${units}${label} for sale`,
+      summary: isToken
+        ? 'Create an on-chain BRC-48 offer for this BSV-21 token'
+        : 'Create an on-chain BRC-48 offer for this collectable',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
       itemOutpoint: normalizeItemOutpoint(body.outpoint) ?? undefined,
+      tokenId: isToken
+        ? (typeof body.origin === 'string' ? body.origin : undefined)
+        : undefined,
       details: [
-        `Item: ${outpoint}`,
-        'Re-tips the item to you and creates a one-satoshi offer token',
-        'The overlay indexes the token but cannot alter its terms',
+        price ? `Price ${price.toLocaleString()} sats` : 'Price unset',
       ],
     }
   }
@@ -922,7 +1025,7 @@ export function requestActionApproval(
   args: unknown,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats, itemOutpoint } =
+  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId } =
     summarizeAction(method, args)
   const itemSpend =
     isItemSpendArgs(method, args) ||
@@ -1015,6 +1118,7 @@ export function requestActionApproval(
     amountLabel,
     amountSats,
     itemOutpoint,
+    tokenId,
     createdAt: Date.now(),
   }).then((decision) => {
     if (decision === 'allow' && isIdentityProofMethod(method)) {
@@ -1051,9 +1155,100 @@ function summarizeItemView(request: ItemViewRequest): {
   }
 }
 
+async function listHeldOutputs(basket: string): Promise<unknown[]> {
+  const active = getActiveWallet()
+  if (!active) return []
+  try {
+    const listed = await active.wallet.listOutputs({
+      basket,
+      limit: 1000,
+      includeTags: true,
+      includeCustomInstructions: true,
+      seekPermission: false,
+    })
+    return listed.outputs ?? []
+  } catch {
+    return []
+  }
+}
+
+async function thirdPartyItemViewRequest(
+  request: ItemViewRequest,
+): Promise<{ request: ItemViewRequest; names: string[] }> {
+  if (!request.wantsAll && request.scope !== 'plain') {
+    return { request, names: request.collections }
+  }
+  const outputs = await listHeldOutputs('1sat')
+  const { collections, apps } = grantableCollectionIdsFromOutputs(outputs)
+  const named = grantableCollectionsFromOutputs(outputs)
+  return {
+    request: {
+      scope: collections.length ? 'collection' : apps.length ? 'app' : 'collection',
+      collections,
+      apps,
+      creators: [],
+      ids: [],
+      wantsAll: false,
+    },
+    names: named.map((row) => row.name),
+  }
+}
+
+async function thirdPartyTokenViewRequest(
+  request: TokenViewRequest,
+): Promise<{ request: TokenViewRequest; tickers: string[] }> {
+  if (!request.wantsAll && request.scope === 'id' && request.ids.length > 0) {
+    return { request, tickers: request.ids }
+  }
+  const outputs = await listHeldOutputs('bsv21')
+  const tokens = grantableTokensFromOutputs(outputs)
+  return {
+    request: {
+      scope: 'id',
+      ids: tokens.map((t) => t.id),
+      wantsAll: false,
+    },
+    tickers: tokens.map((t) => t.ticker),
+  }
+}
+
+function summarizeFilteredItemView(names: string[]): {
+  title: string
+  summary: string
+  details: string[]
+} {
+  const details = ['Not covered by Pay or wallet activity', 'Limited to collections you approve']
+  for (const name of names.slice(0, 24)) details.push(`Collection: ${name}`)
+  if (names.length === 0) details.push('No named collections in this wallet')
+  return {
+    title: 'View items',
+    summary: 'See specific collectables in this wallet',
+    details,
+  }
+}
+
+function summarizeTokenView(tickers: string[], wantsAll: boolean): {
+  title: string
+  summary: string
+  details: string[]
+} {
+  const details = ['Not covered by Pay, item view, or wallet activity']
+  if (wantsAll && tickers.length === 0) {
+    details.push('All BSV-21 tokens')
+  }
+  for (const ticker of tickers.slice(0, 24)) details.push(`Token: ${ticker}`)
+  if (tickers.length === 0) details.push('No BSV-21 tokens in this wallet')
+  return {
+    title: 'View tokens',
+    summary: 'See BSV-21 tokens in this wallet',
+    details,
+  }
+}
+
 /**
  * Gate listOutputs against item baskets. Pay does not include inventory access.
  * Returns allow/deny; caller should filter results when grant is filtered.
+ * Third parties never receive view='all'.
  */
 export async function requestItemViewApproval(
   origin: string | undefined,
@@ -1064,17 +1259,33 @@ export async function requestItemViewApproval(
   const body = asRecord(args)
   if (!isItemBasket(body.basket)) return 'allow'
 
-  const request = preparedRequest ?? parseItemViewRequest(args)
+  let request = preparedRequest ?? parseItemViewRequest(args)
+  const thirdParty = isThirdPartyOriginator(origin)
+  let promptNames: string[] | undefined
+  if (thirdParty && (request.wantsAll || request.scope === 'plain')) {
+    const converted = await thirdPartyItemViewRequest(request)
+    request = converted.request
+    promptNames = converted.names
+  }
   const access = getItemAccess(key)
   if (itemViewGranted(access, request)) return 'allow'
   // BRC-165 `id` is a narrow row lookup, not inventory access. Record only
   // this id-scoped grant so response filtering can enforce the same ceiling.
-  if (request.scope === 'id') {
-    patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
+  if (request.scope === 'id' && !request.wantsAll) {
+    patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request, { allowAll: !thirdParty }))
     return 'allow'
   }
 
-  const { title, summary, details } = summarizeItemView(request)
+  const { title, summary, details } = promptNames
+    ? summarizeFilteredItemView(promptNames)
+    : summarizeItemView(request)
+
+  const grant = (decision: PermissionDecision) => {
+    if (decision === 'allow') {
+      patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request, { allowAll: !thirdParty }))
+    }
+    return decision
+  }
 
   if (
     current?.request.kind === 'action' &&
@@ -1086,10 +1297,7 @@ export async function requestItemViewApproval(
       current = {
         request: prev.request,
         resolve: (decision) => {
-          if (decision === 'allow') {
-            patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
-          }
-          prev.resolve(decision)
+          prev.resolve(grant(decision))
           resolve(decision)
         },
       }
@@ -1105,12 +1313,65 @@ export async function requestItemViewApproval(
     summary,
     details,
     createdAt: Date.now(),
-  }).then((decision) => {
+  }).then(grant)
+}
+
+export async function requestTokenViewApproval(
+  origin: string | undefined,
+  args: unknown,
+  preparedRequest?: TokenViewRequest,
+): Promise<PermissionDecision> {
+  const key = normalizeOrigin(origin)
+  const body = asRecord(args)
+  if (!isTokenViewBasket(body.basket)) return 'allow'
+
+  let request = preparedRequest ?? parseTokenViewRequest(args)
+  const thirdParty = isThirdPartyOriginator(origin)
+  let tickers: string[] = request.ids
+  if (thirdParty && (request.wantsAll || request.scope === 'plain')) {
+    const converted = await thirdPartyTokenViewRequest(request)
+    request = converted.request
+    tickers = converted.tickers
+  }
+  const access = getTokenAccess(key)
+  if (tokenViewGranted(access, request)) return 'allow'
+
+  const { title, summary, details } = summarizeTokenView(tickers, request.wantsAll)
+
+  const grant = (decision: PermissionDecision) => {
     if (decision === 'allow') {
-      patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request))
+      patchTokenAccess(key, (cur) => mergeTokenViewGrant(cur, request, { allowAll: !thirdParty }))
     }
     return decision
-  })
+  }
+
+  if (
+    current?.request.kind === 'action' &&
+    current.request.origin === key &&
+    current.request.method === 'listOutputs'
+  ) {
+    return new Promise((resolve) => {
+      const prev = current!
+      current = {
+        request: prev.request,
+        resolve: (decision) => {
+          prev.resolve(grant(decision))
+          resolve(decision)
+        },
+      }
+    })
+  }
+
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: key,
+    method: 'listOutputs',
+    title,
+    summary,
+    details,
+    createdAt: Date.now(),
+  }).then(grant)
 }
 
 /** Filter listOutputs payload to what the app's item grant allows. */
@@ -1120,15 +1381,64 @@ export function filterItemOutputsForOrigin(
   request?: ItemViewRequest,
 ): unknown {
   const access = getItemAccess(origin)
-  if (access.view === 'none') return result
-  if (access.view === 'all' && (!request || request.wantsAll)) return result
+  const thirdParty = isThirdPartyOriginator(origin)
+  if (access.view === 'none') {
+    if (!result || typeof result !== 'object') return { outputs: [], totalOutputs: 0 }
+    const body = result as { outputs?: unknown[] }
+    return { ...body, outputs: [], totalOutputs: 0 }
+  }
   if (!result || typeof result !== 'object') return result
   const body = result as { outputs?: unknown[]; totalOutputs?: number }
   if (!Array.isArray(body.outputs)) return result
+  const passGrant = access.view === 'all' && (!request || request.wantsAll)
   const outputs = body.outputs.filter((raw) => {
     if (!raw || typeof raw !== 'object') return false
-    const o = raw as { tags?: string[]; customInstructions?: string }
-    return outputMatchesItemAccess(access, o.tags, o.customInstructions, request)
+    const o = raw as { tags?: string[]; customInstructions?: string; lockingScript?: unknown }
+    if (thirdParty && isLeftoverThirdPartyItem(o)) return false
+    if (passGrant) return true
+    return outputMatchesItemAccess(access, o.tags, o.customInstructions, request, o.lockingScript)
+  })
+  return {
+    ...body,
+    outputs,
+    totalOutputs: outputs.length,
+  }
+}
+
+export function filterTokenOutputsForOrigin(
+  origin: string | undefined,
+  result: unknown,
+  request?: TokenViewRequest,
+): unknown {
+  const access = getTokenAccess(origin)
+  const thirdParty = isThirdPartyOriginator(origin)
+  if (access.view === 'none') {
+    if (!result || typeof result !== 'object') return { outputs: [], totalOutputs: 0 }
+    const body = result as { outputs?: unknown[] }
+    return { ...body, outputs: [], totalOutputs: 0 }
+  }
+  if (!result || typeof result !== 'object') return result
+  const body = result as { outputs?: unknown[]; totalOutputs?: number }
+  if (!Array.isArray(body.outputs)) return result
+  const passGrant = access.view === 'all' && (!request || request.wantsAll)
+  const outputs = body.outputs.filter((raw) => {
+    if (!raw || typeof raw !== 'object') return false
+    const o = raw as {
+      tags?: string[]
+      customInstructions?: string
+      lockingScript?: unknown
+      outpoint?: string
+    }
+    if (thirdParty && isOnesatFtLeftoverRow(o)) return false
+    if (passGrant) return true
+    return outputMatchesTokenAccess(
+      access,
+      o.tags,
+      o.customInstructions,
+      request,
+      o.lockingScript,
+      o.outpoint,
+    )
   })
   return {
     ...body,

@@ -306,7 +306,17 @@ function HistoryRow({
       )
   )
   const showPending = pending && (spent || !inventoryProven)
-  const pendingLabel = burned ? 'Burning…' : spent ? 'Sending…' : 'Verifying…'
+  const listing = entry.method === 'market-list'
+  const cancelling = entry.method === 'market-cancel'
+  const pendingLabel = burned
+    ? 'Burning…'
+    : listing
+      ? 'Listing…'
+      : cancelling
+        ? 'Cancelling…'
+        : spent
+          ? 'Sending…'
+          : 'Verifying…'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -355,7 +365,7 @@ function HistoryRow({
   )
   // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
   // never resolve into an authenticity check for the tip it just gave away.
-  const showSending = Boolean(spent && !event && showPending)
+  const showSending = Boolean((spent && !event && showPending) || ((listing || cancelling) && pending))
 
   return (
     <li
@@ -375,11 +385,11 @@ function HistoryRow({
       >
         <div className="history-icon-wrap">
           <div className="history-icon">
-            {event ? (
+            {event && !(shown && (listing || cancelling || shown.imageUrl)) ? (
               <span className="history-item-thumb-icon" aria-hidden>
                 {eventIcon(entry)}
               </span>
-            ) : item && shown?.imageUrl ? (
+            ) : (item || listing || cancelling) && shown?.imageUrl ? (
               <DeferredImage
                 className="history-item-thumb"
                 src={shown.imageUrl}
@@ -397,7 +407,7 @@ function HistoryRow({
                   </span>
                 }
               />
-            ) : item ? (
+            ) : item || listing || cancelling ? (
               <span className="history-item-thumb-icon">
                 <CollectablesIcon size={18} />
               </span>
@@ -419,8 +429,8 @@ function HistoryRow({
             <span
               className="history-pending-mark"
               aria-live="polite"
-              aria-label="Sending"
-              title="Sending"
+              aria-label={listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'}
+              title={listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'}
             >
               <span className="collectable-verify-spinner" aria-hidden />
             </span>
