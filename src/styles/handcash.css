@@ -1541,6 +1541,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
     100% 6px,
     100% 100%;
   opacity: 0.55;
+  mix-blend-mode: multiply;
   filter: blur(0.35px);
 }
 
@@ -1570,38 +1571,26 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   transform: translateY(0);
 }
 
-/* Hardcoded bright fills — no CSS variables, no color-mix against theme
-   tokens. Android WebView dark wrappers turn --primary / aeon-surface into
-   dark fills and black type vanishes. Repeat under every dark wrapper. */
-.bsv-toast-cover[data-tone='success'],
-html[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='success'],
-[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='success'],
-body .bsv-toast-cover[data-tone='success'],
-:root .bsv-toast-cover[data-tone='success'] {
-  background: #c8ffe0 !important;
-  color: #0a0a0a !important;
+/* Bright success — brand green, not --primary; black type for contrast. */
+.bsv-toast-cover[data-tone='success'] {
+  background: color-mix(in srgb, hsl(var(--hc-brand)) 88%, #c8ffe0);
+  color: #0a0a0a;
 }
 
-.bsv-toast-cover[data-tone='neutral'],
-html[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='neutral'],
-[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='neutral'],
-body .bsv-toast-cover[data-tone='neutral'],
-:root .bsv-toast-cover[data-tone='neutral'] {
-  background: #c8ffe0 !important;
-  color: #0a0a0a !important;
-}
-
-.bsv-toast-cover[data-tone='error'],
-html[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='error'],
-[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='error'],
-body .bsv-toast-cover[data-tone='error'],
-:root .bsv-toast-cover[data-tone='error'] {
-  background: #8b1e1e !important;
-  color: #f5f5f5 !important;
+/* Dark error — keep light type. */
+.bsv-toast-cover[data-tone='error'] {
+  background: color-mix(in srgb, hsl(var(--destructive, 0 72% 51%)) 78%, #1a0808);
+  color: #f5f5f5;
 }
 
 .bsv-toast-cover[data-tone='error']::before {
+  mix-blend-mode: soft-light;
   opacity: 0.5;
+}
+
+.bsv-toast-cover[data-tone='neutral'] {
+  background: color-mix(in srgb, var(--colors-aeon-surface-raised, hsl(var(--card))) 70%, hsl(var(--primary)));
+  color: #0a0a0a;
 }
 
 .bsv-toast-title {

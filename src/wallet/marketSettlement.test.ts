@@ -168,6 +168,65 @@ describe('market exact settlement contract', () => {
     expect(swapped.validate).toThrow(/ordering/i)
   })
 
+
+  it('accepts exact settlement with no buyer BSV change output', () => {
+    const { tx, validate } = fixture()
+    tx.outputs.splice(3, 1)
+    expect(validate).not.toThrow()
+  })
+
+  it('accepts 162 leftover token-change after the market fee', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const { tx, listing, validate, buyer } = fixture()
+    listing.assetType = 'bsv21'
+    listing.amt = 60
+    listing.origin = tokenId
+    const buyerAddress = buyer.toAddress('mainnet')
+    tx.outputs[0]!.lockingScript = LockingScript.fromHex(
+      buildBsv21ValueLock({
+        tokenId,
+        amount: 60n,
+        address: buyerAddress,
+      }),
+    )
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: LockingScript.fromHex(
+        buildBsv21ValueLock({
+          tokenId,
+          amount: 7n,
+          address: buyerAddress,
+        }),
+      ),
+    })
+    expect(validate).not.toThrow()
+  })
+
+  it('rejects leftover 162 token-change that does not pay the buyer', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const { tx, listing, validate, buyer } = fixture()
+    listing.assetType = 'bsv21'
+    listing.amt = 60
+    listing.origin = tokenId
+    const buyerAddress = buyer.toAddress('mainnet')
+    tx.outputs[0]!.lockingScript = LockingScript.fromHex(
+      buildBsv21ValueLock({
+        tokenId,
+        amount: 60n,
+        address: buyerAddress,
+      }),
+    )
+    tx.outputs[3]!.satoshis = 1
+    tx.outputs[3]!.lockingScript = LockingScript.fromHex(
+      buildBsv21ValueLock({
+        tokenId,
+        amount: 7n,
+        address: PrivateKey.fromRandom().toPublicKey().toAddress('mainnet'),
+      }),
+    )
+    expect(validate).toThrow(/non-buyer change/i)
+  })
+
   it('never drops a signed txid or AtomicBEEF when entering recovery', () => {
     const previous = {
       saleId: 'sale',

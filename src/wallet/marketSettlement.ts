@@ -35,6 +35,7 @@ import {
   type PurchaseMarketListingArgs,
 } from './marketListing'
 import { parseProvenanceV2 } from './oneSatProvenance'
+import { decodeBsv21Binary } from './bsv21Binary'
 import { buildBsv21ValueLock } from './bsv21Send'
 import {
   MARKET_ITEM_VOUT,
@@ -223,6 +224,25 @@ export function marketSettlementCommitment(tx: Transaction): string {
   return Utils.toHex(Hash.sha256(Utils.toArray(shape, 'utf8')))
 }
 
+
+function isBuyerP2pkhLock(scriptHex: string, buyerP2pkh: string): boolean {
+  return scriptHex === buyerP2pkh.toLowerCase()
+}
+
+/** 162 value lock whose remainder P2PKH pays the buyer. */
+function isBuyerBsv21ValueLock(
+  scriptHex: string,
+  buyerP2pkh: string,
+  tokenId: string,
+): boolean {
+  const decoded = decodeBsv21Binary(scriptHex)
+  if (!decoded || decoded.role !== 'value' || decoded.amount <= 0n) return false
+  if (decoded.restScriptHex !== buyerP2pkh.toLowerCase()) return false
+  const origin = tokenId.trim().toLowerCase().replace('.', '_')
+  if (decoded.tokenId && decoded.tokenId.toLowerCase() !== origin) return false
+  return true
+}
+
 export function validateMarketSettlementOutputs(args: {
   tx: Transaction
   beef: Beef
@@ -314,13 +334,22 @@ export function validateMarketSettlementOutputs(args: {
   ) {
     throw new Error('Settlement outputs do not match listing terms')
   }
+  // Extra outputs after the market fee are optional. Zero extra is valid
+  // (exact BSV funds, no change). Otherwise only buyer BSV change (P2PKH)
+  // and, for BSV-21, leftover 162 token-change paying the buyer.
   for (let i = 3; i < args.tx.outputs.length; i++) {
     const output = args.tx.outputs[i]
-    if (
-      !output ||
-      !(typeof output.satoshis === 'number' && output.satoshis > 0) ||
-      output.lockingScript?.toHex().toLowerCase() !== buyerChangeLock.toLowerCase()
-    ) {
+    const script = output?.lockingScript?.toHex().toLowerCase() ?? ''
+    const sats = output?.satoshis
+    const bsvChange =
+      typeof sats === 'number' &&
+      sats > 0 &&
+      isBuyerP2pkhLock(script, buyerChangeLock)
+    const tokenChange =
+      args.listing.assetType === 'bsv21' &&
+      sats === 1 &&
+      isBuyerBsv21ValueLock(script, buyerChangeLock, args.listing.origin)
+    if (!output || (!bsvChange && !tokenChange)) {
       throw new Error('Settlement contains a non-buyer change output')
     }
   }
