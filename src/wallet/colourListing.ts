@@ -15,6 +15,7 @@ import {
 } from './bsv21'
 import { decodeBsv21Binary, iconOutpointFromPayload } from './bsv21Binary'
 import { tipFromBsv21Script } from './bsv21Send'
+import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   looksLikeOnesatFtTip,
   type ColourTip,
@@ -22,6 +23,76 @@ import {
 } from './colourCoins'
 
 export type { ColourToken, ColourTip }
+
+const DEPLOY_CAP_KEY = 'handcash.bsv21.deploy-cap.v1'
+
+function readDeployCapMap(): Record<string, number> {
+  try {
+    const raw = durableGetItem(DEPLOY_CAP_KEY)
+    if (!raw) return {}
+    const parsed = JSON.parse(raw) as Record<string, unknown>
+    if (!parsed || typeof parsed !== 'object') return {}
+    const out: Record<string, number> = {}
+    for (const [k, v] of Object.entries(parsed)) {
+      const n = Number(v)
+      if (Number.isSafeInteger(n) && n > 0) out[k.toLowerCase()] = n
+    }
+    return out
+  } catch {
+    return {}
+  }
+}
+
+function rememberDeployCap(tokenId: string, cap: number): void {
+  const id = tokenId.trim().toLowerCase()
+  if (!id || !Number.isSafeInteger(cap) || cap <= 0) return
+  const map = readDeployCapMap()
+  if (map[id] === cap) return
+  map[id] = cap
+  durableSetItem(DEPLOY_CAP_KEY, JSON.stringify(map))
+}
+
+export function rememberedDeployCap(tokenId: string): number | undefined {
+  const n = readDeployCapMap()[tokenId.trim().toLowerCase()]
+  return n
+}
+
+function maxSupplyFromCi(raw: string | undefined): number | undefined {
+  if (!raw) return undefined
+  try {
+    const parsed = JSON.parse(raw) as { maxSupply?: unknown }
+    const n = Number(parsed.maxSupply)
+    return Number.isSafeInteger(n) && n > 0 ? n : undefined
+  } catch {
+    return undefined
+  }
+}
+
+async function capFromLocalDeploy(
+  wallet: ActiveWallet,
+  tokenId: string,
+): Promise<number | undefined> {
+  const id = normalizeTokenId(tokenId) ?? tokenId.trim().toLowerCase()
+  const remembered = rememberedDeployCap(id)
+  if (remembered) return remembered
+  const m = /^([0-9a-f]{64})_(\d+)$/i.exec(id)
+  if (!m) return undefined
+  const txid = m[1]!.toLowerCase()
+  const vout = Number(m[2])
+  const { getLocalBeefForTxid } = await import('./beefCache')
+  const beef = await getLocalBeefForTxid(wallet, txid)
+  const tx = beef?.findTxid(txid)?.tx
+  const script = tx?.outputs?.[vout]?.lockingScript
+  if (!script) return undefined
+  const hex = typeof script.toHex === 'function' ? script.toHex() : String(script)
+  const decoded = decodeBsv21Binary(hex)
+  if (!decoded || decoded.role !== 'deploy') return undefined
+  const n = Number(decoded.amount)
+  if (!Number.isSafeInteger(n) || n <= 0) return undefined
+  rememberDeployCap(id, n)
+  return n
+}
+
 
 type ListedOutput = {
   outpoint?: string
@@ -101,7 +172,12 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     iconOutpointFromPayload(decoded.payload?.icon, tokenId) ?? fromCi?.icon
   const maxN = Number(amt)
   const colourMaxSupply =
-    op === 'deploy+mint' && Number.isSafeInteger(maxN) && maxN > 0 ? maxN : undefined
+    op === 'deploy+mint' && Number.isSafeInteger(maxN) && maxN > 0
+      ? maxN
+      : maxSupplyFromCi(
+          typeof raw.customInstructions === 'string' ? raw.customInstructions : undefined,
+        ) ?? rememberedDeployCap(tokenId)
+  if (colourMaxSupply != null) rememberDeployCap(tokenId, colourMaxSupply)
   const remittanceIssuer = issuerFromRemittance({
     customInstructions: raw.customInstructions,
     tags,
@@ -149,7 +225,13 @@ export async function listBsv21BinaryTokens(
 ): Promise<ReturnType<typeof aggregateFungibles>> {
   const active = wallet ?? getActiveWallet()
   if (!active) return []
-  return aggregateFungibles(await listBsv21BinaryTips(active))
+  const tokens = aggregateFungibles(await listBsv21BinaryTips(active))
+  for (const token of tokens) {
+    if (token.colourSupply !== 'locked' || token.colourMaxSupply != null) continue
+    const cap = await capFromLocalDeploy(active, token.tokenId)
+    if (cap != null) token.colourMaxSupply = cap
+  }
+  return tokens
 }
 
 

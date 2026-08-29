@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.19] - 2026-08-29
+
+### Fixed
+
+- Token cards keep the deploy cap as held / max instead of infinity.
+- Approve preview no longer imports a missing TokensIcon (black screen).
+
+### Changed
+
+- Token UI hides origin/outpoint.
+
 ## [1.3.18] - 2026-08-29
 
 ### Fixed

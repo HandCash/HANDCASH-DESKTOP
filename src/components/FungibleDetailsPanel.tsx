@@ -26,7 +26,6 @@ import {
   activityForFungible,
 } from '../machines/fungibleDetailsMachine'
 import { shortIssuerLabel } from '../wallet/bsv21'
-import { shortOriginLabel } from '../wallet/colourCoins'
 import {
   openBurnFungible,
   openPaymentDetails,
@@ -310,21 +309,13 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          <div className="fungible-details-ids">
-            <span className="fungible-details-origin" title={`Origin ${token.tokenId}`}>
-              {shortOriginLabel(token.tokenId)}
-            </span>
-            {issuerLabel ? (
-              <>
-                <span className="fungible-details-ids-sep" aria-hidden>
-                  ·
-                </span>
-                <span className="fungible-details-origin" title={token.issuer || undefined}>
-                  {issuerLabel}
-                </span>
-              </>
-            ) : null}
-          </div>
+          {issuerLabel ? (
+            <div className="fungible-details-ids">
+              <span className="fungible-details-origin" title={token.issuer || undefined}>
+                {issuerLabel}
+              </span>
+            </div>
+          ) : null}
           <strong className="fungible-details-balance">{amount}</strong>
           {supplyLabel ? (
             <span className="fungible-details-issuer">{supplyLabel}</span>

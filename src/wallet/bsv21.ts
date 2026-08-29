@@ -301,6 +301,8 @@ export function buildBsv21CustomInstructions(args: {
   dec?: number
   cosign?: Bsv21Cosign
   issuer?: string
+  /** Deploy cap. Local remittance only — not an on-chain 162 field. */
+  maxSupply?: number
 }): string {
   const body: Record<string, unknown> = {
     p: BSV21_PROTOCOL,
@@ -310,6 +312,9 @@ export function buildBsv21CustomInstructions(args: {
   }
   if (args.sym) body.sym = args.sym
   if (args.icon) body.icon = args.icon
+  if (args.maxSupply != null && Number.isSafeInteger(args.maxSupply) && args.maxSupply > 0) {
+    body.maxSupply = args.maxSupply
+  }
   if (args.dec != null && args.dec > 0) body.dec = String(args.dec)
   const issuer = normalizeIssuerPubKey(args.issuer)
   if (issuer) body.issuer = issuer

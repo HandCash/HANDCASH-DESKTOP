@@ -156,6 +156,7 @@ export function buildBsv21SendRemittance(args: {
   dec?: number
   issuer?: string
   icon?: string
+  maxSupply?: number
 }): { basket: typeof BSV21_BASKET; tags: string[]; customInstructions: string } {
   const tokenId = normalizeTokenId(args.tokenId)
   if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
@@ -184,6 +185,7 @@ export function buildBsv21SendRemittance(args: {
       icon,
       dec: args.dec,
       issuer: args.issuer,
+      maxSupply: args.maxSupply,
     }),
   }
 }

@@ -51,7 +51,6 @@ import {
   type FungibleToken,
 } from '../wallet/fungibles'
 import { shortIssuerLabel } from '../wallet/bsv21'
-import { shortOriginLabel } from '../wallet/colourCoins'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -346,9 +345,6 @@ function FungibleCarouselCard({
           size={56}
         />
         <strong className="collect-token-card-sym">{token.sym}</strong>
-        <span className="collect-token-card-id" title={`Origin ${token.tokenId}`}>
-          {shortOriginLabel(token.tokenId)}
-        </span>
         {token.issuer ? (
           <span
             className="collect-token-card-id"
