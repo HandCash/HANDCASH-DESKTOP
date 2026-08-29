@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.15] - 2026-08-29
+
+### Fixed
+
+- **1sat-ft mint icons no longer list as NFTs.** The image sibling on a colour genesis stays decorative. Refresh drops ones already filed in Collectables.
+
+
 ## [1.3.14] - 2026-08-29
 
 ### Changed
