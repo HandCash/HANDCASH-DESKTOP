@@ -82,6 +82,7 @@ import {
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { paintAfterInternalizeItem } from './internalizeItemPaint'
+import { flattenJsonError } from './errorText'
 
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
@@ -1269,14 +1270,15 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
 
     return { status: 200, body: JSON.stringify(result ?? {}) }
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
     if (isActionMethod(method)) playWalletSound('error')
+    const flat = flattenJsonError(error)
+    const code = error instanceof MarketListingError ? error.code : flat.code
     return {
       status: 400,
       body: JSON.stringify({
         status: 'error',
-        ...(error instanceof MarketListingError ? { code: error.code } : {}),
-        description: message,
+        ...(code ? { code } : {}),
+        description: flat.description,
       }),
     }
   }

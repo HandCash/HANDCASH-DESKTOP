@@ -467,6 +467,26 @@ describe('inbound receive activity', () => {
     expect(activityEntryTitle(row)).toBe('Send failed')
   })
 
+  it('surfaces amt-mismatch / ITEM_ORIGIN_UNPROVEN when failureReason is an object', () => {
+    noteOutboundSendPending({
+      pendingId: 'obj-fail',
+      sats: 500,
+      to: '1abc',
+    })
+    expect(
+      failOutboundSendPending({
+        pendingId: 'obj-fail',
+        reason: {
+          code: 'ITEM_ORIGIN_UNPROVEN',
+          description: 'amt-mismatch',
+        },
+      }),
+    ).toBe(true)
+    const row = listRecentActivity(10)[0]!
+    expect(activityFailureReason(row)).toBe('amt-mismatch')
+    expect(activityFailureLabel(row)).toBe('amt-mismatch')
+  })
+
   it('keeps a failed send in Activity with the why', () => {
     noteOutboundSendPending({
       pendingId: 'poison',

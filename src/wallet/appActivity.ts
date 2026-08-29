@@ -1,3 +1,4 @@
+import { errorText } from './errorText'
 import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
@@ -90,9 +91,8 @@ export type ActivityBurn = {
 const MAX_FAILURE_REASON = 240
 
 export function normalizeFailureReason(reason: unknown): string | undefined {
-  if (typeof reason !== 'string') return undefined
-  const trimmed = reason.replace(/\s+/g, ' ').trim()
-  if (!trimmed) return undefined
+  const trimmed = errorText(reason).replace(/\s+/g, ' ').trim()
+  if (!trimmed || trimmed === '[object Object]') return undefined
   return trimmed.length > MAX_FAILURE_REASON
     ? `${trimmed.slice(0, MAX_FAILURE_REASON - 1)}…`
     : trimmed
@@ -294,9 +294,9 @@ export function isFailedActivity(entry: ActivityEntry): boolean {
 }
 
 /** Short label for a failed Activity row. Long why stays in details storage. */
-export function compactFailureLabel(reason: string | undefined | null): string {
-  const raw = (reason ?? '').replace(/\s+/g, ' ').trim()
-  if (!raw) return 'Send failed'
+export function compactFailureLabel(reason: unknown): string {
+  const raw = errorText(reason).replace(/\s+/g, ' ').trim()
+  if (!raw || raw === '[object Object]') return 'Send failed'
   if (/already spent|doublespend|double spend|missing.?input|mempool-conflict|competing/i.test(raw)) {
     return 'Already spent'
   }
@@ -880,7 +880,7 @@ export function clearOutboundSendPending(pendingId: string): void {
  */
 export function failOutboundSendPending(args: {
   pendingId: string
-  reason: string
+  reason: unknown
 }): boolean {
   const id = args.pendingId.trim()
   if (!id) return false
