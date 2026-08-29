@@ -44,9 +44,13 @@ export function decideWalletDeepLink(raw: string): WalletDeepLink {
       message: 'PeerPay link is not a valid identity key request',
     }
   }
+  const canonical =
+    parsed.sats != null
+      ? `peerpay:${parsed.identityKey}?sats=${parsed.sats}`
+      : `peerpay:${parsed.identityKey}`
   return {
     kind: 'send-request',
-    uri,
+    uri: canonical,
     identityKey: parsed.identityKey,
     sats: parsed.sats,
   }

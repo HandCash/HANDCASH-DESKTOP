@@ -896,7 +896,7 @@ function tokenIdFromOutput(
       // ignore
     }
   }
-  const decoded = decodeBsv21Binary(lockingScript)
+  const decoded = typeof lockingScript === 'string' ? decodeBsv21Binary(lockingScript) : null
   if (decoded?.tokenId) return decoded.tokenId
   if (decoded?.role === 'deploy' && outpoint) return normalizeOutpointId(outpoint)
   return undefined
@@ -1038,7 +1038,6 @@ export function grantableCollectionsFromOutputs(outputs: unknown[]): Array<{ id:
     const tags = Array.isArray(o.tags)
       ? o.tags.filter((t): t is string => typeof t === 'string')
       : []
-    const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
     if (isLeftoverThirdPartyItem(o)) continue
     const collection = tagValueOf(tags, 'collection:')
     const app = tagValueOf(tags, 'app:')
@@ -1074,7 +1073,6 @@ export function grantableCollectionIdsFromOutputs(outputs: unknown[]): {
     const tags = Array.isArray(o.tags)
       ? o.tags.filter((t): t is string => typeof t === 'string')
       : []
-    const custom = typeof o.customInstructions === 'string' ? o.customInstructions : undefined
     if (isLeftoverThirdPartyItem(o)) continue
     const collection = tagValueOf(tags, 'collection:')
     const app = tagValueOf(tags, 'app:')

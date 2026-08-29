@@ -43,9 +43,12 @@ export function parsePeerPayUri(raw: string): PeerPayUri {
   if (!/^peerpay:/i.test(trimmed)) {
     throw new Error('Not a peerpay URI')
   }
-  const withoutScheme = trimmed.replace(/^peerpay:/i, '')
+  const withoutScheme = trimmed.replace(/^peerpay:/i, '').replace(/^\/\//, '')
   const q = withoutScheme.indexOf('?')
-  const keyPart = (q >= 0 ? withoutScheme.slice(0, q) : withoutScheme).trim().toLowerCase()
+  const keyPart = (q >= 0 ? withoutScheme.slice(0, q) : withoutScheme)
+    .trim()
+    .replace(/\/$/, '')
+    .toLowerCase()
   const query = q >= 0 ? withoutScheme.slice(q + 1) : ''
 
   if (!isCompressedIdentityKeyHex(keyPart)) {

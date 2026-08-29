@@ -9,7 +9,6 @@ import {
   UnlockingScript,
   Utils,
 } from '@bsv/sdk'
-import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { createActor } from 'xstate'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import { normalizeAppHost } from './appIdentity'
@@ -26,11 +25,11 @@ import {
   type ProvenanceV2,
 } from './oneSatProvenance'
 import { looksLikeOnesatFtTip, tryParseProvenanceFromCi } from './colourCoins'
-import { decodeListedBsv21Tip } from './colourListing'
+import { decodeListedBsv21Tip, listBsv21BinaryTips } from './colourListing'
 import { decodeBsv21Binary } from './bsv21Binary'
 import { prove } from './bsv21Prove'
 import { parseBsv21CustomInstructions } from './bsv21'
-import { buildBsv21SendRemittance, buildBsv21ValueLock } from './bsv21Send'
+import { buildBsv21SendRemittance, buildBsv21ValueLock, planBsv21Send } from './bsv21Send'
 import { getBeefForTxidCached } from './beefCache'
 import { mergeIconTxIntoBeef } from './tokenIconResolve'
 import { getProvenVerdict } from './provenCache'
@@ -910,6 +909,13 @@ export async function createMarketListingAdvert(
     )
   }
   const outpoint = normalizeOutpoint(args.outpoint)
+  let listingOutpoint = outpoint
+  let itemTxid = listingOutpoint.slice(0, 64)
+  const extraCoverTips: Array<{
+    outpoint: string
+    amt: bigint
+    lockingScript?: string
+  }> = []
   const { active, output, assetType, tokenId, amt: classifiedAmt } = await loadListedOutput(outpoint)
   const priceSats = Math.trunc(Number(args.priceSats))
   if (!Number.isSafeInteger(priceSats) || priceSats < 20) {
@@ -969,7 +975,6 @@ export async function createMarketListingAdvert(
         'BSV-21 listing requires a 162 value lock.',
       )
     }
-    const itemTxid = outpoint.slice(0, 64)
     let beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
     try {
       beef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
@@ -977,12 +982,12 @@ export async function createMarketListingAdvert(
       beef = undefined
     }
     provenance = buildBsv21ListingProof({
-      outpoint,
+      outpoint: listingOutpoint,
       lockingScriptHex,
       customInstructions: output.customInstructions,
       ...(beef ? { beef } : {}),
     })
-    const provenAmt = Number(provenance.amt)
+    let provenAmt = Number(provenance.amt)
     if (!Number.isSafeInteger(provenAmt) || provenAmt <= 0) {
       throw new MarketListingError(
         'MARKET_ASSET_UNSUPPORTED',
@@ -995,7 +1000,66 @@ export async function createMarketListingAdvert(
       throw new Error('List at least 1 unit')
     }
     if (requested > provenAmt) {
-      throw new Error(`This tip only holds ${provenAmt} units`)
+      const tips = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
+      const plannedTips = tips.map((t) => ({
+        outpoint: t.outpoint,
+        tokenId: t.tokenId,
+        amt: BigInt(String(t.amt).replace(/\D/g, '') || '0'),
+        lockingScript: t.lockingScript,
+      }))
+      if (!plannedTips.some((t) => normalizeOutpoint(t.outpoint) === listingOutpoint)) {
+        plannedTips.push({
+          outpoint: listingOutpoint,
+          tokenId: origin,
+          amt: BigInt(provenAmt),
+          lockingScript: lockingScriptHex,
+        })
+      }
+      let plan
+      try {
+        plan = planBsv21Send({
+          tokenId: origin,
+          amount: BigInt(requested),
+          tips: plannedTips,
+        })
+      } catch {
+        throw new Error('Not enough units available to list that amount.')
+      }
+      const selected = [...plan.selected]
+      const origIdx = selected.findIndex(
+        (t) => normalizeOutpoint(t.outpoint) === listingOutpoint,
+      )
+      if (origIdx > 0) {
+        const [orig] = selected.splice(origIdx, 1)
+        selected.unshift(orig!)
+      } else if (origIdx < 0) {
+        const vin0 = selected[0]
+        if (!vin0?.lockingScript) {
+          throw new Error('Not enough units available to list that amount.')
+        }
+        listingOutpoint = normalizeOutpoint(vin0.outpoint)
+        itemTxid = listingOutpoint.slice(0, 64)
+        provenAmt = Number(vin0.amt)
+        let vin0Beef: Awaited<ReturnType<typeof getBeefForTxidCached>> | undefined
+        try {
+          vin0Beef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
+        } catch {
+          vin0Beef = undefined
+        }
+        provenance = buildBsv21ListingProof({
+          outpoint: listingOutpoint,
+          lockingScriptHex: vin0.lockingScript,
+          ...(vin0Beef ? { beef: vin0Beef } : {}),
+        })
+      }
+      extraCoverTips.push(
+        ...selected.slice(1).map((t) => ({
+          outpoint: normalizeOutpoint(t.outpoint),
+          amt: t.amt,
+          lockingScript: t.lockingScript,
+        })),
+      )
+      tipAmt = Number(selected.reduce((sum, t) => sum + t.amt, 0n))
     }
     amt = requested
   } else {
@@ -1072,7 +1136,7 @@ export async function createMarketListingAdvert(
         })
       : new P2PKH().lock(active.address).toHex()
   const path = chooseMarketListingPath({
-    itemOutpoint: outpoint,
+    itemOutpoint: listingOutpoint,
     satoshis: output.satoshis ?? 0,
     ordinal:
       listedAsset === 'bsv21' ||
@@ -1085,10 +1149,19 @@ export async function createMarketListingAdvert(
   }
   const chart = createActor(marketListingMachine).start()
   chart.send({ type: 'LIST', path })
-  const itemTxid = outpoint.slice(0, 64)
   const listingBeef = await getBeefForTxidCached(active, itemTxid, { needProof: true })
   if (listedAsset === 'bsv21' && lockTip?.icon) {
     await mergeIconTxIntoBeef(active, listingBeef, lockTip.icon)
+  }
+  for (const extra of extraCoverTips) {
+    const extraTxid = extra.outpoint.slice(0, 64)
+    if (extraTxid === itemTxid) continue
+    try {
+      const extraBeef = await getBeefForTxidCached(active, extraTxid, { needProof: true })
+      listingBeef.mergeBeef(extraBeef.toBinary())
+    } catch {
+      // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
+    }
   }
   const inputBEEF = listingBeef.toBinary()
   let reference: string | null = null
@@ -1099,10 +1172,15 @@ export async function createMarketListingAdvert(
       inputBEEF,
       inputs: [
         {
-          outpoint: outpoint.replace('_', '.'),
+          outpoint: listingOutpoint.replace('_', '.'),
           inputDescription: 'Market item input zero',
           unlockingScriptLength: 108,
         },
+        ...extraCoverTips.map((tip) => ({
+          outpoint: tip.outpoint.replace('_', '.'),
+          inputDescription: 'BSV-21 listing cover',
+          unlockingScriptLength: 108,
+        })),
       ],
       outputs: [
         {
@@ -1163,17 +1241,25 @@ export async function createMarketListingAdvert(
     reference = signable.reference
     chart.send({ type: 'STAGED', reference })
     const beef = Beef.fromBinary(signable.tx)
+    const vin0Vout = Number(listingOutpoint.split('_')[1])
     const tx = beef.txs.find((entry) =>
       entry.tx?.inputs.some(
         (input) =>
           String(input.sourceTXID).toLowerCase() === itemTxid &&
-          input.sourceOutputIndex === Number(outpoint.split('_')[1])
+          input.sourceOutputIndex === vin0Vout
       )
     )?.tx
     if (!tx) throw new Error('Market listing transaction is missing item input')
+    const selectedPoints = new Set([
+      listingOutpoint,
+      ...extraCoverTips.map((tip) => tip.outpoint),
+    ])
     if (
       String(tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
-      tx.inputs[0]?.sourceOutputIndex !== Number(outpoint.split('_')[1]) ||
+      tx.inputs[0]?.sourceOutputIndex !== vin0Vout ||
+      !selectedPoints.has(
+        `${String(tx.inputs[0]?.sourceTXID).toLowerCase()}_${tx.inputs[0]?.sourceOutputIndex}`,
+      ) ||
       tx.outputs[MARKET_ITEM_VOUT]?.satoshis !== 1 ||
       tx.outputs[MARKET_ITEM_VOUT]?.lockingScript?.toHex() !== itemLockingScript ||
       tx.outputs[MARKET_OFFER_VOUT]?.satoshis !== MARKET_OFFER_DEPOSIT_SATS ||
@@ -1184,8 +1270,11 @@ export async function createMarketListingAdvert(
         'Wallet did not preserve BRC-159 item/input and offer output ordering.'
       )
     }
-    {
-      const vin = tx.inputs[0]!
+    const spends: Record<number, { unlockingScript: string }> = {}
+    for (let i = 0; i < tx.inputs.length; i += 1) {
+      const vin = tx.inputs[i]!
+      const src = `${String(vin.sourceTXID).toLowerCase()}_${vin.sourceOutputIndex}`
+      if (i !== 0 && !selectedPoints.has(src)) continue
       vin.sourceTransaction ??=
         listingBeef.findTxid(String(vin.sourceTXID))?.tx ??
         beef.findTxid(String(vin.sourceTXID))?.tx
@@ -1206,12 +1295,19 @@ export async function createMarketListingAdvert(
       )
     }
     await tx.sign()
-    const unlockingScript = tx.inputs[0]?.unlockingScript?.toHex()
-    if (!unlockingScript) throw new Error('Market item signature missing')
+    for (let i = 0; i < tx.inputs.length; i += 1) {
+      const unlockingScript = tx.inputs[i]?.unlockingScript?.toHex()
+      if (!unlockingScript) {
+        if (i === 0) throw new Error('Market item signature missing')
+        continue
+      }
+      spends[i] = { unlockingScript }
+    }
+    if (!spends[0]) throw new Error('Market item signature missing')
     chart.send({ type: 'SIGNED_UNKNOWN' })
     const signed = await active.wallet.signAction({
       reference,
-      spends: { 0: { unlockingScript } },
+      spends,
       options: { acceptDelayedBroadcast: false },
     })
     const txid = signed.txid?.toLowerCase() ?? ''
@@ -1267,7 +1363,7 @@ export async function createMarketListingAdvert(
     scheduleHistoryBackupPush('market-list')
     rememberGhostTx(txid)
     const identity = listedActivityIdentity({
-      inputOutpoint: outpoint,
+      inputOutpoint: listingOutpoint,
       origin,
       listedAsset,
       customName: typeof custom.name === 'string' ? custom.name : undefined,
@@ -1331,9 +1427,9 @@ export async function createMarketListingAdvert(
       status: 'failed',
       failureReason: reason,
       item: {
-        name: listing.assetType === 'bsv21' ? 'Token' : 'Collectable',
-        origin: listing.origin,
-        outpoint: listing.outpoint,
+        name: listedAsset === 'bsv21' ? (lockTip?.sym || 'Token') : 'Collectable',
+        origin,
+        outpoint: listingOutpoint.replace('_', '.'),
       },
     })
     throw err
@@ -1438,10 +1534,14 @@ export async function verifyMarketListingProvenance(args: {
   if (isBsv21) {
     return { verified: true, reason: null }
   }
+  // Overlay BRC-150 proves the pre-list item tip. The listing outpoint is
+  // output 0 of a new tx the buyer does not have in BEEF — do not treat it
+  // as a held tip. Hash / origin / offer terms already bound the listing.
+  const proofTip = (provenance as ProvenanceV2).tip
   const active = getActiveWallet()
   const verified = await verifyProvenanceForHeldTip({
     provenance: provenance as ProvenanceV2,
-    heldOutpoint: outpoint,
+    heldOutpoint: proofTip,
     ...(active
       ? { getBeef: (txid: string) => getBeefForTxidCached(active, txid, { needProof: true }) }
       : {}),

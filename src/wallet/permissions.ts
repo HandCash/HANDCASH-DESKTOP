@@ -917,8 +917,6 @@ export function summarizeAction(method: string, args: unknown): {
 
   if (method === 'createMarketListingAdvert') {
     const price = Math.max(0, Math.trunc(Number(body.priceSats) || 0))
-    const outpoint =
-      typeof body.outpoint === 'string' ? body.outpoint : 'Unknown item'
     const isToken = body.assetType === 'bsv21'
     const label =
       (typeof body.sym === 'string' && body.sym.trim()) ||

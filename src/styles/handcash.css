@@ -1571,10 +1571,22 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   transform: translateY(0);
 }
 
-/* Bright success — brand green, not --primary; black type for contrast. */
+/* Bright mint fill in both modes so black type stays readable. Do not mix
+   --hc-brand here: in dark mode that token is a dark green and the toast
+   collapses to dark-on-dark. */
 .bsv-toast-cover[data-tone='success'] {
-  background: color-mix(in srgb, hsl(var(--hc-brand)) 88%, #c8ffe0);
+  background: color-mix(in srgb, hsl(152 100% 38%) 45%, #c8ffe0);
   color: #0a0a0a;
+}
+
+html[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='success'] {
+  background: color-mix(in srgb, hsl(152 90% 48%) 38%, #d4ffe6);
+  color: #06140c;
+}
+
+html[data-aeon-mode='dark'] .bsv-toast-cover[data-tone='neutral'] {
+  background: color-mix(in srgb, #dce8ff 62%, hsl(var(--primary)));
+  color: #061018;
 }
 
 /* Dark error — keep light type. */

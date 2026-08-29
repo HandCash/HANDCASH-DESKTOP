@@ -56,4 +56,14 @@ describe('decideWalletDeepLink', () => {
       expect(decision.kind === 'refuse' && decision.reason).toBe('empty')
     }
   })
+
+  it('canonicalizes peerpay://key to peerpay:key', () => {
+    const decision = decideWalletDeepLink(`peerpay://${identityKey}?sats=100`)
+    expect(decision).toEqual({
+      kind: 'send-request',
+      uri: `peerpay:${identityKey.toLowerCase()}?sats=100`,
+      identityKey: identityKey.toLowerCase(),
+      sats: 100,
+    })
+  })
 })

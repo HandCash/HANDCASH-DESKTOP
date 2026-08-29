@@ -82,7 +82,7 @@ export function viewActivityItem(item: ActivityItem): ActivityItem {
   const usable = resolved && !isThinResolution(resolved) ? resolved : null
   const previousOrigin = item.origin ? asOrigin(item.origin) : null
   const origin =
-    getProvenVerdict(outpoint)?.origin ??
+    (outpoint ? getProvenVerdict(outpoint)?.origin : null) ??
     (usable ? asOrigin(usable.origin) : null) ??
     previousOrigin
   if (!origin) return item

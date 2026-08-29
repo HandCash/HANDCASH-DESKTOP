@@ -234,7 +234,7 @@ export function WhatIsBsvPanel() {
       {toast ? (
         <button
           type="button"
-          className="bsv-toast-cover aeon-surface"
+          className="bsv-toast-cover"
           data-aeon-part="toast-cover"
           data-tone={toast.tone}
           aria-live={toast.tone === 'error' ? 'assertive' : 'polite'}
