@@ -231,7 +231,7 @@ describe('classifyLegacyUtxos', () => {
       .join('')
     const ftEnvelope =
       '0063036f726451' +
-      mimeHex.length.toString(16).padStart(2, '0') +
+      (mimeHex.length / 2).toString(16).padStart(2, '0') +
       mimeHex +
       '0002' +
       '7b7d' +
@@ -249,7 +249,54 @@ describe('classifyLegacyUtxos', () => {
     const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
 
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
+    expect(result.heldOneSats).toEqual([])
+    expect(result.onesatFt).toEqual([
+      expect.objectContaining({
+        outpoint: tipOutpoint,
+        origin: `${mint.id('hex')}_0`,
+      }),
+    ])
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
+  it('files a two-hop leftover 1sat-ft tip by mint origin', async () => {
+    const mimeHex = Array.from(new TextEncoder().encode('application/1sat-ft+json'))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const ftEnvelope =
+      '0063036f726451' +
+      (mimeHex.length / 2).toString(16).padStart(2, '0') +
+      mimeHex +
+      '0002' +
+      '7b7d' +
+      '68'
+    const mint = buildTx([{ scriptHex: ftEnvelope + P2PKH_HEX, satoshis: 1 }])
+    const hop1 = buildTx(
+      [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
+      [{ txid: mint.id('hex'), vout: 0 }],
+    )
+    const hop2 = buildTx(
+      [{ scriptHex: P2PKH_HEX, satoshis: 1 }],
+      [{ txid: hop1.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(mint, hop1, hop2)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${hop2.id('hex')}.0`
+    const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
+
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats).toEqual([])
+    expect(result.onesatFt).toEqual([
+      expect.objectContaining({
+        outpoint: tipOutpoint,
+        origin: `${mint.id('hex')}_0`,
+      }),
+    ])
+    expect(fetchMock).not.toHaveBeenCalled()
 
     activeWallet = null
     vi.unstubAllGlobals()

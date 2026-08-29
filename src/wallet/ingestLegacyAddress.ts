@@ -24,6 +24,7 @@ import {
   classifyLegacyUtxos,
   contentUrlForOrigin,
   importOneSatOrdinals,
+  importOnesatFtTips,
   type MigrationItem,
 } from './oneSatImport'
 import {
@@ -471,10 +472,24 @@ export async function ingestLegacyAddressUtxos(
     )
   }
 
+  let importedFt = 0
   if (!fundingOnly && onesatFt.length > 0) {
-    console.info(
-      `[chain-ingest] ${onesatFt.length} address 1sat-ft tip(s) stay until they are in basket 1sat-ft — not recovered from 1sat`,
-    )
+    const newFt = onesatFt.filter((i) => !ftHeld.has(outpointKey(i.outpoint)))
+    if (newFt.length > 0) {
+      const ftResult = await importOnesatFtTips(newFt, active)
+      importedFt = ftResult.imported
+      if (ftResult.failed > 0) {
+        console.warn('[chain-ingest] 1sat-ft scan import partial', ftResult)
+        partialWarn =
+          partialWarn ??
+          `Some tokens didn’t import (${ftResult.failed}). Retrying automatically.`
+      }
+      if (importedFt > 0) {
+        console.info(
+          `[chain-ingest] imported ${importedFt} 1sat-ft tip(s) from address scan`,
+        )
+      }
+    }
   }
 
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.
@@ -498,6 +513,7 @@ export async function ingestLegacyAddressUtxos(
     ...funding.map((u) => outpointKey(u.outpoint)),
     ...oneSats.map((i) => outpointKey(i.outpoint)),
     ...bsv21.map((i) => outpointKey(i.outpoint)),
+    ...onesatFt.map((i) => outpointKey(i.outpoint)),
     ...heldOneSats.map((u) => outpointKey(u.outpoint)),
     ...heldUneconomical.map((u) => outpointKey(u.outpoint)),
   ])

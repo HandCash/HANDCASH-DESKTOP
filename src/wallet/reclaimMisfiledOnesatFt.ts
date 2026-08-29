@@ -284,6 +284,55 @@ function rowSaysOnesatFt(
 }
 
 
+
+/** True when a 1sat row is bound to a BRC-99 collection. Leave those as NFTs. */
+export function onesatRowHasCollection(tags: unknown, ci?: unknown): boolean {
+  if (Array.isArray(tags)) {
+    for (const t of tags) {
+      if (typeof t !== 'string') continue
+      const raw = t.trim()
+      if (!raw.toLowerCase().startsWith('collection:')) continue
+      if (raw.slice('collection:'.length).trim()) return true
+    }
+  }
+  if (ci != null) {
+    let o: Record<string, unknown> | null = null
+    if (typeof ci === 'string') {
+      try {
+        o = JSON.parse(ci) as Record<string, unknown>
+      } catch {
+        o = null
+      }
+    } else if (typeof ci === 'object') {
+      o = ci as Record<string, unknown>
+    }
+    const id = o && typeof o.collectionId === 'string' ? o.collectionId.trim() : ''
+    if (id) return true
+  }
+  return false
+}
+
+/**
+ * Cheap leftover-FT pattern. Collection NFTs and inscribed non-FT stay put.
+ * Only bare / already-marked FT rows are worth a lineage walk.
+ */
+export function shouldProbeOnesatForFt(args: {
+  tags?: unknown
+  customInstructions?: unknown
+  lockingScriptHex?: string
+}): boolean {
+  const saysFt = rowSaysOnesatFt(
+    args.tags,
+    args.customInstructions,
+    args.lockingScriptHex,
+  )
+  if (saysFt) return true
+  if (onesatRowHasCollection(args.tags, args.customInstructions)) return false
+  const env = parseOrdEnvelope(args.lockingScriptHex)
+  if (env && !isOnesatFtMime(env.contentType)) return false
+  return true
+}
+
 /**
  * Address-scan 1sat-ft tips that never entered basket `1sat-ft` (classify
  * used to park them as unknown). Local BEEF / raw tx only — no indexer.
@@ -445,8 +494,9 @@ export async function importUnheldOnesatFtTips(
 }
 
 /**
- * One pass: drop NFT duplicates of tips already in `1sat-ft`, move bare FT
- * lineage tips from `1sat` → `1sat-ft`.
+ * One pass: drop NFT duplicates of tips already in `1sat-ft`, move leftover
+ * FT (collection-less bare / marked 1sat-ft) from `1sat` → `1sat-ft`.
+ * Collection-bound NFTs are never walked.
  */
 export async function reclaimMisfiledOnesatFtTips(
   active?: ActiveWallet | null,
@@ -581,6 +631,13 @@ export async function reclaimMisfiledOnesatFtTips(
     const tags = (row as { tags?: unknown }).tags
     const env = parseOrdEnvelope(scriptHex)
     const saysFt = rowSaysOnesatFt(tags, row.customInstructions, scriptHex)
+    if (!shouldProbeOnesatForFt({
+      tags,
+      customInstructions: row.customInstructions,
+      lockingScriptHex: scriptHex,
+    })) {
+      continue
+    }
     const rowOrigin = originFromColourTags(tags)
     // Leftover extras: NFT copy / icon of a tip already restored to 1sat-ft.
     if (rowOrigin && ftOrigins.has(rowOrigin)) {
