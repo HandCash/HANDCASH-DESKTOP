@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.16] - 2026-08-29
+
+### Fixed
+
+- **Leftover 1sat-ft keeps mint ticker and supply.** After a send, Tokens still show KING and the locked cap instead of a blank origin / no supply cap.
+- **Fingerprint lock icon is the official Material filled 24px path.**
+
+
 ## [1.3.15] - 2026-08-29
 
 ### Fixed
