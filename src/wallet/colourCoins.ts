@@ -319,6 +319,26 @@ function asRecord(raw: unknown): Record<string, unknown> | null {
   return v as Record<string, unknown>
 }
 
+/**
+ * Leftover remittance fills mint fields a thin listed CI dropped.
+ * Listed `amt` wins (on-chain leftover face value).
+ */
+export function mergeColourRemittance(
+  listed: unknown,
+  leftover: unknown,
+): string | undefined {
+  const a = asRecord(listed)
+  const b = asRecord(leftover)
+  if (!a && !b) {
+    if (typeof leftover === 'string' && leftover.trim()) return leftover
+    if (typeof listed === 'string' && listed.trim()) return listed
+    return undefined
+  }
+  const merged: Record<string, unknown> = { ...(a ?? {}), ...(b ?? {}) }
+  if (a?.amt != null) merged.amt = a.amt
+  return JSON.stringify(merged)
+}
+
 function parseSupplyFields(o: Record<string, unknown>): {
   supply: ColourSupply
   maxSupply: number | null
@@ -459,6 +479,12 @@ export function parseOnesatFtOriginPolicy(
       }
       if (!meta.name && typeof nested.name === 'string' && nested.name.trim()) {
         meta = { ...meta, name: nested.name.trim().slice(0, 80) }
+      }
+      if (meta.supply !== 'locked') {
+        const overlay = parseSupplyFields(nested)
+        if (overlay.supply === 'locked') {
+          meta = { ...meta, supply: 'locked', maxSupply: overlay.maxSupply }
+        }
       }
     }
     if (!meta.issuer) {

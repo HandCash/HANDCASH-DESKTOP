@@ -7,6 +7,7 @@ import {
   evaluateColourSupply,
   looksLikeOnesatFtTip,
   normalizeColourOrigin,
+  mergeColourRemittance,
   originFromColourCi,
   shortOriginLabel,
   parseColourTipAmt,
@@ -452,6 +453,24 @@ describe('1Sat fungibles (BRC-175)', () => {
     )
     expect(rows[0]!.balance).toBe(1000)
     expect(rows[0]!.tipCount).toBe(2)
+  })
+
+  it('merges leftover remittance over a thin listed amt CI', () => {
+    const merged = mergeColourRemittance(
+      JSON.stringify({ p: '1sat-ft', amt: '69000' }),
+      JSON.stringify({
+        p: '1sat-ft',
+        origin: ORIGIN,
+        amt: '69000',
+        sym: 'KING',
+        supply: 'locked',
+        max: '69420',
+      }),
+    )
+    const meta = parseOnesatFtOriginPolicy(ORIGIN, { customInstructions: merged })
+    expect(meta.sym).toBe('KING')
+    expect(meta.supply).toBe('locked')
+    expect(meta.maxSupply).toBe(69420)
   })
 
   it('ignores collectable JSON that has no 1sat-ft protocol', () => {

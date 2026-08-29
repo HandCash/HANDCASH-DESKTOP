@@ -7,6 +7,7 @@ import {
   colourTokenAsFungible,
   looksLikeOnesatFtTip,
   ONESAT_FT_BASKET,
+  mergeColourRemittance,
   originFromColourCi,
   originFromColourTags,
   parseColourMintAttestation,
@@ -25,6 +26,7 @@ import {
   isOnesatFtGenesisSpent,
   spentOnesatFtGenesisOrigins,
   leftoverForOutpoint,
+  getOnesatFtLeftover,
   listOnesatFtLeftovers,
   normOnesatFtOutpoint,
   onesatFtLeftoverAmtInflated,
@@ -132,7 +134,7 @@ export async function listColourTips(
     const scriptHex = lockingScriptHex(o.lockingScript)
     const listedCi =
       typeof o.customInstructions === 'string' ? o.customInstructions : undefined
-    const leftover = leftoverForOutpoint(key)
+    const leftover = leftoverForOutpoint(key) ?? getOnesatFtLeftover(key)
     const leftoverCi =
       leftover && !onesatFtLeftoverAmtInflated(leftover) ? leftover.ci : undefined
     const listedFt = looksLikeOnesatFtTip({
@@ -142,11 +144,9 @@ export async function listColourTips(
     })
     // Keep a 1-sat output if it has 1sat-ft CI/tags OR leftover remittance.
     if (!listedFt && !hasOnesatFtTag(tags) && !leftover) continue
-    // Overlay leftover remittance onto bare P2PKH change so amt is visible.
-    const ci =
-      looksLikeOnesatFtTip({ customInstructions: listedCi })
-        ? listedCi
-        : leftoverCi ?? listedCi
+    // Thin listed CI is often just `{p, amt}` copied from the leftover
+    // envelope. Merge leftover remittance so KING / cap / issuer survive.
+    const ci = mergeColourRemittance(listedCi, leftoverCi) ?? leftoverCi ?? listedCi
     let origin =
       leftover?.origin ??
       originFromColourTags(tags) ??
@@ -282,13 +282,31 @@ export async function listColourTokens(
   for (const tip of tips) {
     if (metaByOrigin.has(tip.origin)) continue
     const genesis = tips.find((t) => t.outpoint === tip.origin)
+    const leftover = getOnesatFtLeftover(tip.origin)
+    const parsed = parseOnesatFtOriginPolicy(tip.origin, {
+      lockingScriptHex: genesis?.lockingScript ?? tip.lockingScript,
+      customInstructions:
+        mergeColourRemittance(
+          genesis?.customInstructions ?? tip.customInstructions,
+          leftover?.ci,
+        ) ??
+        genesis?.customInstructions ??
+        tip.customInstructions,
+      tags: genesis?.tags ?? tip.tags,
+    })
     metaByOrigin.set(
       tip.origin,
-      parseOnesatFtOriginPolicy(tip.origin, {
-        lockingScriptHex: genesis?.lockingScript ?? tip.lockingScript,
-        customInstructions: genesis?.customInstructions ?? tip.customInstructions,
-        tags: genesis?.tags ?? tip.tags,
-      }),
+      leftover && (leftover.sym || leftover.supply === 'locked')
+        ? {
+            ...parsed,
+            ...(parsed.sym ? {} : leftover.sym ? { sym: leftover.sym } : {}),
+            ...(parsed.supply === 'locked'
+              ? {}
+              : leftover.supply === 'locked'
+                ? { supply: 'locked' as const, maxSupply: leftover.maxSupply ?? null }
+                : {}),
+          }
+        : parsed,
     )
   }
   return aggregateColourTokens(tips, metaByOrigin)

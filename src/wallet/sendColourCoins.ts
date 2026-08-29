@@ -639,39 +639,39 @@ export async function sendColourCoins(args: {
         change > 0 ? change : args.skipPeerNotify ? amount : Math.max(0, selectedSum - amount)
       const keptOp =
         change > 0 ? `${txid}_1` : args.skipPeerNotify ? `${txid}_0` : undefined
-      void Promise.all([import('./fungibles'), import('./onesatFtLeftover')])
-        .then(([{ paintFungibleAfterSpend }, { rememberOnesatFtLeftover, forgetOnesatFtLeftover }]) => {
-          paintFungibleAfterSpend({
-            tokenId: origin,
-            remainingAmt: kept,
-            outpoint: keptOp,
+      const [{ paintFungibleAfterSpend }, leftover] = await Promise.all([
+        import('./fungibles'),
+        import('./onesatFtLeftover'),
+      ])
+      paintFungibleAfterSpend({
+        tokenId: origin,
+        remainingAmt: kept,
+        outpoint: keptOp,
+        sym,
+        colourSupply: args.supply,
+        colourMaxSupply: args.maxSupply ?? null,
+        icon: args.icon,
+      })
+      if (kept > 0 && keptOp) {
+        leftover.rememberOnesatFtLeftover({
+          origin,
+          amt: kept,
+          outpoint: keptOp,
+          ci: buildColourCustomInstructions({
+            origin,
+            amt: kept,
             sym,
-            colourSupply: args.supply,
-            colourMaxSupply: args.maxSupply ?? null,
-            icon: args.icon,
-          })
-          if (kept > 0 && keptOp) {
-            rememberOnesatFtLeftover({
-              origin,
-              amt: kept,
-              outpoint: keptOp,
-              ci: buildColourCustomInstructions({
-                origin,
-                amt: kept,
-                sym,
-                supply: args.supply,
-                maxSupply: args.maxSupply ?? null,
-                issuer,
-              }),
-              sym,
-              supply: args.supply,
-              maxSupply: args.maxSupply ?? null,
-            })
-          } else {
-            forgetOnesatFtLeftover(origin)
-          }
+            supply: args.supply,
+            maxSupply: args.maxSupply ?? null,
+            issuer,
+          }),
+          sym,
+          supply: args.supply,
+          maxSupply: args.maxSupply ?? null,
         })
-        .catch(() => {})
+      } else {
+        leftover.forgetOnesatFtLeftover(origin)
+      }
       return { txid, tipsSpent: selected.length, change }
       } finally {
         if (actionReference) {

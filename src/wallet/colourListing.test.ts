@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 
 const store = new Map<string, string>()
 
@@ -140,6 +141,44 @@ describe('listColourTips leftover / spent genesis', () => {
     expect(row).toBeTruthy()
     expect(row!.balance).toBe(68862)
     expect(row!.outpoint).toBe(LEFTOVER)
+  })
+
+  it('keeps KING and locked cap when leftover is listed as amt-only', async () => {
+    const leftover = await import('./onesatFtLeftover')
+    leftover.rememberOnesatFtLeftover({
+      origin: ORIGIN,
+      amt: 69000,
+      outpoint: LEFTOVER,
+      ci: kingCi(69000, ORIGIN),
+      sym: 'KING',
+      supply: 'locked',
+      maxSupply: 69420,
+    })
+    leftover.markOnesatFtGenesisSpent(ORIGIN)
+    const { lockingScript } = buildOnesatFtTransferLockingScript({
+      address: '1BoatSLRHtKNngkdXEeobR76b53LETtpyT',
+      amt: 69000,
+    })
+    const { listColourTokens } = await import('./colourListing')
+    const tokens = await listColourTokens(
+      mockWallet({
+        '1sat-ft': [
+          {
+            outpoint: LEFTOVER,
+            satoshis: 1,
+            tags: ['1sat-ft'],
+            lockingScript,
+            customInstructions: JSON.stringify({ p: '1sat-ft', amt: '69000' }),
+          },
+        ],
+        default: [],
+      }),
+    )
+    const row = tokens.find((x) => x.origin === ORIGIN)
+    expect(row?.sym).toBe('KING')
+    expect(row?.supply).toBe('locked')
+    expect(row?.maxSupply).toBe(69420)
+    expect(row?.balance).toBe(69000)
   })
 
   it('does not seed hardcoded leftover when listOutputs is empty', async () => {
