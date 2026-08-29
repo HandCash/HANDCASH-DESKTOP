@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.14] - 2026-08-29
+
+### Changed
+
+- Leftover 1sat-ft tips now inscribe {amt} on chain. Origin comes from the BRC-150 spend-chain walk. Remittance is a fast path only.
+
 ## [1.3.13] - 2026-08-29
 
 ### Changed
