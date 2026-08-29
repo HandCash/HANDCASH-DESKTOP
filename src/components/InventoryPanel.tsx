@@ -315,10 +315,12 @@ function FungibleCarouselCard({
     token.spendKind === 'mixed'
   // Live BRC-162 tips set colourSupply. Old JSON BSV-21 (no 162) stays burn-only.
   const isLegacy = !token.colourSupply
+  // 162 is fixed-supply. Cap lives on the deploy output; transfer tips do not
+  // carry it. Never paint ∞ for locked 162 just because this UTXO is not genesis.
   const cap =
-    token.colourSupply === 'locked' && token.colourMaxSupply != null
+    token.colourMaxSupply != null
       ? formatFungibleAmount(String(token.colourMaxSupply), token.dec)
-      : token.colourSupply
+      : token.colourSupply === 'open'
         ? '∞'
         : null
   const amountLabel = cap != null ? `${amount} / ${cap}` : amount

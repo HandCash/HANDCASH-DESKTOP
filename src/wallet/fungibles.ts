@@ -164,6 +164,9 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
       ...t,
       ...(priorRow && !t.icon && priorRow.icon ? { icon: priorRow.icon } : {}),
       ...(priorRow && !t.iconUrl && priorRow.iconUrl ? { iconUrl: priorRow.iconUrl } : {}),
+      ...(priorRow && t.colourMaxSupply == null && priorRow.colourMaxSupply != null
+        ? { colourMaxSupply: priorRow.colourMaxSupply }
+        : {}),
     })
   }
   // Live listing is source of truth. Never keep a cache extra whose tip is

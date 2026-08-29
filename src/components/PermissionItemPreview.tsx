@@ -3,7 +3,7 @@ import { getCachedCollectables } from '../wallet/collectables'
 import { getCachedFungibles } from '../wallet/fungibles'
 import { getTokenIconDataUrl } from '../wallet/tokenIconCache'
 import { DeferredImage } from './DeferredImage'
-import { CollectablesIcon, TokensIcon } from './icons'
+import { CollectablesIcon, InventoryIcon } from './icons'
 
 type Preview = {
   name: string
@@ -63,7 +63,7 @@ export function PermissionItemPreview({
   }, [outpoint, tokenId])
 
   if (!item) return null
-  const Fallback = item.kind === 'token' ? TokensIcon : CollectablesIcon
+  const Fallback = item.kind === 'token' ? InventoryIcon : CollectablesIcon
 
   return (
     <div className="permission-item-preview" data-aeon-part="item-preview">
