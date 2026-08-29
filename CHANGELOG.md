@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.20] - 2026-08-29
+
+### Changed
+
+- Purchase intents last 15 minutes so a slow phone approval still posts.
+
 ## [1.3.19] - 2026-08-29
 
 ### Fixed

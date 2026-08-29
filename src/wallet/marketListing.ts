@@ -652,7 +652,7 @@ export function verifyMarketPurchaseIntent(
     intent.provenanceHash.toLowerCase() === listing.provenanceHash.toLowerCase() &&
     intent.nonce.toLowerCase() === listing.nonce.toLowerCase() &&
     Number.isSafeInteger(intent.createdAt) &&
-    Math.abs(now - intent.createdAt) <= 5 * 60_000 &&
+    Math.abs(now - intent.createdAt) <= 15 * 60_000 &&
     intent.expiresAt != null &&
     intent.expiresAt > now &&
     verifyRawSignature(
@@ -677,7 +677,7 @@ export function verifyMarketSettlementReceipt(
     receipt.sellerOutputIndex === 1 &&
     receipt.feeOutputIndex === 2 &&
     Number.isSafeInteger(receipt.settledAt) &&
-    Math.abs(now - receipt.settledAt) <= 5 * 60_000 &&
+    Math.abs(now - receipt.settledAt) <= 15 * 60_000 &&
     verifyRawSignature(
       receipt.seller,
       receipt.signature,
@@ -1518,7 +1518,7 @@ export async function createMarketPurchaseIntent(args: {
   }
   marketFeePayToAddress(args.listing)
   const amounts = calculateMarketSettlement(args.listing.priceSats)
-  const createdAt = Date.now()
+  const createdAt = Math.round(Date.now())
   const unsigned: Omit<MarketPurchaseIntent, 'signature'> = {
     intentId: randomNonce(),
     outpoint: args.listing.outpoint,
@@ -1529,7 +1529,7 @@ export async function createMarketPurchaseIntent(args: {
     totalSats: amounts.priceSats,
     provenanceHash: args.listing.provenanceHash.toLowerCase(),
     createdAt,
-    expiresAt: createdAt + 90_000,
+    expiresAt: createdAt + 15 * 60_000,
     nonce: args.listing.nonce.toLowerCase(),
   }
   return {
