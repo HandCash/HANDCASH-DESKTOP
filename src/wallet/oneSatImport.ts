@@ -924,7 +924,7 @@ async function rebuildBrc150Identity(
 /** Per-pass ceiling on transfer-shape probes (a couple of cached rawtx fetches each). */
 export const MAX_TRANSFER_PROBES_PER_PASS = 12
 
-type OrdinalTransferProbe = 'item' | 'bsv21' | 'ft' | 'unknown'
+type OrdinalTransferProbe = 'item' | 'bsv21' | 'ft' | 'icon' | 'unknown'
 
 /** Inscribed parent tip shape — bare needs a further hop. */
 type OnesatParentShape = 'nft' | 'ft' | 'ftHop' | 'bare' | 'other'
@@ -1028,6 +1028,22 @@ async function lineageOfBareOnesatSpend(
  * transfers use the same bare tip shape — parent lineage (not "any 1-sat
  * parent") decides NFT vs hold-for-FT. Authentication stays with BRC-150.
  */
+function isOnesatFtTickerIcon(tx: Transaction, vout: number): boolean {
+  const out = tx.outputs[vout]
+  if (!out || out.satoshis !== 1) return false
+  const env = parseOrdEnvelope(out.lockingScript?.toHex())
+  const mime = (env?.contentType ?? '').toLowerCase().split(';')[0]!.trim()
+  if (!mime.startsWith('image/')) return false
+  for (let i = 0; i < tx.outputs.length; i++) {
+    if (i === vout) continue
+    const sibling = tx.outputs[i]
+    if (!sibling || sibling.satoshis !== 1) continue
+    const sibEnv = parseOrdEnvelope(sibling.lockingScript?.toHex())
+    if (sibEnv && isOnesatFtMime(sibEnv.contentType)) return true
+  }
+  return false
+}
+
 async function probeOrdinalTransfer(
   txid: string,
   vout: number,
@@ -1069,16 +1085,7 @@ async function probeOrdinalTransfer(
       return { kind: 'ft', origin: txidVoutUnderscore(txid, vout) }
     }
     // Image sibling in a 1sat-ft genesis tx is a ticker icon, not a collectable.
-    const mime = (envelope.contentType ?? '').toLowerCase().split(';')[0]!.trim()
-    if (mime.startsWith('image/')) {
-      for (let i = 0; i < tx.outputs.length; i++) {
-        if (i === vout) continue
-        const sibling = tx.outputs[i]
-        if (!sibling || sibling.satoshis !== 1) continue
-        const sibEnv = parseOrdEnvelope(sibling.lockingScript?.toHex())
-        if (sibEnv && isOnesatFtMime(sibEnv.contentType)) return { kind: 'unknown' }
-      }
-    }
+    if (isOnesatFtTickerIcon(tx, vout)) return { kind: 'icon' }
     return { kind: 'item' }
   }
   // Envelope structure we cannot parse a mime out of: let the indexer decide.
@@ -1213,8 +1220,9 @@ export async function classifyLegacyUtxos(
         continue
       }
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
+      const cacheKey = `${u.txid}.${u.vout}`
       let resolved:
-        | { origin: string; name?: string; app?: string; collectionId?: string }
+        | { origin: string; name?: string; app?: string; collectionId?: string; mimeType?: string }
         | null = null
       if (known?.origin != null) {
         resolved = {
@@ -1233,7 +1241,6 @@ export async function classifyLegacyUtxos(
           collectionId: known.collectionId,
         }
       } else {
-        const cacheKey = `${u.txid}.${u.vout}`
         resolved = getResolvedInscription(cacheKey)
         const mayResolve =
           !resolved && shouldResolveInscription(cacheKey, Date.now(), RESOLVE_RETRY_MS)
@@ -1254,6 +1261,13 @@ export async function classifyLegacyUtxos(
               vout: u.vout,
               origin: probe.origin ?? txidVoutUnderscore(u.txid, u.vout),
             })
+            claimed.add(liveKey)
+            continue
+          } else if (probe.kind === 'icon') {
+            // Decorative mint sibling. Hold it; never let the indexer name it
+            // as a collectable (that is how remint KING landed in NFTs).
+            rememberUnresolved(cacheKey)
+            heldOneSats.push(u)
             claimed.add(liveKey)
             continue
           }
@@ -1286,6 +1300,24 @@ export async function classifyLegacyUtxos(
             rememberUnresolved(cacheKey)
           } else {
             rememberUnresolved(cacheKey)
+          }
+        }
+      }
+
+      const resolvedMime = (resolved?.mimeType ?? '').toLowerCase()
+      if (resolved && resolvedMime.startsWith('image/')) {
+        const hex = await fetchRawTxHex(u.txid, chain)
+        if (hex) {
+          try {
+            const live = Transaction.fromHex(hex)
+            if (isOnesatFtTickerIcon(live, u.vout)) {
+              rememberUnresolved(cacheKey)
+              heldOneSats.push(u)
+              claimed.add(liveKey)
+              continue
+            }
+          } catch {
+            /* raw tx parse miss — file as usual */
           }
         }
       }

@@ -342,6 +342,63 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('does not file a 1sat-ft genesis icon as an NFT', async () => {
+    const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
+    const mintLock = buildOnesatFtMintLockingScript({
+      address: addr,
+      sym: 'KING',
+      amt: 69420,
+    }).lockingScript
+    const mimeHex = Array.from(new TextEncoder().encode('image/webp'))
+      .map((b) => b.toString(16).padStart(2, '0'))
+      .join('')
+    const iconEnvelope =
+      '0063036f726451' +
+      (mimeHex.length / 2).toString(16).padStart(2, '0') +
+      mimeHex +
+      '0002' +
+      '0102' +
+      '68'
+    const genesis = buildTx([
+      { scriptHex: mintLock, satoshis: 1 },
+      { scriptHex: iconEnvelope + P2PKH_HEX, satoshis: 1 },
+    ])
+    serveRawTxs(genesis)
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          outpoint: `${genesis.id('hex')}_1`,
+          origin: {
+            outpoint: `${genesis.id('hex')}_1`,
+            data: {
+              map: { name: 'KING' },
+              insc: { file: { type: 'image/webp' } },
+            },
+          },
+        }),
+        { status: 200 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const mintOp = `${genesis.id('hex')}.0`
+    const iconOp = `${genesis.id('hex')}.1`
+    const result = await classifyLegacyUtxos(
+      [utxo(mintOp, 1), utxo(iconOp, 1)],
+      'main',
+    )
+
+    expect(result.onesatFt).toEqual([
+      expect.objectContaining({ outpoint: mintOp, origin: `${genesis.id('hex')}_0` }),
+    ])
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([iconOp])
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
+    vi.unstubAllGlobals()
+  })
+
   it('paints an inscribed mint instantly from its own envelope — no indexer', async () => {
     const funding = buildTx([{ scriptHex: P2PKH_HEX, satoshis: 10_000 }])
     const mint = buildTx(

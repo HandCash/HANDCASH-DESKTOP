@@ -607,6 +607,15 @@ export async function reclaimMisfiledOnesatFtTips(
         : Number((o as { satoshis?: unknown }).satoshis)
     return sats === 1
   })
+  const nftFtTxids = new Set<string>()
+  for (const o of nftRows) {
+    const scriptHex = lockingScriptHex(o.lockingScript)
+    const env = parseOrdEnvelope(scriptHex)
+    if (!env || !isOnesatFtMime(env.contentType)) continue
+    const op = wireOutpoint(String(o.outpoint ?? ''))
+    const tx = op.split('.')[0]
+    if (tx) nftFtTxids.add(tx)
+  }
 
   const dropOps: string[] = []
   const candidates: Array<{
@@ -631,25 +640,27 @@ export async function reclaimMisfiledOnesatFtTips(
     const tags = (row as { tags?: unknown }).tags
     const env = parseOrdEnvelope(scriptHex)
     const saysFt = rowSaysOnesatFt(tags, row.customInstructions, scriptHex)
-    if (!shouldProbeOnesatForFt({
-      tags,
-      customInstructions: row.customInstructions,
-      lockingScriptHex: scriptHex,
-    })) {
-      continue
-    }
     const rowOrigin = originFromColourTags(tags)
     // Leftover extras: NFT copy / icon of a tip already restored to 1sat-ft.
     if (rowOrigin && ftOrigins.has(rowOrigin)) {
       dropOps.push(op)
       continue
     }
+    // Ticker icon (image sibling of a 1sat-ft genesis). Drop even when
+    // shouldProbe is false — an inscribed image is not a leftover candidate.
     if (
       env &&
       (env.contentType ?? '').toLowerCase().startsWith('image/') &&
-      ftGenesisTxids.has(txid)
+      (ftGenesisTxids.has(txid) || nftFtTxids.has(txid))
     ) {
       dropOps.push(op)
+      continue
+    }
+    if (!shouldProbeOnesatForFt({
+      tags,
+      customInstructions: row.customInstructions,
+      lockingScriptHex: scriptHex,
+    })) {
       continue
     }
     // Inscribed non-FT NFTs stay unless remittance already says 1sat-ft.
