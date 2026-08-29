@@ -22,6 +22,7 @@ import { isOnesatFtMime } from './colourCoins'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import { wireCollectableOutpoint } from './oneSatCollectableGuard'
+import { decodeBsv21Binary } from './bsv21Binary'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { getActiveWallet, type ActiveWallet } from './session'
 
@@ -96,6 +97,25 @@ export function classifyOneSatAsBsv21(
   args: ClassifyOneSatAsBsv21Args,
 ): OneSatAsBsv21 {
   if (args.satoshis !== 1) return { kind: 'skip' }
+
+  const binary = args.lockingScriptHex
+    ? decodeBsv21Binary(args.lockingScriptHex)
+    : null
+  if (binary && binary.amount > 0n && binary.role !== 'authority') {
+    const op = (args.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+    const tokenId = binary.tokenId ?? (binary.role === 'deploy' ? op : '')
+    if (tokenId) {
+      const payload = parseBsv21Json({
+        p: 'bsv-20',
+        op: binary.role === 'deploy' ? 'deploy+mint' : 'transfer',
+        id: tokenId,
+        amt: binary.amount.toString(),
+        ...(binary.payload?.sym ? { sym: binary.payload.sym } : {}),
+        ...(binary.payload?.dec != null ? { dec: String(binary.payload.dec) } : {}),
+      })
+      if (payload) return { kind: 'bsv21', payload, tokenId }
+    }
+  }
 
   const { mime, payload: envPayload } = payloadFromEnvelope(args.lockingScriptHex)
   if (mime && isOnesatFtMime(mime)) return { kind: 'skip' }

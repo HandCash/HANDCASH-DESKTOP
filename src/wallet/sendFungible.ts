@@ -1,9 +1,8 @@
 /**
  * Fungible send entrypoint.
  *
- * 1Sat FT (Collect rows with `colourSupply`) spend tip UTXOs and create payee
- * (+ change) tips with conserved face-value `amt`. Legacy BSV-21 wallet sends
- * are retired; helpers below remain for tests / recovery tooling.
+ * BRC-162 value tips: spend basket `bsv21` inputs and create payee (+ change)
+ * 162 value outputs with conserved amt. New sends never emit 1sat-ft MIME.
  */
 import { Beef } from '@bsv/sdk'
 import {
@@ -151,37 +150,28 @@ export async function sendFungible(args: {
     )
   if (!token) throw new Error('Token not found in this wallet')
 
-  // 1Sat FT (Collect rows with colourSupply): face-value tip spend + change.
-  if (token.colourSupply != null) {
-    const units = /^\d+$/.test(args.amount.trim())
-      ? BigInt(args.amount.trim())
-      : BigInt(parseFungibleSendAmount(args.amount, token).unitsStr)
-    if (units <= 0n) throw new Error('Amount must be greater than zero')
-    if (!Number.isSafeInteger(Number(units))) {
-      throw new Error('Amount too large')
-    }
-    const held = BigInt(token.amt.replace(/\D/g, '') || '0')
-    if (units > held) {
-      throw new Error(
-        `Insufficient balance (have ${formatFungibleAmount(token.amt, token.dec)})`,
-      )
-    }
-    const { sendColourCoins } = await import('./sendColourCoins')
-    const result = await sendColourCoins({
-      origin: token.tokenId,
-      amount: Number(units),
-      toAddress: args.toAddress,
-      friendLabel: args.friendLabel,
-      recipientIdentityKey: args.recipientIdentityKey,
-      sym: token.sym,
-      supply: token.colourSupply,
-      maxSupply: token.colourMaxSupply ?? null,
-      ...(token.icon ? { icon: token.icon } : {}),
-    })
-    return { txid: result.txid }
+  const units = /^\d+$/.test(args.amount.trim())
+    ? BigInt(args.amount.trim())
+    : BigInt(parseFungibleSendAmount(args.amount, token).unitsStr)
+  if (units <= 0n) throw new Error('Amount must be greater than zero')
+  if (!Number.isSafeInteger(Number(units))) {
+    throw new Error('Amount too large')
   }
-
-  throw new Error(
-    'BSV-21 wallet sends are retired. 1Sat tokens use face-value tip spends under a shared origin.',
-  )
+  const held = BigInt(token.amt.replace(/\D/g, '') || '0')
+  if (units > held) {
+    throw new Error(
+      `Insufficient balance (have ${formatFungibleAmount(token.amt, token.dec)})`,
+    )
+  }
+  const { sendColourCoins } = await import('./sendColourCoins')
+  const result = await sendColourCoins({
+    origin: token.tokenId,
+    amount: Number(units),
+    toAddress: args.toAddress,
+    friendLabel: args.friendLabel,
+    recipientIdentityKey: args.recipientIdentityKey,
+    sym: token.sym,
+    ...(token.icon ? { icon: token.icon } : {}),
+  })
+  return { txid: result.txid }
 }

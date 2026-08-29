@@ -16,8 +16,8 @@ import {
   DEFAULT_METANET_HANDLES_BASE_URL,
 } from './walletConfig'
 import {
-  messageboxAuthHeaders,
-  signMessageboxAuth,
+  freshMessageboxAuthHeaders,
+  type MessageboxMethod,
 } from './messageboxAuth'
 import {
   appendMessage,
@@ -443,6 +443,27 @@ export type PeerBeefNotifyResult = {
   beefInBox: boolean
 }
 
+/** Sign-then-attach so retries cannot reuse a stale X-BRC33-Timestamp. */
+function signedMessageboxHeaders(
+  rootKeyHex: string,
+  method: MessageboxMethod,
+  extra?: Record<string, string>,
+): Headers {
+  const signed = freshMessageboxAuthHeaders({
+    rootKeyHex,
+    method,
+    messageBox: 'inbox',
+  })
+  const headers = new Headers()
+  if (extra) {
+    for (const [key, value] of Object.entries(extra)) headers.set(key, value)
+  }
+  headers.set('X-BRC33-Identity', signed['X-BRC33-Identity'] ?? '')
+  headers.set('X-BRC33-Timestamp', signed['X-BRC33-Timestamp'] ?? '')
+  headers.set('X-BRC33-Signature', signed['X-BRC33-Signature'] ?? '')
+  return headers
+}
+
 /**
  * Upload bytes to the recipient messagebox file store.
  *
@@ -463,23 +484,17 @@ export async function uploadMessageboxBytes(args: {
     throw new Error('Files are limited to 8 MB')
   }
   const box = normalizeMessageboxBase(args.messagebox)
-  const auth = signMessageboxAuth({
-    rootKeyHex: args.rootKeyHex,
-    method: 'files',
-    messageBox: 'inbox',
-  })
   const filename = args.filename.trim() || 'attachment'
   const contentType = args.contentType || 'application/octet-stream'
   const payload = new Uint8Array(args.bytes.byteLength)
   payload.set(args.bytes)
   const res = await fetch(`${box}/files`, {
     method: 'POST',
-    headers: {
+    headers: signedMessageboxHeaders(args.rootKeyHex, 'files', {
       'Content-Type': contentType,
       'X-HandCash-Recipient': args.recipientIdentityKey,
       'X-HandCash-Filename': encodeURIComponent(filename),
-      ...messageboxAuthHeaders(auth),
-    },
+    }),
     // Blob, not File — Android WebView rejects `File` as a fetch body.
     body: new Blob([payload.buffer], { type: contentType }),
   })
@@ -520,18 +535,12 @@ export async function deliverOutbound(
   const box = normalizeMessageboxBase(env.messagebox)
   const url = `${box}/sendMessage`
   try {
-    const auth = signMessageboxAuth({
-      rootKeyHex: env.rootKeyHex,
-      method: 'sendMessage',
-      messageBox: 'inbox',
-    })
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
+      headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...messageboxAuthHeaders(auth),
-      },
+      }),
       body: JSON.stringify({
         message: {
           recipient: env.recipientIdentityKey,
@@ -610,18 +619,12 @@ export async function pollInboundTipHints(args: {
   const box = normalizeMessageboxBase(args.messagebox)
   const url = `${box}/listMessages`
   try {
-    const auth = signMessageboxAuth({
-      rootKeyHex: args.rootKeyHex,
-      method: 'listMessages',
-      messageBox: 'inbox',
-    })
     const res = await fetch(url, {
       method: 'POST',
-      headers: {
+      headers: signedMessageboxHeaders(args.rootKeyHex, 'listMessages', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...messageboxAuthHeaders(auth),
-      },
+      }),
       body: JSON.stringify({ messageBox: 'inbox' }),
     })
     if (!res.ok) {
@@ -891,18 +894,12 @@ async function acknowledgeMessages(
 ): Promise<void> {
   const box = normalizeMessageboxBase(messagebox)
   try {
-    const auth = signMessageboxAuth({
-      rootKeyHex,
-      method: 'acknowledgeMessage',
-      messageBox: 'inbox',
-    })
     await fetch(`${box}/acknowledgeMessage`, {
       method: 'POST',
-      headers: {
+      headers: signedMessageboxHeaders(rootKeyHex, 'acknowledgeMessage', {
         'Content-Type': 'application/json',
         Accept: 'application/json',
-        ...messageboxAuthHeaders(auth),
-      },
+      }),
       body: JSON.stringify({ messageBox: 'inbox', messageIds }),
     })
   } catch {

@@ -218,9 +218,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   const supplyLabel = isColour
     ? token.colourSupply === 'locked'
       ? token.colourMaxSupply != null
-        ? `1Sat · max supply ${token.colourMaxSupply}`
-        : '1Sat · supply locked'
-      : '1Sat · no supply cap'
+        ? `BSV-21 · max supply ${token.colourMaxSupply}`
+        : 'BSV-21 · supply locked'
+      : 'BSV-21 · no supply cap'
     : null
   const issuerLabel = token.issuerHandle
     ? token.issuerHandle
@@ -310,14 +310,21 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
               </span>
             ) : null}
           </div>
-          <span className="fungible-details-origin" title={`Origin ${token.tokenId}`}>
-            {shortOriginLabel(token.tokenId)}
-          </span>
-          {issuerLabel ? (
-            <span className="fungible-details-origin" title={token.issuer || undefined}>
-              {issuerLabel}
+          <div className="fungible-details-ids">
+            <span className="fungible-details-origin" title={`Origin ${token.tokenId}`}>
+              {shortOriginLabel(token.tokenId)}
             </span>
-          ) : null}
+            {issuerLabel ? (
+              <>
+                <span className="fungible-details-ids-sep" aria-hidden>
+                  ·
+                </span>
+                <span className="fungible-details-origin" title={token.issuer || undefined}>
+                  {issuerLabel}
+                </span>
+              </>
+            ) : null}
+          </div>
           <strong className="fungible-details-balance">{amount}</strong>
           {supplyLabel ? (
             <span className="fungible-details-issuer">{supplyLabel}</span>
@@ -474,9 +481,9 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           <MetaRow label="Raw units" value={token.amt} copyLabel="raw token units" />
           <MetaRow
             label="Protocol"
-            value={isColour ? '1Sat fungible (BRC-175)' : 'Legacy BSV-21 (burn only)'}
+            value={isColour ? 'BSV-21 (BRC-162)' : 'Legacy BSV-21 (burn only)'}
           />
-          <MetaRow label="Basket" value={isColour ? '1sat-ft' : 'bsv21'} />
+          <MetaRow label="Basket" value={'bsv21'} />
           <MetaRow
             label="Spend policy"
             value={isColour ? spendLabel : 'Burn cleanup only — sends retired'}

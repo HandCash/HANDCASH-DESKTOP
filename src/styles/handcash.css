@@ -7564,6 +7564,28 @@ html[data-aeon-mode='light'] .skeleton {
   line-height: 1.25;
 }
 
+.fungible-details-ids {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.fungible-details-ids .fungible-details-origin {
+  display: block;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.fungible-details-ids-sep {
+  flex: 0 0 auto;
+  color: var(--hc-muted);
+}
+
 /* Symbol and the one authenticity badge share a line so the hero stays three
    lines tall instead of stacking five different type sizes. */
 .fungible-details-title {
@@ -7757,6 +7779,10 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .fungible-activity-row {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
   width: 100%;
   min-width: 0;
   padding: 8px;
@@ -7879,6 +7905,11 @@ html[data-aeon-mode='light'] .skeleton {
 .collectable-send-btn--row {
   margin: 0 10px 0 0;
   flex-shrink: 0;
+}
+
+.collectable-burn-btn {
+  color: hsl(var(--destructive));
+  border-color: color-mix(in srgb, hsl(var(--destructive)) 45%, transparent);
 }
 
 .send-collectable-panel.send-panel {

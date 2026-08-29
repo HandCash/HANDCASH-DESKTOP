@@ -279,7 +279,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
               {sendBlocked ? (
                 <CopyableError role="status">
                   {!token.colourSupply
-                    ? 'Legacy BSV-21 tips are read-only. 1Sat tokens split face-value tips under a shared origin.'
+                    ? 'This tip is not a BSV-21 value lock.'
                     : token.spendKind === 'cosigned'
                       ? 'This token requires a cosigner to send.'
                       : 'This balance mixes plain and cosigned tips — send them separately.'}

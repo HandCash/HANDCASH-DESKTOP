@@ -71,7 +71,7 @@ describe('colour-settle activity paint', () => {
     clearAppActivity()
   })
 
-  it('paints a 1sat-ft receive as receive-token, not receive-collectable', () => {
+  it('paints an inbound token receive as receive-token, not receive-collectable', () => {
     const token = colourSettleActivityToken(
       {
         kind: '1sat-ft',

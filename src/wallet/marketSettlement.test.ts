@@ -24,6 +24,8 @@ import {
   MARKET_FEE_IDENTITY_KEY,
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
+import { decodeBsv21Binary } from './bsv21Binary'
+import { buildBsv21ValueLock } from './bsv21Send'
 
 function fixture() {
   const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))
@@ -183,5 +185,31 @@ describe('market exact settlement contract', () => {
     expect(recovered.phase).toBe('recovery')
     expect(recovered.txid).toBe(previous.txid)
     expect(recovered.atomicBeef).toEqual([1, 2, 3])
+  })
+})
+
+
+describe('bsv21 market settlement buyer lock', () => {
+  it('requires a 162 buyer item lock, not P2PKH', () => {
+    const tokenId = `${'ab'.repeat(32)}_0`
+    const { tx, listing, validate, buyer } = fixture()
+    listing.assetType = 'bsv21'
+    listing.amt = 60
+    listing.origin = tokenId
+    expect(validate).toThrow(/outputs do not match|162 amount/i)
+    const buyerAddress = buyer.toAddress('mainnet')
+    tx.outputs[0]!.lockingScript = LockingScript.fromHex(
+      buildBsv21ValueLock({
+        tokenId,
+        amount: 60n,
+        address: buyerAddress,
+      }),
+    )
+    expect(validate).not.toThrow()
+    expect(decodeBsv21Binary(tx.outputs[0]!.lockingScript.toHex())).toMatchObject({
+      role: 'value',
+      tokenId,
+      amount: 60n,
+    })
   })
 })

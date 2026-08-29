@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.17] - 2026-08-29
+
+### Changed
+
+- Tokens are BRC-162 / basket bsv21. List and buy keep the 162 lock. Messagebox remittance re-signs a fresh timestamp. Collect stays 1sat. Token details paint issuer from Sigma or remittance. Activity is one history row.
+
 ## [1.3.16] - 2026-08-29
 
 ### Fixed
@@ -68,7 +74,7 @@
 
 - Settings uses Aeon controls. Send, burn, camera, and QR share the same sheet language.
 - Identity chip shows handle, then BRC-169 key, then PeerPay — one label.
-- Collect stays 1sat. Tokens stays 1sat-ft. FOX / BSV-21 is dead.
+- Collect stays 1sat. Token details paint issuer from Sigma or remittance. Activity is one history row. Tokens stays 1sat-ft. FOX / BSV-21 is dead.
 
 ## [1.3.8] - 2026-08-28
 

@@ -80,6 +80,9 @@ export type Bsv21Utxo = {
   issuerAttested?: boolean
   /** Locking script hex when listed with `include: locking scripts`. */
   lockingScript?: string
+  /** Set on BRC-162 tips — Collect treats these as live (Send), not JSON legacy. */
+  colourSupply?: 'locked' | 'open'
+  colourMaxSupply?: number | null
 }
 
 /** Candidate tip ready to internalize into basket `bsv21`. */
@@ -397,6 +400,10 @@ function mergeFungibleRows(
   if (from.issuerAttested) into.issuerAttested = true
   if (!into.icon && from.icon) into.icon = from.icon
   if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
+  if (!into.colourSupply && from.colourSupply) into.colourSupply = from.colourSupply
+  if (into.colourMaxSupply == null && from.colourMaxSupply != null) {
+    into.colourMaxSupply = from.colourMaxSupply
+  }
   if (from._bestAmt > into._bestAmt) {
     into._bestAmt = from._bestAmt
     into.tokenId = from.tokenId
@@ -438,6 +445,8 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.issuer ? { issuer: u.issuer } : {}),
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
         ...(u.icon ? { icon: u.icon } : {}),
+        ...(u.colourSupply ? { colourSupply: u.colourSupply } : {}),
+        ...(u.colourMaxSupply != null ? { colourMaxSupply: u.colourMaxSupply } : {}),
         _sum: add,
         _plain: !tipCosigned,
         _cosigned: tipCosigned,
@@ -454,6 +463,10 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
     if (u.issuerAttested) existing.issuerAttested = true
     if (!existing.icon && u.icon) existing.icon = u.icon
+    if (!existing.colourSupply && u.colourSupply) existing.colourSupply = u.colourSupply
+    if (existing.colourMaxSupply == null && u.colourMaxSupply != null) {
+      existing.colourMaxSupply = u.colourMaxSupply
+    }
     if (add > existing._bestAmt) {
       existing._bestAmt = add
       existing.tokenId = u.tokenId

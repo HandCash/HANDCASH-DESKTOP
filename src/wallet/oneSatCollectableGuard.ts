@@ -36,6 +36,17 @@ export function isLatchedCollectable(
 }
 
 /**
+ * Latch only real collection NFTs. Collection-less leftovers (blank 1sat-ft
+ * hops, remittance-only splits) must re-probe — otherwise Refresh files them
+ * as collectables, then strips them as bare-origin, and they vanish.
+ */
+export function collectableLatchHolds(
+  remittance?: { collectionId?: string } | null,
+): boolean {
+  return Boolean(remittance?.collectionId?.trim())
+}
+
+/**
  * Merge cached remittance onto an import candidate so heal/reimport keeps the
  * collectable identity (origin / name) instead of painting tip-as-origin NFT.
  */

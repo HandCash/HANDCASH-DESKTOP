@@ -76,7 +76,7 @@
  *   self). It runs in the exclusive spend region so it never races a send, yields
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
  *   `bsv21`) live in their own baskets and are never touched.
- * - **1Sat tokens (fungible)** → basket `1sat-ft`; Collect tip→origin face-value
+ * - **Tokens (fungible)** → BRC-162 binary in basket `bsv21` (BRC-163 remittance).
  *   units (`amt` per tip; balance = Σ amt). Same BRC-150 provenance branding as
  *   collectables; locked origin supply is optional. Transfers spend tips and
  *   create payee (+ change) 1-sat tips — no BSV-21 re-inscription, no indexer for
@@ -111,7 +111,6 @@ export const WALLET_LAYER_MODULES = {
     'fungibles.ts',
     'colourCoins.ts',
     'colourListing.ts',
-    'onesatFtInscribe.ts',
     'sendColourCoins.ts',
     'bsv21.ts',
     'bsv21TipKind.ts',
@@ -230,7 +229,7 @@ export type LocalToolboxState = {
   oneSatOutputCount: number
   /** BSV-21 tips in basket `bsv21` — Collect tokens, not Pay balance. */
   bsv21OutputCount: number
-  /** 1Sat fungible tips in `1sat-ft`. */
+  /** Unused. Tokens live in `bsv21`. */
   colourOutputCount: number
   actionCount: number
   /** True only when there is nothing worth restoring/pushing as history. */
@@ -290,7 +289,7 @@ export async function inspectLocalToolboxState(): Promise<LocalToolboxState> {
     countOutputs('default'),
     countOutputs('1sat'),
     countOutputs('bsv21'),
-    countOutputs('1sat-ft'),
+    Promise.resolve(0),
     countActions(),
   ])
 

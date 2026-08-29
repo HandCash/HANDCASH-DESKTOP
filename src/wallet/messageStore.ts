@@ -50,6 +50,7 @@ export type ItemTransferAsset =
       issuer?: string
     }
   | {
+      /** Inbound decode only. New outbound token peer is kind `fungible` (162 / bsv21). */
       kind: '1sat-ft'
       origin: string
       amount: string

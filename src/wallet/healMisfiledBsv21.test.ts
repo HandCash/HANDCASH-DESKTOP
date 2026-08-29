@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { encodeBsv21Binary } from './bsv21Binary'
 import { classifyOneSatAsBsv21 } from './healMisfiledBsv21'
 
 const P2PKH = '76a914' + '11'.repeat(20) + '88ac'
@@ -99,5 +100,23 @@ describe('classifyOneSatAsBsv21', () => {
         lockingScriptHex: BSV20_EMPTY + P2PKH,
       }).kind,
     ).toBe('skip')
+  })
+
+  it('moves a 162 binary script into bsv21 and not NFT', () => {
+    const script = encodeBsv21Binary({
+      tokenId,
+      amount: 1000n,
+      rest: P2PKH,
+    }).toHex()
+    const got = classifyOneSatAsBsv21({
+      satoshis: 1,
+      outpoint: `${'aa'.repeat(32)}.1`,
+      lockingScriptHex: script,
+    })
+    expect(got.kind).toBe('bsv21')
+    if (got.kind === 'bsv21') {
+      expect(got.tokenId).toBe(tokenId)
+      expect(got.payload.amt).toBe('1000')
+    }
   })
 })

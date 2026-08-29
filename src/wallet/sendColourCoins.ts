@@ -1,8 +1,9 @@
 /**
- * Send 1Sat fungibles (BRC-175): spend tip(s), emit payee (+ change) 1-sat tips
- * with conserved face-value `amt`. Dust/fees from ordinary BSV.
+ * Send BRC-162 value tips: spend 162 inputs, emit payee (+ change) 162 value
+ * outputs with conserved `amt`. Dust/fees from ordinary BSV.
  *
- * Combine = spend all tips for an origin into one self tip (same path, no peer).
+ * NEW sends never emit application/1sat-ft+json. Remittance is BRC-163
+ * (basket `bsv21`). Subject outputs carry a 176 BEEF packet.
  */
 import {
   Beef,
@@ -12,17 +13,22 @@ import {
   type Transaction,
 } from '@bsv/sdk'
 import {
-  assertColourAmtConservation,
-  buildColourCustomInstructions,
   issuerFromColourTags,
-  ONESAT_FT_BASKET,
-  colourTags,
   normalizeColourOrigin,
-  selectColourTipsForAmount,
-  tipFaceAmt,
   type ColourTip,
 } from './colourCoins'
-import { listColourTipsForOrigin, listColourTokens } from './colourListing'
+import {
+  BSV21_BASKET,
+} from './bsv21'
+import { decodeBsv21Binary } from './bsv21Binary'
+import {
+  buildBsv21SendOutputs,
+  buildBsv21SubjectBeef,
+  planBsv21Send,
+  tipFromBsv21Script,
+  type Bsv21SendTip,
+} from './bsv21Send'
+import { listBsv21BinaryTips, listBsv21BinaryTokens } from './colourListing'
 import {
   failOutboundSendPending,
   noteOutboundSendComplete,
@@ -37,7 +43,6 @@ import { normalizeOutpoint } from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import { stampBrc164Id } from './itemAccess'
-import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 import { isCovenantLockedScript } from './collectableTipKind'
 import { tryBuildProvenanceForSend } from './oneSatProvenance'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -124,7 +129,7 @@ export async function signColourTipTransfer(args: {
         beef.mergeBeef(extra.toBinary())
         input.sourceTransaction = beef.findTxid(String(input.sourceTXID))?.tx
       } catch (err) {
-        console.warn('[1sat-ft] source tx hydrate failed', input.sourceTXID, err)
+        console.warn('[bsv21] source tx hydrate failed', input.sourceTXID, err)
       }
     }
     const locking =
@@ -242,36 +247,53 @@ export async function sendColourCoins(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const listed = args.tips ?? (await listColourTipsForOrigin(origin, active))
-  let selected: ColourTip[]
-  let change: number
-  let amount: number
-  if (args.tips?.length) {
-    selected = args.tips.filter((t) => t.satoshis === 1 && t.proven)
-    if (selected.length === 0) throw new Error('No spendable tips')
-    const selectedSum = selected.reduce((s, t) => s + tipFaceAmt(t), 0)
-    amount = args.amount
-    if (!Number.isSafeInteger(amount) || amount <= 0) {
-      throw new Error('Amount must be a positive whole number of units')
+  const listed162 = await listBsv21BinaryTips(active)
+  const fromArgs: Bsv21SendTip[] = (args.tips ?? []).flatMap((t) => {
+    const decoded = tipFromBsv21Script({
+      outpoint: t.outpoint,
+      lockingScript: t.lockingScript,
+      satoshis: t.satoshis,
+      customInstructions: t.customInstructions,
+      tags: t.tags,
+    })
+    if (decoded && t.lockingScript && decodeBsv21Binary(t.lockingScript)) {
+      return [decoded]
     }
-    if (amount > selectedSum) {
-      throw new Error(`Need ${amount} units; only ${selectedSum} in selected tips`)
-    }
-    change = selectedSum - amount
-  } else {
-    const cover = selectColourTipsForAmount(listed, args.amount)
-    selected = cover.selected
-    change = cover.change
-    amount = cover.amount
-  }
-  assertColourAmtConservation(
-    selected.map(tipFaceAmt),
-    change > 0 ? [amount, change] : [amount],
-  )
+    return []
+  })
+  const fromBasket = listed162
+    .filter(
+      (t) =>
+        t.tokenId === origin &&
+        !!t.lockingScript &&
+        !!decodeBsv21Binary(t.lockingScript),
+    )
+    .map((t) => ({
+      outpoint: t.outpoint,
+      tokenId: t.tokenId,
+      amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+      lockingScript: t.lockingScript,
+    }))
+  const plan = planBsv21Send({
+    tokenId: origin,
+    amount: BigInt(args.amount),
+    tips: fromArgs.length ? fromArgs : fromBasket,
+  })
+  const selected = plan.selected
+  const change = Number(plan.changeAmt)
+  const amount = Number(plan.payeeAmt)
+  const selectedColour: ColourTip[] = selected.map((t) => ({
+    outpoint: t.outpoint,
+    origin,
+    satoshis: 1,
+    amt: Number(t.amt),
+    proven: true,
+    lockingScript: t.lockingScript,
+  }))
   const sym = args.sym?.trim() || 'Token'
-  const primary = selected[0]!
-  const actionLabel = args.actionLabel ?? 'handcash-send-1sat-ft'
-  const actionDescription = args.actionDescription ?? 'Send 1Sat token'
+  const primary = selectedColour[0]!
+  const actionLabel = args.actionLabel ?? 'handcash-send-bsv21'
+  const actionDescription = args.actionDescription ?? 'Send token'
 
   setPaymentProgress(
     'preparing',
@@ -319,28 +341,43 @@ export async function sendColourCoins(args: {
 
       setPaymentProgress(
         'building',
-        args.skipPeerNotify ? 'Combining tips…' : 'Preparing 1Sat tip…',
+        args.skipPeerNotify ? 'Combining tips…' : 'Preparing token…',
         primary.outpoint,
       )
       const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
-      let payeeLock: string
-      let changeLock: string
+      const issuer = (() => {
+        for (const tip of listed162) {
+          if (tip.tokenId === origin && tip.issuer) return tip.issuer
+        }
+        for (const tip of selectedColour) {
+          const fromTags = issuerFromColourTags(tip.tags)
+          if (fromTags) return fromTags
+          try {
+            const o = JSON.parse(String(tip.customInstructions ?? '')) as {
+              issuer?: unknown
+            }
+            if (typeof o.issuer === 'string' && o.issuer.trim()) return o.issuer.trim()
+          } catch {
+            /* next tip */
+          }
+        }
+        return undefined
+      })()
+      let plannedOutputs
       try {
-        payeeLock = buildOnesatFtTransferLockingScript({
-          address: to,
-          amt: amount,
-        }).lockingScript
-        changeLock =
-          change > 0
-            ? buildOnesatFtTransferLockingScript({
-                address: wallet.address,
-                amt: change,
-              }).lockingScript
-            : new P2PKH().lock(wallet.address).toHex()
+        plannedOutputs = buildBsv21SendOutputs({
+          tokenId: origin,
+          payeeAmt: plan.payeeAmt,
+          changeAmt: plan.changeAmt,
+          payeeAddress: to,
+          changeAddress: wallet.address,
+          sym,
+          dec: 0,
+          issuer,
+        })
       } catch {
         throw new Error('Invalid recipient address or identity key')
       }
-
       const peerKey =
         args.skipPeerNotify
           ? null
@@ -384,81 +421,28 @@ export async function sendColourCoins(args: {
         priorProvenance: primary.provenance,
         inputBeef: inputBEEF,
       })
-      const issuer = (() => {
-        for (const tip of selected) {
-          const fromTags = issuerFromColourTags(tip.tags)
-          if (fromTags) return fromTags
-          try {
-            const o = JSON.parse(String(tip.customInstructions ?? '')) as {
-              issuer?: unknown
-            }
-            if (typeof o.issuer === 'string' && o.issuer.trim()) return o.issuer.trim()
-          } catch {
-            /* next tip */
-          }
-        }
-        return undefined
-      })()
-      const tags = stampBrc164Id(
-        colourTags(origin, [
-          `name:${sym.slice(0, 80)}`,
+      const outputs = plannedOutputs.map((o) => ({
+        lockingScript: o.lockingScript,
+        satoshis: 1 as const,
+        outputDescription: o.outputDescription,
+        basket: o.basket,
+        tags: stampBrc164Id([
+          ...o.tags,
           ...(args.icon ? [`icon:${args.icon}`] : []),
           ...(issuer ? [`issuer:${issuer}`] : []),
         ]),
-      )
-      const baseCi = {
-        origin,
-        sym,
-        name: sym,
-        supply: args.supply,
-        maxSupply: args.maxSupply ?? null,
-        provenance: provenance ?? primary.provenance ?? null,
-        parent: parentRef,
-        ...(args.icon ? { icon: args.icon } : {}),
-        ...(issuer ? { issuer } : {}),
-      }
-
-      const outputs: Array<{
-        lockingScript: string
-        satoshis: number
-        outputDescription: string
-        basket: string
-        tags: string[]
-        customInstructions: string
-      }> = [
-        {
-          lockingScript: payeeLock,
-          satoshis: 1,
-          outputDescription: args.skipPeerNotify ? '1Sat combined tip' : '1Sat tip',
-          basket: ONESAT_FT_BASKET,
-          tags,
-          customInstructions: buildColourCustomInstructions({
-            ...baseCi,
-            amt: amount,
-          }),
-        },
-      ]
-      if (change > 0) {
-        outputs.push({
-          lockingScript: changeLock,
-          satoshis: 1,
-          outputDescription: '1Sat change',
-          basket: ONESAT_FT_BASKET,
-          tags,
-          customInstructions: buildColourCustomInstructions({
-            ...baseCi,
-            amt: change,
-          }),
-        })
-      }
+        customInstructions: o.customInstructions,
+      }))
+      void provenance
+      void parentRef
 
       setPaymentProgress(
         'signing',
-        args.skipPeerNotify ? 'Signing combined tip…' : 'Signing 1Sat tip…',
+        args.skipPeerNotify ? 'Signing token…' : 'Signing token…',
         primary.outpoint,
       )
       console.info(
-        `[1sat-ft] createAction start tips=${selected.length} amount=${amount} change=${change}`,
+        `[bsv21] createAction start tips=${selected.length} amount=${amount} change=${change}`,
       )
       let actionReference: string | undefined
       try {
@@ -470,7 +454,7 @@ export async function sendColourCoins(args: {
             inputBEEF,
             inputs: selected.map((tip) => ({
               outpoint: wireOutpoint(tip.outpoint),
-              inputDescription: '1Sat tip',
+              inputDescription: 'BSV-21 value',
               unlockingScriptLength: 108,
             })),
             outputs,
@@ -481,7 +465,7 @@ export async function sendColourCoins(args: {
               randomizeOutputs: false,
               signAndProcess: true,
             },
-            labels: [ONESAT_FT_BASKET, actionLabel],
+            labels: [BSV21_BASKET, actionLabel],
           }),
           FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
         )
@@ -496,7 +480,7 @@ export async function sendColourCoins(args: {
               inputBEEF,
               inputs: selected.map((tip) => ({
                 outpoint: wireOutpoint(tip.outpoint),
-                inputDescription: '1Sat tip',
+                inputDescription: 'BSV-21 value',
                 unlockingScriptLength: 108,
               })),
               outputs,
@@ -507,7 +491,7 @@ export async function sendColourCoins(args: {
                 randomizeOutputs: false,
                 signAndProcess: true,
               },
-              labels: [ONESAT_FT_BASKET, actionLabel],
+              labels: [BSV21_BASKET, actionLabel],
             }),
             FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
           )
@@ -535,7 +519,7 @@ export async function sendColourCoins(args: {
           throw new Error('Token transfer produced no txid')
         }
         actionReference = signable.reference
-        console.info('[1sat-ft] createAction returned signable — unlocking tip(s)')
+        console.info('[bsv21] createAction returned signable — unlocking tip(s)')
         setPaymentProgress(
           'signing',
           'Signing token tip…',
@@ -550,7 +534,7 @@ export async function sendColourCoins(args: {
         atomic = signed.atomicBeef
         actionReference = undefined
       }
-      console.info(`[1sat-ft] createAction done txid=${txid}`)
+      console.info(`[bsv21] createAction done txid=${txid}`)
 
       if (!atomic?.length) {
         try {
@@ -571,6 +555,23 @@ export async function sendColourCoins(args: {
         throw new Error('Token transfer missing AtomicBEEF for broadcast')
       }
       rememberBeefTree(atomic, txid)
+      try {
+        const signedBeef = Beef.fromBinary(atomic)
+        const signedTx =
+          signedBeef.findTxid(txid)?.tx ?? signedBeef.findAtomicTransaction(txid)
+        if (signedTx) {
+          buildBsv21SubjectBeef({
+            parentBeef: signedBeef,
+            subjectTx: signedTx,
+          })
+        }
+      } catch (err) {
+        throw new Error(
+          err instanceof Error
+            ? err.message
+            : 'BRC-176 prove failed for the token send',
+        )
+      }
 
       try {
         await wallet.wallet.actionBatch.abort()
@@ -602,12 +603,12 @@ export async function sendColourCoins(args: {
           txid,
           itemName: sym,
           asset: {
-            kind: '1sat-ft',
-            origin,
+            kind: 'fungible',
+            tokenId: origin,
             amount: String(amount),
             sym,
-            ...(args.supply ? { supply: args.supply } : {}),
-            ...(args.maxSupply != null ? { maxSupply: args.maxSupply } : {}),
+            dec: 0,
+            ...(args.icon ? { icon: args.icon } : {}),
           },
           atomicBeef: atomic,
         })
@@ -634,44 +635,19 @@ export async function sendColourCoins(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendColourCoins')
-      const selectedSum = selected.reduce((s, tip) => s + tipFaceAmt(tip), 0)
+      const selectedSum = selected.reduce((s, tip) => s + Number(tip.amt), 0)
       const kept =
         change > 0 ? change : args.skipPeerNotify ? amount : Math.max(0, selectedSum - amount)
       const keptOp =
         change > 0 ? `${txid}_1` : args.skipPeerNotify ? `${txid}_0` : undefined
-      const [{ paintFungibleAfterSpend }, leftover] = await Promise.all([
-        import('./fungibles'),
-        import('./onesatFtLeftover'),
-      ])
+      const { paintFungibleAfterSpend } = await import('./fungibles')
       paintFungibleAfterSpend({
         tokenId: origin,
         remainingAmt: kept,
         outpoint: keptOp,
         sym,
-        colourSupply: args.supply,
-        colourMaxSupply: args.maxSupply ?? null,
         icon: args.icon,
       })
-      if (kept > 0 && keptOp) {
-        leftover.rememberOnesatFtLeftover({
-          origin,
-          amt: kept,
-          outpoint: keptOp,
-          ci: buildColourCustomInstructions({
-            origin,
-            amt: kept,
-            sym,
-            supply: args.supply,
-            maxSupply: args.maxSupply ?? null,
-            issuer,
-          }),
-          sym,
-          supply: args.supply,
-          maxSupply: args.maxSupply ?? null,
-        })
-      } else {
-        leftover.forgetOnesatFtLeftover(origin)
-      }
       return { txid, tipsSpent: selected.length, change }
       } finally {
         if (actionReference) {
@@ -691,7 +667,7 @@ export async function sendColourCoins(args: {
       () => {
         setPaymentProgress(
           'building',
-          args.skipPeerNotify ? 'Combining tips…' : 'Preparing 1Sat tip…',
+          args.skipPeerNotify ? 'Combining tips…' : 'Preparing token…',
           primary.outpoint,
         )
       },
@@ -712,10 +688,10 @@ export async function sendColourCoins(args: {
           await import('./actionReview')
         await releaseStuckNosends(active)
         await abortReservedActionBatches(active)
-        void listColourTokens(active).catch(() => {})
+        void listBsv21BinaryTokens(active).catch(() => {})
       }
     } catch (recoverErr) {
-      console.warn('[1sat-ft] tip restore after failed send skipped', recoverErr)
+      console.warn('[bsv21] tip restore after failed send skipped', recoverErr)
     }
     throw err
   }
@@ -732,24 +708,20 @@ export async function combineColourTips(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const tips = (await listColourTipsForOrigin(origin, active)).filter(
-    (t) => t.satoshis === 1 && t.proven,
-  )
-  if (tips.length < 2) {
+  const listed162 = await listBsv21BinaryTips(active)
+  const mine = listed162.filter((t) => t.tokenId === origin)
+  if (mine.length < 2) {
     throw new Error('Already a single tip — nothing to combine')
   }
-  const amount = tips.reduce((s, t) => s + tipFaceAmt(t), 0)
+  const amount = mine.reduce((s, t) => s + Number(t.amt.replace(/\D/g, '') || '0'), 0)
   const result = await sendColourCoins({
     origin,
     amount,
     toAddress: active.address,
-    tips,
     skipPeerNotify: true,
     sym: args.sym,
-    supply: args.supply,
-    maxSupply: args.maxSupply ?? null,
-    actionDescription: 'Combine 1Sat tips',
-    actionLabel: 'handcash-combine-1sat-ft',
+    actionDescription: 'Combine token tips',
+    actionLabel: 'handcash-combine-bsv21',
   })
   return { txid: result.txid, tipsSpent: result.tipsSpent }
 }

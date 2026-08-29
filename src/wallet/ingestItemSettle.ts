@@ -11,6 +11,8 @@ import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 import { getActiveWallet } from './session'
 import { rememberBeefTree } from './beefCache'
+import { decodeBProtocol } from './bProtocol'
+import { decodeBsv21Binary } from './bsv21Binary'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import {
@@ -118,6 +120,8 @@ export async function internalizePeerItemSettle(opts: {
       const sats = out?.satoshis
       const hex = out?.lockingScript?.toHex()
       if (!hex || !scriptPaysAddress(hex, active.address)) continue
+      if (decodeBsv21Binary(hex)) continue
+      if (decodeBProtocol(hex)) continue
       if (sats === 1 && tipVout < 0) tipVout = i
     }
     if (tipVout < 0) {

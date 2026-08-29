@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   applyCollectableRemittance,
   collectableKeySet,
+  collectableLatchHolds,
   isLatchedCollectable,
   keepCollectablesOutOfTokenRoute,
   skipTokenImportForBasketHeld,
@@ -83,5 +84,12 @@ describe('oneSatCollectableGuard', () => {
       name: 'Pixel Fox',
       app: 'Market',
     })
+  })
+
+  it('holds the collectable latch only when remittance names a collection', () => {
+    expect(collectableLatchHolds({ collectionId: ORIGIN })).toBe(true)
+    expect(collectableLatchHolds({ collectionId: '  ' })).toBe(false)
+    expect(collectableLatchHolds({ collectionId: undefined })).toBe(false)
+    expect(collectableLatchHolds(undefined)).toBe(false)
   })
 })

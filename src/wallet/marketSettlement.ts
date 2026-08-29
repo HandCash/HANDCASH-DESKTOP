@@ -16,6 +16,7 @@ import {
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
 import { getBeefForTxidCached } from './beefCache'
 import {
+  buildMarketHeldRemittance,
   calculateMarketSettlement,
   createMarketSettlementReceipt,
   findMarketListingAuthorizationBySaleId,
@@ -33,15 +34,8 @@ import {
   type MarketSettlementReceipt,
   type PurchaseMarketListingArgs,
 } from './marketListing'
-import {
-  buildCollectableCustomInstructions,
-  parseProvenanceV2,
-} from './oneSatProvenance'
-import {
-  ONESAT_FT_BASKET,
-  buildColourCustomInstructions,
-  colourTags,
-} from './colourCoins'
+import { parseProvenanceV2 } from './oneSatProvenance'
+import { buildBsv21ValueLock } from './bsv21Send'
 import {
   MARKET_ITEM_VOUT,
   MARKET_OFFER_DEPOSIT_SATS,
@@ -248,7 +242,20 @@ export function validateMarketSettlementOutputs(args: {
   const buyerAddress = PublicKey.fromString(args.buyerIdentityKey).toAddress(
     args.chain === 'main' ? 'mainnet' : 'testnet'
   )
-  const buyerLock = new P2PKH().lock(buyerAddress).toHex()
+  const buyerChangeLock = new P2PKH().lock(buyerAddress).toHex()
+  if (args.listing.assetType === 'bsv21') {
+    if (args.listing.amt == null || !(args.listing.amt > 0)) {
+      throw new Error('BSV-21 settlement requires a 162 amount')
+    }
+  }
+  const buyerItemLock =
+    args.listing.assetType === 'bsv21'
+      ? buildBsv21ValueLock({
+          tokenId: args.listing.origin,
+          amount: BigInt(args.listing.amt!),
+          address: buyerAddress,
+        })
+      : buyerChangeLock
   const sellerLock = new P2PKH().lock(args.listing.payTo).toHex()
   const feeLock = new P2PKH()
     .lock(marketFeePayToAddress(args.listing))
@@ -293,7 +300,7 @@ export function validateMarketSettlementOutputs(args: {
     throw new Error('Settlement offer token does not match active terms')
   }
   if (
-    !outputEquals(args.tx, args.itemOutputIndex, 1, buyerLock) ||
+    !outputEquals(args.tx, args.itemOutputIndex, 1, buyerItemLock) ||
     !outputEquals(
       args.tx,
       args.sellerOutputIndex,
@@ -312,7 +319,7 @@ export function validateMarketSettlementOutputs(args: {
     if (
       !output ||
       !(typeof output.satoshis === 'number' && output.satoshis > 0) ||
-      output.lockingScript?.toHex().toLowerCase() !== buyerLock.toLowerCase()
+      output.lockingScript?.toHex().toLowerCase() !== buyerChangeLock.toLowerCase()
     ) {
       throw new Error('Settlement contains a non-buyer change output')
     }
@@ -385,8 +392,13 @@ export async function executeMarketPurchase(
         proof.reason ?? 'Listing provenance is invalid.'
       )
     }
-    const provenance = parseProvenanceV2(args.provenance)
-    if (!provenance) throw new Error('Missing BRC-150 provenance')
+    const provenance =
+      listing.assetType === 'bsv21'
+        ? undefined
+        : parseProvenanceV2(args.provenance)
+    if (listing.assetType !== 'bsv21' && !provenance) {
+      throw new Error('Missing BRC-150 provenance')
+    }
     if (
       args.intent.buyer.toLowerCase() !== active.identityKey.toLowerCase() ||
       !verifyMarketPurchaseIntent(args.intent, listing)
@@ -399,7 +411,20 @@ export async function executeMarketPurchase(
     const amounts = calculateMarketSettlement(listing.priceSats)
     const feeAddress = marketFeePayToAddress(listing)
     const feeLockingScript = new P2PKH().lock(feeAddress).toHex()
-    const buyerLock = new P2PKH().lock(active.address).toHex()
+    const isBsv21 = listing.assetType === 'bsv21'
+    if (isBsv21 && (listing.amt == null || !(listing.amt > 0))) {
+      throw new MarketListingError(
+        'MARKET_ASSET_UNSUPPORTED',
+        'BSV-21 settlement requires a 162 amount.',
+      )
+    }
+    const buyerLock = isBsv21
+      ? buildBsv21ValueLock({
+          tokenId: listing.origin,
+          amount: BigInt(listing.amt!),
+          address: active.address,
+        })
+      : new P2PKH().lock(active.address).toHex()
     const sellerLock = new P2PKH().lock(listing.payTo).toHex()
     const [itemTxid] = normalizeOutpoint(listing.outpoint).split('.')
     const [offerTxid] = normalizeOutpoint(listing.offerOutpoint).split('.')
@@ -435,23 +460,13 @@ export async function executeMarketPurchase(
           lockingScript: buyerLock,
           satoshis: 1,
           outputDescription: 'Market item to buyer',
-          basket: listing.assetType === '1sat-ft' ? ONESAT_FT_BASKET : '1sat',
-          tags:
-            listing.assetType === '1sat-ft'
-              ? colourTags(listing.origin)
-              : ['ordinal', `origin:${listing.origin.replace('_', '.')}`],
-          customInstructions:
-            listing.assetType === '1sat-ft'
-              ? buildColourCustomInstructions({
-                  origin: listing.origin,
-                  amt: listing.amt,
-                  provenance,
-                })
-              : buildCollectableCustomInstructions({
-                  origin: listing.origin,
-                  name: 'Market item',
-                  provenance,
-                }),
+          ...buildMarketHeldRemittance({
+            assetType: listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal',
+            origin: listing.origin,
+            amt: listing.amt,
+            name: 'Market item',
+            ...(provenance ? { provenance } : {}),
+          }),
         },
         {
           lockingScript: sellerLock,
@@ -997,7 +1012,10 @@ export async function handleInboundMarketSettlementWire(args: {
     if (!progress.itemRetired) {
       const retireErrors: string[] = []
       for (const spend of [
-        { basket: '1sat', output: listing.outpoint.replace('_', '.') },
+        {
+          basket: listing.assetType === 'bsv21' ? 'bsv21' : '1sat',
+          output: listing.outpoint.replace('_', '.'),
+        },
         { basket: 'market-offers', output: listing.offerOutpoint.replace('_', '.') },
       ]) {
         try {

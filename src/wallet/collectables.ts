@@ -38,8 +38,9 @@ import {
   type ResolvedInscription,
 } from './oneSatImport'
 import { isBsv21Mime } from './bsv21'
-import { isOnesatFtMime, ONESAT_FT_TAG, looksLikeOnesatFtTip, originFromColourCi } from './colourCoins'
-import { isOnesatFtCollectableMisfile, normOnesatFtOutpoint } from './onesatFtLeftover'
+import { decodeBProtocol } from './bProtocol'
+import { isBsv21BinaryScript } from './bsv21Binary'
+import { isOnesatFtMime, ONESAT_FT_TAG, looksLikeOnesatFtTip } from './colourCoins'
 import { getCachedFungibles } from './fungibles'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
@@ -541,14 +542,12 @@ export function collectableIsOnesatFt(item: {
   // not collectables. Real 1sat items have a name, collection, or app.
   if (isBareOriginCollectable(item)) return true
   if (isOnesatFtMime(item.mimeType)) return true
-  if (isOnesatFtCollectableMisfile(item.outpoint)) return true
-  if (item.origin && isOnesatFtCollectableMisfile(item.origin)) return true
-  const op = normOnesatFtOutpoint(item.outpoint)
-  const origin = item.origin ? normOnesatFtOutpoint(item.origin) : ''
+  const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
   try {
     for (const tok of getCachedFungibles()) {
-      const id = normOnesatFtOutpoint(tok.tokenId)
-      const tip = normOnesatFtOutpoint(tok.outpoint)
+      const id = tok.tokenId.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+      const tip = tok.outpoint.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
       if (id && (id === op || (origin && id === origin))) return true
       if (tip && tip === op) return true
     }
@@ -1039,6 +1038,8 @@ function isListableItem(o: ItemOutput): boolean {
   const resolved = getResolvedInscription(normalizeOutpoint(o.outpoint))
   if (isBsv21Mime(resolved?.mimeType)) return false
   if (o.tags?.includes('bsv21')) return false
+  if (o.lockingScript && isBsv21BinaryScript(o.lockingScript)) return false
+  if (o.lockingScript && decodeBProtocol(o.lockingScript)) return false
   // 1sat-FT leftovers belong in Tokens (basket 1sat-ft), not NFT cards.
   // Bare leftover change is 1-sat P2PKH — no MIME until CI/leftover says so.
   if (isOnesatFtMime(resolved?.mimeType)) return false
@@ -1054,9 +1055,6 @@ function isListableItem(o: ItemOutput): boolean {
   if (o.tags?.some((tag) => tag === ONESAT_FT_TAG || tag.startsWith('1sat-ft'))) return false
   // Bare P2PKH 1-sats are leftover FT change / funds, not inscribed items.
   if (o.lockingScript && !hasOrdEnvelope(o.lockingScript)) return false
-  const origin = tagValue(o.tags, 'origin:') ?? originFromColourCi(o.customInstructions) ?? undefined
-  if (origin && isOnesatFtCollectableMisfile(origin)) return false
-  if (isOnesatFtCollectableMisfile(o.outpoint)) return false
   return true
 }
 

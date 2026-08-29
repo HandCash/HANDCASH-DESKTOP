@@ -1,19 +1,19 @@
 /**
- * Payee ingest of a P2P 1Sat fungible settle.
- *
- * Same tip move as collectables, but files into basket `1sat-ft` with FT
- * tags / CI (including face-value `amt`) — never `1sat` (NFT) or `bsv21`.
+ * Payee ingest of a P2P token settle tagged `1sat-ft` (inbound decode only).
+ * Files 162 value tips into basket `bsv21`. Non-162 1sat-ft is rejected —
+ * never basket `1sat-ft`. 1sat NFT settle stays on ingestItemSettle.
  */
 import { Beef } from '@bsv/sdk'
 import type { AtomicBeefPurpose } from './beefCache'
 import { rememberBeefTree } from './beefCache'
+import { normalizeColourOrigin } from './colourCoins'
+import { listBsv21BinaryTokens } from './colourListing'
 import {
-  buildColourCustomInstructions,
-  ONESAT_FT_BASKET,
-  colourTags,
-  normalizeColourOrigin,
-} from './colourCoins'
-import { listColourTokens } from './colourListing'
+  BSV21_BASKET,
+  buildBsv21CustomInstructions,
+  bsv21Tags,
+} from './bsv21'
+import { decodeBsv21Binary } from './bsv21Binary'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import {
@@ -186,24 +186,47 @@ export async function internalizePeerColourSettle(opts: {
     await broadcastAtomicBeef(id, atomic)
     rememberBeefTree(atomic, id)
 
+    const tipScript = (() => {
+      try {
+        const beef = Beef.fromBinary(atomic)
+        const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
+        return tx?.outputs?.[tipVout]?.lockingScript?.toHex()
+      } catch {
+        return undefined
+      }
+    })()
+    const binary = tipScript ? decodeBsv21Binary(tipScript) : null
+    const fileBsv21 = Boolean(binary && binary.amount > 0n)
+    if (!fileBsv21) {
+      markOneSatImportFailed(allOps)
+      clearInboundReceivePending(id)
+      return { accepted: false, outpoints: [], reason: 'not-bsv21' }
+    }
+    const tokenId = binary?.tokenId ?? origin
+    const amtStr = binary?.amount.toString() ?? String(faceAmt)
     await active.wallet.internalizeAction({
       tx: atomic,
       description: `Receive ${sym}`.slice(0, 50),
-      labels: [ONESAT_FT_BASKET, 'handcash-1sat-ft-p2p'],
+      labels: [BSV21_BASKET, 'handcash-token-p2p'],
       outputs: [
         {
           outputIndex: tipVout,
           protocol: 'basket insertion',
           insertionRemittance: {
-            basket: ONESAT_FT_BASKET,
-            tags: stampBrc164Id(colourTags(origin, [`name:${sym.slice(0, 80)}`])),
-            customInstructions: buildColourCustomInstructions({
-              origin,
+            basket: BSV21_BASKET,
+            tags: stampBrc164Id(
+              bsv21Tags({
+                tokenId,
+                amt: amtStr,
+                sym,
+                op: 'transfer',
+              }),
+            ),
+            customInstructions: buildBsv21CustomInstructions({
+              tokenId,
+              amt: amtStr,
+              op: 'transfer',
               sym,
-              name: sym,
-              amt: faceAmt,
-              supply: opts.token.supply,
-              maxSupply: opts.token.maxSupply ?? null,
             }),
           },
         },
@@ -222,8 +245,8 @@ export async function internalizePeerColourSettle(opts: {
       outpoint: tipOp,
       token: tokenPaint,
     })
-    void listColourTokens(active).catch(() => {})
-    console.info(`[1sat-ft-settle] accepted ${tipOp} into 1sat-ft`)
+    void listBsv21BinaryTokens(active).catch(() => {})
+    console.info(`[token-settle] accepted ${tipOp} into bsv21`)
     return { accepted: true, outpoints: allOps }
   } catch (err) {
     if (alreadyInternalizedError(err)) {
@@ -236,7 +259,7 @@ export async function internalizePeerColourSettle(opts: {
         outpoint: tipOp,
         token: tokenPaint,
       })
-      void listColourTokens(active).catch(() => {})
+      void listBsv21BinaryTokens(active).catch(() => {})
       return { accepted: true, outpoints: allOps, reason: 'already-imported' }
     }
     markOneSatImportFailed(allOps)

@@ -310,6 +310,7 @@ function FungibleCarouselCard({
     !token.colourSupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
+  // Live BRC-162 tips set colourSupply. Old JSON BSV-21 (no 162) stays burn-only.
   const isLegacy = !token.colourSupply
   const cap =
     token.colourSupply === 'locked' && token.colourMaxSupply != null

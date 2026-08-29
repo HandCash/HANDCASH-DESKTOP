@@ -241,6 +241,8 @@ describe('messagebox base URL', () => {
     expect(calls[0]?.headers.get('X-BRC33-Identity')).toBe(
       root.toPublicKey().toString().toLowerCase(),
     )
+    expect(calls[0]?.headers.get('X-BRC33-Timestamp')).toMatch(/^\d+$/)
+    expect(Number(calls[0]?.headers.get('X-BRC33-Timestamp'))).toBeGreaterThan(0)
     expect(calls[0]?.headers.get('X-BRC33-Signature')).toMatch(/^[0-9a-f]{128}$/i)
     expect(JSON.parse(calls[0]!.body).message).toMatchObject({
       recipient: '02' + 'ab'.repeat(32),
@@ -360,6 +362,83 @@ describe('messagebox base URL', () => {
     })
     expect(result).toEqual({ delivered: 'cloud', beefInBox: false })
   })
+  it('notifyPeerItemIncoming sends X-BRC33 Identity, Timestamp, and Signature', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    let headers: Headers | undefined
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        headers = new Headers(init?.headers)
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'a'.repeat(64),
+      itemName: 'KING',
+      asset: {
+        kind: 'fungible',
+        tokenId: `${'ab'.repeat(32)}_0`,
+        amount: '10',
+        sym: 'KING',
+        dec: 0,
+      },
+    })
+
+    expect(result.delivered).toBe('cloud')
+    expect(headers?.get('X-BRC33-Identity')).toBe(
+      root.toPublicKey().toString().toLowerCase(),
+    )
+    expect(headers?.get('X-BRC33-Timestamp')).toMatch(/^\d+$/)
+    expect(Number(headers?.get('X-BRC33-Timestamp'))).toBeGreaterThan(0)
+    expect(headers?.get('X-BRC33-Signature')).toMatch(/^[0-9a-f]{128}$/i)
+  })
+
+  it('re-signs a fresh timestamp on each notify retry', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    let now = 1_700_000_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => {
+      now += 1_000
+      return now
+    })
+    const timestamps: string[] = []
+    let n = 0
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers)
+        timestamps.push(headers.get('X-BRC33-Timestamp') || '')
+        n += 1
+        if (n < 3) {
+          return new Response(
+            JSON.stringify({ status: 'error', error: 'auth-timestamp' }),
+            { status: 401 },
+          )
+        }
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: '02' + 'ab'.repeat(32),
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      txid: 'b'.repeat(64),
+      itemName: 'KING',
+    })
+
+    expect(result.delivered).toBe('cloud')
+    expect(timestamps).toHaveLength(3)
+    expect(new Set(timestamps).size).toBe(3)
+    expect(Number(timestamps[1])).toBeGreaterThan(Number(timestamps[0]))
+    expect(Number(timestamps[2])).toBeGreaterThan(Number(timestamps[1]))
+  })
+
 })
 
 afterEach(() => {

@@ -42,16 +42,14 @@ describe('mergeLiveFungibles', () => {
     vi.resetModules()
   })
 
-  it('does not restore genesis mint amt over a leftover', async () => {
+  it('does not paint a 1sat-ft leftover as a token', async () => {
     const leftover = await import('./onesatFtLeftover')
     leftover.markOnesatFtGenesisSpent(ORIGIN)
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [row({ tokenId: ORIGIN, amt: '68862', outpoint: LEFTOVER })]
     const live = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
     const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(1)
-    expect(merged[0]!.amt).toBe('68862')
-    expect(merged[0]!.outpoint).toBe(LEFTOVER)
+    expect(merged).toHaveLength(0)
   })
 
   it('drops a cache-only spent genesis when live has no leftover', async () => {
@@ -214,4 +212,38 @@ describe('mergeLiveFungibles', () => {
     expect(
       leftoverFloorWouldClobber(undefined, { amt: '68862', utxoCount: 1 }),
     ).toBe(false)
+  })
+
+  it('live 162 colourSupply wins over stale colourSupply-null legacy same tokenId', async () => {
+    const { mergeLiveFungibles } = await import('./fungibles')
+    const tokenId = `${'5a'.repeat(32)}_0`
+    const prior = [
+      {
+        tokenId,
+        sym: 'GOLD',
+        amt: '1',
+        dec: 0,
+        utxoCount: 1,
+        outpoint: tokenId,
+        spendKind: 'plain' as const,
+      },
+    ]
+    const live = [
+      {
+        tokenId,
+        sym: 'GOLD',
+        amt: '69240',
+        dec: 0,
+        utxoCount: 1,
+        outpoint: tokenId,
+        spendKind: 'plain' as const,
+        colourSupply: 'locked' as const,
+        icon: `${'5a'.repeat(32)}_1`,
+      },
+    ]
+    const merged = mergeLiveFungibles(live, prior)
+    expect(merged).toHaveLength(1)
+    expect(merged[0]!.colourSupply).toBe('locked')
+    expect(merged[0]!.amt).toBe('69240')
+    expect(merged[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
   })

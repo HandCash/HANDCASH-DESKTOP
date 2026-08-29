@@ -473,11 +473,6 @@ export async function refreshFromChainExclusive(
               healMisfiledCollectables(active),
             ),
           )
-          .then(() =>
-            import('./reclaimMisfiledOnesatFt').then(({ reclaimMisfiledOnesatFtTips }) =>
-              reclaimMisfiledOnesatFtTips(active),
-            ),
-          )
           .then(() => listCollectables(active))
           .finally(() => {
             void import('./collectables').then(

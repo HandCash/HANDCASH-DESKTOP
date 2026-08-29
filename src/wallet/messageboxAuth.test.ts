@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { PrivateKey } from '@bsv/sdk'
 
 import {
+  freshMessageboxAuthHeaders,
   messageboxAuthHeaders,
   messageboxAuthPreimage,
   signMessageboxAuth,
@@ -94,5 +95,46 @@ describe('messageboxAuth', () => {
         now: 1_700_000_000_000,
       }),
     ).toBe(true)
+  })
+
+  it('fresh headers always include Identity, Timestamp, and Signature', () => {
+    const root = PrivateKey.fromRandom()
+    const headers = freshMessageboxAuthHeaders({
+      rootKeyHex: root.toHex(),
+      method: 'sendMessage',
+    })
+    expect(headers['X-BRC33-Identity']).toBe(
+      root.toPublicKey().toString().toLowerCase(),
+    )
+    expect(headers['X-BRC33-Timestamp']).toMatch(/^\d+$/)
+    expect(Number(headers['X-BRC33-Timestamp'])).toBeGreaterThan(0)
+    expect(headers['X-BRC33-Signature']).toMatch(/^[0-9a-f]{128}$/i)
+    expect(headers['X-BRC103-Signature']).toBeUndefined()
+  })
+
+  it('re-signs with a new Date.now() on every call', () => {
+    const root = PrivateKey.fromRandom()
+    let now = 1_700_000_000_000
+    const spy = vi.spyOn(Date, 'now').mockImplementation(() => {
+      now += 1_000
+      return now
+    })
+    try {
+      const first = freshMessageboxAuthHeaders({
+        rootKeyHex: root.toHex(),
+        method: 'sendMessage',
+      })
+      const second = freshMessageboxAuthHeaders({
+        rootKeyHex: root.toHex(),
+        method: 'sendMessage',
+      })
+      expect(first['X-BRC33-Timestamp']).not.toBe(second['X-BRC33-Timestamp'])
+      expect(first['X-BRC33-Signature']).not.toBe(second['X-BRC33-Signature'])
+      expect(Number(second['X-BRC33-Timestamp'])).toBeGreaterThan(
+        Number(first['X-BRC33-Timestamp']),
+      )
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

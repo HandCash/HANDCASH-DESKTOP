@@ -604,7 +604,7 @@ export async function burnBsv21(args: {
     note: `Burning ${token.sym}`,
     item,
     burn: {
-      asset: token.colourSupply != null ? '1sat' : 'bsv21',
+      asset: 'bsv21',
       destroyedAmount: args.amount,
     },
     status: 'pending',
@@ -638,7 +638,7 @@ export async function burnBsv21(args: {
         method: 'burn-token',
         note: `${token.sym} was not burned`,
         item,
-        burn: { asset: '1sat', destroyedAmount: args.amount },
+        burn: { asset: 'bsv21', destroyedAmount: args.amount },
         status: 'failed',
         pendingId,
         failureReason: reason,

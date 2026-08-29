@@ -1,8 +1,6 @@
 /**
- * Tokens list: 1sat-ft only (BRC-175). Basket `1sat-ft`.
- * Collect is 1sat collectables. BSV-21 / FOX is leftover and is not listed.
- *
- * Balance is summed from live 1sat-ft tips' inscription `amt`.
+ * Tokens list: basket `bsv21` BRC-162 value tips, aggregated by deploy outpoint.
+ * 1sat-ft leftovers are not painted as tokens.
  * Never included in fetchBalanceSats / Pay.
  */
 
@@ -15,20 +13,18 @@ import {
   cosignFromRemittance,
   detectCosignFromLockingScript,
   formatFungibleAmount,
-  isBalanceBearingOp,
   issuerFromRemittance,
   issuerFromSigmaLockingScript,
   normalizeTokenId,
   parseBsv21CustomInstructions,
   parseBsv21Json,
   shortTokenLabel,
-  tokenIdForListedTip,
-  tokenIdFromBsv21Tags,
   type Bsv21ImportItem,
   type Bsv21Op,
   type Bsv21Utxo,
   type FungibleToken,
 } from './bsv21'
+import { tipFromBsv21Script } from './bsv21Send'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   beginOneSatImport,
@@ -41,11 +37,6 @@ import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDat
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
-import {
-  healOnesatFtFromListed,
-  isOnesatFtGenesisSpent,
-  listOnesatFtLeftovers,
-} from './onesatFtLeftover'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -79,10 +70,7 @@ function loadDurableList(): FungibleToken[] {
     if (!Array.isArray(parsed?.items)) return []
     return parsed.items
       .filter(isFungibleShape)
-      .filter((t) => Boolean(t.colourSupply))
       .filter((t) => !leftoverCollectableSym(t.sym))
-      .filter((t) => t.colourSupply === 'locked' || Number(t.amt) > 1)
-      .filter((t) => t.colourMaxSupply == null || !(Number(t.amt) > t.colourMaxSupply))
       .map((t) => ({
       ...t,
       dec: Number.isFinite(t.dec) ? t.dec : 0,
@@ -133,9 +121,8 @@ function leftoverCollectableSym(sym: string | undefined): boolean {
 
 function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
   if (leftoverCollectableSym(t.sym)) return false
-  if (t.colourSupply === 'locked') return true
   const amt = Number(t.amt)
-  return t.colourSupply != null && Number.isFinite(amt) && amt > 1
+  return Number.isFinite(amt) && amt > 0
 }
 
 function setFungiblesCache(items: FungibleToken[]): void {
@@ -163,13 +150,11 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   const liveIds = new Set<string>()
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (t.outpoint && isOnesatFtGenesisSpent(t.outpoint)) continue
     if (t.colourMaxSupply != null && Number(t.amt) > t.colourMaxSupply) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (t.outpoint && isOnesatFtGenesisSpent(t.outpoint)) continue
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
@@ -258,46 +243,7 @@ export function leftoverFloorWouldClobber(
     cached = durable
     hydrated = true
   }
-  try {
-    healOnesatFtFromListed([])
-    const leftoverRows = listOnesatFtLeftovers()
-    if (leftoverRows.length > 0) {
-      const floors = leftoverRows
-        .map((leftover) => {
-          let issuer: string | undefined
-          try {
-            const o = JSON.parse(leftover.ci) as { issuer?: unknown }
-            if (typeof o.issuer === 'string' && o.issuer.trim()) issuer = o.issuer.trim()
-          } catch {
-            /* remittance may omit issuer */
-          }
-          return {
-            tokenId: leftover.origin,
-            sym: leftover.sym || 'Token',
-            amt: String(leftover.amt),
-            dec: 0,
-            utxoCount: 1,
-            outpoint: leftover.outpoint,
-            spendKind: 'plain' as const,
-            colourSupply: leftover.supply ?? 'locked',
-            colourMaxSupply: leftover.maxSupply ?? null,
-            colourProvenanceOk: true,
-            ...(issuer ? { issuer } : {}),
-          }
-        })
-        .filter((floor) => {
-          const prior = cached.find((t) => tokenKey(t) === tokenKey(floor))
-          return !leftoverFloorWouldClobber(prior, floor)
-        })
-      if (floors.length > 0) {
-        cached = mergeLiveFungibles(floors, cached)
-        persistDurableList(cached)
-        hydrated = true
-      }
-    }
-  } catch {
-    /* leftover paint is best-effort */
-  }
+  // 1sat-ft leftover remittance is not painted as Tokens.
 }
 
 function notify() {
@@ -312,14 +258,17 @@ export async function hydrateCachedTokenIcons(
   for (const token of tokens) {
     if (token.iconUrl) continue
     if (!cacheExtraLooksLikeFungible(token)) continue
-    const url =
-      (await resolveOnesatFtIconDataUrl({
-        origin: token.tokenId,
-        icon: token.icon,
-        tipOutpoint: token.outpoint,
-        wallet,
-      })) ??
-      (token.icon ? await resolveTokenIconDataUrl(token.icon, wallet) : undefined)
+    const url = token.colourSupply
+      ? token.icon
+        ? await resolveTokenIconDataUrl(token.icon, wallet)
+        : undefined
+      : (await resolveOnesatFtIconDataUrl({
+          origin: token.tokenId,
+          icon: token.icon,
+          tipOutpoint: token.outpoint,
+          wallet,
+        })) ??
+        (token.icon ? await resolveTokenIconDataUrl(token.icon, wallet) : undefined)
     if (!url) continue
     const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
     if (idx < 0) continue
@@ -354,17 +303,6 @@ export function subscribeFungibles(cb: Listener): () => void {
   }
 }
 
-function tagValue(tags: string[] | undefined, prefix: string): string | undefined {
-  if (!tags) return undefined
-  for (const tag of tags) {
-    if (tag.startsWith(prefix)) {
-      const v = tag.slice(prefix.length).trim()
-      if (v) return v
-    }
-  }
-  return undefined
-}
-
 function parseListedOutput(
   raw: {
     outpoint?: string
@@ -377,21 +315,17 @@ function parseListedOutput(
 ): Bsv21Utxo | null {
   const outpoint = (raw.outpoint ?? '').trim().toLowerCase()
   if (!outpoint) return null
-  const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
-  const amt = fromCi?.amt ?? tagValue(raw.tags, 'amt:')
-  const op = (fromCi?.op ?? tagValue(raw.tags, 'op:') ?? 'transfer') as Bsv21Op
-  // deploy+mint has no id field — tip outpoint is the token id (BRC-161).
-  // Tag form is `bsv21:<tokenId>` (not `id:` — reserved for per-output identity).
-  const tokenId = tokenIdForListedTip({
+  if (!raw.lockingScript) return null
+  const from162 = tipFromBsv21Script({
     outpoint,
-    op,
-    id: fromCi?.id,
-    idTag: tokenIdFromBsv21Tags(raw.tags),
+    lockingScript: raw.lockingScript,
+    satoshis: raw.satoshis,
+    customInstructions: raw.customInstructions,
+    tags: raw.tags,
   })
-  if (!tokenId || !amt || !isBalanceBearingOp(op)) return null
-  const sym = fromCi?.sym ?? tagValue(raw.tags, 'sym:')
-  const icon = fromCi?.icon
-  const dec = fromCi?.dec ?? 0
+  if (!from162) return null
+  const ci = parseBsv21CustomInstructions(raw.customInstructions)
+  const op = (from162.tokenId === from162.outpoint ? 'deploy+mint' : 'transfer') as Bsv21Op
   const cosign = cosignFromRemittance({
     customInstructions: raw.customInstructions,
     tags: raw.tags,
@@ -401,30 +335,27 @@ function parseListedOutput(
     tags: raw.tags,
   })
   let issuerAttested = false
-  if (raw.lockingScript) {
-    const candidates = [issuer, selfIdentityKey].filter(Boolean) as string[]
-    const sigma = issuerFromSigmaLockingScript(raw.lockingScript, candidates)
-    if (sigma.issuer) {
-      issuer = sigma.issuer
-      issuerAttested = true
-    } else if (issuer && sigma.address) {
-      // Remittance issuer present; Sigma address seen on script.
-      issuerAttested = true
-    }
+  const candidates = [issuer, selfIdentityKey].filter(Boolean) as string[]
+  const sigma = issuerFromSigmaLockingScript(raw.lockingScript, candidates)
+  if (sigma.issuer) {
+    issuer = sigma.issuer
+    issuerAttested = true
+  } else if (issuer && sigma.address) {
+    issuerAttested = true
   }
   return {
-    outpoint,
-    tokenId,
-    amt,
+    outpoint: from162.outpoint,
+    tokenId: from162.tokenId,
+    amt: from162.amt.toString(),
     op,
-    ...(sym ? { sym } : {}),
-    ...(icon ? { icon } : {}),
-    dec,
-    satoshis: raw.satoshis === 1 ? 1 : (raw.satoshis ?? 1),
+    dec: ci?.dec ?? 0,
+    satoshis: 1,
+    ...(ci?.sym ? { sym: ci.sym } : {}),
+    ...(ci?.icon ? { icon: ci.icon } : {}),
+    lockingScript: raw.lockingScript,
     ...(cosign ? { cosign } : {}),
     ...(issuer ? { issuer } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
-    ...(raw.lockingScript ? { lockingScript: raw.lockingScript } : {}),
   }
 }
 
@@ -456,14 +387,17 @@ async function listFungiblesNow(
 
   try {
     await yieldToUi()
-    let colourRows: FungibleToken[] = []
+    let liveRows: FungibleToken[] = []
     try {
-      const { listColourTokensAsFungibles } = await import('./colourListing')
-      colourRows = (await listColourTokensAsFungibles(wallet)) as FungibleToken[]
+      const { listBsv21BinaryTokens } = await import('./colourListing')
+      liveRows = await listBsv21BinaryTokens(wallet)
     } catch (err) {
-      console.warn('[colour] list failed', err)
+      console.warn('[bsv21] list failed', err)
     }
-    const merged = mergeLiveFungibles(colourRows, cached)
+    // Do not paint 1sat-ft leftovers as tokens.
+    // Live 162 (colourSupply set) wins over stale JSON BSV-21 rows.
+    const prior = cached.filter((t) => !leftoverCollectableSym(t.sym))
+    const merged = mergeLiveFungibles(liveRows, prior)
     setFungiblesCache(merged)
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, merged)

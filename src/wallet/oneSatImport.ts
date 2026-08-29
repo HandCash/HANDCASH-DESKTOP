@@ -49,22 +49,20 @@ import {
   type Bsv21Op,
   type Bsv21Payload,
 } from './bsv21'
+import { decodeBProtocol } from './bProtocol'
+import { decodeBsv21Binary } from './bsv21Binary'
 import {
-  ONESAT_FT_BASKET,
-  buildColourCustomInstructions,
-  colourTags,
   isOnesatFtMime,
   isOnesatFtAmtHop,
   looksLikeOnesatFtTip,
-  normalizeColourOrigin,
   originFromOnesatFtLock,
-  parseColourTipAmt,
 } from './colourCoins'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 import {
   applyCollectableRemittance,
   collectableKeySet,
+  collectableLatchHolds,
 } from './oneSatCollectableGuard'
 
 export type MigrationItem = {
@@ -937,6 +935,8 @@ function shapeOfOnesatLock(
   satoshis: number | undefined,
 ): OnesatParentShape {
   if (satoshis !== 1) return 'other'
+  if (scriptHex && decodeBsv21Binary(scriptHex)) return 'other'
+  if (scriptHex && decodeBProtocol(scriptHex)) return 'other'
   if (isOnesatFtAmtHop(scriptHex)) return 'ftHop'
   if (looksLikeOnesatFtTip({ lockingScriptHex: scriptHex })) return 'ft'
   const envelope = parseOrdEnvelope(scriptHex)
@@ -1048,7 +1048,12 @@ async function probeOrdinalTransfer(
   txid: string,
   vout: number,
   chain: Chain,
-): Promise<{ kind: OrdinalTransferProbe; origin?: string }> {
+): Promise<{
+  kind: OrdinalTransferProbe
+  origin?: string
+  tokenId?: string
+  amt?: string
+}> {
   const hex = await fetchRawTxHex(txid, chain)
   if (!hex) return { kind: 'unknown' }
   let tx: Transaction
@@ -1061,6 +1066,18 @@ async function probeOrdinalTransfer(
   if (!out || out.satoshis !== 1) return { kind: 'unknown' }
 
   const scriptHex = out.lockingScript?.toHex()
+  const binary = scriptHex ? decodeBsv21Binary(scriptHex) : null
+  if (binary && binary.amount > 0n && binary.role !== 'authority') {
+    const tokenId =
+      binary.tokenId ??
+      (binary.role === 'deploy' ? txidVoutUnderscore(txid, vout) : undefined)
+    return {
+      kind: 'bsv21',
+      origin: tokenId,
+      tokenId,
+      amt: binary.amount.toString(),
+    }
+  }
   const envelope = parseOrdEnvelope(scriptHex)
   if (envelope) {
     // Inscribed at this outpoint — a mint, so tip-as-origin is literally
@@ -1089,6 +1106,7 @@ async function probeOrdinalTransfer(
     return { kind: 'item' }
   }
   // Envelope structure we cannot parse a mime out of: let the indexer decide.
+  if (decodeBProtocol(scriptHex)) return { kind: 'icon' }
   if (hasOrdEnvelope(scriptHex)) return { kind: 'unknown' }
 
   // Bare P2PKH: NFT only when lineage reaches a non-FT ordinal inscription.
@@ -1125,7 +1143,8 @@ export async function classifyLegacyUtxos(
     fundingOnly?: boolean
     /**
      * Outpoints already known as 1sat collectables (import mark, basket `1sat`,
-     * remittance, or BRC-150). Never route these to bsv21 / NFT.
+     * remittance, or BRC-150). Latch only when remittance has a collection id —
+     * leftover 1sat-ft must re-probe.
      */
     knownCollectableOutpoints?: Iterable<string>
     /** Cached remittance so heal/reimport keeps origin + name. */
@@ -1200,8 +1219,8 @@ export async function classifyLegacyUtxos(
         continue
       }
       const liveKey = outpointKey(u.outpoint)
-      if (latchedCollectables.has(liveKey)) {
-        const rem = opts.collectableRemittance?.get(liveKey)
+      const rem = opts.collectableRemittance?.get(liveKey)
+      if (latchedCollectables.has(liveKey) && collectableLatchHolds(rem)) {
         oneSats.push(
           applyCollectableRemittance(
             {
@@ -1220,11 +1239,14 @@ export async function classifyLegacyUtxos(
         continue
       }
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
+      // Collection-less leftover / misfiled FT: ignore NFT cache and re-probe.
+      const forceProbe =
+        latchedCollectables.has(liveKey) && !collectableLatchHolds(rem)
       const cacheKey = `${u.txid}.${u.vout}`
       let resolved:
         | { origin: string; name?: string; app?: string; collectionId?: string; mimeType?: string }
         | null = null
-      if (known?.origin != null) {
+      if (!forceProbe && known?.origin != null) {
         resolved = {
           origin: known.origin.includes('.')
             ? known.origin.replace(/\.(\d+)$/, '_$1')
@@ -1233,7 +1255,7 @@ export async function classifyLegacyUtxos(
           app: known.app,
           collectionId: known.collectionId,
         }
-      } else if (known) {
+      } else if (!forceProbe && known) {
         resolved = {
           origin: txidVoutUnderscore(u.txid, u.vout),
           name: known.name,
@@ -1241,9 +1263,10 @@ export async function classifyLegacyUtxos(
           collectionId: known.collectionId,
         }
       } else {
-        resolved = getResolvedInscription(cacheKey)
+        resolved = forceProbe ? null : getResolvedInscription(cacheKey)
         const mayResolve =
-          !resolved && shouldResolveInscription(cacheKey, Date.now(), RESOLVE_RETRY_MS)
+          forceProbe ||
+          (!resolved && shouldResolveInscription(cacheKey, Date.now(), RESOLVE_RETRY_MS))
 
         // Instant ingest, deferred verify. The transfer-shape probe replaces
         // the removed latch fast path: tip-as-origin paints a card now, and
@@ -1252,7 +1275,27 @@ export async function classifyLegacyUtxos(
         if (mayResolve && probeBudget > 0) {
           probeBudget--
           const probe = await probeOrdinalTransfer(u.txid, u.vout, chain)
-          if (probe.kind === 'item') {
+          if (probe.kind === 'bsv21') {
+            const tokenId =
+              probe.tokenId ??
+              probe.origin ??
+              txidVoutUnderscore(u.txid, u.vout)
+            const amt = probe.amt
+            if (tokenId && amt) {
+              bsv21.push({
+                outpoint: u.outpoint,
+                txid: u.txid,
+                vout: u.vout,
+                tokenId,
+                amt,
+                op: tokenId === txidVoutUnderscore(u.txid, u.vout)
+                  ? 'deploy+mint'
+                  : 'transfer',
+              })
+              claimed.add(liveKey)
+              continue
+            }
+          } else if (probe.kind === 'item') {
             resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
           } else if (probe.kind === 'ft') {
             onesatFt.push({
@@ -1305,6 +1348,16 @@ export async function classifyLegacyUtxos(
       }
 
       const resolvedMime = (resolved?.mimeType ?? '').toLowerCase()
+      if (resolved && isOnesatFtMime(resolved.mimeType)) {
+        onesatFt.push({
+          outpoint: u.outpoint,
+          txid: u.txid,
+          vout: u.vout,
+          origin: resolved.origin || txidVoutUnderscore(u.txid, u.vout),
+        })
+        claimed.add(liveKey)
+        continue
+      }
       if (resolved && resolvedMime.startsWith('image/')) {
         const hex = await fetchRawTxHex(u.txid, chain)
         if (hex) {
@@ -1499,110 +1552,12 @@ export async function importOneSatOrdinals(
 }
 
 
-/** Internalize classified 1sat-ft tips into basket `1sat-ft` by mint origin. */
+/** Closed beta: classified 1sat-ft is not imported. Tokens are 162 / `bsv21`. */
 export async function importOnesatFtTips(
-  items: MigrationItem[],
-  active?: ActiveWallet | null,
+  _items: MigrationItem[],
+  _active?: ActiveWallet | null,
 ): Promise<OneSatImportResult> {
-  const wallet = active ?? getActiveWallet()
-  if (!wallet) throw new Error('Wallet locked')
-
-  const normalized = items
-    .map(normalizeMigrationItem)
-    .filter((x): x is MigrationItem => x != null)
-
-  if (normalized.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const claimed = beginOneSatImport(normalized.map((i) => i.outpoint))
-  const claimedSet = new Set(claimed)
-  const toImport = normalized.filter((i) =>
-    claimedSet.has(i.outpoint.trim().toLowerCase()),
-  )
-  if (toImport.length === 0) {
-    return { imported: 0, failed: 0, errors: [], outpoints: [] }
-  }
-
-  const byTxid = new Map<string, MigrationItem[]>()
-  for (const item of toImport) {
-    const txid = item.txid!
-    const list = byTxid.get(txid) ?? []
-    list.push(item)
-    byTxid.set(txid, list)
-  }
-
-  const groups = [...byTxid.entries()]
-  const parts = await mapPool(groups, IMPORT_TX_CONCURRENCY, async ([txid, group]) => {
-    const groupOps = group.map((g) => g.outpoint)
-    const part: OneSatImportResult = {
-      imported: 0,
-      failed: 0,
-      errors: [],
-      outpoints: [],
-    }
-    try {
-      await yieldToUi()
-      const atomic = await getAtomicBeefBinaryForTxid(wallet, txid)
-      await yieldToUi()
-      const beef = Beef.fromBinary(atomic)
-      const sourceTx = beef.findAtomicTransaction(txid)
-      const remittanceOutputs = group.map((item) => {
-        const origin = normalizeColourOrigin(item.origin ?? txidVoutUnderscore(txid, item.vout!))
-        const scriptHex = sourceTx?.outputs?.[item.vout!]?.lockingScript?.toHex()
-        const amt = parseColourTipAmt({ lockingScriptHex: scriptHex })
-        return {
-          outputIndex: item.vout!,
-          protocol: 'basket insertion' as const,
-          insertionRemittance: {
-            basket: ONESAT_FT_BASKET,
-            tags: stampBrc164Id(colourTags(origin)),
-            customInstructions: buildColourCustomInstructions({
-              origin,
-              ...(amt > 0 ? { amt } : {}),
-            }),
-          },
-        }
-      })
-      await wallet.wallet.internalizeAction({
-        tx: atomic,
-        description: 'Import 1sat-ft',
-        labels: [ONESAT_FT_BASKET, 'handcash-1sat-ft-scan'],
-        outputs: remittanceOutputs,
-        seekPermission: false,
-      })
-      part.imported = group.length
-      part.outpoints = group.map((i) => i.outpoint)
-      markOneSatImported(groupOps)
-    } catch (err) {
-      markOneSatImportFailed(groupOps)
-      part.failed = group.length
-      const msg = err instanceof Error ? err.message : String(err)
-      for (const item of group) {
-        part.errors.push(`${item.outpoint}: ${msg}`)
-      }
-      console.warn('[1sat-ft-scan] internalize failed', txid, err)
-    }
-    return part
-  })
-
-  const result = {
-    imported: parts.reduce((n, p) => n + p.imported, 0),
-    failed: parts.reduce((n, p) => n + p.failed, 0),
-    errors: parts.flatMap((p) => p.errors),
-    outpoints: parts.flatMap((p) => p.outpoints),
-  }
-  if (result.imported > 0) {
-    void import('./deviceSync')
-      .then(({ scheduleHistoryBackupPush }) =>
-        scheduleHistoryBackupPush('importOnesatFtTips'),
-      )
-      .catch(() => {})
-    void import('./colourListing')
-      .then(({ listColourTokens }) => listColourTokens(wallet))
-      .catch(() => {})
-  }
-  return result
+  return { imported: 0, failed: 0, errors: [], outpoints: [] }
 }
 
 export function contentUrlForOrigin(origin: string, chain: Chain = 'main'): string {

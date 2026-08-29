@@ -251,7 +251,7 @@ function BurnShell({
               <div className="actions send-actions">
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-danger"
                   disabled={busy}
                   aria-busy={busy || undefined}
                   onClick={onConfirm}
@@ -307,7 +307,7 @@ function BurnShell({
               <div className="actions send-actions">
                 <button
                   type="button"
-                  className="btn btn-primary"
+                  className="btn btn-danger"
                   disabled={!canReview || busy}
                   aria-busy={busy || undefined}
                   onClick={onReview}
@@ -415,7 +415,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const multiDeploy = (token.tokenIds?.length ?? 1) > 1
   const refusal =
     token.colourSupply == null
-      ? 'This wallet burns 1Sat tokens only. Legacy tips stay read-only.'
+      ? 'This tip is not a BSV-21 value lock.'
       : token.spendKind === 'cosigned'
         ? 'This token requires a cosigner, so it cannot be burned here.'
         : token.spendKind === 'mixed'
@@ -473,7 +473,7 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     let units: string
     try {
       if (token.colourSupply == null) {
-        throw new Error('This wallet burns 1Sat tokens only.')
+        throw new Error('This tip is not a BSV-21 value lock.')
       }
       units = parseFungibleSendAmount(typed, token).unitsStr
     } catch (err) {

@@ -22,6 +22,7 @@ import {
   markOneSatImported,
   markOneSatImportFailed,
 } from './oneSatImportGuard'
+import { decodeBsv21Binary } from './bsv21Binary'
 import { parseOrdEnvelope, scriptPaysAddress } from './ordinalOwnership'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { getActiveWallet } from './session'
@@ -127,6 +128,22 @@ export async function internalizePeerFungibleSettle(opts: {
         !scriptPaysAddress(scriptHex, active.address)
       ) {
         continue
+      }
+      const binary = decodeBsv21Binary(scriptHex)
+      if (binary && binary.amount > 0n) {
+        const binId = binary.tokenId
+        if (binId === tokenId && binary.amount.toString() === amount) {
+          if (tipVout >= 0) {
+            clearInboundReceivePending(id)
+            return {
+              accepted: false,
+              outpoints: [],
+              reason: 'ambiguous-token-output',
+            }
+          }
+          tipVout = i
+          continue
+        }
       }
       const envelope = parseOrdEnvelope(scriptHex)
       if (!envelope) continue

@@ -7,6 +7,7 @@ import { normalizeTokenId } from './bsv21'
 import { rememberBeef } from './beefCache'
 import { isOnesatFtMime } from './colourCoins'
 import { parseOrdEnvelope } from './ordinalOwnership'
+import { decodeBProtocol } from './bProtocol'
 import { getTokenIconDataUrl, rememberTokenIcon } from './tokenIconCache'
 
 function splitOutpoint(outpoint: string): { txid: string; vout: number } | null {
@@ -74,12 +75,23 @@ function scriptHexOf(out: { lockingScript?: unknown } | undefined): string | und
 
 function rememberImage(outpoint: string, scriptHex: string | undefined): string | undefined {
   const env = parseOrdEnvelope(scriptHex)
-  if (!env || !env.body?.length) return undefined
-  if (isOnesatFtMime(env.contentType)) return undefined
-  const mime = resolveIconMime(env.contentType, env.body)
-  if (!mime) return undefined
-  rememberTokenIcon(outpoint, env.body, mime)
-  return getTokenIconDataUrl(outpoint)
+  if (env?.body?.length) {
+    if (isOnesatFtMime(env.contentType)) return undefined
+    const mime = resolveIconMime(env.contentType, env.body)
+    if (mime) {
+      rememberTokenIcon(outpoint, env.body, mime)
+      return getTokenIconDataUrl(outpoint)
+    }
+  }
+  const b = decodeBProtocol(scriptHex)
+  if (b?.data?.length) {
+    const mime = resolveIconMime(b.mediaType, b.data)
+    if (mime) {
+      rememberTokenIcon(outpoint, b.data, mime)
+      return getTokenIconDataUrl(outpoint)
+    }
+  }
+  return undefined
 }
 
 export function cacheTokenIconFromBeef(

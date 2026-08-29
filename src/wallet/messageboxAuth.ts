@@ -117,6 +117,24 @@ export function messageboxAuthHeaders(
   return headers
 }
 
+/** Sign immediately before fetch — never reuse the result across retries. */
+export function freshMessageboxAuthHeaders(args: {
+  rootKeyHex: string
+  method: MessageboxMethod
+  messageBox?: string
+  includeAuthrite?: boolean
+}): Record<string, string> {
+  return messageboxAuthHeaders(
+    signMessageboxAuth({
+      rootKeyHex: args.rootKeyHex,
+      method: args.method,
+      messageBox: args.messageBox,
+      timestamp: Date.now(),
+    }),
+    { includeAuthrite: args.includeAuthrite },
+  )
+}
+
 /** Local verify (tests). Server uses @noble/secp256k1. */
 export function verifyMessageboxAuth(args: {
   identityKey: string

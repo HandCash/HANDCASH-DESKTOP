@@ -1,38 +1,25 @@
 /**
- * List 1Sat fungible tips (BRC-175 basket `1sat-ft`).
+ * List fungible tips. Tokens are BRC-162 value tips in basket `bsv21` (BRC-163).
+ * 1sat-ft leftover overlay and basket `1sat-ft` are not Tokens.
  */
 import { getActiveWallet, type ActiveWallet } from './session'
 import {
-  aggregateColourTokens,
-  colourTokenAsFungible,
+  aggregateFungibles,
+  BSV21_BASKET,
+  issuerFromRemittance,
+  issuerFromSigmaLockingScript,
+  normalizeTokenId,
+  parseBsv21CustomInstructions,
+  type Bsv21Op,
+  type Bsv21Utxo,
+} from './bsv21'
+import { decodeBsv21Binary, iconOutpointFromPayload } from './bsv21Binary'
+import { tipFromBsv21Script } from './bsv21Send'
+import {
   looksLikeOnesatFtTip,
-  ONESAT_FT_BASKET,
-  mergeColourRemittance,
-  originFromColourCi,
-  originFromColourTags,
-  parseColourMintAttestation,
-  parseColourTipAmt,
-  tipCountsTowardBalance,
-  parseOnesatFtOriginPolicy,
-  tryParseProvenanceFromCi,
-  verifyColourTipProvenance,
-  type ColourOriginMeta,
   type ColourTip,
   type ColourToken,
 } from './colourCoins'
-import { getTokenIconDataUrl } from './tokenIconCache'
-import {
-  healOnesatFtFromListed,
-  isOnesatFtGenesisSpent,
-  spentOnesatFtGenesisOrigins,
-  leftoverForOutpoint,
-  getOnesatFtLeftover,
-  listOnesatFtLeftovers,
-  normOnesatFtOutpoint,
-  onesatFtLeftoverAmtInflated,
-  shouldOverlayOnesatFtLeftover,
-} from './onesatFtLeftover'
-import { healMisfiledOnesatFtReceives } from './appActivity'
 
 export type { ColourToken, ColourTip }
 
@@ -56,9 +43,115 @@ function outpointUnderscore(op: string): string {
   return op.includes('.') ? op.replace(/\.(\d+)$/, '_$1') : op
 }
 
-function hasOnesatFtTag(tags: string[]): boolean {
-  return tags.some((t) => String(t).trim().toLowerCase() === '1sat-ft')
+function tagValue(tags: string[] | undefined, prefix: string): string | undefined {
+  if (!tags) return undefined
+  for (const tag of tags) {
+    if (tag.startsWith(prefix)) {
+      const v = tag.slice(prefix.length).trim()
+      if (v) return v
+    }
+  }
+  return undefined
 }
+
+/**
+ * Decode a listed basket row as BRC-162 / BRC-163.
+ * Script amount wins. CI/tags supply id, dec, sym. 1sat-ft leftovers return null.
+ */
+export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): Bsv21Utxo | null {
+  const outpointRaw = (raw.outpoint ?? '').trim()
+  if (!outpointRaw) return null
+  const satoshis = typeof raw.satoshis === 'number' ? raw.satoshis : 1
+  if (satoshis !== 1) return null
+  const scriptHex = lockingScriptHex(raw.lockingScript)
+  if (!scriptHex) return null
+  const tags = Array.isArray(raw.tags) ? raw.tags.map(String) : []
+  if (
+    looksLikeOnesatFtTip({
+      tags,
+      customInstructions: raw.customInstructions,
+      lockingScriptHex: scriptHex,
+    })
+  ) {
+    return null
+  }
+
+  const decoded = decodeBsv21Binary(scriptHex)
+  if (!decoded) return null
+  const fromScript = tipFromBsv21Script({
+    outpoint: outpointRaw,
+    lockingScript: scriptHex,
+    satoshis,
+    customInstructions: raw.customInstructions,
+    tags,
+  })
+  if (!fromScript) return null
+  const fromCi = parseBsv21CustomInstructions(raw.customInstructions)
+  const tokenId = fromScript.tokenId
+  const amt = fromScript.amt.toString()
+  if (!tokenId || !amt) return null
+  const op = (
+    decoded?.role === 'deploy' || fromCi?.op === 'deploy+mint'
+      ? 'deploy+mint'
+      : (fromCi?.op ?? 'transfer')
+  ) as Bsv21Op
+  const sym = fromCi?.sym ?? decoded?.payload?.sym ?? tagValue(tags, 'sym:')
+  const dec = fromCi?.dec ?? decoded?.payload?.dec ?? 0
+  const icon =
+    iconOutpointFromPayload(decoded.payload?.icon, tokenId) ?? fromCi?.icon
+  const maxN = Number(amt)
+  const colourMaxSupply =
+    op === 'deploy+mint' && Number.isSafeInteger(maxN) && maxN > 0 ? maxN : undefined
+  const remittanceIssuer = issuerFromRemittance({
+    customInstructions: raw.customInstructions,
+    tags,
+  })
+  const sigma = issuerFromSigmaLockingScript(
+    scriptHex,
+    [remittanceIssuer, identityKey].filter(Boolean) as string[],
+  )
+  const issuer = sigma.issuer ?? remittanceIssuer
+  return {
+    outpoint: outpointUnderscore(outpointRaw).toLowerCase(),
+    tokenId,
+    amt,
+    op,
+    dec,
+    satoshis: 1,
+    colourSupply: 'locked',
+    ...(sym ? { sym } : {}),
+    ...(icon ? { icon } : {}),
+    ...(colourMaxSupply != null ? { colourMaxSupply } : {}),
+    ...(scriptHex ? { lockingScript: scriptHex } : {}),
+    ...(issuer ? { issuer } : {}),
+    ...(sigma.issuer ? { issuerAttested: true } : {}),
+  }
+}
+
+export async function listBsv21BinaryTips(
+  wallet: ActiveWallet,
+): Promise<Bsv21Utxo[]> {
+  const rows = await listBasketTips(wallet, BSV21_BASKET)
+  const tips: Bsv21Utxo[] = []
+  const seen = new Set<string>()
+  for (const row of rows) {
+    const tip = decodeListedBsv21Tip(row, wallet.identityKey)
+    if (!tip) continue
+    if (seen.has(tip.outpoint)) continue
+    seen.add(tip.outpoint)
+    tips.push(tip)
+  }
+  return tips
+}
+
+export async function listBsv21BinaryTokens(
+  wallet?: ActiveWallet | null,
+): Promise<ReturnType<typeof aggregateFungibles>> {
+  const active = wallet ?? getActiveWallet()
+  if (!active) return []
+  return aggregateFungibles(await listBsv21BinaryTips(active))
+}
+
 
 async function listBasketTips(
   wallet: ActiveWallet,
@@ -80,264 +173,56 @@ async function listBasketTips(
   }
 }
 
-function forgetBurnedFungibles(keepOrigins: Iterable<string>): void {
-  const keep = new Set(
-    [...keepOrigins].map(normOnesatFtOutpoint).filter(Boolean),
-  )
-  for (const row of listOnesatFtLeftovers()) {
-    const origin = normOnesatFtOutpoint(row.origin)
-    if (origin) keep.add(origin)
+
+function colourTipFromBsv21(tip: Bsv21Utxo): ColourTip | null {
+  const amt = Number(String(tip.amt).replace(/\D/g, '') || '0')
+  if (!(amt > 0)) return null
+  return {
+    outpoint: tip.outpoint,
+    origin: tip.tokenId,
+    satoshis: 1,
+    amt,
+    proven: true,
+    lockingScript: tip.lockingScript,
   }
-  void import('./fungibles')
-    .then(({ forgetFungibleToken }) => {
-      for (const origin of spentOnesatFtGenesisOrigins()) {
-        if (keep.has(normOnesatFtOutpoint(origin))) continue
-        forgetFungibleToken(origin)
-      }
-    })
-    .catch(() => {})
 }
 
+/** 162 / basket `bsv21` only. Does not overlay leftover 1sat-ft. */
 export async function listColourTips(
   wallet: ActiveWallet = getActiveWallet()!,
 ): Promise<ColourTip[]> {
   if (!wallet) return []
-  // Tokens live in `1sat-ft` only. Do not scan `1sat` (NFT / BRC-147 auto-sync)
-  // or `default` (hangs boot on every BSV UTXO). Leftover change is overlaid
-  // from send remittance.
-  const rows = [...(await listBasketTips(wallet, ONESAT_FT_BASKET))]
-  healOnesatFtFromListed(rows)
-
-  const seen = new Set<string>()
-  const pending: Array<{
-    outpoint: string
-    origin: string
-    satoshis: number
-    scriptHex?: string
-    tags: string[]
-    ci?: string
-    provenance: ReturnType<typeof tryParseProvenanceFromCi>
-  }> = []
-
-  for (const o of rows) {
-    const outpoint = typeof o.outpoint === 'string' ? o.outpoint : ''
-    if (!outpoint) continue
-    const key = normOnesatFtOutpoint(outpoint)
-    if (seen.has(key)) continue
-    seen.add(key)
-    if (isOnesatFtGenesisSpent(key)) continue
-    // Do not hide 1sat-ft self-send receives behind collectables sent-guard.
-    // Spent leftover outpoints are dropped by leftover heal, not this skip.
-    const satoshis = typeof o.satoshis === 'number' ? o.satoshis : 0
-    if (satoshis !== 1) continue
-    const tags = Array.isArray(o.tags) ? o.tags : []
-    const scriptHex = lockingScriptHex(o.lockingScript)
-    const listedCi =
-      typeof o.customInstructions === 'string' ? o.customInstructions : undefined
-    const leftover = leftoverForOutpoint(key) ?? getOnesatFtLeftover(key)
-    const leftoverCi =
-      leftover && !onesatFtLeftoverAmtInflated(leftover) ? leftover.ci : undefined
-    const listedFt = looksLikeOnesatFtTip({
-      tags,
-      customInstructions: listedCi,
-      lockingScriptHex: scriptHex,
-    })
-    // Keep a 1-sat output if it has 1sat-ft CI/tags OR leftover remittance.
-    if (!listedFt && !hasOnesatFtTag(tags) && !leftover) continue
-    // Thin listed CI is often just `{p, amt}` copied from the leftover
-    // envelope. Merge leftover remittance so KING / cap / issuer survive.
-    const ci = mergeColourRemittance(listedCi, leftoverCi) ?? leftoverCi ?? listedCi
-    let origin =
-      leftover?.origin ??
-      originFromColourTags(tags) ??
-      originFromColourCi(ci) ??
-      parseOnesatFtOriginPolicy(outpointUnderscore(outpoint), {
-        lockingScriptHex: scriptHex,
-        customInstructions: ci,
-        tags,
-      }).origin
-    if (!leftover && origin) {
-      const sameOriginLeftover = listOnesatFtLeftovers().find(
-        (row) => normOnesatFtOutpoint(row.origin) === normOnesatFtOutpoint(origin),
-      )
-      if (sameOriginLeftover?.origin) origin = sameOriginLeftover.origin
-    }
-    // Spent genesis means the mint UTXO is gone, not leftover change of that origin.
-    pending.push({
-      outpoint: key,
-      origin,
-      satoshis,
-      scriptHex,
-      tags: tags.map(String),
-      ci,
-      provenance: tryParseProvenanceFromCi(ci),
-    })
-  }
-
-  for (const leftover of listOnesatFtLeftovers()) {
-    const leftoverOp = normOnesatFtOutpoint(leftover.outpoint)
-    // Overlay leftover change even when a receive of the same origin is listed.
-    // Genesis spent is expected (the mint UTXO moved); do not hide leftover.
-    if (!shouldOverlayOnesatFtLeftover(leftover, seen)) continue
-    seen.add(leftoverOp)
-    pending.push({
-      outpoint: leftoverOp,
-      origin: leftover.origin,
-      satoshis: 1,
-      tags: ['1sat-ft'],
-      ci: leftover.ci,
-      provenance: tryParseProvenanceFromCi(leftover.ci),
-    })
-  }
-
-  forgetBurnedFungibles(pending.map((row) => row.origin).filter(Boolean))
-
-  // Origin policy: prefer genesis tip's inscription.
-  const metaByOrigin = new Map<string, ColourOriginMeta>()
-  for (const row of pending) {
-    if (row.outpoint !== row.origin) continue
-    metaByOrigin.set(
-      row.origin,
-      parseOnesatFtOriginPolicy(row.origin, {
-        lockingScriptHex: row.scriptHex,
-        customInstructions: row.ci,
-        tags: row.tags,
-      }),
-    )
-  }
-  for (const row of pending) {
-    if (metaByOrigin.has(row.origin)) continue
-    metaByOrigin.set(
-      row.origin,
-      parseOnesatFtOriginPolicy(row.origin, {
-        lockingScriptHex: row.scriptHex,
-        customInstructions: row.ci,
-        tags: row.tags,
-      }),
-    )
-  }
-
-  // Resolve binding with parent induction (bounded).
-  const bound = new Map<string, boolean>()
   const tips: ColourTip[] = []
-
-  const tryBind = (row: (typeof pending)[0], depth: number): boolean => {
-    if (bound.has(row.outpoint)) return bound.get(row.outpoint)!
-    if (depth > 32) {
-      bound.set(row.outpoint, false)
-      return false
-    }
-    const attest = parseColourMintAttestation(row.ci)
-    let parentBound: boolean | undefined
-    if (attest.parent) {
-      const parentRow = pending.find((p) => p.outpoint === attest.parent)
-      if (parentRow) parentBound = tryBind(parentRow, depth + 1)
-      else parentBound = false
-    }
-    const check = verifyColourTipProvenance({
-      tipOutpoint: row.outpoint,
-      claimedOrigin: row.origin,
-      provenance: row.provenance,
-      lockingScriptHex: row.scriptHex,
-      customInstructions: row.ci,
-      originMeta: metaByOrigin.get(row.origin),
-      parentBound,
-    })
-    bound.set(row.outpoint, check.ok)
-    return check.ok
+  for (const tip of await listBsv21BinaryTips(wallet)) {
+    const colour = colourTipFromBsv21(tip)
+    if (colour) tips.push(colour)
   }
-
-  for (const row of pending) {
-    const proven = tryBind(row, 0)
-    const amt = parseColourTipAmt({
-      customInstructions: row.ci,
-      lockingScriptHex: row.scriptHex,
-    })
-    tips.push({
-      outpoint: row.outpoint,
-      origin: row.origin,
-      satoshis: row.satoshis,
-      amt,
-      lockingScript: row.scriptHex,
-      provenance: row.provenance ?? undefined,
-      proven,
-      name: metaByOrigin.get(row.origin)?.name,
-      customInstructions: row.ci,
-      tags: row.tags,
-    })
-  }
-
-  healMisfiledOnesatFtReceives(tips.map(tip => ({ outpoint: tip.outpoint, origin: tip.origin, amt: tip.amt, name: tip.name })))
-
   return tips
 }
 
 export async function listColourTokens(
   wallet?: ActiveWallet | null,
 ): Promise<ColourToken[]> {
-  const active = wallet ?? getActiveWallet()
-  if (!active) return []
-  const tips = await listColourTips(active)
-  const metaByOrigin = new Map<string, ColourOriginMeta>()
-  for (const tip of tips) {
-    if (metaByOrigin.has(tip.origin)) continue
-    const genesis = tips.find((t) => t.outpoint === tip.origin)
-    const leftover = getOnesatFtLeftover(tip.origin)
-    const parsed = parseOnesatFtOriginPolicy(tip.origin, {
-      lockingScriptHex: genesis?.lockingScript ?? tip.lockingScript,
-      customInstructions:
-        mergeColourRemittance(
-          genesis?.customInstructions ?? tip.customInstructions,
-          leftover?.ci,
-        ) ??
-        genesis?.customInstructions ??
-        tip.customInstructions,
-      tags: genesis?.tags ?? tip.tags,
-    })
-    metaByOrigin.set(
-      tip.origin,
-      leftover && (leftover.sym || leftover.supply === 'locked')
-        ? {
-            ...parsed,
-            ...(parsed.sym ? {} : leftover.sym ? { sym: leftover.sym } : {}),
-            ...(parsed.supply === 'locked'
-              ? {}
-              : leftover.supply === 'locked'
-                ? { supply: 'locked' as const, maxSupply: leftover.maxSupply ?? null }
-                : {}),
-          }
-        : parsed,
-    )
-  }
-  return aggregateColourTokens(tips, metaByOrigin)
+  const tokens = await listBsv21BinaryTokens(wallet)
+  return tokens.map((t) => ({
+    origin: t.tokenId,
+    sym: t.sym || 'Token',
+    tipCount: t.utxoCount,
+    balance: Number(String(t.amt).replace(/\D/g, '') || '0'),
+    supply: (t.colourSupply === 'open' ? 'open' : 'locked') as 'locked' | 'open',
+    maxSupply: t.colourMaxSupply ?? null,
+    provenanceOk: true,
+    outpoint: t.outpoint,
+    ...(t.icon ? { icon: t.icon } : {}),
+    ...(t.iconUrl ? { iconUrl: t.iconUrl } : {}),
+    ...(t.issuer ? { issuer: t.issuer } : {}),
+  }))
 }
 
 export async function listColourTokensAsFungibles(
   wallet?: ActiveWallet | null,
-): Promise<ReturnType<typeof colourTokenAsFungible>[]> {
-  const active = wallet ?? getActiveWallet()
-  const tokens = await listColourTokens(active)
-  const { resolveOnesatFtIconDataUrl } = await import('./tokenIconResolve')
-  const out: ReturnType<typeof colourTokenAsFungible>[] = []
-  for (const token of tokens) {
-    const realFt = token.supply === 'locked' || token.balance > 1
-    let iconUrl =
-      token.iconUrl ?? (token.icon ? getTokenIconDataUrl(token.icon) : undefined)
-    if (!iconUrl && active && realFt) {
-      iconUrl = await resolveOnesatFtIconDataUrl({
-        origin: token.origin,
-        icon: token.icon,
-        tipOutpoint: token.outpoint,
-        wallet: active,
-      })
-    }
-    out.push(
-      colourTokenAsFungible(
-        iconUrl ? { ...token, iconUrl } : token,
-      ),
-    )
-  }
-  return out
+): Promise<ReturnType<typeof aggregateFungibles>> {
+  return listBsv21BinaryTokens(wallet)
 }
 
 export async function listColourTipsForOrigin(
@@ -345,8 +230,10 @@ export async function listColourTipsForOrigin(
   wallet?: ActiveWallet | null,
 ): Promise<ColourTip[]> {
   const tips = await listColourTips(wallet ?? getActiveWallet()!)
-  const want = origin.includes('.')
-    ? origin.replace(/\.(\d+)$/, '_$1').toLowerCase()
-    : origin.toLowerCase()
-  return tips.filter((t) => t.origin === want && tipCountsTowardBalance(t))
+  const want =
+    normalizeTokenId(origin) ??
+    (origin.includes('.')
+      ? origin.replace(/\.(\d+)$/, '_$1').toLowerCase()
+      : origin.toLowerCase())
+  return tips.filter((t) => t.origin === want && t.satoshis === 1 && t.amt > 0)
 }

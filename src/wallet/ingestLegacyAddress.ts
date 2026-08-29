@@ -24,7 +24,6 @@ import {
   classifyLegacyUtxos,
   contentUrlForOrigin,
   importOneSatOrdinals,
-  importOnesatFtTips,
   type MigrationItem,
 } from './oneSatImport'
 import {
@@ -400,7 +399,7 @@ export async function ingestLegacyAddressUtxos(
       .map((u) => u.outpoint),
   ])
 
-  let { funding, oneSats, bsv21, onesatFt, heldOneSats, heldUneconomical, pendingTips } =
+  let { funding, oneSats, bsv21, onesatFt = [], heldOneSats, heldUneconomical, pendingTips } =
     await classifyLegacyUtxos(scan.utxos, active.chain, opts.knownItems ?? [], {
       fundingOnly,
       knownCollectableOutpoints,
@@ -439,7 +438,7 @@ export async function ingestLegacyAddressUtxos(
 
   // Clear durable import marks for tips still live on our address but gone from
   // the local basket so the filter below can re-claim them on this Refresh.
-  // Reimport stays basket `1sat` + remittance — classify already latched them.
+  // Collection NFTs stay latched; leftover 1sat-ft re-probes into onesatFt.
   // Never forget leftover / 1sat-ft marks — that is the reimport loop.
   if (!fundingOnly && oneSats.length > 0) {
     await healOrphanOneSatImportMarks(active, oneSats, basketListed, ftHeld)
@@ -472,24 +471,10 @@ export async function ingestLegacyAddressUtxos(
     )
   }
 
-  let importedFt = 0
   if (!fundingOnly && onesatFt.length > 0) {
-    const newFt = onesatFt.filter((i) => !ftHeld.has(outpointKey(i.outpoint)))
-    if (newFt.length > 0) {
-      const ftResult = await importOnesatFtTips(newFt, active)
-      importedFt = ftResult.imported
-      if (ftResult.failed > 0) {
-        console.warn('[chain-ingest] 1sat-ft scan import partial', ftResult)
-        partialWarn =
-          partialWarn ??
-          `Some tokens didn’t import (${ftResult.failed}). Retrying automatically.`
-      }
-      if (importedFt > 0) {
-        console.info(
-          `[chain-ingest] imported ${importedFt} 1sat-ft tip(s) from address scan`,
-        )
-      }
-    }
+    console.info(
+      `[chain-ingest] skipped ${onesatFt.length} 1sat-ft tip(s) — Tokens are 162/bsv21 only`,
+    )
   }
 
   // In fundingOnly mode every 1-sat is held by design, so the count says nothing.

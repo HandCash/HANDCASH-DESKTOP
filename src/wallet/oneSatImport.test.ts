@@ -452,7 +452,12 @@ describe('classifyLegacyUtxos', () => {
     const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
     vi.stubGlobal('fetch', fetchMock)
     const remittance = new Map([
-      [`${TXID_A}.0`, { origin: `${TXID_A}_0`, name: 'Pixel Fox', app: 'Market' }],
+      [`${TXID_A}.0`, {
+        origin: `${TXID_A}_0`,
+        name: 'Pixel Fox',
+        app: 'Market',
+        collectionId: `${TXID_B}_0`,
+      }],
     ])
     const result = await classifyLegacyUtxos(
       [utxo(`${TXID_A}.0`, 1)],
@@ -470,11 +475,54 @@ describe('classifyLegacyUtxos', () => {
         origin: `${TXID_A}_0`,
         name: 'Pixel Fox',
         app: 'Market',
+        collectionId: `${TXID_B}_0`,
       }),
     ])
     expect(result.bsv21).toEqual([])
     expect(result.heldOneSats).toEqual([])
     expect(fetchMock).not.toHaveBeenCalled()
+    vi.unstubAllGlobals()
+  })
+
+  it('re-probes a latched collection-less leftover as 1sat-ft', async () => {
+    const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
+    const mintLock = buildOnesatFtMintLockingScript({
+      address: addr,
+      sym: 'KING',
+      amt: 69000,
+    }).lockingScript
+    const hopLock = buildOnesatFtTransferLockingScript({
+      address: addr,
+      amt: 420,
+    }).lockingScript
+    const mint = buildTx([{ scriptHex: mintLock, satoshis: 1 }])
+    const transfer = buildTx(
+      [{ scriptHex: hopLock, satoshis: 1 }],
+      [{ txid: mint.id('hex'), vout: 0 }],
+    )
+    serveRawTxs(mint, transfer)
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    const tipOutpoint = `${transfer.id('hex')}.0`
+    const result = await classifyLegacyUtxos(
+      [utxo(tipOutpoint, 1)],
+      'main',
+      [],
+      { knownCollectableOutpoints: [tipOutpoint] },
+    )
+
+    expect(result.oneSats).toEqual([])
+    expect(result.heldOneSats).toEqual([])
+    expect(result.onesatFt).toEqual([
+      expect.objectContaining({
+        outpoint: tipOutpoint,
+        origin: `${mint.id('hex')}_0`,
+      }),
+    ])
+    expect(fetchMock).not.toHaveBeenCalled()
+
+    activeWallet = null
     vi.unstubAllGlobals()
   })
 

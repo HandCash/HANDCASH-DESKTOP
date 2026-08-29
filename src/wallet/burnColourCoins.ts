@@ -1,20 +1,19 @@
 /**
- * Burn 1Sat fungibles (BRC-175): spend tip(s), destroy face-value units, keep
- * optional change tip + pack physical tip sats into managed recovery.
+ * Burn 162 value tips: spend 162 inputs, destroy face-value units, keep
+ * optional 162 change + pack physical tip sats into managed recovery.
+ * New burns never emit application/1sat-ft+json or basket `1sat-ft`.
  */
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { buildMergedInputBeef, rememberBeefTree } from './beefCache'
+import { normalizeColourOrigin } from './colourCoins'
+import { BSV21_BASKET } from './bsv21'
 import {
-  assertColourAmtConservation,
-  buildColourCustomInstructions,
-  colourTags,
-  normalizeColourOrigin,
-  ONESAT_FT_BASKET,
-  selectColourTipsForAmount,
-  tipFaceAmt,
-} from './colourCoins'
-import { listColourTipsForOrigin } from './colourListing'
+  buildBsv21SendRemittance,
+  buildBsv21ValueLock,
+  planBsv21Send,
+} from './bsv21Send'
+import { listBsv21BinaryTips } from './colourListing'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { markItemsSent } from './sentItemGuard'
 import { stampBrc164Id } from './itemAccess'
@@ -50,13 +49,22 @@ export async function previewColourBurn(args: {
   if (!active) throw new Error('Wallet locked')
   const origin = normalizeColourOrigin(args.origin)
   const amount = parseBurnUnits(args.amount)
-  const listed = await listColourTipsForOrigin(origin, active)
-  const cover = selectColourTipsForAmount(listed, amount)
+  const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
+  const plan = planBsv21Send({
+    tokenId: origin,
+    amount: BigInt(amount),
+    tips: listed.map((t) => ({
+      outpoint: t.outpoint,
+      tokenId: t.tokenId,
+      amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+      lockingScript: t.lockingScript,
+    })),
+  })
   return estimateBurnEconomics({
-    inputCount: cover.selected.length,
-    protocolOutputCount: cover.change > 0 ? 1 : 0,
+    inputCount: plan.selected.length,
+    protocolOutputCount: plan.changeAmt > 0n ? 1 : 0,
     recoveryOutput: true,
-    grossAssetSats: cover.selected.length,
+    grossAssetSats: plan.selected.length,
   })
 }
 
@@ -142,14 +150,19 @@ export async function burnColourCoins(args: {
       await abortReservedActionBatches(active)
     }
 
-    const listed = await listColourTipsForOrigin(origin, active)
-    const cover = selectColourTipsForAmount(listed, amount)
-    const selected = cover.selected
-    const change = cover.change
-    assertColourAmtConservation(
-      selected.map(tipFaceAmt),
-      change > 0 ? [amount, change] : [amount],
-    )
+    const listed = (await listBsv21BinaryTips(active)).filter((t) => t.tokenId === origin)
+    const plan = planBsv21Send({
+      tokenId: origin,
+      amount: BigInt(amount),
+      tips: listed.map((t) => ({
+        outpoint: t.outpoint,
+        tokenId: t.tokenId,
+        amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
+        lockingScript: t.lockingScript,
+      })),
+    })
+    const selected = plan.selected
+    const change = Number(plan.changeAmt)
 
     const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
     const knownTxids = [
@@ -166,23 +179,6 @@ export async function burnColourCoins(args: {
     )
 
     const self = await deriveSelfPayment(active)
-    const tags = stampBrc164Id(
-      colourTags(origin, [
-        `name:${sym.slice(0, 80)}`,
-        ...(args.icon ? [`icon:${args.icon}`] : []),
-      ]),
-    )
-    const parentRef = selected[0]!.outpoint
-    const baseCi = {
-      origin,
-      sym,
-      name: sym,
-      supply: args.supply,
-      maxSupply: args.maxSupply ?? null,
-      parent: parentRef,
-      ...(args.icon ? { icon: args.icon } : {}),
-    }
-
     const outputs: Array<{
       lockingScript: string
       satoshis: number
@@ -192,16 +188,26 @@ export async function burnColourCoins(args: {
       customInstructions: string
     }> = []
     if (change > 0) {
+      const remit = buildBsv21SendRemittance({
+        tokenId: origin,
+        amt: BigInt(change),
+        sym,
+        dec: 0,
+      })
       outputs.push({
-        lockingScript: new P2PKH().lock(active.address).toHex(),
-        satoshis: 1,
-        outputDescription: '1Sat burn change',
-        basket: ONESAT_FT_BASKET,
-        tags,
-        customInstructions: buildColourCustomInstructions({
-          ...baseCi,
-          amt: change,
+        lockingScript: buildBsv21ValueLock({
+          tokenId: origin,
+          amount: BigInt(change),
+          address: active.address,
         }),
+        satoshis: 1,
+        outputDescription: 'BSV-21 burn change',
+        basket: remit.basket,
+        tags: stampBrc164Id([
+          ...remit.tags,
+          ...(args.icon ? [`icon:${args.icon}`] : []),
+        ]),
+        customInstructions: remit.customInstructions,
       })
     }
     // Pack tip sats into ≥2 so ordinal/FT identity ends (same rule as 1sat burn).
@@ -221,16 +227,16 @@ export async function burnColourCoins(args: {
     })
 
     console.info(
-      `[1sat-ft-burn] createAction start tips=${selected.length} amount=${amount} change=${change}`,
+      `[bsv21-burn] createAction start tips=${selected.length} amount=${amount} change=${change}`,
     )
     const created = await withFungibleCreateActionTimeout(
       active.wallet.createAction({
         description: `Burn ${sym}`.slice(0, 50),
-        labels: ['handcash-burn', ONESAT_FT_BASKET],
+        labels: ['handcash-burn', BSV21_BASKET],
         inputBEEF,
         inputs: selected.map((tip) => ({
           outpoint: wireOutpoint(tip.outpoint),
-          inputDescription: '1Sat tip burn',
+          inputDescription: 'BSV-21 value burn',
           unlockingScriptLength: 108,
         })),
         outputs,
@@ -254,7 +260,7 @@ export async function burnColourCoins(args: {
     if (!txid) {
       const signable = created.signableTransaction
       if (!signable) throw new Error('Token burn produced no txid')
-      console.info('[1sat-ft-burn] createAction returned signable — unlocking tip(s)')
+      console.info('[bsv21-burn] createAction returned signable — unlocking tip(s)')
       const { signColourTipTransfer } = await import('./sendColourCoins')
       try {
         const signed = await signColourTipTransfer({
@@ -314,13 +320,13 @@ export async function burnColourCoins(args: {
         }),
       )
     } catch (err) {
-      console.warn('[1sat-ft-burn] recovery internalize skipped', err)
+      console.warn('[bsv21-burn] recovery internalize skipped', err)
     }
 
     for (const tip of selected) {
       try {
         await active.wallet.relinquishOutput({
-          basket: ONESAT_FT_BASKET,
+          basket: BSV21_BASKET,
           output: wireOutpoint(tip.outpoint),
         } as never)
       } catch {
@@ -337,62 +343,28 @@ export async function burnColourCoins(args: {
       txid,
       item: args.item,
       burn: {
-        asset: '1sat',
+        asset: 'bsv21',
         destroyedAmount: String(amount),
         recoveredSatoshis: recoverSatoshis,
       },
       status: 'complete',
       pendingId: args.pendingId,
     })
-    console.info(`[1sat-ft-burn] complete txid=${txid}`)
+    console.info(`[bsv21-burn] complete txid=${txid}`)
     scheduleHistoryBackupPush('burnColourCoins')
     markItemsSent(
       selected.map((tip) => ({ outpoint: wireOutpoint(tip.outpoint), txid })),
     )
-    void Promise.all([import('./fungibles'), import('./onesatFtLeftover')])
-      .then(([{ paintFungibleAfterSpend }, { rememberOnesatFtLeftover, forgetOnesatFtLeftover }]) => {
+    void import('./fungibles')
+      .then(({ paintFungibleAfterSpend }) => {
         const keptOp = change > 0 ? `${txid}_0` : undefined
         paintFungibleAfterSpend({
           tokenId: origin,
           remainingAmt: change,
           outpoint: keptOp,
           sym,
-          colourSupply: args.supply,
-          colourMaxSupply: args.maxSupply ?? null,
           icon: args.icon,
         })
-        if (change > 0 && keptOp) {
-          rememberOnesatFtLeftover({
-            origin,
-            amt: change,
-            outpoint: keptOp,
-            ci: buildColourCustomInstructions({
-              origin,
-              amt: change,
-              sym,
-              supply: args.supply,
-              maxSupply: args.maxSupply ?? null,
-              issuer: (() => {
-                for (const tip of selected) {
-                  try {
-                    const o = JSON.parse(String(tip.customInstructions ?? '')) as {
-                      issuer?: unknown
-                    }
-                    if (typeof o.issuer === 'string' && o.issuer.trim()) return o.issuer
-                  } catch {
-                    /* next tip */
-                  }
-                }
-                return undefined
-              })(),
-            }),
-            sym,
-            supply: args.supply,
-            maxSupply: args.maxSupply ?? null,
-          })
-        } else {
-          forgetOnesatFtLeftover(origin)
-        }
       })
       .catch(() => {})
     return { txid, recoveredSatoshis: recoverSatoshis }
