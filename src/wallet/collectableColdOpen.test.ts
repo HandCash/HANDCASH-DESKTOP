@@ -51,25 +51,27 @@ vi.mock('./session', () => ({
   getActiveWallet: () => active,
 }))
 
-function seedDurableList(identityKey: string | null) {
+function itemRow(outpoint: string, name: string) {
+  return {
+    outpoint,
+    origin: outpoint.replace('.', '_'),
+    name,
+    imageUrl: '',
+    satoshis: 1,
+    traits: [] as [],
+    extras: [] as [],
+    proven: false,
+    authenticity: 'unproven' as const,
+  }
+}
+
+function seedDurableList(identityKey: string | null, items = [itemRow(TIP, 'Test Item')]) {
   store.set(
     LIST_CACHE_KEY,
     JSON.stringify({
       at: Date.now(),
       identityKey,
-      items: [
-        {
-          outpoint: TIP,
-          origin: TIP,
-          name: 'Test Item',
-          imageUrl: '',
-          satoshis: 1,
-          traits: [],
-          extras: [],
-          proven: false,
-          authenticity: 'unproven',
-        },
-      ],
+      items,
     }),
   )
 }
@@ -169,8 +171,14 @@ describe('collectables across a cold open', () => {
     expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toEqual([])
   })
 
-  it('accepts an authoritative empty basket once recompose is finished', async () => {
-    seedDurableList(IDENTITY)
+  it('keeps N cached items when listOutputs returns 0 during sync', async () => {
+    const n = 7
+    const rows = Array.from({ length: n }, (_, i) => {
+      const tx = i.toString(16).padStart(2, '0').repeat(32)
+      return itemRow(`${tx}.${i}`, `Card ${i + 1}`)
+    })
+    seedDurableList(IDENTITY, rows)
+    recomposeActive = false
     active.wallet.listOutputs.mockResolvedValueOnce({
       outputs: [],
       totalOutputs: 0,
@@ -179,8 +187,46 @@ describe('collectables across a cold open', () => {
 
     await listCollectables(active as never)
 
-    expect(getCachedCollectables()).toEqual([])
-    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toEqual([])
+    expect(getCachedCollectables()).toHaveLength(n)
+    expect(getCachedCollectables().map((c) => c.name)).toEqual(rows.map((r) => r.name))
+    expect(JSON.parse(store.get(LIST_CACHE_KEY)!).items).toHaveLength(n)
+  })
+
+  it('merges a new outpoint from a short sync page without dropping the rest', async () => {
+    const extra = `${'ab'.repeat(32)}.0`
+    seedDurableList(IDENTITY, [
+      itemRow(TIP, 'Test Item'),
+      itemRow(`${'cd'.repeat(32)}.0`, 'Kept Card'),
+    ])
+    recomposeActive = false
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [
+        { outpoint: extra, satoshis: 1, tags: ['ordinal', 'name:New Arrival'] },
+      ],
+      totalOutputs: 1,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    const ops = getCachedCollectables().map((c) => c.outpoint)
+    expect(ops).toEqual(expect.arrayContaining([TIP, `${'cd'.repeat(32)}.0`, extra]))
+    expect(ops).toHaveLength(3)
+  })
+
+  it('keeps a named card when the sync page omits remittance names', async () => {
+    seedDurableList(IDENTITY)
+    recomposeActive = false
+    active.wallet.listOutputs.mockResolvedValueOnce({
+      outputs: [{ outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`] }],
+      totalOutputs: 1,
+    })
+    const { listCollectables, getCachedCollectables } = await import('./collectables')
+
+    await listCollectables(active as never)
+
+    expect(getCachedCollectables()).toHaveLength(1)
+    expect(getCachedCollectables()[0]?.name).toBe('Test Item')
   })
 
   it('does not paint leftover 1sat-ft origins as collectables', async () => {

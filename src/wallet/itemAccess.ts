@@ -823,6 +823,28 @@ export function itemAccessOriginKey(origin: string | undefined): string {
   return normalizeAppHost(origin)
 }
 
+const HANDCASH_CATALOG_HOSTS = [
+  'handcash.io',
+  'www.handcash.io',
+  'market.handcash.io',
+  'preprod-market.handcash.io',
+  'market-v2.handcash.io',
+]
+
+/** Market catalog hosts share one view-grant row so Allow sticks across reloads. */
+export function isHandCashCatalogOrigin(origin: string | undefined): boolean {
+  const host = normalizeAppHost(origin)
+  const bare = (host.split(':')[0] ?? host).toLowerCase().replace(/^www\./, '')
+  return (HANDCASH_CATALOG_HOSTS as readonly string[]).includes(bare)
+}
+
+/** Lookup keys for a persisted item/token view grant. */
+export function viewGrantOriginAliases(origin: string | undefined): string[] {
+  const host = itemAccessOriginKey(origin)
+  if (isHandCashCatalogOrigin(host)) return [...HANDCASH_CATALOG_HOSTS]
+  return [host]
+}
+
 export function normalizeTokenAccess(raw: unknown): TokenAccess {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_TOKEN_ACCESS }
   const o = raw as Partial<TokenAccess>

@@ -4,8 +4,6 @@ import {
 } from './appIdentity'
 import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
-  DEFAULT_ITEM_ACCESS,
-  DEFAULT_TOKEN_ACCESS,
   grantableCollectionIdsFromOutputs,
   grantableCollectionsFromOutputs,
   grantableTokensFromOutputs,
@@ -31,6 +29,8 @@ import {
   parseItemViewRequest,
   parseTokenViewRequest,
   tokenViewGranted,
+  isHandCashCatalogOrigin,
+  viewGrantOriginAliases,
   type ItemAccess,
   type ItemViewRequest,
   type TokenAccess,
@@ -351,12 +351,16 @@ export function clearPermissionSession(origin?: string): void {
 }
 
 export function normalizeOrigin(origin: string | undefined): string {
-  return normalizeAppHost(origin)
+  const host = normalizeAppHost(origin)
+  return isHandCashCatalogOrigin(host) ? 'handcash.io' : host
 }
 
 export function isOriginAllowed(origin: string | undefined): boolean {
-  const key = normalizeOrigin(origin)
-  return readConnected().some((a) => a.origin === key)
+  const aliases = new Set(viewGrantOriginAliases(origin))
+  aliases.add(normalizeOrigin(origin))
+  return readConnected().some(
+    (a) => aliases.has(a.origin) || aliases.has(normalizeAppHost(a.origin)),
+  )
 }
 
 export function listConnectedApps(): ConnectedApp[] {
@@ -368,16 +372,47 @@ export function listAllowedOrigins(): string[] {
   return readConnected().map((a) => a.origin)
 }
 
-export function allowOrigin(origin: string | undefined): void {
+function findConnectedApp(origin: string | undefined): {
+  idx: number
+  apps: ConnectedApp[]
+  key: string
+} {
   const key = normalizeOrigin(origin)
-  const prior = readConnected().find((a) => a.origin === key)
-  const existing = readConnected().filter((a) => a.origin !== key)
+  const apps = readConnected()
+  const aliases = new Set(viewGrantOriginAliases(origin))
+  aliases.add(key)
+  const idx = apps.findIndex(
+    (a) => aliases.has(a.origin) || aliases.has(normalizeAppHost(a.origin)),
+  )
+  return { idx, apps, key }
+}
+
+function ensureConnectedApp(origin: string | undefined): {
+  idx: number
+  apps: ConnectedApp[]
+  key: string
+} {
+  const found = findConnectedApp(origin)
+  if (found.idx >= 0) return found
+  const row: ConnectedApp = {
+    origin: found.key,
+    name: appDisplayName(found.key),
+    connectedAt: Date.now(),
+  }
+  return { idx: 0, apps: [row, ...found.apps], key: found.key }
+}
+
+export function allowOrigin(origin: string | undefined): void {
+  const { idx, apps, key } = findConnectedApp(origin)
+  const prior = idx >= 0 ? apps[idx] : undefined
+  const existing = idx >= 0 ? apps.filter((_, i) => i !== idx) : apps
   writeConnected([
     {
-      origin: key,
-      name: appDisplayName(key),
+      origin: prior?.origin ?? key,
+      name: prior?.name ?? appDisplayName(key),
       connectedAt: prior?.connectedAt ?? Date.now(),
-      // Connect does not grant item view/send/receive — those are approved per request.
+      // Connect does not by itself grant item/token view. Reconnect must reuse
+      // a prior View items / View tokens Allow so catalog reloads do not re-prompt.
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
     },
@@ -387,25 +422,20 @@ export function allowOrigin(origin: string | undefined): void {
 }
 
 export function getItemAccess(origin: string | undefined): ItemAccess {
-  const key = normalizeOrigin(origin)
-  const app = readConnected().find((a) => a.origin === key)
-  return normalizeItemAccess(app?.itemAccess)
+  const { idx, apps } = findConnectedApp(origin)
+  return normalizeItemAccess(idx >= 0 ? apps[idx]?.itemAccess : undefined)
 }
 
 export function getTokenAccess(origin: string | undefined): TokenAccess {
-  const key = normalizeOrigin(origin)
-  const app = readConnected().find((a) => a.origin === key)
-  return normalizeTokenAccess(app?.tokenAccess)
+  const { idx, apps } = findConnectedApp(origin)
+  return normalizeTokenAccess(idx >= 0 ? apps[idx]?.tokenAccess : undefined)
 }
 
 function patchItemAccess(
   origin: string | undefined,
   patch: (current: ItemAccess) => ItemAccess,
 ): ItemAccess {
-  const key = normalizeOrigin(origin)
-  const apps = readConnected()
-  const idx = apps.findIndex((a) => a.origin === key)
-  if (idx < 0) return DEFAULT_ITEM_ACCESS
+  const { idx, apps } = ensureConnectedApp(origin)
   const next = patch(normalizeItemAccess(apps[idx]!.itemAccess))
   const copy = [...apps]
   copy[idx] = { ...copy[idx]!, itemAccess: next }
@@ -417,10 +447,7 @@ function patchTokenAccess(
   origin: string | undefined,
   patch: (current: TokenAccess) => TokenAccess,
 ): TokenAccess {
-  const key = normalizeOrigin(origin)
-  const apps = readConnected()
-  const idx = apps.findIndex((a) => a.origin === key)
-  if (idx < 0) return DEFAULT_TOKEN_ACCESS
+  const { idx, apps } = ensureConnectedApp(origin)
   const next = patch(normalizeTokenAccess(apps[idx]!.tokenAccess))
   const copy = [...apps]
   copy[idx] = { ...copy[idx]!, tokenAccess: next }
@@ -1276,7 +1303,9 @@ function summarizeTokenView(tickers: string[], wantsAll: boolean): {
 /**
  * Gate listOutputs against item baskets. Pay does not include inventory access.
  * Returns allow/deny; caller should filter results when grant is filtered.
- * Third parties never receive view='all'.
+ * First Allow persists on the originator (creating the connected row if needed)
+ * so catalog reloads, reconnect, and getTokenIcon do not re-prompt. Send/list/buy
+ * still prompt. Market catalog Allow is durable view=all.
  */
 export async function requestItemViewApproval(
   origin: string | undefined,
@@ -1287,30 +1316,34 @@ export async function requestItemViewApproval(
   const body = asRecord(args)
   if (!isItemBasket(body.basket)) return 'allow'
 
-  let request = preparedRequest ?? parseItemViewRequest(args)
+  const original = preparedRequest ?? parseItemViewRequest(args)
   const thirdParty = isThirdPartyOriginator(origin)
+  const catalog = isHandCashCatalogOrigin(origin)
   let promptNames: string[] | undefined
-  if (thirdParty && (request.wantsAll || request.scope === 'plain')) {
-    const converted = await thirdPartyItemViewRequest(request)
-    request = converted.request
+  if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
+    const converted = await thirdPartyItemViewRequest(original)
     promptNames = converted.names
   }
-  const access = getItemAccess(key)
-  if (itemViewGranted(access, request)) return 'allow'
+  const access = getItemAccess(origin)
+  if (itemViewGranted(access, original)) return 'allow'
   // BRC-165 `id` is a narrow row lookup, not inventory access. Record only
   // this id-scoped grant so response filtering can enforce the same ceiling.
-  if (request.scope === 'id' && !request.wantsAll) {
-    patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request, { allowAll: !thirdParty }))
+  if (original.scope === 'id' && !original.wantsAll) {
+    patchItemAccess(origin, (cur) =>
+      mergeItemViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+    )
     return 'allow'
   }
 
   const { title, summary, details } = promptNames
     ? summarizeFilteredItemView(promptNames)
-    : summarizeItemView(request)
+    : summarizeItemView(original)
 
   const grant = (decision: PermissionDecision) => {
     if (decision === 'allow') {
-      patchItemAccess(key, (cur) => mergeItemViewGrant(cur, request, { allowAll: !thirdParty }))
+      patchItemAccess(origin, (cur) =>
+        mergeItemViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+      )
     }
     return decision
   }
@@ -1353,22 +1386,24 @@ export async function requestTokenViewApproval(
   const body = asRecord(args)
   if (!isTokenViewBasket(body.basket)) return 'allow'
 
-  let request = preparedRequest ?? parseTokenViewRequest(args)
+  const original = preparedRequest ?? parseTokenViewRequest(args)
   const thirdParty = isThirdPartyOriginator(origin)
-  let tickers: string[] = request.ids
-  if (thirdParty && (request.wantsAll || request.scope === 'plain')) {
-    const converted = await thirdPartyTokenViewRequest(request)
-    request = converted.request
+  const catalog = isHandCashCatalogOrigin(origin)
+  let tickers: string[] = original.ids
+  if (thirdParty && (original.wantsAll || original.scope === 'plain')) {
+    const converted = await thirdPartyTokenViewRequest(original)
     tickers = converted.tickers
   }
-  const access = getTokenAccess(key)
-  if (tokenViewGranted(access, request)) return 'allow'
+  const access = getTokenAccess(origin)
+  if (tokenViewGranted(access, original)) return 'allow'
 
-  const { title, summary, details } = summarizeTokenView(tickers, request.wantsAll)
+  const { title, summary, details } = summarizeTokenView(tickers, original.wantsAll)
 
   const grant = (decision: PermissionDecision) => {
     if (decision === 'allow') {
-      patchTokenAccess(key, (cur) => mergeTokenViewGrant(cur, request, { allowAll: !thirdParty }))
+      patchTokenAccess(origin, (cur) =>
+        mergeTokenViewGrant(cur, original, { allowAll: catalog || !thirdParty }),
+      )
     }
     return decision
   }

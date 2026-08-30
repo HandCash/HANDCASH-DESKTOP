@@ -1,7 +1,7 @@
 {
   "name": "handcash-brc100",
-  "version": "1.3.25",
-  "description": "Official HandCash Desktop wallet (BETA) — self-custodial BRC-100, based on BSVA open standards",
+  "version": "1.3.26",
+  "description": "Official HandCash Desktop wallet (BETA) \u2014 self-custodial BRC-100, based on BSVA open standards",
   "main": "dist-electron/main.js",
   "type": "module",
   "author": "HandCash BRC100",
@@ -81,7 +81,7 @@
   "build": {
     "appId": "io.handcash.brc100",
     "productName": "HandCash",
-    "copyright": "Copyright © HandCash",
+    "copyright": "Copyright \u00a9 HandCash",
     "directories": {
       "output": "release",
       "buildResources": "build"
@@ -162,7 +162,7 @@
       "maintainer": "HandCash BRC100 <devs@handcash.io>",
       "artifactName": "${productName}-${version}-${arch}.${ext}",
       "synopsis": "Official HandCash Desktop wallet",
-      "description": "Official HandCash Desktop — self-custodial BRC-100 wallet with local app bridge.",
+      "description": "Official HandCash Desktop \u2014 self-custodial BRC-100 wallet with local app bridge.",
       "executableName": "HandCash"
     }
   }

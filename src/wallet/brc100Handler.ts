@@ -11,6 +11,7 @@ import {
   normalizeOrigin,
   noteInboundWalletRequest,
   requestActionApproval,
+  getTokenAccess,
   requestItemViewApproval,
   requestTokenViewApproval,
 } from './permissions'
@@ -699,6 +700,12 @@ async function dispatchWalletMethod(
           : {}
       const icon = typeof body.icon === 'string' ? body.icon.trim() : ''
       const origin = typeof body.origin === 'string' ? body.origin.trim() : ''
+      // Same originator as listOutputs bsv21 — if View tokens was already
+      // Allowed, do not prompt again. First Allow persists on the originator.
+      if (getTokenAccess(originator).view === 'none') {
+        const decision = await requestTokenViewApproval(originator, { basket: 'bsv21' })
+        if (decision !== 'allow') return { dataUrl: null }
+      }
       const dataUrl = await resolveBsv21IconDataUrl({
         icon: icon || undefined,
         origin: origin || (typeof body.outpoint === 'string' ? body.outpoint : undefined),

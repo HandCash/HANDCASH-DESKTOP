@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.26] - 2026-08-30
+
+### Fixed
+
+- Mobile Collect no longer flashes empty during sync: a short or empty `listOutputs` page keeps the durable cache and merges new outpoints instead of replacing 777 cards with zero.
+- View items / View tokens Allow persists on the originator (creates the connected row if missing; market hosts share one grant) so catalog reloads, reconnect, and `getTokenIcon` do not re-prompt. Send/list/buy still prompt.
+
 ## [1.3.25] - 2026-08-30
 
 ### Changed

@@ -484,6 +484,8 @@ export function WalletNav({
                 <ConnectedAppsPanel apps={apps} />
               </div>
             )}
+            {/* Unmount Collect to free ordinal images. Remount paints the last
+                durable list (collectables.ts) — never an emptied cache. */}
             {nav.section === 'collectables' && !mobileInlinePermission && <InventoryPanel />}
             {mountedLight.has('friends') && (
               <div

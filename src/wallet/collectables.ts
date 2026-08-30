@@ -138,7 +138,6 @@ import {
 } from './oneSatGenesisProof'
 import {
   getWalletCoordinatorSnapshot,
-  isRecomposeCoordinatorActive,
 } from './walletCoordinator'
 import {
   getResolvedInscription,
@@ -398,8 +397,15 @@ function setCollectablesCache(
     }
   }
   // Drop leftover 1sat-ft and hashed origin-only cards. Those are Tokens, not
-  // Items. Named 1sat still paints during sync.
-  items = items.filter((item) => !collectableIsOnesatFt(item))
+  // Items. Named 1sat still paints during sync — do not hide a card that already
+  // has a real name just because this pass lacked remittance tags.
+  items = items
+    .map((item) =>
+      collectableIsOnesatFt(item)
+        ? heldNamedCollectable(item.outpoint) ?? item
+        : item,
+    )
+    .filter((item) => !collectableIsOnesatFt(item))
   cachedCollectables = items
   collectablesHydrated = true
   persistDurableList(items)
@@ -444,7 +450,7 @@ function setCollectablesCache(
   })
 }
 
-export function clearCollectablesCache(): void {
+export function clearCollectablesCache(options?: { notify?: boolean }): void {
   cachedCollectables = []
   collectablesHydrated = false
   listedOutputCursor = 0
@@ -456,7 +462,9 @@ export function clearCollectablesCache(): void {
   loadedSeedIdentity = null
   durableRemoveItem(LIST_CACHE_KEY)
   durableRemoveItem(SEEDED_ITEMS_KEY)
-  notifyCollectables([])
+  // Skip the empty notify when a re-read is about to replace the list —
+  // notifying [] is what flashed Collect empty on sync / unlock / pull.
+  if (options?.notify !== false) notifyCollectables([])
 }
 
 /**
@@ -471,7 +479,7 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
   const identityKey = getActiveWallet()?.identityKey ?? null
   const cachedFor = durableListIdentity()
   if (identityKey && cachedFor && cachedFor !== identityKey) {
-    clearCollectablesCache()
+    clearCollectablesCache({ notify: false })
   } else {
     invalidateLiveOneSatOutpoints()
   }
@@ -1073,6 +1081,15 @@ function needsIndexerResolve(o: ItemOutput): boolean {
   return !hasLocalOrigin(o)
 }
 
+function heldNamedCollectable(outpoint: string): Collectable | undefined {
+  const key = normalizeOutpoint(outpoint)
+  const held = cachedCollectables.find(
+    (c) => normalizeOutpoint(c.outpoint) === key,
+  )
+  if (held && !collectableIsOnesatFt(held)) return held
+  return undefined
+}
+
 function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
   const items: Collectable[] = []
   for (const o of outputs) {
@@ -1082,7 +1099,12 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
       chain,
       getResolvedInscription(normalizeOutpoint(o.outpoint))
     )
-    if (collectableIsOnesatFt(item)) continue
+    if (collectableIsOnesatFt(item)) {
+      // Named items briefly lack remittance during sync — keep the painted card.
+      const held = heldNamedCollectable(item.outpoint)
+      if (held) items.push(held)
+      continue
+    }
     items.push(item)
   }
   return dedupeByOrigin(
@@ -1887,6 +1909,39 @@ export function loadMoreCollectables(
   return run
 }
 
+
+/** Short/empty basket page: keep painted cards, append newly listed outpoints. */
+function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
+  const incoming: Collectable[] = []
+  for (const o of page) {
+    if (!isListableItem(o)) continue
+    incoming.push(
+      toCollectable(
+        o,
+        chain,
+        getResolvedInscription(normalizeOutpoint(o.outpoint)),
+      ),
+    )
+  }
+  const byOp = new Map<string, Collectable>()
+  for (const held of cachedCollectables) {
+    if (isItemSent(held.outpoint)) continue
+    byOp.set(normalizeOutpoint(held.outpoint), held)
+  }
+  for (const item of incoming) {
+    const key = normalizeOutpoint(item.outpoint)
+    if (isItemSent(key)) continue
+    const prev = byOp.get(key)
+    if (!prev) {
+      if (!collectableIsOnesatFt(item)) byOp.set(key, item)
+      continue
+    }
+    if (collectableIsOnesatFt(item) && !collectableIsOnesatFt(prev)) continue
+    if (!collectableIsOnesatFt(item)) byOp.set(key, item)
+  }
+  return [...byOp.values()]
+}
+
 async function listCollectablesNow(
   active?: ActiveWallet | null,
   append = false,
@@ -1932,25 +1987,36 @@ async function listCollectablesNow(
         lockingScript: lockingScript || undefined,
       }
     })
-    // Recompose replaces localState before it restores BRC-39. A basket read in
-    // that window is a successful read of a temporary or partially restored
-    // database, not proof of the holder's inventory. On a real cold launch this
-    // painted 777 durable cards, replaced them with zero, then nine. Keep the
-    // complete stale view until the explicit post-replace relist above; that
-    // answer is authoritative and may legitimately be empty.
+    // Recompose / BRC-39 / mobile sync can return 0 or a short page from a
+    // temporary or partially restored database. That is not proof of an empty
+    // inventory. On a real cold launch this painted 777 durable cards, replaced
+    // them with zero, then nine. Keep the complete stale view unless this read
+    // is explicitly authoritative (post-replace relist / identity change / user
+    // spent). Merge newly listed outpoints; do not drop existing ones because
+    // this page is short. Mobile sync/soft pull is often NOT the recompose
+    // coordinator, so that flag must not be required.
     if (
       !append &&
       cachedCollectables.length > 0 &&
-      isRecomposeCoordinatorActive() &&
       !authoritativeAfterReplace &&
       page.length < cachedCollectables.length
     ) {
-      // Partial restore (0 or a short page) must not wipe a complete cache.
-      // A *longer* live page is new 1sat tips arriving during sync — paint them
-      // unverified rather than hiding them until recompose finishes.
+      const seeded = pendingSeededItems(page, Date.now(), wallet.identityKey)
+      const merged = mergeShortBasketPage([...page, ...seeded], wallet.chain)
       console.info(
-        `[collectables] kept ${cachedCollectables.length} cached item(s) while recompose localState listed ${page.length}`
+        `[collectables] kept ${cachedCollectables.length} cached item(s) while basket listed ${page.length}`
       )
+      if (page.length > 0) {
+        const byOp = new Map(
+          lastItemOutputs.map((o) => [outpointKey(o.outpoint), o]),
+        )
+        for (const o of [...page, ...seeded]) {
+          byOp.set(outpointKey(o.outpoint), o)
+        }
+        lastItemOutputs = [...byOp.values()]
+        lastItemChain = wallet.chain
+      }
+      setCollectablesCache(merged, { announceArrivals: true })
       return getCachedCollectables()
     }
     listedOutputTotal = inferCollectableOutputTotal({
