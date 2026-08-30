@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.25] - 2026-08-30
+
+### Changed
+
+- Split BSV-21 listAmt to an exact 162 lock before listing so advert.amt matches the 176 proof. Mobile Collect shortLabel. Inbound :3321 requests yield cloud-backup so the permission prompt is not stuck behind Argon2.
+
+
 ## [1.3.24] - 2026-08-29
 
 ### Changed
