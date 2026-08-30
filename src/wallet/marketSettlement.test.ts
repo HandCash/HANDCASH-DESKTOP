@@ -175,6 +175,28 @@ describe('market exact settlement contract', () => {
     expect(validate).not.toThrow()
   })
 
+  it('accepts buyer wallet addresses that differ from the identity-derived address', () => {
+    const { tx, listing, buyer } = fixture()
+    const buyerWalletAddress = PrivateKey.fromRandom().toPublicKey().toAddress('mainnet')
+    tx.outputs[0]!.lockingScript = new P2PKH().lock(buyerWalletAddress)
+    tx.outputs[3]!.lockingScript = new P2PKH().lock(buyerWalletAddress)
+    expect(() =>
+      validateMarketSettlementOutputs({
+        tx,
+        beef: new Beef().mergeTransaction(tx),
+        listing,
+        buyerIdentityKey: buyer.toString(),
+        buyerAddress: buyerWalletAddress,
+        chain: 'main',
+        itemVin: 0,
+        offerVin: 1,
+        itemOutputIndex: 0,
+        sellerOutputIndex: 1,
+        feeOutputIndex: 2,
+      }),
+    ).not.toThrow()
+  })
+
   it('accepts 162 leftover token-change after the market fee', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
     const { tx, listing, validate, buyer } = fixture()

@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { extractSatsFromArgs } from './appActivity'
 import { humanActionCopy } from './appIdentity'
 import { isIdentityProofMethod, summarizeAction } from './permissions'
 import {
@@ -42,6 +43,26 @@ describe('wallet identity proof permission copy', () => {
     expect(humanActionCopy('createSignature', action.title)).toEqual({
       eyebrow: 'Identity proof',
       verb: 'wants proof that this wallet approved its challenge',
+    })
+  })
+
+  it('treats deferred-sign payment finalization as a payment amount', () => {
+    const args = {
+      reference: 'abc123',
+      spends: {},
+      outputs: [
+        { satoshis: 500, outputDescription: 'Coffee' },
+        { satoshis: 250, outputDescription: 'Tip' },
+      ],
+    }
+
+    expect(extractSatsFromArgs('signAction', args)).toBe(750)
+    expect(summarizeAction('signAction', args)).toEqual({
+      title: 'Confirm payment',
+      summary: 'Finish signing a payment you already started',
+      details: ['Coffee: 500 sats', 'Tip: 250 sats'],
+      amountSats: 750,
+      amountLabel: '750 sats',
     })
   })
 

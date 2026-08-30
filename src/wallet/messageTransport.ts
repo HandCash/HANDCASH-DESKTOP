@@ -45,6 +45,7 @@ export type MarketSettlementWire =
       type: 'sign-request'
       saleId: string
       buyerIdentityKey: string
+      buyerAddress?: string
       intent: MarketPurchaseIntent
       buyerMessagebox?: string
       listing: unknown

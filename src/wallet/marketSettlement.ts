@@ -54,6 +54,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import { runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import { addressFromIdentityKey } from './friends'
 import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 
 const PENDING_KEY = 'handcash.market.pending.v2'
@@ -248,6 +249,7 @@ export function validateMarketSettlementOutputs(args: {
   beef: Beef
   listing: MarketListingAdvert
   buyerIdentityKey: string
+  buyerAddress?: string
   chain: 'main' | 'test'
   itemVin: number
   offerVin: number
@@ -259,9 +261,11 @@ export function validateMarketSettlementOutputs(args: {
     throw new Error('Market settlement is mainnet only')
   }
   const amounts = calculateMarketSettlement(args.listing.priceSats)
-  const buyerAddress = PublicKey.fromString(args.buyerIdentityKey).toAddress(
-    args.chain === 'main' ? 'mainnet' : 'testnet'
-  )
+  const buyerAddress =
+    (args.buyerAddress ?? '').trim() ||
+    PublicKey.fromString(args.buyerIdentityKey).toAddress(
+      args.chain === 'main' ? 'mainnet' : 'testnet'
+    )
   const buyerChangeLock = new P2PKH().lock(buyerAddress).toHex()
   if (args.listing.assetType === 'bsv21') {
     if (args.listing.amt == null || !(args.listing.amt > 0)) {
@@ -531,6 +535,7 @@ export async function executeMarketPurchase(
       beef,
       listing,
       buyerIdentityKey: active.identityKey,
+      buyerAddress: active.address,
       chain: active.chain,
       itemVin,
       offerVin,
@@ -578,6 +583,7 @@ export async function executeMarketPurchase(
           type: 'sign-request',
           saleId,
           buyerIdentityKey: active.identityKey,
+          buyerAddress: active.address,
           intent: args.intent,
           ...(buyerMessagebox ? { buyerMessagebox } : {}),
           listing,
@@ -894,6 +900,7 @@ async function signSellerInputs(args: {
     beef,
     listing,
     buyerIdentityKey: args.wire.buyerIdentityKey,
+    buyerAddress: args.wire.buyerAddress ?? addressFromIdentityKey(args.wire.buyerIdentityKey, active.chain),
     chain: active.chain,
     itemVin: vin,
     offerVin: offerSubject.vin,

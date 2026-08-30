@@ -102,7 +102,10 @@ export async function prepareBrcActionSpend(
   method: string,
   args: unknown,
 ): Promise<number> {
-  const sats = method === 'createAction' ? extractSatsFromArgs(method, args) : 0
+  const sats =
+    method === 'createAction' || method === 'signAction'
+      ? extractSatsFromArgs(method, args)
+      : 0
   if (sats > 0) return prepareSpendHeal(sats)
   return prepareSpendHeal()
 }

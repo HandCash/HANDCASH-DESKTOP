@@ -6,7 +6,11 @@ import { toastError } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
-type ReceiveMode = 'peerpay' | 'address'
+export type ReceiveMode = 'peerpay' | 'address'
+
+export function defaultReceiveMode(): ReceiveMode {
+  return 'address'
+}
 
 type Props = {
   address: string
@@ -14,7 +18,7 @@ type Props = {
 }
 
 export function ReceivePanel({ address, identityKey }: Props) {
-  const [mode, setMode] = useState<ReceiveMode>('peerpay')
+  const [mode, setMode] = useState<ReceiveMode>(defaultReceiveMode())
   const [dataUrl, setDataUrl] = useState<string | null>(null)
 
   const peerpayUri = useMemo(() => {

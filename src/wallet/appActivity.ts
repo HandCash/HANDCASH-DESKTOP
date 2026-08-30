@@ -1577,7 +1577,11 @@ export function extractSatsFromArgs(method: string, args: unknown): number {
   if (!args || typeof args !== 'object') return 0
   const body = args as Record<string, unknown>
 
-  if (method === 'createAction' || method === 'internalizeAction') {
+  if (
+    method === 'createAction' ||
+    method === 'internalizeAction' ||
+    method === 'signAction'
+  ) {
     const outputs = Array.isArray(body.outputs) ? body.outputs : []
     let total = 0
     for (const raw of outputs) {
@@ -1586,7 +1590,7 @@ export function extractSatsFromArgs(method: string, args: unknown): number {
       if (typeof sats === 'number' && Number.isFinite(sats))
         total += Math.max(0, sats)
     }
-    return Math.trunc(total)
+    if (total > 0) return Math.trunc(total)
   }
 
   if (typeof body.satoshis === 'number' && Number.isFinite(body.satoshis)) {

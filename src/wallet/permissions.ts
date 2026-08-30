@@ -868,6 +868,29 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'signAction') {
+    const outputs = Array.isArray(body.outputs) ? body.outputs : []
+    let total = 0
+    const details: string[] = []
+    for (const raw of outputs) {
+      if (!raw || typeof raw !== 'object') continue
+      const out = raw as Record<string, unknown>
+      const sats = typeof out.satoshis === 'number' ? out.satoshis : 0
+      total += sats
+      const label =
+        typeof out.outputDescription === 'string' && out.outputDescription
+          ? out.outputDescription
+          : 'Payment'
+      if (sats > 0) details.push(`${label}: ${formatBsvSignificant(sats, 5)}`)
+    }
+    if (details.length > 0 || total > 0) {
+      return {
+        title: 'Confirm payment',
+        summary: 'Finish signing a payment you already started',
+        details,
+        amountSats: total > 0 ? total : undefined,
+        amountLabel: total > 0 ? formatBsvSignificant(total, 5) : undefined,
+      }
+    }
     return {
       title: 'Confirm payment',
       summary: 'Finish signing a payment you already started',
