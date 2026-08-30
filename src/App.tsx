@@ -12,6 +12,7 @@ import {
   resolvePermission,
   cancelPendingPermissions,
   clearPermissionSession,
+  noteInboundWalletRequest,
   subscribePermissionRequests,
   type PendingPrompt,
 } from './wallet/permissions'
@@ -167,6 +168,7 @@ export function App() {
   useEffect(() => {
     if (!window.handcash) return
     const off = window.handcash.onHttpRequest((event) => {
+      const releaseInbound = noteInboundWalletRequest()
       void (async () => {
         try {
           const result = await handleBrc100Request(event)
@@ -186,6 +188,8 @@ export function App() {
               description,
             }),
           })
+        } finally {
+          releaseInbound()
         }
       })()
     })

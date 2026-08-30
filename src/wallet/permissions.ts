@@ -260,12 +260,13 @@ function pumpQueue(): void {
  * queued spend does — so BRC-39 encrypt/upload cannot sit ahead of Approve.
  */
 let releasePermissionSpendPriority: (() => void) | null = null
+let inboundWalletRequests = 0
 function syncPermissionSpendPriority(): void {
   void import('./walletCoordinator')
     .then(({ requestSpendPriority }) => {
       // Re-read intent inside the callback: the prompt may have resolved while
       // the dynamic import was in flight.
-      const want = current != null || queue.length > 0
+      const want = current != null || queue.length > 0 || inboundWalletRequests > 0
       if (want && !releasePermissionSpendPriority) {
         releasePermissionSpendPriority = requestSpendPriority('permission-prompt')
       } else if (!want && releasePermissionSpendPriority) {
@@ -452,6 +453,35 @@ export function revokeAllOrigins(): void {
 /** True when a connect/pay/sign prompt is showing or queued — heavy sync must yield. */
 export function hasPendingPermissionPrompt(): boolean {
   return current != null || queue.length > 0
+}
+
+/**
+ * Inbound :3321 wallet requests that have been accepted but not finished.
+ * Set as soon as the HTTP event arrives — not after JS is free of Argon2 —
+ * so backup/chain-ingest yield before getVersion/isAuthenticated/waitForAuthentication.
+ */
+export function hasInboundWalletRequest(): boolean {
+  return inboundWalletRequests > 0
+}
+
+/** Mark a live BRC-100 HTTP request. Caller must invoke the returned release. */
+export function noteInboundWalletRequest(): () => void {
+  inboundWalletRequests += 1
+  syncPermissionSpendPriority()
+  void import('./brc39Encrypt')
+    .then(({ abortBrc39EncryptInFlight }) => {
+      abortBrc39EncryptInFlight()
+    })
+    .catch(() => {
+      /* worker optional in tests */
+    })
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    inboundWalletRequests = Math.max(0, inboundWalletRequests - 1)
+    syncPermissionSpendPriority()
+  }
 }
 
 export function subscribePermissionRequests(cb: PromptListener): () => void {

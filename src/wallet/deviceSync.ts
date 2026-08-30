@@ -80,12 +80,18 @@ function pushDebounceMs(reason: string): number {
 
 async function permissionPromptBlocksBackup(reason: string): Promise<boolean> {
   try {
-    const { hasPendingPermissionPrompt } = await import('./permissions')
-    if (!hasPendingPermissionPrompt()) return false
+    const { hasPendingPermissionPrompt, hasInboundWalletRequest } = await import(
+      './permissions'
+    )
+    const inbound = hasInboundWalletRequest()
+    const prompt = hasPendingPermissionPrompt()
+    if (!inbound && !prompt) return false
     const { appendAppLog } = await import('./appLog')
     appendAppLog(
       'info',
-      `[cloud-backup] defer (${reason}) — permission prompt pending`,
+      inbound
+        ? `[cloud-backup] defer (${reason}) — inbound 3321 request pending`
+        : `[cloud-backup] defer (${reason}) — permission prompt pending`,
     )
     return true
   } catch {

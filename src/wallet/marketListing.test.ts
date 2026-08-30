@@ -334,6 +334,49 @@ describe('162 market list createAction lock', () => {
     expect(ci.amt).toBe('60')
   })
 
+  it('splits a larger 162 tip to listAmt before the offer so lock amt matches the advert', async () => {
+    const lockingScriptHex = buildBsv21ValueLock({
+      tokenId,
+      amount: 69000n,
+      address: seller.toAddress(),
+    })
+    listingHarness.listed = {
+      outpoint: tip.replace('_', '.'),
+      satoshis: 1,
+      lockingScript: lockingScriptHex,
+      tags: ['bsv21', `bsv21:${tokenId}`, 'amt:69000'],
+      customInstructions: JSON.stringify({
+        p: 'bsv-20',
+        op: 'transfer',
+        id: tokenId,
+        amt: '69000',
+      }),
+    }
+    await expect(
+      createMarketListingAdvert({
+        outpoint: tip,
+        assetType: 'bsv21',
+        priceSats: 57600,
+        listAmt: 240,
+      }),
+    ).rejects.toThrow(/stop-after-createAction/)
+    expect(listingHarness.createAction).toHaveBeenCalledTimes(1)
+    const args = listingHarness.createAction.mock.calls[0]![0] as {
+      description: string
+      outputs: Array<{
+        lockingScript: string
+        basket?: string
+        outputDescription?: string
+      }>
+    }
+    expect(args.description).toMatch(/split/i)
+    expect(args.outputs.some((o) => o.basket === 'market-offers')).toBe(false)
+    const listed = decodeBsv21Binary(args.outputs[0]!.lockingScript)
+    expect(listed).toMatchObject({ role: 'value', tokenId, amount: 240n })
+    const change = decodeBsv21Binary(args.outputs[1]!.lockingScript)
+    expect(change).toMatchObject({ role: 'value', tokenId, amount: 68760n })
+  })
+
   it('does not treat remittance-only 1-sat as a 162 listable tip', () => {
     const classified = classifyMarketListingAsset({
       outpoint: tip,

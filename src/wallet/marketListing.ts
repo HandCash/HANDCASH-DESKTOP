@@ -12,7 +12,7 @@ import {
 import { createActor } from 'xstate'
 import { marketListingMachine, mayAbortMarketListing } from '../machines/marketListingMachine'
 import { normalizeAppHost } from './appIdentity'
-import { getActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from './session'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   buildCollectableCustomInstructions,
@@ -899,6 +899,182 @@ async function loadListedOutput(outpoint: string) {
   }
 }
 
+/**
+ * When listAmt is not the covering tip's 162 amt, split/consolidate first so
+ * the listed UTXO lock equals listAmt (remainder is 162 change to the seller).
+ * The listing tx then lists that exact tip: advert.amt === lock amt === 176
+ * proof.amt. Never advertise a partial amt against a larger covering lock.
+ */
+async function splitBsv21CoverToExactAmt(args: {
+  active: ActiveWallet
+  origin: string
+  requested: number
+  covers: Array<{ outpoint: string; amt: bigint; lockingScript?: string }>
+  icon?: string
+  sym?: string
+}): Promise<{
+  outpoint: string
+  lockingScript: string
+  beef: Awaited<ReturnType<typeof getBeefForTxidCached>>
+}> {
+  const requested = BigInt(args.requested)
+  const coverSum = args.covers.reduce((sum, t) => sum + t.amt, 0n)
+  if (coverSum < requested) {
+    throw new Error('Not enough units available to list that amount.')
+  }
+  const changeAmt = coverSum - requested
+  const listedLock = buildBsv21ValueLock({
+    tokenId: args.origin,
+    amount: requested,
+    address: args.active.address,
+  })
+  const key = PrivateKey.fromHex(args.active.rootKeyHex)
+  const vin0 = args.covers[0]
+  if (!vin0) throw new Error('Not enough units available to list that amount.')
+  const itemTxid = vin0.outpoint.slice(0, 64)
+  const splitBeef = await getBeefForTxidCached(args.active, itemTxid, { needProof: true })
+  for (const extra of args.covers.slice(1)) {
+    const extraTxid = extra.outpoint.slice(0, 64)
+    if (extraTxid === itemTxid) continue
+    try {
+      const extraBeef = await getBeefForTxidCached(args.active, extraTxid, {
+        needProof: true,
+      })
+      splitBeef.mergeBeef(extraBeef.toBinary())
+    } catch {
+      // Overlay conservation still sees the extra input; BEEF hydrate is best-effort.
+    }
+  }
+  const created = await args.active.wallet.createAction({
+    description: 'Split BSV-21 cover for market list',
+    labels: ['market-v3', 'bsv21-split'],
+    inputBEEF: splitBeef.toBinary(),
+    inputs: args.covers.map((tip, i) => ({
+      outpoint: tip.outpoint.replace('_', '.'),
+      inputDescription: i === 0 ? 'BSV-21 list cover' : 'BSV-21 list extra cover',
+      unlockingScriptLength: 108,
+    })),
+    outputs: [
+      {
+        lockingScript: listedLock,
+        satoshis: 1,
+        outputDescription: 'BSV-21 list amount',
+        ...buildBsv21SendRemittance({
+          tokenId: args.origin,
+          amt: requested,
+          icon: args.icon,
+          ...(args.sym ? { sym: args.sym } : {}),
+        }),
+      },
+      ...(changeAmt > 0n
+        ? [
+            {
+              lockingScript: buildBsv21ValueLock({
+                tokenId: args.origin,
+                amount: changeAmt,
+                address: args.active.address,
+              }),
+              satoshis: 1,
+              outputDescription: 'BSV-21 listing change',
+              ...buildBsv21SendRemittance({
+                tokenId: args.origin,
+                amt: changeAmt,
+                icon: args.icon,
+                ...(args.sym ? { sym: args.sym } : {}),
+              }),
+            },
+          ]
+        : []),
+    ],
+    options: {
+      randomizeOutputs: false,
+      signAndProcess: false,
+      trustSelf: 'known',
+    },
+  })
+  const signable = created.signableTransaction
+  if (!signable) throw new Error('BSV-21 list split did not return a signable action')
+  const reference = signable.reference
+  try {
+    const beef = Beef.fromBinary(signable.tx)
+    const vin0Vout = Number(vin0.outpoint.split('_')[1])
+    const tx = beef.txs.find((entry) =>
+      entry.tx?.inputs.some(
+        (input) =>
+          String(input.sourceTXID).toLowerCase() === itemTxid &&
+          input.sourceOutputIndex === vin0Vout,
+      ),
+    )?.tx
+    if (!tx) throw new Error('BSV-21 list split is missing cover input')
+    const selectedPoints = new Set(args.covers.map((tip) => tip.outpoint))
+    if (
+      String(tx.inputs[0]?.sourceTXID).toLowerCase() !== itemTxid ||
+      tx.inputs[0]?.sourceOutputIndex !== vin0Vout ||
+      tx.outputs[0]?.lockingScript?.toHex() !== listedLock
+    ) {
+      throw new MarketListingError(
+        'MARKET_LISTING_SHAPE_MISMATCH',
+        'Wallet did not preserve BSV-21 list-split output ordering.',
+      )
+    }
+    const spends: Record<number, { unlockingScript: string }> = {}
+    for (let i = 0; i < tx.inputs.length; i += 1) {
+      const vin = tx.inputs[i]!
+      const src = `${String(vin.sourceTXID).toLowerCase()}_${vin.sourceOutputIndex}`
+      if (i !== 0 && !selectedPoints.has(src)) continue
+      vin.sourceTransaction ??=
+        splitBeef.findTxid(String(vin.sourceTXID))?.tx ??
+        beef.findTxid(String(vin.sourceTXID))?.tx
+      const sourceOut = vin.sourceTransaction?.outputs[vin.sourceOutputIndex]
+      const satoshis = sourceOut?.satoshis
+      const lockingScript = sourceOut?.lockingScript
+      if (typeof satoshis !== 'number' || !lockingScript) {
+        throw new Error('List-split input is missing its source locking script')
+      }
+      vin.unlockingScriptTemplate = new P2PKH().unlock(
+        key,
+        'all',
+        false,
+        satoshis,
+        lockingScript,
+      )
+    }
+    await tx.sign()
+    for (let i = 0; i < tx.inputs.length; i += 1) {
+      const unlockingScript = tx.inputs[i]?.unlockingScript?.toHex()
+      if (!unlockingScript) {
+        if (i === 0) throw new Error('BSV-21 list-split signature missing')
+        continue
+      }
+      spends[i] = { unlockingScript }
+    }
+    if (!spends[0]) throw new Error('BSV-21 list-split signature missing')
+    const signed = await args.active.wallet.signAction({
+      reference,
+      spends,
+      options: { acceptDelayedBroadcast: false },
+    })
+    const txid = signed.txid?.toLowerCase() ?? ''
+    if (!/^[0-9a-f]{64}$/.test(txid)) {
+      throw new MarketListingError(
+        'MARKET_LISTING_BROADCAST_UNKNOWN',
+        'BSV-21 list split was signed but did not return a transaction.',
+      )
+    }
+    rememberGhostTx(txid)
+    return {
+      outpoint: `${txid}_0`,
+      lockingScript: listedLock,
+      beef: signed.tx
+        ? Beef.fromBinary(Array.from(signed.tx))
+        : splitBeef,
+    }
+  } catch (err) {
+    await args.active.wallet.abortAction({ reference }).catch(() => {})
+    throw err
+  }
+}
+
 export async function createMarketListingAdvert(
   args: CreateMarketListingArgs
 ): Promise<MarketListingPostPayload> {
@@ -1060,6 +1236,33 @@ export async function createMarketListingAdvert(
         })),
       )
       tipAmt = Number(selected.reduce((sum, t) => sum + t.amt, 0n))
+    }
+    if (requested !== provenAmt || extraCoverTips.length > 0) {
+      const split = await splitBsv21CoverToExactAmt({
+        active,
+        origin,
+        requested,
+        covers: [
+          {
+            outpoint: listingOutpoint,
+            amt: BigInt(provenAmt),
+            lockingScript: lockingScriptHex,
+          },
+          ...extraCoverTips,
+        ],
+        icon: lockTip?.icon,
+        ...(lockTip?.sym ? { sym: lockTip.sym } : {}),
+      })
+      listingOutpoint = split.outpoint
+      itemTxid = listingOutpoint.slice(0, 64)
+      extraCoverTips.length = 0
+      provenAmt = requested
+      tipAmt = requested
+      provenance = buildBsv21ListingProof({
+        outpoint: listingOutpoint,
+        lockingScriptHex: split.lockingScript,
+        beef: split.beef,
+      })
     }
     amt = requested
   } else {

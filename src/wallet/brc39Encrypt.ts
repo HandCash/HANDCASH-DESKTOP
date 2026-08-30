@@ -14,6 +14,14 @@ const ENCRYPT_TIMEOUT_MS = 120_000
 
 let workersUsable = typeof Worker !== 'undefined'
 let nextId = 1
+let abortLiveEncrypt: (() => void) | null = null
+
+/** Terminate an in-flight Argon2 worker so a :3321 request can run. */
+export function abortBrc39EncryptInFlight(): boolean {
+  if (!abortLiveEncrypt) return false
+  abortLiveEncrypt()
+  return true
+}
 
 function spawn(): Worker {
   return new Worker(new URL('./brc39.worker.ts', import.meta.url), {
@@ -34,19 +42,26 @@ function encryptInWorker(json: string, password: string): Promise<Uint8Array> {
 
     const id = nextId++
     let settled = false
-
-    const finish = (fn: () => void): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      worker.terminate()
-      fn()
-    }
+    let abortThis: (() => void) | null = null
 
     const timer = setTimeout(
       () => finish(() => reject(new Error('BRC-39 encryption timed out'))),
       ENCRYPT_TIMEOUT_MS,
     )
+
+    const finish = (fn: () => void): void => {
+      if (settled) return
+      settled = true
+      if (abortLiveEncrypt === abortThis) abortLiveEncrypt = null
+      clearTimeout(timer)
+      worker.terminate()
+      fn()
+    }
+
+    abortThis = (): void => {
+      finish(() => reject(new Error('BRC-39 encryption aborted')))
+    }
+    abortLiveEncrypt = abortThis
 
     worker.onmessage = (event: MessageEvent<Brc39EncryptResponse>) => {
       const msg = event.data

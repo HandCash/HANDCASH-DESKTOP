@@ -6,7 +6,10 @@ import {
   filterTokenOutputsForOrigin,
   gateOriginAccess,
   isActionMethod,
+  isPublicMethod,
+  isSilentAuthMethod,
   normalizeOrigin,
+  noteInboundWalletRequest,
   requestActionApproval,
   requestItemViewApproval,
   requestTokenViewApproval,
@@ -812,6 +815,15 @@ async function dispatchWalletMethod(
 }
 
 export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ status: number; body: string }> {
+  const releaseInbound = noteInboundWalletRequest()
+  try {
+    return await handleBrc100RequestInner(event)
+  } finally {
+    releaseInbound()
+  }
+}
+
+async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ status: number; body: string }> {
   if (event.method === 'OPTIONS') {
     return { status: 200, body: '' }
   }
@@ -845,8 +857,11 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     }
   }
 
-  // BRC-99: rewrite `p 1sat <scope>` → storage basket `1sat`; reject unknown schemes.
-  {
+  const originator = parseOrigin(event.headers)
+
+  // Discovery / silent auth / connect prompt: skip basket rewrite. Do not
+  // queue getVersion or isAuthenticated behind runExclusiveSpend.
+  if (!isPublicMethod(method) && !isSilentAuthMethod(method) && method !== 'waitForAuthentication') {
     const prepared = prepareItemBasketArgs(args)
     if (prepared.error) {
       return {
@@ -862,8 +877,6 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
     itemViewRequest = prepared.itemViewRequest
     tokenViewRequest = prepared.tokenViewRequest
   }
-
-  const originator = parseOrigin(event.headers)
 
   const access = await gateOriginAccess(originator, method)
   if (access === 'unauthenticated') {

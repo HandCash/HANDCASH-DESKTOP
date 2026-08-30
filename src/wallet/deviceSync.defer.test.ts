@@ -43,7 +43,11 @@ vi.mock('./backupWatchdog', () => ({
   openBackupAttempt: vi.fn(),
 }))
 
-vi.mock('./permissions', () => ({ hasPendingPermissionPrompt: () => false }))
+let inboundRequest = false
+vi.mock('./permissions', () => ({
+  hasPendingPermissionPrompt: () => false,
+  hasInboundWalletRequest: () => inboundRequest,
+}))
 vi.mock('./appLog', () => ({ appendAppLog: vi.fn() }))
 
 /** Let the scheduler's timer fire and its dynamic imports settle. */
@@ -57,6 +61,7 @@ describe('scheduleHistoryBackupPush deferral budget', () => {
     vi.useFakeTimers()
     createBrc39BackupBytes.mockClear()
     spendWaiting = true
+    inboundRequest = false
     const { resetHistoryBackupDeferForTests } = await import('./deviceSync')
     resetHistoryBackupDeferForTests()
   })
@@ -97,5 +102,20 @@ describe('scheduleHistoryBackupPush deferral budget', () => {
     expect(createBrc39BackupBytes.mock.calls[0]?.[1]).toMatchObject({
       priority: 'yieldToSpend',
     })
+  })
+
+  it('defers backup while an inbound 3321 request is pending', async () => {
+    spendWaiting = false
+    inboundRequest = true
+    const { scheduleHistoryBackupPush } = await import('./deviceSync')
+    scheduleHistoryBackupPush('send')
+
+    await runOneWindow()
+    expect(createBrc39BackupBytes).not.toHaveBeenCalled()
+
+    inboundRequest = false
+    await runOneWindow()
+
+    expect(createBrc39BackupBytes).toHaveBeenCalledTimes(1)
   })
 })
