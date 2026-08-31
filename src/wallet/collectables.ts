@@ -82,7 +82,7 @@ import {
   authenticityResultToVerdict,
   type AuthenticityResult,
 } from './oneSatAuthenticity'
-import { hasOrdEnvelope, scriptPaysAddress } from './ordinalOwnership'
+import { scriptPaysAddress } from './ordinalOwnership'
 import { resolveDerivativeContent } from './derivativeContentResolve'
 import {
   liveOneSatKeys,
@@ -396,9 +396,8 @@ function setCollectablesCache(
       skipArrivalToast.delete(op)
     }
   }
-  // Drop leftover 1sat-ft and hashed origin-only cards. Those are Tokens, not
-  // Items. Named 1sat still paints during sync — do not hide a card that already
-  // has a real name just because this pass lacked remittance tags.
+  // Drop leftover 1sat-ft. Unnamed / tip-as-origin 1sat NFTs still paint —
+  // indexer traits arrive after ingest.
   items = items
     .map((item) =>
       collectableIsOnesatFt(item)
@@ -546,9 +545,8 @@ export function collectableIsOnesatFt(item: {
   collectionId?: string
   app?: string
 }): boolean {
-  // Hashed origin-only cards are leftover 1sat-ft (or unnamed FT genesis),
-  // not collectables. Real 1sat items have a name, collection, or app.
-  if (isBareOriginCollectable(item)) return true
+  // Protocol / mime / a matching Tokens origin — not "no name yet".
+  // Transfer tips paint tip-as-origin until BRC-150 / indexer fills traits.
   if (isOnesatFtMime(item.mimeType)) return true
   const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
@@ -1061,8 +1059,8 @@ function isListableItem(o: ItemOutput): boolean {
     return false
   }
   if (o.tags?.some((tag) => tag === ONESAT_FT_TAG || tag.startsWith('1sat-ft'))) return false
-  // Bare P2PKH 1-sats are leftover FT change / funds, not inscribed items.
-  if (o.lockingScript && !hasOrdEnvelope(o.lockingScript)) return false
+  // NFT transfers are bare P2PKH at the live tip (inscription lives at origin).
+  // Do not require an ord envelope here — that hid every self-sent 1sat NFT.
   return true
 }
 

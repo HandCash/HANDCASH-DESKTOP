@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.29] - 2026-08-31
+
+### Fixed
+
+- Strip dead 1sat-ft address-scan routing after BRC-175 removal: beta FT-shaped tips stay **held** on Refresh instead of misfileing into basket `1sat` or looping reimport.
+- Collect list again shows bare P2PKH NFT transfer tips (self-sent / received ordinals) — ord envelope is not required at the live outpoint.
+- Drop 1sat-ft basket scans from ingest heal paths; tokens remain BRC-162 / basket `bsv21` only.
+
 ## [1.3.26] - 2026-08-30
 
 ### Fixed

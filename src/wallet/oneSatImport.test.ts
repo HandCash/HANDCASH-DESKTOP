@@ -253,13 +253,7 @@ describe('classifyLegacyUtxos', () => {
     const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
 
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats).toEqual([])
-    expect(result.onesatFt).toEqual([
-      expect.objectContaining({
-        outpoint: tipOutpoint,
-        origin: `${mint.id('hex')}_0`,
-      }),
-    ])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
 
     activeWallet = null
     vi.unstubAllGlobals()
@@ -293,13 +287,7 @@ describe('classifyLegacyUtxos', () => {
     const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
 
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats).toEqual([])
-    expect(result.onesatFt).toEqual([
-      expect.objectContaining({
-        outpoint: tipOutpoint,
-        origin: `${mint.id('hex')}_0`,
-      }),
-    ])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
     expect(fetchMock).not.toHaveBeenCalled()
 
     activeWallet = null
@@ -330,13 +318,7 @@ describe('classifyLegacyUtxos', () => {
     const result = await classifyLegacyUtxos([utxo(tipOutpoint, 1)], 'main')
 
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats).toEqual([])
-    expect(result.onesatFt).toEqual([
-      expect.objectContaining({
-        outpoint: tipOutpoint,
-        origin: `${mint.id('hex')}_0`,
-      }),
-    ])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
 
     activeWallet = null
     vi.unstubAllGlobals()
@@ -388,11 +370,8 @@ describe('classifyLegacyUtxos', () => {
       'main',
     )
 
-    expect(result.onesatFt).toEqual([
-      expect.objectContaining({ outpoint: mintOp, origin: `${genesis.id('hex')}_0` }),
-    ])
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([iconOp])
+    expect(result.heldOneSats.map((u) => u.outpoint).sort()).toEqual([iconOp, mintOp].sort())
     expect(fetchMock).not.toHaveBeenCalled()
 
     activeWallet = null
@@ -484,7 +463,7 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
-  it('re-probes a latched collection-less leftover as 1sat-ft', async () => {
+  it('re-probes a latched collection-less leftover as held FT dust', async () => {
     const addr = '1BoatSLRHtKNngkdXEeobR76b53LETtpyT'
     const mintLock = buildOnesatFtMintLockingScript({
       address: addr,
@@ -513,13 +492,7 @@ describe('classifyLegacyUtxos', () => {
     )
 
     expect(result.oneSats).toEqual([])
-    expect(result.heldOneSats).toEqual([])
-    expect(result.onesatFt).toEqual([
-      expect.objectContaining({
-        outpoint: tipOutpoint,
-        origin: `${mint.id('hex')}_0`,
-      }),
-    ])
+    expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([tipOutpoint])
     expect(fetchMock).not.toHaveBeenCalled()
 
     activeWallet = null

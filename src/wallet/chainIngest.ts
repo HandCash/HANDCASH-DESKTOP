@@ -299,8 +299,7 @@ export async function refreshFromChainExclusive(
     console.warn('[chain-ingest] pending send reconcile skipped', err)
   }
 
-  // Failed 1sat-ft / item creates leave tips spent inside noSend. Free them
-  // *before* legacy BSV-21 beef work — chaintracks timeouts must not strand KING.
+  // Failed item creates leave tips spent inside noSend. Free them before ingest.
   if (forceReview) {
     try {
       const { releaseStuckNosends, abortReservedActionBatches } =
@@ -310,12 +309,6 @@ export async function refreshFromChainExclusive(
       console.info('[chain-ingest] released stuck noSend / action batches before ingest')
     } catch (err) {
       console.warn('[chain-ingest] early nosend release skipped', err)
-    }
-    try {
-      const { listColourTokens } = await import('./colourListing')
-      void listColourTokens(active).catch(() => {})
-    } catch {
-      /* optional */
     }
   }
 
@@ -460,7 +453,7 @@ export async function refreshFromChainExclusive(
         } else {
           invalidateLiveOneSatOutpoints()
         }
-        // Tokens from basket 1sat-ft only. Do not scan basket 1sat for FTs.
+        // Defer BRC-150 verify walk while fungibles heal + collectables list run.
         void import('./collectables')
           .then(({ setCollectableVerifyWalkDeferred }) => {
             setCollectableVerifyWalkDeferred(true)

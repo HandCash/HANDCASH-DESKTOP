@@ -7,7 +7,7 @@
 import { isBsv21Mime, parseBsv21Json } from './bsv21'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import { BSV21_BASKET } from './bsv21'
-import { isOnesatFtMime, ONESAT_FT_BASKET } from './colourCoins'
+import { isOnesatFtMime } from './colourCoins'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import { markOneSatImported } from './oneSatImportGuard'
@@ -177,8 +177,8 @@ async function loadCachedByOutpoint(): Promise<Map<string, CollectableRemittance
 }
 
 /**
- * Relinquish misfiled collectables from `bsv21` / `1sat-ft` and re-insert
- * under basket `1sat`. Duplicate rows already in `1sat` are dropped only.
+ * Relinquish misfiled collectables from `bsv21` and re-insert under basket
+ * `1sat`. Duplicate rows already in `1sat` are dropped only.
  */
 export async function healMisfiledCollectables(
   active?: ActiveWallet | null,
@@ -192,17 +192,9 @@ export async function healMisfiledCollectables(
   }
   if (!wallet) return result
 
-  const [bsv21Listed, ftListed, itemListed] = await Promise.all([
+  const [bsv21Listed, itemListed] = await Promise.all([
     wallet.wallet.listOutputs({
       basket: BSV21_BASKET,
-      limit: 2000,
-      includeTags: true,
-      includeCustomInstructions: true,
-      include: 'locking scripts',
-      seekPermission: false,
-    }),
-    wallet.wallet.listOutputs({
-      basket: ONESAT_FT_BASKET,
       limit: 2000,
       includeTags: true,
       includeCustomInstructions: true,
@@ -282,7 +274,6 @@ export async function healMisfiledCollectables(
   }
 
   consider(BSV21_BASKET, bsv21Listed.outputs ?? [])
-  consider(ONESAT_FT_BASKET, ftListed.outputs ?? [])
 
   for (const cand of drop) {
     try {

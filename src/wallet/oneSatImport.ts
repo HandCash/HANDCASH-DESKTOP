@@ -96,8 +96,6 @@ export type ClassifiedLegacyUtxos = {
   oneSats: MigrationItem[]
   /** Confirmed BSV-21 tips — internalize to basket `bsv21` (Collect fungibles) */
   bsv21: Bsv21ImportItem[]
-  /** Confirmed 1sat-ft genesis / tips — internalize to basket `1sat-ft` */
-  onesatFt: MigrationItem[]
   /** satoshis === 1, not yet confirmed — leave untouched (never sweep) */
   heldOneSats: LegacyUtxo[]
   /**
@@ -1012,7 +1010,7 @@ async function lineageOfBareOnesatSpend(
     }
   }
 
-  // FT lineage wins: file into `1sat-ft` (mint origin), never basket `1sat`.
+  // FT lineage wins: hold — never basket `1sat` (1sat-ft product removed).
   if (sawFt) return { kind: 'ft', origin: ftOrigin }
   if (sawNft) return { kind: 'item' }
   return { kind: 'unknown' }
@@ -1144,7 +1142,7 @@ export async function classifyLegacyUtxos(
     /**
      * Outpoints already known as 1sat collectables (import mark, basket `1sat`,
      * remittance, or BRC-150). Latch only when remittance has a collection id —
-     * leftover 1sat-ft must re-probe.
+     * collection-less tips must re-probe.
      */
     knownCollectableOutpoints?: Iterable<string>
     /** Cached remittance so heal/reimport keeps origin + name. */
@@ -1190,7 +1188,6 @@ export async function classifyLegacyUtxos(
     claimed.add(key)
   }
 
-  const onesatFt: MigrationItem[] = []
   const funding: LegacyUtxo[] = []
   const heldOneSats: LegacyUtxo[] = []
   const heldUneconomical: LegacyUtxo[] = []
@@ -1239,7 +1236,7 @@ export async function classifyLegacyUtxos(
         continue
       }
       const known = knownByOutpoint.get(outpointKey(u.outpoint))
-      // Collection-less leftover / misfiled FT: ignore NFT cache and re-probe.
+      // Collection-less leftover: ignore NFT cache and re-probe.
       const forceProbe =
         latchedCollectables.has(liveKey) && !collectableLatchHolds(rem)
       const cacheKey = `${u.txid}.${u.vout}`
@@ -1298,12 +1295,9 @@ export async function classifyLegacyUtxos(
           } else if (probe.kind === 'item') {
             resolved = { origin: txidVoutUnderscore(u.txid, u.vout) }
           } else if (probe.kind === 'ft') {
-            onesatFt.push({
-              outpoint: u.outpoint,
-              txid: u.txid,
-              vout: u.vout,
-              origin: probe.origin ?? txidVoutUnderscore(u.txid, u.vout),
-            })
+            // Removed product: beta 1sat-ft tips stay held — never basket `1sat`.
+            rememberUnresolved(cacheKey)
+            heldOneSats.push(u)
             claimed.add(liveKey)
             continue
           } else if (probe.kind === 'icon') {
@@ -1349,12 +1343,8 @@ export async function classifyLegacyUtxos(
 
       const resolvedMime = (resolved?.mimeType ?? '').toLowerCase()
       if (resolved && isOnesatFtMime(resolved.mimeType)) {
-        onesatFt.push({
-          outpoint: u.outpoint,
-          txid: u.txid,
-          vout: u.vout,
-          origin: resolved.origin || txidVoutUnderscore(u.txid, u.vout),
-        })
+        rememberUnresolved(cacheKey)
+        heldOneSats.push(u)
         claimed.add(liveKey)
         continue
       }
@@ -1412,7 +1402,7 @@ export async function classifyLegacyUtxos(
     // nonPositive / weird values: ignore (do not sweep)
   }
 
-  return { funding, oneSats, bsv21, onesatFt, heldOneSats, heldUneconomical, pendingTips }
+  return { funding, oneSats, bsv21, heldOneSats, heldUneconomical, pendingTips }
 }
 
 /** Internalize ordinal outs into basket `1sat`. */
@@ -1551,14 +1541,6 @@ export async function importOneSatOrdinals(
   }
 }
 
-
-/** Closed beta: classified 1sat-ft is not imported. Tokens are 162 / `bsv21`. */
-export async function importOnesatFtTips(
-  _items: MigrationItem[],
-  _active?: ActiveWallet | null,
-): Promise<OneSatImportResult> {
-  return { imported: 0, failed: 0, errors: [], outpoints: [] }
-}
 
 export function contentUrlForOrigin(origin: string, chain: Chain = 'main'): string {
   const underscored = origin.includes('.')
