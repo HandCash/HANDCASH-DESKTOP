@@ -291,8 +291,15 @@ export function PermissionRequestPanel({
         </div>
       </div>
 
-      {pending.kind === 'action' && (pending.itemOutpoint || pending.tokenId) ? (
-        <PermissionItemPreview outpoint={pending.itemOutpoint} tokenId={pending.tokenId} />
+      {pending.kind === 'action' &&
+      (pending.itemOutpoint || pending.tokenId || pending.itemName) ? (
+        <PermissionItemPreview
+          outpoint={pending.itemOutpoint}
+          tokenId={pending.tokenId}
+          itemName={pending.itemName}
+          itemImageUrl={pending.itemImageUrl}
+          previewKind={pending.previewKind}
+        />
       ) : null}
 
       {(amountPrimary || pending.amountLabel) && (

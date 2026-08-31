@@ -880,10 +880,13 @@ export function Dashboard({
                   ? `${lastApproved.title} — ${appDisplayName(lastApproved.origin)}`
                   : 'Finishing the approved request.')}
             </p>
-            {lastApproved?.itemOutpoint || lastApproved?.tokenId ? (
+            {lastApproved?.itemOutpoint || lastApproved?.tokenId || lastApproved?.itemName ? (
               <PermissionItemPreview
                 outpoint={lastApproved.itemOutpoint}
                 tokenId={lastApproved.tokenId}
+                itemName={lastApproved.itemName}
+                itemImageUrl={lastApproved.itemImageUrl}
+                previewKind={lastApproved.previewKind}
               />
             ) : null}
           </section>

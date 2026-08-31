@@ -37,6 +37,40 @@ describe('market listing permission summary', () => {
     ).toBeUndefined()
   })
 
+  it('shows market listing content on purchase approval from nested listing', () => {
+    const outpoint = `${'c'.repeat(64)}_0`
+    const summary = summarizeAction('purchaseMarketListing', {
+      listing: {
+        outpoint,
+        assetType: 'ordinal',
+        name: 'Rare Fox',
+        contentUrl: 'https://cdn.example/fox.png',
+        priceSats: 500,
+      },
+    })
+    expect(summary.itemOutpoint).toBe(`${'c'.repeat(64)}.0`)
+    expect(summary.itemName).toBe('Rare Fox')
+    expect(summary.itemImageUrl).toBe('https://cdn.example/fox.png')
+    expect(summary.previewKind).toBe('collectable')
+    expect(summary.summary).toContain('Rare Fox')
+  })
+
+  it('shows token sym on BSV-21 purchase intent', () => {
+    const origin = `${'d'.repeat(64)}_0`
+    const summary = summarizeAction('createMarketPurchaseIntent', {
+      listing: {
+        outpoint: `${'e'.repeat(64)}_0`,
+        assetType: 'bsv21',
+        origin,
+        sym: 'HNDC',
+        priceSats: 100,
+      },
+    })
+    expect(summary.tokenId).toBe(origin)
+    expect(summary.itemName).toBe('HNDC')
+    expect(summary.previewKind).toBe('token')
+  })
+
   it('never lets one approval authorize a different market request', async () => {
     cancelPendingPermissions()
     let current: PendingPrompt | null = null

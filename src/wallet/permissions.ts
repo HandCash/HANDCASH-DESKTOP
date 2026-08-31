@@ -43,6 +43,7 @@ import {
 } from './bsv21Issuer'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
+import { marketListingPreviewFromArgs } from './marketListing'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -84,6 +85,10 @@ export type PendingAction = {
   itemOutpoint?: string
   /** BSV-21 token id when this action spends or lists a fungible tip. */
   tokenId?: string
+  /** Market listing display when the buyer does not yet hold the item. */
+  itemName?: string
+  itemImageUrl?: string
+  previewKind?: 'token' | 'collectable'
   createdAt: number
 }
 
@@ -685,6 +690,9 @@ export function summarizeAction(method: string, args: unknown): {
   amountSats?: number
   itemOutpoint?: string
   tokenId?: string
+  itemName?: string
+  itemImageUrl?: string
+  previewKind?: 'token' | 'collectable'
 } {
   const body = asRecord(args)
   const details: string[] = []
@@ -1024,6 +1032,7 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'purchaseMarketListing') {
+    const preview = marketListingPreviewFromArgs(args)
     const price = Math.max(
       0,
       Math.trunc(
@@ -1037,9 +1046,16 @@ export function summarizeAction(method: string, args: unknown): {
     )
     return {
       title: 'Buy market item',
-      summary: 'Authorize one atomic item purchase',
+      summary: preview?.itemName
+        ? `Buy ${preview.itemName}`
+        : 'Authorize one atomic item purchase',
       amountSats: price || undefined,
       amountLabel: price ? formatBsvSignificant(price, 5) : undefined,
+      itemOutpoint: preview?.itemOutpoint,
+      tokenId: preview?.tokenId,
+      itemName: preview?.itemName,
+      itemImageUrl: preview?.itemImageUrl,
+      previewKind: preview?.previewKind,
       details: [
         'Total includes the 5% market fee',
         'No payment is sent unless the exact item settlement can complete',
@@ -1048,6 +1064,7 @@ export function summarizeAction(method: string, args: unknown): {
   }
 
   if (method === 'createMarketPurchaseIntent') {
+    const preview = marketListingPreviewFromArgs(args)
     const listing =
       body.listing && typeof body.listing === 'object'
         ? (body.listing as Record<string, unknown>)
@@ -1055,7 +1072,14 @@ export function summarizeAction(method: string, args: unknown): {
     const price = Math.max(0, Math.trunc(Number(listing.priceSats) || 0))
     return {
       title: 'Approve market purchase',
-      summary: `Sign an intent to buy this item for ${price.toLocaleString()} sats`,
+      summary: preview?.itemName
+        ? `Sign intent to buy ${preview.itemName} for ${price.toLocaleString()} sats`
+        : `Sign an intent to buy this item for ${price.toLocaleString()} sats`,
+      itemOutpoint: preview?.itemOutpoint,
+      tokenId: preview?.tokenId,
+      itemName: preview?.itemName,
+      itemImageUrl: preview?.itemImageUrl,
+      previewKind: preview?.previewKind,
       details: ['The signed intent binds the listing, price, fee, and BRC-150 proof.'],
     }
   }
@@ -1103,7 +1127,7 @@ export function requestActionApproval(
   args: unknown,
 ): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
-  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId } =
+  const { title, summary, details, amountLabel, amountSats, itemOutpoint, tokenId, itemName, itemImageUrl, previewKind } =
     summarizeAction(method, args)
   const itemSpend =
     isItemSpendArgs(method, args) ||
@@ -1197,6 +1221,9 @@ export function requestActionApproval(
     amountSats,
     itemOutpoint,
     tokenId,
+    itemName,
+    itemImageUrl,
+    previewKind,
     createdAt: Date.now(),
   }).then((decision) => {
     if (decision === 'allow' && isIdentityProofMethod(method)) {

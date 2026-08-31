@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.30] - 2026-08-31
+
+### Fixed
+
+- Market purchase confirmation shows the listed item name and image from the market listing (buyer does not hold the tip pre-purchase).
+- Market settlement accepts buyer BSV change from inscription-wrapped toolbox outputs instead of rejecting with “non-buyer change output”.
+- Market purchase remittance uses the listing name; busy-state tracks `listing.outpoint`.
+
 ## [1.3.29] - 2026-08-31
 
 ### Fixed

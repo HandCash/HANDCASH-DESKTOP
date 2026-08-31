@@ -69,6 +69,7 @@ import {
   isMarketListingOrigin,
   markMarketListingPublishFailed,
   MarketListingError,
+  marketListingPreviewFromArgs,
   purchaseMarketListing,
   verifyMarketListingProvenance,
   type CreateMarketListingArgs,
@@ -91,12 +92,16 @@ import { flattenJsonError } from './errorText'
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
 
+function marketOutpointFromArgs(args: unknown): string {
+  if (args && typeof args === 'object' && !Array.isArray(args)) {
+    const top = String((args as { outpoint?: unknown }).outpoint ?? '').trim().toLowerCase()
+    if (top) return top
+  }
+  return marketListingPreviewFromArgs(args)?.itemOutpoint?.toLowerCase() ?? ''
+}
+
 function marketActionKey(method: string, args: unknown): string {
-  const outpoint =
-    args && typeof args === 'object' && !Array.isArray(args)
-      ? String((args as { outpoint?: unknown }).outpoint ?? '').trim().toLowerCase()
-      : ''
-  return `${method}:${outpoint}`
+  return `${method}:${marketOutpointFromArgs(args)}`
 }
 
 /**
@@ -1160,10 +1165,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         label: 'Working…',
         detail: 'Processing market request',
       }
-      const outpoint =
-        args && typeof args === 'object' && !Array.isArray(args)
-          ? String((args as { outpoint?: unknown }).outpoint ?? '') || null
-          : null
+      const outpoint = marketOutpointFromArgs(args) || null
       const actionKey = marketActionKey(method, args)
       if (inFlightMarketActions.has(actionKey)) {
         return {

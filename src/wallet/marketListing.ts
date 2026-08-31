@@ -636,6 +636,44 @@ function verifyRawSignature(
   }
 }
 
+export type MarketListingPreview = {
+  itemOutpoint?: string
+  tokenId?: string
+  itemName?: string
+  itemImageUrl?: string
+  previewKind?: 'token' | 'collectable'
+}
+
+/** Display hints for permission prompts — market sends full listing JSON, not just advert fields. */
+export function marketListingPreviewFromArgs(args: unknown): MarketListingPreview | null {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return null
+  const body = args as Record<string, unknown>
+  const listing =
+    body.listing && typeof body.listing === 'object' && !Array.isArray(body.listing)
+      ? (body.listing as Record<string, unknown>)
+      : null
+  if (!listing) return null
+  const outpoint =
+    typeof listing.outpoint === 'string' ? listing.outpoint.trim().toLowerCase() : ''
+  if (!outpoint) return null
+  const isToken = listing.assetType === 'bsv21'
+  const origin =
+    typeof listing.origin === 'string' ? listing.origin.trim().toLowerCase() : ''
+  const sym = typeof listing.sym === 'string' ? listing.sym.trim() : ''
+  const name = typeof listing.name === 'string' ? listing.name.trim() : ''
+  const contentUrl =
+    typeof listing.contentUrl === 'string' && listing.contentUrl.trim()
+      ? listing.contentUrl.trim()
+      : undefined
+  return {
+    itemOutpoint: outpoint.replace(/_(\d+)$/, '.$1'),
+    ...(isToken && origin ? { tokenId: origin } : {}),
+    itemName: sym || name || (isToken ? 'Token' : 'Collectable'),
+    ...(contentUrl ? { itemImageUrl: contentUrl } : {}),
+    previewKind: isToken ? 'token' : 'collectable',
+  }
+}
+
 export function verifyMarketPurchaseIntent(
   intent: MarketPurchaseIntent,
   listing: MarketListingAdvert,

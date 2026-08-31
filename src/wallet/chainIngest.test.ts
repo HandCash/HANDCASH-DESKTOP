@@ -96,6 +96,8 @@ vi.mock('./collectables', () => ({
   invalidateLiveOneSatOutpoints: vi.fn(),
   rememberLiveOneSatOutpoints: vi.fn(),
   listCollectables: vi.fn(async () => []),
+  setCollectableVerifyWalkDeferred: vi.fn(),
+  resumeCollectableVerifyWalk: vi.fn(),
 }))
 
 vi.mock('./fungibles', () => ({

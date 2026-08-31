@@ -197,6 +197,28 @@ describe('market exact settlement contract', () => {
     ).not.toThrow()
   })
 
+  it('accepts inscription-wrapped buyer BSV change from the toolbox', () => {
+    const { tx, listing, validate, buyer } = fixture()
+    const buyerAddress = buyer.toAddress('mainnet')
+    const bareP2pkh = new P2PKH().lock(buyerAddress).toHex().toLowerCase()
+    tx.outputs[3]!.lockingScript = LockingScript.fromHex(`0063036f7264${bareP2pkh}`)
+    expect(() =>
+      validateMarketSettlementOutputs({
+        tx,
+        beef: new Beef().mergeTransaction(tx),
+        listing,
+        buyerIdentityKey: buyer.toString(),
+        buyerAddress,
+        chain: 'main',
+        itemVin: 0,
+        offerVin: 1,
+        itemOutputIndex: 0,
+        sellerOutputIndex: 1,
+        feeOutputIndex: 2,
+      }),
+    ).not.toThrow()
+  })
+
   it('accepts 162 leftover token-change after the market fee', () => {
     const tokenId = `${'ab'.repeat(32)}_0`
     const { tx, listing, validate, buyer } = fixture()

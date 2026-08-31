@@ -16,7 +16,15 @@ function norm(raw: string): string {
   return raw.replace('_', '.').toLowerCase()
 }
 
-function resolvePreview(outpoint?: string, tokenId?: string): Preview | null {
+function resolvePreview(
+  outpoint?: string,
+  tokenId?: string,
+  hints?: {
+    itemName?: string
+    itemImageUrl?: string
+    previewKind?: 'token' | 'collectable'
+  },
+): Preview | null {
   const tip = outpoint ? norm(outpoint) : ''
   const id = tokenId ? norm(tokenId) : ''
   if (tip) {
@@ -46,21 +54,41 @@ function resolvePreview(outpoint?: string, tokenId?: string): Preview | null {
       subtitle: 'Token',
     }
   }
+  if (hints?.itemName) {
+    return {
+      name: hints.itemName,
+      imageUrl: hints.itemImageUrl,
+      kind: hints.previewKind ?? (id ? 'token' : 'collectable'),
+      subtitle: hints.previewKind === 'token' ? 'Token' : 'Collectable',
+    }
+  }
   return null
 }
 
 export function PermissionItemPreview({
   outpoint,
   tokenId,
+  itemName,
+  itemImageUrl,
+  previewKind,
 }: {
   outpoint?: string
   tokenId?: string
+  itemName?: string
+  itemImageUrl?: string
+  previewKind?: 'token' | 'collectable'
 }) {
   const [item, setItem] = useState<Preview | null>(null)
 
   useEffect(() => {
-    setItem(resolvePreview(outpoint, tokenId))
-  }, [outpoint, tokenId])
+    setItem(
+      resolvePreview(outpoint, tokenId, {
+        itemName,
+        itemImageUrl,
+        previewKind,
+      }),
+    )
+  }, [outpoint, tokenId, itemName, itemImageUrl, previewKind])
 
   if (!item) return null
   const Fallback = item.kind === 'token' ? InventoryIcon : CollectablesIcon

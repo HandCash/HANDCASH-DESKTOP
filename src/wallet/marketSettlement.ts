@@ -15,6 +15,7 @@ import {
 } from '../machines/marketPurchaseMachine'
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
 import { getBeefForTxidCached } from './beefCache'
+import { scriptPaysAddress } from './ordinalOwnership'
 import {
   buildMarketHeldRemittance,
   calculateMarketSettlement,
@@ -230,6 +231,18 @@ function isBuyerP2pkhLock(scriptHex: string, buyerP2pkh: string): boolean {
   return scriptHex === buyerP2pkh.toLowerCase()
 }
 
+/** BSV change may be bare P2PKH or inscription-wrapped P2PKH from the toolbox. */
+function isBuyerBsvChangeOutput(
+  scriptHex: string,
+  sats: number | undefined,
+  buyerAddress: string,
+  buyerP2pkh: string,
+): boolean {
+  if (!Number.isSafeInteger(sats) || sats == null || sats < 1) return false
+  if (isBuyerP2pkhLock(scriptHex, buyerP2pkh)) return true
+  return scriptPaysAddress(scriptHex, buyerAddress)
+}
+
 /** 162 value lock whose remainder P2PKH pays the buyer. */
 function isBuyerBsv21ValueLock(
   scriptHex: string,
@@ -266,7 +279,7 @@ export function validateMarketSettlementOutputs(args: {
     PublicKey.fromString(args.buyerIdentityKey).toAddress(
       args.chain === 'main' ? 'mainnet' : 'testnet'
     )
-  const buyerChangeLock = new P2PKH().lock(buyerAddress).toHex()
+  const buyerChangeLock = new P2PKH().lock(buyerAddress).toHex().toLowerCase()
   if (args.listing.assetType === 'bsv21') {
     if (args.listing.amt == null || !(args.listing.amt > 0)) {
       throw new Error('BSV-21 settlement requires a 162 amount')
@@ -345,10 +358,7 @@ export function validateMarketSettlementOutputs(args: {
     const output = args.tx.outputs[i]
     const script = output?.lockingScript?.toHex().toLowerCase() ?? ''
     const sats = output?.satoshis
-    const bsvChange =
-      typeof sats === 'number' &&
-      sats > 0 &&
-      isBuyerP2pkhLock(script, buyerChangeLock)
+    const bsvChange = isBuyerBsvChangeOutput(script, sats, buyerAddress, buyerChangeLock)
     const tokenChange =
       args.listing.assetType === 'bsv21' &&
       sats === 1 &&
@@ -451,6 +461,14 @@ export async function executeMarketPurchase(
         'BSV-21 settlement requires a 162 amount.',
       )
     }
+    const listingMeta = listing as MarketListingAdvert & {
+      name?: string | null
+      sym?: string | null
+    }
+    const itemDisplayName =
+      listingMeta.sym?.trim() ||
+      listingMeta.name?.trim() ||
+      'Market item'
     const buyerLock = isBsv21
       ? buildBsv21ValueLock({
           tokenId: listing.origin,
@@ -497,7 +515,7 @@ export async function executeMarketPurchase(
             assetType: listing.assetType === 'bsv21' ? 'bsv21' : 'ordinal',
             origin: listing.origin,
             amt: listing.amt,
-            name: 'Market item',
+            name: itemDisplayName,
             ...(provenance ? { provenance } : {}),
           }),
         },

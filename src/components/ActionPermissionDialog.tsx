@@ -200,8 +200,14 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   </Prompt.Amount>
                 )}
 
-                {pending.itemOutpoint ? (
-                  <PermissionItemPreview outpoint={pending.itemOutpoint} />
+                {(pending.itemOutpoint || pending.tokenId || pending.itemName) ? (
+                  <PermissionItemPreview
+                    outpoint={pending.itemOutpoint}
+                    tokenId={pending.tokenId}
+                    itemName={pending.itemName}
+                    itemImageUrl={pending.itemImageUrl}
+                    previewKind={pending.previewKind}
+                  />
                 ) : null}
 
                 <Prompt.Meta className="permission-meta">
