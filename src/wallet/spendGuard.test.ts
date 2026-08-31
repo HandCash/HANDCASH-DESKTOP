@@ -41,6 +41,10 @@ vi.mock('./balanceView', () => ({
   unconfirmedChangeSats: (opts?: { needAtLeast?: number }) => unconfirmedChangeSats(opts),
 }))
 
+vi.mock('./changeScriptFate', () => ({
+  sweepChangeScripts: async () => ({ scanned: 0, healed: 0, quarantined: 0, refused: 0 }),
+}))
+
 vi.mock('./staleOutputRelease', () => ({
   restoreLiveSpendableOutputs: (opts?: { forSpendChain?: boolean }) =>
     restoreLiveSpendableOutputs(opts),
@@ -86,10 +90,23 @@ describe('refreshSpendableBalance', () => {
   it('assertSendableBalance credits unconfirmed change only for the shortfall', async () => {
     mockConfirmed(100)
     unconfirmedChangeSats.mockResolvedValue(900)
+    restoreLiveSpendableOutputs.mockImplementation(async () => {
+      mockConfirmed(600)
+      return 1
+    })
     const { assertSendableBalance } = await import('./spendGuard')
-    await expect(assertSendableBalance(500)).resolves.toBe(1_000)
+    await expect(assertSendableBalance(500)).resolves.toBe(600)
     expect(restoreLiveSpendableOutputs).toHaveBeenCalledWith({ forSpendChain: true })
-    expect(unconfirmedChangeSats).toHaveBeenCalledWith({ needAtLeast: 400 })
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+  })
+
+  it('assertSendableBalance refuses when credit exists but change was not promoted', async () => {
+    mockConfirmed(2)
+    unconfirmedChangeSats.mockResolvedValue(162_767)
+    restoreLiveSpendableOutputs.mockResolvedValue(0)
+    const { assertSendableBalance } = await import('./spendGuard')
+    await expect(assertSendableBalance(50_000)).rejects.toThrow(/chains unconfirmed change/)
+    expect(unconfirmedChangeSats).toHaveBeenCalled()
   })
 
   it('assertSendableBalance skips restore and credit when confirmed covers the payment', async () => {

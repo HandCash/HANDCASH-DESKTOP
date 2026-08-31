@@ -1,8 +1,7 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
-import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
 import {
   formatUsdFromSats,
   getCachedUsdPerBsv,
@@ -35,34 +34,14 @@ import { useFitFontSize } from './FitSlot'
 import {
   listConnectedApps,
   hasPendingPermissionPrompt,
-  resolvePermission,
   revokeOrigin,
   subscribeConnectedApps,
-  subscribePermissionRequests,
   type ConnectedApp,
-  type PendingAction,
-  type PendingPrompt,
 } from '../wallet/permissions'
-import { openReceiveFlow, openScanFlow, openSendFlow, getSideScanOpen, subscribeSideScan } from '../wallet/navStore'
+import { openReceiveFlow, openScanFlow, openSendFlow } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { toastSuccess } from '../wallet/toast'
-import { appDisplayName } from '../wallet/appIdentity'
-import { setAutoPaySettings } from '../wallet/autoPay'
-import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
-import { WhatIsBsvPanel } from './WhatIsBsvPanel'
-import { ScanPanel } from './ScanPanel'
 import { WalletNav } from './WalletNav'
-import { RecentActivityPanel } from './RecentActivity'
-import { PermissionRequestPanel } from './PermissionRequestPanel'
-import { PermissionItemPreview } from './PermissionItemPreview'
-import {
-  clearPaymentProgress,
-  getPaymentProgress,
-  marketBusyCopy,
-  setPaymentProgress,
-  subscribePaymentProgress,
-  type PaymentProgress,
-} from '../wallet/paymentProgress'
+import { DashboardSideColumn } from './DashboardSideColumn'
 import { pollDeviceMeshOnce, startDeviceMesh } from '../wallet/deviceMesh'
 import { isDeviceParityEnabled } from '../wallet/paymentPolicy'
 import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
@@ -174,21 +153,11 @@ export function Dashboard({
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
-  const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
-  const [paymentProgress, setPaymentProgressState] = useState<PaymentProgress>(() =>
-    getPaymentProgress(),
-  )
-  const [lastApproved, setLastApproved] = useState<PendingAction | null>(null)
   const [claimedHandle, setClaimedHandle] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
   const balanceSlotRef = useRef<HTMLDivElement>(null)
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
-  const sideRef = useRef<HTMLElement>(null)
-  const sideBusy =
-    !isMobileWalletPlatform() &&
-    (pendingPrompt != null || paymentProgress.phase !== 'idle')
-  const sideApproval = !isMobileWalletPlatform() && pendingPrompt != null
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
 
@@ -197,75 +166,8 @@ export function Dashboard({
     refresh()
     return subscribeClaimedCloudHandle(refresh)
   }, [profile.identityKey])
-  useEffect(() => {
-    if (isMobileWalletPlatform()) return
-    return subscribePermissionRequests(setPendingPrompt)
-  }, [])
-  useEffect(() => {
-    if (isMobileWalletPlatform()) return
-    return subscribePaymentProgress(setPaymentProgressState)
-  }, [])
-  useEffect(() => {
-    if (pendingPrompt) setLastApproved(null)
-  }, [pendingPrompt?.id])
-  useEffect(() => {
-    if (!sideBusy || !sideRef.current) return
-    sideRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
-  }, [sideBusy, pendingPrompt?.id, paymentProgress.phase])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
-
-  const onPermissionAllow = useCallback(
-    (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
-      if (!pendingPrompt) return false
-      if (!resolvePermission(pendingPrompt.id, 'allow')) return false
-      if (autoPay) setAutoPaySettings(pendingPrompt.origin, autoPay)
-      const name = appDisplayName(pendingPrompt.origin)
-      // Mutating action requests stay represented after approval. In
-      // particular, a market listing can spend/sign/broadcast for several
-      // seconds; dropping the prompt with no Working state made Approve look
-      // non-blocking and encouraged repeat submissions.
-      if (
-        pendingPrompt.kind === 'action' &&
-        (pendingPrompt.method === 'createAction' ||
-          pendingPrompt.method === 'signAction' ||
-          pendingPrompt.method === 'createMarketListingAdvert' ||
-          pendingPrompt.method === 'createCancelMarketListingAdvert' ||
-          pendingPrompt.method === 'purchaseMarketListing')
-      ) {
-        setLastApproved(pendingPrompt)
-        const market = marketBusyCopy(pendingPrompt.method)
-        setPaymentProgress(
-          'preparing',
-          market?.detail ?? 'Starting…',
-          pendingPrompt.itemOutpoint,
-          market?.label,
-        )
-      } else if (
-        pendingPrompt.kind === 'action' &&
-        getPaymentProgress().detail === 'Starting…'
-      ) {
-        // Recover from a prior View-items approve that left Working stuck.
-        clearPaymentProgress()
-        setLastApproved(null)
-      }
-      playWalletSound('connect')
-      if (pendingPrompt.kind === 'connect') {
-        toastSuccess('Connected', `${name} can use your wallet`)
-      } else {
-        toastSuccess('Approved', pendingPrompt.title || name)
-      }
-      return true
-    },
-    [pendingPrompt],
-  )
-
-  const onPermissionDeny = useCallback(() => {
-    if (!pendingPrompt) return false
-    if (!resolvePermission(pendingPrompt.id, 'deny')) return false
-    playWalletSound('deny')
-    return true
-  }, [pendingPrompt])
   useEffect(() => {
     return startDeviceMesh(profile.identityKey)
   }, [profile.identityKey])
@@ -281,21 +183,6 @@ export function Dashboard({
     // First Identity tab visit used to block ~3s generating this QR on a phone.
     void identityQrDataUrl(profile.identityKey)
   }, [profile.identityKey])
-
-  const hostScanInSide = !isPhoneShell()
-  const [sideScanOpen, setSideScanOpen] = useState(
-    () => hostScanInSide && getSideScanOpen(),
-  )
-  useEffect(() => {
-    if (!hostScanInSide) {
-      setSideScanOpen(false)
-      return
-    }
-    return subscribeSideScan((open) => {
-      setSideScanOpen(open)
-      if (!open) releaseWarmedQrCamera()
-    })
-  }, [hostScanInSide])
 
   useEffect(() => {
     void refreshUsdPerBsv()
@@ -846,57 +733,7 @@ export function Dashboard({
         />
       </div>
 
-      <aside
-        ref={sideRef}
-        className="dashboard-side"
-        data-aeon-scope="dashboard-side"
-        data-aeon-state={sideBusy ? 'permission' : 'idle'}
-      >
-        {sideApproval && pendingPrompt ? (
-          <section
-            className="panel permission-side-panel"
-            aria-label="Permission request"
-          >
-            <PermissionRequestPanel
-              pending={pendingPrompt}
-              onAllow={onPermissionAllow}
-              onDeny={onPermissionDeny}
-              actions="inline"
-            />
-          </section>
-        ) : sideBusy ? (
-          <section
-            className="panel permission-side-panel permission-side-panel--processing"
-            aria-label={paymentProgress.label || 'Working'}
-            aria-busy="true"
-          >
-            <div className="send-spinner" aria-hidden />
-            <p className="send-status-title">
-              {paymentProgress.label || 'Working…'}
-            </p>
-            <p className="send-status-sub">
-              {paymentProgress.detail ||
-                (lastApproved
-                  ? `${lastApproved.title} — ${appDisplayName(lastApproved.origin)}`
-                  : 'Finishing the approved request.')}
-            </p>
-            {lastApproved?.itemOutpoint || lastApproved?.tokenId || lastApproved?.itemName ? (
-              <PermissionItemPreview
-                outpoint={lastApproved.itemOutpoint}
-                tokenId={lastApproved.tokenId}
-                itemName={lastApproved.itemName}
-                itemImageUrl={lastApproved.itemImageUrl}
-                previewKind={lastApproved.previewKind}
-              />
-            ) : null}
-          </section>
-        ) : (
-          <>
-            {sideScanOpen ? <ScanPanel placement="side" /> : <WhatIsBsvPanel />}
-            <RecentActivityPanel chain={profile.chain} />
-          </>
-        )}
-      </aside>
+      <DashboardSideColumn profile={profile} />
     </section>
   )
 }

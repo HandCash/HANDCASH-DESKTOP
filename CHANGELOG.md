@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.36] - 2026-08-31
+
+### Fixed
+
+- **Input lag** — isolate the desktop side column (permissions, payment progress, activity) so progress ticks no longer re-render `WalletNav` and mounted tabs; statechart Mermaid pan updates the DOM imperatively during drag; idle-lock listeners depend on `ready` only; `WalletNav` is memoized.
+- **Unconfirmed spend chaining** — `promoteSpendableChange` runs at exclusive-spend entry and inside `assertSendableBalance`; the gate fails closed on confirmed selectable rows instead of passing on display credit alone; restore treats `sats > 1` outputs as change.
+- **Insufficient funds copy** — when pending change covers the amount, explain that the wallet chains unconfirmed change automatically instead of "still confirming."
+
 ## [1.3.35] - 2026-08-31
 
 ### Fixed

@@ -1,4 +1,5 @@
 import {
+  memo,
   startTransition,
   useCallback,
   useEffect,
@@ -112,7 +113,7 @@ function sectionLabel(section: NavSection): string {
   return SECTIONS.find((s) => s.value === section)?.label ?? section
 }
 
-export function WalletNav({
+export const WalletNav = memo(function WalletNav({
   profile,
   apps,
   balanceSats,
@@ -583,4 +584,4 @@ export function WalletNav({
       </div>
     </section>
   )
-}
+})

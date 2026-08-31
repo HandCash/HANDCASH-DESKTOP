@@ -15,17 +15,32 @@ import { acquireSpendLease } from './spendLease'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
+/** Rebuild script-less change rows and mark live pending change spendable for chaining. */
+async function promoteSpendableChange(): Promise<number> {
+  let restored = 0
+  try {
+    restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+    const { sweepChangeScripts } = await import('./changeScriptFate')
+    const sweep = await sweepChangeScripts({ fromChain: false })
+    if (sweep.healed > 0) {
+      restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+    }
+  } catch (err) {
+    console.warn('[spend-guard] promote change skipped', err)
+  }
+  if (restored > 0) {
+    console.info(`[spend-guard] promoted ${restored} change output(s) for spend chaining`)
+  }
+  return restored
+}
+
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
 ): Promise<T> {
   return runExclusiveSpendCoordinated(async () => {
-    try {
-      await restoreLiveSpendableOutputs({ forSpendChain: true })
-    } catch (err) {
-      console.warn('[spend-guard] chain restore skipped', err)
-    }
+    await promoteSpendableChange()
     return fn()
   }, acquireSpendLease, onSpendRegion)
 }
@@ -78,31 +93,34 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   let confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 
-  // Display balance already credits pending change; createAction only selects
-  // `spendable: true` rows. Promote live change inside the spend region so
-  // back-to-back sends/burns chain on unconfirmed fee change without polling.
-  try {
-    await restoreLiveSpendableOutputs({ forSpendChain: true })
-    confirmed = await readConfirmedSpendable(active)
-    if (satoshis <= confirmed) return confirmed
-  } catch (err) {
-    console.warn('[spend-guard] live change restore skipped', err)
-  }
+  // Display balance credits pending change; createAction only selects spendable
+  // toolbox rows. Promote live change — never pass the gate on credit alone.
+  await promoteSpendableChange()
+  confirmed = await readConfirmedSpendable(active)
+  if (satoshis <= confirmed) return confirmed
 
-  let credit = 0
+  let confirming = 0
   try {
     const { unconfirmedChangeSats } = await import('./balanceView')
-    credit = await unconfirmedChangeSats({ needAtLeast: satoshis - confirmed })
+    confirming = await unconfirmedChangeSats()
   } catch (err) {
     console.warn('[spend-guard] unconfirmed change credit skipped', err)
   }
-  const available = confirmed + credit
-  if (satoshis > available) {
+
+  if (confirming > 0 && confirmed + confirming >= satoshis) {
+    const { insufficientFundsMessage } = await import('./insufficientFunds')
     throw new Error(
-      `Insufficient balance (${available} sats available, need ${satoshis}).`,
+      insufficientFundsMessage({
+        confirmedSats: confirmed,
+        confirmingSats: confirming,
+        neededSats: satoshis,
+      }),
     )
   }
-  return available
+
+  throw new Error(
+    `Insufficient balance (${confirmed} sats available, need ${satoshis}).`,
+  )
 }
 
 /**

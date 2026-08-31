@@ -49,7 +49,10 @@ export function insufficientFundsMessage(opts: {
   const needed = Math.max(0, Math.trunc(opts.neededSats))
 
   if (confirming > 0 && confirmed + confirming >= needed) {
-    return `Your funds are still confirming. ${bsv(confirmed)} BSV is spendable now and ${bsv(confirming)} BSV is waiting for confirmation. Try again once it clears.`
+    if (confirmed < needed) {
+      return `Your balance includes change from a recent payment. The wallet chains unconfirmed change automatically — try again. If this keeps happening, open Refresh once.`
+    }
+    return `Not enough spendable BSV right now: ${bsv(confirmed)} selectable, need ${bsv(needed)} plus network fee.`
   }
   return `Not enough spendable BSV: ${bsv(confirmed)} spendable now, need ${bsv(needed)} plus network fee.`
 }

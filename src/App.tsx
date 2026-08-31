@@ -63,10 +63,12 @@ export function App() {
     [send],
   )
 
+  const walletReady = snapshot.matches('ready')
+
   useEffect(() => {
     // Never interrupt a legal spend phase. Once the chart returns to ready, a
     // fresh idle window begins and unattended keys are removed from memory.
-    if (!snapshot.matches('ready')) return
+    if (!walletReady) return
     if (shouldAutoUnlock()) return
     let timer = 0
     let hideTimer = 0
@@ -102,7 +104,7 @@ export function App() {
       for (const event of events) window.removeEventListener(event, arm)
       document.removeEventListener('visibilitychange', onVisibility)
     }
-  }, [snapshot, lockWallet])
+  }, [walletReady, lockWallet])
 
   useEffect(() => {
     let cancelled = false

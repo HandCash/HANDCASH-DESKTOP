@@ -328,13 +328,29 @@ export function MermaidDiagram({ source, title, navigableIds, onNavigateState }:
   const navigateRef = useRef(onNavigateState)
   navigateRef.current = onNavigateState
 
-  const applyView = useCallback((nextZoom: number, nextPan: { x: number; y: number }) => {
-    const z = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
-    zoomRef.current = z
-    panRef.current = nextPan
-    setZoom(z)
-    setPan(nextPan)
+  const paintStageTransform = useCallback((z: number, p: { x: number; y: number }) => {
+    const stage = stageRef.current
+    if (!stage) return
+    stage.style.transform = `translate(${p.x}px, ${p.y}px) scale(${z})`
   }, [])
+
+  const applyView = useCallback(
+    (nextZoom: number, nextPan: { x: number; y: number }, syncReact = true) => {
+      const z = clamp(nextZoom, MIN_ZOOM, MAX_ZOOM)
+      zoomRef.current = z
+      panRef.current = nextPan
+      paintStageTransform(z, nextPan)
+      if (syncReact) {
+        setZoom(z)
+        setPan(nextPan)
+      }
+    },
+    [paintStageTransform],
+  )
+
+  useEffect(() => {
+    paintStageTransform(zoom, pan)
+  }, [zoom, pan, paintStageTransform, svg])
 
   const fitEntire = useCallback(() => {
     const viewport = viewportRef.current
@@ -554,10 +570,14 @@ export function MermaidDiagram({ source, title, navigableIds, onNavigateState }:
       y: Math.round(drag.originY + dy),
     }
     panRef.current = nextPan
-    setPan(nextPan)
+    paintStageTransform(zoomRef.current, nextPan)
   }
 
   const endDrag = (e: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = dragRef.current
+    if (drag?.pointerId === e.pointerId && drag.moved) {
+      setPan({ ...panRef.current })
+    }
     if (dragRef.current?.pointerId === e.pointerId) dragRef.current = null
   }
 
@@ -616,9 +636,6 @@ export function MermaidDiagram({ source, title, navigableIds, onNavigateState }:
           <div
             ref={stageRef}
             className="statechart-mermaid"
-            style={{
-              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-            }}
             dangerouslySetInnerHTML={{ __html: svg }}
           />
         </div>

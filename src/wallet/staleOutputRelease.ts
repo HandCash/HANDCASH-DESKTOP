@@ -779,12 +779,14 @@ export async function restoreLiveSpendableOutputs(opts?: {
             if (rowTxid !== creatorTxid) continue
           }
           const creatorLiveness = txLivenessFromStatus(creator?.status)
+          const sats = Math.max(0, Math.trunc(Number(output.satoshis) || 0))
+          const isChangeOutput = output.change === true || sats > 1
           const localChange =
-            output.change === true &&
+            isChangeOutput &&
             creatorLiveness === 'pending' &&
             spentBy == null
           const settledChange =
-            output.change === true &&
+            isChangeOutput &&
             creatorLiveness === 'settled' &&
             spentBy == null &&
             output.spendable !== true

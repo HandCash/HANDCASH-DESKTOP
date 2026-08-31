@@ -28,15 +28,14 @@ describe('isInsufficientFundsError', () => {
 })
 
 describe('insufficientFundsMessage', () => {
-  it('names the confirming balance when it closes the gap', () => {
+  it('names chainable change when promotion has not caught up yet', () => {
     const message = insufficientFundsMessage({
-      confirmedSats: 0,
-      confirmingSats: 8_228_900,
-      neededSats: 539_816,
+      confirmedSats: 2,
+      confirmingSats: 162_767,
+      neededSats: 50_000,
     })
-    expect(message).toContain('still confirming')
-    expect(message).toContain('0 BSV is spendable now')
-    expect(message).toContain('0.082289 BSV is waiting')
+    expect(message).toContain('chains unconfirmed change')
+    expect(message).not.toContain('still confirming')
   })
 
   it('refuses to promise a wait the balance cannot honour', () => {
@@ -64,11 +63,11 @@ describe('insufficientFundsMessage', () => {
 
   it('never leaks the raw toolbox satoshi arithmetic', () => {
     const message = insufficientFundsMessage({
-      confirmedSats: 0,
-      confirmingSats: 8_228_900,
-      neededSats: 539_816,
+      confirmedSats: 2,
+      confirmingSats: 162_767,
+      neededSats: 50_000,
     })
     expect(message).not.toContain('more satoshis are needed')
-    expect(message).not.toContain('539816')
+    expect(message).not.toContain('50000')
   })
 })
