@@ -52,7 +52,11 @@ import {
   type MarketSettlementWire,
 } from './messageTransport'
 import { durableGetItem, durableSetItem } from './durableStorage'
-import { runExclusiveSpend } from './spendGuard'
+import {
+  describeInsufficientFunds,
+  isInsufficientFundsError,
+} from './insufficientFunds'
+import { runExclusiveSpend, prepareSpendHeal } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
@@ -461,6 +465,26 @@ export async function executeMarketPurchase(
         'BSV-21 settlement requires a 162 amount.',
       )
     }
+    const {
+      abortReservedActionBatches,
+      releaseStuckNosends,
+    } = await import('./actionReview')
+    await releaseStuckNosends(active)
+    await abortReservedActionBatches(active)
+    // Buyer funds seller + fee outputs from spendable BSV; credit unconfirmed change
+    // so createAction can chain when almost all balance is still confirming.
+    const fundingSats = amounts.sellerSats + amounts.feeSats + 100
+    try {
+      await prepareSpendHeal(fundingSats)
+    } catch (err) {
+      if (isInsufficientFundsError(err)) {
+        throw new MarketListingError(
+          'INSUFFICIENT_FUNDS',
+          await describeInsufficientFunds(active.wallet, fundingSats),
+        )
+      }
+      throw err
+    }
     const listingMeta = listing as MarketListingAdvert & {
       name?: string | null
       sym?: string | null
@@ -483,7 +507,9 @@ export async function executeMarketPurchase(
       throw new Error('Market item and offer token must come from the same listing transaction')
     }
     const inputBeef = (await getBeefForTxidCached(active, itemTxid!, { needProof: true })).toBinary()
-    const created = await active.wallet.createAction({
+    let created: Awaited<ReturnType<typeof active.wallet.createAction>>
+    try {
+      created = await active.wallet.createAction({
       description: 'Buy market collectable',
       labels: [
         'market-v3',
@@ -537,6 +563,15 @@ export async function executeMarketPurchase(
         trustSelf: 'known',
       },
     })
+    } catch (err) {
+      if (isInsufficientFundsError(err)) {
+        throw new MarketListingError(
+          'INSUFFICIENT_FUNDS',
+          await describeInsufficientFunds(active.wallet, fundingSats),
+        )
+      }
+      throw err
+    }
     const signable = created.signableTransaction
     if (!signable)
       throw new Error('Market purchase did not return a signable transaction')

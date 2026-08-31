@@ -1,7 +1,10 @@
 import { useEffect, useState } from 'react'
 import { DeferredImage } from './DeferredImage'
-import { SettingsControlRow, SettingsSection } from './settings'
-import { listIndexExpansions, removeIndexExpansion } from '../wallet/indexExpansion'
+import {
+  listIndexPacksForOrigin,
+  removeIndexExpansion,
+} from '../wallet/indexExpansion'
+import { subscribeIndexExpansionPacks } from '../wallet/indexExpansionStore'
 import { playWalletSound } from '../wallet/soundService'
 
 function formatBytes(n: number): string {
@@ -10,15 +13,15 @@ function formatBytes(n: number): string {
   return `${(n / (1024 * 1024)).toFixed(1)} MB`
 }
 
-export function IndexExpansionsPanel() {
-  const [packs, setPacks] = useState(() => listIndexExpansions().packs)
+/** Catalog packs installed for one connected app — lives under App details, not Settings. */
+export function AppCatalogPacksPanel({ origin }: { origin: string }) {
+  const [packs, setPacks] = useState(() => listIndexPacksForOrigin(origin))
 
   useEffect(() => {
-    const id = window.setInterval(() => {
-      setPacks(listIndexExpansions().packs)
-    }, 2000)
-    return () => window.clearInterval(id)
-  }, [])
+    return subscribeIndexExpansionPacks(() => {
+      setPacks(listIndexPacksForOrigin(origin))
+    })
+  }, [origin])
 
   const onRemove = (packId: string, name: string) => {
     if (!window.confirm(`Remove cached catalog "${name}"? Held collectables are not affected.`)) {
@@ -26,15 +29,16 @@ export function IndexExpansionsPanel() {
     }
     playWalletSound('soft')
     removeIndexExpansion({ packId })
-    setPacks(listIndexExpansions().packs)
+    setPacks(listIndexPacksForOrigin(origin))
   }
 
   return (
-    <SettingsSection title="Catalog packs" part="index-expansions">
+    <div className="app-details-section" data-aeon-part="index-expansions">
+      <p className="scope-list-label">Catalog packs</p>
       {packs.length === 0 ? (
         <p className="settings-row-desc">
-          No catalog packs installed. Apps can request BRC-230 index expansion installs;
-          cached rows are display-only, not custody.
+          No catalog packs for this app yet. When the app requests a BRC-230 index
+          expansion install, cached rows appear here — display-only, not custody.
         </p>
       ) : (
         <ul className="index-expansion-list">
@@ -66,12 +70,6 @@ export function IndexExpansionsPanel() {
           ))}
         </ul>
       )}
-      <SettingsControlRow
-        label="Developer guide"
-        description="docs/bsva/brcs/wallet/index-expansion-guide.md (BRC-230)"
-      >
-        <span className="settings-row-desc mono">index-expansion-guide.md</span>
-      </SettingsControlRow>
-    </SettingsSection>
+    </div>
   )
 }

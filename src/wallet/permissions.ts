@@ -228,6 +228,17 @@ function writeConnected(apps: ConnectedApp[]): void {
   emitConnected()
 }
 
+function dispatchWalletUiEvent(
+  type: 'handcash:permission-request' | 'handcash:wallet-connected' | 'handcash:permission-dismissed',
+  detail: Record<string, unknown>,
+): void {
+  try {
+    document.dispatchEvent(new CustomEvent(type, { detail }))
+  } catch {
+    // Non-DOM environments (tests) — ignore.
+  }
+}
+
 function notify(): void {
   const pending = current?.request ?? null
   for (const cb of promptListeners) cb(pending)
@@ -258,19 +269,14 @@ function pumpQueue(): void {
   // Mobile shell listens to bring the app forward + show a heads-up if needed.
   const prompt = current?.request
   if (prompt) {
-    try {
-      document.dispatchEvent(
-        new CustomEvent('handcash:permission-request', {
-          detail: {
-            kind: prompt.kind,
-            origin: prompt.origin,
-            title: prompt.kind === 'action' ? prompt.title : 'Connect request',
-          },
-        }),
-      )
-    } catch {
-      // Non-DOM environments (tests) — ignore.
-    }
+    const appName = appDisplayName(prompt.origin)
+    dispatchWalletUiEvent('handcash:permission-request', {
+      kind: prompt.kind,
+      origin: prompt.origin,
+      appName,
+      title:
+        prompt.kind === 'action' ? prompt.title : `Connect to ${appName}`,
+    })
   }
 }
 
@@ -607,6 +613,15 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       note: prompt.title,
     })
   })
+  const appName = appDisplayName(prompt.origin)
+  if (prompt.kind === 'connect' && decision === 'allow') {
+    dispatchWalletUiEvent('handcash:wallet-connected', {
+      origin: prompt.origin,
+      appName,
+    })
+  } else {
+    dispatchWalletUiEvent('handcash:permission-dismissed', {})
+  }
   resolve(decision)
   pumpQueue()
   return true
@@ -624,6 +639,7 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
   }
   for (const item of waiting) item.resolve('deny')
   syncPermissionSpendPriority()
+  dispatchWalletUiEvent('handcash:permission-dismissed', {})
   notify()
 }
 

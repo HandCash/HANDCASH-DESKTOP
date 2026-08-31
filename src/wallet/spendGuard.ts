@@ -20,7 +20,14 @@ export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
 ): Promise<T> {
-  return runExclusiveSpendCoordinated(fn, acquireSpendLease, onSpendRegion)
+  return runExclusiveSpendCoordinated(async () => {
+    try {
+      await restoreLiveSpendableOutputs({ forSpendChain: true })
+    } catch (err) {
+      console.warn('[spend-guard] chain restore skipped', err)
+    }
+    return fn()
+  }, acquireSpendLease, onSpendRegion)
 }
 
 /**

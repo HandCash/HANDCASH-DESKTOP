@@ -33,6 +33,7 @@ import {
 } from '../wallet/autoPay'
 import { openPermissionDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
+import { AppCatalogPacksPanel } from './IndexExpansionsPanel'
 
 type Props = {
   app: ConnectedApp
@@ -173,6 +174,8 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
               </div>
             </dl>
           </div>
+
+          <AppCatalogPacksPanel origin={app.origin} />
 
           <div className="actions app-details-actions">
             {home ? (

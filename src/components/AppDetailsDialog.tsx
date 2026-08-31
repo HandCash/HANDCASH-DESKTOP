@@ -22,6 +22,7 @@ import {
   subscribeAutoPay,
   type AutoPaySettings,
 } from '../wallet/autoPay'
+import { AppCatalogPacksPanel } from './IndexExpansionsPanel'
 
 type Props = {
   app: ConnectedApp | null
@@ -123,6 +124,8 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
               </div>
             </dl>
           </div>
+
+          <AppCatalogPacksPanel origin={app.origin} />
 
           <div className="actions qr-actions app-details-actions">
             {home ? (

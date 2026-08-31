@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.35] - 2026-08-31
+
+### Fixed
+
+- **Catalog packs placement** — BRC-230 index packs live under each connected app's details (manage/remove per app), not in Settings.
+- **Settings input lag** — removed the global 2s catalog poll from Settings; pack list updates via event subscription only when app details are open.
+- **Market purchase funds** — buyer settlement runs `prepareSpendHeal` and promotes unconfirmed change before `createAction`, with the same insufficient-funds copy as Send when toolbox cannot fund the listing price.
+- **Spend queue** — every exclusive spend restores live change at region entry so queued market/burn/send txs can chain confirming balance.
+- **Connect notifications (Mobile)** — background connect shows **Connect to {app}**; after approval, **Wallet connected to {app}** replaces the stale request notification.
+
 ## [1.3.34] - 2026-08-31
 
 ### Fixed
