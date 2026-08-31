@@ -8,10 +8,26 @@ import {
   INDEX_ENTRIES_STORAGE_KEY,
   INDEX_EXPANSION_STORAGE_KEY,
   INDEX_STORAGE_BASKET,
+  resolveIndexCatalogContext,
 } from './indexExpansionTypes'
 
 type PackMap = Record<string, IndexPackRecord>
 type EntryMap = Record<string, Record<string, IndexEntryRecord>>
+
+type PackListener = () => void
+const packListeners = new Set<PackListener>()
+
+function emitPackChange(): void {
+  for (const listener of packListeners) listener()
+}
+
+function normalizePackRecord(pack: IndexPackRecord): IndexPackRecord {
+  const catalogContext =
+    pack.catalogContext ??
+    (pack.manifest ? resolveIndexCatalogContext(pack.manifest) : 'generic')
+  if (pack.catalogContext === catalogContext) return pack
+  return { ...pack, catalogContext }
+}
 
 function readPacks(): PackMap {
   try {
@@ -46,19 +62,29 @@ function writeEntries(entries: EntryMap): void {
 export function listStoredIndexPacks(): IndexPackRecord[] {
   return Object.values(readPacks())
     .filter((p) => p.status !== 'removed')
+    .map(normalizePackRecord)
     .sort((a, b) => b.installedAt - a.installedAt)
 }
 
 export function getStoredIndexPack(packId: string): IndexPackRecord | null {
   const pack = readPacks()[packId]
   if (!pack || pack.status === 'removed') return null
-  return pack
+  return normalizePackRecord(pack)
+}
+
+export function subscribeIndexExpansionPacks(listener: PackListener): () => void {
+  packListeners.add(listener)
+  listener()
+  return () => {
+    packListeners.delete(listener)
+  }
 }
 
 export function upsertStoredIndexPack(pack: IndexPackRecord): void {
   const packs = readPacks()
-  packs[pack.packId] = pack
+  packs[pack.packId] = normalizePackRecord(pack)
   writePacks(packs)
+  emitPackChange()
 }
 
 export function removeStoredIndexPack(packId: string): void {
@@ -70,6 +96,7 @@ export function removeStoredIndexPack(packId: string): void {
   const entries = readEntries()
   delete entries[packId]
   writeEntries(entries)
+  emitPackChange()
 }
 
 export function listStoredIndexEntries(packId: string): IndexEntryRecord[] {

@@ -124,6 +124,7 @@ export function isOutpointSending(outpoint: string): boolean {
 export function inFlightVerb(outpoint: string): string | null {
   if (!isOutpointSending(outpoint)) return null
   const label = (progress.label || 'Sending').replace(/…/g, '').trim()
+  if (/^burn/i.test(label)) return 'Burning'
   if (/^list/i.test(label)) return 'Listing'
   if (/^cancel/i.test(label)) return 'Cancelling'
   if (/^buy/i.test(label)) return 'Buying'

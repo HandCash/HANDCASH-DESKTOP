@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.33] - 2026-08-31
+
+### Fixed
+
+- **Chained collectable burns** — back-to-back burns reuse only unspent fee change from the immediately prior burn tx (`creatorTxid`-scoped restore); never re-enable outputs already promised elsewhere.
+- **Burn progress** — collectable burns surface **Burning…** in payment/activity progress while the destroy tx is building.
+- **Insufficient funds copy** — burn failures explain the confirmed vs still-confirming balance split instead of raw toolbox text.
+
+### Added
+
+- **Index pack catalog context** — manifests and installed packs carry `catalogContext` (1Sat ordinal, BSV-21, …) and sync reports download progress on the wallet progress bus.
+
 ## [1.3.32] - 2026-08-31
 
 ### Added

@@ -1,5 +1,73 @@
 /** BRC-230 index expansion pack types (grade-C overlay catalog mirrors). */
 
+/** What the cached overlay index represents — drives Activity copy and NFT verify hints. */
+export type IndexCatalogContext =
+  | 'onesat-ordinal'
+  | 'bsv21-token'
+  | 'social-feed'
+  | 'generic'
+
+const INDEX_CATALOG_CONTEXTS = new Set<IndexCatalogContext>([
+  'onesat-ordinal',
+  'bsv21-token',
+  'social-feed',
+  'generic',
+])
+
+export function isIndexCatalogContext(value: string): value is IndexCatalogContext {
+  return INDEX_CATALOG_CONTEXTS.has(value as IndexCatalogContext)
+}
+
+/** Resolve explicit manifest field or infer from topic / lookup service / scope. */
+export function resolveIndexCatalogContext(
+  manifest: Pick<
+    IndexExpansionManifest,
+    'catalogContext' | 'topic' | 'lookupService' | 'scope'
+  >,
+): IndexCatalogContext {
+  const explicit = manifest.catalogContext
+  if (explicit && isIndexCatalogContext(explicit)) return explicit
+  const topic = manifest.topic.toLowerCase()
+  const lookup = manifest.lookupService.toLowerCase()
+  if (
+    topic.includes('1sat') ||
+    lookup.includes('1sat') ||
+    topic.includes('ordinal') ||
+    lookup.includes('ordinal') ||
+    topic.includes('nft')
+  ) {
+    return 'onesat-ordinal'
+  }
+  if (
+    topic.includes('bsv21') ||
+    lookup.includes('bsv21') ||
+    topic.includes('token') ||
+    lookup.includes('token')
+  ) {
+    return 'bsv21-token'
+  }
+  if (manifest.scope.kind === 'feed') return 'social-feed'
+  return 'generic'
+}
+
+export function indexCatalogContextLabel(context: IndexCatalogContext): string {
+  switch (context) {
+    case 'onesat-ordinal':
+      return '1Sat ordinal index'
+    case 'bsv21-token':
+      return 'BSV-21 token index'
+    case 'social-feed':
+      return 'Feed index'
+    default:
+      return 'Catalog index'
+  }
+}
+
+/** True when pack rows describe NFT / ordinal listings (not fungible or social). */
+export function isNftIndexCatalog(context: IndexCatalogContext): boolean {
+  return context === 'onesat-ordinal'
+}
+
 export type OverlayDiscoveryMode = 'auto' | 'slap' | 'url'
 
 export type IndexExpansionDiscovery = {
@@ -37,6 +105,8 @@ export type IndexExpansionManifest = {
     mode?: 'manual' | 'onOpen' | 'interval'
     intervalSeconds?: number
   }
+  /** What this overlay mirror indexes — e.g. onesat-ordinal for NFT listing packs. */
+  catalogContext?: IndexCatalogContext
   [key: string]: unknown
 }
 
@@ -60,6 +130,7 @@ export type IndexPackRecord = {
   lastSyncedAt?: number
   installedAt: number
   installedByOrigin?: string
+  catalogContext: IndexCatalogContext
   lastError?: string
 }
 
@@ -108,4 +179,5 @@ export const HANDCASH_MARKET_CATALOG_MANIFEST: IndexExpansionManifest = {
     maxBeefBytes: 1_048_576,
   },
   updatePolicy: { mode: 'onOpen', intervalSeconds: 0 },
+  catalogContext: 'onesat-ordinal',
 }

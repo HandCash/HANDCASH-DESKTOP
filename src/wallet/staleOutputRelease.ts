@@ -694,8 +694,14 @@ async function loadUnspendableChange(
  */
 export async function restoreLiveSpendableOutputs(opts?: {
   onlyLiveChange?: boolean
+  /**
+   * When set, only re-enable unspent change created by this local txid.
+   * Used to chain burn fees without touching any other pending output.
+   */
+  creatorTxid?: string
 }): Promise<number> {
-  void opts
+  void opts?.onlyLiveChange
+  const creatorTxid = opts?.creatorTxid?.trim().toLowerCase() || null
   if (shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   if (!active) return 0
@@ -757,6 +763,10 @@ export async function restoreLiveSpendableOutputs(opts?: {
           const creatorId = positiveId(output.transactionId)
           const creator =
             creatorId != null ? await loadTxRow(sp, creatorId, txCache) : null
+          if (creatorTxid) {
+            const rowTxid = txidFromRow(creator ?? {})?.toLowerCase()
+            if (rowTxid !== creatorTxid) continue
+          }
           const creatorLiveness = txLivenessFromStatus(creator?.status)
           const localChange =
             output.change === true &&

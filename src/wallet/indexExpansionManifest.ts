@@ -1,4 +1,5 @@
-import type { IndexExpansionManifest } from './indexExpansionTypes'
+import type { IndexCatalogContext, IndexExpansionManifest } from './indexExpansionTypes'
+import { isIndexCatalogContext } from './indexExpansionTypes'
 
 const PACK_ID_RE = /^[a-z0-9][a-z0-9.-]*$/
 const TOPIC_RE = /^tm_[a-z0-9_]+$/
@@ -193,6 +194,17 @@ export function validateIndexExpansionManifest(raw: unknown): IndexExpansionMani
     }
   }
 
+  const catalogContextRaw = readString(body, 'catalogContext')
+  let catalogContext: IndexCatalogContext | undefined
+  if (catalogContextRaw) {
+    if (!isIndexCatalogContext(catalogContextRaw)) {
+      throw new IndexManifestError(
+        'catalogContext must be onesat-ordinal, bsv21-token, social-feed, or generic',
+      )
+    }
+    catalogContext = catalogContextRaw
+  }
+
   const manifest: IndexExpansionManifest = {
     v: 1,
     packId,
@@ -208,6 +220,7 @@ export function validateIndexExpansionManifest(raw: unknown): IndexExpansionMani
     ...(discovery ? { discovery } : {}),
     ...(preview ? { preview } : {}),
     ...(updatePolicy ? { updatePolicy } : {}),
+    ...(catalogContext ? { catalogContext } : {}),
   }
 
   for (const [key, value] of Object.entries(body)) {

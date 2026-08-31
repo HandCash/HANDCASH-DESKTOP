@@ -22,6 +22,15 @@ import {
   upsertStoredIndexPack,
 } from './indexExpansionStore'
 import type { IndexExpansionManifest, IndexPackRecord } from './indexExpansionTypes'
+import {
+  indexCatalogContextLabel,
+  resolveIndexCatalogContext,
+} from './indexExpansionTypes'
+import {
+  finishWalletProgress,
+  startWalletProgress,
+  updateWalletProgress,
+} from './walletProgress'
 
 function newActivityId(): string {
   return globalThis.crypto.randomUUID()
@@ -60,6 +69,8 @@ export type OverlayLookupArgs = {
 const syncInFlight = new Map<string, Promise<void>>()
 
 function packSummary(pack: IndexPackRecord) {
+  const catalogContext =
+    pack.catalogContext ?? resolveIndexCatalogContext(pack.manifest)
   return {
     packId: pack.packId,
     name: pack.name,
@@ -69,6 +80,9 @@ function packSummary(pack: IndexPackRecord) {
     bytesUsed: pack.bytesUsed,
     lastSyncedAt: pack.lastSyncedAt,
     partial: pack.partial,
+    installedByOrigin: pack.installedByOrigin,
+    catalogContext,
+    catalogContextLabel: indexCatalogContextLabel(catalogContext),
   }
 }
 
@@ -89,10 +103,13 @@ async function resolveManifest(
 }
 
 function previewItemFromManifest(manifest: IndexExpansionManifest) {
+  const catalogContext = resolveIndexCatalogContext(manifest)
   return {
     name: manifest.name,
     origin: manifest.packId,
     imageUrl: manifest.iconUrl,
+    app: indexCatalogContextLabel(catalogContext),
+    indexCatalogContext: catalogContext,
   }
 }
 
@@ -118,12 +135,23 @@ async function runPackSync(args: {
 
   activityNote(`Syncing ${existing.name}…`, 'pending')
 
+  const catalogContext =
+    existing.catalogContext ?? resolveIndexCatalogContext(existing.manifest)
+
+  startWalletProgress({
+    kind: 'index-expansion',
+    phase: 'fetching',
+    message: `Downloading ${existing.name} (${indexCatalogContextLabel(catalogContext)})…`,
+  })
+
   upsertStoredIndexPack({
     ...existing,
     status: 'installing',
+    catalogContext,
   })
 
   try {
+    updateWalletProgress({ phase: 'fetching', message: `Fetching overlay for ${existing.name}…` })
     const lookup = await fetchOverlayLookup({
       manifest: existing.manifest,
       fetchImpl: args.fetchImpl,
@@ -134,6 +162,16 @@ async function runPackSync(args: {
       outputs: lookup.outputs,
       budget: existing.manifest.budget,
       beefBytesUsed: 0,
+    })
+    const rowTotal = mapped.rows.length
+    updateWalletProgress({
+      phase: 'caching',
+      current: 0,
+      total: rowTotal > 0 ? rowTotal : null,
+      message:
+        rowTotal > 0
+          ? `Caching ${rowTotal.toLocaleString()} entries for ${existing.name}…`
+          : `Caching ${existing.name}…`,
     })
     let partial = lookup.truncated || mapped.partial
     let entryCount: number
@@ -163,14 +201,24 @@ async function runPackSync(args: {
       bytesUsed,
       lastSyncedAt: Math.floor(Date.now() / 1000),
       lastError: undefined,
+      catalogContext,
     }
     upsertStoredIndexPack(updated)
+    updateWalletProgress({
+      current: entryCount,
+      total: rowTotal > 0 ? rowTotal : entryCount || null,
+    })
     activityNote(
       partial
         ? `${entryCount} entries cached (partial — budget reached)${hostNote}`
         : `${entryCount} entries cached${hostNote}`,
       'complete',
     )
+    finishWalletProgress('done', {
+      message: partial
+        ? `${entryCount.toLocaleString()} entries cached (partial)`
+        : `${entryCount.toLocaleString()} entries cached`,
+    })
     return updated
   } catch (err) {
     const reason = err instanceof Error ? err.message : String(err)
@@ -178,8 +226,10 @@ async function runPackSync(args: {
       ...existing,
       status: 'failed',
       lastError: reason,
+      catalogContext,
     }
     upsertStoredIndexPack(failed)
+    finishWalletProgress('failed', { message: reason })
     recordWalletEvent({
       origin: args.origin,
       method: 'index-sync',
@@ -200,6 +250,7 @@ export async function installIndexExpansion(args: {
   const manifest = await resolveManifest(args.body, args.fetchImpl)
   const activityId = newActivityId()
   const now = Math.floor(Date.now() / 1000)
+  const catalogContext = resolveIndexCatalogContext(manifest)
 
   recordWalletEvent({
     origin: args.origin,
@@ -221,6 +272,7 @@ export async function installIndexExpansion(args: {
     bytesUsed: 0,
     installedAt: now,
     installedByOrigin: normalizeOrigin(args.origin) || undefined,
+    catalogContext,
   }
   upsertStoredIndexPack(pack)
 
@@ -256,6 +308,15 @@ export async function installIndexExpansion(args: {
 
 export function listIndexExpansions(): { packs: ReturnType<typeof packSummary>[] } {
   return { packs: listStoredIndexPacks().map(packSummary) }
+}
+
+/** Installed catalog packs requested by one connected app origin. */
+export function listIndexPacksForOrigin(origin: string): ReturnType<typeof packSummary>[] {
+  const key = normalizeOrigin(origin)
+  if (!key) return []
+  return listStoredIndexPacks()
+    .filter((pack) => pack.installedByOrigin === key)
+    .map(packSummary)
 }
 
 export function removeIndexExpansion(args: { packId: string }): { removed: boolean } {

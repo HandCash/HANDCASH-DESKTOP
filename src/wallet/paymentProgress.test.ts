@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   clearPaymentProgress,
   getPaymentProgress,
+  inFlightVerb,
   isOutpointSending,
   marketBusyCopy,
   setPaymentProgress,
@@ -57,5 +58,11 @@ describe('paymentProgress', () => {
     })
     expect(marketBusyCopy('purchaseMarketListing')?.label).toBe('Buying…')
     expect(marketBusyCopy('createAction')).toBeNull()
+  })
+
+  it('reports Burning for collectable burns in flight', () => {
+    setPaymentProgress('building', 'Destroying on chain', 'abc.0', 'Burning…')
+    expect(inFlightVerb('abc_0')).toBe('Burning')
+    clearPaymentProgress()
   })
 })
