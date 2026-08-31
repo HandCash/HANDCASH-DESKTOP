@@ -8,7 +8,6 @@
     "v",
     "packId",
     "name",
-    "overlayBaseUrl",
     "topic",
     "lookupService",
     "scope",
@@ -27,6 +26,20 @@
     "iconUrl": { "type": "string", "format": "uri" },
     "curatorIdentityKey": { "type": "string", "pattern": "^(02|03)[0-9a-f]{64}$" },
     "overlayBaseUrl": { "type": "string", "format": "uri" },
+    "discovery": {
+      "type": "object",
+      "properties": {
+        "mode": { "enum": ["auto", "slap", "url"] },
+        "hosts": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        },
+        "slapTrackers": {
+          "type": "array",
+          "items": { "type": "string", "format": "uri" }
+        }
+      }
+    },
     "topic": { "type": "string", "pattern": "^tm_[a-z0-9_]+$" },
     "lookupService": { "type": "string", "pattern": "^ls_[a-z0-9_]+$" },
     "scope": {

@@ -23,6 +23,7 @@ export const ONE_SAT_APP_CAPABILITIES = Object.freeze({
       'removeIndexExpansion',
       'syncIndexExpansion',
       'listIndexExpansionEntries',
+      'overlayLookup',
     ]),
   }),
   provenanceVerify: Object.freeze(['v2']),

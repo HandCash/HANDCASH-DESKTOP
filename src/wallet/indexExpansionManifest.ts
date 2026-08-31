@@ -92,14 +92,46 @@ export function validateIndexExpansionManifest(raw: unknown): IndexExpansionMani
     throw new IndexManifestError('curatorIdentityKey must be a compressed secp256k1 pubkey')
   }
 
-  const overlayBaseUrl = readString(body, 'overlayBaseUrl', { required: true })!
-  try {
-    const url = new URL(overlayBaseUrl)
-    if (url.protocol !== 'https:') {
-      throw new IndexManifestError('overlayBaseUrl must use HTTPS')
+  const discoveryBody = asRecord(body.discovery)
+  let discovery: IndexExpansionManifest['discovery']
+  if (discoveryBody) {
+    const mode = readString(discoveryBody, 'mode')
+    if (mode && mode !== 'auto' && mode !== 'slap' && mode !== 'url') {
+      throw new IndexManifestError('discovery.mode must be auto, slap, or url')
     }
-  } catch {
-    throw new IndexManifestError('overlayBaseUrl must be a valid HTTPS URL')
+    const hosts = Array.isArray(discoveryBody.hosts)
+      ? discoveryBody.hosts.filter((h): h is string => typeof h === 'string' && h.trim().length > 0)
+      : undefined
+    const slapTrackers = Array.isArray(discoveryBody.slapTrackers)
+      ? discoveryBody.slapTrackers.filter(
+          (h): h is string => typeof h === 'string' && h.trim().length > 0,
+        )
+      : undefined
+    discovery = {
+      ...(mode ? { mode: mode as 'auto' | 'slap' | 'url' } : {}),
+      ...(hosts?.length ? { hosts } : {}),
+      ...(slapTrackers?.length ? { slapTrackers } : {}),
+    }
+  }
+  const discoveryMode = discovery?.mode ?? 'auto'
+  const overlayBaseUrlRaw = readString(body, 'overlayBaseUrl', {
+    required: discoveryMode === 'url',
+  })
+  if (!overlayBaseUrlRaw && discoveryMode === 'url') {
+    throw new IndexManifestError('overlayBaseUrl is required when discovery.mode is url')
+  }
+  let overlayBaseUrl: string | undefined
+  if (overlayBaseUrlRaw) {
+    try {
+      const url = new URL(overlayBaseUrlRaw)
+      if (url.protocol !== 'https:') {
+        throw new IndexManifestError('overlayBaseUrl must use HTTPS')
+      }
+      overlayBaseUrl = overlayBaseUrlRaw.replace(/\/+$/, '')
+    } catch (err) {
+      if (err instanceof IndexManifestError) throw err
+      throw new IndexManifestError('overlayBaseUrl must be a valid HTTPS URL')
+    }
   }
 
   const topic = readString(body, 'topic', { required: true })!
@@ -165,14 +197,15 @@ export function validateIndexExpansionManifest(raw: unknown): IndexExpansionMani
     v: 1,
     packId,
     name,
-    overlayBaseUrl: overlayBaseUrl.replace(/\/+$/, ''),
     topic,
     lookupService,
     scope: { kind: kind as IndexExpansionManifest['scope']['kind'], query },
     budget: { maxEntries, maxBytes, maxBeefBytes },
+    ...(overlayBaseUrl ? { overlayBaseUrl } : {}),
     ...(description ? { description } : {}),
     ...(iconUrl ? { iconUrl } : {}),
     ...(curatorIdentityKey ? { curatorIdentityKey } : {}),
+    ...(discovery ? { discovery } : {}),
     ...(preview ? { preview } : {}),
     ...(updatePolicy ? { updatePolicy } : {}),
   }

@@ -17,6 +17,7 @@ import {
   requestIndexInstallApproval,
   requestIndexReadApproval,
   requestIndexSyncApproval,
+  requestOverlayLookupApproval,
   filterIndexOutputsForOrigin,
 } from './permissions'
 import {
@@ -40,6 +41,7 @@ import {
   listIndexExpansionEntries,
   listIndexExpansions,
   listIndexBasketOutputs,
+  overlayLookup,
   removeIndexExpansion,
   syncIndexExpansion,
 } from './indexExpansion'
@@ -786,7 +788,13 @@ async function dispatchWalletMethod(
         origin: originator,
       })
     case 'listIndexExpansionEntries':
-      return listIndexExpansionEntries((args ?? {}) as Parameters<typeof listIndexExpansionEntries>[0])
+      return listIndexExpansionEntries(
+        (args ?? {}) as Parameters<typeof listIndexExpansionEntries>[0],
+      )
+    case 'overlayLookup':
+      return overlayLookup({
+        body: (args ?? {}) as Parameters<typeof overlayLookup>[0]['body'],
+      })
     case 'getVersion':
       return wallet.getVersion({})
     case 'getNetwork':
@@ -1071,10 +1079,11 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   }
 
   if (method === 'listIndexExpansionEntries') {
-    const packId =
+    const body =
       args && typeof args === 'object' && !Array.isArray(args)
-        ? String((args as { packId?: unknown }).packId ?? '').trim()
-        : ''
+        ? (args as { packId?: unknown; live?: unknown })
+        : {}
+    const packId = String(body.packId ?? '').trim()
     const readDecision = await requestIndexReadApproval(originator, packId)
     if (readDecision !== 'allow') {
       return {
@@ -1083,6 +1092,21 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
           status: 'error',
           code: 'INDEX_READ_DENIED',
           description: 'You denied reading this catalog cache.',
+        }),
+      }
+    }
+    await yieldForPermissionProjection()
+  }
+
+  if (method === 'overlayLookup') {
+    const lookupDecision = await requestOverlayLookupApproval(originator, args)
+    if (lookupDecision !== 'allow') {
+      return {
+        status: 403,
+        body: JSON.stringify({
+          status: 'error',
+          code: 'OVERLAY_LOOKUP_DENIED',
+          description: 'You denied live overlay lookup.',
         }),
       }
     }

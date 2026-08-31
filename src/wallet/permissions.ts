@@ -47,7 +47,9 @@ import { marketListingPreviewFromArgs } from './marketListing'
 import {
   indexAccessGranted,
   mergeIndexGrant,
+  mergeOverlayLookupGrant,
   normalizeIndexAccess,
+  overlayLookupAccessGranted,
   type IndexAccess,
 } from './indexAccess'
 import { validateIndexExpansionManifest } from './indexExpansionManifest'
@@ -1689,6 +1691,49 @@ export async function requestIndexReadApproval(
   }).then((decision) => {
     if (decision === 'allow') {
       patchIndexAccess(origin, (cur) => mergeIndexGrant(cur, packId))
+    }
+    return decision
+  })
+}
+
+export async function requestOverlayLookupApproval(
+  origin: string | undefined,
+  args: unknown,
+): Promise<PermissionDecision> {
+  const body = asRecord(args)
+  const packId = typeof body.packId === 'string' ? body.packId.trim() : ''
+  const lookupService =
+    typeof body.lookupService === 'string' ? body.lookupService.trim() : ''
+  if (packId && indexAccessGranted(getIndexAccess(origin), packId)) return 'allow'
+  if (lookupService && overlayLookupAccessGranted(getIndexAccess(origin), lookupService)) {
+    return 'allow'
+  }
+  if (packId) {
+    return requestIndexReadApproval(origin, packId)
+  }
+  if (!lookupService) return 'deny'
+
+  const details = [
+    'Live overlay read — authoritative catalog state, not cached',
+    'Does not grant item send, list, or buy permissions',
+    `Service: ${lookupService}`,
+  ]
+  if (typeof body.overlayBaseUrl === 'string' && body.overlayBaseUrl.trim()) {
+    details.push(`Host hint: ${body.overlayBaseUrl.trim()}`)
+  }
+
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: normalizeOrigin(origin),
+    method: 'overlayLookup',
+    title: 'Query overlay',
+    summary: `Live lookup for ${lookupService}`,
+    details,
+    createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow') {
+      patchIndexAccess(origin, (cur) => mergeOverlayLookupGrant(cur, lookupService))
     }
     return decision
   })

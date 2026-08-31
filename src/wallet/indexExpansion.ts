@@ -1,6 +1,3 @@
-function newActivityId(): string {
-  return globalThis.crypto.randomUUID()
-}
 import { recordWalletEvent } from './appActivity'
 import { normalizeOrigin } from './permissions'
 import {
@@ -10,8 +7,11 @@ import {
 } from './indexExpansionManifest'
 import {
   fetchOverlayLookup,
+  liveOverlayLookup,
   overlayOutputsToIndexEntries,
+  overlayOutputsToListOutputs,
 } from './indexExpansionLookup'
+import { overlayRequestFromManifest } from './overlayClient'
 import {
   getStoredIndexPack,
   listStoredIndexPacks,
@@ -22,6 +22,10 @@ import {
   upsertStoredIndexPack,
 } from './indexExpansionStore'
 import type { IndexExpansionManifest, IndexPackRecord } from './indexExpansionTypes'
+
+function newActivityId(): string {
+  return globalThis.crypto.randomUUID()
+}
 
 export type InstallIndexExpansionArgs = {
   manifest?: IndexExpansionManifest
@@ -38,6 +42,19 @@ export type ListIndexExpansionEntriesArgs = {
   tags?: string[]
   limit?: number
   offset?: number
+  /** When true, query overlay live (SLAP + failover) instead of local cache. */
+  live?: boolean
+}
+
+export type OverlayLookupArgs = {
+  lookupService: string
+  query?: Record<string, unknown>
+  overlayBaseUrl?: string
+  discovery?: 'auto' | 'slap' | 'url'
+  slapTrackers?: string[]
+  extraHosts?: string[]
+  packId?: string
+  maxOutputs?: number
 }
 
 const syncInFlight = new Map<string, Promise<void>>()
@@ -137,6 +154,7 @@ async function runPackSync(args: {
     }
     if (bytesUsed > existing.manifest.budget.maxBytes) partial = true
 
+    const hostNote = lookup.host ? ` via ${lookup.host}` : ''
     const updated: IndexPackRecord = {
       ...existing,
       status: partial ? 'partial' : 'ready',
@@ -149,8 +167,8 @@ async function runPackSync(args: {
     upsertStoredIndexPack(updated)
     activityNote(
       partial
-        ? `${entryCount} entries cached (partial — budget reached)`
-        : `${entryCount} entries cached`,
+        ? `${entryCount} entries cached (partial — budget reached)${hostNote}`
+        : `${entryCount} entries cached${hostNote}`,
       'complete',
     )
     return updated
@@ -281,18 +299,85 @@ export async function syncIndexExpansion(args: {
   return { packId, status: updated?.status ?? 'ready' }
 }
 
-export function listIndexExpansionEntries(args: ListIndexExpansionEntriesArgs) {
+export async function listIndexExpansionEntries(
+  args: ListIndexExpansionEntriesArgs,
+  fetchImpl?: typeof fetch,
+) {
   const packId = args.packId?.trim()
   if (!packId) throw new Error('packId is required')
-  if (!getStoredIndexPack(packId)) {
+  const pack = getStoredIndexPack(packId)
+  if (!pack) {
     return { outputs: [], totalOutputs: 0 }
   }
+
+  if (args.live) {
+    const lookup = await fetchOverlayLookup({
+      manifest: pack.manifest,
+      fetchImpl,
+      maxEntries: args.limit ?? pack.manifest.budget.maxEntries,
+    })
+    const page = overlayOutputsToListOutputs(lookup.outputs, packId)
+    return {
+      ...page,
+      live: true,
+      host: lookup.host,
+      hostsTried: lookup.hostsTried,
+      truncated: lookup.truncated,
+    }
+  }
+
   return queryStoredIndexEntries({
     packId,
     tags: args.tags,
     limit: args.limit,
     offset: args.offset,
   })
+}
+
+/** Live BRC-24 overlay lookup — authoritative read, no local persistence. */
+export async function overlayLookup(args: {
+  body: OverlayLookupArgs
+  fetchImpl?: typeof fetch
+}) {
+  const body = args.body
+  const lookupService = body.lookupService?.trim()
+  if (!lookupService) throw new Error('lookupService is required')
+
+  let req = {
+    lookupService,
+    query: body.query ?? {},
+    overlayBaseUrl: body.overlayBaseUrl,
+    discovery: body.discovery ?? 'auto',
+    slapTrackers: body.slapTrackers,
+    extraHosts: body.extraHosts,
+    maxOutputs: body.maxOutputs,
+  } satisfies OverlayLookupArgs
+
+  if (body.packId) {
+    const pack = getStoredIndexPack(body.packId.trim())
+    if (!pack) throw new Error(`Pack "${body.packId}" is not installed`)
+    const fromManifest = overlayRequestFromManifest(pack.manifest)
+    req = {
+      ...req,
+      lookupService: fromManifest.lookupService,
+      query: body.query ?? fromManifest.query ?? {},
+      overlayBaseUrl: fromManifest.overlayBaseUrl,
+      discovery: fromManifest.discovery ?? 'auto',
+      slapTrackers: fromManifest.slapTrackers,
+      extraHosts: fromManifest.extraHosts,
+    }
+  }
+
+  const result = await liveOverlayLookup(req, args.fetchImpl)
+  const page = overlayOutputsToListOutputs(result.outputs, body.packId?.trim())
+  return {
+    type: result.type,
+    ...page,
+    live: true,
+    host: result.host,
+    hostsTried: result.hostsTried,
+    truncated: result.truncated,
+  }
 }
 
 /** Intercept listOutputs for basket `index`. */

@@ -1,5 +1,16 @@
 /** BRC-230 index expansion pack types (grade-C overlay catalog mirrors). */
 
+export type OverlayDiscoveryMode = 'auto' | 'slap' | 'url'
+
+export type IndexExpansionDiscovery = {
+  /** auto = curator hint + SLAP; slap = SLAP only; url = overlayBaseUrl only */
+  mode?: OverlayDiscoveryMode
+  /** Extra curator host hints (tried before SLAP in auto mode). */
+  hosts?: string[]
+  /** Override default BSVA SLAP trackers. */
+  slapTrackers?: string[]
+}
+
 export type IndexExpansionManifest = {
   v: 1
   packId: string
@@ -7,9 +18,11 @@ export type IndexExpansionManifest = {
   description?: string
   iconUrl?: string
   curatorIdentityKey?: string
-  overlayBaseUrl: string
+  /** Curator hint — optional when discovery.mode is slap (SLAP resolves hosts). */
+  overlayBaseUrl?: string
   topic: string
   lookupService: string
+  discovery?: IndexExpansionDiscovery
   scope: {
     kind: 'overlay-query' | 'collection' | 'feed'
     query: Record<string, unknown>
@@ -87,7 +100,8 @@ export const HANDCASH_MARKET_CATALOG_MANIFEST: IndexExpansionManifest = {
   overlayBaseUrl: 'https://market.handcash.io',
   topic: 'tm_1sat_market',
   lookupService: 'ls_1sat_market',
-  scope: { kind: 'overlay-query', query: {} },
+  scope: { kind: 'overlay-query', query: { mode: 'active', limit: 500 } },
+  discovery: { mode: 'auto' },
   budget: {
     maxEntries: 5000,
     maxBytes: 52_428_800,

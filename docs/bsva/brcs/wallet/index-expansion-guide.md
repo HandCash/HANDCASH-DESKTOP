@@ -27,7 +27,8 @@ basket `1sat` and existing BRC-100 market methods.
         "listIndexExpansions",
         "removeIndexExpansion",
         "syncIndexExpansion",
-        "listIndexExpansionEntries"
+        "listIndexExpansionEntries",
+        "overlayLookup"
       ]
     }
   }
@@ -69,7 +70,8 @@ HandCash Market reference profile:
   "overlayBaseUrl": "https://market.handcash.io",
   "topic": "tm_1sat_market",
   "lookupService": "ls_1sat_market",
-  "scope": { "kind": "overlay-query", "query": {} },
+  "discovery": { "mode": "auto" },
+  "scope": { "kind": "overlay-query", "query": { "mode": "active", "limit": 500 } },
   "budget": {
     "maxEntries": 5000,
     "maxBytes": 52428800,
@@ -159,6 +161,42 @@ await wallet.listIndexExpansionEntries({
 })
 ```
 
+### Live overlay read (no cache)
+
+Prefer overlay-native reads when you need authoritative catalog state:
+
+```ts
+// Ad-hoc BRC-24 lookup (SLAP discovery + host failover)
+const live = await wallet.overlayLookup({
+  lookupService: 'ls_1sat_market',
+  query: { mode: 'active', limit: 50 },
+  overlayBaseUrl: 'https://market.handcash.io',
+  discovery: 'auto',
+})
+// { type: 'output-list', outputs, totalOutputs, live: true, host, hostsTried }
+
+// Or reuse an installed pack's manifest discovery hints
+await wallet.overlayLookup({
+  packId: 'handcash.market.catalog',
+  query: { mode: 'seller', seller: '<identity-key>' },
+})
+
+// Pass-through on listIndexExpansionEntries
+await wallet.listIndexExpansionEntries({
+  packId: 'handcash.market.catalog',
+  live: true,
+  limit: 48,
+})
+```
+
+Manifest `discovery`:
+
+| `mode` | Behavior |
+|--------|----------|
+| `auto` | Curator `overlayBaseUrl` + `discovery.hosts`, then SLAP trackers |
+| `slap` | SLAP only — omit `overlayBaseUrl` when hosts are fully discoverable |
+| `url` | Fixed `overlayBaseUrl` only (no SLAP) |
+
 ## Sync, list packs, remove
 
 ```ts
@@ -182,10 +220,11 @@ Fields: `kind: event`, `status: pending | complete | failed`, `note`, optional `
 
 ## Sync algorithm (wallet)
 
-1. `POST {overlayBaseUrl}/lookup` with `{ service, query }` (BRC-24)
-2. Map each `output-list` row → `entryKey` + `customInstructions`
-3. Enforce `budget.maxEntries`, `maxBytes`, `maxBeefBytes`
-4. Stop cleanly with `partial: true` when capped
+1. Resolve hosts: curator hints → SLAP (`ls_slap`) → verify `/listLookupServiceProviders`
+2. `POST /lookup` with failover across verified hosts (BRC-24)
+3. Map each `output-list` row → `entryKey` + `customInstructions`
+4. Enforce `budget.maxEntries`, `maxBytes`, `maxBeefBytes`
+5. Stop cleanly with `partial: true` when capped
 
 ## Trust boundaries
 
@@ -221,6 +260,7 @@ function parseIndexEntry(output: { customInstructions?: string }): IndexEntry | 
 | `INDEX_INSTALL_DENIED` | User denied install prompt |
 | `INDEX_READ_DENIED` | User denied read prompt |
 | `INDEX_SYNC_DENIED` | User denied sync prompt |
+| `OVERLAY_LOOKUP_DENIED` | User denied live overlay lookup |
 | `INVALID_INDEX_BASKET` | Wrong `p index` use on listOutputs |
 
 ## Related docs

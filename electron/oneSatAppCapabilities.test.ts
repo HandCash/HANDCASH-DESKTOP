@@ -8,6 +8,7 @@ describe('ONE_SAT_APP_CAPABILITIES', () => {
     expect(ONE_SAT_APP_CAPABILITIES.indexExpansion?.methods).toContain(
       'installIndexExpansion',
     )
+    expect(ONE_SAT_APP_CAPABILITIES.indexExpansion?.methods).toContain('overlayLookup')
     expect(ONE_SAT_APP_CAPABILITIES.permissions.indexProtocol).toBe('p index')
 
     const wire = JSON.stringify(ONE_SAT_APP_CAPABILITIES).toLowerCase()

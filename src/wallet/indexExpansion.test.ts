@@ -62,6 +62,8 @@ describe('indexExpansionManifest', () => {
     const { HANDCASH_MARKET_CATALOG_MANIFEST } = await import('./indexExpansionTypes')
     const manifest = validateIndexExpansionManifest(HANDCASH_MARKET_CATALOG_MANIFEST)
     expect(manifest.packId).toBe('handcash.market.catalog')
+    expect(manifest.scope.query).toEqual({ mode: 'active', limit: 500 })
+    expect(manifest.discovery?.mode).toBe('auto')
   })
 })
 

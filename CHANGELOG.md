@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.32] - 2026-08-31
+
+### Added
+
+- **Overlay-native index expansion** — SLAP host discovery, multi-host BRC-24 failover, live `overlayLookup`, and `listIndexExpansionEntries({ live: true })`; manifest `discovery` field; HandCash Market query `{ mode: 'active', limit: 500 }`.
+
 ## [1.3.31] - 2026-08-31
 
 ### Added

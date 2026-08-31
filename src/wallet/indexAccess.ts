@@ -13,9 +13,11 @@ export type IndexPermissionOp = 'install' | 'read' | 'sync'
 export type IndexAccess = {
   /** Pack ids this origin may install/read/sync. */
   packs: string[]
+  /** lookupService ids approved for live overlayLookup (no installed pack). */
+  lookupServices?: string[]
 }
 
-export const DEFAULT_INDEX_ACCESS: IndexAccess = { packs: [] }
+export const DEFAULT_INDEX_ACCESS: IndexAccess = { packs: [], lookupServices: [] }
 
 export type IndexReadRequest = {
   packId: string
@@ -23,11 +25,20 @@ export type IndexReadRequest = {
 
 export function normalizeIndexAccess(raw: unknown): IndexAccess {
   if (!raw || typeof raw !== 'object') return { ...DEFAULT_INDEX_ACCESS }
-  const body = raw as { packs?: unknown }
+  const body = raw as { packs?: unknown; lookupServices?: unknown }
   const packs = Array.isArray(body.packs)
     ? [...new Set(body.packs.filter((p): p is string => typeof p === 'string' && p.trim().length > 0).map((p) => p.trim()))]
     : []
-  return { packs }
+  const lookupServices = Array.isArray(body.lookupServices)
+    ? [
+        ...new Set(
+          body.lookupServices
+            .filter((s): s is string => typeof s === 'string' && s.trim().length > 0)
+            .map((s) => s.trim()),
+        ),
+      ]
+    : []
+  return { packs, lookupServices }
 }
 
 export function isIndexScheme(scheme: string): boolean {
@@ -75,9 +86,22 @@ export function indexAccessGranted(access: IndexAccess, packId: string): boolean
   return access.packs.includes(packId)
 }
 
+export function overlayLookupAccessGranted(access: IndexAccess, lookupService: string): boolean {
+  return (access.lookupServices ?? []).includes(lookupService)
+}
+
 export function mergeIndexGrant(access: IndexAccess, packId: string): IndexAccess {
   if (access.packs.includes(packId)) return access
-  return { packs: [...access.packs, packId] }
+  return { ...access, packs: [...access.packs, packId] }
+}
+
+export function mergeOverlayLookupGrant(
+  access: IndexAccess,
+  lookupService: string,
+): IndexAccess {
+  const lookupServices = access.lookupServices ?? []
+  if (lookupServices.includes(lookupService)) return access
+  return { ...access, lookupServices: [...lookupServices, lookupService] }
 }
 
 /**
