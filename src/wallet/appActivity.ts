@@ -1486,6 +1486,16 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     if (entry.item?.name) return `Receiving ${entry.item.name}…`
     return 'Receiving…'
   }
+  if (entry.status === 'pending' && entry.kind === 'event') {
+    if (entry.method === 'index-install') {
+      return entry.item?.name
+        ? `Installing ${entry.item.name}…`
+        : 'Installing catalog…'
+    }
+    if (entry.method === 'index-sync') {
+      return entry.item?.name ? `Syncing ${entry.item.name}…` : 'Syncing catalog…'
+    }
+  }
   if (entry.kind === 'event') {
     if (entry.method === 'market-list' && entry.item?.name?.trim() && entry.item.name !== 'Collectable') {
       const price = entry.note?.match(/for ([\d,]+) sats/)?.[1]

@@ -1937,7 +1937,10 @@ function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
     if (collectableIsOnesatFt(item) && !collectableIsOnesatFt(prev)) continue
     if (!collectableIsOnesatFt(item)) byOp.set(key, item)
   }
-  return [...byOp.values()]
+  return dedupeByOrigin(
+    [...byOp.values()],
+    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+  )
 }
 
 async function listCollectablesNow(

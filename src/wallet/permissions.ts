@@ -44,6 +44,14 @@ import {
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
+import {
+  indexAccessGranted,
+  mergeIndexGrant,
+  normalizeIndexAccess,
+  type IndexAccess,
+} from './indexAccess'
+import { validateIndexExpansionManifest } from './indexExpansionManifest'
+import { getStoredIndexPack } from './indexExpansionStore'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
 
@@ -57,6 +65,8 @@ export type ConnectedApp = {
   itemAccess?: ItemAccess
   /** BSV-21 token view — never implied by item view. */
   tokenAccess?: TokenAccess
+  /** BRC-230 index expansion packs — grade-C catalogs, not custody. */
+  indexAccess?: IndexAccess
 }
 
 export type PendingPermission = {
@@ -119,6 +129,7 @@ const ACTION_METHODS = new Set([
   'createMarketPurchaseIntent',
   'purchaseMarketListing',
   'createCancelMarketListingAdvert',
+  'removeIndexExpansion',
   'encrypt',
   'decrypt',
   'revealCounterpartyKeyLinkage',
@@ -173,6 +184,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           connectedAt: typeof a.connectedAt === 'number' ? a.connectedAt : Date.now(),
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
+          indexAccess: a.indexAccess ? normalizeIndexAccess(a.indexAccess) : undefined,
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -434,6 +446,23 @@ export function getItemAccess(origin: string | undefined): ItemAccess {
 export function getTokenAccess(origin: string | undefined): TokenAccess {
   const { idx, apps } = findConnectedApp(origin)
   return normalizeTokenAccess(idx >= 0 ? apps[idx]?.tokenAccess : undefined)
+}
+
+export function getIndexAccess(origin: string | undefined): IndexAccess {
+  const { idx, apps } = findConnectedApp(origin)
+  return normalizeIndexAccess(idx >= 0 ? apps[idx]?.indexAccess : undefined)
+}
+
+function patchIndexAccess(
+  origin: string | undefined,
+  patch: (current: IndexAccess) => IndexAccess,
+): IndexAccess {
+  const { idx, apps } = ensureConnectedApp(origin)
+  const next = patch(normalizeIndexAccess(apps[idx]!.indexAccess))
+  const copy = [...apps]
+  copy[idx] = { ...copy[idx]!, indexAccess: next }
+  writeConnected(copy)
+  return next
 }
 
 function patchItemAccess(
@@ -1558,6 +1587,132 @@ export function filterTokenOutputsForOrigin(
     outputs,
     totalOutputs: outputs.length,
   }
+}
+
+function indexPackIdFromArgs(method: string, args: unknown): string {
+  const body = asRecord(args)
+  if (method === 'installIndexExpansion') {
+    try {
+      if (body.manifest) return validateIndexExpansionManifest(body.manifest).packId
+      if (typeof body.manifestUrl === 'string') return body.manifestUrl.trim()
+    } catch {
+      return ''
+    }
+  }
+  return typeof body.packId === 'string' ? body.packId.trim() : ''
+}
+
+export async function requestIndexInstallApproval(
+  origin: string | undefined,
+  args: unknown,
+): Promise<PermissionDecision> {
+  const key = normalizeOrigin(origin)
+  let manifestName = 'Index pack'
+  let manifestDescription = 'Public overlay catalog mirror (display only — not custody)'
+  let itemImageUrl: string | undefined
+  let packId = ''
+  try {
+    const body = asRecord(args)
+    const manifest =
+      body.manifest != null
+        ? validateIndexExpansionManifest(body.manifest)
+        : null
+    if (manifest) {
+      packId = manifest.packId
+      manifestName = manifest.name
+      manifestDescription = manifest.description ?? manifestDescription
+      itemImageUrl = manifest.iconUrl
+    }
+  } catch {
+    // Prompt with generic copy; install will fail validation after allow.
+  }
+  if (packId && indexAccessGranted(getIndexAccess(origin), packId)) return 'allow'
+
+  const details = [
+    'Grade-C convenience data — not held collectables',
+    'Does not grant item send, list, or buy permissions',
+    packId ? `Pack id: ${packId}` : 'Manifest required',
+  ]
+
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: key,
+    method: 'installIndexExpansion',
+    title: 'Install catalog',
+    summary: `Download ${manifestName} for offline browsing`,
+    details,
+    itemName: manifestName,
+    itemImageUrl,
+    previewKind: 'collectable',
+    createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow' && packId) {
+      patchIndexAccess(origin, (cur) => mergeIndexGrant(cur, packId))
+    }
+    return decision
+  })
+}
+
+export async function requestIndexSyncApproval(
+  origin: string | undefined,
+  args: unknown,
+): Promise<PermissionDecision> {
+  const packId = indexPackIdFromArgs('syncIndexExpansion', args)
+  if (!packId) return 'allow'
+  if (indexAccessGranted(getIndexAccess(origin), packId)) return 'allow'
+  const stored = getStoredIndexPack(packId)
+  if (stored) {
+    return requestIndexInstallApproval(origin, { manifest: stored.manifest })
+  }
+  return requestIndexInstallApproval(origin, args)
+}
+
+export async function requestIndexReadApproval(
+  origin: string | undefined,
+  packId: string,
+): Promise<PermissionDecision> {
+  if (!packId) return 'deny'
+  if (indexAccessGranted(getIndexAccess(origin), packId)) return 'allow'
+  return enqueuePrompt({
+    id: idCounter++,
+    kind: 'action',
+    origin: normalizeOrigin(origin),
+    method: 'listIndexExpansionEntries',
+    title: 'Read catalog cache',
+    summary: `Browse cached entries for ${packId}`,
+    details: [
+      'Local mirror only — not proof of custody',
+      `Pack: ${packId}`,
+    ],
+    createdAt: Date.now(),
+  }).then((decision) => {
+    if (decision === 'allow') {
+      patchIndexAccess(origin, (cur) => mergeIndexGrant(cur, packId))
+    }
+    return decision
+  })
+}
+
+export function filterIndexOutputsForOrigin(
+  origin: string | undefined,
+  result: unknown,
+  packId?: string,
+): unknown {
+  if (!isThirdPartyOriginator(origin)) return result
+  const access = getIndexAccess(origin)
+  if (!result || typeof result !== 'object') return { outputs: [], totalOutputs: 0 }
+  const body = result as { outputs?: unknown[]; totalOutputs?: number }
+  if (!Array.isArray(body.outputs)) return result
+  const outputs = body.outputs.filter((raw) => {
+    if (!raw || typeof raw !== 'object') return false
+    const tags = (raw as { tags?: string[] }).tags
+    if (!Array.isArray(tags)) return false
+    const tag = tags.find((t) => t.startsWith('pack:'))
+    const rowPack = tag?.slice('pack:'.length) ?? packId
+    return !!rowPack && indexAccessGranted(access, rowPack)
+  })
+  return { ...body, outputs, totalOutputs: outputs.length }
 }
 
 export async function gateOriginAccess(

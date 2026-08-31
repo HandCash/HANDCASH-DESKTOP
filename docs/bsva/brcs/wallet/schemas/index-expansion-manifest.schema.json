@@ -1,0 +1,63 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://handcash.io/schemas/brc-230/index-expansion-manifest.schema.json",
+  "title": "BRC-230 Index Expansion Pack Manifest",
+  "type": "object",
+  "additionalProperties": true,
+  "required": [
+    "v",
+    "packId",
+    "name",
+    "overlayBaseUrl",
+    "topic",
+    "lookupService",
+    "scope",
+    "budget"
+  ],
+  "properties": {
+    "v": { "const": 1 },
+    "packId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 128,
+      "pattern": "^[a-z0-9][a-z0-9.-]*$"
+    },
+    "name": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "description": { "type": "string", "maxLength": 512 },
+    "iconUrl": { "type": "string", "format": "uri" },
+    "curatorIdentityKey": { "type": "string", "pattern": "^(02|03)[0-9a-f]{64}$" },
+    "overlayBaseUrl": { "type": "string", "format": "uri" },
+    "topic": { "type": "string", "pattern": "^tm_[a-z0-9_]+$" },
+    "lookupService": { "type": "string", "pattern": "^ls_[a-z0-9_]+$" },
+    "scope": {
+      "type": "object",
+      "required": ["kind", "query"],
+      "properties": {
+        "kind": { "enum": ["overlay-query", "collection", "feed"] },
+        "query": { "type": "object" }
+      }
+    },
+    "budget": {
+      "type": "object",
+      "required": ["maxEntries", "maxBytes", "maxBeefBytes"],
+      "properties": {
+        "maxEntries": { "type": "integer", "minimum": 1, "maximum": 1000000 },
+        "maxBytes": { "type": "integer", "minimum": 1024 },
+        "maxBeefBytes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "preview": {
+      "type": "object",
+      "properties": {
+        "beefB64": { "type": "string" }
+      }
+    },
+    "updatePolicy": {
+      "type": "object",
+      "properties": {
+        "mode": { "enum": ["manual", "onOpen", "interval"] },
+        "intervalSeconds": { "type": "integer", "minimum": 300 }
+      }
+    }
+  }
+}

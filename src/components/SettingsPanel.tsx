@@ -38,6 +38,7 @@ import {
   ShortcutHint,
   screenshotShortcutKeys,
 } from './settings'
+import { IndexExpansionsPanel } from './IndexExpansionsPanel'
 
 type SettingItem = {
   id: SettingId
@@ -292,6 +293,8 @@ export function SettingsPanel() {
           ) : null}
         </ul>
       </SettingsSection>
+
+      <IndexExpansionsPanel />
 
       <SettingsSection title="Support" part="support">
         <ul className="settings-list">

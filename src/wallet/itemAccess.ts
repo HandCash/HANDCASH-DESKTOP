@@ -11,6 +11,7 @@
 
 import { normalizeAppHost } from './appIdentity'
 import { decodeBsv21Binary } from './bsv21Binary'
+import { INDEX_SCHEME } from './indexExpansionTypes'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */
 export const ITEM_STORAGE_BASKET = '1sat'
@@ -175,7 +176,7 @@ export function isUnsupportedPBasket(basket: unknown): boolean {
   const parsed = parsePBasket(raw)
   if (!parsed) return true
   const scheme = parsed.scheme.toLowerCase()
-  return scheme !== ITEM_SCHEME && scheme !== TOKEN_SCHEME
+  return scheme !== ITEM_SCHEME && scheme !== TOKEN_SCHEME && scheme !== INDEX_SCHEME
 }
 
 /**
@@ -264,8 +265,8 @@ export function parseTokenViewRequest(args: unknown): TokenViewRequest {
 export function prepareItemBasketArgs(args: unknown): {
   args: unknown
   error?: { code: string; description: string }
-   itemViewRequest?: ItemViewRequest
-   tokenViewRequest?: TokenViewRequest
+  itemViewRequest?: ItemViewRequest
+  tokenViewRequest?: TokenViewRequest
 } {
   if (args == null || typeof args !== 'object' || Array.isArray(args)) {
     return { args }
@@ -387,7 +388,7 @@ function findUnsupportedPBasket(value: unknown, depth = 0): string | null {
   if (depth > 6 || value == null) return null
   if (typeof value === 'string') {
     if (isUnsupportedPBasket(value)) {
-      return `Unsupported permission basket "${value}". Only schemes "1sat" and "bsv21" are implemented.`
+      return `Unsupported permission basket "${value}". Only schemes "1sat", "bsv21", and "index" are implemented.`
     }
     return null
   }
