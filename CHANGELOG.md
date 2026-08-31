@@ -2,9 +2,13 @@
 
 ## [1.3.31] - 2026-08-31
 
-### Changed
+### Added
 
-- Patch release (every push must ship a new version).
+- **BRC-230 Index Expansion Packs** — `installIndexExpansion`, `listIndexExpansions`, `syncIndexExpansion`, `removeIndexExpansion`, `listIndexExpansionEntries`, `p index` permissions, basket `index` local cache, Activity install/sync events, Settings → Catalog packs, bridge capabilities, and [developer guide](docs/bsva/brcs/wallet/index-expansion-guide.md).
+
+### Fixed
+
+- Collect list short-page merge dedupes by origin again (ghost duplicate cards when cache exceeds one basket page).
 
 ## [1.3.30] - 2026-08-31
 
