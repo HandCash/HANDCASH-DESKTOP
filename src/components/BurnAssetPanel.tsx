@@ -43,6 +43,7 @@ import {
 } from '../wallet/navStore'
 import {
   isOutpointSending,
+  inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
 import { parseFungibleSendAmount } from '../wallet/sendFungible'
@@ -636,7 +637,9 @@ function BurnCollectablePanel({ outpoint }: { outpoint: string }) {
   const refusal = item.covenantLocked
     ? 'This tip is covenant locked, so the wallet cannot spend it.'
     : sending
-      ? 'This item is mid-send. Wait for it to settle first.'
+      ? (inFlightVerb(outpoint) ?? 'Sending') === 'Burning'
+        ? 'This item is being burned. Wait for it to finish first.'
+        : 'This item is mid-send. Wait for it to settle first.'
       : null
   const economics = estimateBurnEconomics({
     inputCount: 1,

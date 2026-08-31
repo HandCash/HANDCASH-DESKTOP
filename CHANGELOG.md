@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.34] - 2026-08-31
+
+### Fixed
+
+- **Burning UX** — collectable cards show **Burning** while destroy is in flight (including burns queued behind an active burn); burned items drop from inventory immediately after broadcast.
+- **Unconfirmed spend chaining** — fee change from a just-signed tx is promoted immediately; the spend gate restores live change inside the exclusive spend queue so back-to-back burns/sends chain on unconfirmed change without "insufficient funds" while the hero balance looks funded.
+
 ## [1.3.33] - 2026-08-31
 
 ### Fixed

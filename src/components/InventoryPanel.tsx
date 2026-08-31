@@ -20,6 +20,7 @@ import {
   collectableIsOnesatFt,
   type Collectable,
 } from '../wallet/collectables'
+import { subscribeAppActivity } from '../wallet/appActivity'
 import {
   groupCollectables,
   groupQuantityLabel,
@@ -200,12 +201,10 @@ function CollectableItems({
   items,
   view,
   verification,
-  sendingOutpoint,
 }: {
   items: Collectable[]
   view: CollectionView
   verification: VerificationProgress
-  sendingOutpoint: string | null
 }) {
   const shownCount = useChunkedCount(items.length, RENDER_CHUNK)
   const visible = items.slice(0, shownCount)
@@ -218,7 +217,7 @@ function CollectableItems({
           key={item.outpoint}
           item={item}
           verifying={isOutpointVerifying(item.outpoint, verification)}
-          sending={sendingOutpoint != null && isOutpointSending(item.outpoint)}
+          sending={isOutpointSending(item.outpoint)}
         />
       ))}
     </ul>
@@ -260,15 +259,12 @@ function CollectionGroupItem({
   group,
   view,
   verification,
-  sendingOutpoint,
 }: {
   group: CollectableGroup
   view: CollectionView
   verification: VerificationProgress
-  sendingOutpoint: string | null
 }) {
-  const sendingHere =
-    sendingOutpoint != null && group.items.some((item) => isOutpointSending(item.outpoint))
+  const sendingHere = group.items.some((item) => isOutpointSending(item.outpoint))
 
   return (
     <Accordion.Item
@@ -293,7 +289,6 @@ function CollectionGroupItem({
           items={group.items}
           view={view}
           verification={verification}
-          sendingOutpoint={sendingOutpoint}
         />
       </Accordion.ItemContent>
     </Accordion.Item>
@@ -422,6 +417,7 @@ export function InventoryPanel() {
   const [sendingOutpoint, setSendingOutpoint] = useState<string | null>(() =>
     getPaymentProgress().phase === 'idle' ? null : getPaymentProgress().outpoint,
   )
+  const [, bumpInFlight] = useState(0)
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
   useEffect(() => subscribeVerificationProgress(setVerification), [])
@@ -429,9 +425,11 @@ export function InventoryPanel() {
     () =>
       subscribePaymentProgress((next) => {
         setSendingOutpoint(next.phase === 'idle' ? null : next.outpoint)
+        bumpInFlight((n) => n + 1)
       }),
     [],
   )
+  useEffect(() => subscribeAppActivity(() => bumpInFlight((n) => n + 1)), [])
   useEffect(
     () =>
       subscribeCollectables((next) => {
@@ -575,7 +573,6 @@ export function InventoryPanel() {
                   group={group}
                   view={view}
                   verification={verification}
-                  sendingOutpoint={sendingOutpoint}
                 />
               ))}
             </Accordion.Root>
@@ -590,7 +587,6 @@ export function InventoryPanel() {
                 items={loose}
                 view={view}
                 verification={verification}
-                sendingOutpoint={sendingOutpoint}
               />
             </>
           ) : null}

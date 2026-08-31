@@ -199,6 +199,10 @@ export async function sealSpentInputsOfSignedTx(
       `[stale-output] sealed ${hidden} input(s) spent by ${id.slice(0, 12)} — next send cannot reselect them`,
     )
   }
+  // Promote this tx's change immediately so the spend queue can chain the next
+  // payment without waiting for chain ingest (restoreLiveSpendableOutputs yields
+  // while a spend holds priority).
+  await keepChangeOfSignedTx(id)
   return hidden
 }
 
@@ -699,10 +703,17 @@ export async function restoreLiveSpendableOutputs(opts?: {
    * Used to chain burn fees without touching any other pending output.
    */
   creatorTxid?: string
+  /**
+   * Spend-path chaining — do not yield to queued sends. Maintenance scans defer
+   * while a spend holds priority; promoting pending change for the next queued
+   * tx must run inside that same region.
+   */
+  forSpendChain?: boolean
 }): Promise<number> {
   void opts?.onlyLiveChange
   const creatorTxid = opts?.creatorTxid?.trim().toLowerCase() || null
-  if (shouldYieldChainIngestToSpend()) return 0
+  const forSpendChain = opts?.forSpendChain === true
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   if (!active) return 0
   const storage = active.wallet.storage
@@ -726,7 +737,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
       const sp = activeSp as unknown as LocalStorage
 
       for (const raw of dead.slice(0, RESTORE_MAX)) {
-        if (shouldYieldChainIngestToSpend()) {
+        if (!forSpendChain && shouldYieldChainIngestToSpend()) {
           console.info(
             `[stale-output] restore yielded to spend after ${restored} restore(s)`,
           )

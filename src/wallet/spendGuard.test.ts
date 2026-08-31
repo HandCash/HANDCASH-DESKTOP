@@ -17,6 +17,7 @@ function mockConfirmed(sats: number): void {
 }
 const assertOnlineForPayment = vi.fn(() => undefined)
 const unconfirmedChangeSats = vi.fn(async (_opts?: { needAtLeast?: number }) => 0)
+const restoreLiveSpendableOutputs = vi.fn(async () => 0)
 
 vi.mock('./paymentPolicy', () => ({
   assertOnlineForPayment: () => assertOnlineForPayment(),
@@ -38,6 +39,11 @@ vi.mock('./session', () => ({
 
 vi.mock('./balanceView', () => ({
   unconfirmedChangeSats: (opts?: { needAtLeast?: number }) => unconfirmedChangeSats(opts),
+}))
+
+vi.mock('./staleOutputRelease', () => ({
+  restoreLiveSpendableOutputs: (opts?: { forSpendChain?: boolean }) =>
+    restoreLiveSpendableOutputs(opts),
 }))
 
 vi.mock('./walletCoordinator', () => ({
@@ -63,6 +69,7 @@ describe('refreshSpendableBalance', () => {
     vi.clearAllMocks()
     mockConfirmed(12_345)
     unconfirmedChangeSats.mockResolvedValue(0)
+    restoreLiveSpendableOutputs.mockResolvedValue(0)
   })
 
   it('reads confirmed toolbox balance without the unconfirmed-change scan', async () => {
@@ -76,19 +83,33 @@ describe('refreshSpendableBalance', () => {
     expect(assertOnlineForPayment).toHaveBeenCalledTimes(1)
   })
 
-  it('assertSendableBalance skips the graveyard when confirmed covers the payment', async () => {
-    mockConfirmed(10_000)
-    const { assertSendableBalance } = await import('./spendGuard')
-    await expect(assertSendableBalance(500)).resolves.toBe(10_000)
-    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
-  })
-
   it('assertSendableBalance credits unconfirmed change only for the shortfall', async () => {
     mockConfirmed(100)
     unconfirmedChangeSats.mockResolvedValue(900)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).resolves.toBe(1_000)
+    expect(restoreLiveSpendableOutputs).toHaveBeenCalledWith({ forSpendChain: true })
     expect(unconfirmedChangeSats).toHaveBeenCalledWith({ needAtLeast: 400 })
+  })
+
+  it('assertSendableBalance skips restore and credit when confirmed covers the payment', async () => {
+    mockConfirmed(10_000)
+    const { assertSendableBalance } = await import('./spendGuard')
+    await expect(assertSendableBalance(500)).resolves.toBe(10_000)
+    expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+  })
+
+  it('assertSendableBalance stops after restore when confirmed becomes enough', async () => {
+    mockConfirmed(100)
+    restoreLiveSpendableOutputs.mockImplementation(async () => {
+      mockConfirmed(600)
+      return 1
+    })
+    const { assertSendableBalance } = await import('./spendGuard')
+    await expect(assertSendableBalance(500)).resolves.toBe(600)
+    expect(restoreLiveSpendableOutputs).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(unconfirmedChangeSats).not.toHaveBeenCalled()
   })
 
   it('assertSendableBalance refuses when confirmed + credit are still short', async () => {

@@ -12,6 +12,7 @@ import { extractSatsFromArgs } from './appActivity'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
+import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
@@ -67,8 +68,19 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   const active = getActiveWallet()
   if (!active) throw new Error('Wallet locked')
 
-  const confirmed = await readConfirmedSpendable(active)
+  let confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
+
+  // Display balance already credits pending change; createAction only selects
+  // `spendable: true` rows. Promote live change inside the spend region so
+  // back-to-back sends/burns chain on unconfirmed fee change without polling.
+  try {
+    await restoreLiveSpendableOutputs({ forSpendChain: true })
+    confirmed = await readConfirmedSpendable(active)
+    if (satoshis <= confirmed) return confirmed
+  } catch (err) {
+    console.warn('[spend-guard] live change restore skipped', err)
+  }
 
   let credit = 0
   try {

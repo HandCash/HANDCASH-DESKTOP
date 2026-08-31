@@ -31,7 +31,11 @@ import {
   type Bsv21Utxo,
 } from './bsv21'
 import { refreshFromChainDuringSpend } from './chainIngest'
-import { getCachedCollectables, listCollectables } from './collectables'
+import {
+  getCachedCollectables,
+  hideCollectablesAfterSpend,
+  listCollectables,
+} from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { getFungible, listFungibleTips, listFungibles } from './fungibles'
 import { stampBrc164Id } from './itemAccess'
@@ -47,12 +51,9 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
-import { assertSendableBalance, runExclusiveSpend } from './spendGuard'
+import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
 import { getActiveWallet, type ActiveWallet } from './session'
-import {
-  restoreLiveSpendableOutputs,
-  sealSpentInputsOfSignedTx,
-} from './staleOutputRelease'
+import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
 type SelfPayment = {
   lockingScript: string
@@ -62,45 +63,10 @@ type SelfPayment = {
 
 /** Confirmed + pending self-change needed to fund the next burn fee. */
 const MIN_BURN_FEE_SATS = 50
-const BURN_FEE_WAIT_MS = 20_000
-const BURN_FEE_POLL_MS = 150
 
-/**
- * Fee change from the last successful burn on this device — only this output
- * may be re-enabled for the next burn. Never broad-restore unrelated pending
- * coins (that could touch outputs already committed elsewhere).
- */
-let burnFeeChainTxid: string | null = null
-
-/**
- * Wait until uncommitted coins cover the next burn fee.
- *
- * Law: never spend an output already promised in another live transaction —
- * that is double-spend. Chained burns may only reuse **unspent change** from
- * the immediately prior burn tx (`burnFeeChainTxid`), never payment outputs or
- * inputs with a live `spentBy`.
- */
-async function waitForBurnFeeCredit(minSats = MIN_BURN_FEE_SATS): Promise<void> {
-  const deadline = Date.now() + BURN_FEE_WAIT_MS
-  let lastErr: Error | null = null
-  while (Date.now() < deadline) {
-    if (burnFeeChainTxid) {
-      await restoreLiveSpendableOutputs({ creatorTxid: burnFeeChainTxid })
-    }
-    try {
-      await assertSendableBalance(minSats)
-      return
-    } catch (err) {
-      lastErr = err instanceof Error ? err : new Error(String(err))
-      await new Promise((resolve) => setTimeout(resolve, BURN_FEE_POLL_MS))
-    }
-  }
-  if (burnFeeChainTxid) {
-    await restoreLiveSpendableOutputs({ creatorTxid: burnFeeChainTxid })
-  }
+async function assertBurnFeeAvailable(minSats = MIN_BURN_FEE_SATS): Promise<void> {
   try {
-    await assertSendableBalance(minSats)
-    return
+    await prepareSpendHeal(minSats)
   } catch (err) {
     if (isInsufficientFundsError(err)) {
       const active = getActiveWallet()
@@ -108,7 +74,7 @@ async function waitForBurnFeeCredit(minSats = MIN_BURN_FEE_SATS): Promise<void> 
         throw new Error(await describeInsufficientFunds(active.wallet, minSats))
       }
     }
-    throw lastErr ?? err
+    throw err
   }
 }
 
@@ -358,6 +324,8 @@ async function executeBurnPlan(args: {
   icon?: string
   dec?: number
   issuer?: string
+  /** Primary tip for inventory Burning badge while this plan runs. */
+  progressOutpoint?: string
 }): Promise<{
   txid: string
   recoveredSatoshis: number
@@ -458,7 +426,15 @@ async function executeBurnPlan(args: {
 
   const result = await executeBurnLifecycle(args.plan, {
     build: async () => {
-      await waitForBurnFeeCredit()
+      if (args.progressOutpoint) {
+        setPaymentProgress(
+          'building',
+          'Destroying on chain',
+          args.progressOutpoint,
+          'Burning…',
+        )
+      }
+      await assertBurnFeeAvailable()
       const { withFungibleCreateActionTimeout, FUNGIBLE_CREATE_ACTION_TIMEOUT_MS } =
         await import('./sendFungible')
       console.info(
@@ -497,6 +473,14 @@ async function executeBurnPlan(args: {
     },
     sign: async () => {
       if (!signable) throw new Error('Burn sign phase has no transaction')
+      if (args.progressOutpoint) {
+        setPaymentProgress(
+          'signing',
+          'Signing the burn transaction',
+          args.progressOutpoint,
+          'Burning…',
+        )
+      }
       signed = await signBurnInputs({
         active: args.active,
         signable,
@@ -512,6 +496,14 @@ async function executeBurnPlan(args: {
     },
     broadcast: async () => {
       if (!signed) throw new Error('Burn broadcast phase has no signed BEEF')
+      if (args.progressOutpoint) {
+        setPaymentProgress(
+          'broadcasting',
+          'Broadcasting the burn',
+          args.progressOutpoint,
+          'Burning…',
+        )
+      }
       await sealSpentInputsOfSignedTx(signed.txid, signed.atomicBeef)
       await ensurePaymentBroadcasted(signed.txid, signed.atomicBeef)
     },
@@ -572,7 +564,6 @@ async function executeBurnPlan(args: {
       }
     },
   })
-  burnFeeChainTxid = result.txid.toLowerCase()
   return {
     txid: result.txid,
     recoveredSatoshis: args.plan.recoverSatoshis,
@@ -923,7 +914,15 @@ export async function burnOneSat(
           scriptPaysAddress(script, active.address),
       })
       if (plan.path === 'refuse') throw refusalMessage(plan.reason)
-      const result = await executeBurnPlan({ active, plan })
+      const result = await executeBurnPlan({
+        active,
+        plan,
+        progressOutpoint: wanted[0],
+      })
+      hideCollectablesAfterSpend(
+        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
+        result.txid,
+      )
       upsertAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',

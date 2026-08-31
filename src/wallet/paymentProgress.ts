@@ -7,6 +7,11 @@
  * around that call — chain ingest is not required before pay.
  */
 
+import {
+  findPendingOutpointFlight,
+  pendingOutpointFlightVerb,
+} from './appActivity'
+
 export type PaymentPhase =
   | 'idle'
   | 'preparing'
@@ -116,19 +121,24 @@ export function getSendingOutpoint(): string | null {
 }
 
 export function isOutpointSending(outpoint: string): boolean {
-  if (progress.phase === 'idle' || !progress.outpoint) return false
-  return progress.outpoint === normalizeOutpointKey(outpoint)
+  const key = normalizeOutpointKey(outpoint)
+  if (progress.phase !== 'idle' && progress.outpoint === key) return true
+  return findPendingOutpointFlight(outpoint) != null
 }
 
-/** Verb for an in-flight outpoint: Listing, Cancelling, Buying, or Sending. */
+/** Verb for an in-flight outpoint: Listing, Cancelling, Buying, Burning, or Sending. */
 export function inFlightVerb(outpoint: string): string | null {
   if (!isOutpointSending(outpoint)) return null
-  const label = (progress.label || 'Sending').replace(/…/g, '').trim()
-  if (/^burn/i.test(label)) return 'Burning'
-  if (/^list/i.test(label)) return 'Listing'
-  if (/^cancel/i.test(label)) return 'Cancelling'
-  if (/^buy/i.test(label)) return 'Buying'
-  return 'Sending'
+  const key = normalizeOutpointKey(outpoint)
+  if (progress.phase !== 'idle' && progress.outpoint === key && progress.label) {
+    const label = progress.label.replace(/…/g, '').trim()
+    if (/^burn/i.test(label)) return 'Burning'
+    if (/^list/i.test(label)) return 'Listing'
+    if (/^cancel/i.test(label)) return 'Cancelling'
+    if (/^buy/i.test(label)) return 'Buying'
+    return 'Sending'
+  }
+  return pendingOutpointFlightVerb(outpoint) ?? 'Sending'
 }
 
 export function isMarketBusy(): boolean {

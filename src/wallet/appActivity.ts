@@ -1297,6 +1297,43 @@ export function isBurnActivity(entry: ActivityEntry): boolean {
   return entry.method === 'burn-token' || entry.method === 'burn-collectable'
 }
 
+function activityOutpointKey(outpoint: string | undefined | null): string {
+  return (outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
+/**
+ * Pending Activity row for this tip — durable while burns queue behind
+ * `runExclusiveSpend` even after payment progress cleared for the prior tx.
+ */
+export function findPendingOutpointFlight(
+  outpoint: string | undefined | null,
+): ActivityEntry | null {
+  const key = activityOutpointKey(outpoint)
+  if (!key) return null
+  for (const entry of readAll()) {
+    if (entry.status !== 'pending') continue
+    if (entry.kind !== 'spent' && entry.kind !== 'earned') continue
+    const op = entry.item?.outpoint
+    if (!op) continue
+    if (activityOutpointKey(op) !== key) continue
+    return entry
+  }
+  return null
+}
+
+/** Inventory / details badge verb from a pending Activity row. */
+export function pendingOutpointFlightVerb(
+  outpoint: string | undefined | null,
+): string | null {
+  const entry = findPendingOutpointFlight(outpoint)
+  if (!entry) return null
+  if (isBurnActivity(entry)) return 'Burning'
+  if (entry.method === 'market-list') return 'Listing'
+  if (entry.method === 'market-cancel') return 'Cancelling'
+  if (entry.method === 'purchaseMarketListing') return 'Buying'
+  return 'Sending'
+}
+
 /**
  * Format BSV-21 integer `amt` with deploy decimals for activity rows.
  * Kept local so appActivity does not import the full fungibles stack.

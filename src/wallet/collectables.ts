@@ -2596,6 +2596,28 @@ async function relinquishSpentOutputs(
 }
 
 /**
+ * Hide collectables the wallet just spent (send or burn) before listOutputs
+ * catches up — same pattern as {@link abandonCollectable} without abandon markers.
+ */
+export function hideCollectablesAfterSpend(
+  outpoints: string[],
+  txid: string,
+): void {
+  const keys = new Set(
+    outpoints.map((op) => normalizeOutpoint(op)).filter(Boolean),
+  )
+  if (keys.size === 0) return
+  markItemsSent(
+    [...keys].map((outpoint) => ({ outpoint, txid: txid.trim().toLowerCase() })),
+  )
+  invalidateLiveOneSatOutpoints()
+  setCollectablesCache(
+    cachedCollectables.filter((i) => !keys.has(normalizeOutpoint(i.outpoint))),
+    { announceArrivals: false },
+  )
+}
+
+/**
  * Forget a held collectable tip from local inventory.
  *
  * Does not spend on-chain. Relinquishes the basket row, marks it abandoned, and

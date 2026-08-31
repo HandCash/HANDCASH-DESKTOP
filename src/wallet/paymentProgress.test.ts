@@ -7,6 +7,7 @@ import {
   marketBusyCopy,
   setPaymentProgress,
 } from './paymentProgress'
+import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 
 describe('paymentProgress', () => {
   it('exposes Sending label for preparing / broadcasting / finishing', () => {
@@ -64,5 +65,31 @@ describe('paymentProgress', () => {
     setPaymentProgress('building', 'Destroying on chain', 'abc.0', 'Burning…')
     expect(inFlightVerb('abc_0')).toBe('Burning')
     clearPaymentProgress()
+  })
+
+  it('reports Burning from pending Activity when payment progress is idle', () => {
+    clearPaymentProgress()
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 1,
+      method: 'burn-collectable',
+      note: 'Burning Fox',
+      status: 'pending',
+      pendingId: 'burn-test',
+      item: { name: 'Fox', origin: 'abc_0', outpoint: 'abc.0' },
+    })
+    expect(isOutpointSending('abc.0')).toBe(true)
+    expect(inFlightVerb('abc_0')).toBe('Burning')
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'spent',
+      sats: 1,
+      method: 'burn-collectable',
+      note: 'Burned Fox',
+      status: 'complete',
+      pendingId: 'burn-test',
+      item: { name: 'Fox', origin: 'abc_0', outpoint: 'abc.0' },
+    })
   })
 })
