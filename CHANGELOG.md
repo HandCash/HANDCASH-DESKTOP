@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.58] - 2026-09-01
+
+### Fixed
+
+- **Tab switch input lag** — balance sync no longer re-renders all mounted nav tabs; nav updates run as transitions with optimistic tab highlight; Send reads balance via a scoped subscription instead of through `WalletNav`.
+- **Identity QR shadow** — removed drop shadow from the identity key QR frame.
+
 ## [1.3.57] - 2026-09-01
 
 ### Fixed
