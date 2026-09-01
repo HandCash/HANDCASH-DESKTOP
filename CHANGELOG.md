@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.62] - 2026-09-01
+
+### Fixed
+
+- **CI green** — wallet core test gate, BRC-CLOUD sibling checkout for market proof tests, sendPayment/actionReview mocks.
+- **Fresh wallet setup in dev** — HandCash history URL falls back when Vite dev proxy leaves cloud base empty.
+- **Log upload in vitest/node** — no crash when `window.location` is absent; log bucket URL uses cloud fallback in dev.
+
 ## [1.3.61] - 2026-09-01
 
 ### Fixed

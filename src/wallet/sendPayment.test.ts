@@ -73,6 +73,11 @@ vi.mock('./friends', () => ({
 }))
 vi.mock('./actionReview', () => ({
   releaseStuckNosends: async () => {},
+  releaseUnsignedSpendReservations: async () => ({
+    failedTxs: 0,
+    reviewLog: '',
+    batchesAborted: 0,
+  }),
   sendWithHasFailure: () => false,
   isReviewActionsError: () => false,
   isIteratorCrashError: () => false,

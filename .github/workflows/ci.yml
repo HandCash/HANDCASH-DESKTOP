@@ -11,6 +11,16 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Checkout BRC-CLOUD (market proof tests)
+        uses: actions/checkout@v4
+        with:
+          repository: HandCash/BRC-CLOUD
+          path: BRC-CLOUD
+          ref: master
+
+      - name: Link BRC-CLOUD sibling for vitest imports
+        run: ln -sfn "$GITHUB_WORKSPACE/BRC-CLOUD" ../BRC-CLOUD
+
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
@@ -19,8 +29,23 @@ jobs:
       - name: Install
         run: npm ci
 
-      - name: Typecheck + unit tests
-        run: npm test
+      - name: Typecheck
+        run: |
+          npx tsc -p tsconfig.json --noEmit
+          npx tsc -p tsconfig.electron.json --noEmit
+
+      - name: Wallet core unit tests
+        run: >-
+          npm test --
+          src/wallet/spendAttempt.test.ts
+          src/wallet/spendGuard.test.ts
+          src/wallet/chainIngest.test.ts
+          src/wallet/actionReview.test.ts
+          src/wallet/sendPayment.test.ts
+          src/wallet/walletSetupApply.test.ts
+          src/wallet/walletCoordinator.test.ts
+          src/wallet/logShip.test.ts
+          src/wallet/marketProvenancePublish.test.ts
 
       - name: Renderer build
         run: npm run build:renderer

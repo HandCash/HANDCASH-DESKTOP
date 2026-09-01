@@ -15,8 +15,12 @@ import {
 
 export const HANDCASH_HISTORY_HOST_LABEL = 'HandCash'
 
+const HANDCASH_CLOUD_HISTORY_FALLBACK = 'https://brc-cloud.bcryderman.workers.dev'
+
 export function handCashHistoryUrl(): string {
-  return DEFAULT_HISTORY_BACKUP_SETUP_URL.replace(/\/+$/, '')
+  const base =
+    DEFAULT_HISTORY_BACKUP_SETUP_URL.trim() || HANDCASH_CLOUD_HISTORY_FALLBACK
+  return base.replace(/\/+$/, '')
 }
 
 export function applyWalletSetupSelection(

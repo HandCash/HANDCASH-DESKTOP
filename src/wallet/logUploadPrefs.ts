@@ -10,9 +10,13 @@ function randomHex(bytes: number): string {
   return [...a].map((b) => b.toString(16).padStart(2, '0')).join('')
 }
 
+const LOG_UPLOAD_CLOUD_FALLBACK = 'https://brc-cloud.bcryderman.workers.dev'
+
 /** BRC-CLOUD log sink base — agents fetch `/latest` on this host. */
 export function defaultLogUploadBaseUrl(): string {
-  return `${DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')}/v1/logs`
+  const base =
+    DEFAULT_BRC_CLOUD_BASE_URL.trim() || LOG_UPLOAD_CLOUD_FALLBACK
+  return `${base.replace(/\/+$/, '')}/v1/logs`
 }
 
 /**
@@ -54,10 +58,15 @@ export function getLogUploadUrl(): string {
 
 /** Route log POST through the Vite dev proxy (same origin) so uploads work on localhost. */
 function rewriteLogUploadUrlForDev(url: string): string {
-  if (!import.meta.env.DEV || typeof window === 'undefined') return url
+  if (!import.meta.env.DEV) return url
+  const origin =
+    typeof window !== 'undefined' && window.location?.origin
+      ? window.location.origin
+      : ''
+  if (!origin) return url
   const bucket = url.match(/\/v1\/logs\/([a-z0-9-]+)/i)?.[1]
   if (!bucket) return url
-  return `${window.location.origin}/v1/logs/${bucket}`
+  return `${origin}/v1/logs/${bucket}`
 }
 
 export function setLogUploadUrl(url: string): string {
