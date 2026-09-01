@@ -51,7 +51,7 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
-import { prepareSpendHeal, runExclusiveSpend } from './spendGuard'
+import { prepareSpendHeal, runExclusiveBurn } from './spendGuard'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
@@ -722,7 +722,7 @@ export async function burnBsv21(args: {
   }
 
   try {
-    return await runExclusiveSpend(async () => {
+    return await runExclusiveBurn('burn-token', async () => {
       assertOnlineForPayment()
       const active = getActiveWallet()
       if (!active) throw new Error('Wallet locked')
@@ -849,7 +849,7 @@ export async function burnOneSat(
   setPaymentProgress('building', 'Destroying on chain', outpoints[0], 'Burning…')
 
   try {
-    return await runExclusiveSpend(async () => {
+    return await runExclusiveBurn('burn-collectable', async () => {
       assertOnlineForPayment()
       const active = getActiveWallet()
       if (!active) throw new Error('Wallet locked')

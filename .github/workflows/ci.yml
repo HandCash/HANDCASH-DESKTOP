@@ -34,6 +34,7 @@ jobs:
           src/wallet/sendPayment.test.ts
           src/wallet/walletSetupApply.test.ts
           src/wallet/walletCoordinator.test.ts
+          src/wallet/chainedChangeHeal.test.ts
           src/wallet/logShip.test.ts
 
       - name: Renderer build

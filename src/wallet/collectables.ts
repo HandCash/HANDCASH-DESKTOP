@@ -138,6 +138,7 @@ import {
   type GenesisWalkOutcome,
 } from './oneSatGenesisProof'
 import {
+  getSpendPriorityDepth,
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
@@ -1974,7 +1975,8 @@ async function listCollectablesNow(
     cachedCollectables.length > 0 &&
     (coord.chainIngest === 'active' ||
       coord.spend === 'active' ||
-      shouldYieldChainIngestToSpend())
+      shouldYieldChainIngestToSpend() ||
+      getSpendPriorityDepth() > 0)
   ) {
     console.info(
       `[collectables] deferring listOutputs — wallet busy, using ${cachedCollectables.length} cached item(s)`,

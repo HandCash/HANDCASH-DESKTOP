@@ -448,6 +448,16 @@ export type BalanceRead =
  */
 let lastKnownBalanceSats: number | null = null
 let lastBalanceBreakdown = ''
+
+/** Drop cached balance breakdown so the next read re-logs after a heal promoted rows. */
+export function bumpBalanceAfterHeal(): void {
+  lastBalanceBreakdown = ''
+  const session = getActiveWallet()
+  if (session?.wallet && typeof session.wallet === 'object') {
+    spendableBalanceCache.delete(session.wallet)
+  }
+}
+
 /** Background heal when display credits pending change toolbox cannot spend yet. */
 let chainedBalanceHealAt = 0
 let chainedBalanceHealFlight: Promise<void> | null = null
@@ -460,15 +470,9 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
   chainedBalanceHealFlight = (async () => {
     chainedBalanceHealAt = Date.now()
     try {
-      const {
-        promotePendingLocalChangeOutputs,
-        reclaimSealedInputsNeverSpent,
-      } = await import('./staleOutputRelease')
-      const promoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      const reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
-      if (promoted > 0 || reclaimed > 0) {
-        lastBalanceBreakdown = ''
-      }
+      const { runChangeHeal } = await import('./chainedChangeHeal')
+      await runChangeHeal({ path: 'displayBackground' })
+      lastBalanceBreakdown = ''
     } catch (err) {
       console.warn('[balance] chained change heal skipped', err)
     } finally {

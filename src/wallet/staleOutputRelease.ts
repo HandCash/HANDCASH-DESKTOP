@@ -830,7 +830,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
    */
   forSpendChain?: boolean
 }): Promise<number> {
-  void opts?.onlyLiveChange
+  const onlyLiveChange = opts?.onlyLiveChange === true
   const creatorTxid = opts?.creatorTxid?.trim().toLowerCase() || null
   const forSpendChain = opts?.forSpendChain === true
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
@@ -922,7 +922,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
             continue
           }
 
-          if (!localChange && !settledChange && !orphanRecoveredChange) continue
+          if (onlyLiveChange) {
+            if (!localChange) continue
+          } else if (!localChange && !settledChange && !orphanRecoveredChange) {
+            continue
+          }
 
           await sp.updateOutput(outputId, {
             spendable: true,

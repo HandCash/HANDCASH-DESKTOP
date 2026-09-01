@@ -43,6 +43,7 @@ vi.mock('./session', () => ({
   }),
   fetchBalanceRead: (wallet?: unknown, opts?: { creditUnconfirmed?: boolean }) =>
     fetchBalanceRead(wallet, opts),
+  bumpBalanceAfterHeal: vi.fn(),
 }))
 
 vi.mock('./balanceView', () => ({
@@ -172,8 +173,16 @@ describe('refreshSpendableBalance', () => {
     await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
   })
 
-  it('assertSendableBalance tries a bounded chain script heal when local promotion finds nothing', async () => {
+  it('runExclusiveSpend spendGate does not sweep change scripts', async () => {
+    const { runExclusiveSpend } = await import('./spendGuard')
+    await expect(runExclusiveSpend(async () => 'ok')).resolves.toBe('ok')
+    expect(sweepChangeScripts).not.toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
+  })
+
+  it('assertSendableBalance tries a bounded chain script heal when display credit covers payment', async () => {
     mockConfirmed(100)
+    unconfirmedChangeSats.mockResolvedValue(500)
     sweepChangeScripts.mockImplementation(async (opts?: { fromChain?: boolean }) => {
       if (opts?.fromChain) return { scanned: 1, healed: 1, quarantined: 0, refused: 0 }
       return { scanned: 1, healed: 0, quarantined: 0, refused: 0 }

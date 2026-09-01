@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.65] - 2026-09-01
+
+### Fixed
+
+- **Mobile burn timeouts** — burn holds spend priority before FIFO acquire so collectables/fungibles `listOutputs` yields during the queue wait; no more 100s+ “Wallet is busy” on destroy.
+- **Spend path speed** — `spendGate` is local-only (reclaim + promote + restore); full script sweeps and chain raw-tx fetches stay on Refresh / last-resort chaining heal, matching the fast Babbage-style spend path.
+- **Balance after heal** — promoted change invalidates cached breakdown and spendable cache so display reconciles spendable vs pending credit.
+
+### Added
+
+- **`chainedChangeHeal`** — single SSoT for change-heal paths with CI tests (`spendGate` must not sweep scripts).
+
 ## [1.3.64] - 2026-09-01
 
 ### Changed

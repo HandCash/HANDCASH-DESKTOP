@@ -175,12 +175,8 @@ export function SendPanel({
             : 'Invalid amount',
         )
       }
-      // Trust the painted balance when it already covers the amount — avoid a
-      // toolbox listOutputs stall while sync holds IndexedDB. Confirm re-checks.
-      if (satoshis <= balanceSats) {
-        send({ type: 'REVIEW' })
-        return
-      }
+      // Always verify confirmed spendable — display balance may credit pending
+      // change the toolbox has not promoted yet.
       const release = requestSpendPriority('send-review-balance')
       try {
         const available = await assertSendableBalance(satoshis)

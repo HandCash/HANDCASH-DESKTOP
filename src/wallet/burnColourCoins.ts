@@ -25,7 +25,7 @@ import {
   withFungibleCreateActionTimeout,
 } from './sendFungible'
 import { getActiveWallet, type ActiveWallet } from './session'
-import { runExclusiveSpend } from './spendGuard'
+import { runExclusiveBurn } from './spendGuard'
 import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
 
@@ -139,7 +139,7 @@ export async function burnColourCoins(args: {
   }
   const sym = args.sym?.trim() || 'Token'
 
-  return runExclusiveSpend(async () => {
+  return runExclusiveBurn('burn-colour', async () => {
     assertOnlineForPayment()
     const active = getActiveWallet()
     if (!active) throw new Error('Wallet locked')

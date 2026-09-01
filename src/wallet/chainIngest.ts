@@ -688,19 +688,12 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     { reconcileDualLayerState },
     { healGhostSentItems },
     { pruneMissingOnChainActivity, expireStaleInboundPending },
-    {
-      rehideInputsOfLiveLocalTxs,
-      restoreLiveSpendableOutputs,
-      reclaimSealedInputsNeverSpent,
-      promotePendingLocalChangeOutputs,
-    },
     { txExistsOnChain },
     { forgetOneSatImported },
   ] = await Promise.all([
     import('./txReconcile'),
     import('./sentItemGuard'),
     import('./appActivity'),
-    import('./staleOutputRelease'),
     import('./legacyScan'),
     import('./oneSatImportGuard'),
   ])
@@ -741,57 +734,31 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
         console.warn('[chain-ingest] release stuck nosends skipped', err)
       }
       // BRC-39 merges and device sync can leave change rows with satoshis but no
-      // locking script. restoreLiveSpendableOutputs skips those rows entirely, so
-      // spendable stays 0 while pendingChange credits them — funds look present but
-      // Pay cannot select them. Rebuild scripts from local raw tx first, then from
-      // chain (budgeted per pass) before the spendable restore loop.
+      // locking script. Single explicit heal path — see chainedChangeHeal.ts.
       try {
-        const { sweepChangeScripts } = await import('./changeScriptFate')
-        let scriptsHealed = 0
-        for (let pass = 0; pass < 4; pass += 1) {
-          throwIfYieldToSpend()
-          const sweep = await sweepChangeScripts({ fromChain: true })
-          scriptsHealed += sweep.healed
-          if (sweep.healed === 0) break
-        }
-        if (scriptsHealed > 0) {
+        const { runChangeHeal } = await import('./chainedChangeHeal')
+        const heal = await runChangeHeal({
+          path: 'chainMaintenance',
+          throwIfYield: throwIfYieldToSpend,
+        })
+        if (heal.scriptsChain > 0) {
           console.info(
-            `[chain-ingest] rebuilt ${scriptsHealed} change locking script(s) before spendable restore`,
+            `[chain-ingest] rebuilt ${heal.scriptsChain} change locking script(s) before spendable restore`,
+          )
+        }
+        if (heal.pendingPromoted > 0) {
+          console.info(
+            `[chain-ingest] promoted ${heal.pendingPromoted} pending local change output(s) before bulk restore`,
+          )
+        }
+        if (heal.restored > 0) {
+          console.info(
+            `[chain-ingest] restored ${heal.restored} change output(s) previously marked unspendable`,
           )
         }
       } catch (err) {
-        console.warn('[chain-ingest] change script sweep skipped', err)
-      }
-      throwIfYieldToSpend()
-      await rehideInputsOfLiveLocalTxs()
-      try {
-        const pendingPromoted = await promotePendingLocalChangeOutputs()
-        if (pendingPromoted > 0) {
-          console.info(
-            `[chain-ingest] promoted ${pendingPromoted} pending local change output(s) before bulk restore`,
-          )
-        }
-      } catch (err) {
-        console.warn('[chain-ingest] pending change promotion skipped', err)
-      }
-      let restored = 0
-      for (let pass = 0; pass < 5; pass += 1) {
-        throwIfYieldToSpend()
-        const batch = await restoreLiveSpendableOutputs()
-        if (batch === 0) break
-        restored += batch
-      }
-      if (restored > 0) {
-        console.info(
-          `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
-        )
-      }
-      // Coins a send sealed for a transaction that never reached a node. Runs
-      // after the rehide pass so anything genuinely in flight is sealed first.
-      for (let pass = 0; pass < 3; pass += 1) {
-        throwIfYieldToSpend()
-        const reclaimed = await reclaimSealedInputsNeverSpent()
-        if (reclaimed === 0) break
+        if (err instanceof ChainIngestYieldToSpendError) throw err
+        console.warn('[chain-ingest] chained change heal skipped', err)
       }
     })(),
   ])

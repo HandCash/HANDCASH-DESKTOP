@@ -9,62 +9,15 @@
  * concern. A stale local tip fails at broadcast and is released then.
  */
 import { extractSatsFromArgs } from './appActivity'
+import { runChangeHeal } from './chainedChangeHeal'
 import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
-import {
-  promotePendingLocalChangeOutputs,
-  reclaimSealedInputsNeverSpent,
-  restoreLiveSpendableOutputs,
-} from './staleOutputRelease'
-import { sweepChangeScripts } from './changeScriptFate'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
-/** True while {@link runExclusiveSpend} already promoted chained change. */
+/** True while {@link runExclusiveSpend} already ran {@link ChangeHealPath.spendGate}. */
 let spendChainPromoted = false
-
-/** Rebuild script-less change rows and mark live pending change spendable for chaining. */
-async function promoteSpendableChange(): Promise<number> {
-  let restored = 0
-  let localHealed = 0
-  let chainHealed = 0
-  try {
-    // Coins sealed for a broadcast that never landed — reclaim before selection.
-    await reclaimSealedInputsNeverSpent({ forSpendChain: true })
-    // Pending change from live sends — O(live txs), not O(unspendable rows).
-    await promotePendingLocalChangeOutputs({ forSpendChain: true })
-    const localSweep = await sweepChangeScripts({ fromChain: false })
-    localHealed = localSweep.healed
-    for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
-      restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-    }
-    if (restored === 0 && localHealed > 0) {
-      restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-    }
-    // Script-less change credited in the hero balance but skipped by restore —
-    // one bounded chain pass heals rows local raw tx could not rebuild.
-    if (restored === 0 && localHealed === 0) {
-      const chainSweep = await sweepChangeScripts({ fromChain: true })
-      chainHealed = chainSweep.healed
-      if (chainHealed > 0) {
-        restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-      }
-    }
-  } catch (err) {
-    logDiag('spend-guard', 'warn', 'promote-skipped', {
-      error: err instanceof Error ? err.message : String(err),
-    })
-  }
-  if (restored > 0 || localHealed > 0 || chainHealed > 0) {
-    logDiag('spend-guard', 'info', 'promoted', {
-      restored,
-      scriptsLocal: localHealed,
-      scriptsChain: chainHealed,
-    })
-  }
-  return restored
-}
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(
@@ -72,7 +25,7 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
 ): Promise<T> {
   return runExclusiveSpendCoordinated(async () => {
-    await promoteSpendableChange()
+    await runChangeHeal({ path: 'spendGate' })
     spendChainPromoted = true
     try {
       return await fn()
@@ -83,10 +36,21 @@ export function runExclusiveSpend<T>(
 }
 
 /**
- * @deprecated No-op. Spends no longer cache a pre-pay chain heal.
- * Kept so older call sites compile until cleaned up.
+ * Burn / destroy paths call this so `requestSpendPriority` is held **before**
+ * FIFO acquire — collectables `listOutputs` then yields while burn waits.
  */
-export function invalidateFundingHealCache(): void {}
+export async function runExclusiveBurn<T>(
+  reason: string,
+  fn: () => Promise<T>,
+): Promise<T> {
+  const { requestSpendPriority } = await import('./walletCoordinator')
+  const releasePriority = requestSpendPriority(reason)
+  try {
+    return await runExclusiveSpend(fn)
+  } finally {
+    releasePriority()
+  }
+}
 
 const BALANCE_UNREADABLE =
   'Wallet storage is busy, so your spendable balance could not be read. Nothing was sent — try again in a moment.'
@@ -133,14 +97,9 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   // Display balance credits pending change; createAction only selects spendable
   // toolbox rows. Promote live change — never pass the gate on credit alone.
   if (!spendChainPromoted) {
-    await promoteSpendableChange()
+    await runChangeHeal({ path: 'spendGate' })
   } else {
-    // runExclusiveSpend already ran promoteSpendableChange at queue entry. When
-    // bulk restore could not reach this wallet's pending credit (small UTXO
-    // count on mobile, huge dead row count on desktop), retry the O(live-txs)
-    // path here instead of throwing "chain unconfirmed change" while funds exist.
-    await promotePendingLocalChangeOutputs({ forSpendChain: true })
-    await restoreLiveSpendableOutputs({ forSpendChain: true })
+    await runChangeHeal({ path: 'spendGatePartialRetry' })
   }
   confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
@@ -156,14 +115,10 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   }
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
-    // Last pass: chain script heal for script-less pending change, then re-read.
-    const chainSweep = await sweepChangeScripts({ fromChain: true })
-    if (chainSweep.healed > 0) {
-      await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      await restoreLiveSpendableOutputs({ forSpendChain: true })
-      confirmed = await readConfirmedSpendable(active)
-      if (satoshis <= confirmed) return confirmed
-    }
+    await runChangeHeal({ path: 'chainingScriptHeal' })
+    confirmed = await readConfirmedSpendable(active)
+    if (satoshis <= confirmed) return confirmed
+
     const { insufficientFundsMessage } = await import('./insufficientFunds')
     await logSpendFailure('chaining-required', {
       needed: satoshis,
@@ -187,7 +142,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
 /**
  * Pre-spend gate: online + local balance (optional amount check).
- * Name kept for call-site stability; does not heal from chain.
+ * Runs {@link assertSendableBalance} when an amount is given (includes promote).
  */
 export async function prepareSpendHeal(satoshis?: number): Promise<number> {
   if (typeof satoshis === 'number' && satoshis > 0) {
