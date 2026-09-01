@@ -1,10 +1,16 @@
 # Changelog
 
+## [1.3.40] - 2026-09-01
+
+### Changed
+
+- Version bump (corrected v1.3.39 CHANGELOG; diagnostics shipped in v1.3.39).
+
 ## [1.3.39] - 2026-09-01
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **Support diagnostics** — structured wallet logs (`[scope] event key=value`) on spend failures, BRC-100 mutations, connect/permission edges, balance breakdowns, and script-less change skips; spend/burn/market failures auto-upload logs with balance snapshots; larger ring buffer and richer upload headers for remote `/latest` triage.
 
 ## [1.3.38] - 2026-08-31
 
