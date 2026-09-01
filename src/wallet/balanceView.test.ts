@@ -23,6 +23,8 @@ describe('txLivenessFromStatus', () => {
   })
 })
 
+const sampleScript = '76a914000000000000000000000000000000000000000088ac'
+
 describe('classifyOwnedCash', () => {
   it('counts remaining spendable coins', () => {
     expect(
@@ -33,11 +35,26 @@ describe('classifyOwnedCash', () => {
   it('credits unconfirmed change of a live send, even when not yet spendable', () => {
     expect(
       classifyOwnedCash(
-        { satoshis: 9_000, change: true, spendable: false },
+        {
+          satoshis: 9_000,
+          change: true,
+          spendable: false,
+          lockingScript: sampleScript,
+        },
         'pending',
         'none',
       ),
     ).toEqual({ kind: 'count', as: 'unconfirmedChange', satoshis: 9_000 })
+  })
+
+  it('does not credit script-less change rows', () => {
+    expect(
+      classifyOwnedCash(
+        { satoshis: 9_000, change: true, spendable: false },
+        'pending',
+        'none',
+      ),
+    ).toEqual({ kind: 'exclude', reason: 'notOurs' })
   })
 
   it('drops inputs of a live send so the displayed total is not send+change', () => {
@@ -121,7 +138,12 @@ describe('owned cash while sending', () => {
       'none',
     )
     const change = classifyOwnedCash(
-      { satoshis: 48_990, change: true, spendable: false },
+      {
+        satoshis: 48_990,
+        change: true,
+        spendable: false,
+        lockingScript: sampleScript,
+      },
       'pending',
       'none',
     )
@@ -163,7 +185,13 @@ describe('unconfirmedChangeSats', () => {
 
   it('credits change of a live send without paging the spent graveyard', async () => {
     findOutputs.mockResolvedValue([
-      { satoshis: 9_000, change: true, spendable: false, transactionId: 9 },
+      {
+        satoshis: 9_000,
+        change: true,
+        spendable: false,
+        transactionId: 9,
+        lockingScript: sampleScript,
+      },
     ])
     findTransactions.mockResolvedValue([{ status: 'unproven' }])
 
@@ -176,7 +204,13 @@ describe('unconfirmedChangeSats', () => {
 
   it('does not re-credit completed change restored from BRC-39 history', async () => {
     findOutputs.mockResolvedValue([
-      { satoshis: 9_000, change: true, spendable: false, transactionId: 9 },
+      {
+        satoshis: 9_000,
+        change: true,
+        spendable: false,
+        transactionId: 9,
+        lockingScript: sampleScript,
+      },
     ])
     findTransactions.mockResolvedValue([{ status: 'completed' }])
 
@@ -198,9 +232,30 @@ describe('unconfirmedChangeSats', () => {
       args.paged.offset > 0
         ? []
         : [
-            { satoshis: 1_000, change: true, spendable: false, transactionId: 1, spentBy: 11 },
-            { satoshis: 2_000, change: true, spendable: false, transactionId: 2, spentBy: 12 },
-            { satoshis: 3_000, change: true, spendable: false, transactionId: 3, spentBy: 13 },
+            {
+              satoshis: 1_000,
+              change: true,
+              spendable: false,
+              transactionId: 1,
+              spentBy: 11,
+              lockingScript: sampleScript,
+            },
+            {
+              satoshis: 2_000,
+              change: true,
+              spendable: false,
+              transactionId: 2,
+              spentBy: 12,
+              lockingScript: sampleScript,
+            },
+            {
+              satoshis: 3_000,
+              change: true,
+              spendable: false,
+              transactionId: 3,
+              spentBy: 13,
+              lockingScript: sampleScript,
+            },
           ],
     )
     findTransactions.mockImplementation(
@@ -220,8 +275,20 @@ describe('unconfirmedChangeSats', () => {
       args.paged.offset > 0
         ? []
         : [
-            { satoshis: 1_000, change: true, spendable: false, transactionId: 4 },
-            { satoshis: 2_000, change: true, spendable: false, transactionId: 4 },
+            {
+              satoshis: 1_000,
+              change: true,
+              spendable: false,
+              transactionId: 4,
+              lockingScript: sampleScript,
+            },
+            {
+              satoshis: 2_000,
+              change: true,
+              spendable: false,
+              transactionId: 4,
+              lockingScript: sampleScript,
+            },
           ],
     )
     findTransactions.mockResolvedValue([{ status: 'unproven' }])
@@ -234,7 +301,7 @@ describe('unconfirmedChangeSats', () => {
     findOutputs.mockImplementation(async (args: { paged: { offset: number } }) =>
       args.paged.offset > 0
         ? []
-        : [{ satoshis: 9_000, change: true, spendable: false, transactionId: 5 }],
+        : [{ satoshis: 9_000, change: true, spendable: false, transactionId: 5, lockingScript: sampleScript }],
     )
     findTransactions.mockRejectedValue(new Error('idb closed'))
 
@@ -245,12 +312,30 @@ describe('unconfirmedChangeSats', () => {
     findOutputs.mockImplementation(async (args: { paged: { offset: number } }) => {
       if (args.paged.offset === 0) {
         return [
-          { satoshis: 4_000, change: true, spendable: false, transactionId: 1 },
-          { satoshis: 5_000, change: true, spendable: false, transactionId: 2 },
+          {
+            satoshis: 4_000,
+            change: true,
+            spendable: false,
+            transactionId: 1,
+            lockingScript: sampleScript,
+          },
+          {
+            satoshis: 5_000,
+            change: true,
+            spendable: false,
+            transactionId: 2,
+            lockingScript: sampleScript,
+          },
         ]
       }
       return [
-        { satoshis: 50_000, change: true, spendable: false, transactionId: 3 },
+        {
+          satoshis: 50_000,
+          change: true,
+          spendable: false,
+          transactionId: 3,
+          lockingScript: sampleScript,
+        },
       ]
     })
     findTransactions.mockResolvedValue([{ status: 'unproven' }])

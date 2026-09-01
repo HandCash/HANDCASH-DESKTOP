@@ -48,7 +48,7 @@ const PAGE = 200
 /** Ceiling so a corrupt row count cannot stall a send forever. */
 const MAX_PAGES = 40
 /** Chain lookups per pass. Local storage hydration is unbounded; network is not. */
-const CHAIN_FETCH_MAX = 12
+const CHAIN_FETCH_MAX = 48
 
 export function hasLockingScript(row: ChangeRow): boolean {
   const script = row.lockingScript
@@ -291,6 +291,18 @@ export async function sweepChangeScripts(args?: {
     console.info(
       `[change-script] quarantined ${result.quarantined} change output(s) with no rebuildable script`,
     )
+  }
+  if (result.refused > 0 || result.quarantined > 0 || result.healed > 0) {
+    void import('./diagnosticLog').then(({ logDiag }) => {
+      logDiag('change-script', result.healed > 0 ? 'info' : 'warn', 'sweep', {
+        scanned: result.scanned,
+        unscripted: unscripted.length,
+        healed: result.healed,
+        quarantined: result.quarantined,
+        refused: result.refused,
+        fromChain: args?.fromChain === true,
+      })
+    })
   }
   return result
 }

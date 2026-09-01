@@ -15,6 +15,7 @@
  * 1-sat items and BSV-21 stay out of Pay.
  */
 import { getActiveWallet } from './session'
+import { hasLockingScript, type ChangeRow } from './changeScriptFate'
 import { isLiveLocalTxStatus } from './staleOutputRelease'
 
 export type OwnedCashRow = {
@@ -79,6 +80,10 @@ export function classifyOwnedCash(
   }
 
   if (row.change === true && creator === 'pending') {
+    // Script-less BRC-39 change rows look like credit but crash createAction.
+    if (!hasLockingScript(row as ChangeRow)) {
+      return { kind: 'exclude', reason: 'notOurs' }
+    }
     return { kind: 'count', as: 'unconfirmedChange', satoshis }
   }
 

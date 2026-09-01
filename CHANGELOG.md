@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.41] - 2026-09-01
+
+### Fixed
+
+- **Script-less change balance** — stop crediting unscripted BRC-39 change in the hero balance; heal locking scripts on unlock/recompose with a higher chain fetch budget; log sweep outcomes for remote triage.
+
 ## [1.3.40] - 2026-09-01
 
 ### Changed
