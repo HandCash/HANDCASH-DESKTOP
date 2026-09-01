@@ -30,7 +30,7 @@ import { resolveHistoryBackupBaseUrl } from './historyBackupPrefs'
 import { toastSuccess } from './toast'
 import { getDisplayCurrency } from './displayCurrency'
 import { formatPrimaryFromSats } from './fx'
-import { ingestLegacyAddressUtxos } from './ingestLegacyAddress'
+import { ingestLegacyAddressUtxos, ChainIngestYieldToSpendError } from './ingestLegacyAddress'
 import { type MigrationItem } from './oneSatImport'
 import { isLegacyImportGraceActive } from './legacyImportGuard'
 import { isUndefinedPartialFilterError } from './staleOutputRelease'
@@ -403,6 +403,18 @@ export async function refreshFromChainExclusive(
     let ingest: Awaited<ReturnType<typeof ingestLegacyAddressUtxos>>
     try {
       ingest = await ingestPromise
+    } catch (err) {
+      if (err instanceof ChainIngestYieldToSpendError) {
+        console.info('[chain-ingest] legacy ingest aborted — send waiting')
+        return finishEarlyForSpend(active, {
+          heldCount,
+          pendingTips,
+          importedFunding,
+          importedItems,
+          scannedTxids,
+        })
+      }
+      throw err
     } finally {
       clearTimeout(softTimer)
     }

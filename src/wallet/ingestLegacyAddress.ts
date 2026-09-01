@@ -43,6 +43,20 @@ import { isItemAbandoned, isItemSent } from './sentItemGuard'
 import { yieldToUi } from './yieldToUi'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
+/** In-flight legacy ingest aborts so the spend region can open. */
+export class ChainIngestYieldToSpendError extends Error {
+  constructor() {
+    super('chain ingest yielded to spend')
+    this.name = 'ChainIngestYieldToSpendError'
+  }
+}
+
+function yieldToSpendIfNeeded(): void {
+  if (shouldYieldChainIngestToSpend()) {
+    throw new ChainIngestYieldToSpendError()
+  }
+}
+
 export type LegacyAddressIngestResult = {
   scan: LegacyScanResult
   importedFunding: number
@@ -490,6 +504,7 @@ export async function ingestLegacyAddressUtxos(
       oneSats.map((item) => [outpointKey(item.outpoint), item]),
     )
     for (let i = 0; i < newOneSatCandidates.length; i += ONE_SAT_IMPORT_CHUNK) {
+      yieldToSpendIfNeeded()
       const chunk = newOneSatCandidates.slice(i, i + ONE_SAT_IMPORT_CHUNK)
       await yieldToUi()
       const itemResult = await importOneSatOrdinals(chunk, active)
@@ -540,6 +555,7 @@ export async function ingestLegacyAddressUtxos(
   let importedFundingOutpoints: string[] = []
 
   if (funding.length > 0) {
+    yieldToSpendIfNeeded()
     let result = await importLegacyUtxos(funding, active)
     importedFunding = result.imported
     fundingFailed = result.failed

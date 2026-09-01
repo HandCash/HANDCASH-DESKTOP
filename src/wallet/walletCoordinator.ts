@@ -212,11 +212,19 @@ async function acquire(
   endEvent: WalletCoordinatorEvent,
   canBegin: () => boolean,
 ): Promise<() => void> {
+  const started = Date.now()
+  let loggedWait = false
   while (true) {
     const before = JSON.stringify(context())
     actor.send(event)
     const after = JSON.stringify(context())
     if (before !== after) break
+    if (!loggedWait && Date.now() - started > 5_000) {
+      loggedWait = true
+      console.info(
+        `[coordinator] waiting to acquire ${event.type} — ${describeWalletCoordinator().summary}`,
+      )
+    }
     await waitFor(canBegin)
   }
   return () => {
