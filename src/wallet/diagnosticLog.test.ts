@@ -11,10 +11,6 @@ vi.mock('./session', () => ({
   ),
 }))
 
-vi.mock('./permissions', () => ({
-  normalizeOrigin: (origin: string) => origin,
-}))
-
 const store = new Map<string, string>()
 
 vi.mock('./durableStorage', () => ({

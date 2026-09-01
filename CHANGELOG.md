@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.42] - 2026-09-01
+
+### Fixed
+
+- **Website connect regression** — remove blocking change-script heal from unlock/recompose; break diagnosticLog → permissions circular import; never let BRC-100 diagnostic logging throw on connect paths.
+
 ## [1.3.41] - 2026-09-01
 
 ### Fixed

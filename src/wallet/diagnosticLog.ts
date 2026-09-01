@@ -8,7 +8,6 @@
 import { appendAppLog, type AppLogLevel } from './appLog'
 import { formatLogFields } from './logFormat'
 import { fetchBalanceRead, getActiveWallet } from './session'
-import { normalizeOrigin } from './permissions'
 
 export type WalletBalanceSnapshot = {
   spendable: number | null
@@ -24,6 +23,7 @@ const QUIET_BRC100 = new Set([
   'getHeaderForHeight',
   'health',
   'isAuthenticated',
+  'waitForAuthentication',
   'listOutputs',
   'listActions',
   'listCertificates',
@@ -93,12 +93,12 @@ export async function logSpendFailure(
 }
 
 function originHost(origin: string | undefined): string {
-  const normalized = normalizeOrigin(origin)
-  if (!normalized) return 'unknown'
+  const raw = (origin ?? '').trim()
+  if (!raw) return 'unknown'
   try {
-    return new URL(normalized).host
+    return new URL(raw).host
   } catch {
-    return normalized.slice(0, 80)
+    return raw.replace(/\/+$/, '').slice(0, 80)
   }
 }
 

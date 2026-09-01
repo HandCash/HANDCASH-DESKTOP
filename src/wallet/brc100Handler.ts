@@ -890,7 +890,14 @@ export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ st
   try {
     const result = await handleBrc100RequestInner(event)
     if (diag && method) {
-      logBrc100Response(method, originator, result, Date.now() - t0, args)
+      try {
+        logBrc100Response(method, originator, result, Date.now() - t0, args)
+      } catch (err) {
+        appendAppLog(
+          'warn',
+          `[brc100] diagnostic log skipped: ${err instanceof Error ? err.message : String(err)}`,
+        )
+      }
     }
     return result
   } finally {

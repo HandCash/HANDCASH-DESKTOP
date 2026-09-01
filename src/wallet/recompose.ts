@@ -151,43 +151,6 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
 
   await relistCollectablesAfterLocalStateReplace()
 
-  // BRC-39 restore often leaves change rows without locking scripts. Chain ingest
-  // may yield to an in-flight send before the sweep finishes — run a dedicated
-  // heal pass so unlock shows spendable balance that matches reality.
-  try {
-    const { sweepChangeScripts } = await import('./changeScriptFate')
-    const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
-    let scriptsHealed = 0
-    for (let pass = 0; pass < 4; pass += 1) {
-      const sweep = await sweepChangeScripts({ fromChain: true })
-      scriptsHealed += sweep.healed
-      if (sweep.healed === 0) break
-    }
-    if (scriptsHealed > 0) {
-      let restored = 0
-      for (let pass = 0; pass < 3; pass += 1) {
-        const batch = await restoreLiveSpendableOutputs({ forSpendChain: true })
-        if (batch === 0) break
-        restored += batch
-      }
-      const { logDiag } = await import('./diagnosticLog')
-      logDiag('recompose', 'info', 'change-healed', { scriptsHealed, restored })
-      if (spendableSats == null) {
-        const active = getActiveWallet()
-        spendableSats = active ? await fetchBalanceSats(active.wallet) : spendableSats
-      }
-    }
-  } catch (err) {
-    try {
-      const { logDiag } = await import('./diagnosticLog')
-      logDiag('recompose', 'warn', 'change-heal-skipped', {
-        error: err instanceof Error ? err.message : String(err),
-      })
-    } catch {
-      /* ignore */
-    }
-  }
-
   try {
     const { appendAppLog } = await import('./appLog')
     appendAppLog(
