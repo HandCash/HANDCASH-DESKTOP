@@ -473,6 +473,11 @@ export function InventoryPanel() {
     let cancelled = false
 
     const refresh = async (reason: string) => {
+      const { shouldYieldChainIngestToSpend } = await import('../wallet/walletCoordinator')
+      if (shouldYieldChainIngestToSpend()) {
+        console.info(`[collectables] deferring refresh (${reason}) — send waiting`)
+        return
+      }
       const showSpinner = !areCollectablesHydrated() && getCachedCollectables().length === 0
       if (showSpinner && !cancelled) setAwaitingFirst(true)
       try {

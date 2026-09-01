@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.50] - 2026-09-01
+
+### Fixed
+
+- **NFT / collectable send timeouts** — spend region fails fast after 45s instead of wedging silently; fungibles list defers like collectables when sync/send is active; Collectables ownership refresh skips while a send is waiting; inbound BRC-100 traffic no longer holds `permission-prompt` spend priority without a visible prompt.
+- **Market inventory** — BRC-100 `listOutputs` for market hosts caps at 20s and serves cached collectables/tokens when the wallet is busy; market originator host normalization fixed.
+
+### Added
+
+- **Network dependency health** — Settings → Support probes Chaintracks, Bitails, and GorillaPool on open and during Refresh; logs `[dependency-health]` for support.
+- **`scripts/sync-reference-repos.sh`** — refresh local Babbage SDK + BSV Desktop reference clones under `~/reference`.
+
 ## [1.3.49] - 2026-09-01
 
 ### Fixed

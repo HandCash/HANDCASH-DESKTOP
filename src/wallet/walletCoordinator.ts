@@ -46,6 +46,8 @@ type SpendPriorityHold = {
 }
 
 const SPEND_PRIORITY_MAX_MS = 90_000
+/** Fail fast when a send cannot acquire the spend region — UI watchdog is 90s. */
+const SPEND_ACQUIRE_MAX_MS = 45_000
 /** Proof-of-life cadence for a hold whose work is still running. */
 const SPEND_PRIORITY_TOUCH_MS = 30_000
 
@@ -207,14 +209,38 @@ function waitFor(predicate: () => boolean): Promise<void> {
   })
 }
 
+export class WalletCoordinatorAcquireTimeoutError extends Error {
+  readonly region: string
+  readonly waitedMs: number
+  readonly coordinatorSummary: string
+
+  constructor(region: string, waitedMs: number, coordinatorSummary: string) {
+    super(
+      `Wallet is busy (${coordinatorSummary}). Nothing was sent — try again in a moment.`,
+    )
+    this.name = 'WalletCoordinatorAcquireTimeoutError'
+    this.region = region
+    this.waitedMs = waitedMs
+    this.coordinatorSummary = coordinatorSummary
+  }
+}
+
 async function acquire(
   event: WalletCoordinatorEvent,
   endEvent: WalletCoordinatorEvent,
   canBegin: () => boolean,
+  options?: { maxWaitMs?: number },
 ): Promise<() => void> {
   const started = Date.now()
   let loggedWait = false
   while (true) {
+    if (options?.maxWaitMs != null && Date.now() - started > options.maxWaitMs) {
+      throw new WalletCoordinatorAcquireTimeoutError(
+        event.type,
+        Date.now() - started,
+        describeWalletCoordinator().summary,
+      )
+    }
     const before = JSON.stringify(context())
     actor.send(event)
     const after = JSON.stringify(context())
@@ -241,7 +267,12 @@ async function acquireChainIngest(nested: boolean): Promise<() => void> {
 }
 
 async function acquireSpend(): Promise<() => void> {
-  return acquire({ type: 'SPEND_BEGIN' }, { type: 'SPEND_END' }, () => canBeginSpend(context()))
+  return acquire(
+    { type: 'SPEND_BEGIN' },
+    { type: 'SPEND_END' },
+    () => canBeginSpend(context()),
+    { maxWaitMs: SPEND_ACQUIRE_MAX_MS },
+  )
 }
 
 async function acquireHistoryReplica(): Promise<() => void> {

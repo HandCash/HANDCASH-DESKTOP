@@ -274,6 +274,9 @@ export async function refreshFromChainExclusive(
     phase: 'syncing',
     message: syncMessage,
   })
+  void import('./dependencyHealth')
+    .then(({ refreshDependencyHealth }) => refreshDependencyHealth())
+    .catch(() => {})
   startWalletProgress({
     kind: 'refresh',
     phase: fundingOnly ? 'funding' : 'scanning',

@@ -389,6 +389,22 @@ async function listFungiblesNow(
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
 
+  const { getWalletCoordinatorSnapshot, shouldYieldChainIngestToSpend } =
+    await import('./walletCoordinator')
+  const coord = getWalletCoordinatorSnapshot()
+  const cachedRows = getCachedFungibles()
+  if (
+    cachedRows.length > 0 &&
+    (coord.chainIngest === 'active' ||
+      coord.spend === 'active' ||
+      shouldYieldChainIngestToSpend())
+  ) {
+    console.info(
+      `[bsv21] deferring listOutputs — wallet busy, using ${cachedRows.length} cached token(s)`,
+    )
+    return cachedRows
+  }
+
   try {
     await yieldToUi()
     let liveRows: FungibleToken[] = []

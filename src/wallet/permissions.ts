@@ -291,7 +291,9 @@ function syncPermissionSpendPriority(): void {
     .then(({ requestSpendPriority }) => {
       // Re-read intent inside the callback: the prompt may have resolved while
       // the dynamic import was in flight.
-      const want = current != null || queue.length > 0 || inboundWalletRequests > 0
+      // Inbound BRC-100 reads must not masquerade as a permission prompt — a
+      // wedged listOutputs held spend priority for 90s+ with no UI to dismiss.
+      const want = current != null || queue.length > 0
       if (want && !releasePermissionSpendPriority) {
         releasePermissionSpendPriority = requestSpendPriority('permission-prompt')
       } else if (!want && releasePermissionSpendPriority) {

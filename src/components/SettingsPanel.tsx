@@ -38,6 +38,7 @@ import {
   ShortcutHint,
   screenshotShortcutKeys,
 } from './settings'
+import { SettingsNetworkHealth } from './settings/SettingsNetworkHealth'
 
 type SettingItem = {
   id: SettingId
@@ -297,6 +298,7 @@ export function SettingsPanel() {
 
       <SettingsSection title="Support" part="support">
         <ul className="settings-list">
+          <SettingsNetworkHealth />
           <SettingsNavRow
             label="Session logs"
             description="View, copy, and upload"

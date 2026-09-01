@@ -1,6 +1,84 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { rememberProvenVerdict } from './provenCache'
-import { addMarketOriginVerdicts } from './marketInventory'
+import { addMarketOriginVerdicts, listMarketBasketOutputs } from './marketInventory'
+
+const listOutputsWithTimeout = vi.fn()
+const getCachedCollectables = vi.fn()
+const getCachedFungibles = vi.fn()
+const getWalletCoordinatorSnapshot = vi.fn()
+const shouldYieldChainIngestToSpend = vi.fn()
+
+vi.mock('./collectables', () => ({
+  listOutputsWithTimeout: (...args: unknown[]) => listOutputsWithTimeout(...args),
+  getCachedCollectables: () => getCachedCollectables(),
+}))
+
+vi.mock('./fungibles', () => ({
+  getCachedFungibles: () => getCachedFungibles(),
+}))
+
+vi.mock('./walletCoordinator', () => ({
+  getWalletCoordinatorSnapshot: () => getWalletCoordinatorSnapshot(),
+  shouldYieldChainIngestToSpend: () => shouldYieldChainIngestToSpend(),
+}))
+
+describe('market inventory listOutputs fast path', () => {
+  beforeEach(() => {
+    listOutputsWithTimeout.mockReset()
+    getCachedCollectables.mockReset()
+    getCachedFungibles.mockReset()
+    getWalletCoordinatorSnapshot.mockReturnValue({
+      chainIngest: 'idle',
+      spend: 'idle',
+    })
+    shouldYieldChainIngestToSpend.mockReturnValue(false)
+  })
+
+  it('serves cached 1sat rows when the wallet is busy', async () => {
+    getWalletCoordinatorSnapshot.mockReturnValue({
+      chainIngest: 'active',
+      spend: 'idle',
+    })
+    getCachedCollectables.mockReturnValue([
+      {
+        outpoint: `${'a'.repeat(64)}.1`,
+        origin: `${'b'.repeat(64)}_0`,
+        name: 'Fox',
+        satoshis: 1,
+        imageUrl: '',
+        traits: [],
+        extras: [],
+        proven: true,
+        authenticity: 'brc150',
+      },
+    ])
+
+    const wallet = { listOutputs: vi.fn() }
+    const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
+    expect(result.outputs).toHaveLength(1)
+    expect(wallet.listOutputs).not.toHaveBeenCalled()
+  })
+
+  it('falls back to cached bsv21 rows after a live read times out', async () => {
+    listOutputsWithTimeout.mockRejectedValue(new Error('listOutputs timed out'))
+    getCachedFungibles.mockReturnValue([
+      {
+        tokenId: `${'c'.repeat(64)}.0`,
+        sym: 'KING',
+        amt: '60',
+        dec: 0,
+        utxoCount: 1,
+        outpoint: `${'d'.repeat(64)}.2`,
+        spendKind: 'plain',
+      },
+    ])
+
+    const wallet = { listOutputs: vi.fn() }
+    const result = await listMarketBasketOutputs(wallet as never, { basket: 'bsv21' })
+    expect(result.outputs).toHaveLength(1)
+    expect((result.outputs?.[0] as { tags?: string[] }).tags).toContain('bsv21')
+  })
+})
 
 describe('market inventory authenticity projection', () => {
   it('exposes only the durable BRC-150 verdict as originVerified', () => {
