@@ -7,6 +7,7 @@ import {
 import type { Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
+import { getDependencyHealthSnapshot } from './dependencyHealth'
 import {
   beginLegacyImport,
   markLegacyImported,
@@ -109,6 +110,14 @@ let handcashChainCooldownUntil = 0
 let bananablocksCooldownUntil = 0
 let kallubiCooldownUntil = 0
 
+/** Skip slow cloud proxy when Settings already marked HandCash Chain down. */
+function handcashChainLikelyUp(): boolean {
+  const snap = getDependencyHealthSnapshot()
+  if (snap.at === 0) return true
+  const hc = snap.probes.find((p) => p.id === 'handcash-chain')
+  return hc?.status !== 'down'
+}
+
 /** Test-only — clear provider skip windows. */
 export function resetLegacyScanCooldownForTests(): void {
   wocCooldownUntil = 0
@@ -176,24 +185,6 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
 
-  try {
-    const cloud = await cloudTxExists(id, chain)
-    if (cloud === true || cloud === false) return cloud
-  } catch {
-    /* fall through */
-  }
-
-  const bitails = bitailsBase(chain)
-  if (bitails) {
-    try {
-      const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-      if (res.status === 404) return false
-      if (res.ok) return true
-    } catch (err) {
-      console.warn('[legacy-scan] Bitails tx lookup failed', err)
-    }
-  }
-
   const banana = bananablocksBase(chain)
   if (banana) {
     try {
@@ -215,6 +206,26 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
       if (res.ok) return true
     } catch (err) {
       console.warn('[legacy-scan] Kallubi tx lookup failed', err)
+    }
+  }
+
+  const bitails = bitailsBase(chain)
+  if (bitails) {
+    try {
+      const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
+      if (res.status === 404) return false
+      if (res.ok) return true
+    } catch (err) {
+      console.warn('[legacy-scan] Bitails tx lookup failed', err)
+    }
+  }
+
+  if (handcashChainLikelyUp()) {
+    try {
+      const cloud = await cloudTxExists(id, chain)
+      if (cloud === true || cloud === false) return cloud
+    } catch {
+      /* fall through */
     }
   }
 
@@ -270,14 +281,23 @@ export async function spentStatusOfOutpoint(
   const parsed = parseOutpoint(outpoint)
   if (!parsed) return 'unknown'
 
-  try {
-    const cloud = await cloudSpentStatus(parsed.txid, parsed.vout, chain)
-    if (cloud === 'spent' || cloud === 'unspent') return cloud
-  } catch {
-    /* fall through */
+  let bitailsUnknown = false
+
+  const banana = bananablocksBase(chain)
+  if (banana) {
+    try {
+      const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
+      if (res.status === 404) return 'unspent'
+      if (!res.ok) return 'unknown'
+      const body = (await res.json()) as { txid?: unknown }
+      const spendTxid = String(body.txid ?? '').toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
+      return 'unknown'
+    } catch (err) {
+      console.warn('[legacy-scan] BananaBlocks utxo status failed', err)
+    }
   }
 
-  let bitailsUnknown = false
   const bitails = bitailsBase(chain)
   if (bitails) {
     try {
@@ -295,18 +315,12 @@ export async function spentStatusOfOutpoint(
     }
   }
 
-  const banana = bananablocksBase(chain)
-  if (banana) {
+  if (handcashChainLikelyUp()) {
     try {
-      const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
-      if (res.status === 404) return bitailsUnknown ? 'unknown' : 'unspent'
-      if (!res.ok) return 'unknown'
-      const body = (await res.json()) as { txid?: unknown }
-      const spendTxid = String(body.txid ?? '').toLowerCase()
-      if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
-      return 'unknown'
-    } catch (err) {
-      console.warn('[legacy-scan] BananaBlocks utxo status failed', err)
+      const cloud = await cloudSpentStatus(parsed.txid, parsed.vout, chain)
+      if (cloud === 'spent' || cloud === 'unspent') return cloud
+    } catch {
+      /* fall through */
     }
   }
 
@@ -562,7 +576,7 @@ async function enrichZeroSatRows(
 }
 
 /**
- * Prefer Bitails (independent budget); WhatsOnChain then toolbox Services.
+ * Fast 2026 explorers first; slow cloud proxy last.
  *
  * Hosts are staggered rather than raced outright: the common case stays a single
  * request, and only a stalled host costs a second one.
@@ -573,40 +587,6 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 
   const now = Date.now()
   const starters: Array<() => Promise<LegacyScanResult>> = []
-
-  if (now >= handcashChainCooldownUntil) {
-    starters.push(async () => {
-      try {
-        const result = await scanAddressViaHandcashChain(wallet.address, wallet.chain)
-        handcashChainCooldownUntil = 0
-        return result
-      } catch (err) {
-        handcashChainCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-        console.info('[legacy-scan] HandCash Chain failed', err)
-        throw err
-      }
-    })
-  } else {
-    console.info('[legacy-scan] skipping HandCash Chain (recently failed)')
-  }
-
-  if (bitailsBase(wallet.chain)) {
-    if (now >= bitailsCooldownUntil) {
-      starters.push(async () => {
-        try {
-          const result = await scanAddressViaBitails(wallet.address, wallet.chain)
-          bitailsCooldownUntil = 0
-          return result
-        } catch (err) {
-          bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-          console.warn('[legacy-scan] Bitails failed', err)
-          throw err
-        }
-      })
-    } else {
-      console.info('[legacy-scan] skipping Bitails (recently failed)')
-    }
-  }
 
   if (bananablocksBase(wallet.chain)) {
     if (now >= bananablocksCooldownUntil) {
@@ -642,6 +622,42 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
     } else {
       console.info('[legacy-scan] skipping Kallubi (recently failed)')
     }
+  }
+
+  if (bitailsBase(wallet.chain)) {
+    if (now >= bitailsCooldownUntil) {
+      starters.push(async () => {
+        try {
+          const result = await scanAddressViaBitails(wallet.address, wallet.chain)
+          bitailsCooldownUntil = 0
+          return result
+        } catch (err) {
+          bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          console.warn('[legacy-scan] Bitails failed', err)
+          throw err
+        }
+      })
+    } else {
+      console.info('[legacy-scan] skipping Bitails (recently failed)')
+    }
+  }
+
+  if (handcashChainLikelyUp() && now >= handcashChainCooldownUntil) {
+    starters.push(async () => {
+      try {
+        const result = await scanAddressViaHandcashChain(wallet.address, wallet.chain)
+        handcashChainCooldownUntil = 0
+        return result
+      } catch (err) {
+        handcashChainCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+        console.info('[legacy-scan] HandCash Chain failed', err)
+        throw err
+      }
+    })
+  } else if (!handcashChainLikelyUp()) {
+    console.info('[legacy-scan] skipping HandCash Chain (dependency health: down)')
+  } else {
+    console.info('[legacy-scan] skipping HandCash Chain (recently failed)')
   }
 
   if (now >= wocCooldownUntil) {

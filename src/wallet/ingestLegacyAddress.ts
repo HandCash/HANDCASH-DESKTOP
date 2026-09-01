@@ -376,12 +376,22 @@ export async function ingestLegacyAddressUtxos(
   ])
 
   const scan = mergeTokenTxos(addressScan, ordinalTxos)
+  if (scan.utxos.length > 0) {
+    console.info(
+      `[chain-ingest] legacy address scan: ${scan.utxos.length} UTXO(s), ${scan.sats} sats via ${scan.source}`,
+    )
+  }
+
   if (scan.utxos.length === 0) {
     return emptyIngest(scan)
   }
 
+  // A send / app request may have arrived while the scan ran. Still sweep funding
+  // — that is what moves the displayed balance. Skip ordinal import only.
+  let skipCollectableImport = fundingOnly
   if (!fundingOnly && shouldYieldChainIngestToSpend()) {
-    return emptyIngest(scan)
+    console.info('[chain-ingest] send waiting — sweeping funding, skipping ordinal import')
+    skipCollectableImport = true
   }
 
   const remittanceByOutpoint = await loadCollectableRemittance()
@@ -493,7 +503,7 @@ export async function ingestLegacyAddressUtxos(
   // Collect paints after each batch instead of staying on a stale 9-item cache
   // until the entire importOneSatOrdinals call returns.
   const ONE_SAT_IMPORT_CHUNK = 48
-  if (newOneSatCandidates.length > 0) {
+  if (!skipCollectableImport && newOneSatCandidates.length > 0) {
     const totalTips = newOneSatCandidates.length
     if (totalTips > ONE_SAT_IMPORT_CHUNK) {
       console.info(

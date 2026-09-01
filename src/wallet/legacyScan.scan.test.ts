@@ -58,6 +58,7 @@ afterEach(() => {
 describe('scanLegacyAddress', () => {
   it('answers from Bitails alone — no hedge request on the happy path', async () => {
     const fetchMock = cloudSilent(async (url: string) => {
+      if (isBanana(url) || isKallubi(url)) throw new Error('fast explorer down')
       if (!isBitails(url)) throw new Error(`unexpected host ${url}`)
       return new Response(bitailsBody(500), { status: 200 })
     })
@@ -67,7 +68,7 @@ describe('scanLegacyAddress', () => {
 
     expect(scan.source).toBe('bitails')
     expect(scan.sats).toBe(500)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock).toHaveBeenCalledTimes(3)
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
@@ -153,7 +154,7 @@ describe('scanLegacyAddress', () => {
 
     const scan = await scanLegacyAddress(wallet())
 
-    expect(afterFirst).toBe(3)
+    expect(afterFirst).toBe(1)
     expect(scan.source).toBe('bananablocks')
     expect(fetchMock.mock.calls.some(([url]) => isBitails(url))).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(1)

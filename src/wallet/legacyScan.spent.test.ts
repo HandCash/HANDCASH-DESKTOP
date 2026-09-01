@@ -69,10 +69,15 @@ describe('spentStatusOfOutpoint', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
-  it('returns unspent from Bitails without asking WhatsOnChain', async () => {
+  it('returns unspent from BananaBlocks 404 without asking WhatsOnChain', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async () => jsonResponse(200, { status: 'exists', spent: false })),
+      vi.fn(async (url: string) => {
+        if (String(url).includes('bananablocks')) {
+          return new Response('', { status: 404 })
+        }
+        throw new Error(`unexpected ${url}`)
+      }),
     )
 
     await expect(spentStatusOfOutpoint(`${PREV}.0`, 'main')).resolves.toBe('unspent')
@@ -80,6 +85,9 @@ describe('spentStatusOfOutpoint', () => {
 
   it('does not treat Bitails unknown plus a WhatsOnChain 404 as spent', async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('bananablocks')) {
+        return new Response('', { status: 500 })
+      }
       if (String(url).includes('bitails')) {
         return jsonResponse(200, { status: 'unknown' })
       }

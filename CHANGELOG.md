@@ -2,9 +2,11 @@
 
 ## [1.3.56] - 2026-09-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Wrong balance after Refresh** — legacy address scan now hits BananaBlocks/Kallubi first (not slow HandCash Chain/Bitails); when a send/app request arrives mid-scan, funding UTXOs still sweep into managed change instead of being discarded.
+- **BRC-100 listOutputs wedged 120s** — all basket reads use the busy-aware timeout + cache path, not only market listing origins.
+- **HandCash Chain skip** — when dependency health marks the cloud proxy down, direct explorers are used without waiting on a 7s cloud timeout.
 
 ## [1.3.55] - 2026-09-01
 

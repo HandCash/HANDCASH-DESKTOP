@@ -824,11 +824,8 @@ async function dispatchWalletMethod(
       if (isIndexBasket(basket)) {
         return listIndexBasketOutputs(args)
       }
-      if (isMarketListingOrigin(originator)) {
-        const { listMarketBasketOutputs } = await import('./marketInventory')
-        return listMarketBasketOutputs(wallet, (args ?? {}) as never)
-      }
-      return wallet.listOutputs((args ?? {}) as never, originator)
+      const { listMarketBasketOutputs } = await import('./marketInventory')
+      return listMarketBasketOutputs(wallet, (args ?? {}) as never)
     }
     case 'relinquishOutput':
       return wallet.relinquishOutput((args ?? {}) as never, originator)
