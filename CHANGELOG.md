@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.66] - 2026-09-01
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
+## [1.3.66] - 2026-09-01
+
+### Fixed
+
+- **Spend-path reclaim** — `reclaimSealedInputsNeverSpent({ forSpendChain: true })` no longer yields on the first sealed input while spend priority is held (was always returning 0 during send/burn).
+
 ## [1.3.65] - 2026-09-01
 
 ### Fixed

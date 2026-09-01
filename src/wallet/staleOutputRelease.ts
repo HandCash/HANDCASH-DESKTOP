@@ -385,7 +385,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
 
   const revive: string[] = []
   for (const rec of sealed) {
-    if (shouldYieldChainIngestToSpend()) break
+    if (!forSpendChain && shouldYieldChainIngestToSpend()) break
     if (liveSealers.has(rec.spentBy as string)) continue
     const parsed = parseOutpoint(rec.outpoint)
     if (!parsed) continue
