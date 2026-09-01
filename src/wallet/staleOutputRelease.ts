@@ -31,6 +31,7 @@ import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 import {
   classifyChangeScript,
   hasLockingScript,
+  resolveChangeRowOutpoint,
   sweepChangeScripts,
   type ChangeRow,
 } from './changeScriptFate'
@@ -547,17 +548,26 @@ async function loadTxRow(
 
 async function healLockingScript(
   sp: LocalStorage,
-  output: ChangeRow,
+  output: ChangeRow & { transactionId?: number; outputIndex?: number },
+  txCache: Map<number, TxStatusRow | null>,
   opts?: { fromChain?: boolean },
 ): Promise<number[] | null> {
   if (hasLockingScript(output)) return null
-  const txid = String(output.txid ?? '').trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid)) return null
 
+  let txRow: TxStatusRow | null = null
+  const transactionId = Number(output.transactionId)
+  if (Number.isFinite(transactionId) && transactionId > 0) {
+    txRow = await loadTxRow(sp, transactionId, txCache)
+  }
+
+  const resolved = resolveChangeRowOutpoint(output, txRow)
+  if (!resolved?.txid) return null
+
+  const txid = resolved.txid
   if (typeof sp.getProvenOrRawTx === 'function') {
     try {
       const local = await sp.getProvenOrRawTx(txid)
-      const fate = classifyChangeScript(output, local?.rawTx?.length ? local.rawTx : null)
+      const fate = classifyChangeScript(resolved, local?.rawTx?.length ? local.rawTx : null)
       if (fate.kind === 'heal') return fate.lockingScript
     } catch (err) {
       console.warn('[stale-output] change script heal skipped', txid.slice(0, 12), err)
@@ -571,9 +581,9 @@ async function healLockingScript(
         noRawTx: false,
         paged: { limit: 1, offset: 0 },
       })
-      const raw = rows?.[0]?.rawTx
+      const raw = rows?.[0]?.rawTx ?? txRow?.rawTx
       if (Array.isArray(raw) && raw.length) {
-        const fate = classifyChangeScript(output, raw)
+        const fate = classifyChangeScript(resolved, raw)
         if (fate.kind === 'heal') return fate.lockingScript
       }
     } catch (err) {
@@ -590,7 +600,7 @@ async function healLockingScript(
     const hex = await fetchRawTxHex(txid, active.chain)
     if (!hex) return null
     const { Transaction } = await import('@bsv/sdk')
-    const fate = classifyChangeScript(output, Transaction.fromHex(hex).toBinary())
+    const fate = classifyChangeScript(resolved, Transaction.fromHex(hex).toBinary())
     return fate.kind === 'heal' ? fate.lockingScript : null
   } catch (err) {
     console.warn('[stale-output] chain script heal skipped', txid.slice(0, 12), err)
@@ -826,7 +836,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
             spentBy == null &&
             output.spendable !== true
 
-          const healed = await healLockingScript(sp, output, { fromChain: forSpendChain })
+          const healed = await healLockingScript(sp, output, txCache, { fromChain: forSpendChain })
           if (healed == null && !hasLockingScript(output)) {
             unscripted += 1
             continue

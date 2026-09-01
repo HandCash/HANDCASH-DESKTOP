@@ -14,7 +14,7 @@ vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
-const { classifyChangeScript, hasLockingScript, sweepChangeScripts } =
+const { classifyChangeScript, findMatchingVout, hasLockingScript, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow } =
   await import('./changeScriptFate')
 
 /** A one-output tx we can point a change row at. */
@@ -77,6 +77,20 @@ describe('classifyChangeScript', () => {
   })
 })
 
+describe('resolveChangeRowOutpoint', () => {
+  it('fills txid and vout from a parent transaction row', () => {
+    const tx = fixtureTx(9000)
+    const resolved = resolveChangeRowOutpoint(
+      { change: true, spendable: false, transactionId: 42, satoshis: 9000 },
+      { txid: tx.id('hex'), rawTx: tx.toBinary(), status: 'completed' },
+    )
+    expect(resolved?.txid).toBe(tx.id('hex'))
+    expect(resolved?.vout).toBe(0)
+    expect(txidFromTxRow({ rawTx: tx.toBinary() })).toBe(tx.id('hex'))
+    expect(findMatchingVout(tx.toBinary(), 9000)).toBe(0)
+  })
+})
+
 describe('hasLockingScript', () => {
   it('treats empty and missing scripts alike', () => {
     expect(hasLockingScript({ lockingScript: undefined })).toBe(false)
@@ -89,16 +103,19 @@ describe('hasLockingScript', () => {
 describe('sweepChangeScripts', () => {
   const findOutputs = vi.fn()
   const getProvenOrRawTx = vi.fn()
+  const findTransactions = vi.fn()
   const updateOutput = vi.fn()
 
   beforeEach(() => {
     findOutputs.mockReset()
     getProvenOrRawTx.mockReset()
+    findTransactions.mockReset()
     updateOutput.mockReset()
     fetchRawTxHex.mockReset()
     peekRawTxLookup.mockReset()
     peekRawTxLookup.mockReturnValue('unknown')
     getProvenOrRawTx.mockResolvedValue({})
+    findTransactions.mockResolvedValue([])
     updateOutput.mockResolvedValue(1)
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
@@ -106,7 +123,7 @@ describe('sweepChangeScripts', () => {
       wallet: {
         storage: {
           runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
-            fn({ findOutputs, getProvenOrRawTx, updateOutput }),
+            fn({ findOutputs, getProvenOrRawTx, findTransactions, updateOutput }),
         },
       },
     })
@@ -144,6 +161,32 @@ describe('sweepChangeScripts', () => {
     expect(r.healed).toBe(1)
     expect(r.quarantined).toBe(0)
     expect(updateOutput).toHaveBeenCalledExactlyOnceWith(11, {
+      lockingScript: tx.outputs[0].lockingScript.toBinary(),
+    })
+  })
+
+  it('heals rows that only have transactionId after BRC-39 restore', async () => {
+    const tx = fixtureTx(9000)
+    pageOnce([], [
+      {
+        outputId: 20,
+        change: true,
+        spendable: false,
+        transactionId: 42,
+        satoshis: 9000,
+      },
+    ])
+    findTransactions.mockImplementation(async (args: { partial?: { transactionId?: number } }) => {
+      if (args.partial?.transactionId === 42) {
+        return [{ txid: tx.id('hex'), rawTx: tx.toBinary(), status: 'completed' }]
+      }
+      return []
+    })
+
+    const r = await sweepChangeScripts()
+
+    expect(r.healed).toBe(1)
+    expect(updateOutput).toHaveBeenCalledExactlyOnceWith(20, {
       lockingScript: tx.outputs[0].lockingScript.toBinary(),
     })
   })

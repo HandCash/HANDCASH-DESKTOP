@@ -29,18 +29,26 @@ export type ChangeRow = {
   outputId?: number
   txid?: string
   vout?: number
+  outputIndex?: number
+  transactionId?: number
   satoshis?: number
   change?: boolean
   spendable?: boolean
   lockingScript?: unknown
 }
 
+export type ChangeRefuseReason =
+  | 'no-outpoint'
+  | 'no-rawtx'
+  | 'vout-missing'
+  | 'satoshis-mismatch'
+
 export type ChangeScriptFate =
   | { kind: 'scripted' }
   | { kind: 'heal'; lockingScript: number[] }
   | {
       kind: 'refuse'
-      reason: 'no-outpoint' | 'no-rawtx' | 'vout-missing' | 'satoshis-mismatch'
+      reason: ChangeRefuseReason
     }
 
 /** Page size for the output scan; matches the toolbox's own paging shape. */
@@ -48,7 +56,78 @@ const PAGE = 200
 /** Ceiling so a corrupt row count cannot stall a send forever. */
 const MAX_PAGES = 40
 /** Chain lookups per pass. Local storage hydration is unbounded; network is not. */
-const CHAIN_FETCH_MAX = 12
+const CHAIN_FETCH_MAX = 32
+
+type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
+
+type ChangeStorage = {
+  findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
+  getProvenOrRawTx?: (txid: string) => Promise<{ rawTx?: number[] } | undefined>
+  updateOutput: (outputId: number, update: Record<string, unknown>) => Promise<unknown>
+}
+
+export function txidFromTxRow(row: TxStatusRow | null | undefined): string | null {
+  if (!row) return null
+  const direct = String(row.txid ?? '')
+    .trim()
+    .toLowerCase()
+  if (/^[0-9a-f]{64}$/.test(direct)) return direct
+  if (row.rawTx?.length) {
+    try {
+      return Transaction.fromBinary(row.rawTx).id('hex')
+    } catch {
+      return null
+    }
+  }
+  return null
+}
+
+/** Match a toolbox output row to a vout when BRC-39 restore omitted vout. */
+export function findMatchingVout(rawTx: number[], satoshis: number | undefined): number {
+  const target = Math.max(0, Math.trunc(Number(satoshis) || 0))
+  if (target <= 0) return -1
+  try {
+    const tx = Transaction.fromBinary(rawTx)
+    const matches: number[] = []
+    tx.outputs.forEach((out, index) => {
+      if (Number(out.satoshis) === target) matches.push(index)
+    })
+    if (matches.length === 1) return matches[0]!
+    // Wallet change is usually the last matching output in a multi-output tx.
+    if (matches.length > 1) return matches[matches.length - 1]!
+  } catch {
+    return -1
+  }
+  return -1
+}
+
+/**
+ * BRC-39 / device-peer merges often leave `transactionId` but no `txid`/`vout`.
+ * Resolve both from the parent transaction row before classifying script fate.
+ */
+export function resolveChangeRowOutpoint(
+  row: ChangeRow,
+  txRow: TxStatusRow | null | undefined,
+): ChangeRow | null {
+  let txid = String(row.txid ?? '')
+    .trim()
+    .toLowerCase()
+  let vout = Number(row.vout ?? row.outputIndex)
+
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    txid = txidFromTxRow(txRow) ?? ''
+  }
+
+  if ((!Number.isInteger(vout) || vout < 0) && txRow?.rawTx?.length) {
+    const found = findMatchingVout(txRow.rawTx, row.satoshis)
+    if (found >= 0) vout = found
+  }
+
+  if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(vout) || vout < 0) {
+    return null
+  }
+  return { ...row, txid, vout }
+}
 
 export function hasLockingScript(row: ChangeRow): boolean {
   const script = row.lockingScript
@@ -118,80 +197,106 @@ async function readChangeRows(active: ActiveWallet): Promise<ChangeRow[]> {
   return rows
 }
 
-async function readRawTx(
+async function loadTxRowByTransactionId(
+  sp: ChangeStorage,
+  transactionId: number,
+  cache: Map<number, TxStatusRow | null>,
+): Promise<TxStatusRow | null> {
+  if (cache.has(transactionId)) return cache.get(transactionId) ?? null
+  if (typeof sp.findTransactions !== 'function') {
+    cache.set(transactionId, null)
+    return null
+  }
+  try {
+    const rows = await sp.findTransactions({
+      partial: { transactionId },
+      noRawTx: false,
+      paged: { limit: 1, offset: 0 },
+    })
+    const row = Array.isArray(rows) && rows[0] ? rows[0] : null
+    cache.set(transactionId, row)
+    return row
+  } catch (err) {
+    console.warn('[change-script] transactionId lookup skipped', transactionId, err)
+    cache.set(transactionId, null)
+    return null
+  }
+}
+
+async function readRawTxInSession(
   active: ActiveWallet,
   txid: string,
+  sp: ChangeStorage,
   cache: Map<string, number[] | null>,
   fromChain: boolean,
   budget: { chainFetches: number },
-  _opts?: { spendable?: boolean },
+  primed?: TxStatusRow | null,
 ): Promise<number[] | null> {
-  const cached = cache.get(txid)
+  const key = txid.trim().toLowerCase()
+  const cached = cache.get(key)
   if (cached !== undefined) return cached
+
+  if (primed?.rawTx?.length) {
+    cache.set(key, primed.rawTx)
+    return primed.rawTx
+  }
 
   let rawTx: number[] | null = null
   try {
-    const local = (await active.wallet.storage.runAsStorageProvider(async (sp) =>
-      sp.getProvenOrRawTx(txid),
-    )) as { rawTx?: number[] } | undefined
-    if (local?.rawTx?.length) rawTx = local.rawTx
+    if (typeof sp.getProvenOrRawTx === 'function') {
+      const local = await sp.getProvenOrRawTx(key)
+      if (local?.rawTx?.length) rawTx = local.rawTx
+    }
   } catch (err) {
-    console.warn('[change-script] local rawTx lookup skipped', txid, err)
+    console.warn('[change-script] local rawTx lookup skipped', key, err)
   }
 
   if (!rawTx) {
     try {
       const { getLocalBeefForTxid } = await import('./beefCache')
-      const beef = await getLocalBeefForTxid(active, txid)
-      const tx = beef?.findTxid(txid)?.tx
+      const beef = await getLocalBeefForTxid(active, key)
+      const tx = beef?.findTxid(key)?.tx
       if (tx) rawTx = tx.toBinary()
     } catch {
       // local BEEF optional
     }
   }
 
-  if (!rawTx) {
+  if (!rawTx && typeof sp.findTransactions === 'function') {
     try {
-      rawTx = (await active.wallet.storage.runAsStorageProvider(async (sp) => {
-        const provider = sp as {
-          findTransactions?: (args: unknown) => Promise<Array<{ rawTx?: number[] }> | undefined>
-        }
-        if (typeof provider.findTransactions !== 'function') return null
-        const rows = await provider.findTransactions({
-          partial: { txid },
-          noRawTx: false,
-          paged: { limit: 1, offset: 0 },
-        })
-        const local = rows?.[0]?.rawTx
-        return Array.isArray(local) && local.length > 0 ? local : null
-      })) as number[] | null
+      const rows = await sp.findTransactions({
+        partial: { txid: key },
+        noRawTx: false,
+        paged: { limit: 1, offset: 0 },
+      })
+      const local = rows?.[0]?.rawTx
+      if (Array.isArray(local) && local.length > 0) rawTx = local
     } catch (err) {
-      console.warn('[change-script] toolbox rawTx lookup skipped', txid, err)
+      console.warn('[change-script] toolbox rawTx lookup skipped', key, err)
     }
   }
 
   if (!rawTx && fromChain && budget.chainFetches < CHAIN_FETCH_MAX) {
-    // Known-missing ghosts (Bitails 404) — do not re-ask, spendable or not.
     try {
       const { peekRawTxLookup } = await import('./oneSatImport')
-      if (peekRawTxLookup(txid) === 'miss') {
-        cache.set(txid, null)
+      if (peekRawTxLookup(key) === 'miss') {
+        cache.set(key, null)
         return null
       }
     } catch {
-      // import / cache probe failed — fall through to a budgeted fetch
+      // fall through
     }
     budget.chainFetches += 1
     try {
       const { fetchRawTxHex } = await import('./oneSatImport')
-      const hex = await fetchRawTxHex(txid, active.chain)
+      const hex = await fetchRawTxHex(key, active.chain)
       if (hex) rawTx = Transaction.fromHex(hex).toBinary()
     } catch (err) {
-      console.warn('[change-script] chain rawTx lookup skipped', txid, err)
+      console.warn('[change-script] chain rawTx lookup skipped', key, err)
     }
   }
 
-  cache.set(txid, rawTx)
+  cache.set(key, rawTx)
   return rawTx
 }
 
@@ -239,47 +344,81 @@ export async function sweepChangeScripts(args?: {
     quarantined: 0,
     refused: 0,
   }
-  const rawTxCache = new Map<string, number[] | null>()
-  const budget = { chainFetches: 0 }
+  const refuseReasons: Partial<Record<ChangeRefuseReason, number>> = {}
+  const fromChain = args?.fromChain === true
+  const ordered = [...unscripted].sort(
+    (a, b) => Math.max(0, Number(b.satoshis) || 0) - Math.max(0, Number(a.satoshis) || 0),
+  )
 
-  for (const row of unscripted) {
-    const outputId = Number(row.outputId)
-    if (!Number.isFinite(outputId) || outputId <= 0) continue
+  try {
+    await active.wallet.storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as ChangeStorage
+      const rawTxCache = new Map<string, number[] | null>()
+      const txByIdCache = new Map<number, TxStatusRow | null>()
+      const budget = { chainFetches: 0 }
 
-    const txid = (row.txid ?? '').trim().toLowerCase()
-    const rawTx = /^[0-9a-f]{64}$/.test(txid)
-      ? await readRawTx(active, txid, rawTxCache, args?.fromChain === true, budget, {
-          spendable: row.spendable === true,
-        })
-      : null
-    const fate = classifyChangeScript(row, rawTx)
+      for (const row of ordered) {
+        const outputId = Number(row.outputId)
+        if (!Number.isFinite(outputId) || outputId <= 0) continue
 
-    if (fate.kind === 'scripted') continue
+        const transactionId = Number(row.transactionId)
+        const txRow =
+          Number.isFinite(transactionId) && transactionId > 0
+            ? await loadTxRowByTransactionId(sp, transactionId, txByIdCache)
+            : null
+        const resolved = resolveChangeRowOutpoint(row, txRow)
+        if (!resolved?.txid) {
+          result.refused += 1
+          refuseReasons['no-outpoint'] = (refuseReasons['no-outpoint'] ?? 0) + 1
+          if (row.spendable === true) {
+            try {
+              await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
+              result.quarantined += 1
+            } catch (err) {
+              console.warn('[change-script] quarantine skipped', outputId, err)
+            }
+          }
+          continue
+        }
 
-    if (fate.kind === 'heal') {
-      try {
-        await active.wallet.storage.runAsStorageProvider(async (sp) => {
-          await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
-        })
-        result.healed += 1
-        continue
-      } catch (err) {
-        console.warn('[change-script] heal skipped', outputId, err)
+        const rawTx = await readRawTxInSession(
+          active,
+          resolved.txid,
+          sp,
+          rawTxCache,
+          fromChain,
+          budget,
+          txRow,
+        )
+        const fate = classifyChangeScript(resolved, rawTx)
+
+        if (fate.kind === 'scripted') continue
+
+        if (fate.kind === 'heal') {
+          try {
+            await sp.updateOutput(outputId, { lockingScript: fate.lockingScript })
+            result.healed += 1
+            continue
+          } catch (err) {
+            console.warn('[change-script] heal skipped', outputId, err)
+          }
+        } else {
+          result.refused += 1
+          refuseReasons[fate.reason] = (refuseReasons[fate.reason] ?? 0) + 1
+        }
+
+        if (row.spendable !== true) continue
+        try {
+          await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
+          result.quarantined += 1
+        } catch (err) {
+          console.warn('[change-script] quarantine skipped', outputId, err)
+        }
       }
-    } else {
-      result.refused += 1
-    }
-
-    // Fail closed: an unscripted row must not stay spendable.
-    if (row.spendable !== true) continue
-    try {
-      await active.wallet.storage.runAsStorageProvider(async (sp) => {
-        await sp.updateOutput(outputId, { spendable: false, spentBy: undefined })
-      })
-      result.quarantined += 1
-    } catch (err) {
-      console.warn('[change-script] quarantine skipped', outputId, err)
-    }
+    })
+  } catch (err) {
+    console.warn('[change-script] sweep session failed', err)
+    return result
   }
 
   if (result.healed > 0) {
@@ -300,7 +439,17 @@ export async function sweepChangeScripts(args?: {
         healed: result.healed,
         quarantined: result.quarantined,
         refused: result.refused,
-        fromChain: args?.fromChain === true,
+        fromChain,
+        ...(refuseReasons['no-outpoint']
+          ? { noOutpoint: refuseReasons['no-outpoint'] }
+          : {}),
+        ...(refuseReasons['no-rawtx'] ? { noRawtx: refuseReasons['no-rawtx'] } : {}),
+        ...(refuseReasons['vout-missing']
+          ? { voutMissing: refuseReasons['vout-missing'] }
+          : {}),
+        ...(refuseReasons['satoshis-mismatch']
+          ? { satMismatch: refuseReasons['satoshis-mismatch'] }
+          : {}),
       })
     })
   }

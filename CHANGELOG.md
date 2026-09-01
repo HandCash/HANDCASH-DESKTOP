@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.43] - 2026-09-01
+
+### Fixed
+
+- **Stuck change after BRC-39 restore** — heal locking scripts using `transactionId` when output rows lack `txid`/`vout`; multi-pass chain sweep + restore on spend; refuse-reason diagnostics in logs.
+
 ## [1.3.42] - 2026-09-01
 
 ### Fixed

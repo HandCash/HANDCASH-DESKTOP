@@ -28,9 +28,14 @@ async function promoteSpendableChange(): Promise<number> {
     const localSweep = await sweepChangeScripts({ fromChain: false })
     localHealed = localSweep.healed
     restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-    if (restored === 0) {
-      const chainSweep = await sweepChangeScripts({ fromChain: true })
-      chainHealed = chainSweep.healed
+    if (restored === 0 && localHealed === 0) {
+      for (let pass = 0; pass < 3 && restored === 0; pass += 1) {
+        const chainSweep = await sweepChangeScripts({ fromChain: true })
+        chainHealed += chainSweep.healed
+        if (chainSweep.healed === 0) break
+        restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+      }
+    } else if (restored === 0) {
       restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     }
   } catch (err) {
