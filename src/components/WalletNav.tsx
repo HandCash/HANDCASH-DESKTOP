@@ -91,7 +91,6 @@ type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 type Props = {
   profile: WalletProfile
   apps: ConnectedApp[]
-  balanceSats: number
   onRevoke: (origin: string) => void
   onSent: (balanceSats: number) => void
   onFail: (error: string) => void
@@ -118,12 +117,12 @@ function sectionLabel(section: NavSection): string {
 export const WalletNav = memo(function WalletNav({
   profile,
   apps,
-  balanceSats,
   onRevoke,
   onSent,
   onFail,
 }: Props) {
   const [nav, setNav] = useState<NavState>(() => getNavState())
+  const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
   const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
@@ -139,7 +138,16 @@ export const WalletNav = memo(function WalletNav({
     return initial === 'collectables' ? new Set() : new Set([initial])
   })
 
-  useEffect(() => subscribeNav(setNav), [])
+  useEffect(
+    () =>
+      subscribeNav((next) => {
+        startTransition(() => setNav(next))
+      }),
+    [],
+  )
+  useEffect(() => {
+    setOptimisticSection(null)
+  }, [nav.section, nav.child?.type])
   useEffect(() => {
     if (!isMobileWalletPlatform()) return
     return subscribePermissionRequests(setPendingPrompt)
@@ -189,11 +197,13 @@ export const WalletNav = memo(function WalletNav({
 
   useEffect(() => {
     if (nav.section === 'collectables') return
-    setMountedLight((prev) => {
-      if (prev.has(nav.section)) return prev
-      const next = new Set(prev)
-      next.add(nav.section)
-      return next
+    startTransition(() => {
+      setMountedLight((prev) => {
+        if (prev.has(nav.section)) return prev
+        const next = new Set(prev)
+        next.add(nav.section)
+        return next
+      })
     })
   }, [nav.section])
 
@@ -340,9 +350,12 @@ export const WalletNav = memo(function WalletNav({
     return [root, { label: 'Transaction' }]
   })()
 
+  const activeSection = optimisticSection ?? nav.section
+
   const selectSection = (next: NavSection) => {
     if (next === nav.section && !nav.child) return
-    playWalletSound('soft')
+    setOptimisticSection(next)
+    queueMicrotask(() => playWalletSound('soft'))
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
       else clearNavChild()
@@ -378,7 +391,7 @@ export const WalletNav = memo(function WalletNav({
               {stageChild.type === 'send' && (
                 <SendPanel
                   chain={profile.chain}
-                  balanceSats={balanceSats}
+                  identityKey={profile.identityKey}
                   initialRecipient={stageChild.prefill}
                   onSent={onSent}
                   onFail={onFail}
@@ -567,7 +580,7 @@ export const WalletNav = memo(function WalletNav({
               </>
             ) : (
               SECTIONS.map(({ value, label, shortLabel, Icon }) => {
-                const selected = nav.section === value
+                const selected = activeSection === value
                 return (
                   <button
                     key={value}

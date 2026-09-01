@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { formatBsvSignificant } from '../wallet/session'
 import { refreshFromChain } from '../wallet/chainIngest'
 import { isPhoneShell } from '../wallet/runtimePlatform'
@@ -151,6 +151,11 @@ export function Dashboard({
   onFail,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
+
+  const onRevoke = useCallback((origin: string) => {
+    revokeOrigin(origin)
+    setConnectedApps(listConnectedApps())
+  }, [])
   const [usdPerBsv, setUsdPerBsv] = useState<number | null>(() => getCachedUsdPerBsv())
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [claimedHandle, setClaimedHandle] = useState<ClaimedHandleState | null>(() =>
@@ -723,13 +728,9 @@ export function Dashboard({
         <WalletNav
           profile={profile}
           apps={connectedApps}
-          balanceSats={balanceSats}
           onSent={onSent}
           onFail={onFail}
-          onRevoke={(origin) => {
-            revokeOrigin(origin)
-            setConnectedApps(listConnectedApps())
-          }}
+          onRevoke={onRevoke}
         />
       </div>
 

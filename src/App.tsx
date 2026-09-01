@@ -43,7 +43,7 @@ import {
   shouldKeepDisplayBalanceOnConfirmedRead,
   writeTrustedBalance,
 } from './wallet/balanceSnapshot'
-import { DISPLAY_BALANCE_REFRESH_EVENT } from './wallet/displayBalanceRefresh'
+import { DISPLAY_BALANCE_REFRESH_EVENT, publishDisplayBalanceRefresh } from './wallet/displayBalanceRefresh'
 import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
@@ -246,6 +246,21 @@ export function App() {
     snapshot.context.balanceSats,
   ])
 
+  useEffect(() => {
+    if (!walletUnlocked) return
+    publishDisplayBalanceRefresh(snapshot.context.balanceSats)
+  }, [walletUnlocked, snapshot.context.balanceSats])
+
+  const onSent = useCallback(
+    (balanceSats: number) => send({ type: 'SENT', balanceSats }),
+    [send],
+  )
+
+  const onWalletFail = useCallback((error: string) => {
+    playWalletSound('error')
+    toastError('Something went wrong', error)
+  }, [])
+
   const handleBalanceRefresh = useCallback(
     (balanceSats: number) => {
       // A BRC-39 pull temporarily replaces local state. An empty read in that
@@ -366,13 +381,10 @@ export function App() {
             <Dashboard
               profile={snapshot.context.profile}
               balanceSats={snapshot.context.balanceSats}
-              onSent={(balanceSats) => send({ type: 'SENT', balanceSats })}
+              onSent={onSent}
               onRefreshBalance={handleBalanceRefresh}
               onLock={() => lockWallet('manual')}
-              onFail={(error) => {
-                playWalletSound('error')
-                toastError('Something went wrong', error)
-              }}
+              onFail={onWalletFail}
             />
           )}
         </main>

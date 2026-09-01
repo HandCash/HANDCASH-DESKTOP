@@ -3522,7 +3522,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   flex-shrink: 0;
   border-radius: calc(var(--hc-radius) + 4px);
   background: #ffffff;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.28);
 }
 
 button.identity-qr-copy {

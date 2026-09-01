@@ -43,13 +43,14 @@ import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
+import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 
 type Props = {
   chain: Chain
-  balanceSats: number
+  identityKey: string
   /** Prefill from QR scan (PeerPay / identity / address). */
   initialRecipient?: string
   onSent: (balanceSats: number) => void
@@ -103,12 +104,13 @@ function resolvedRecipientName(
 
 export function SendPanel({
   chain,
-  balanceSats,
+  identityKey,
   initialRecipient,
   onSent,
   onFail,
   onClose,
 }: Props) {
+  const balanceSats = useDisplayBalanceSats({ identityKey, chain })
   const [sendSnap, send] = useMachine(sendMachine)
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [recipientQuery, setRecipientQuery] = useState('')
