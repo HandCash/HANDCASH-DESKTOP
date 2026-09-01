@@ -14,7 +14,7 @@ vi.mock('./oneSatImport', () => ({
   peekRawTxLookup: (txid: string) => peekRawTxLookup(txid),
 }))
 
-const { classifyChangeScript, findMatchingVout, hasLockingScript, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow } =
+const { classifyChangeScript, findMatchingVout, hasLockingScript, isWalletChangeRow, resolveChangeRowOutpoint, sweepChangeScripts, txidFromTxRow, walletChangeLockingScript } =
   await import('./changeScriptFate')
 
 /** A one-output tx we can point a change row at. */
@@ -100,7 +100,17 @@ describe('hasLockingScript', () => {
   })
 })
 
+describe('isWalletChangeRow', () => {
+  it('treats change flag and multi-sat rows as wallet change', () => {
+    expect(isWalletChangeRow({ change: true, satoshis: 1 })).toBe(true)
+    expect(isWalletChangeRow({ change: false, satoshis: 500 })).toBe(true)
+    expect(isWalletChangeRow({ change: false, satoshis: 1 })).toBe(false)
+  })
+})
+
 describe('sweepChangeScripts', () => {
+  const walletAddress = PrivateKey.fromRandom().toPublicKey().toAddress('mainnet')
+  const walletScript = new P2PKH().lock(walletAddress).toBinary()
   const findOutputs = vi.fn()
   const getProvenOrRawTx = vi.fn()
   const findTransactions = vi.fn()
@@ -120,6 +130,7 @@ describe('sweepChangeScripts', () => {
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
+      address: walletAddress,
       wallet: {
         storage: {
           runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
@@ -191,7 +202,32 @@ describe('sweepChangeScripts', () => {
     })
   })
 
-  it('quarantines a spendable change row it cannot rebuild', async () => {
+  it('assigns wallet P2PKH when a change row has no outpoint after BRC-39 restore', async () => {
+    pageOnce([
+      { outputId: 12, change: true, spendable: true, satoshis: 500 },
+    ])
+
+    const r = await sweepChangeScripts()
+
+    expect(r.healed).toBe(1)
+    expect(r.addressFallback).toBe(1)
+    expect(r.quarantined).toBe(0)
+    expect(r.refused).toBe(0)
+    expect(updateOutput).toHaveBeenCalledExactlyOnceWith(12, {
+      lockingScript: walletScript,
+    })
+  })
+
+  it('quarantines a change row when address fallback is unavailable', async () => {
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async <T>(fn: (sp: unknown) => Promise<T>) =>
+            fn({ findOutputs, getProvenOrRawTx, findTransactions, updateOutput }),
+        },
+      },
+    })
     pageOnce([
       { outputId: 12, change: true, spendable: true, satoshis: 500 },
     ])
@@ -260,7 +296,7 @@ describe('sweepChangeScripts', () => {
         if (!args.partial.spendable) return []
         if (args.paged.offset === 0) return early
         if (args.paged.offset === 200) {
-          return [{ outputId: 999, change: true, spendable: true, satoshis: 1 }]
+          return [{ outputId: 999, change: true, spendable: true, satoshis: 500 }]
         }
         return []
       },
@@ -269,10 +305,10 @@ describe('sweepChangeScripts', () => {
     const r = await sweepChangeScripts()
 
     expect(r.scanned).toBe(201)
-    expect(r.quarantined).toBe(1)
+    expect(r.healed).toBe(1)
+    expect(r.addressFallback).toBe(1)
     expect(updateOutput).toHaveBeenCalledExactlyOnceWith(999, {
-      spendable: false,
-      spentBy: undefined,
+      lockingScript: walletScript,
     })
   })
 

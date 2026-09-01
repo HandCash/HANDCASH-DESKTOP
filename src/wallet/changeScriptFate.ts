@@ -22,7 +22,7 @@
  * Healing never flips `spendable`. Re-enabling a written-off output requires
  * on-chain evidence, which is `restoreLiveSpendableOutputs`' job.
  */
-import { Transaction } from '@bsv/sdk'
+import { P2PKH, Transaction } from '@bsv/sdk'
 import { getActiveWallet, type ActiveWallet } from './session'
 
 export type ChangeRow = {
@@ -305,6 +305,24 @@ export type ChangeScriptSweep = {
   healed: number
   quarantined: number
   refused: number
+  addressFallback?: number
+}
+
+/** Change rows the wallet created — not 1-sat item tips. */
+export function isWalletChangeRow(row: ChangeRow): boolean {
+  const sats = Math.max(0, Math.trunc(Number(row.satoshis) || 0))
+  return row.change === true || sats > 1
+}
+
+/** Last resort when BRC-39 rows have no outpoint or raw tx — P2PKH change to this wallet. */
+export function walletChangeLockingScript(active: ActiveWallet): number[] | null {
+  const address = active.address?.trim()
+  if (!address) return null
+  try {
+    return new P2PKH().lock(address).toBinary()
+  } catch {
+    return null
+  }
 }
 
 /**
@@ -343,6 +361,7 @@ export async function sweepChangeScripts(args?: {
     healed: 0,
     quarantined: 0,
     refused: 0,
+    addressFallback: 0,
   }
   const refuseReasons: Partial<Record<ChangeRefuseReason, number>> = {}
   const fromChain = args?.fromChain === true
@@ -356,6 +375,20 @@ export async function sweepChangeScripts(args?: {
       const rawTxCache = new Map<string, number[] | null>()
       const txByIdCache = new Map<number, TxStatusRow | null>()
       const budget = { chainFetches: 0 }
+      const walletScript = walletChangeLockingScript(active)
+
+      const tryAddressFallback = async (row: ChangeRow, outputId: number): Promise<boolean> => {
+        if (!isWalletChangeRow(row) || !walletScript) return false
+        try {
+          await sp.updateOutput(outputId, { lockingScript: walletScript })
+          result.healed += 1
+          result.addressFallback = (result.addressFallback ?? 0) + 1
+          return true
+        } catch (err) {
+          console.warn('[change-script] address fallback skipped', outputId, err)
+          return false
+        }
+      }
 
       for (const row of ordered) {
         const outputId = Number(row.outputId)
@@ -368,6 +401,7 @@ export async function sweepChangeScripts(args?: {
             : null
         const resolved = resolveChangeRowOutpoint(row, txRow)
         if (!resolved?.txid) {
+          if (await tryAddressFallback(row, outputId)) continue
           result.refused += 1
           refuseReasons['no-outpoint'] = (refuseReasons['no-outpoint'] ?? 0) + 1
           if (row.spendable === true) {
@@ -422,9 +456,18 @@ export async function sweepChangeScripts(args?: {
   }
 
   if (result.healed > 0) {
-    console.info(
-      `[change-script] rebuilt ${result.healed} change locking script(s) from raw tx`,
-    )
+    const viaFallback = result.addressFallback ?? 0
+    const viaRawTx = result.healed - viaFallback
+    if (viaRawTx > 0) {
+      console.info(
+        `[change-script] rebuilt ${viaRawTx} change locking script(s) from raw tx`,
+      )
+    }
+    if (viaFallback > 0) {
+      console.info(
+        `[change-script] assigned ${viaFallback} wallet P2PKH script(s) (no outpoint/raw tx)`,
+      )
+    }
   }
   if (result.quarantined > 0) {
     console.info(
@@ -440,6 +483,7 @@ export async function sweepChangeScripts(args?: {
         quarantined: result.quarantined,
         refused: result.refused,
         fromChain,
+        ...(result.addressFallback ? { addressFallback: result.addressFallback } : {}),
         ...(refuseReasons['no-outpoint']
           ? { noOutpoint: refuseReasons['no-outpoint'] }
           : {}),
