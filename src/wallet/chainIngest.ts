@@ -707,8 +707,10 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       // chain (budgeted per pass) before the spendable restore loop.
       try {
         const { sweepChangeScripts } = await import('./changeScriptFate')
+        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
         let scriptsHealed = 0
         for (let pass = 0; pass < 4; pass += 1) {
+          if (shouldYieldChainIngestToSpend()) break
           const sweep = await sweepChangeScripts({ fromChain: true })
           scriptsHealed += sweep.healed
           if (sweep.healed === 0) break

@@ -727,6 +727,11 @@ function listingAuthorizationKey(outpoint: string, nonce: string): string {
   return `${normalizeOutpoint(outpoint)}:${nonce.trim().toLowerCase()}`
 }
 
+/** All persisted listing authorizations (newest per key wins on read). */
+export function listMarketListingAuthorizations(): MarketListingAuthorization[] {
+  return readAuthorizations()
+}
+
 function readAuthorizations(): MarketListingAuthorization[] {
   try {
     const parsed = JSON.parse(

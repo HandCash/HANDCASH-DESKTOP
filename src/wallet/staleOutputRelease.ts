@@ -441,6 +441,7 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
     return (await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage
       const rows = await findOutputsForTxid(sp, id)
+      const txCache = new Map<number, TxStatusRow | null>()
       let kept = 0
       for (const row of rows) {
         const outputId = positiveId(row.outputId)
@@ -453,7 +454,7 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
         const isChange = row.change === true || sats > 1
         if (!isChange) continue
 
-        const healed = await healLockingScript(sp, row)
+        const healed = await healLockingScript(sp, row, txCache)
         const scripted = healed != null || hasLockingScript(row)
         if (!scripted) continue
 

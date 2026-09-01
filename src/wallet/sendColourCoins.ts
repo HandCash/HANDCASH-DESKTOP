@@ -61,6 +61,7 @@ import {
 import { getActiveWallet, type ActiveWallet } from './session'
 import { markItemsSent } from './sentItemGuard'
 import { runExclusiveSpend } from './spendGuard'
+import { requestSpendPriority } from './walletCoordinator'
 
 function wireOutpoint(op: string): string {
   return op.includes('_') ? op.replace(/_(\d+)$/, '.$1') : op
@@ -301,6 +302,7 @@ export async function sendColourCoins(args: {
     args.skipPeerNotify ? 'Waiting to combine tips' : 'Waiting to send token',
     primary.outpoint,
   )
+  const releaseSpendHint = requestSpendPriority('send-fungible')
   const outboundPending = beginPendingSend({
     to: args.toAddress,
     sats: selected.length,
@@ -704,10 +706,10 @@ export async function sendColourCoins(args: {
       console.warn('[bsv21] tip restore after failed send skipped', recoverErr)
     }
     throw err
+  } finally {
+    releaseSpendHint()
   }
 }
-
-/** Fold all bound tips for an origin into one self tip (balance unchanged). */
 export async function combineColourTips(args: {
   origin: string
   sym?: string

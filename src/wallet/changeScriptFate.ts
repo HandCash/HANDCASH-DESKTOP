@@ -57,6 +57,8 @@ const PAGE = 200
 const MAX_PAGES = 40
 /** Chain lookups per pass. Local storage hydration is unbounded; network is not. */
 const CHAIN_FETCH_MAX = 32
+/** Rows per IDB session — long single sessions block listOutputs during sync. */
+const SWEEP_BATCH_SIZE = 40
 
 type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
 
@@ -369,13 +371,14 @@ export async function sweepChangeScripts(args?: {
     (a, b) => Math.max(0, Number(b.satoshis) || 0) - Math.max(0, Number(a.satoshis) || 0),
   )
 
-  try {
+  const rawTxCache = new Map<string, number[] | null>()
+  const txByIdCache = new Map<number, TxStatusRow | null>()
+  const budget = { chainFetches: 0 }
+  const walletScript = walletChangeLockingScript(active)
+
+  const processBatch = async (batch: ChangeRow[]): Promise<void> => {
     await active.wallet.storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as ChangeStorage
-      const rawTxCache = new Map<string, number[] | null>()
-      const txByIdCache = new Map<number, TxStatusRow | null>()
-      const budget = { chainFetches: 0 }
-      const walletScript = walletChangeLockingScript(active)
 
       const tryAddressFallback = async (row: ChangeRow, outputId: number): Promise<boolean> => {
         if (!isWalletChangeRow(row) || !walletScript) return false
@@ -390,7 +393,7 @@ export async function sweepChangeScripts(args?: {
         }
       }
 
-      for (const row of ordered) {
+      for (const row of batch) {
         const outputId = Number(row.outputId)
         if (!Number.isFinite(outputId) || outputId <= 0) continue
 
@@ -450,6 +453,22 @@ export async function sweepChangeScripts(args?: {
         }
       }
     })
+  }
+
+  try {
+    for (let offset = 0; offset < ordered.length; offset += SWEEP_BATCH_SIZE) {
+      if (offset > 0) {
+        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+        if (shouldYieldChainIngestToSpend()) {
+          console.info('[change-script] yielding mid-sweep — send waiting')
+          break
+        }
+        const { yieldToUi } = await import('./yieldToUi')
+        await yieldToUi()
+      }
+      const batch = ordered.slice(offset, offset + SWEEP_BATCH_SIZE)
+      await processBatch(batch)
+    }
   } catch (err) {
     console.warn('[change-script] sweep session failed', err)
     return result

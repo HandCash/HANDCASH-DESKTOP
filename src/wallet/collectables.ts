@@ -45,6 +45,7 @@ import { getCachedFungibles } from './fungibles'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
+import { requestSpendPriority } from './walletCoordinator'
 import { stampBrc164Id } from './itemAccess'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
@@ -1951,6 +1952,19 @@ async function listCollectablesNow(
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
 
+  const coord = getWalletCoordinatorSnapshot()
+  if (
+    !append &&
+    !authoritativeAfterReplace &&
+    cachedCollectables.length > 0 &&
+    coord.chainIngest === 'active'
+  ) {
+    console.info(
+      `[collectables] deferring listOutputs — chain ingest active, using ${cachedCollectables.length} cached item(s)`,
+    )
+    return getCachedCollectables()
+  }
+
   let outputs: ItemOutput[] = []
   const pageOffset = append ? listedOutputCursor : 0
 
@@ -2720,6 +2734,7 @@ export async function sendCollectable(args: {
   }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
   setPaymentProgress('preparing', 'Waiting to send the collectable', outpoint)
+  const releaseSpendHint = requestSpendPriority('send-collectable')
   const outboundPending = beginPendingSend({
     to: args.toAddress,
     sats: 1,
@@ -3442,5 +3457,7 @@ export async function sendCollectable(args: {
       reason: err instanceof Error ? err.message : String(err),
     })
     throw err
+  } finally {
+    releaseSpendHint()
   }
 }

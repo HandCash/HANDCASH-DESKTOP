@@ -46,6 +46,13 @@ import {
 } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
+import { TokenPriceChart } from './TokenPriceChart'
+import {
+  formatPrimaryFromSats,
+  getCachedUsdPerBsv,
+} from '../wallet/fx'
+import { getDisplayCurrency } from '../wallet/displayCurrency'
+import { tokenMarketPriceHistory } from '../wallet/tokenMarketView'
 
 type Props = {
   tokenId: string
@@ -211,6 +218,10 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   }
 
   const amount = formatFungibleAmount(token.amt, token.dec)
+  const displayCurrency = getDisplayCurrency()
+  const usdPerBsv = getCachedUsdPerBsv()
+  const marketListing = token.marketListing
+  const priceHistory = tokenMarketPriceHistory(token.tokenId, snapshot.context.activity)
   const isColour = Boolean(token.colourSupply)
   const sendBlocked = !isColour || token.spendKind !== 'plain'
   const canCombine = isColour && !sendBlocked && token.utxoCount >= 2
@@ -317,6 +328,12 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             </div>
           ) : null}
           <strong className="fungible-details-balance">{amount}</strong>
+          {marketListing ? (
+            <span className="fungible-details-list-price">
+              Listed for{' '}
+              {formatPrimaryFromSats(marketListing.priceSats, displayCurrency, usdPerBsv)}
+            </span>
+          ) : null}
           {supplyLabel ? (
             <span className="fungible-details-issuer">{supplyLabel}</span>
           ) : null}
@@ -457,6 +474,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           </MetricStrip.Chip>
         ) : null}
       </MetricStrip.Root>
+
+      {isColour ? (
+        <section className="fungible-details-section" data-aeon-part="market">
+          <div className="fungible-section-heading">
+            <h3>Market</h3>
+            <span>Local listing history</span>
+          </div>
+          <TokenPriceChart
+            points={priceHistory}
+            currency={displayCurrency}
+            usdPerBsv={usdPerBsv}
+          />
+        </section>
+      ) : null}
 
       <section className="fungible-details-section" data-aeon-part="metadata">
         <div className="fungible-section-heading">

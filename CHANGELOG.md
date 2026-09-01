@@ -1,10 +1,20 @@
 # Changelog
 
+## [1.3.45] - 2026-09-01
+
+### Fixed
+
+- **Sync blocking sends** — batched change-script heal (40 rows per IDB session) with mid-sweep yield when a send is waiting; skip full-basket `listOutputs` during active chain ingest when cache is warm; raise spend priority before collectable/token sends queue on the coordinator.
+
+### Added
+
+- **BSV-21 market UI** — list price on token carousel and detail hero; local listing price sparkline on token detail; stacked “Listed on market” cards in Collect (items-market layout, not side-by-side hero).
+
 ## [1.3.44] - 2026-09-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Stuck change after BRC-39 restore (no outpoint)** — when change rows lack `txid`/`vout`/`transactionId`, assign the wallet P2PKH locking script as a last resort so ~162k sats become spendable again; log `addressFallback` count for triage.
 
 ## [1.3.43] - 2026-09-01
 

@@ -137,6 +137,13 @@ export type FungibleToken = {
   colourSupply?: 'locked' | 'open'
   colourMaxSupply?: number | null
   colourProvenanceOk?: boolean
+  /** Active BRC-48 listing when this held tip is on the market. */
+  marketListing?: {
+    priceSats: number
+    listAmt?: number
+    state: 'active' | 'reserved'
+    listedOutpoint: string
+  }
 }
 
 export function normalizeTokenId(raw: string): string | null {

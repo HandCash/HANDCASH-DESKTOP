@@ -37,6 +37,7 @@ import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDat
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
+import { attachMarketListingToToken } from './tokenMarketView'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -126,7 +127,7 @@ function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
 }
 
 function setFungiblesCache(items: FungibleToken[]): void {
-  cached = items.filter(cacheExtraLooksLikeFungible)
+  cached = items.filter(cacheExtraLooksLikeFungible).map(attachMarketListingToToken)
   hydrated = true
   persistDurableList(cached)
   notify()

@@ -52,6 +52,13 @@ import {
   type FungibleToken,
 } from '../wallet/fungibles'
 import { shortIssuerLabel } from '../wallet/bsv21'
+import {
+  formatPrimaryFromSats,
+  getCachedUsdPerBsv,
+} from '../wallet/fx'
+import { getDisplayCurrency } from '../wallet/displayCurrency'
+import { listActiveBsv21MarketListings } from '../wallet/tokenMarketView'
+import { TokenMarketListingCard } from './TokenMarketListingCard'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -319,6 +326,9 @@ function FungibleCarouselCard({
         : null
   const amountLabel = cap != null ? `${amount} / ${cap}` : amount
   const supplyBadge = isLegacy ? 'Legacy · burn only' : null
+  const displayCurrency = getDisplayCurrency()
+  const usdPerBsv = getCachedUsdPerBsv()
+  const listPrice = token.marketListing?.priceSats
   return (
     <li
       className="collect-token-card"
@@ -349,6 +359,11 @@ function FungibleCarouselCard({
           </span>
         ) : null}
         <span className="collect-token-card-amt">{amountLabel}</span>
+        {listPrice != null ? (
+          <span className="collect-token-card-list-price">
+            Listed · {formatPrimaryFromSats(listPrice, displayCurrency, usdPerBsv)}
+          </span>
+        ) : null}
         {supplyBadge ? (
           <span className="collect-token-card-meta">{supplyBadge}</span>
         ) : null}
@@ -528,6 +543,12 @@ export function InventoryPanel() {
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, loose } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
   const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
+  const marketListings = useMemo(
+    () => listActiveBsv21MarketListings(tokens),
+    [tokens],
+  )
+  const displayCurrency = getDisplayCurrency()
+  const usdPerBsv = getCachedUsdPerBsv()
 
   return (
     <div
@@ -558,6 +579,31 @@ export function InventoryPanel() {
               />
             ))}
           </ul>
+        </section>
+      ) : null}
+
+      {marketListings.length > 0 ? (
+        <section className="collect-market-section" aria-label="Token market listings">
+          <h3 className="collect-section-title">Listed on market</h3>
+          <div className="token-market-stack">
+            {marketListings.map((row) => (
+              <TokenMarketListingCard
+                key={row.tokenId}
+                tokenId={row.tokenId}
+                sym={row.sym}
+                iconUrl={row.iconUrl}
+                listAmt={row.listing.listAmt}
+                dec={row.dec}
+                priceSats={row.listing.priceSats}
+                currency={displayCurrency}
+                usdPerBsv={usdPerBsv}
+                onClick={() => {
+                  playWalletSound('soft')
+                  openFungibleDetails(row.tokenId)
+                }}
+              />
+            ))}
+          </div>
         </section>
       ) : null}
 
