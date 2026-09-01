@@ -12,6 +12,7 @@ import {
   FireIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
+import { useChunkedCount } from './useChunkedCount'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
 import {
   activityEntryKey,

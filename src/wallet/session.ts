@@ -14,6 +14,7 @@ import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { appendAppLog } from './appLog'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
+import { preferServiceOrder } from './serviceOrder'
 
 const { specOpWalletBalance } = sdk
 

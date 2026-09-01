@@ -1,10 +1,16 @@
 # Changelog
 
+## [1.3.54] - 2026-09-01
+
+### Fixed
+
+- **Blank wallet after unlock** — restore missing `preferServiceOrder` import in `session.ts` and `useChunkedCount` import in Activity feed (both caused runtime ReferenceErrors that crashed the dashboard).
+
 ## [1.3.53] - 2026-09-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Index packs panel** — import `listStoredIndexPacks` from `indexExpansionStore` so Mobile Vite builds succeed.
 
 ## [1.3.52] - 2026-09-01
 
