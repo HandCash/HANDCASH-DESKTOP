@@ -4,11 +4,17 @@ type Props = {
   tone: 'warn' | 'error'
 }
 
-/** Caution circle on Wallet health row when a probe is degraded or down. */
+/** Caution icon in the same trailing pill as Settings icon toggles. */
 export function WalletHealthAlertBadge({ tone }: Props) {
   return (
-    <span className="wallet-health-alert" data-tone={tone} aria-hidden>
-      <WarningIcon size={13} />
-    </span>
+    <div className="settings-icon-toggle wallet-health-trailing" aria-hidden>
+      <span
+        className="settings-icon-toggle-btn wallet-health-alert"
+        data-tone={tone}
+        data-selected
+      >
+        <WarningIcon size={16} />
+      </span>
+    </div>
   )
 }

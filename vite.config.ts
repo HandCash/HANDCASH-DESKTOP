@@ -44,6 +44,18 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
+    proxy: {
+      '/v1': {
+        target: 'https://brc-cloud.bcryderman.workers.dev',
+        changeOrigin: true,
+        secure: true,
+      },
+      '/.well-known': {
+        target: 'https://brc-cloud.bcryderman.workers.dev',
+        changeOrigin: true,
+        secure: true,
+      },
+    },
     watch: {
       // packaging writes here — don't restart Vite while launch:mac runs
       ignored: ['**/release/**', '**/dist/**', '**/dist-electron/**'],

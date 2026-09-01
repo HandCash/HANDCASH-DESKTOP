@@ -16,12 +16,16 @@ function purgeDeprecatedCloudKeyState(): void {
   }
 }
 
-/** Public BRC-CLOUD origin (handles, history). */
-export const DEFAULT_BRC_CLOUD_BASE_URL =
-  (typeof import.meta !== 'undefined' &&
+/** Public BRC-CLOUD origin (handles, history). Vite dev uses same-origin proxy. */
+export const DEFAULT_BRC_CLOUD_BASE_URL = (() => {
+  const fromEnv =
+    typeof import.meta !== 'undefined' &&
     typeof import.meta.env?.VITE_BRC_CLOUD_BASE_URL === 'string' &&
-    import.meta.env.VITE_BRC_CLOUD_BASE_URL.trim()) ||
-  'https://brc-cloud.bcryderman.workers.dev'
+    import.meta.env.VITE_BRC_CLOUD_BASE_URL.trim()
+  if (fromEnv) return fromEnv
+  if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) return ''
+  return 'https://brc-cloud.bcryderman.workers.dev'
+})()
 
 export const DEFAULT_METANET_HANDLES_BASE_URL =
   (typeof import.meta !== 'undefined' &&

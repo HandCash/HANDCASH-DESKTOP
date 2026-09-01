@@ -816,7 +816,7 @@ export function ActivityFeed({
     const confirmed = window.confirm(
       `Clear ${failedCount} failed send${
         failedCount === 1 ? '' : 's'
-      } from Activity? Unsigned failed sends are removed. A signed send stays until every one of its inputs is already spent on chain — this does not cancel a live transaction.`
+      } from Activity? Unsigned failed sends are removed. Signed sends that never reached the chain can be cleared too. A signed send whose inputs already spent on chain is dropped from history only — it does not undo the spend.`
     )
     if (!confirmed) return
     setClearingFailed(true)
@@ -825,7 +825,7 @@ export function ActivityFeed({
       if (removed === 0 && kept > 0) {
         toastError(
           'Nothing cleared',
-          `${kept} failed send${kept === 1 ? '' : 's'} still live — signed transfers with unspent coins stay until rebroadcast succeeds or inputs spend on chain. Use Rebroadcast, or wait for Refresh to confirm they never landed.`
+          `${kept} failed send${kept === 1 ? '' : 's'} could not be cleared — chain status was unavailable, or the recipient can still broadcast a live transfer.`
         )
       } else {
         toastSuccess(

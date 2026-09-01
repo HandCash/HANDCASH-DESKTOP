@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.59] - 2026-09-01
+
+### Fixed
+
+- **Clear failed sends hung forever** — Activity bulk clear no longer runs the full change-script sweep (~15s+ IDB page); it uses lightweight `releaseUnsignedSpendReservations` with a 30s wall-clock budget so "Clearing…" always finishes.
+- **Chained unconfirmed change** — documented layering in `layers.ts`; `runExclusiveSpend` skips a redundant second `promoteSpendableChange` when balance check runs inside the spend queue.
+- **Signed-but-never-broadcast clears** — failed sends whose inputs never left the wallet can be dropped from Activity without undoing coins.
+
 ## [1.3.58] - 2026-09-01
 
 ### Fixed

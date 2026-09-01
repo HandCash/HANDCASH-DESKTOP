@@ -1,6 +1,7 @@
 import type { WalletInterface } from '@bsv/sdk'
 import { buildBsv21CustomInstructions, bsv21Tags } from './bsv21'
 import { getCachedCollectables, listOutputsWithTimeout } from './collectables'
+import type { ActiveWallet } from './session'
 import type { Collectable } from './collectables'
 import { getCachedFungibles } from './fungibles'
 import { authenticityFromProvenCache, getProvenVerdict } from './provenCache'
@@ -114,7 +115,11 @@ export async function listMarketBasketOutputs(
   }
 
   try {
-    return await listOutputsWithTimeout(wallet, args, MARKET_LIST_TIMEOUT_MS)
+    return await listOutputsWithTimeout(
+      wallet as ActiveWallet['wallet'],
+      args,
+      MARKET_LIST_TIMEOUT_MS,
+    )
   } catch (err) {
     const cached = cachedMarketListOutputs(basket)
     if (cached && cached.outputs.length > 0) {

@@ -121,26 +121,30 @@ export async function abortReservedActionBatches(
   return aborted
 }
 
+export type RepairFailedSpendOptions = {
+  /** Pay for chain raw-tx lookups when rebuilding script-less change rows. */
+  fromChain?: boolean
+  /** Skip the paged change-script sweep (Activity clear / fast unblock). */
+  skipChangeSweep?: boolean
+}
+
 /**
  * Fail abandoned unsigned/unprocessed txs, run toolbox reviewStatus to free
- * inputs stuck on failed spends, then rebuild or quarantine change outs that
- * have no lockingScript (those crash createAction as `Array.from(undefined)` —
- * see `changeScriptFate`).
+ * inputs stuck on failed spends, and abort leftover action-batch reservations.
+ *
+ * Intentionally **no** change-script sweep — that pages every historical output
+ * and blocked Activity → Clear failed for 15s+. Full heal uses
+ * {@link repairFailedSpendState}.
  *
  * Does **not** listFailedActions(unfail) — that requeues doubleSpends into
  * TaskSendWaiting and poisons the next pay.
  */
-export async function repairFailedSpendState(
+export async function releaseUnsignedSpendReservations(
   active?: ActiveWallet | null,
-): Promise<{
-  failedTxs: number
-  reviewLog: string
-  quarantined: number
-  healed: number
-}> {
+): Promise<{ failedTxs: number; reviewLog: string; batchesAborted: number }> {
   const resolved = active ?? getActiveWallet()
   const wallet = resolved?.wallet
-  const empty = { failedTxs: 0, reviewLog: '', quarantined: 0, healed: 0 }
+  const empty = { failedTxs: 0, reviewLog: '', batchesAborted: 0 }
   if (!wallet?.storage) return empty
 
   let failedTxs = 0
@@ -186,11 +190,39 @@ export async function repairFailedSpendState(
     console.warn('[action-review] reviewStatus skipped', err)
   }
 
-  const sweep = await sweepChangeScripts({ active: resolved })
+  const batchesAborted = await abortReservedActionBatches(resolved)
+
+  return { failedTxs, reviewLog, batchesAborted }
+}
+
+/**
+ * Full failed-spend repair: release unsigned reservations, then rebuild or
+ * quarantine change outs that have no lockingScript (those crash createAction
+ * as `Array.from(undefined)` — see `changeScriptFate`).
+ */
+export async function repairFailedSpendState(
+  active?: ActiveWallet | null,
+  opts?: RepairFailedSpendOptions,
+): Promise<{
+  failedTxs: number
+  reviewLog: string
+  batchesAborted: number
+  quarantined: number
+  healed: number
+}> {
+  const resolved = active ?? getActiveWallet()
+  const base = await releaseUnsignedSpendReservations(resolved)
+  if (opts?.skipChangeSweep) {
+    return { ...base, quarantined: 0, healed: 0 }
+  }
+
+  const sweep = await sweepChangeScripts({
+    active: resolved,
+    fromChain: opts?.fromChain,
+  })
 
   return {
-    failedTxs,
-    reviewLog,
+    ...base,
     quarantined: sweep.quarantined,
     healed: sweep.healed,
   }
@@ -288,23 +320,20 @@ export async function recoverFromReviewActions(args: {
     }
   }
 
-  await abortReservedActionBatches(active)
-
   // Do not listFailedActions(unfail): leftover doubleSpends re-enter
   // TaskSendWaiting, poison the next real payment, and can surface as
   // "undefined is not iterable". Fail abandoned txs + reviewStatus instead.
-  await repairFailedSpendState(active)
+  const repair = await repairFailedSpendState(active, {
+    fromChain: isIteratorCrashError(args.err),
+  })
 
   // `Array.from(undefined)` means a change row reached createAction with no
   // locking script. The pre-send sweep only rebuilds from local raw tx; here a
   // coin is already blocking the wallet, so pay for chain lookups and let the
   // audited restore path re-enable whatever we rebuilt.
-  if (isIteratorCrashError(args.err)) {
-    const rebuilt = await sweepChangeScripts({ active, fromChain: true })
-    if (rebuilt.healed > 0) {
-      const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
-      await restoreLiveSpendableOutputs({ onlyLiveChange: true })
-    }
+  if (isIteratorCrashError(args.err) && repair.healed > 0) {
+    const { restoreLiveSpendableOutputs } = await import('./staleOutputRelease')
+    await restoreLiveSpendableOutputs({ onlyLiveChange: true })
   }
 
   try {

@@ -3,6 +3,7 @@ import {
   formatReviewActionsError,
   isReservedActionBatchError,
   isReviewActionsError,
+  releaseUnsignedSpendReservations,
   repairFailedSpendState,
   sendWithHasFailure,
 } from './actionReview'
@@ -18,6 +19,9 @@ const findOutputs = vi.fn(async () => [
   { outputId: 11, change: true, spendable: true, lockingScript: undefined },
   { outputId: 12, change: true, spendable: true, lockingScript: '76a914' },
 ])
+
+const findExpiredActionBatches = vi.fn(async () => [])
+const abortActionBatch = vi.fn(async () => ({ aborted: true }))
 
 const {
   abortAction,
@@ -48,7 +52,9 @@ vi.mock('./session', () => ({
             findOutputs,
             validateOutputScript,
             updateOutput,
+            findExpiredActionBatches,
           }),
+        abortActionBatch,
       },
     },
   }),
@@ -137,12 +143,18 @@ describe('actionReview', () => {
     ).toBe('Already spent')
   })
 
-  it('repairFailedSpendState fails abandoned txs, reviews status, sweeps change scripts', async () => {
-    const r = await repairFailedSpendState()
+  it('releaseUnsignedSpendReservations fails abandoned txs and reviews status without sweeping', async () => {
+    const r = await releaseUnsignedSpendReservations()
     expect(r.failedTxs).toBe(1)
     expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
     expect(reviewStatus).toHaveBeenCalled()
-    expect(r.quarantined).toBe(1    )
+    expect(sweepChangeScripts).not.toHaveBeenCalled()
+  })
+
+  it('repairFailedSpendState includes change-script sweep', async () => {
+    const r = await repairFailedSpendState()
+    expect(r.failedTxs).toBe(1)
+    expect(r.quarantined).toBe(1)
     expect(sweepChangeScripts).toHaveBeenCalled()
   })
 

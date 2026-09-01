@@ -4,7 +4,10 @@ import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 const PROBE_TIMEOUT_MS = 7_000
 
 function cloudBase(): string {
-  return DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  const configured = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  if (configured) return configured
+  if (typeof window !== 'undefined') return window.location.origin
+  return 'https://brc-cloud.bcryderman.workers.dev'
 }
 
 async function fetchCloudJson<T>(path: string, chain: Chain): Promise<T | null> {

@@ -9,3 +9,9 @@ export function isPhoneShell(): boolean {
   const p = typeof window !== 'undefined' ? window.handcash?.platform : undefined
   return p === 'android' || p === 'ios'
 }
+
+/** Vite dev in a plain browser — no Electron/Capacitor bridge; direct explorer APIs hit CORS. */
+export function isViteDevBrowser(): boolean {
+  if (typeof window === 'undefined' || !import.meta.env.DEV) return false
+  return window.handcash == null
+}

@@ -68,6 +68,12 @@
  *   Never treat HTTP 200 / postBeef accept as mined. Activity never drops a signed send
  *   until every one of its inputs is spent on chain — clearing history is not a
  *   cancel, and it keeps that tx's change.
+ * - **Chained unconfirmed change** — spending change from a prior local send
+ *   before it confirms on-chain. `balanceView` credits pending change for display;
+ *   `spendGuard.promoteSpendableChange` + `staleOutputRelease.restoreLiveSpendableOutputs`
+ *   mark live change spendable for the next pay. `runExclusiveSpend` serializes
+ *   sends so chains do not double-spend. Activity clear uses the lightweight
+ *   `releaseUnsignedSpendReservations` path — not the full change-script sweep.
  * - **Change consolidation** → `changeConsolidationPath` (tagged-union decision) +
  *   `consolidateChange`. Many small BRC-29 receives fragment the managed-change
  *   pool and slow `createAction` coin selection. A rate-limited background pass

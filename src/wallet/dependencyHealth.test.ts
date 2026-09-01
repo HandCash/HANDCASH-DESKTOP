@@ -9,7 +9,12 @@ describe('dependencyHealth', () => {
         if (url.includes('/v1/chain/health')) {
           return new Response(JSON.stringify({ ok: true }), { status: 200 })
         }
-        if (url.includes('bitails') || url.includes('bsvblockchain.tech')) {
+        if (
+          url.includes('bitails') ||
+          url.includes('bsvblockchain.tech') ||
+          url.includes('bananablocks.com') ||
+          url.includes('bsv.cx/a/')
+        ) {
           return new Response('{}', { status: 200 })
         }
         return new Response(null, { status: 404 })
@@ -35,7 +40,12 @@ describe('dependencyHealth', () => {
         if (url.includes('/v1/chain/health')) {
           throw new TypeError('Failed to fetch')
         }
-        if (url.includes('bitails') || url.includes('bsvblockchain.tech')) {
+        if (
+          url.includes('bitails') ||
+          url.includes('bsvblockchain.tech') ||
+          url.includes('bananablocks.com') ||
+          url.includes('bsv.cx/a/')
+        ) {
           return new Response('{}', { status: 200 })
         }
         return new Response(null, { status: 404 })

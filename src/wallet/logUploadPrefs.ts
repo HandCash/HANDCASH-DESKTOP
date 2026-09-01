@@ -45,11 +45,19 @@ export function getLogUploadUrl(): string {
   if (stored) {
     const normalized = normalizeLogUploadUrl(stored)
     if (normalized !== stored) durableSetItem(KEY, normalized)
-    return normalized
+    return rewriteLogUploadUrlForDev(normalized)
   }
   const url = `${defaultLogUploadBaseUrl()}/hc-${randomHex(10)}`
   durableSetItem(KEY, url)
-  return url
+  return rewriteLogUploadUrlForDev(url)
+}
+
+/** Route log POST through the Vite dev proxy (same origin) so uploads work on localhost. */
+function rewriteLogUploadUrlForDev(url: string): string {
+  if (!import.meta.env.DEV || typeof window === 'undefined') return url
+  const bucket = url.match(/\/v1\/logs\/([a-z0-9-]+)/i)?.[1]
+  if (!bucket) return url
+  return `${window.location.origin}/v1/logs/${bucket}`
 }
 
 export function setLogUploadUrl(url: string): string {

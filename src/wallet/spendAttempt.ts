@@ -200,8 +200,14 @@ async function signedTxInputsFate(
   return 'spent'
 }
 
-function mayClearSignedInputs(fate: SignedInputsFate): boolean {
-  return fate === 'unsigned' || fate === 'spent'
+function mayClearSignedInputs(
+  fate: SignedInputsFate,
+  txConfirmedOnChain: boolean | null = null,
+): boolean {
+  if (fate === 'unsigned' || fate === 'spent') return true
+  // Signed but never broadcast — inputs still local; safe to drop the history row.
+  if (fate === 'unspent' && txConfirmedOnChain === false) return true
+  return false
 }
 
 /** True when the wallet still holds enough of this token to recreate the send. */
@@ -242,6 +248,7 @@ export async function resolveSpendAttemptFate(
     }
   }
 
+  let txOnChain: boolean | null = null
   if (hasTxid(entry)) {
     const onChain = await Promise.resolve(
       txExistsOnChain(entry.txid!, chain),
@@ -256,6 +263,7 @@ export async function resolveSpendAttemptFate(
         mayClear: false,
       }
     }
+    txOnChain = onChain
   }
 
   const inputsFate = await signedTxInputsFate(entry, chain)
@@ -277,7 +285,7 @@ export async function resolveSpendAttemptFate(
       message: isFailedActivity(entry)
         ? 'This send failed and cannot be retried — its original recipient details were not saved.'
         : 'This send did not confirm and cannot be retried — its original recipient details were not saved.',
-      mayClear: mayClearSignedInputs(inputsFate),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
     }
   }
 
@@ -289,7 +297,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? 'This payment never landed on chain. You can send it again from the Send screen.'
         : 'This payment failed before it reached the network. You can send it again from the Send screen, or clear it.',
-      mayClear: mayClearSignedInputs(inputsFate),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
     }
   }
 
@@ -310,7 +318,7 @@ export async function resolveSpendAttemptFate(
         reason: 'sourceNotSpendable',
         message:
           'This send cannot be retried — there is no longer enough of this token spendable in this wallet.',
-        mayClear: mayClearSignedInputs(inputsFate),
+        mayClear: mayClearSignedInputs(inputsFate, txOnChain),
       }
     }
     return {
@@ -320,7 +328,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? 'This send did not confirm. The token tips are still unspent, so the signed transfer can be broadcast again.'
         : 'This send failed before it produced a transaction. The token is still spendable and can be retried.',
-      mayClear: mayClearSignedInputs(inputsFate),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
     }
   }
 
@@ -342,7 +350,7 @@ export async function resolveSpendAttemptFate(
       reason: 'sourceNotSpendable',
       message:
         'This send cannot be retried — the original item output is no longer spendable in this wallet.',
-      mayClear: mayClearSignedInputs(inputsFate),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
     }
   }
 
@@ -353,7 +361,7 @@ export async function resolveSpendAttemptFate(
     message: hasTxid(entry)
       ? 'This send did not confirm. The item is still unspent, so the signed transfer can be broadcast again.'
       : 'This send failed before it produced a transaction. The item is still spendable and can be retried.',
-    mayClear: mayClearSignedInputs(inputsFate),
+    mayClear: mayClearSignedInputs(inputsFate, txOnChain),
   }
 }
 
@@ -500,12 +508,15 @@ export async function clearSpendAttempt(
   }
   if (!hasTxid(entry)) await releaseLocalSpendReservations()
   else {
-    const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
-      './staleOutputRelease'
-    )
-    const inputs = await loadSignedInputOutpoints(entry.txid!)
-    if (inputs.length > 0) await hideSpentOutpoints(inputs)
-    await keepChangeOfSignedTx(entry.txid!)
+    const inputsFate = await signedTxInputsFate(entry, chain)
+    if (inputsFate === 'spent') {
+      const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
+        './staleOutputRelease'
+      )
+      const inputs = await loadSignedInputOutpoints(entry.txid!)
+      if (inputs.length > 0) await hideSpentOutpoints(inputs)
+      await keepChangeOfSignedTx(entry.txid!)
+    }
   }
   return { removed: removeActivityById(entry.id) }
 }
@@ -555,9 +566,17 @@ export async function clearAllFailedSpends(): Promise<{
       keepIds.add(row.id)
       continue
     }
+    let txOnChain: boolean | null = null
+    if (hasTxid(row)) {
+      txOnChain = await txExistsOnChain(row.txid!, chain).catch(() => null)
+      if (txOnChain === null) {
+        keepIds.add(row.id)
+        continue
+      }
+    }
     const inputsFate = await signedTxInputsFate(row, chain)
-    if (inputsFate !== 'spent') keepIds.add(row.id)
-    else toKeepChange.push(row.txid!)
+    if (!mayClearSignedInputs(inputsFate, txOnChain)) keepIds.add(row.id)
+    else if (inputsFate === 'spent') toKeepChange.push(row.txid!)
   }
 
   if (unsignedToClear) await releaseLocalSpendReservations()
@@ -643,15 +662,45 @@ export async function rebroadcastAllFailedSpends(): Promise<{
 }
 
 /** Best-effort release of the local reservations a dead spend left behind. */
-async function releaseLocalSpendReservations(): Promise<void> {
+const RELEASE_RESERVATIONS_BUDGET_MS = 30_000
+
+async function withClearBudget<T>(
+  label: string,
+  ms: number,
+  work: () => Promise<T>,
+): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
   try {
-    const { repairFailedSpendState } = await import('./actionReview')
-    const repair = await repairFailedSpendState()
-    if (repair.failedTxs > 0 || repair.quarantined > 0 || repair.healed > 0) {
-      console.info('[spend-attempt] cleared local spend state', repair)
-    }
+    return await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out after ${ms}ms`)),
+          ms,
+        )
+      }),
+    ])
   } catch (err) {
-    // Removing the row is still correct — the repair is a best-effort unblock.
-    console.warn('[spend-attempt] local spend repair skipped', err)
+    console.warn(`[spend-attempt] ${label} skipped`, err)
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function releaseLocalSpendReservations(): Promise<void> {
+  const repair = await withClearBudget(
+    'release unsigned spend reservations',
+    RELEASE_RESERVATIONS_BUDGET_MS,
+    async () => {
+      const { releaseUnsignedSpendReservations } = await import('./actionReview')
+      return releaseUnsignedSpendReservations()
+    },
+  )
+  if (
+    repair &&
+    (repair.failedTxs > 0 || repair.batchesAborted > 0 || repair.reviewLog.trim())
+  ) {
+    console.info('[spend-attempt] cleared local spend state', repair)
   }
 }

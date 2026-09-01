@@ -8,6 +8,7 @@ import type { Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import { getDependencyHealthSnapshot } from './dependencyHealth'
+import { isViteDevBrowser } from './runtimePlatform'
 import {
   beginLegacyImport,
   markLegacyImported,
@@ -200,7 +201,7 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   if (kallubi) {
     try {
       const res = await fetchWithDeadline(`${kallubi}/tx/${id}`, {
-        Accept: 'application/json',
+        headers: { Accept: 'application/json' },
       })
       if (res.status === 404) return false
       if (res.ok) return true
@@ -280,6 +281,17 @@ export async function spentStatusOfOutpoint(
 ): Promise<OutpointSpentStatus> {
   const parsed = parseOutpoint(outpoint)
   if (!parsed) return 'unknown'
+
+  if (isViteDevBrowser() && handcashChainLikelyUp()) {
+    try {
+      const cloud = await cloudSpentStatus(parsed.txid, parsed.vout, chain)
+      if (cloud === 'spent' || cloud === 'unspent') return cloud
+    } catch {
+      /* fall through */
+    }
+    // Plain browser dev has no CORS on public explorers — avoid noisy failures.
+    return 'unknown'
+  }
 
   let bitailsUnknown = false
 
@@ -430,7 +442,9 @@ export async function scanAddressViaKallubi(
   const base = kallubiBase(chain)
   if (!base) throw new Error(`Kallubi has no endpoint for chain ${chain}`)
   const url = `${base}/a/${encodeURIComponent(address)}`
-  const res = await fetchWithDeadline(url, { Accept: 'application/json' })
+  const res = await fetchWithDeadline(url, {
+    headers: { Accept: 'application/json' },
+  })
   if (!res.ok) {
     throw new Error(`Kallubi ${res.status}: ${await res.text()}`)
   }
@@ -587,6 +601,20 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 
   const now = Date.now()
   const starters: Array<() => Promise<LegacyScanResult>> = []
+
+  if (isViteDevBrowser() && handcashChainLikelyUp() && now >= handcashChainCooldownUntil) {
+    starters.push(async () => {
+      try {
+        const result = await scanAddressViaHandcashChain(wallet.address, wallet.chain)
+        handcashChainCooldownUntil = 0
+        return result
+      } catch (err) {
+        handcashChainCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+        console.info('[legacy-scan] HandCash Chain failed', err)
+        throw err
+      }
+    })
+  }
 
   if (bananablocksBase(wallet.chain)) {
     if (now >= bananablocksCooldownUntil) {

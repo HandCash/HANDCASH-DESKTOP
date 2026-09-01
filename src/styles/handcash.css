@@ -3788,22 +3788,22 @@ button.identity-qr-copy:focus-visible {
   cursor: default;
 }
 
-.wallet-health-alert {
-  display: inline-grid;
-  place-items: center;
-  width: 22px;
-  height: 22px;
-  border-radius: 999px;
-  border: 1px solid rgb(255 200 87 / 42%);
-  background: rgb(255 200 87 / 14%);
-  color: var(--hc-warn, #ffc857);
+.wallet-health-trailing {
   flex-shrink: 0;
+  pointer-events: none;
 }
 
-.wallet-health-alert[data-tone='error'] {
-  border-color: rgb(255 107 107 / 42%);
-  background: rgb(255 107 107 / 12%);
+.wallet-health-trailing .wallet-health-alert {
+  cursor: default;
+  color: var(--hc-warn, #ffc857);
+  background: rgb(255 200 87 / 14%);
+  box-shadow: inset 0 0 0 1px rgb(255 200 87 / 42%);
+}
+
+.wallet-health-trailing .wallet-health-alert[data-tone='error'] {
   color: var(--hc-danger);
+  background: rgb(255 107 107 / 12%);
+  box-shadow: inset 0 0 0 1px rgb(255 107 107 / 42%);
 }
 
 .index-packs-progress {

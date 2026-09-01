@@ -1,5 +1,4 @@
-import { formatBsvSignificant } from './session'
-import type { DisplayCurrency } from './displayCurrency'
+import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 
 const CACHE_KEY = 'handcash.brc100.bsvUsd'
 const CACHE_TTL_MS = 5 * 60_000
@@ -49,6 +48,28 @@ function writeCache(usdPerBsv: number): void {
 }
 
 async function fetchFromCoinGecko(): Promise<number> {
+  const cloudBase =
+    DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '') ||
+    (typeof window !== 'undefined' ? window.location.origin : '')
+  if (cloudBase) {
+    try {
+      const res = await fetch(`${cloudBase}/v1/fx/bsv-usd`, {
+        headers: { Accept: 'application/json' },
+      })
+      if (res.status === 429) {
+        noteFxRateLimited()
+        throw new Error('coingecko 429')
+      }
+      if (res.ok) {
+        const data = (await res.json()) as { usdPerBsv?: number }
+        if (typeof data.usdPerBsv === 'number' && data.usdPerBsv > 0) return data.usdPerBsv
+      }
+    } catch (err) {
+      if (err instanceof Error && err.message === 'coingecko 429') throw err
+      /* fall through to direct fetch (Electron / no proxy) */
+    }
+  }
+
   const res = await fetch(
     'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
   )

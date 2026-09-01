@@ -4,7 +4,10 @@
  * before they wedge sends behind a long sync.
  */
 
-import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
+import { DEFAULT_BRC_CLOUD_BASE_URL, MARKET_FEE_PAY_TO_ADDRESS } from './walletConfig'
+
+/** Known mainnet address — Kallubi GET /a/:address (balance + UTXOs). */
+const KALLUBI_PROBE_ADDRESS = MARKET_FEE_PAY_TO_ADDRESS
 
 export type DependencyProbeStatus = 'ok' | 'degraded' | 'down' | 'unknown'
 
@@ -168,7 +171,7 @@ async function probeBananaBlocks(): Promise<DependencyProbe> {
 
 async function probeKallubi(): Promise<DependencyProbe> {
   const { code, timedOut, latencyMs } = await probeUrl(
-    'https://bsv.cx/tx/' + 'a'.repeat(64),
+    `https://bsv.cx/a/${encodeURIComponent(KALLUBI_PROBE_ADDRESS)}`,
     { headers: { Accept: 'application/json' } },
   )
   const status = statusFromHttp(code, timedOut)

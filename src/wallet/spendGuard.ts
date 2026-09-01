@@ -16,6 +16,9 @@ import { acquireSpendLease } from './spendLease'
 import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
+/** True while {@link runExclusiveSpend} already promoted chained change. */
+let spendChainPromoted = false
+
 /** Rebuild script-less change rows and mark live pending change spendable for chaining. */
 async function promoteSpendableChange(): Promise<number> {
   let restored = 0
@@ -53,7 +56,12 @@ export function runExclusiveSpend<T>(
 ): Promise<T> {
   return runExclusiveSpendCoordinated(async () => {
     await promoteSpendableChange()
-    return fn()
+    spendChainPromoted = true
+    try {
+      return await fn()
+    } finally {
+      spendChainPromoted = false
+    }
   }, acquireSpendLease, onSpendRegion)
 }
 
@@ -107,7 +115,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
   // Display balance credits pending change; createAction only selects spendable
   // toolbox rows. Promote live change — never pass the gate on credit alone.
-  await promoteSpendableChange()
+  if (!spendChainPromoted) await promoteSpendableChange()
   confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 

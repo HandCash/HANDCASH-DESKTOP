@@ -27,11 +27,12 @@ export function arcadeV2BaseUrl(chain: Chain): string | null {
   }
 }
 
-type ServicesInternals = Services & {
+/** Post-create patch surface — avoid intersecting private SDK members (CI tsc). */
+type ServicesPatchTarget = {
   configureOptionalProviders?: () => { hasBitails: boolean; hasWhatsOnChain: boolean }
   initializeReadServices?: (hasBitails: boolean, hasWhatsOnChain: boolean) => void
   initializePostBeefServices?: (hasBitails: boolean, hasWhatsOnChain: boolean) => void
-  options: Services['options'] & {
+  options: {
     chaintracks?: unknown
     arcadeUrl?: string
     arcadeConfig?: Record<string, unknown>
@@ -49,7 +50,7 @@ export function installArcadeV2Services(services: Services, chain: Chain): void 
   if (!base) return
 
   try {
-    const s = services as ServicesInternals
+    const s = services as unknown as ServicesPatchTarget
     const token = getOrCreateArcadeCallbackToken()
 
     s.options.chaintracks = new GoChaintracksServiceClient(chain, base, {
