@@ -59,7 +59,8 @@ export function hasLockingScript(row: ChangeRow): boolean {
 }
 
 function isChangeRow(row: ChangeRow): boolean {
-  return row.change === true
+  const sats = Math.max(0, Math.trunc(Number(row.satoshis) || 0))
+  return row.change === true || sats > 1
 }
 
 /**
@@ -146,6 +147,26 @@ async function readRawTx(
       if (tx) rawTx = tx.toBinary()
     } catch {
       // local BEEF optional
+    }
+  }
+
+  if (!rawTx) {
+    try {
+      rawTx = (await active.wallet.storage.runAsStorageProvider(async (sp) => {
+        const provider = sp as {
+          findTransactions?: (args: unknown) => Promise<Array<{ rawTx?: number[] }> | undefined>
+        }
+        if (typeof provider.findTransactions !== 'function') return null
+        const rows = await provider.findTransactions({
+          partial: { txid },
+          noRawTx: false,
+          paged: { limit: 1, offset: 0 },
+        })
+        const local = rows?.[0]?.rawTx
+        return Array.isArray(local) && local.length > 0 ? local : null
+      })) as number[] | null
+    } catch (err) {
+      console.warn('[change-script] toolbox rawTx lookup skipped', txid, err)
     }
   }
 

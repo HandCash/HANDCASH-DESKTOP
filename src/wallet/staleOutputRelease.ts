@@ -563,6 +563,23 @@ async function healLockingScript(
     }
   }
 
+  if (typeof sp.findTransactions === 'function') {
+    try {
+      const rows = await sp.findTransactions({
+        partial: { txid },
+        noRawTx: false,
+        paged: { limit: 1, offset: 0 },
+      })
+      const raw = rows?.[0]?.rawTx
+      if (Array.isArray(raw) && raw.length) {
+        const fate = classifyChangeScript(output, raw)
+        if (fate.kind === 'heal') return fate.lockingScript
+      }
+    } catch (err) {
+      console.warn('[stale-output] toolbox tx raw heal skipped', txid.slice(0, 12), err)
+    }
+  }
+
   if (opts?.fromChain !== true) return null
 
   try {

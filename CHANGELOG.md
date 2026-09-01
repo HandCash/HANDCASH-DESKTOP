@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.38] - 2026-08-31
+
+### Fixed
+
+- **Script-less change heal** — sweep and restore rebuild locking scripts from toolbox transaction rows (not only getProvenOrRawTx / chain); change sweep includes `sats > 1` rows.
+- **Mobile update UX** — Settings shows Updates on Android; update toasts use HandCash Mobile copy; auto update-check failures stay silent.
+
 ## [1.3.37] - 2026-08-31
 
 ### Fixed

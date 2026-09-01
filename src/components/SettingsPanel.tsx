@@ -157,8 +157,10 @@ export function SettingsPanel() {
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
   const [, setStatusTick] = useState(0)
-  const isDesktop =
-    window.handcash?.platform !== 'android' && window.handcash?.platform !== 'ios'
+  const platform = window.handcash?.platform
+  const isMobileShell = platform === 'android' || platform === 'ios'
+  const isDesktopShell = platform != null && platform !== 'web' && !isMobileShell
+  const showUpdates = isMobileShell || isDesktopShell
   const runningVersion =
     context.currentVersion && context.currentVersion !== '0.0.0'
       ? context.currentVersion
@@ -250,7 +252,7 @@ export function SettingsPanel() {
             />
           </SettingsControlRow>
 
-          {isDesktop ? (
+          {showUpdates ? (
             <>
               <SettingsControlRow
                 icon={SETTINGS_APPLICATION_ICONS.updates}
@@ -301,7 +303,7 @@ export function SettingsPanel() {
             icon={SETTINGS_APPLICATION_ICONS.logs}
             onClick={() => openSetting('logs')}
           />
-          {isDesktop ? (
+          {isDesktopShell ? (
             <SettingsControlRow
               icon={SETTINGS_APPLICATION_ICONS.screenshot}
               label="Screenshot"

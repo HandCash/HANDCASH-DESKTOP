@@ -20,12 +20,13 @@ function toastCopy(
   percent: number | null,
   error: string | null,
   fromCheck: boolean,
-  macManual: boolean,
+  sideloadManual: boolean,
+  productName: string,
 ): ToastCopy | null {
   if (phase === 'ready') {
     return {
       title: 'Update ready',
-      body: `HandCash Desktop ${version ?? ''} is ready to install.`,
+      body: `${productName} ${version ?? ''} is ready to install.`,
       action: 'restart',
       dismissable: true,
       sticky: true,
@@ -33,9 +34,9 @@ function toastCopy(
   }
   if (phase === 'downloading') {
     return {
-      title: macManual ? 'Opening installer…' : 'Downloading update…',
-      body: macManual
-        ? `HandCash Desktop ${version ?? ''} — your browser will download the DMG.`
+      title: sideloadManual ? 'Opening installer…' : 'Downloading update…',
+      body: sideloadManual
+        ? `${productName} ${version ?? ''} — follow the download prompt to install.`
         : `${version ?? 'Update'} — ${percent ?? 0}%`,
       action: null,
       dismissable: false,
@@ -43,12 +44,12 @@ function toastCopy(
     }
   }
   if (phase === 'available') {
-    if (macManual) {
+    if (sideloadManual) {
       return {
         title: 'Update available',
         body:
           error ??
-          `HandCash Desktop ${version ?? ''} is ready. Get the installer — drag HandCash into Applications.`,
+          `${productName} ${version ?? ''} is ready. Download and install the new build.`,
         action: 'download',
         dismissable: true,
         sticky: true,
@@ -56,7 +57,7 @@ function toastCopy(
     }
     return {
       title: 'Update available',
-      body: `HandCash Desktop ${version ?? ''} is available.`,
+      body: `${productName} ${version ?? ''} is available.`,
       action: 'download',
       dismissable: true,
       sticky: true,
@@ -83,7 +84,7 @@ function toastCopy(
   if (phase === 'not-available' && fromCheck) {
     return {
       title: 'Up to date',
-      body: error ?? "You're on the latest HandCash Desktop.",
+      body: error ?? `You're on the latest ${productName}.`,
       action: null,
       dismissable: true,
       sticky: false,
@@ -135,14 +136,19 @@ export function UpdatePrompt() {
     }
   }, [context.phase])
 
-  const macManual = window.handcash?.platform === 'darwin'
+  const platform = window.handcash?.platform
+  const macManual = platform === 'darwin'
+  const isMobile = platform === 'android' || platform === 'ios'
+  const sideloadManual = macManual || isMobile
+  const productName = isMobile ? 'HandCash Mobile' : 'HandCash Desktop'
   const copy = toastCopy(
     context.phase,
     context.availableVersion,
     context.percent,
     context.error,
     fromCheck,
-    macManual,
+    sideloadManual,
+    productName,
   )
   const visible = Boolean(copy && !userDismissed)
 
@@ -199,7 +205,7 @@ export function UpdatePrompt() {
                         className="btn btn-primary"
                         onClick={() => void download()}
                       >
-                        {macManual ? 'Get update' : 'Update'}
+                        {sideloadManual ? 'Get update' : 'Update'}
                       </button>
                     ) : null}
                     {copy.action === 'restart' ? (
