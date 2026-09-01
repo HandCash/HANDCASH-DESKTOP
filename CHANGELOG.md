@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.51] - 2026-09-01
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
+## [1.3.51] - 2026-09-01
+
+### Fixed
+
+- **Settings network health import** — correct wallet-ui bundle path so Mobile builds succeed.
+
 ## [1.3.50] - 2026-09-01
 
 ### Fixed

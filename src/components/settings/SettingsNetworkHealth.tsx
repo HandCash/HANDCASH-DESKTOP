@@ -4,7 +4,7 @@ import {
   refreshDependencyHealth,
   subscribeDependencyHealth,
   type DependencyHealthSnapshot,
-} from '../wallet/dependencyHealth'
+} from '../../wallet/dependencyHealth'
 import { SettingsControlRow } from './SettingsControlRow'
 
 function tone(status: string): 'muted' | 'warn' | 'error' {
