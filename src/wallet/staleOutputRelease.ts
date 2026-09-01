@@ -483,6 +483,76 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
   }
 }
 
+/** Statuses whose change outputs may still be unspendable in the toolbox. */
+const PENDING_CHANGE_TX_STATUSES = [
+  'sending',
+  'unproven',
+  'nosend',
+  'nonfinal',
+  'unfail',
+] as const
+
+/**
+ * Promote change from live local sends without paging the whole unspendable set.
+ *
+ * `restoreLiveSpendableOutputs` only inspects the first {@link RESTORE_MAX} dead
+ * rows. Wallets with hundreds of historical script-less change rows never reach
+ * a small pending credit (e.g. 8822 sats) — displayed balance includes it but
+ * Pay cannot select it. This walks pending local txids and calls
+ * {@link keepChangeOfSignedTx} for each.
+ */
+export async function promotePendingLocalChangeOutputs(opts?: {
+  forSpendChain?: boolean
+}): Promise<number> {
+  const forSpendChain = opts?.forSpendChain === true
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return 0
+
+  const txids = new Set<string>()
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return
+      for (const status of PENDING_CHANGE_TX_STATUSES) {
+        if (!forSpendChain && shouldYieldChainIngestToSpend()) break
+        for (let page = 0; page < 5; page += 1) {
+          const rows = await sp.findTransactions({
+            partial: {},
+            status: [status],
+            noRawTx: true,
+            paged: { limit: 25, offset: page * 25 },
+          })
+          if (!rows?.length) break
+          for (const row of rows) {
+            const txid = String(row.txid ?? '').trim().toLowerCase()
+            if (/^[0-9a-f]{64}$/.test(txid)) txids.add(txid)
+          }
+          if (rows.length < 25) break
+        }
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] pending tx scan skipped', err)
+    return 0
+  }
+
+  if (txids.size === 0) return 0
+
+  let promoted = 0
+  for (const txid of txids) {
+    if (!forSpendChain && shouldYieldChainIngestToSpend()) break
+    promoted += await keepChangeOfSignedTx(txid)
+  }
+  if (promoted > 0) {
+    console.info(
+      `[stale-output] promoted ${promoted} pending local change output(s) from ${txids.size} live tx(s)`,
+    )
+  }
+  return promoted
+}
+
 async function loadLocalRawTx(txid: string): Promise<number[] | null> {
   const storage = getActiveWallet()?.wallet?.storage
   if (!storage?.runAsStorageProvider) return null

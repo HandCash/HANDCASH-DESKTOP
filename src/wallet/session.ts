@@ -448,6 +448,36 @@ export type BalanceRead =
  */
 let lastKnownBalanceSats: number | null = null
 let lastBalanceBreakdown = ''
+/** Background heal when display credits pending change toolbox cannot spend yet. */
+let chainedBalanceHealAt = 0
+let chainedBalanceHealFlight: Promise<void> | null = null
+const CHAINED_BALANCE_HEAL_COOLDOWN_MS = 12_000
+
+function scheduleChainedBalanceHeal(pendingChange: number): void {
+  if (pendingChange <= 0) return
+  if (Date.now() - chainedBalanceHealAt < CHAINED_BALANCE_HEAL_COOLDOWN_MS) return
+  if (chainedBalanceHealFlight) return
+  chainedBalanceHealFlight = (async () => {
+    chainedBalanceHealAt = Date.now()
+    try {
+      const {
+        promotePendingLocalChangeOutputs,
+        reclaimSealedInputsNeverSpent,
+      } = await import('./staleOutputRelease')
+      const promoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
+      const reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+      if (promoted > 0 || reclaimed > 0) {
+        lastBalanceBreakdown = ''
+      }
+    } catch (err) {
+      console.warn('[balance] chained change heal skipped', err)
+    } finally {
+      chainedBalanceHealFlight = null
+    }
+  })()
+  void chainedBalanceHealFlight
+}
+
 const spendableBalanceCache = new WeakMap<object, number>()
 const spendableBalanceRefresh = new WeakMap<object, Promise<number | null>>()
 const balanceReadFlights = new WeakMap<
@@ -555,6 +585,7 @@ export async function fetchBalanceRead(
         displayed: spendable,
       })
     })
+    scheduleChainedBalanceHeal(pendingChange)
   }
   lastKnownBalanceSats = spendable
   if (typeof w === 'object' && w != null) {

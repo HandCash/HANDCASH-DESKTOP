@@ -70,7 +70,9 @@
  *   cancel, and it keeps that tx's change.
  * - **Chained unconfirmed change** — spending change from a prior local send
  *   before it confirms on-chain. `balanceView` credits pending change for display;
- *   `spendGuard.promoteSpendableChange` + `staleOutputRelease.restoreLiveSpendableOutputs`
+ *   `spendGuard.promoteSpendableChange` (reclaim sealed →
+ *   `promotePendingLocalChangeOutputs` → script sweep →
+ *   `staleOutputRelease.restoreLiveSpendableOutputs`)
  *   mark live change spendable for the next pay. `runExclusiveSpend` serializes
  *   sends so chains do not double-spend. Activity clear uses the lightweight
  *   `releaseUnsignedSpendReservations` path — not the full change-script sweep.

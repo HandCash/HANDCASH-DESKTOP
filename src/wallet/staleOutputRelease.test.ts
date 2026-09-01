@@ -23,6 +23,7 @@ const {
   releaseStaleSpendableOutputs,
   restoreLiveSpendableOutputs,
   keepChangeOfSignedTx,
+  promotePendingLocalChangeOutputs,
   hideSpentOutpoints,
   rehideInputsOfLiveLocalTxs,
   sealSpentInputsOfSignedTx,
@@ -357,6 +358,73 @@ describe('keepChangeOfSignedTx', () => {
       spendable: true,
       spentBy: undefined,
     })
+  })
+})
+
+describe('promotePendingLocalChangeOutputs', () => {
+  const findTransactions = vi.fn()
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+
+  beforeEach(() => {
+    findTransactions.mockReset()
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      address: '1abc',
+      wallet: {
+        storage: {
+          findTransactions,
+          findOutputs,
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+              getProvenOrRawTx: () => Promise<undefined>
+            }) => Promise<unknown>,
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              getProvenOrRawTx: async () => undefined,
+            }),
+        },
+      },
+    })
+  })
+
+  it('promotes change from live pending txs without paging unspendable rows', async () => {
+    const txid = 'ef'.repeat(32)
+    findTransactions.mockImplementation(async (args: { status?: string[] }) => {
+      if (args.status?.includes('unproven')) {
+        return [{ txid, status: 'unproven' }]
+      }
+      return []
+    })
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 3,
+        txid,
+        vout: 1,
+        change: true,
+        satoshis: 8822,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+        spentBy: undefined,
+      },
+    ])
+
+    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ spendable: true }),
+    )
   })
 })
 

@@ -13,7 +13,12 @@ import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
-import { restoreLiveSpendableOutputs } from './staleOutputRelease'
+import {
+  promotePendingLocalChangeOutputs,
+  reclaimSealedInputsNeverSpent,
+  restoreLiveSpendableOutputs,
+} from './staleOutputRelease'
+import { sweepChangeScripts } from './changeScriptFate'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
 /** True while {@link runExclusiveSpend} already promoted chained change. */
@@ -25,10 +30,10 @@ async function promoteSpendableChange(): Promise<number> {
   let localHealed = 0
   let chainHealed = 0
   try {
-    const { sweepChangeScripts } = await import('./changeScriptFate')
-    const { reclaimSealedInputsNeverSpent } = await import('./staleOutputRelease')
     // Coins sealed for a broadcast that never landed — reclaim before selection.
     await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+    // Pending change from live sends — O(live txs), not O(unspendable rows).
+    await promotePendingLocalChangeOutputs({ forSpendChain: true })
     const localSweep = await sweepChangeScripts({ fromChain: false })
     localHealed = localSweep.healed
     for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
@@ -127,7 +132,16 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
   // Display balance credits pending change; createAction only selects spendable
   // toolbox rows. Promote live change — never pass the gate on credit alone.
-  if (!spendChainPromoted) await promoteSpendableChange()
+  if (!spendChainPromoted) {
+    await promoteSpendableChange()
+  } else {
+    // runExclusiveSpend already ran promoteSpendableChange at queue entry. When
+    // bulk restore could not reach this wallet's pending credit (small UTXO
+    // count on mobile, huge dead row count on desktop), retry the O(live-txs)
+    // path here instead of throwing "chain unconfirmed change" while funds exist.
+    await promotePendingLocalChangeOutputs({ forSpendChain: true })
+    await restoreLiveSpendableOutputs({ forSpendChain: true })
+  }
   confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 
@@ -142,6 +156,14 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   }
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
+    // Last pass: chain script heal for script-less pending change, then re-read.
+    const chainSweep = await sweepChangeScripts({ fromChain: true })
+    if (chainSweep.healed > 0) {
+      await promotePendingLocalChangeOutputs({ forSpendChain: true })
+      await restoreLiveSpendableOutputs({ forSpendChain: true })
+      confirmed = await readConfirmedSpendable(active)
+      if (satoshis <= confirmed) return confirmed
+    }
     const { insufficientFundsMessage } = await import('./insufficientFunds')
     await logSpendFailure('chaining-required', {
       needed: satoshis,

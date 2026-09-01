@@ -688,7 +688,12 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     { reconcileDualLayerState },
     { healGhostSentItems },
     { pruneMissingOnChainActivity, expireStaleInboundPending },
-    { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs, reclaimSealedInputsNeverSpent },
+    {
+      rehideInputsOfLiveLocalTxs,
+      restoreLiveSpendableOutputs,
+      reclaimSealedInputsNeverSpent,
+      promotePendingLocalChangeOutputs,
+    },
     { txExistsOnChain },
     { forgetOneSatImported },
   ] = await Promise.all([
@@ -759,6 +764,16 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       }
       throwIfYieldToSpend()
       await rehideInputsOfLiveLocalTxs()
+      try {
+        const pendingPromoted = await promotePendingLocalChangeOutputs()
+        if (pendingPromoted > 0) {
+          console.info(
+            `[chain-ingest] promoted ${pendingPromoted} pending local change output(s) before bulk restore`,
+          )
+        }
+      } catch (err) {
+        console.warn('[chain-ingest] pending change promotion skipped', err)
+      }
       let restored = 0
       for (let pass = 0; pass < 5; pass += 1) {
         throwIfYieldToSpend()

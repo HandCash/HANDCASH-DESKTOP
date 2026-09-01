@@ -19,6 +19,7 @@ const assertOnlineForPayment = vi.fn(() => undefined)
 const unconfirmedChangeSats = vi.fn(async (_opts?: { needAtLeast?: number }) => 0)
 const restoreLiveSpendableOutputs = vi.fn(async () => 0)
 const reclaimSealedInputsNeverSpent = vi.fn(async () => 0)
+const promotePendingLocalChangeOutputs = vi.fn(async () => 0)
 const sweepChangeScripts = vi.fn(async () => ({
   scanned: 0,
   healed: 0,
@@ -57,6 +58,8 @@ vi.mock('./staleOutputRelease', () => ({
     restoreLiveSpendableOutputs(opts),
   reclaimSealedInputsNeverSpent: (opts?: { forSpendChain?: boolean }) =>
     reclaimSealedInputsNeverSpent(opts),
+  promotePendingLocalChangeOutputs: (opts?: { forSpendChain?: boolean }) =>
+    promotePendingLocalChangeOutputs(opts),
 }))
 
 vi.mock('./walletCoordinator', () => ({
@@ -83,6 +86,14 @@ describe('refreshSpendableBalance', () => {
     mockConfirmed(12_345)
     unconfirmedChangeSats.mockResolvedValue(0)
     restoreLiveSpendableOutputs.mockResolvedValue(0)
+    reclaimSealedInputsNeverSpent.mockResolvedValue(0)
+    promotePendingLocalChangeOutputs.mockResolvedValue(0)
+    sweepChangeScripts.mockResolvedValue({
+      scanned: 0,
+      healed: 0,
+      quarantined: 0,
+      refused: 0,
+    })
   })
 
   it('reads confirmed toolbox balance without the unconfirmed-change scan', async () => {
@@ -107,6 +118,22 @@ describe('refreshSpendableBalance', () => {
     await expect(assertSendableBalance(500)).resolves.toBe(600)
     expect(restoreLiveSpendableOutputs).toHaveBeenCalledWith({ forSpendChain: true })
     expect(unconfirmedChangeSats).not.toHaveBeenCalled()
+  })
+
+  it('assertSendableBalance retries pending-tx promotion inside runExclusiveSpend', async () => {
+    mockConfirmed(2)
+    unconfirmedChangeSats.mockResolvedValue(2614)
+    promotePendingLocalChangeOutputs.mockImplementation(async () => {
+      mockConfirmed(2616)
+      return 1
+    })
+    restoreLiveSpendableOutputs.mockResolvedValue(0)
+
+    const { runExclusiveSpend, assertSendableBalance } = await import('./spendGuard')
+    await expect(
+      runExclusiveSpend(() => assertSendableBalance(50)),
+    ).resolves.toBe(2616)
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
   })
 
   it('assertSendableBalance refuses when credit exists but change was not promoted', async () => {
@@ -161,6 +188,7 @@ describe('refreshSpendableBalance', () => {
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).resolves.toBe(600)
     expect(reclaimSealedInputsNeverSpent).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
     expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: false })
     expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
   })

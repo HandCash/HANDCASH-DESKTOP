@@ -23,6 +23,7 @@ const mockPruneMissingOnChainActivity = vi.fn(async () => 0)
 const mockExpireStaleInboundPending = vi.fn(() => 0)
 const mockRehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
 const mockRestoreLiveSpendableOutputs = vi.fn(async () => 0)
+const mockPromotePendingLocalChangeOutputs = vi.fn(async () => 0)
 const mockSweepChangeScripts = vi.fn(async () => ({
   scanned: 0,
   healed: 0,
@@ -67,6 +68,7 @@ vi.mock('./appActivity', () => ({
 vi.mock('./staleOutputRelease', () => ({
   rehideInputsOfLiveLocalTxs: () => mockRehideInputsOfLiveLocalTxs(),
   restoreLiveSpendableOutputs: () => mockRestoreLiveSpendableOutputs(),
+  promotePendingLocalChangeOutputs: () => mockPromotePendingLocalChangeOutputs(),
   reclaimSealedInputsNeverSpent: () => Promise.resolve(0),
   isUndefinedPartialFilterError: (err: unknown) =>
     /undefined.*filter|partial\.basket/i.test(
@@ -154,6 +156,7 @@ function resetMaintenanceMocks(): void {
   mockExpireStaleInboundPending.mockReset()
   mockRehideInputsOfLiveLocalTxs.mockReset()
   mockRestoreLiveSpendableOutputs.mockReset()
+  mockPromotePendingLocalChangeOutputs.mockReset()
   mockSweepChangeScripts.mockReset()
 
   mockReconcileDualLayerState.mockResolvedValue({
@@ -166,6 +169,7 @@ function resetMaintenanceMocks(): void {
   mockPruneMissingOnChainActivity.mockResolvedValue(0)
   mockExpireStaleInboundPending.mockReturnValue(0)
   mockRehideInputsOfLiveLocalTxs.mockResolvedValue(undefined)
+  mockPromotePendingLocalChangeOutputs.mockResolvedValue(0)
   mockRestoreLiveSpendableOutputs.mockResolvedValue(0)
   mockSweepChangeScripts.mockResolvedValue({
     scanned: 0,
@@ -218,6 +222,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
     expect(mockPruneMissingOnChainActivity).toHaveBeenCalledTimes(1)
     expect(mockSweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
     expect(mockRehideInputsOfLiveLocalTxs).toHaveBeenCalledTimes(1)
+    expect(mockPromotePendingLocalChangeOutputs).toHaveBeenCalledTimes(1)
     expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
     expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
   })
