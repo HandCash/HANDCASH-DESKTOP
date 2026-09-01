@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.60] - 2026-09-01
+
+### Fixed
+
+- **Build break in v1.3.59** — restore missing `DisplayCurrency` / `formatBsvSignificant` imports in `fx.ts` (CI tsc was failing on all platforms).
+
 ## [1.3.59] - 2026-09-01
 
 ### Fixed
