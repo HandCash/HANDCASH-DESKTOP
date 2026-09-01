@@ -2,9 +2,9 @@ import { useEffect, useState } from 'react'
 import { DeferredImage } from '../DeferredImage'
 import {
   listStoredIndexPacks,
-  removeIndexExpansion,
-} from '../../wallet/indexExpansion'
-import { subscribeIndexExpansionPacks } from '../../wallet/indexExpansionStore'
+  subscribeIndexExpansionPacks,
+} from '../../wallet/indexExpansionStore'
+import { removeIndexExpansion } from '../../wallet/indexExpansion'
 import {
   getWalletProgress,
   subscribeWalletProgress,
