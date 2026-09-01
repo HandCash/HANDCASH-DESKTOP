@@ -19,10 +19,13 @@ import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoord
 async function promoteSpendableChange(): Promise<number> {
   let restored = 0
   try {
-    restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     const { sweepChangeScripts } = await import('./changeScriptFate')
-    const sweep = await sweepChangeScripts({ fromChain: false })
-    if (sweep.healed > 0) {
+    // Scripts must exist before restore can flip spendable. Local-first keeps
+    // latency down; chain heals rows restored from BRC-39 without raw tx.
+    await sweepChangeScripts({ fromChain: false })
+    restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+    if (restored === 0) {
+      await sweepChangeScripts({ fromChain: true })
       restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     }
   } catch (err) {

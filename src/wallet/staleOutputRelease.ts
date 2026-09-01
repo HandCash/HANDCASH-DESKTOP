@@ -547,18 +547,35 @@ async function loadTxRow(
 async function healLockingScript(
   sp: LocalStorage,
   output: ChangeRow,
+  opts?: { fromChain?: boolean },
 ): Promise<number[] | null> {
   if (hasLockingScript(output)) return null
   const txid = String(output.txid ?? '').trim().toLowerCase()
-  if (!/^[0-9a-f]{64}$/.test(txid) || typeof sp.getProvenOrRawTx !== 'function') {
-    return null
+  if (!/^[0-9a-f]{64}$/.test(txid)) return null
+
+  if (typeof sp.getProvenOrRawTx === 'function') {
+    try {
+      const local = await sp.getProvenOrRawTx(txid)
+      const fate = classifyChangeScript(output, local?.rawTx?.length ? local.rawTx : null)
+      if (fate.kind === 'heal') return fate.lockingScript
+    } catch (err) {
+      console.warn('[stale-output] change script heal skipped', txid.slice(0, 12), err)
+    }
   }
+
+  if (opts?.fromChain !== true) return null
+
   try {
-    const local = await sp.getProvenOrRawTx(txid)
-    const fate = classifyChangeScript(output, local?.rawTx?.length ? local.rawTx : null)
+    const active = getActiveWallet()
+    if (!active) return null
+    const { fetchRawTxHex } = await import('./oneSatImport')
+    const hex = await fetchRawTxHex(txid, active.chain)
+    if (!hex) return null
+    const { Transaction } = await import('@bsv/sdk')
+    const fate = classifyChangeScript(output, Transaction.fromHex(hex).toBinary())
     return fate.kind === 'heal' ? fate.lockingScript : null
   } catch (err) {
-    console.warn('[stale-output] change script heal skipped', txid.slice(0, 12), err)
+    console.warn('[stale-output] chain script heal skipped', txid.slice(0, 12), err)
     return null
   }
 }
@@ -791,7 +808,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
             spentBy == null &&
             output.spendable !== true
 
-          const healed = await healLockingScript(sp, output)
+          const healed = await healLockingScript(sp, output, { fromChain: forSpendChain })
           if (healed == null && !hasLockingScript(output)) {
             unscripted += 1
             continue

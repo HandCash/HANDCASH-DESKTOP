@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.37] - 2026-08-31
+
+### Fixed
+
+- **Market / chained spends on script-less change** — spend promotion sweeps locking scripts before restore (local then chain) so BRC-39–restored change rows without raw tx can fund the next `createAction`; restore on the spend path may fetch raw tx from chain when healing scripts.
+
 ## [1.3.36] - 2026-08-31
 
 ### Fixed
