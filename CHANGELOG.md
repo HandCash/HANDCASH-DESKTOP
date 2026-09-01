@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.61] - 2026-09-01
+
+### Fixed
+
+- **Send timeout while Refresh running** — chain-ingest maintenance now skips or aborts when a send is waiting, instead of holding the spend region for 15s+.
+- **Missing spendable balance** — send path reclaims ghost-sealed inputs, and tries one bounded chain heal for script-less change rows credited in the hero balance but not selectable.
+- **Clearer send refusal** — coordinator acquire timeout surfaces as “still syncing / nothing was sent” instead of hanging on “Waiting to send…”.
+
 ## [1.3.60] - 2026-09-01
 
 ### Fixed

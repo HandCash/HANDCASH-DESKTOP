@@ -46,6 +46,7 @@ import {
   tryFinalizeDualLayerTx,
 } from './dualLayerSend'
 import { transitionTx } from './txStore'
+import { spendBlockedMessage } from './walletCoordinator'
 
 export type SendSatsResult = {
   txid: string
@@ -97,8 +98,10 @@ export async function sendSatsToAddress(opts: {
           })
 
           chart.send({ type: 'START', to, satoshis })
-          const { releaseStuckNosends } = await import('./actionReview')
+          const { releaseStuckNosends, releaseUnsignedSpendReservations } =
+            await import('./actionReview')
           await releaseStuckNosends(active)
+          await releaseUnsignedSpendReservations(active)
           await prepareSpendHeal(satoshis)
 
           const availableSats = await fetchBalanceSats(active.wallet).catch(() => 0)
@@ -353,6 +356,8 @@ export async function sendSatsToAddress(opts: {
       pendingId: pending.id,
       reason: err instanceof Error ? err.message : String(err),
     })
+    const blocked = spendBlockedMessage(err)
+    if (blocked) throw new Error(blocked)
     throw err
   }
 }

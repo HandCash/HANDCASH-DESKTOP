@@ -225,6 +225,12 @@ export class WalletCoordinatorAcquireTimeoutError extends Error {
   }
 }
 
+/** User-facing refusal when a send could not acquire the spend region in time. */
+export function spendBlockedMessage(err: unknown): string | null {
+  if (!(err instanceof WalletCoordinatorAcquireTimeoutError)) return null
+  return 'Wallet is still syncing or finishing another payment. Wait a moment and try Send again — nothing was sent.'
+}
+
 async function acquire(
   event: WalletCoordinatorEvent,
   endEvent: WalletCoordinatorEvent,

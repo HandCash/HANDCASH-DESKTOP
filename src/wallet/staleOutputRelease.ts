@@ -340,8 +340,12 @@ const RECLAIM_MAX = 40
  * never actually spent. A sealing transaction this wallet still considers live
  * is left alone regardless.
  */
-export async function reclaimSealedInputsNeverSpent(): Promise<number> {
-  if (shouldYieldChainIngestToSpend()) return 0
+export async function reclaimSealedInputsNeverSpent(opts?: {
+  /** Spend-path reclaim — do not defer while a send holds spend priority. */
+  forSpendChain?: boolean
+}): Promise<number> {
+  const forSpendChain = opts?.forSpendChain === true
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   const isUtxo = active?.services?.isUtxo
   const storage = active?.wallet?.storage

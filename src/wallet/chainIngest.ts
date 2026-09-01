@@ -326,7 +326,7 @@ export async function refreshFromChainExclusive(
     })
   }
 
-  if (maintenanceDue(active, forceReview)) {
+  if (maintenanceDue(active, forceReview) && !shouldYieldChainIngestToSpend()) {
     try {
       // Free abandoned noSend batches as part of repair, not every receipt poll.
       const { abortReservedActionBatches } = await import('./actionReview')
@@ -337,7 +337,20 @@ export async function refreshFromChainExclusive(
 
     // Independent maintenance — run together so wall-clock ≈ slowest step, not sum.
     // Explicit Refresh always runs it; background receipt polling is throttled.
-    await runChainMaintenance(active.chain)
+    try {
+      await runChainMaintenance(active.chain)
+    } catch (err) {
+      if (err instanceof ChainIngestYieldToSpendError) {
+        return finishEarlyForSpend(active, {
+          heldCount: 0,
+          pendingTips: 0,
+          importedFunding: 0,
+          importedItems: 0,
+          scannedTxids: [],
+        })
+      }
+      throw err
+    }
   }
 
   if (shouldYieldChainIngestToSpend()) {
@@ -665,6 +678,12 @@ async function finishEarlyForSpend(
  * Refresh wall-clock is max(step) instead of sum(step). Failures stay isolated.
  */
 async function runChainMaintenance(chain: Chain): Promise<void> {
+  if (shouldYieldChainIngestToSpend()) return
+
+  const throwIfYieldToSpend = (): void => {
+    if (shouldYieldChainIngestToSpend()) throw new ChainIngestYieldToSpendError()
+  }
+
   const [
     { reconcileDualLayerState },
     { healGhostSentItems },
@@ -709,6 +728,7 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       }
     })(),
     (async () => {
+      throwIfYieldToSpend()
       try {
         const { releaseStuckNosends } = await import('./actionReview')
         await releaseStuckNosends()
@@ -722,10 +742,9 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       // chain (budgeted per pass) before the spendable restore loop.
       try {
         const { sweepChangeScripts } = await import('./changeScriptFate')
-        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
         let scriptsHealed = 0
         for (let pass = 0; pass < 4; pass += 1) {
-          if (shouldYieldChainIngestToSpend()) break
+          throwIfYieldToSpend()
           const sweep = await sweepChangeScripts({ fromChain: true })
           scriptsHealed += sweep.healed
           if (sweep.healed === 0) break
@@ -738,9 +757,11 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       } catch (err) {
         console.warn('[chain-ingest] change script sweep skipped', err)
       }
+      throwIfYieldToSpend()
       await rehideInputsOfLiveLocalTxs()
       let restored = 0
       for (let pass = 0; pass < 5; pass += 1) {
+        throwIfYieldToSpend()
         const batch = await restoreLiveSpendableOutputs()
         if (batch === 0) break
         restored += batch
@@ -753,6 +774,7 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       // Coins a send sealed for a transaction that never reached a node. Runs
       // after the rehide pass so anything genuinely in flight is sealed first.
       for (let pass = 0; pass < 3; pass += 1) {
+        throwIfYieldToSpend()
         const reclaimed = await reclaimSealedInputsNeverSpent()
         if (reclaimed === 0) break
       }
@@ -768,6 +790,7 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
   for (let i = 0; i < results.length; i++) {
     const r = results[i]
     if (r?.status === 'rejected') {
+      if (r.reason instanceof ChainIngestYieldToSpendError) throw r.reason
       console.warn(`[chain-ingest] ${labels[i]} skipped`, r.reason)
     }
   }

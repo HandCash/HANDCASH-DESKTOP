@@ -94,6 +94,7 @@ import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import { spendBlockedMessage } from './walletCoordinator'
 import { canAutoProcessPayment } from './autoPay'
 import {
   clearPaymentProgress,
@@ -1301,7 +1302,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         setPaymentProgress('finishing', 'Updating your balance')
       } catch (err) {
         clearPaymentProgress()
-        const description = err instanceof Error ? err.message : String(err)
+        const blocked = spendBlockedMessage(err)
+        const description =
+          blocked ?? (err instanceof Error ? err.message : String(err))
         const offline = /offline/i.test(description)
         return {
           status: offline ? 503 : 400,

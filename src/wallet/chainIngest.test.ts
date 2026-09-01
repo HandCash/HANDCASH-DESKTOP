@@ -29,6 +29,7 @@ const mockSweepChangeScripts = vi.fn(async () => ({
   quarantined: 0,
   refused: 0,
 }))
+const mockShouldYieldChainIngestToSpend = vi.fn(() => false)
 
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
@@ -122,7 +123,7 @@ vi.mock('./pendingSend', () => ({
 vi.mock('./walletCoordinator', () => ({
   runChainIngest: (fn: () => Promise<unknown>) => fn(),
   runChainIngestDuringSpend: (fn: () => Promise<unknown>) => fn(),
-  shouldYieldChainIngestToSpend: () => false,
+  shouldYieldChainIngestToSpend: () => mockShouldYieldChainIngestToSpend(),
 }))
 
 vi.mock('./walletHealth', () => ({
@@ -145,6 +146,8 @@ vi.mock('./historyBackupPrefs', () => ({
 
 /** Reset the maintenance batch to a quiet, successful default. */
 function resetMaintenanceMocks(): void {
+  mockShouldYieldChainIngestToSpend.mockReset()
+  mockShouldYieldChainIngestToSpend.mockReturnValue(false)
   mockReconcileDualLayerState.mockReset()
   mockHealGhostSentItems.mockReset()
   mockPruneMissingOnChainActivity.mockReset()
@@ -299,6 +302,16 @@ describe('refreshFromChain pre-scan maintenance', () => {
 
     const { forgetOneSatImported } = await import('./oneSatImportGuard')
     expect(forgetOneSatImported).toHaveBeenCalledWith(['aa.0', 'bb.1'])
+  })
+
+  it('skips maintenance while a send is already waiting', async () => {
+    mockShouldYieldChainIngestToSpend.mockReturnValue(true)
+
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+
+    expect(mockSweepChangeScripts).not.toHaveBeenCalled()
+    expect(mockRestoreLiveSpendableOutputs).not.toHaveBeenCalled()
   })
 })
 

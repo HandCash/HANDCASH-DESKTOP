@@ -23,10 +23,12 @@ let spendChainPromoted = false
 async function promoteSpendableChange(): Promise<number> {
   let restored = 0
   let localHealed = 0
+  let chainHealed = 0
   try {
     const { sweepChangeScripts } = await import('./changeScriptFate')
-    // Spend path: local IDB only. Chain raw-tx heal belongs on Refresh — it was
-    // wedging every send behind hundreds of network lookups on phones.
+    const { reclaimSealedInputsNeverSpent } = await import('./staleOutputRelease')
+    // Coins sealed for a broadcast that never landed — reclaim before selection.
+    await reclaimSealedInputsNeverSpent({ forSpendChain: true })
     const localSweep = await sweepChangeScripts({ fromChain: false })
     localHealed = localSweep.healed
     for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
@@ -35,15 +37,25 @@ async function promoteSpendableChange(): Promise<number> {
     if (restored === 0 && localHealed > 0) {
       restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     }
+    // Script-less change credited in the hero balance but skipped by restore —
+    // one bounded chain pass heals rows local raw tx could not rebuild.
+    if (restored === 0 && localHealed === 0) {
+      const chainSweep = await sweepChangeScripts({ fromChain: true })
+      chainHealed = chainSweep.healed
+      if (chainHealed > 0) {
+        restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+      }
+    }
   } catch (err) {
     logDiag('spend-guard', 'warn', 'promote-skipped', {
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  if (restored > 0 || localHealed > 0) {
+  if (restored > 0 || localHealed > 0 || chainHealed > 0) {
     logDiag('spend-guard', 'info', 'promoted', {
       restored,
       scriptsLocal: localHealed,
+      scriptsChain: chainHealed,
     })
   }
   return restored

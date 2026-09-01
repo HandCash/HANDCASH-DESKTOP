@@ -18,6 +18,13 @@ function mockConfirmed(sats: number): void {
 const assertOnlineForPayment = vi.fn(() => undefined)
 const unconfirmedChangeSats = vi.fn(async (_opts?: { needAtLeast?: number }) => 0)
 const restoreLiveSpendableOutputs = vi.fn(async () => 0)
+const reclaimSealedInputsNeverSpent = vi.fn(async () => 0)
+const sweepChangeScripts = vi.fn(async () => ({
+  scanned: 0,
+  healed: 0,
+  quarantined: 0,
+  refused: 0,
+}))
 
 vi.mock('./paymentPolicy', () => ({
   assertOnlineForPayment: () => assertOnlineForPayment(),
@@ -42,12 +49,14 @@ vi.mock('./balanceView', () => ({
 }))
 
 vi.mock('./changeScriptFate', () => ({
-  sweepChangeScripts: async () => ({ scanned: 0, healed: 0, quarantined: 0, refused: 0 }),
+  sweepChangeScripts: (opts?: { fromChain?: boolean }) => sweepChangeScripts(opts),
 }))
 
 vi.mock('./staleOutputRelease', () => ({
   restoreLiveSpendableOutputs: (opts?: { forSpendChain?: boolean }) =>
     restoreLiveSpendableOutputs(opts),
+  reclaimSealedInputsNeverSpent: (opts?: { forSpendChain?: boolean }) =>
+    reclaimSealedInputsNeverSpent(opts),
 }))
 
 vi.mock('./walletCoordinator', () => ({
@@ -134,6 +143,26 @@ describe('refreshSpendableBalance', () => {
     unconfirmedChangeSats.mockResolvedValue(50)
     const { assertSendableBalance } = await import('./spendGuard')
     await expect(assertSendableBalance(500)).rejects.toThrow(/Insufficient balance/)
+  })
+
+  it('assertSendableBalance tries a bounded chain script heal when local promotion finds nothing', async () => {
+    mockConfirmed(100)
+    sweepChangeScripts.mockImplementation(async (opts?: { fromChain?: boolean }) => {
+      if (opts?.fromChain) return { scanned: 1, healed: 1, quarantined: 0, refused: 0 }
+      return { scanned: 1, healed: 0, quarantined: 0, refused: 0 }
+    })
+    restoreLiveSpendableOutputs.mockImplementation(async () => {
+      if (sweepChangeScripts.mock.calls.some(([o]) => o?.fromChain)) {
+        mockConfirmed(600)
+        return 1
+      }
+      return 0
+    })
+    const { assertSendableBalance } = await import('./spendGuard')
+    await expect(assertSendableBalance(500)).resolves.toBe(600)
+    expect(reclaimSealedInputsNeverSpent).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: false })
+    expect(sweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
   })
 
   it('never spends against an unreadable balance as if the wallet were empty', async () => {
