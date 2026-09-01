@@ -30,6 +30,9 @@ const wocBody = (sats: number) =>
   JSON.stringify([{ tx_hash: TXID, tx_pos: 1, value: sats, height: 2 }])
 
 const isBitails = (url: unknown) => String(url).includes('bitails')
+const isBanana = (url: unknown) => String(url).includes('bananablocks')
+const isKallubi = (url: unknown) => String(url).includes('bsv.cx')
+const isWoc = (url: unknown) => String(url).includes('whatsonchain')
 const isCloud = (url: unknown) => String(url).includes('/v1/chain/')
 
 /** HandCash Chain probe/scan routes — tests skip unless they mock a definitive answer. */
@@ -68,7 +71,7 @@ describe('scanLegacyAddress', () => {
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
-  it('promotes WhatsOnChain immediately when Bitails fails fast', async () => {
+  it('promotes BananaBlocks immediately when Bitails fails fast', async () => {
     const started = Date.now()
     vi.stubGlobal(
       'fetch',
@@ -80,13 +83,13 @@ describe('scanLegacyAddress', () => {
 
     const scan = await scanLegacyAddress(wallet())
 
-    expect(scan.source).toBe('whatsonchain')
+    expect(scan.source).toBe('bananablocks')
     expect(scan.sats).toBe(300)
     // Must not sit out the stagger behind a host that already gave up.
     expect(Date.now() - started).toBeLessThan(600)
   })
 
-  it('hedges to WhatsOnChain when Bitails stalls, and takes the first answer', async () => {
+  it('hedges to BananaBlocks when Bitails stalls, and takes the first answer', async () => {
     vi.stubGlobal(
       'fetch',
       cloudSilent(async (url: string) => {
@@ -103,7 +106,7 @@ describe('scanLegacyAddress', () => {
       const pending = scanLegacyAddress(wallet())
       await vi.advanceTimersByTimeAsync(1_300)
       const scan = await pending
-      expect(scan.source).toBe('whatsonchain')
+      expect(scan.source).toBe('bananablocks')
       expect(scan.sats).toBe(300)
     } finally {
       vi.useRealTimers()
@@ -151,16 +154,20 @@ describe('scanLegacyAddress', () => {
     const scan = await scanLegacyAddress(wallet())
 
     expect(afterFirst).toBe(3)
-    expect(scan.source).toBe('whatsonchain')
+    expect(scan.source).toBe('bananablocks')
     expect(fetchMock.mock.calls.some(([url]) => isBitails(url))).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('borrows missing sat amounts from services when WhatsOnChain omits them', async () => {
+  it('borrows missing sat amounts from services when WoC-class hosts omit them', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
-        if (isBitails(url)) throw new Error('bitails down')
+        if (isCloud(url)) return new Response('', { status: 503 })
+        if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+          throw new Error('explorer down')
+        }
+        if (!isWoc(url)) throw new Error(`unexpected host ${url}`)
         return new Response(
           JSON.stringify([{ tx_hash: TXID, tx_pos: 2, value: 0, height: 2 }]),
           { status: 200 },

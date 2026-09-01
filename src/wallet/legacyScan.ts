@@ -35,7 +35,7 @@ export type LegacyScanResult = {
   chain: Chain
   sats: number
   utxos: LegacyUtxo[]
-  source: 'services' | 'whatsonchain' | 'bitails' | 'handcash-chain'
+  source: 'services' | 'whatsonchain' | 'bitails' | 'handcash-chain' | 'bananablocks' | 'kallubi'
   error?: string
 }
 
@@ -62,6 +62,17 @@ function wocBase(chain: Chain): string {
 function bitailsBase(chain: Chain): string | null {
   if (chain === 'main') return 'https://api.bitails.io'
   if (chain === 'test') return 'https://test-api.bitails.io'
+  return null
+}
+
+function bananablocksBase(chain: Chain): string | null {
+  if (chain === 'main') return 'https://bananablocks.com/api/v1/bsv/main'
+  if (chain === 'test') return 'https://bananablocks.com/api/v1/bsv/test'
+  return null
+}
+
+function kallubiBase(chain: Chain): string | null {
+  if (chain === 'main') return 'https://bsv.cx'
   return null
 }
 
@@ -95,6 +106,8 @@ let wocCooldownUntil = 0
 let wocNextSlotAt = 0
 let bitailsCooldownUntil = 0
 let handcashChainCooldownUntil = 0
+let bananablocksCooldownUntil = 0
+let kallubiCooldownUntil = 0
 
 /** Test-only — clear provider skip windows. */
 export function resetLegacyScanCooldownForTests(): void {
@@ -102,13 +115,18 @@ export function resetLegacyScanCooldownForTests(): void {
   wocNextSlotAt = 0
   bitailsCooldownUntil = 0
   handcashChainCooldownUntil = 0
+  bananablocksCooldownUntil = 0
+  kallubiCooldownUntil = 0
 }
 
-async function fetchWithDeadline(url: string): Promise<Response> {
+async function fetchWithDeadline(
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS)
   try {
-    return await fetch(url, { signal: controller.signal })
+    return await fetch(url, { ...init, signal: controller.signal })
   } finally {
     clearTimeout(timer)
   }
@@ -173,6 +191,30 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
       if (res.ok) return true
     } catch (err) {
       console.warn('[legacy-scan] Bitails tx lookup failed', err)
+    }
+  }
+
+  const banana = bananablocksBase(chain)
+  if (banana) {
+    try {
+      const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
+      if (res.status === 404) return false
+      if (res.ok) return true
+    } catch (err) {
+      console.warn('[legacy-scan] BananaBlocks tx lookup failed', err)
+    }
+  }
+
+  const kallubi = kallubiBase(chain)
+  if (kallubi) {
+    try {
+      const res = await fetchWithDeadline(`${kallubi}/tx/${id}`, {
+        Accept: 'application/json',
+      })
+      if (res.status === 404) return false
+      if (res.ok) return true
+    } catch (err) {
+      console.warn('[legacy-scan] Kallubi tx lookup failed', err)
     }
   }
 
@@ -253,6 +295,21 @@ export async function spentStatusOfOutpoint(
     }
   }
 
+  const banana = bananablocksBase(chain)
+  if (banana) {
+    try {
+      const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
+      if (res.status === 404) return bitailsUnknown ? 'unknown' : 'unspent'
+      if (!res.ok) return 'unknown'
+      const body = (await res.json()) as { txid?: unknown }
+      const spendTxid = String(body.txid ?? '').toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
+      return 'unknown'
+    } catch (err) {
+      console.warn('[legacy-scan] BananaBlocks utxo status failed', err)
+    }
+  }
+
   try {
     const res = await fetchWhatsOnChainPaced(
       `${wocBase(chain)}/tx/${parsed.txid}/${parsed.vout}/spent`,
@@ -295,6 +352,30 @@ export async function scanAddressViaBitails(
 }
 
 /** Scan a legacy P2PKH address for UTXOs via WhatsOnChain REST. */
+async function scanAddressViaWocRest(
+  base: string,
+  address: string,
+  chain: Chain,
+  source: LegacyScanResult['source'],
+  fetch: (url: string) => Promise<Response>,
+): Promise<LegacyScanResult> {
+  const url = `${base}/address/${encodeURIComponent(address)}/unspent`
+  const res = await fetch(url)
+  if (!res.ok) {
+    throw new Error(`${source} ${res.status}: ${await res.text()}`)
+  }
+  const rows = (await res.json()) as WocUnspent[]
+  const utxos: LegacyUtxo[] = (rows ?? []).map((r) => ({
+    outpoint: `${r.tx_hash}.${r.tx_pos}`,
+    txid: r.tx_hash,
+    vout: r.tx_pos,
+    satoshis: r.value,
+    height: r.height,
+  }))
+  const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
+  return { address, chain, sats, utxos, source }
+}
+
 export async function scanAddressViaWhatsOnChain(
   address: string,
   chain: Chain,
@@ -315,6 +396,43 @@ export async function scanAddressViaWhatsOnChain(
   }))
   const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
   return { address, chain, sats, utxos, source: 'whatsonchain' }
+}
+
+/** GorillaPool BananaBlocks — WoC-compatible REST. */
+export async function scanAddressViaBananaBlocks(
+  address: string,
+  chain: Chain,
+): Promise<LegacyScanResult> {
+  const base = bananablocksBase(chain)
+  if (!base) throw new Error(`BananaBlocks has no endpoint for chain ${chain}`)
+  return scanAddressViaWocRest(base, address, chain, 'bananablocks', fetchWithDeadline)
+}
+
+/** Kallubi BSV Explorer (bsv.cx) — address balance + UTXO JSON. */
+export async function scanAddressViaKallubi(
+  address: string,
+  chain: Chain,
+): Promise<LegacyScanResult> {
+  const base = kallubiBase(chain)
+  if (!base) throw new Error(`Kallubi has no endpoint for chain ${chain}`)
+  const url = `${base}/a/${encodeURIComponent(address)}`
+  const res = await fetchWithDeadline(url, { Accept: 'application/json' })
+  if (!res.ok) {
+    throw new Error(`Kallubi ${res.status}: ${await res.text()}`)
+  }
+  const body = (await res.json()) as {
+    utxos?: Array<{ txid: string; vout: number; satoshis: number; height?: number }>
+  }
+  const rows = body.utxos ?? []
+  const utxos: LegacyUtxo[] = rows.map((r) => ({
+    outpoint: `${r.txid}.${r.vout}`,
+    txid: r.txid,
+    vout: r.vout,
+    satoshis: r.satoshis,
+    height: r.height,
+  }))
+  const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
+  return { address, chain, sats, utxos, source: 'kallubi' }
 }
 
 /** Scan via HandCash Chain on BRC-CLOUD (provider rotation server-side). */
@@ -487,6 +605,42 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
       })
     } else {
       console.info('[legacy-scan] skipping Bitails (recently failed)')
+    }
+  }
+
+  if (bananablocksBase(wallet.chain)) {
+    if (now >= bananablocksCooldownUntil) {
+      starters.push(async () => {
+        try {
+          const result = await scanAddressViaBananaBlocks(wallet.address, wallet.chain)
+          bananablocksCooldownUntil = 0
+          return result
+        } catch (err) {
+          bananablocksCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          console.warn('[legacy-scan] BananaBlocks failed', err)
+          throw err
+        }
+      })
+    } else {
+      console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
+    }
+  }
+
+  if (kallubiBase(wallet.chain)) {
+    if (now >= kallubiCooldownUntil) {
+      starters.push(async () => {
+        try {
+          const result = await scanAddressViaKallubi(wallet.address, wallet.chain)
+          kallubiCooldownUntil = 0
+          return result
+        } catch (err) {
+          kallubiCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          console.warn('[legacy-scan] Kallubi failed', err)
+          throw err
+        }
+      })
+    } else {
+      console.info('[legacy-scan] skipping Kallubi (recently failed)')
     }
   }
 

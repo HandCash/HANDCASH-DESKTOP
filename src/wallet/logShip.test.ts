@@ -117,6 +117,22 @@ describe('logShip', () => {
     expect(result).toMatchObject({ ok: false })
   })
 
+  it('strips /latest from a misconfigured upload URL before POST', async () => {
+    store.set(
+      UPLOAD_KEY,
+      'https://example.test/v1/logs/hc-abcdefgh/latest',
+    )
+    const fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }))
+    vi.stubGlobal('fetch', fetchSpy)
+    const ship = await withRecoveredCrash()
+
+    await ship.shipPreviousSessionLogs()
+
+    const [url] = fetchSpy.mock.calls[0] as unknown as [string]
+    expect(url).toBe('https://example.test/v1/logs/hc-abcdefgh')
+    expect(store.get(UPLOAD_KEY)).toBe('https://example.test/v1/logs/hc-abcdefgh')
+  })
+
   it('auto-ships on send-failure without waiting for the interval', async () => {
     store.set(UPLOAD_KEY, 'https://example.test/v1/logs/hc-live')
     store.set(

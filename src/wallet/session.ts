@@ -294,6 +294,28 @@ function installTipHeaderFailover(services: Services, chain: Chain): void {
   }
 }
 
+/**
+ * SetupClient wires the monitor with the default browser Chaintracks client before
+ * we replace `services.options.chaintracks` with Arcade V2. TaskNewHeader polls
+ * `monitor.chaintracks` directly — without this sync it keeps hitting dead
+ * `mainnet-chaintracks.babbage.systems`.
+ */
+function syncMonitorChaintracks(monitor: unknown, chaintracks: unknown): void {
+  if (!monitor || chaintracks == null) return
+  try {
+    const m = monitor as {
+      chaintracks?: unknown
+      chaintracksWithEvents?: unknown
+    }
+    m.chaintracks = chaintracks
+    if (typeof (chaintracks as { subscribeHeaders?: unknown }).subscribeHeaders === 'function') {
+      m.chaintracksWithEvents = chaintracks
+    }
+  } catch (err) {
+    console.warn('[chaintracker] monitor chaintracks sync skipped', err)
+  }
+}
+
 export function getActiveWallet(): ActiveWallet | null {
   return active
 }
@@ -332,6 +354,7 @@ export async function bootWallet(args: {
   installMerklePreferBitails(setup.services as Services)
   installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
+  syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
 
   try {
     wireArcadeMonitor(setup.monitor, getOrCreateArcadeCallbackToken())

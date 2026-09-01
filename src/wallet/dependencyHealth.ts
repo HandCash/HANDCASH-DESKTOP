@@ -149,6 +149,40 @@ async function probeBitails(): Promise<DependencyProbe> {
   return { id: 'bitails', label: 'Bitails', status, detail, latencyMs }
 }
 
+async function probeBananaBlocks(): Promise<DependencyProbe> {
+  const { code, timedOut, latencyMs } = await probeUrl(
+    'https://bananablocks.com/api/v1/bsv/main/chain/info',
+    { headers: { Accept: 'application/json' } },
+  )
+  const status = statusFromHttp(code, timedOut)
+  const detail =
+    status === 'ok'
+      ? `${latencyMs}ms`
+      : timedOut
+        ? 'Timeout'
+        : code === 0
+          ? 'Down'
+          : `HTTP ${code}`
+  return { id: 'bananablocks', label: 'BananaBlocks', status, detail, latencyMs }
+}
+
+async function probeKallubi(): Promise<DependencyProbe> {
+  const { code, timedOut, latencyMs } = await probeUrl(
+    'https://bsv.cx/tx/' + 'a'.repeat(64),
+    { headers: { Accept: 'application/json' } },
+  )
+  const status = statusFromHttp(code, timedOut)
+  const detail =
+    status === 'ok'
+      ? `${latencyMs}ms`
+      : timedOut
+        ? 'Timeout'
+        : code === 0
+          ? 'Down'
+          : `HTTP ${code}`
+  return { id: 'kallubi', label: 'Kallubi', status, detail, latencyMs }
+}
+
 async function probeGorillaPool(): Promise<DependencyProbe> {
   const { code, timedOut, latencyMs } = await probeUrl(
     'https://ordinals.gorillapool.io/favicon.ico',
@@ -200,13 +234,16 @@ export function subscribeDependencyHealth(listener: Listener): () => void {
 
 /** Run probes once; safe to call from Settings or after Refresh. */
 export async function refreshDependencyHealth(): Promise<DependencyHealthSnapshot> {
-  const [arcadeV2, handcashChain, bitails, gorillapool] = await Promise.all([
-    probeArcadeV2(),
-    probeHandcashChain(),
-    probeBitails(),
-    probeGorillaPool(),
-  ])
-  const probes = [arcadeV2, handcashChain, bitails, gorillapool]
+  const [arcadeV2, handcashChain, bitails, bananablocks, kallubi, gorillapool] =
+    await Promise.all([
+      probeArcadeV2(),
+      probeHandcashChain(),
+      probeBitails(),
+      probeBananaBlocks(),
+      probeKallubi(),
+      probeGorillaPool(),
+    ])
+  const probes = [arcadeV2, handcashChain, bitails, bananablocks, kallubi, gorillapool]
   const summary = summarize(probes)
   cached = { at: Date.now(), probes, summary }
   console.info(`[dependency-health] ${summary}`)

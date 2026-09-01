@@ -121,7 +121,11 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
     return true
   }, [pendingPrompt])
 
-  if (isMobileWalletPlatform()) return null
+  if (isMobileWalletPlatform()) {
+    // Mobile layout (see mobile-overrides.css) expects this between hero and nav;
+    // it is also the only toast viewport on phone shells.
+    return <WhatIsBsvPanel />
+  }
 
   return (
     <aside

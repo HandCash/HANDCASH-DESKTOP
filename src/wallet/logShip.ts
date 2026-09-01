@@ -78,6 +78,8 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
   } catch {
     return { ok: false, error: 'Invalid upload URL' }
   }
+  const bucketPath = target.pathname.match(/^(\/v1\/logs\/[^/]+)/)
+  if (bucketPath) target.pathname = bucketPath[1]!
   if (target.protocol !== 'http:' && target.protocol !== 'https:') {
     return { ok: false, error: 'Upload URL must be http(s)' }
   }

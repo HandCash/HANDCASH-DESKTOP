@@ -565,10 +565,22 @@ export async function clearAllFailedSpends(): Promise<{
     const { keepChangeOfSignedTx, hideSpentOutpoints } = await import(
       './staleOutputRelease'
     )
+    const cleanupFailedTxids = new Set<string>()
     for (const txid of toKeepChange) {
-      const inputs = await loadSignedInputOutpoints(txid)
-      if (inputs.length > 0) await hideSpentOutpoints(inputs)
-      await keepChangeOfSignedTx(txid)
+      try {
+        const inputs = await loadSignedInputOutpoints(txid)
+        if (inputs.length > 0) await hideSpentOutpoints(inputs)
+        await keepChangeOfSignedTx(txid)
+      } catch (err) {
+        console.warn('[spend-attempt] clear failed row cleanup skipped', txid, err)
+        cleanupFailedTxids.add(txid.toLowerCase())
+      }
+    }
+    if (cleanupFailedTxids.size > 0) {
+      for (const row of listFailedActivity()) {
+        const txid = row.txid?.toLowerCase()
+        if (txid && cleanupFailedTxids.has(txid)) keepIds.add(row.id)
+      }
     }
   }
   const removed = removeFailedActivity((entry) => keepIds.has(entry.id))

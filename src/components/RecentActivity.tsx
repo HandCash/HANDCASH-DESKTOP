@@ -822,14 +822,21 @@ export function ActivityFeed({
     setClearingFailed(true)
     try {
       const { removed, kept } = await clearAllFailedSpends()
-      toastSuccess(
-        'Cleared failed sends',
-        `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.${
-          kept > 0
-            ? ` Kept ${kept} still live (coins unspent, or the recipient can still broadcast).`
-            : ''
-        }`
-      )
+      if (removed === 0 && kept > 0) {
+        toastError(
+          'Nothing cleared',
+          `${kept} failed send${kept === 1 ? '' : 's'} still live — signed transfers with unspent coins stay until rebroadcast succeeds or inputs spend on chain. Use Rebroadcast, or wait for Refresh to confirm they never landed.`
+        )
+      } else {
+        toastSuccess(
+          'Cleared failed sends',
+          `Removed ${removed} row${removed === 1 ? '' : 's'} from Activity.${
+            kept > 0
+              ? ` Kept ${kept} still live (coins unspent, or the recipient can still broadcast).`
+              : ''
+          }`
+        )
+      }
     } catch (err) {
       toastError(
         'Clear failed',

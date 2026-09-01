@@ -9,6 +9,9 @@ afterEach(() => {
 })
 
 const isBitails = (url: unknown) => String(url).includes('bitails')
+const isBanana = (url: unknown) => String(url).includes('bananablocks')
+const isKallubi = (url: unknown) => String(url).includes('bsv.cx')
+const isWoc = (url: unknown) => String(url).includes('whatsonchain')
 const isCloud = (url: unknown) =>
   String(url).includes('/v1/chain/tx/') && String(url).includes('/exists')
 
@@ -26,7 +29,7 @@ describe('txExistsOnChain', () => {
   it('asks Bitails before WhatsOnChain when HandCash Chain is silent', async () => {
     const order: string[] = []
     const fetchMock = cloudSilentThen(async (url) => {
-      order.push(isBitails(url) ? 'bitails' : 'woc')
+      order.push(isBitails(url) ? 'bitails' : isWoc(url) ? 'woc' : 'other')
       if (isBitails(url)) return new Response('', { status: 404 })
       return new Response('{}', { status: 200 })
     })
@@ -50,25 +53,28 @@ describe('txExistsOnChain', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
-  it('falls back to WhatsOnChain only when Bitails is silent', async () => {
+  it('falls back to WhatsOnChain only when earlier providers are silent', async () => {
     const fetchMock = cloudSilentThen(async (url: string) => {
-      if (isBitails(url)) return new Response('', { status: 500 })
+      if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+        return new Response('', { status: 500 })
+      }
       return new Response('{}', { status: 200 })
     })
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    expect(fetchMock).toHaveBeenCalledTimes(5)
   })
 
   it('affirms presence when either provider has seen the tx', async () => {
     vi.stubGlobal(
       'fetch',
-      cloudSilentThen(async (url: string) =>
-        isBitails(url)
-          ? new Response('', { status: 500 })
-          : new Response('{}', { status: 200 }),
-      ),
+      cloudSilentThen(async (url: string) => {
+        if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+          return new Response('', { status: 500 })
+        }
+        return new Response('{}', { status: 200 })
+      }),
     )
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(true)
   })
@@ -103,27 +109,29 @@ describe('txExistsOnChain', () => {
   it('treats a WhatsOnChain 429 as no evidence, not absence', async () => {
     vi.stubGlobal(
       'fetch',
-      cloudSilentThen(async (url: string) =>
-        isBitails(url)
-          ? new Response('', { status: 500 })
-          : new Response('', { status: 429 }),
-      ),
+      cloudSilentThen(async (url: string) => {
+        if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+          return new Response('', { status: 500 })
+        }
+        return new Response('', { status: 429 })
+      }),
     )
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBeNull()
   })
 
   it('stops asking WhatsOnChain after it throttles us', async () => {
-    const fetchMock = cloudSilentThen(async (url: string) =>
-      isBitails(url)
-        ? new Response('', { status: 500 })
-        : new Response('', { status: 429 }),
-    )
+    const fetchMock = cloudSilentThen(async (url: string) => {
+      if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+        return new Response('', { status: 500 })
+      }
+      return new Response('', { status: 429 })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     await txExistsOnChain(TXID, 'main')
     await txExistsOnChain('cd'.repeat(32), 'main')
 
-    const wocCalls = fetchMock.mock.calls.filter(([url]) => !isBitails(url) && !isCloud(url))
+    const wocCalls = fetchMock.mock.calls.filter(([url]) => isWoc(url))
     expect(wocCalls).toHaveLength(1)
   })
 
