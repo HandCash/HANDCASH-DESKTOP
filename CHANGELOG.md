@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.67] - 2026-09-01
+
+### Changed
+
+- **Optimistic send UX** — BSV, BRC-29, and collectable sends complete as soon as the signed tx exists; miner submit runs in the background instead of blocking the progress bar.
+- **Late broadcast errors** — if background miner submit hard-fails (e.g. already spent), Activity rewrites the row as failed and shows a toast.
+
 ## [1.3.66] - 2026-09-01
 
 ### Changed

@@ -3382,42 +3382,56 @@ export async function sendCollectable(args: {
                 )
               }
               const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
-              if (!silent) {
-                setPaymentProgress(
-                  'broadcasting',
-                  'Inbox unreachable — submitting on chain',
-                  outpoint
+              const reportBroadcastFailure = (reason: unknown) => {
+                void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
+                  reportLateMinerSubmitFailure({
+                    pendingId: outboundPending.id,
+                    txid,
+                    reason,
+                  }),
                 )
               }
-              const ok = await broadcastAtomicBeef(txid, atomicBeef)
+              // Signed tx is spent — miner submit is best-effort background work.
+              void broadcastAtomicBeef(txid, atomicBeef)
+                .then((ok) => {
+                  if (!ok) reportBroadcastFailure('Not sent')
+                })
+                .catch((err) => {
+                  console.warn(
+                    '[collectables] broadcast failed after send success',
+                    txid.slice(0, 12),
+                    err instanceof Error ? err.message : String(err),
+                  )
+                  reportBroadcastFailure(err)
+                })
               if (silent) {
-                itemChart.send({ type: ok ? 'BROADCASTED' : 'SKIPPED' })
-              } else if (!ok) {
-                // Neither the peer nor a node holds this transfer, so the seal
-                // is retiring coins for a transaction that does not exist.
-                if (delivered.delivered !== 'cloud') {
-                  await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
-                }
-                itemChart.stop()
-                return failSend(new Error('Not sent'))
+                itemChart.send({ type: 'SKIPPED' })
               } else {
                 itemChart.send({ type: 'BROADCASTED' })
               }
             } else if (maySenderBroadcast(settleSnap)) {
-              setPaymentProgress(
-                'broadcasting',
-                settleSnap.matches('selfReceive')
-                  ? 'Broadcasting item back to this wallet'
-                  : 'Broadcasting the collectable',
-                outpoint
-              )
-              const ok = await broadcastAtomicBeef(txid, atomicBeef)
-              if (!ok) {
-                // Sender was the only route and it failed — hand the coins back.
-                await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
-                itemChart.stop()
-                return failSend(new Error('Not sent'))
+              setPaymentProgress('finishing', undefined, outpoint)
+              const reportBroadcastFailure = (reason: unknown) => {
+                void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
+                  reportLateMinerSubmitFailure({
+                    pendingId: outboundPending.id,
+                    txid,
+                    reason,
+                  }),
+                )
               }
+              void broadcastAtomicBeef(txid, atomicBeef)
+                .then((ok) => {
+                  if (!ok) reportBroadcastFailure('Not sent')
+                })
+                .catch((err) => {
+                  console.warn(
+                    '[collectables] broadcast failed after send success',
+                    txid.slice(0, 12),
+                    err instanceof Error ? err.message : String(err),
+                  )
+                  reportBroadcastFailure(err)
+                })
               itemChart.send({ type: 'BROADCASTED' })
             } else {
               itemChart.stop()

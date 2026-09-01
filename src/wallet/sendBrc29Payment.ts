@@ -43,7 +43,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
-  releaseSealedInputsOfUnsentTx,
   sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
@@ -126,14 +125,13 @@ export async function broadcastAtomicBeef(
       if (onChain === true) return true
     }
 
-    const { summarizePostBeef } = await import('./postBeefResult')
-    const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
-    const accepted = summarizePostBeef(results as never).accepted
-    mark(`postBeef accepted=${String(accepted)}`)
-    return accepted
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(id, atomic)
+    mark(`postBeef confirmed=${String(result.confirmed)} submitted=${String(result.submitted)}`)
+    return result.submitted
   } catch (err) {
     console.warn(
-      '[brc29] postBeef failed',
+      '[brc29] postBeef hard reject',
       id,
       err instanceof Error ? err.message : String(err),
     )
@@ -142,55 +140,20 @@ export async function broadcastAtomicBeef(
 }
 
 /**
- * Delayed createAction can return a txid before the network accepts it.
- * Confirm with postBeef before Activity / remittance — otherwise mobile shows
- * "sent" for a doubleSpend that never exists on chain (payee never receives).
+ * Hand signed BEEF to miners after createAction. Signed txs are treated as
+ * spent immediately; only hard missing-inputs / double-spend failures throw.
  */
 export async function ensurePaymentBroadcasted(
   txid: string,
   atomic: number[] | undefined,
 ): Promise<void> {
-  const id = txid.trim().toLowerCase()
   if (!atomic?.length) {
     throw new Error(
       'Payment was signed but no transaction body was returned — try Send again.',
     )
   }
-  const active = getActiveWallet()
-  if (!active?.services?.postBeef) {
-    throw new Error('Cannot confirm broadcast offline. Check connection and try again.')
-  }
-  const { summarizePostBeef, formatPostBeefFailure } = await import('./postBeefResult')
-  let summary
-  try {
-    const beef = Beef.fromBinary(atomic)
-    const results = await active.services.postBeef(beef, [id])
-    summary = summarizePostBeef(results as never)
-  } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err)
-    console.warn('[brc29] postBeef confirm failed', id, msg)
-    // Nothing was broadcast, so the pre-broadcast seal is holding live coins.
-    await releaseSealedInputsOfUnsentTx(id, atomic)
-    if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
-      throw new Error(
-        'Payment was signed but the transaction body is invalid — try Send again.',
-      )
-    }
-    throw new Error(
-      'Could not confirm the payment on the network. Check connection and try again.',
-    )
-  }
-  if (summary.accepted) return
-  console.warn('[brc29] broadcast not accepted', id, summary.detail)
-  if (summary.doubleSpend || summary.missingInputs) {
-    await onAlreadySpentSend({ txid: id, atomic })
-  } else {
-    // Nobody reported these inputs gone, so nothing was spent — the failure was
-    // transport. Hand the coins back rather than letting a no-network attempt
-    // shrink the spendable balance.
-    await releaseSealedInputsOfUnsentTx(id, atomic)
-  }
-  throw new Error(formatPostBeefFailure(summary))
+  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+  await submitAtomicBeefToMiners(txid, atomic)
 }
 
 export function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
@@ -423,11 +386,7 @@ export async function sendBrc29ToIdentityKey(opts: {
           // and get rejected as a double spend.
           await sealSpentInputsOfSignedTx(txid, atomicBeef)
           mark('inputs sealed')
-          setPaymentProgress('broadcasting', 'Confirming payment on the network')
-          await ensurePaymentBroadcasted(txid, atomicBeef)
-          mark('broadcast')
           chart.send({ type: 'BROADCASTED', txid })
-
           completePendingSend(pending.id, txid)
           noteOutboundSendComplete({
             pendingId: pending.id,
@@ -437,9 +396,25 @@ export async function sendBrc29ToIdentityKey(opts: {
             friendLabel: opts.friendLabel ?? null,
           })
           clearPendingSend(pending.id)
-
           setPaymentProgress('finishing')
           scheduleHistoryBackupPush('send')
+          // Miner submit is best-effort — signed tx is already spent for UI.
+          void ensurePaymentBroadcasted(txid, atomicBeef)
+            .then(() => mark('broadcast'))
+            .catch((err) => {
+              console.warn(
+                '[brc29] miner submit failed after send success',
+                txid.slice(0, 12),
+                err instanceof Error ? err.message : String(err),
+              )
+              void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
+                reportLateMinerSubmitFailure({
+                  pendingId: pending.id,
+                  txid,
+                  reason: err,
+                }),
+              )
+            })
 
           let selfReceived = false
           let peerDelivered = false

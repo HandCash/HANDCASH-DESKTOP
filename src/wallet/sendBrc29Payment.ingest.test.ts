@@ -181,11 +181,11 @@ describe('broadcastAtomicBeef', () => {
     expect(postBeef).not.toHaveBeenCalled()
   })
 
-  it('reports failure instead of throwing when postBeef rejects', async () => {
+  it('reports optimistic success when postBeef transport fails', async () => {
     postBeef.mockRejectedValueOnce(new Error('provider down') as never)
     const { broadcastAtomicBeef } = await import('./sendBrc29Payment')
 
-    await expect(broadcastAtomicBeef('a'.repeat(64), ATOMIC)).resolves.toBe(false)
+    await expect(broadcastAtomicBeef('a'.repeat(64), ATOMIC)).resolves.toBe(true)
   })
 })
 

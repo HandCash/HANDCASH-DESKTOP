@@ -1,4 +1,4 @@
-import { Beef, P2PKH } from '@bsv/sdk'
+import { P2PKH } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,
@@ -30,7 +30,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   isAlreadySpentInputError,
   onAlreadySpentSend,
-  releaseSealedInputsOfUnsentTx,
   sealSpentInputsOfSignedTx,
 } from './staleOutputRelease'
 import {
@@ -201,58 +200,63 @@ export async function sendSatsToAddress(opts: {
               // Retire the consumed coins before the next send can pick them —
               // chain-ingest's rehide pass defers while a spend is queued.
               await sealSpentInputsOfSignedTx(realTxid, atomic)
-              setPaymentProgress('broadcasting', 'Confirming payment on the network')
-              const { summarizePostBeef, formatPostBeefFailure } = await import(
-                './postBeefResult'
-              )
-              let summary
-              try {
-                const results = await active.services.postBeef(
-                  Beef.fromBinary(atomic),
-                  [realTxid],
-                )
-                summary = summarizePostBeef(results as never)
-              } catch (err) {
-                const msg = err instanceof Error ? err.message : String(err)
-                console.warn('[send] postBeef confirm failed', realTxid, msg)
-                // Nothing broadcast — do not leave the seal holding live coins.
-                await releaseSealedInputsOfUnsentTx(realTxid, atomic)
-                if (/4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)) {
-                  failDualLayerSend(dualId, 'SCRIPT_INVALID', msg)
-                  throw new Error(
-                    'Payment was signed but the transaction body is invalid — try Send again.',
-                  )
-                }
-                failDualLayerSend(dualId, 'UNKNOWN', msg)
-                throw new Error(
-                  'Could not confirm the payment on the network. Check connection and try again.',
-                )
+              // Signed tx is spent for UI — miner ACK is best-effort background work.
+              transitionTx(dualId, 'SEEN_IN_MEMPOOL')
+              chart.send({ type: 'BROADCASTED', txid })
+              completePendingSend(pending.id, txid)
+
+              const recipientNote = opts.friendLabel ? `${opts.friendLabel} (${to})` : to
+              noteOutboundSendComplete({
+                pendingId: pending.id,
+                txid,
+                sats: satoshis,
+                to,
+                friendLabel: opts.friendLabel ?? null,
+              })
+              if (!hasActivityTxid(txid, 'spent')) {
+                recordAppActivity({
+                  origin: WALLET_ACTIVITY_ORIGIN,
+                  kind: 'spent',
+                  sats: satoshis,
+                  method: 'send',
+                  note: `Sent to ${recipientNote}`,
+                  txid,
+                })
               }
-              noteDualLayerPostBeef(dualId, summary)
-              if (!summary.accepted) {
-                if (summary.doubleSpend || summary.missingInputs) {
+              clearPendingSend(pending.id)
+              setPaymentProgress('finishing')
+              scheduleHistoryBackupPush('send')
+
+              void (async () => {
+                try {
+                  const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+                  const miner = await submitAtomicBeefToMiners(realTxid, atomic)
+                  if (miner.summary) noteDualLayerPostBeef(dualId, miner.summary)
+                  void tryFinalizeDualLayerTx(dualId).catch((err) => {
+                    console.warn('[send] SPV finality deferred', realTxid, err)
+                  })
+                } catch (err) {
                   failDualLayerSend(
                     dualId,
                     'UNKNOWN',
-                    formatPostBeefFailure(summary),
-                    { hideInputs: true },
+                    err instanceof Error ? err.message : String(err),
+                    { hideInputs: isAlreadySpentInputError(err) },
                   )
-                  await onAlreadySpentSend({
-                    txid: realTxid,
-                    atomic,
-                  })
-                } else {
-                  // Nobody claimed these inputs, so the failure was transport.
-                  // Give them back instead of shrinking the balance.
-                  failDualLayerSend(dualId, 'UNKNOWN', formatPostBeefFailure(summary))
-                  await releaseSealedInputsOfUnsentTx(realTxid, atomic)
+                  void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
+                    reportLateMinerSubmitFailure({
+                      pendingId: pending.id,
+                      txid: realTxid,
+                      reason: err,
+                    }),
+                  )
                 }
-                throw new Error(formatPostBeefFailure(summary))
-              }
-              // Best-effort SPV finality — mempool accept is enough for UI done.
-              void tryFinalizeDualLayerTx(dualId).catch((err) => {
-                console.warn('[send] SPV finality deferred', realTxid, err)
-              })
+              })()
+
+              const balanceSats = Math.max(
+                0,
+                (await fetchBalanceSats(active.wallet).catch(() => 0)) || 0,
+              )
+              return { txid, balanceSats }
             } else if (realTxid) {
               // createAction broadcast without confirm postBeef — still mark mempool-seen.
               transitionTx(dualId, 'SEEN_IN_MEMPOOL')

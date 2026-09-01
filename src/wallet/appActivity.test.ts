@@ -25,6 +25,7 @@ import {
   noteInboundReceivePending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
+  noteOutboundSendBroadcastFailed,
   failOutboundSendPending,
   isFailedActivity,
   activityFailureReason,
@@ -450,6 +451,25 @@ describe('inbound receive activity', () => {
     expect(rows.some((r) => r.pendingId === 'live')).toBe(true)
     expect(rows.some((r) => r.txid === 'dd'.repeat(32))).toBe(true)
     expect(rows.every((r) => r.status !== 'failed')).toBe(true)
+  })
+
+  it('rewrites a settled send when background broadcast hard-fails', () => {
+    noteOutboundSendPending({ pendingId: 'late-fail', sats: 500, to: '1abc' })
+    noteOutboundSendComplete({
+      pendingId: 'late-fail',
+      txid: TX,
+      sats: 500,
+      to: '1abc',
+    })
+    expect(noteOutboundSendBroadcastFailed({
+      pendingId: 'late-fail',
+      txid: TX,
+      reason: 'Already spent',
+    })).toBe(true)
+    const row = listRecentActivity(10)[0]!
+    expect(isFailedActivity(row)).toBe(true)
+    expect(activityFailureReason(row)).toBe('Already spent')
+    expect(row.note).toBe(`Failed: Sent to 1abc`)
   })
 
   it('marks stale Sending… rows as failed with a reason', () => {

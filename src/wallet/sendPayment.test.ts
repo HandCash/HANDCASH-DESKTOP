@@ -98,16 +98,17 @@ describe('sendSatsToAddress', () => {
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
   })
 
-  it('uses delayed createAction and confirms with postBeef before success', async () => {
+  it('uses delayed createAction and submits to miners without blocking success', async () => {
     // Undelayed mode throws WERR_REVIEW_ACTIONS on prior ghost doubleSpends
-    // ("require review"). Delayed returns; we refuse success unless sendWith is clean
-    // and postBeef accepts the signed tx.
+    // ("require review"). Delayed returns; we refuse success unless sendWith is clean.
+    // Miner submit runs in the background — transport silence does not fail the send.
     const { sendSatsToAddress } = await import('./sendPayment')
     await sendSatsToAddress({ to: ADDRESS, satoshis: 1_000 })
 
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0]
     expect(args?.options?.acceptDelayedBroadcast).toBe(true)
-    expect(postBeef).toHaveBeenCalled()
+    // postBeef may still be in flight when send returns
+    await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
   })
 })

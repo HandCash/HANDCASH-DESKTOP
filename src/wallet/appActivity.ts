@@ -920,6 +920,43 @@ export function failOutboundSendPending(args: {
   return changed
 }
 
+/**
+ * Rewrite a settled outbound row when background miner submit later hard-fails
+ * (e.g. missing inputs). Optimistic transport silence does not call this.
+ */
+export function noteOutboundSendBroadcastFailed(args: {
+  pendingId?: string
+  txid?: string
+  reason: unknown
+}): boolean {
+  const pendingId = args.pendingId?.trim()
+  const txid = args.txid?.trim().toLowerCase()
+  const reason = normalizeFailureReason(args.reason) ?? 'Broadcast failed'
+  if (!pendingId && !txid) return false
+  let changed = false
+  const entries = readAll().map((e) => {
+    if (e.kind !== 'spent') return e
+    const matchPending = Boolean(pendingId && e.pendingId === pendingId)
+    const matchTxid = Boolean(txid && e.txid?.toLowerCase() === txid)
+    if (!matchPending && !matchTxid) return e
+    if (e.status === 'failed') return e
+    changed = true
+    const name = e.item?.name?.trim()
+    return {
+      ...e,
+      status: 'failed' as const,
+      failureReason: reason,
+      note: name
+        ? `${name} was not sent`
+        : e.note?.startsWith('Sent ')
+          ? `Failed: ${e.note}`
+          : 'Payment was not sent',
+    }
+  })
+  if (changed) writeAll(entries)
+  return changed
+}
+
 function normalizeActivityOutpoint(outpoint: string): string {
   return outpoint
     .trim()

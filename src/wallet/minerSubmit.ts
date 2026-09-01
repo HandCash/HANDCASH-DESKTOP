@@ -1,0 +1,94 @@
+/**
+ * Submit signed Atomic BEEF to miners after createAction.
+ *
+ * A signed tx is a spendable promise — UI success should not block on miner ACK.
+ * Only hard missing-inputs / double-spend responses roll back the seal.
+ */
+import { Beef } from '@bsv/sdk'
+import { getActiveWallet } from './session'
+import {
+  formatPostBeefFailure,
+  summarizePostBeef,
+  type PostBeefSummary,
+} from './postBeefResult'
+import { onAlreadySpentSend, releaseSealedInputsOfUnsentTx } from './staleOutputRelease'
+
+export type MinerSubmitResult = {
+  /** At least one miner reported mempool accept / already-known. */
+  confirmed: boolean
+  /** Signed tx was handed to miners (or transport failed after hand-off). */
+  submitted: boolean
+  summary?: PostBeefSummary
+}
+
+function isInvalidBeefTransport(msg: string): boolean {
+  return /4022206465|4022206466|beef|mergeRawTx|invalid/i.test(msg)
+}
+
+/**
+ * Hand signed BEEF to miners. Returns optimistic `submitted` on transport silence.
+ * Throws only on invalid BEEF body or provable missing-inputs / double-spend.
+ */
+export async function submitAtomicBeefToMiners(
+  txid: string,
+  atomic: number[],
+): Promise<MinerSubmitResult> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id) || !atomic.length) {
+    throw new Error(
+      'Payment was signed but no transaction body was returned — try Send again.',
+    )
+  }
+  const active = getActiveWallet()
+  if (!active?.services?.postBeef) {
+    console.info('[minerSubmit] offline — treating signed tx as submitted', id.slice(0, 12))
+    return { confirmed: false, submitted: true }
+  }
+
+  let summary: PostBeefSummary | undefined
+  try {
+    const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
+    summary = summarizePostBeef(results as never)
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
+    if (isInvalidBeefTransport(msg)) {
+      await releaseSealedInputsOfUnsentTx(id, atomic)
+      throw new Error(
+        'Payment was signed but the transaction body is invalid — try Send again.',
+      )
+    }
+    return { confirmed: false, submitted: true }
+  }
+
+  if (summary.accepted) {
+    return { confirmed: true, submitted: true, summary }
+  }
+  if (summary.doubleSpend || summary.missingInputs) {
+    console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
+    await onAlreadySpentSend({ txid: id, atomic })
+    throw new Error(formatPostBeefFailure(summary))
+  }
+
+  console.info(
+    '[minerSubmit] no miner ack — signed tx treated as submitted',
+    id.slice(0, 12),
+    summary.detail,
+  )
+  return { confirmed: false, submitted: true, summary }
+}
+
+/** Surface a hard miner reject after optimistic send success. */
+export async function reportLateMinerSubmitFailure(args: {
+  pendingId?: string
+  txid?: string
+  reason: unknown
+}): Promise<void> {
+  const { noteOutboundSendBroadcastFailed, compactFailureLabel } = await import(
+    './appActivity'
+  )
+  const { toastError } = await import('./toast')
+  if (!noteOutboundSendBroadcastFailed(args)) return
+  const label = compactFailureLabel(args.reason)
+  toastError('Send issue', label)
+}
