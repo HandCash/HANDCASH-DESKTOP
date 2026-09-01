@@ -1,10 +1,11 @@
 # Changelog
 
-## [1.3.47] - 2026-09-01
+## [1.3.48] - 2026-09-01
 
 ### Fixed
 
-- **Market wallet connect from Cloudflare hosts** — allow `handcash-market-v2.pages.dev` and `brc-cloud.bcryderman.workers.dev` as catalog/market listing origins so BRC-100 connect grants match the canonical `market.handcash.io` permission.
+- **Sends blocked by long Refresh** — legacy 1sat import chunks abort when a payment is waiting so chain ingest releases the spend region instead of holding it for minutes.
+- **Coordinator wait visibility** — log when spend acquire waits >5s on an active layer.
 
 ## [1.3.46] - 2026-09-01
 
