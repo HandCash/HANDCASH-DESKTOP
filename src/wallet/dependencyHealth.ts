@@ -1,8 +1,10 @@
 /**
- * Upstream dependency probes — Chaintracks, Bitails, ord content.
+ * Upstream dependency probes — HandCash Chain, Bitails, ord content.
  * Logged on Refresh and surfaced in Settings → Support so outages are visible
  * before they wedge sends behind a long sync.
  */
+
+import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 
 export type DependencyProbeStatus = 'ok' | 'degraded' | 'down' | 'unknown'
 
@@ -70,21 +72,64 @@ async function probeUrl(
   }
 }
 
-async function probeChaintracks(): Promise<DependencyProbe> {
+async function probeArcadeV2(): Promise<DependencyProbe> {
   const { code, timedOut, latencyMs } = await probeUrl(
-    'https://api.chaintracks.com/v1/chain/header',
+    'https://arcade-v2-us-1.bsvblockchain.tech/chaintracks/v2/height',
     { headers: { Accept: 'application/json' } },
   )
   const status = statusFromHttp(code, timedOut)
   const detail =
     status === 'ok'
-      ? `HTTP ${code} · ${latencyMs}ms`
+      ? `${latencyMs}ms`
       : timedOut
-        ? 'Timed out — Bitails header fallback is in use'
+        ? 'Timeout'
         : code === 0
-          ? 'Unreachable — Bitails header fallback is in use'
-          : `HTTP ${code} — Bitails header fallback is in use`
-  return { id: 'chaintracks', label: 'Chaintracks', status, detail, latencyMs }
+          ? 'Down'
+          : `HTTP ${code}`
+  return { id: 'arcade-v2', label: 'Arcade V2', status, detail, latencyMs }
+}
+
+async function probeHandcashChain(): Promise<DependencyProbe> {
+  const base = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  const started = performance.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${base}/v1/chain/health`, {
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+    const latencyMs = Math.round(performance.now() - started)
+    let status: DependencyProbeStatus = statusFromHttp(res.status, false)
+    let detail =
+      status === 'ok'
+        ? `${latencyMs}ms`
+        : res.status >= 400
+          ? `HTTP ${res.status}`
+          : 'Down'
+    if (status === 'ok') {
+      try {
+        const body = (await res.json()) as { ok?: unknown }
+        if (body.ok !== true) {
+          status = 'degraded'
+          detail = 'Unhealthy'
+        }
+      } catch {
+        status = 'degraded'
+        detail = 'Unreadable'
+      }
+    }
+    return { id: 'handcash-chain', label: 'HandCash Chain', status, detail, latencyMs }
+  } catch (err) {
+    const timedOut = err instanceof Error && err.name === 'AbortError'
+    const latencyMs = timedOut ? PROBE_TIMEOUT_MS : Math.round(performance.now() - started)
+    const status = statusFromHttp(0, timedOut)
+    const detail = timedOut ? 'Timeout' : 'Down'
+    return { id: 'handcash-chain', label: 'HandCash Chain', status, detail, latencyMs }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 async function probeBitails(): Promise<DependencyProbe> {
@@ -95,40 +140,50 @@ async function probeBitails(): Promise<DependencyProbe> {
   const status = statusFromHttp(code, timedOut)
   const detail =
     status === 'ok'
-      ? `HTTP ${code} · ${latencyMs}ms (header + raw-tx fallback)`
+      ? `${latencyMs}ms`
       : timedOut
-        ? 'Timed out — Refresh and change heal may stall'
+        ? 'Timeout'
         : code === 0
-          ? 'Unreachable — Refresh and change heal may stall'
+          ? 'Down'
           : `HTTP ${code}`
   return { id: 'bitails', label: 'Bitails', status, detail, latencyMs }
 }
 
 async function probeGorillaPool(): Promise<DependencyProbe> {
   const { code, timedOut, latencyMs } = await probeUrl(
-    'https://ordinals.gorillapool.io/content',
+    'https://ordinals.gorillapool.io/favicon.ico',
     { method: 'HEAD' },
   )
   const status = statusFromHttp(code, timedOut)
   const detail =
     status === 'ok'
-      ? `Reachable · ${latencyMs}ms (collectable media)`
+      ? `${latencyMs}ms`
       : timedOut
-        ? 'Timed out — thumbnails may skeleton longer'
-        : 'Unreachable — thumbnails may skeleton longer'
-  return { id: 'gorillapool', label: 'GorillaPool ord', status, detail, latencyMs }
+        ? 'Timeout'
+        : 'Down'
+  return { id: 'gorillapool', label: 'Ordinals', status, detail, latencyMs }
 }
 
 function summarize(probes: DependencyProbe[]): string {
   const down = probes.filter((p) => p.status === 'down')
   const degraded = probes.filter((p) => p.status === 'degraded')
   if (down.length > 0) {
-    return `${down.map((p) => p.label).join(', ')} down`
+    return down.length === 1 ? `${down[0]!.label} down` : `${down.length} down`
   }
   if (degraded.length > 0) {
-    return `${degraded.map((p) => p.label).join(', ')} degraded`
+    return degraded.length === 1 ? `${degraded[0]!.label} slow` : `${degraded.length} slow`
   }
-  return 'Network dependencies OK'
+  return 'All OK'
+}
+
+/** Worst status across probes — drives Settings → Wallet health badge. */
+export function dependencyHealthAlert(
+  snapshot: DependencyHealthSnapshot,
+): 'unknown' | 'ok' | 'warn' | 'error' {
+  if (snapshot.at === 0 || snapshot.probes.length === 0) return 'unknown'
+  if (snapshot.probes.some((p) => p.status === 'down')) return 'error'
+  if (snapshot.probes.some((p) => p.status === 'degraded')) return 'warn'
+  return 'ok'
 }
 
 export function getDependencyHealthSnapshot(): DependencyHealthSnapshot {
@@ -145,12 +200,13 @@ export function subscribeDependencyHealth(listener: Listener): () => void {
 
 /** Run probes once; safe to call from Settings or after Refresh. */
 export async function refreshDependencyHealth(): Promise<DependencyHealthSnapshot> {
-  const [chaintracks, bitails, gorillapool] = await Promise.all([
-    probeChaintracks(),
+  const [arcadeV2, handcashChain, bitails, gorillapool] = await Promise.all([
+    probeArcadeV2(),
+    probeHandcashChain(),
     probeBitails(),
     probeGorillaPool(),
   ])
-  const probes = [chaintracks, bitails, gorillapool]
+  const probes = [arcadeV2, handcashChain, bitails, gorillapool]
   const summary = summarize(probes)
   cached = { at: Date.now(), probes, summary }
   console.info(`[dependency-health] ${summary}`)

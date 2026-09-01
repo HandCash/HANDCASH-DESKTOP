@@ -10,6 +10,7 @@ import { listConnectedApps } from './permissions'
 
 export type PaymentKindFilter = 'all' | ActivityKind
 export type PaymentTimeFilter = 'all' | '24h' | '7d' | '30d'
+export type PaymentStatusFilter = 'all' | 'failed' | 'success'
 
 /** `all` = entire wallet activity; otherwise a connected/history app origin. */
 export type PaymentOriginFilter = 'all' | string
@@ -18,12 +19,14 @@ export type PaymentFilters = {
   kind: PaymentKindFilter
   time: PaymentTimeFilter
   origin: PaymentOriginFilter
+  status: PaymentStatusFilter
 }
 
 export const DEFAULT_PAYMENT_FILTERS: PaymentFilters = {
   kind: 'all',
   time: 'all',
   origin: 'all',
+  status: 'all',
 }
 
 const TIME_MS: Record<Exclude<PaymentTimeFilter, 'all'>, number> = {
@@ -60,6 +63,12 @@ export function matchesPaymentFilters(
 
   const cutoff = paymentTimeCutoff(filters.time, now)
   if (cutoff != null && entry.at < cutoff) return false
+
+  if (filters.status === 'failed') {
+    if (entry.status !== 'failed') return false
+  } else if (filters.status === 'success') {
+    if (entry.status === 'failed') return false
+  }
 
   return true
 }

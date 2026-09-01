@@ -12,6 +12,7 @@ type Props = {
   iconTone?: SettingIconTone
   onClick: () => void
   trailing?: ReactNode
+  trailingEnd?: ReactNode
 }
 
 /** Navigable Settings row — ListRow button with optional live status. */
@@ -24,6 +25,7 @@ export function SettingsNavRow({
   iconTone = 'default',
   onClick,
   trailing,
+  trailingEnd,
 }: Props) {
   const desc = status || description
   return (
@@ -48,6 +50,7 @@ export function SettingsNavRow({
             {desc}
           </ListRow.Description>
         ) : null}
+        {trailingEnd ? <ListRow.Trailing>{trailingEnd}</ListRow.Trailing> : null}
       </ListRow.Root>
     </li>
   )

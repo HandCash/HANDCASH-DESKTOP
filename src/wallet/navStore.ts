@@ -22,6 +22,8 @@ export type SettingId =
   | 'about-handcash'
   | 'statecharts'
   | 'logs'
+  | 'wallet-health'
+  | 'index-packs'
 
 export type NavChild =
   | { type: 'app'; origin: string }

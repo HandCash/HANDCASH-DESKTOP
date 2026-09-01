@@ -2,7 +2,11 @@ import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { installRawTxFallback } from './rawTxFallback'
-import { preferServiceOrder } from './serviceOrder'
+import { installArcadeV2Services } from './arcadeV2'
+import {
+  getOrCreateArcadeCallbackToken,
+  wireArcadeMonitor,
+} from './arcadeIntegration'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -182,7 +186,7 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
- * Broadcast: public ARC / Bitails before Taal.
+ * Broadcast: Arcade V2 first, then public ARC / Bitails before Taal.
  * Taal ARC returns 401 without a product API key — trying it first only adds
  * console noise, then soft-timeout rotation still succeeds elsewhere.
  */
@@ -194,6 +198,7 @@ function installPostBeefPreferFast(services: Services): void {
       }
     ).postBeefServices
     preferServiceOrder(collection, [
+      'ArcadeBeef',
       'GorillaPoolArcBeef',
       'Bitails',
       'WhatsOnChain',
@@ -319,12 +324,19 @@ export async function bootWallet(args: {
   })
 
   installFallbackChainTracker(setup.services as Services, args.chain)
+  installArcadeV2Services(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
   installTipHeaderFailover(setup.services as Services, args.chain)
   installMerklePreferBitails(setup.services as Services)
   installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
+
+  try {
+    wireArcadeMonitor(setup.monitor, getOrCreateArcadeCallbackToken())
+  } catch (err) {
+    console.warn('[arcade-v2] monitor SSE wiring skipped', err)
+  }
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes

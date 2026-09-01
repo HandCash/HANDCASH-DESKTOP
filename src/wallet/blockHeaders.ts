@@ -23,6 +23,8 @@
 import { Hash, Utils } from '@bsv/sdk'
 
 import { appendAppLog } from './appLog'
+import { arcadeV2BaseUrl } from './arcadeV2'
+import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import type { Chain } from './vault'
 
 /** Shape `Services.toBinaryBaseBlockHeader` expects, plus the identity fields. */
@@ -150,11 +152,25 @@ type HeaderSource = {
 
 function sourcesFor(chain: Chain): HeaderSource[] {
   const woc = `https://api.whatsonchain.com/v1/bsv/${chain === 'main' ? 'main' : 'test'}`
+  const cloud = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  const arcade = arcadeV2BaseUrl(chain)
   return [
-    // Same ordering rationale as the chain tracker: WhatsOnChain carries most of
-    // the toolbox's other traffic and is the first to rate-limit on a busy device.
+    ...(arcade
+      ? [
+          {
+            name: 'Arcade V2',
+            url: (h: number) => `${arcade}/chaintracks/v2/header/height/${h}`,
+          },
+        ]
+      : []),
     ...(chain === 'main'
-      ? [{ name: 'Bitails', url: (h: number) => `https://api.bitails.io/block/height/${h}` }]
+      ? [
+          {
+            name: 'HandCash Chain',
+            url: (h: number) => `${cloud}/v1/chain/header/${h}`,
+          },
+          { name: 'Bitails', url: (h: number) => `https://api.bitails.io/block/height/${h}` },
+        ]
       : []),
     { name: 'WhatsOnChain', url: (h: number) => `${woc}/block/${h}/header` },
   ]
@@ -207,7 +223,7 @@ export async function fetchBlockHeaderForHeight(
       }
       if (!loggedFallback) {
         loggedFallback = true
-        appendAppLog('info', `[headers] serving headers from ${source.name} while Chaintracks lags`)
+        appendAppLog('info', `[headers] serving headers from ${source.name} while primary chain host lags`)
       }
       remember(key, header)
       return header

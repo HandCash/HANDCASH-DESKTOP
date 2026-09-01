@@ -158,7 +158,7 @@ export async function auditSpendableOutputs(force = false): Promise<SpendableRev
   const active = getActiveWallet()
   if (!active) return { suspect: 0, skipped: true }
   if (shouldYieldChainIngestToSpend()) return { suspect: 0, skipped: true }
-  if (typeof document !== 'undefined' && document.hidden) {
+  if (!force && typeof document !== 'undefined' && document.hidden) {
     return { suspect: 0, skipped: true }
   }
 
@@ -174,10 +174,10 @@ export async function auditSpendableOutputs(force = false): Promise<SpendableRev
   }
 
   try {
-    // Report-only. WhatsOnChain /unspent/all 429s Refresh, so stay off the wire.
-    const REVIEW_SPENDABLE_ON_INGEST = false
-    if (!REVIEW_SPENDABLE_ON_INGEST) {
-      console.info('[chain-ingest] skipped spendable indexer review (WOC 429)')
+    // Report-only. Background polls skip the indexer round trips; explicit
+    // Refresh (force) still audits when no legacy sweep ran this pass.
+    if (!force) {
+      console.info('[chain-ingest] skipped spendable indexer review (background poll)')
       lastSpendableReviewAt = Date.now()
       return { suspect: 0, skipped: true }
     }

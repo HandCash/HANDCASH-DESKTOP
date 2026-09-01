@@ -55,6 +55,9 @@ function jsonResponse(status: number, body: unknown): Response {
 describe('spentStatusOfOutpoint', () => {
   it('returns spent from Bitails without asking WhatsOnChain', async () => {
     const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).includes('/v1/chain/spent/')) {
+        return new Response('', { status: 503 })
+      }
       if (String(url).includes('/output/0/status')) {
         return jsonResponse(200, { status: 'exists', spent: true })
       }
@@ -63,7 +66,7 @@ describe('spentStatusOfOutpoint', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(spentStatusOfOutpoint(`${PREV}.0`, 'main')).resolves.toBe('spent')
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
   it('returns unspent from Bitails without asking WhatsOnChain', async () => {

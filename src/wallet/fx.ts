@@ -48,18 +48,6 @@ function writeCache(usdPerBsv: number): void {
   for (const cb of listeners) cb(usdPerBsv)
 }
 
-async function fetchFromWhatsOnChain(): Promise<number> {
-  const res = await fetch('https://api.whatsonchain.com/v1/bsv/main/exchangerate')
-  if (res.status === 429) {
-    noteFxRateLimited()
-    throw new Error('rate 429')
-  }
-  if (!res.ok) throw new Error(`rate ${res.status}`)
-  const data = (await res.json()) as { rate?: number; currency?: string }
-  if (typeof data.rate !== 'number' || !(data.rate > 0)) throw new Error('bad rate')
-  return data.rate
-}
-
 async function fetchFromCoinGecko(): Promise<number> {
   const res = await fetch(
     'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
@@ -100,13 +88,6 @@ export async function refreshUsdPerBsv(force = false): Promise<number | null> {
     return rate
   } catch (err) {
     console.warn('[fx] CoinGecko rate failed', err)
-  }
-  try {
-    const rate = await fetchFromWhatsOnChain()
-    writeCache(rate)
-    return rate
-  } catch (err) {
-    console.warn('[fx] WhatsOnChain rate failed', err)
   }
   return cached?.usdPerBsv ?? null
 }

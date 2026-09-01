@@ -30,6 +30,17 @@ const wocBody = (sats: number) =>
   JSON.stringify([{ tx_hash: TXID, tx_pos: 1, value: sats, height: 2 }])
 
 const isBitails = (url: unknown) => String(url).includes('bitails')
+const isCloud = (url: unknown) => String(url).includes('/v1/chain/')
+
+/** HandCash Chain probe/scan routes — tests skip unless they mock a definitive answer. */
+function cloudSilent(
+  next: (url: string) => Response | Promise<Response>,
+): ReturnType<typeof vi.fn> {
+  return vi.fn(async (url: string) => {
+    if (isCloud(url)) return new Response('', { status: 503 })
+    return next(url)
+  })
+}
 
 beforeEach(() => {
   resetLegacyScanCooldownForTests()
@@ -43,7 +54,7 @@ afterEach(() => {
 
 describe('scanLegacyAddress', () => {
   it('answers from Bitails alone — no hedge request on the happy path', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = cloudSilent(async (url: string) => {
       if (!isBitails(url)) throw new Error(`unexpected host ${url}`)
       return new Response(bitailsBody(500), { status: 200 })
     })
@@ -53,7 +64,7 @@ describe('scanLegacyAddress', () => {
 
     expect(scan.source).toBe('bitails')
     expect(scan.sats).toBe(500)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
@@ -61,7 +72,7 @@ describe('scanLegacyAddress', () => {
     const started = Date.now()
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
+      cloudSilent(async (url: string) => {
         if (isBitails(url)) throw new Error('bitails down')
         return new Response(wocBody(300), { status: 200 })
       }),
@@ -78,7 +89,7 @@ describe('scanLegacyAddress', () => {
   it('hedges to WhatsOnChain when Bitails stalls, and takes the first answer', async () => {
     vi.stubGlobal(
       'fetch',
-      vi.fn(async (url: string) => {
+      cloudSilent(async (url: string) => {
         if (isBitails(url)) {
           await new Promise((r) => setTimeout(r, 5_000))
           return new Response(bitailsBody(999), { status: 200 })
@@ -127,7 +138,7 @@ describe('scanLegacyAddress', () => {
   })
 
   it('skips a host inside its cooldown window instead of paying the timeout again', async () => {
-    const fetchMock = vi.fn(async (url: string) => {
+    const fetchMock = cloudSilent(async (url: string) => {
       if (isBitails(url)) throw new Error('bitails down')
       return new Response(wocBody(300), { status: 200 })
     })
@@ -139,7 +150,7 @@ describe('scanLegacyAddress', () => {
 
     const scan = await scanLegacyAddress(wallet())
 
-    expect(afterFirst).toBe(2)
+    expect(afterFirst).toBe(3)
     expect(scan.source).toBe('whatsonchain')
     expect(fetchMock.mock.calls.some(([url]) => isBitails(url))).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(1)

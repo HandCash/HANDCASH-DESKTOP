@@ -5,6 +5,7 @@ import type {
   PaymentFilters,
   PaymentKindFilter,
   PaymentOriginOption,
+  PaymentStatusFilter,
   PaymentTimeFilter,
 } from '../wallet/paymentFilters'
 
@@ -27,6 +28,12 @@ const TIME_OPTIONS: { id: PaymentTimeFilter; label: string }[] = [
   { id: '24h', label: '24h' },
   { id: '7d', label: '7d' },
   { id: '30d', label: '30d' },
+]
+
+const STATUS_OPTIONS: { id: PaymentStatusFilter; label: string }[] = [
+  { id: 'all', label: 'All' },
+  { id: 'success', label: 'Success' },
+  { id: 'failed', label: 'Failed' },
 ]
 
 function originLabel(opt: PaymentOriginOption): string {
@@ -90,6 +97,17 @@ export function PaymentFiltersPanel({ id, value, origins, onChange }: Props) {
             label={opt.label}
             active={value.kind === opt.id}
             onClick={() => onChange({ ...value, kind: opt.id })}
+          />
+        ))}
+      </FilterRow>
+
+      <FilterRow label="Status">
+        {STATUS_OPTIONS.map((opt) => (
+          <FilterOption
+            key={`status-${opt.id}`}
+            label={opt.label}
+            active={value.status === opt.id}
+            onClick={() => onChange({ ...value, status: opt.id })}
           />
         ))}
       </FilterRow>

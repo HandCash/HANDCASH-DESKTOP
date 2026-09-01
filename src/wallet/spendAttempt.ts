@@ -575,6 +575,61 @@ export async function clearAllFailedSpends(): Promise<{
   return { removed, kept: Math.max(0, failed - removed) }
 }
 
+/** Failed sends whose signed transfer can be re-submitted without a new spend. */
+export async function countRebroadcastableFailedSpends(
+  chain: Chain,
+): Promise<number> {
+  let count = 0
+  for (const row of listFailedActivity()) {
+    if (isCounterpartySettlePending(row)) continue
+    const fate = await resolveSpendAttemptFate(row, chain)
+    if (fate.kind === 'retry' && fate.action === 'rebroadcast') count += 1
+  }
+  return count
+}
+
+/**
+ * Rebroadcast every failed send that already has a signed transfer.
+ *
+ * Unsigned failures and coin payments are skipped — those need a fresh send from
+ * the Send screen, not a silent rebroadcast.
+ */
+export async function rebroadcastAllFailedSpends(): Promise<{
+  rebroadcasted: number
+  skipped: number
+  failed: number
+  errors: string[]
+}> {
+  const chain = getActiveWallet()?.chain
+  if (!chain) throw new Error('Wallet is not unlocked.')
+
+  let rebroadcasted = 0
+  let skipped = 0
+  let failed = 0
+  const errors: string[] = []
+
+  for (const row of listFailedActivity()) {
+    if (isCounterpartySettlePending(row)) {
+      skipped += 1
+      continue
+    }
+    const fate = await resolveSpendAttemptFate(row, chain)
+    if (fate.kind !== 'retry' || fate.action !== 'rebroadcast') {
+      skipped += 1
+      continue
+    }
+    try {
+      await retrySpendAttempt(row, chain)
+      rebroadcasted += 1
+    } catch (err) {
+      failed += 1
+      errors.push(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  return { rebroadcasted, skipped, failed, errors }
+}
+
 /** Best-effort release of the local reservations a dead spend left behind. */
 async function releaseLocalSpendReservations(): Promise<void> {
   try {

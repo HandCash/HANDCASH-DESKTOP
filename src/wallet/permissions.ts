@@ -52,7 +52,7 @@ import {
   overlayLookupAccessGranted,
   type IndexAccess,
 } from './indexAccess'
-import { validateIndexExpansionManifest } from './indexExpansionManifest'
+import { validateIndexExpansionManifest, fetchIndexExpansionManifest } from './indexExpansionManifest'
 import { getStoredIndexPack } from './indexExpansionStore'
 
 const STORAGE_KEY = 'handcash.brc100.connectedApps'
@@ -1648,12 +1648,14 @@ export async function requestIndexInstallApproval(
   let manifestDescription = 'Public overlay catalog mirror (display only — not custody)'
   let itemImageUrl: string | undefined
   let packId = ''
+  let manifest = null as ReturnType<typeof validateIndexExpansionManifest> | null
   try {
     const body = asRecord(args)
-    const manifest =
-      body.manifest != null
-        ? validateIndexExpansionManifest(body.manifest)
-        : null
+    if (body.manifest != null) {
+      manifest = validateIndexExpansionManifest(body.manifest)
+    } else if (typeof body.manifestUrl === 'string' && body.manifestUrl.trim()) {
+      manifest = await fetchIndexExpansionManifest(body.manifestUrl.trim())
+    }
     if (manifest) {
       packId = manifest.packId
       manifestName = manifest.name

@@ -38,7 +38,14 @@ import {
   ShortcutHint,
   screenshotShortcutKeys,
 } from './settings'
-import { SettingsNetworkHealth } from './settings/SettingsNetworkHealth'
+import { WalletHealthAlertBadge } from './settings/WalletHealthAlertBadge'
+import {
+  dependencyHealthAlert,
+  getDependencyHealthSnapshot,
+  refreshDependencyHealth,
+  subscribeDependencyHealth,
+  type DependencyHealthSnapshot,
+} from '../wallet/dependencyHealth'
 
 type SettingItem = {
   id: SettingId
@@ -110,6 +117,8 @@ export function settingLabel(id: SettingId): string {
   if (id === 'about-handcash') return 'HandCash'
   if (id === 'statecharts') return 'Statecharts'
   if (id === 'logs') return 'Session logs'
+  if (id === 'wallet-health') return 'Wallet health'
+  if (id === 'index-packs') return 'Index packs'
   if (id === 'backup' || id === 'backup-phrase' || id === 'split-backup') return 'Recovery backup'
   if (id === 'device-handoff') return 'Device backup'
   if (id === 'change-password') return 'Unlock'
@@ -158,6 +167,9 @@ export function SettingsPanel() {
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
   const [, setStatusTick] = useState(0)
+  const [healthSnap, setHealthSnap] = useState<DependencyHealthSnapshot>(() =>
+    getDependencyHealthSnapshot(),
+  )
   const platform = window.handcash?.platform
   const isMobileShell = platform === 'android' || platform === 'ios'
   const isDesktopShell = platform != null && platform !== 'web' && !isMobileShell
@@ -202,6 +214,18 @@ export function SettingsPanel() {
       unsubSpares()
     }
   }, [])
+
+  useEffect(() => subscribeDependencyHealth(setHealthSnap), [])
+
+  useEffect(() => {
+    void refreshDependencyHealth().catch(() => {})
+  }, [])
+
+  const healthAlert = dependencyHealthAlert(healthSnap)
+  const healthDescription =
+    healthSnap.at === 0
+      ? 'Checking…'
+      : healthSnap.summary
 
   return (
     <div
@@ -298,7 +322,33 @@ export function SettingsPanel() {
 
       <SettingsSection title="Support" part="support">
         <ul className="settings-list">
-          <SettingsNetworkHealth />
+          <SettingsNavRow
+            label="Index packs"
+            description="Cached BRC-230 catalog mirrors"
+            icon={settingIconFor('index-packs').icon}
+            onClick={() => openSetting('index-packs')}
+          />
+          <SettingsNavRow
+            label="Wallet health"
+            description={
+              healthAlert === 'ok' || healthAlert === 'unknown'
+                ? healthDescription
+                : undefined
+            }
+            status={
+              healthAlert === 'error' || healthAlert === 'warn'
+                ? healthDescription
+                : undefined
+            }
+            statusTone={healthAlert === 'error' ? 'warn' : 'warn'}
+            icon={settingIconFor('wallet-health').icon}
+            trailingEnd={
+              healthAlert === 'error' || healthAlert === 'warn' ? (
+                <WalletHealthAlertBadge tone={healthAlert} />
+              ) : undefined
+            }
+            onClick={() => openSetting('wallet-health')}
+          />
           <SettingsNavRow
             label="Session logs"
             description="View, copy, and upload"

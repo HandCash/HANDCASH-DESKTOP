@@ -391,6 +391,21 @@ function findActivityMatchIndex(
     })
     if (byOp >= 0) return byOp
   }
+  const packOrigin = args.item?.origin?.trim().toLowerCase()
+  if (
+    args.kind === 'event' &&
+    packOrigin &&
+    (args.method === 'index-install' || args.method === 'index-sync')
+  ) {
+    const byPack = entries.findIndex(
+      (e) =>
+        e.kind === 'event' &&
+        e.status === 'pending' &&
+        e.item?.origin?.trim().toLowerCase() === packOrigin &&
+        (e.method === 'index-install' || e.method === 'index-sync'),
+    )
+    if (byPack >= 0) return byPack
+  }
   const txid = args.txid?.trim().toLowerCase()
   if (!txid) return -1
   const wantItem = activityRowIsItem(args)
@@ -411,6 +426,7 @@ export function recordAppActivity(args: {
   item?: ActivityItem
   status?: ActivityStatus
   failureReason?: string
+  pendingId?: string
 }): void {
   upsertAppActivity(args)
 }
@@ -1179,6 +1195,7 @@ export function recordWalletEvent(args: {
   item?: ActivityItem
   status?: ActivityStatus
   failureReason?: string
+  pendingId?: string
 }): void {
   recordAppActivity({
     origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
@@ -1190,7 +1207,15 @@ export function recordWalletEvent(args: {
     ...(args.item ? { item: args.item } : {}),
     ...(args.status ? { status: args.status } : {}),
     ...(args.failureReason ? { failureReason: args.failureReason } : {}),
+    ...(args.pendingId ? { pendingId: args.pendingId } : {}),
   })
+}
+
+export function isIndexExpansionActivity(entry: ActivityEntry): boolean {
+  return (
+    entry.method === 'index-install' ||
+    entry.method === 'index-sync'
+  )
 }
 
 /** Overlay refused a listing that already has a txid. Rewrite that row as failed. */
@@ -1490,6 +1515,14 @@ export function activityEntryKey(entry: ActivityEntry): string {
   if (outpoint) return `item:${outpoint}:${kind}:${txid ?? entry.id}`
   if (txid) return `tx:${txid}:${kind}`
   if (kind === 'event') {
+    if (entry.pendingId) return `event:${entry.pendingId}`
+    const pack = entry.item?.origin?.trim().toLowerCase()
+    if (
+      pack &&
+      (entry.method === 'index-install' || entry.method === 'index-sync')
+    ) {
+      return `event:pack:${pack}`
+    }
     return `event:${entry.at}:${entry.method}:${entry.note ?? ''}`
   }
   // Nothing on-chain to key on (a local-only row): the timestamp it was written

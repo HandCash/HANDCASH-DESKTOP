@@ -36,7 +36,9 @@ import {
 } from '../wallet/appActivity'
 import {
   clearAllFailedSpends,
+  countRebroadcastableFailedSpends,
   isCounterpartySettlePending,
+  rebroadcastAllFailedSpends,
 } from '../wallet/spendAttempt'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
@@ -99,7 +101,12 @@ import {
 } from '../wallet/phraseSweep'
 import { getActiveWallet } from '../wallet/session'
 import { EmptyState } from './EmptyState'
-import { useChunkedCount } from './useChunkedCount'
+import {
+  getWalletProgress,
+  subscribeWalletProgress,
+  walletProgressDetail,
+  type WalletProgress,
+} from '../wallet/walletProgress'
 
 /** Paint a few rows per frame so Activity does not block the UI on open. */
 const RENDER_CHUNK = 24
@@ -272,6 +279,7 @@ function HistoryRow({
   showWhen,
   newest = false,
   verifying = false,
+  indexProgress = null,
 }: {
   entry: ActivityEntry
   currency: DisplayCurrency
@@ -279,6 +287,7 @@ function HistoryRow({
   showWhen: boolean
   newest?: boolean
   verifying?: boolean
+  indexProgress?: WalletProgress | null
 }) {
   const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const spent = entry.kind === 'spent'
@@ -305,7 +314,17 @@ function HistoryRow({
               .replace(/_(\d+)$/, '.$1')
       )
   )
-  const showPending = pending && (spent || !inventoryProven)
+  const indexInstall =
+    event &&
+    pending &&
+    (entry.method === 'index-install' || entry.method === 'index-sync')
+  const indexDetail =
+    indexInstall &&
+    indexProgress?.kind === 'index-expansion' &&
+    indexProgress.status === 'running'
+      ? walletProgressDetail(indexProgress)
+      : null
+  const showPending = pending && (spent || !inventoryProven || indexInstall)
   const listing = entry.method === 'market-list'
   const cancelling = entry.method === 'market-cancel'
   const pendingLabel = burned
@@ -351,6 +370,8 @@ function HistoryRow({
   const subtitle =
     failed && failureReason
       ? failureReason
+      : indexDetail
+      ? indexDetail
       : event
       ? entry.origin !== WALLET_ACTIVITY_ORIGIN
         ? entry.origin
@@ -365,7 +386,11 @@ function HistoryRow({
   )
   // Same corner spinner as a Verifying… receive. Not the verify mark: a send must
   // never resolve into an authenticity check for the tip it just gave away.
-  const showSending = Boolean((spent && !event && showPending) || ((listing || cancelling) && pending))
+  const showSending = Boolean(
+    (spent && !event && showPending) ||
+      ((listing || cancelling) && pending) ||
+      indexInstall,
+  )
 
   return (
     <li
@@ -676,10 +701,12 @@ export function ActivityFeed({
   const [phraseImport, setPhraseImport] = useState(() =>
     peekPhraseItemMigrateCursor()
   )
+  const [indexProgress, setIndexProgress] = useState(() => getWalletProgress())
   const listRef = useRef<HTMLUListElement>(null)
   useScrollReveal(listRef)
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => subscribePhraseItemMigrateCursor(setPhraseImport), [])
+  useEffect(() => subscribeWalletProgress(setIndexProgress), [])
   const visiblePhraseImport = phraseImportBelongsToWallet(
     phraseImport,
     getActiveWallet()?.identityKey
@@ -703,7 +730,8 @@ export function ActivityFeed({
   const filtersActive =
     filters.kind !== DEFAULT_PAYMENT_FILTERS.kind ||
     filters.time !== DEFAULT_PAYMENT_FILTERS.time ||
-    filters.origin !== DEFAULT_PAYMENT_FILTERS.origin
+    filters.origin !== DEFAULT_PAYMENT_FILTERS.origin ||
+    filters.status !== DEFAULT_PAYMENT_FILTERS.status
 
   // Count from the store, not the capped feed. Transfers the recipient can
   // still broadcast are excluded. Signed sends whose inputs are still unspent
@@ -716,6 +744,71 @@ export function ActivityFeed({
     [entries, showFilters]
   )
   const [clearingFailed, setClearingFailed] = useState(false)
+  const [rebroadcastingFailed, setRebroadcastingFailed] = useState(false)
+  const [rebroadcastCount, setRebroadcastCount] = useState(0)
+
+  useEffect(() => {
+    if (!showFilters || failedCount === 0) {
+      setRebroadcastCount(0)
+      return
+    }
+    const chain = getActiveWallet()?.chain
+    if (!chain) {
+      setRebroadcastCount(0)
+      return
+    }
+    let cancelled = false
+    void countRebroadcastableFailedSpends(chain).then((count) => {
+      if (!cancelled) setRebroadcastCount(count)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [entries, showFilters, failedCount])
+
+  const rebroadcastFailed = async () => {
+    if (rebroadcastingFailed || rebroadcastCount === 0) return
+    const confirmed = window.confirm(
+      `Rebroadcast ${rebroadcastCount} signed failed send${
+        rebroadcastCount === 1 ? '' : 's'
+      }? This re-submits the original transactions — it does not create new spends.`
+    )
+    if (!confirmed) return
+    setRebroadcastingFailed(true)
+    try {
+      const { rebroadcasted, skipped, failed, errors } =
+        await rebroadcastAllFailedSpends()
+      if (rebroadcasted > 0) {
+        toastSuccess(
+          'Rebroadcast sent',
+          `Submitted ${rebroadcasted} signed transfer${
+            rebroadcasted === 1 ? '' : 's'
+          } to the network.${
+            skipped > 0
+              ? ` Skipped ${skipped} that need a fresh send or are still live.`
+              : ''
+          }`
+        )
+      } else if (failed > 0) {
+        toastError(
+          'Rebroadcast failed',
+          errors[0] ?? 'No signed transfers could be rebroadcast.'
+        )
+      } else {
+        toastError(
+          'Nothing to rebroadcast',
+          'No failed sends have a signed transfer ready to resubmit.'
+        )
+      }
+    } catch (err) {
+      toastError(
+        'Rebroadcast failed',
+        err instanceof Error ? err.message : String(err)
+      )
+    } finally {
+      setRebroadcastingFailed(false)
+    }
+  }
 
   const clearFailed = async () => {
     if (clearingFailed || failedCount === 0) return
@@ -761,7 +854,9 @@ export function ActivityFeed({
         body={
           entries.length === 0
             ? 'Sends, receives, connections, and other wallet actions show up here.'
-            : 'Try clearing filters to see more activity.'
+            : filters.status === 'failed'
+              ? 'No failed sends match these filters.'
+              : 'Try clearing filters to see more activity.'
         }
       />
     ) : (
@@ -796,6 +891,7 @@ export function ActivityFeed({
               (isPendingActivity(entry) ||
                 isOutpointVerifying(entry.item?.outpoint, verification))
             }
+            indexProgress={indexProgress}
           />
         ))}
         {viewAllLabel && onViewAll ? (
@@ -821,6 +917,22 @@ export function ActivityFeed({
       <div className="connected-panel-head-actions">
         {showCount ? (
           <span className="connected-count">{filtered.length}</span>
+        ) : null}
+        {showFilters && rebroadcastCount > 0 ? (
+          <button
+            type="button"
+            className="activity-rebroadcast-failed"
+            disabled={rebroadcastingFailed}
+            title="Rebroadcast signed failed sends"
+            onClick={() => {
+              playWalletSound('soft')
+              void rebroadcastFailed()
+            }}
+          >
+            {rebroadcastingFailed
+              ? 'Rebroadcasting…'
+              : `Rebroadcast ${rebroadcastCount}`}
+          </button>
         ) : null}
         {showFilters && failedCount > 0 ? (
           <button

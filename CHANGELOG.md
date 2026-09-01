@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.52] - 2026-09-01
+
+### Added
+
+- **HandCash Chain (BRC-CLOUD)** — SPV header service and chain probe routes (`/v1/chain/*`) with Arcade V2 → Bitails → WhatsOnChain waterfall; Desktop legacy scan and block headers use it before direct providers.
+- **Arcade V2 boot** — toolbox chaintracks + Teranode broadcaster pointed at public `arcade-v2-*.bsvblockchain.tech` hosts; Arcade SSE wired for tx status.
+- **Wallet health** — Settings nests network probes under **Wallet health** with caution badge; flat network panel removed.
+- **Index packs** — Settings panel + Activity progress during BRC-100 manifest install; manifest URL prefetch on permission grant.
+- **Activity** — rebroadcast failed sends; Success/Failed status filter.
+
+### Changed
+
+- **Legacy scan** — Bitails-first address UTXO scan; HandCash Chain cooldown; WoC FX fallback removed.
+- **Chain ingest** — explicit Refresh re-enables spendable indexer review (`forceReview`); background polls skip audit to avoid racing sends.
+
+### Fixed
+
+- **App avatar** — `object-fit: cover` for favicon crops.
+
 ## [1.3.51] - 2026-09-01
 
 ### Changed

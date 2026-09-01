@@ -123,17 +123,22 @@ async function runPackSync(args: {
   const existing = getStoredIndexPack(args.packId)
   if (!existing) throw new Error(`Pack "${args.packId}" is not installed`)
 
-  const activityNote = (note: string, status?: 'pending' | 'complete' | 'failed') => {
+  const activityNote = (
+    note: string,
+    status?: 'pending' | 'complete' | 'failed',
+    method: 'index-install' | 'index-sync' = 'index-sync',
+  ) => {
     recordWalletEvent({
       origin: args.origin,
-      method: 'index-sync',
+      method,
       note,
       item: previewItemFromManifest(existing.manifest),
       ...(status ? { status } : {}),
+      ...(args.activityId ? { pendingId: args.activityId } : {}),
     })
   }
 
-  activityNote(`Syncing ${existing.name}…`, 'pending')
+  activityNote(`Syncing ${existing.name}…`, 'pending', 'index-sync')
 
   const catalogContext =
     existing.catalogContext ?? resolveIndexCatalogContext(existing.manifest)
@@ -237,6 +242,7 @@ async function runPackSync(args: {
       item: previewItemFromManifest(existing.manifest),
       status: 'failed',
       failureReason: reason,
+      ...(args.activityId ? { pendingId: args.activityId } : {}),
     })
     throw err
   }
@@ -258,6 +264,7 @@ export async function installIndexExpansion(args: {
     note: `Downloading ${manifest.name}…`,
     item: previewItemFromManifest(manifest),
     status: 'pending',
+    pendingId: activityId,
   })
 
   const pack: IndexPackRecord = {
@@ -293,6 +300,7 @@ export async function installIndexExpansion(args: {
           note: `Installed ${manifest.name}`,
           item: previewItemFromManifest(manifest),
           status: 'complete',
+          pendingId: activityId,
         })
       })
       .catch(() => {})

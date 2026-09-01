@@ -24,6 +24,8 @@
 import type { ChainTracker } from '@bsv/sdk'
 
 import { appendAppLog } from './appLog'
+import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
+import { arcadeV2BaseUrl } from './arcadeV2'
 import type { Chain } from './vault'
 
 type Verdict = 'valid' | 'invalid' | 'unknown'
@@ -121,6 +123,31 @@ function bitailsSource(): HeaderSource {
   }
 }
 
+/** Arcade V2 go-chaintracks — Babbage wallet-services header store. */
+function arcadeV2Source(chain: Chain): HeaderSource | null {
+  const base = arcadeV2BaseUrl(chain)
+  if (!base) return null
+  return {
+    name: 'Arcade V2',
+    rootAt: async (height) => {
+      const body = await fetchJson(`${base}/chaintracks/v2/header/height/${height}`)
+      return stringAt(body, 'merkleRoot') ?? stringAt(body, 'merkleroot')
+    },
+    tip: async () => numberAt(await fetchJson(`${base}/chaintracks/v2/tip`), 'height'),
+  }
+}
+
+/** BRC-CLOUD HandCash Chain — KV-cached headers with Bitails/WoC upstream. */
+function handcashChainSource(): HeaderSource {
+  const base = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  return {
+    name: 'HandCash Chain',
+    rootAt: async (height) =>
+      stringAt(await fetchJson(`${base}/v1/chain/merkleroot/${height}`), 'merkleroot'),
+    tip: async () => numberAt(await fetchJson(`${base}/v1/chain/tip`), 'height'),
+  }
+}
+
 /** Wraps the toolbox's own tracker, which can only be asked yes/no. */
 function primarySource(primary: ChainTracker): {
   name: string
@@ -144,7 +171,7 @@ function primarySource(primary: ChainTracker): {
   }
 
   return {
-    name: 'Chaintracks',
+    name: 'Arcade V2',
     check: async (root, height) => {
       // Without knowing how far this tracker has synced, its `false` cannot be
       // told apart from "not there yet" — so refuse to interpret it.
@@ -163,8 +190,10 @@ export function createFallbackChainTracker(
   chain: Chain,
   primary: ChainTracker | null,
 ): ChainTracker {
+  const arcade = arcadeV2Source(chain)
   const headerSources: HeaderSource[] = [
-    ...(chain === 'main' ? [bitailsSource()] : []),
+    ...(arcade ? [arcade] : []),
+    ...(chain === 'main' ? [handcashChainSource(), bitailsSource()] : []),
     whatsOnChainSource(chain),
   ]
   const first = primary != null ? primarySource(primary) : null

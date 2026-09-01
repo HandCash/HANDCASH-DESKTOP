@@ -92,6 +92,8 @@ vi.mock('./appActivity', async (importOriginal) => ({
 import {
   clearAllFailedSpends,
   clearSpendAttempt,
+  countRebroadcastableFailedSpends,
+  rebroadcastAllFailedSpends,
   resolveSpendAttemptFate,
   retrySpendAttempt,
 } from './spendAttempt'
@@ -611,5 +613,53 @@ describe('clearAllFailedSpends', () => {
       kept: 1,
     })
     expect(mocks.repairFailedSpendState).not.toHaveBeenCalled()
+  })
+})
+
+describe('rebroadcastAllFailedSpends', () => {
+  beforeEach(() => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })
+    mocks.spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mocks.isCollectableOutpointSpendable.mockResolvedValue(true)
+    mocks.getBeefForTxidCached.mockResolvedValue({
+      toBinaryAtomic: () => new Uint8Array([1, 2, 3]),
+    })
+    mocks.broadcastAtomicBeef.mockResolvedValue(true)
+    mocks.counterpartyMaySettle.mockReturnValue(false)
+  })
+
+  it('rebroadcasts every signed item failure and skips unsigned coin sends', async () => {
+    mocks.listFailedActivity.mockReturnValue([
+      itemAttempt({ id: 'item', status: 'failed' }),
+      paymentAttempt({ id: 'coin', status: 'failed' }),
+    ])
+
+    await expect(rebroadcastAllFailedSpends()).resolves.toEqual({
+      rebroadcasted: 1,
+      skipped: 1,
+      failed: 0,
+      errors: [],
+    })
+    expect(mocks.broadcastAtomicBeef).toHaveBeenCalledTimes(1)
+  })
+
+  it('counts only rebroadcastable signed failures', async () => {
+    const liveOutpoint = `${'d'.repeat(64)}.0`
+    mocks.listFailedActivity.mockReturnValue([
+      itemAttempt({ id: 'item', status: 'failed' }),
+      paymentAttempt({ id: 'coin', status: 'failed' }),
+      itemAttempt({
+        id: 'live',
+        status: 'failed',
+        item: { name: 'Fox', origin: liveOutpoint.replace('.', '_'), outpoint: liveOutpoint },
+        retry: { kind: 'send-collectable', outpoint: liveOutpoint, toAddress: '1recipient' },
+      }),
+    ])
+    mocks.counterpartyMaySettle.mockImplementation(
+      (outpoint: string) => outpoint === liveOutpoint,
+    )
+
+    await expect(countRebroadcastableFailedSpends('main')).resolves.toBe(1)
   })
 })

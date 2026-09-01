@@ -49,6 +49,10 @@ function iconFor(id: SettingId): SettingIconSpec {
       return { icon: <ActivityIcon size={ICON_SIZE} /> }
     case 'logs':
       return { icon: <FileIcon size={ICON_SIZE} /> }
+    case 'wallet-health':
+      return { icon: <ActivityIcon size={ICON_SIZE} /> }
+    case 'index-packs':
+      return { icon: <DownloadIcon size={ICON_SIZE} /> }
     default:
       return { icon: <InfoIcon size={ICON_SIZE} /> }
   }

@@ -73,11 +73,14 @@ describe('fetchBlockHeaderForHeight', () => {
   })
 
   it('moves to the next source when the first cannot serve the height', async () => {
-    const fetchMock = vi.fn(async (url: string) =>
-      url.includes('bitails')
-        ? respondWith(null, false)
-        : respondWith({ ...BLOCK_961050, height }),
-    )
+    const fetchMock = vi.fn(async (url: string) => {
+      if (url.includes('arcade-v2') || url.includes('bsvblockchain.tech')) {
+        return respondWith(null, false)
+      }
+      if (url.includes('/v1/chain/header/')) return respondWith(null, false)
+      if (url.includes('bitails')) return respondWith(null, false)
+      return respondWith({ ...BLOCK_961050, height })
+    })
     vi.stubGlobal('fetch', fetchMock)
 
     expect(await fetchBlockHeaderForHeight('main', height)).toMatchObject({ hash: BLOCK_961050.hash })

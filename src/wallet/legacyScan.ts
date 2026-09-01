@@ -1,4 +1,9 @@
 import { P2PKH } from '@bsv/sdk'
+import {
+  cloudAddressUnspent,
+  cloudSpentStatus,
+  cloudTxExists,
+} from './chainProbeClient'
 import type { Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
@@ -30,7 +35,7 @@ export type LegacyScanResult = {
   chain: Chain
   sats: number
   utxos: LegacyUtxo[]
-  source: 'services' | 'whatsonchain' | 'bitails'
+  source: 'services' | 'whatsonchain' | 'bitails' | 'handcash-chain'
   error?: string
 }
 
@@ -89,12 +94,14 @@ const WOC_THROTTLE_COOLDOWN_MS = 20_000
 let wocCooldownUntil = 0
 let wocNextSlotAt = 0
 let bitailsCooldownUntil = 0
+let handcashChainCooldownUntil = 0
 
 /** Test-only — clear provider skip windows. */
 export function resetLegacyScanCooldownForTests(): void {
   wocCooldownUntil = 0
   wocNextSlotAt = 0
   bitailsCooldownUntil = 0
+  handcashChainCooldownUntil = 0
 }
 
 async function fetchWithDeadline(url: string): Promise<Response> {
@@ -129,10 +136,10 @@ async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
       return null
     }
     return res
-  } catch (err) {
-    // A CORS-less 429 and a dead host look identical here; both earn the pause.
+  } catch {
+    // CORS-less 429 and network errors look identical — pause and fail silent.
     wocCooldownUntil = Date.now() + WOC_THROTTLE_COOLDOWN_MS
-    throw err
+    return null
   }
 }
 
@@ -144,45 +151,40 @@ async function fetchWhatsOnChainPaced(url: string): Promise<Response | null> {
  * again would double-spend it. Silence from the provider is not evidence, so an
  * error answers null and the mark stands.
  *
- * Bitails + WhatsOnChain run in parallel — any definitive hit wins; a miss
- * only sticks when no provider affirmed presence.
+ * Bitails is asked first. WhatsOnChain is a fallback only when Bitails cannot
+ * answer — it rate-limits aggressively and 429s often arrive without CORS headers.
  */
 export async function txExistsOnChain(txid: string, chain: Chain): Promise<boolean | null> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
 
+  try {
+    const cloud = await cloudTxExists(id, chain)
+    if (cloud === true || cloud === false) return cloud
+  } catch {
+    /* fall through */
+  }
+
   const bitails = bitailsBase(chain)
-  const bitailsCheck: Promise<boolean | null> = bitails
-    ? (async () => {
-        try {
-          const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
-          if (res.status === 404) return false
-          if (res.ok) return true
-          return null
-        } catch (err) {
-          console.warn('[legacy-scan] Bitails tx lookup failed', err)
-          return null
-        }
-      })()
-    : Promise.resolve(null)
-
-  const wocCheck: Promise<boolean | null> = (async () => {
+  if (bitails) {
     try {
-      const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
-      if (!res) return null
+      const res = await fetchWithDeadline(`${bitails}/tx/${id}/status`)
       if (res.status === 404) return false
-      if (!res.ok) return null
-      return true
+      if (res.ok) return true
     } catch (err) {
-      console.warn('[legacy-scan] WhatsOnChain tx lookup failed', err)
-      return null
+      console.warn('[legacy-scan] Bitails tx lookup failed', err)
     }
-  })()
+  }
 
-  const [b, w] = await Promise.all([bitailsCheck, wocCheck])
-  if (b === true || w === true) return true
-  if (b === false || w === false) return false
-  return null
+  try {
+    const res = await fetchWhatsOnChainPaced(`${wocBase(chain)}/tx/hash/${id}`)
+    if (!res) return null
+    if (res.status === 404) return false
+    if (!res.ok) return null
+    return true
+  } catch {
+    return null
+  }
 }
 
 export type OutpointSpentStatus = 'spent' | 'unspent' | 'unknown'
@@ -226,6 +228,13 @@ export async function spentStatusOfOutpoint(
   const parsed = parseOutpoint(outpoint)
   if (!parsed) return 'unknown'
 
+  try {
+    const cloud = await cloudSpentStatus(parsed.txid, parsed.vout, chain)
+    if (cloud === 'spent' || cloud === 'unspent') return cloud
+  } catch {
+    /* fall through */
+  }
+
   let bitailsUnknown = false
   const bitails = bitailsBase(chain)
   if (bitails) {
@@ -255,8 +264,7 @@ export async function spentStatusOfOutpoint(
     const spendTxid = String(body.txid ?? '').toLowerCase()
     if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
     return 'unknown'
-  } catch (err) {
-    console.warn('[legacy-scan] WhatsOnChain spent lookup failed', err)
+  } catch {
     return 'unknown'
   }
 }
@@ -307,6 +315,29 @@ export async function scanAddressViaWhatsOnChain(
   }))
   const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
   return { address, chain, sats, utxos, source: 'whatsonchain' }
+}
+
+/** Scan via HandCash Chain on BRC-CLOUD (provider rotation server-side). */
+export async function scanAddressViaHandcashChain(
+  address: string,
+  chain: Chain,
+): Promise<LegacyScanResult> {
+  const result = await cloudAddressUnspent(address, chain)
+  if (!result) throw new Error('HandCash Chain unspent unavailable')
+  const utxos: LegacyUtxo[] = result.utxos.map((r) => ({
+    outpoint: r.outpoint,
+    txid: r.txid,
+    vout: r.vout,
+    satoshis: r.satoshis,
+    height: r.height,
+  }))
+  return {
+    address,
+    chain,
+    sats: result.sats,
+    utxos,
+    source: 'handcash-chain',
+  }
 }
 
 /** Scan via toolbox Services.getUtxoStatus on the address locking script. */
@@ -424,6 +455,22 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
 
   const now = Date.now()
   const starters: Array<() => Promise<LegacyScanResult>> = []
+
+  if (now >= handcashChainCooldownUntil) {
+    starters.push(async () => {
+      try {
+        const result = await scanAddressViaHandcashChain(wallet.address, wallet.chain)
+        handcashChainCooldownUntil = 0
+        return result
+      } catch (err) {
+        handcashChainCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+        console.info('[legacy-scan] HandCash Chain failed', err)
+        throw err
+      }
+    })
+  } else {
+    console.info('[legacy-scan] skipping HandCash Chain (recently failed)')
+  }
 
   if (bitailsBase(wallet.chain)) {
     if (now >= bitailsCooldownUntil) {

@@ -75,6 +75,16 @@ vi.mock('./staleOutputRelease', () => ({
 
 vi.mock('./oneSatImportGuard', () => ({
   forgetOneSatImported: vi.fn(),
+  isOneSatOutpointKnown: vi.fn(() => false),
+}))
+
+vi.mock('./tokenAddressScan', () => ({
+  scanAddressOrdinalTxos: vi.fn(async () => []),
+  scanAddressTokenTxos: vi.fn(async () => []),
+}))
+
+vi.mock('./dependencyHealth', () => ({
+  refreshDependencyHealth: vi.fn(async () => undefined),
 }))
 
 vi.mock('./actionReview', () => ({
@@ -96,6 +106,7 @@ vi.mock('./collectables', () => ({
   invalidateLiveOneSatOutpoints: vi.fn(),
   rememberLiveOneSatOutpoints: vi.fn(),
   listCollectables: vi.fn(async () => []),
+  listOneSatBasketOutpointKeys: vi.fn(async () => ({ keys: new Set<string>(), fullyListed: true })),
   setCollectableVerifyWalkDeferred: vi.fn(),
   resumeCollectableVerifyWalk: vi.fn(),
 }))
@@ -106,6 +117,12 @@ vi.mock('./fungibles', () => ({
 
 vi.mock('./pendingSend', () => ({
   reconcilePendingSends: () => mockReconcilePendingSends(),
+}))
+
+vi.mock('./walletCoordinator', () => ({
+  runChainIngest: (fn: () => Promise<unknown>) => fn(),
+  runChainIngestDuringSpend: (fn: () => Promise<unknown>) => fn(),
+  shouldYieldChainIngestToSpend: () => false,
 }))
 
 vi.mock('./walletHealth', () => ({
@@ -302,8 +319,10 @@ describe('refreshFromChain spendable review', () => {
 
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
+      address: '1A1zP1eP5QGefi2DMPTfTL5SLmv7DivfNa',
       wallet: {
         reviewSpendableOutputs: mockReviewSpendableOutputs,
+        listOutputs: vi.fn(async () => ({ outputs: [], totalOutputs: 0 })),
       },
     })
     mockFetchBalanceSats.mockResolvedValue(1000)

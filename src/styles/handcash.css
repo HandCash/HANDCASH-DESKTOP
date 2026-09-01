@@ -2396,8 +2396,8 @@ button.wallet-detail-value.is-copied {
   inset: 0;
   width: 100%;
   height: 100%;
-  object-fit: contain;
-  padding: 14%;
+  object-fit: cover;
+  padding: 0;
   box-sizing: border-box;
   display: block;
   opacity: 0;
@@ -3789,6 +3789,81 @@ button.identity-qr-copy:focus-visible {
   cursor: default;
 }
 
+.wallet-health-alert {
+  display: inline-grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 1px solid rgb(255 200 87 / 42%);
+  background: rgb(255 200 87 / 14%);
+  color: var(--hc-warn, #ffc857);
+  flex-shrink: 0;
+}
+
+.wallet-health-alert[data-tone='error'] {
+  border-color: rgb(255 107 107 / 42%);
+  background: rgb(255 107 107 / 12%);
+  color: var(--hc-danger);
+}
+
+.index-packs-progress {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid rgb(255 255 255 / 8%);
+  background: rgb(255 255 255 / 4%);
+}
+
+.wallet-progress-bar {
+  height: 4px;
+  border-radius: 999px;
+  background: rgb(255 255 255 / 10%);
+  overflow: hidden;
+}
+
+.wallet-progress-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--hc-accent);
+  transition: width 180ms ease;
+}
+
+.status-pill-compact {
+  padding: 4px 8px;
+  font-size: 0.72rem;
+  min-width: 3.25rem;
+  justify-content: center;
+}
+
+.activity-rebroadcast-failed {
+  appearance: none;
+  margin: 0;
+  padding: 0 10px;
+  height: 28px;
+  border-radius: var(--radius);
+  border: 1px solid rgb(0 212 170 / 34%);
+  background: rgb(0 212 170 / 10%);
+  color: var(--hc-brand);
+  font-size: 0.74rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: background 140ms ease, border-color 140ms ease, opacity 140ms ease;
+}
+
+.activity-rebroadcast-failed:hover {
+  background: rgb(0 212 170 / 16%);
+  border-color: rgb(0 212 170 / 48%);
+}
+
+.activity-rebroadcast-failed:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .activity-filter-toggle {
   appearance: none;
   position: relative;
@@ -4006,7 +4081,8 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-icon .app-avatar-img {
-  padding: 10%;
+  padding: 0;
+  object-fit: cover;
 }
 
 .history-item-thumb {
