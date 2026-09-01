@@ -830,6 +830,8 @@ const HANDCASH_CATALOG_HOSTS = [
   'market.handcash.io',
   'preprod-market.handcash.io',
   'market-v2.handcash.io',
+  'brc-cloud.bcryderman.workers.dev',
+  'handcash-market-v2.pages.dev',
 ]
 
 /** Market catalog hosts share one view-grant row so Allow sticks across reloads. */

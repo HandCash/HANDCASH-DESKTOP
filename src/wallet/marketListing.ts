@@ -443,6 +443,7 @@ export function isMarketListingOrigin(origin: string | undefined): boolean {
     bare === 'market.handcash.io' ||
     bare === 'preprod-market.handcash.io' ||
     bare === 'market-v2.handcash.io' ||
+    bare === 'handcash-market-v2.pages.dev' ||
     bare === 'brc-cloud.bcryderman.workers.dev'
   )
 }

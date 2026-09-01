@@ -162,6 +162,7 @@ describe('BRC-48 one-sat market offer', () => {
       feeSats: 5,
     })
     expect(isMarketListingOrigin('brc-cloud.bcryderman.workers.dev')).toBe(true)
+    expect(isMarketListingOrigin('handcash-market-v2.pages.dev')).toBe(true)
     expect(isMarketListingOrigin('evil.workers.dev')).toBe(false)
   })
 })
