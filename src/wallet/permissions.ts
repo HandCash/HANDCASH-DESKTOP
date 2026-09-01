@@ -613,6 +613,23 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       note: prompt.title,
     })
   })
+  void import('./diagnosticLog').then(({ logDiag }) => {
+    const name = appDisplayName(prompt.origin)
+    if (prompt.kind === 'connect') {
+      logDiag('connect', decision === 'allow' ? 'info' : 'warn', decision, {
+        app: name,
+        origin: prompt.origin,
+      })
+      return
+    }
+    if (prompt.kind === 'action') {
+      logDiag('permission', decision === 'allow' ? 'info' : 'warn', decision, {
+        method: prompt.method,
+        app: name,
+        origin: prompt.origin,
+      })
+    }
+  })
   const appName = appDisplayName(prompt.origin)
   if (prompt.kind === 'connect' && decision === 'allow') {
     dispatchWalletUiEvent('handcash:wallet-connected', {

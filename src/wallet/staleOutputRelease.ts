@@ -13,6 +13,7 @@
  * release here.
  */
 import { parseOutpoint } from './legacyScan'
+import { logDiag } from './diagnosticLog'
 import { getActiveWallet } from './session'
 import {
   creditUtxo,
@@ -860,9 +861,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
       )
     }
     if (unscripted > 0) {
-      console.info(
-        `[stale-output] skipped ${unscripted} output(s) with no locking script — awaiting rebuild`,
-      )
+      logDiag('stale-output', 'warn', 'unscripted-skipped', { count: unscripted })
     }
     return restored
   } catch (err) {

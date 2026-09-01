@@ -7,6 +7,7 @@
  * only record of what the app was doing when it died.
  */
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { formatLogArg } from './logFormat'
 import { APP_VERSION } from '../version'
 
 export type AppLogLevel = 'info' | 'warn' | 'error'
@@ -17,9 +18,9 @@ export type AppLogEntry = {
   message: string
 }
 
-const MAX = 500
+const MAX = 800
 /** Mirrored tail. Smaller than the ring so a flush stays cheap. */
-const PERSIST_MAX = 200
+const PERSIST_MAX = 350
 const PERSIST_INTERVAL_MS = 4_000
 const CURRENT_KEY = 'handcash.applog.current.v1'
 const PREVIOUS_KEY = 'handcash.applog.previous.v1'
@@ -280,18 +281,7 @@ export function installAppLogCapture(): void {
     (level: AppLogLevel, original: (...args: unknown[]) => void) =>
     (...args: unknown[]) => {
       try {
-        const msg = args
-          .map((a) => {
-            if (typeof a === 'string') return a.length > 500 ? `${a.slice(0, 500)}…` : a
-            if (a instanceof Error) return a.stack || a.message
-            try {
-              const s = JSON.stringify(a)
-              return s.length > 500 ? `${s.slice(0, 500)}…` : s
-            } catch {
-              return String(a)
-            }
-          })
-          .join(' ')
+        const msg = args.map((a) => formatLogArg(a)).join(' ')
         // Toolbox monitor dumps can be huge; never let log capture itself stall UI.
         if (msg.includes('TaskMonitorCallHistory') && msg.length > 80) {
           appendAppLog(level, 'TaskMonitorCallHistory …')

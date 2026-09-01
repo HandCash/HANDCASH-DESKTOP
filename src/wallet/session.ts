@@ -512,9 +512,13 @@ export async function fetchBalanceRead(
   const breakdown = `${spendable - pendingChange}:${pendingChange}:${spendable}`
   if (breakdown !== lastBalanceBreakdown) {
     lastBalanceBreakdown = breakdown
-    console.info(
-      `[balance] spendable=${spendable - pendingChange} pendingChange=${pendingChange} displayed=${spendable}`,
-    )
+    void import('./diagnosticLog').then(({ logDiag }) => {
+      logDiag('balance', 'info', 'breakdown', {
+        spendable: spendable - pendingChange,
+        pendingChange,
+        displayed: spendable,
+      })
+    })
   }
   lastKnownBalanceSats = spendable
   if (typeof w === 'object' && w != null) {

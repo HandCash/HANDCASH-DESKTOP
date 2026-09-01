@@ -798,6 +798,9 @@ export async function burnBsv21(args: {
       failureReason: reason,
     })
     console.error(`[burn] failed token=${tokenId.slice(0, 16)}…`, reason)
+    void import('./diagnosticLog').then(({ logSpendFailure }) =>
+      logSpendFailure('burn-token', { token: tokenId.slice(0, 16), reason }),
+    )
     throw error
   }
 }
@@ -966,6 +969,9 @@ export async function burnOneSat(
       failureReason: reason,
     })
     console.error(`[burn] failed collectable count=${wanted.length}`, reason)
+    void import('./diagnosticLog').then(({ logSpendFailure }) =>
+      logSpendFailure('burn-collectable', { count: wanted.length, reason }),
+    )
     throw new Error(reason)
   } finally {
     clearPaymentProgress()

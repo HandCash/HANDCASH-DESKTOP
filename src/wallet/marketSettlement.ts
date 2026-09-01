@@ -478,6 +478,13 @@ export async function executeMarketPurchase(
       await prepareSpendHeal(fundingSats)
     } catch (err) {
       if (isInsufficientFundsError(err)) {
+        void import('./diagnosticLog').then(({ logSpendFailure }) =>
+          logSpendFailure('market-purchase', {
+            listing: listing.outpoint,
+            fundingSats,
+            reason: err instanceof Error ? err.message : String(err),
+          }),
+        )
         throw new MarketListingError(
           'INSUFFICIENT_FUNDS',
           await describeInsufficientFunds(active.wallet, fundingSats),

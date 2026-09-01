@@ -9,6 +9,7 @@
  * concern. A stale local tip fails at broadcast and is released then.
  */
 import { extractSatsFromArgs } from './appActivity'
+import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
@@ -18,21 +19,31 @@ import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoord
 /** Rebuild script-less change rows and mark live pending change spendable for chaining. */
 async function promoteSpendableChange(): Promise<number> {
   let restored = 0
+  let localHealed = 0
+  let chainHealed = 0
   try {
     const { sweepChangeScripts } = await import('./changeScriptFate')
     // Scripts must exist before restore can flip spendable. Local-first keeps
     // latency down; chain heals rows restored from BRC-39 without raw tx.
-    await sweepChangeScripts({ fromChain: false })
+    const localSweep = await sweepChangeScripts({ fromChain: false })
+    localHealed = localSweep.healed
     restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     if (restored === 0) {
-      await sweepChangeScripts({ fromChain: true })
+      const chainSweep = await sweepChangeScripts({ fromChain: true })
+      chainHealed = chainSweep.healed
       restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     }
   } catch (err) {
-    console.warn('[spend-guard] promote change skipped', err)
+    logDiag('spend-guard', 'warn', 'promote-skipped', {
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
-  if (restored > 0) {
-    console.info(`[spend-guard] promoted ${restored} change output(s) for spend chaining`)
+  if (restored > 0 || localHealed > 0 || chainHealed > 0) {
+    logDiag('spend-guard', 'info', 'promoted', {
+      restored,
+      scriptsLocal: localHealed,
+      scriptsChain: chainHealed,
+    })
   }
   return restored
 }
@@ -107,11 +118,18 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
     const { unconfirmedChangeSats } = await import('./balanceView')
     confirming = await unconfirmedChangeSats()
   } catch (err) {
-    console.warn('[spend-guard] unconfirmed change credit skipped', err)
+    logDiag('spend-guard', 'warn', 'unconfirmed-credit-skipped', {
+      error: err instanceof Error ? err.message : String(err),
+    })
   }
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
     const { insufficientFundsMessage } = await import('./insufficientFunds')
+    await logSpendFailure('chaining-required', {
+      needed: satoshis,
+      confirmed,
+      confirming,
+    })
     throw new Error(
       insufficientFundsMessage({
         confirmedSats: confirmed,
@@ -121,6 +139,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
     )
   }
 
+  await logSpendFailure('insufficient', { needed: satoshis, confirmed, confirming })
   throw new Error(
     `Insufficient balance (${confirmed} sats available, need ${satoshis}).`,
   )

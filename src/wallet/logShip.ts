@@ -23,9 +23,12 @@ export type LogShipResult =
   | { ok: true; skipped: true; reason: string }
 
 function platformTag(): string {
+  if (typeof window === 'undefined') return 'node'
   const declared = window.handcash?.platform
   if (typeof declared === 'string' && declared) return declared
-  return /android/i.test(navigator.userAgent) ? 'android' : 'web'
+  return typeof navigator !== 'undefined' && /android/i.test(navigator.userAgent)
+    ? 'android'
+    : 'web'
 }
 
 /**
@@ -51,6 +54,21 @@ async function platformTail(): Promise<string> {
 function previousBlock(previous: AppLogEntry[]): string {
   if (previous.length === 0) return ''
   return `—— previous session (ended without a clean exit) ——\n${formatAppLogs(previous)}\n\n`
+}
+
+function sessionHeader(reason: string, lineCount: number): string {
+  const ua =
+    typeof navigator !== 'undefined'
+      ? navigator.userAgent.replace(/\s+/g, ' ').slice(0, 140)
+      : 'unknown'
+  return [
+    '# HandCash diagnostic log',
+    `# version ${APP_VERSION} · platform ${platformTag()}`,
+    `# reason ${reason} · lines ${lineCount}`,
+    `# uploaded ${new Date().toISOString()}`,
+    `# userAgent ${ua}`,
+    '',
+  ].join('\n')
 }
 
 async function post(url: string, body: string, reason: string): Promise<LogShipResult> {
@@ -88,11 +106,18 @@ async function post(url: string, body: string, reason: string): Promise<LogShipR
   }
 }
 
+async function buildUploadBody(reason: string): Promise<string> {
+  const previous = getPreviousSessionLogs()
+  const tail = await platformTail()
+  const lineCount =
+    previous.length + (tail ? tail.split('\n').filter((line) => line.trim()).length : 0)
+  return `${sessionHeader(reason, lineCount)}${previousBlock(previous)}${tail}`
+}
+
 /** Manual send from Settings. Includes the previous session when there is one. */
 export async function shipAppLogs(url = getLogUploadUrl()): Promise<LogShipResult> {
   if (!url) return { ok: false, error: 'Set an upload URL first' }
-  const body = `${previousBlock(getPreviousSessionLogs())}${await platformTail()}`
-  return post(url, body, 'manual')
+  return post(url, await buildUploadBody('manual'), 'manual')
 }
 
 let shippedPrevious = false
@@ -121,7 +146,7 @@ export async function shipAppLogsAuto(reason: string): Promise<LogShipResult> {
 
   lastAutoShipAt = now
   const run = (async () => {
-    const body = `${previousBlock(getPreviousSessionLogs())}${await platformTail()}`
+    const body = await buildUploadBody(reason)
     const result = await post(url, body, reason)
     if (result.ok && !('skipped' in result && result.skipped)) {
       console.info(`[logs] auto-uploaded (${reason}, ${result.bytes} bytes)`)
@@ -168,7 +193,11 @@ export async function shipPreviousSessionLogs(): Promise<LogShipResult> {
   if (previous.length === 0) return { ok: true, skipped: true, reason: 'clean previous run' }
 
   shippedPrevious = true
-  const result = await post(url, previousBlock(previous) + formatAppLogs(), 'crash-recovery')
+  const result = await post(
+    url,
+    `${sessionHeader('crash-recovery', previous.length + formatAppLogs().split('\n').length)}${previousBlock(previous)}${formatAppLogs()}`,
+    'crash-recovery',
+  )
   if (result.ok) console.info(`[logs] previous session uploaded (${previous.length} lines)`)
   else console.warn('[logs] previous session upload failed', result.error)
   lastAutoShipAt = Date.now()

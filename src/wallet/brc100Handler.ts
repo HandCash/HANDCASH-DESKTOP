@@ -102,6 +102,7 @@ import {
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
+import { logBrc100Response, shouldLogBrc100Method } from './diagnosticLog'
 import { paintAfterInternalizeItem } from './internalizeItemPaint'
 import { flattenJsonError } from './errorText'
 
@@ -874,8 +875,24 @@ async function dispatchWalletMethod(
 
 export async function handleBrc100Request(event: HttpRequestEvent): Promise<{ status: number; body: string }> {
   const releaseInbound = noteInboundWalletRequest()
+  const method = methodFromPath(event.path)
+  const originator = parseOrigin(event.headers)
+  const diag = shouldLogBrc100Method(method)
+  const t0 = diag ? Date.now() : 0
+  let args: unknown
+  if (event.body) {
+    try {
+      args = JSON.parse(event.body)
+    } catch {
+      args = event.body
+    }
+  }
   try {
-    return await handleBrc100RequestInner(event)
+    const result = await handleBrc100RequestInner(event)
+    if (diag && method) {
+      logBrc100Response(method, originator, result, Date.now() - t0, args)
+    }
+    return result
   } finally {
     releaseInbound()
   }
