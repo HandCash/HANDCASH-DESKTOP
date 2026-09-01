@@ -836,6 +836,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
             creatorLiveness === 'settled' &&
             spentBy == null &&
             output.spendable !== true
+          const orphanRecoveredChange =
+            isChangeOutput &&
+            spentBy == null &&
+            output.spendable !== true &&
+            creatorLiveness === 'none'
 
           const healed = await healLockingScript(sp, output, txCache, { fromChain: forSpendChain })
           if (healed == null && !hasLockingScript(output)) {
@@ -843,7 +848,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
             continue
           }
 
-          if (!localChange && !settledChange) continue
+          if (!localChange && !settledChange && !orphanRecoveredChange) continue
 
           await sp.updateOutput(outputId, {
             spendable: true,

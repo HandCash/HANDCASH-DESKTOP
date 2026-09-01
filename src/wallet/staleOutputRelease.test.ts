@@ -209,6 +209,24 @@ describe('restoreLiveSpendableOutputs', () => {
     expect(isUtxo).not.toHaveBeenCalled()
   })
 
+  it('restores orphan BRC-39 change rows that lack creator tx status', async () => {
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 4,
+        change: true,
+        spendable: false,
+        satoshis: 2614,
+        lockingScript: [118, 169],
+      },
+    ])
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(4, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
+
   it('restores change from a locally completed spend left unspendable', async () => {
     findOutputs.mockResolvedValue([
       {

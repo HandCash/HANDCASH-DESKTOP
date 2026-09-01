@@ -45,7 +45,7 @@ import { getCachedFungibles } from './fungibles'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
-import { requestSpendPriority } from './walletCoordinator'
+import { leaseSpendPriority } from './walletCoordinator'
 import { stampBrc164Id } from './itemAccess'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
@@ -1656,6 +1656,20 @@ let listMoreInFlight: Promise<Collectable[]> | null = null
  */
 const LIST_TIMEOUT_MS = 20_000
 
+/** Shared ceiling for basket reads that would otherwise wedge sends and panels. */
+export async function listOutputsWithTimeout(
+  wallet: ActiveWallet['wallet'],
+  args: Parameters<ActiveWallet['wallet']['listOutputs']>[0],
+  timeoutMs = LIST_TIMEOUT_MS,
+): Promise<Awaited<ReturnType<ActiveWallet['wallet']['listOutputs']>>> {
+  return Promise.race([
+    wallet.listOutputs(args),
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(new Error('listOutputs timed out')), timeoutMs),
+    ),
+  ])
+}
+
 /**
  * Verify one tip's authenticity (BRC-150 only) and remember the verdict.
  *
@@ -2746,7 +2760,8 @@ export async function sendCollectable(args: {
   }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
   setPaymentProgress('preparing', 'Waiting to send the collectable', outpoint)
-  const releaseSpendHint = requestSpendPriority('send-collectable')
+  const spendPriority = leaseSpendPriority('send-collectable')
+  const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
   const outboundPending = beginPendingSend({
     to: args.toAddress,
     sats: 1,
@@ -2803,7 +2818,7 @@ export async function sendCollectable(args: {
           )
           const originTag = originGuess.replace(/_(\d+)$/, '.$1')
 
-          const held = await wallet.wallet.listOutputs({
+          const held = await listOutputsWithTimeout(wallet.wallet, {
             basket: '1sat',
             tags: [`origin:${originTag}`],
             tagQueryMode: 'all',
@@ -2820,7 +2835,7 @@ export async function sendCollectable(args: {
           )
           // Origin tag can miss after a migrate / rename; one broader pass is enough.
           if (!match) {
-            const wide = await wallet.wallet.listOutputs({
+            const wide = await listOutputsWithTimeout(wallet.wallet, {
               basket: '1sat',
               limit: 1000,
               includeTags: true,
@@ -3470,6 +3485,7 @@ export async function sendCollectable(args: {
     })
     throw err
   } finally {
-    releaseSpendHint()
+    clearInterval(touchSpendPriority)
+    spendPriority.release()
   }
 }

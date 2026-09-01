@@ -20,22 +20,16 @@ import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoord
 async function promoteSpendableChange(): Promise<number> {
   let restored = 0
   let localHealed = 0
-  let chainHealed = 0
   try {
     const { sweepChangeScripts } = await import('./changeScriptFate')
-    // Scripts must exist before restore can flip spendable. Local-first keeps
-    // latency down; chain heals rows restored from BRC-39 without raw tx.
+    // Spend path: local IDB only. Chain raw-tx heal belongs on Refresh — it was
+    // wedging every send behind hundreds of network lookups on phones.
     const localSweep = await sweepChangeScripts({ fromChain: false })
     localHealed = localSweep.healed
-    restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-    if (restored === 0 && localHealed === 0) {
-      for (let pass = 0; pass < 3 && restored === 0; pass += 1) {
-        const chainSweep = await sweepChangeScripts({ fromChain: true })
-        chainHealed += chainSweep.healed
-        if (chainSweep.healed === 0) break
-        restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
-      }
-    } else if (restored === 0) {
+    for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
+      restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+    }
+    if (restored === 0 && localHealed > 0) {
       restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
     }
   } catch (err) {
@@ -43,11 +37,10 @@ async function promoteSpendableChange(): Promise<number> {
       error: err instanceof Error ? err.message : String(err),
     })
   }
-  if (restored > 0 || localHealed > 0 || chainHealed > 0) {
+  if (restored > 0 || localHealed > 0) {
     logDiag('spend-guard', 'info', 'promoted', {
       restored,
       scriptsLocal: localHealed,
-      scriptsChain: chainHealed,
     })
   }
   return restored

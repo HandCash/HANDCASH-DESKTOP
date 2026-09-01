@@ -2,9 +2,10 @@
 
 ## [1.3.49] - 2026-09-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Send timeouts** — pre-send change promotion no longer runs chain raw-tx heal (Refresh-only); collectable sends time out `listOutputs` and keep spend priority alive while queued.
+- **Stuck mobile balance after BRC-39 restore** — wallet P2PKH fallback now marks orphan change spendable; restore promotes change rows even when creator tx status is missing.
 
 ## [1.3.48] - 2026-09-01
 

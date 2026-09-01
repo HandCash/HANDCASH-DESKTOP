@@ -383,7 +383,10 @@ export async function sweepChangeScripts(args?: {
       const tryAddressFallback = async (row: ChangeRow, outputId: number): Promise<boolean> => {
         if (!isWalletChangeRow(row) || !walletScript) return false
         try {
-          await sp.updateOutput(outputId, { lockingScript: walletScript })
+          await sp.updateOutput(outputId, {
+            lockingScript: walletScript,
+            ...(row.spendable !== true ? { spendable: true, spentBy: undefined } : {}),
+          })
           result.healed += 1
           result.addressFallback = (result.addressFallback ?? 0) + 1
           return true
