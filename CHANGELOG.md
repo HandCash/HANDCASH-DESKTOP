@@ -2,9 +2,17 @@
 
 ## [1.3.55] - 2026-09-01
 
-### Changed
+### Added
 
-- Patch release (every push must ship a new version).
+- **BananaBlocks + Kallubi explorers** — legacy address scan, tx existence, and spent-status checks use GorillaPool BananaBlocks and Kallubi (bsv.cx) before WhatsOnChain; HandCash Chain server-side waterfall updated to match.
+- **Dependency health** — Settings probes now include BananaBlocks and Kallubi alongside Arcade V2, HandCash Chain, Bitails, and Ordinals.
+
+### Fixed
+
+- **Log upload 405** — normalize stored upload URLs that mistakenly include `/latest` or `/all` (POST target is the bucket root only).
+- **Mobile price bar + toasts** — dashboard side column renders `WhatIsBsvPanel` on phone shells (toast viewport + BSV price strip).
+- **Arcade monitor stale host** — sync toolbox monitor chaintracks URL when Arcade V2 is installed.
+- **Clear failed sends** — clearer per-row cleanup and toast when nothing removable remains.
 
 ## [1.3.54] - 2026-09-01
 
