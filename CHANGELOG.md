@@ -2,9 +2,9 @@
 
 ## [1.3.57] - 2026-09-01
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Send pane scroll** — BSV, collectable, fungible, and burn send panels scroll when content exceeds the nav column (mirrors receive panel behaviour).
 
 ## [1.3.56] - 2026-09-01
 

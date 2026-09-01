@@ -6208,10 +6208,25 @@ html[data-aeon-mode='light'] .shortcut-key {
   display: flex;
   flex-direction: column;
   min-height: 0;
-  height: 100%;
-  overflow: hidden;
+  flex: 1 1 auto;
+  height: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   container-type: inline-size;
   container-name: send;
+}
+
+.send-panel.nav-child-panel {
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.send-stage-edit,
+.send-stage-confirm {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .send-stage {
