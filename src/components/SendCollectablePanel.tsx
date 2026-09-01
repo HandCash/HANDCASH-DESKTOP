@@ -20,7 +20,7 @@ import {
   clearNavChild,
   openCollectableDetails,
 } from '../wallet/navStore'
-import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
+import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
@@ -72,8 +72,10 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
+  const handleResolveRef = useRef(createHandleResolveDebouncer())
 
   useEffect(() => subscribeFriends(setFriends), [])
+  useEffect(() => () => handleResolveRef.current.cancel(), [])
 
   useEffect(() => {
     let cancelled = false
@@ -117,22 +119,21 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     }
 
     if (parseHandleInput(trimmed)) {
-      // Do not park the raw $handle in `to` — send would treat it as an address.
       setTo('')
       setRecipientIdentityKey(null)
-      void (async () => {
-        try {
-          const resolved = await resolveHandle(trimmed)
+      handleResolveRef.current.schedule(trimmed, {
+        onResolved: (resolved) => {
           setTo(addressFromIdentityKey(resolved.identityKey, chain))
           setRecipientIdentityKey(resolved.identityKey)
           setFriendLabel(resolved.display)
           setError(null)
-        } catch (err) {
+        },
+        onError: (err) => {
           setTo('')
           setRecipientIdentityKey(null)
-          setError(err instanceof Error ? err.message : String(err))
-        }
-      })()
+          setError(err.message)
+        },
+      })
       return
     }
 

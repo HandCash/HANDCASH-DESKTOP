@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { mintClaimTicket, verifyClaimTicket } from './claimTicket'
-import { parseHandleInput } from './handleResolve'
+import { parseHandleInput, shouldResolveHandleInput } from './handleResolve'
 
 const SECRET = 'test-handle-claim-secret'
 
@@ -78,6 +78,11 @@ describe('parseHandleInput at-dollar preference', () => {
       handle: 'alice',
       domain: 'handcash.io',
     })
+  })
+
+  it('parses short local-parts but resolve waits for min length', () => {
+    expect(parseHandleInput('s')).toEqual({ handle: 's', domain: null })
+    expect(shouldResolveHandleInput('s')).toBe(false)
   })
 
   it('does not treat P2PKH addresses or identity keys as bare handles', () => {

@@ -23,10 +23,6 @@ function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }
 
-/**
- * Parse @$handle, $handle, @handle, @$handle@domain, $handle@domain,
- * @handle@domain, handle@domain, or bare handle.
- */
 export function parseHandleInput(raw: string): { handle: string; domain: string | null } | null {
   const t = raw.trim()
   if (!t) return null
@@ -50,6 +46,62 @@ export function parseHandleInput(raw: string): { handle: string; domain: string 
   if (m) return { handle: m[1]!.toLowerCase(), domain: null }
 
   return null
+}
+
+/** Do not hit resolve until the local-part is long enough to be intentional. */
+export const HANDLE_RESOLVE_MIN_LEN = 3
+export const HANDLE_RESOLVE_DEBOUNCE_MS = 400
+
+export function shouldResolveHandleInput(raw: string): boolean {
+  const parsed = parseHandleInput(raw)
+  if (!parsed) return false
+  return parsed.handle.length >= HANDLE_RESOLVE_MIN_LEN
+}
+
+export type HandleResolveDebouncer = {
+  cancel: () => void
+  schedule: (
+    raw: string,
+    handlers: {
+      onResolved: (resolved: ResolvedHandle) => void
+      onError: (err: Error) => void
+    },
+  ) => void
+}
+
+/** Debounced resolve — avoids 404 spam while the user is still typing `$al…`. */
+export function createHandleResolveDebouncer(
+  debounceMs = HANDLE_RESOLVE_DEBOUNCE_MS,
+): HandleResolveDebouncer {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  let gen = 0
+
+  return {
+    cancel() {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      gen += 1
+    },
+    schedule(raw, handlers) {
+      if (timer) clearTimeout(timer)
+      timer = undefined
+      const trimmed = raw.trim()
+      if (!shouldResolveHandleInput(trimmed)) return
+      const myGen = ++gen
+      timer = setTimeout(() => {
+        timer = undefined
+        void resolveHandle(trimmed)
+          .then((resolved) => {
+            if (myGen !== gen) return
+            handlers.onResolved(resolved)
+          })
+          .catch((err) => {
+            if (myGen !== gen) return
+            handlers.onError(err instanceof Error ? err : new Error(String(err)))
+          })
+      }, debounceMs)
+    },
+  }
 }
 
 export async function resolveHandle(

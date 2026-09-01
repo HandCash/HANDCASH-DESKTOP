@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.46] - 2026-09-01
+
+### Fixed
+
+- **Handle resolve while typing** — wait until the local-part is ≥3 characters and debounce 400ms before calling BRC-CLOUD; stops `resolve?handle=s` 404 spam in send panels.
+- **Collectables list during sync/send** — defer full-basket `listOutputs` while spend is active; log cache fallback at info instead of warn on timeout.
+
 ## [1.3.45] - 2026-09-01
 
 ### Fixed

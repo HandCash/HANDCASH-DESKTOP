@@ -40,7 +40,7 @@ import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
 import { requestSpendPriority } from '../wallet/walletCoordinator'
 import { toastSuccess } from '../wallet/toast'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
-import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
+import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
 import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
@@ -120,8 +120,10 @@ export function SendPanel({
   const [scanningTo, setScanningTo] = useState(false)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
+  const handleResolveRef = useRef(createHandleResolveDebouncer())
 
   useEffect(() => subscribeFriends(setFriends), [])
+  useEffect(() => () => handleResolveRef.current.cancel(), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => {
@@ -287,9 +289,8 @@ export function SendPanel({
       }
     }
     if (parseHandleInput(value)) {
-      void (async () => {
-        try {
-          const resolved = await resolveHandle(value)
+      handleResolveRef.current.schedule(value, {
+        onResolved: (resolved) => {
           const address = addressFromIdentityKey(resolved.identityKey, chain)
           send({
             type: 'EDIT',
@@ -297,10 +298,9 @@ export function SendPanel({
             friendLabel: resolved.display,
             payeeIdentityKey: resolved.identityKey,
           })
-        } catch (err) {
-          onFail(err instanceof Error ? err.message : String(err))
-        }
-      })()
+        },
+        onError: (err) => onFail(err.message),
+      })
       return
     }
     send({

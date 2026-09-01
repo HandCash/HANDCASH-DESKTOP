@@ -139,6 +139,7 @@ import {
 } from './oneSatGenesisProof'
 import {
   getWalletCoordinatorSnapshot,
+  shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
 import {
   getResolvedInscription,
@@ -1957,10 +1958,12 @@ async function listCollectablesNow(
     !append &&
     !authoritativeAfterReplace &&
     cachedCollectables.length > 0 &&
-    coord.chainIngest === 'active'
+    (coord.chainIngest === 'active' ||
+      coord.spend === 'active' ||
+      shouldYieldChainIngestToSpend())
   ) {
     console.info(
-      `[collectables] deferring listOutputs — chain ingest active, using ${cachedCollectables.length} cached item(s)`,
+      `[collectables] deferring listOutputs — wallet busy, using ${cachedCollectables.length} cached item(s)`,
     )
     return getCachedCollectables()
   }
@@ -2054,9 +2057,18 @@ async function listCollectablesNow(
       outputs = page
     }
   } catch (err) {
-    console.warn('[collectables] listOutputs failed', err)
-    // Keep prior cache — do not hydrate as empty on transient failures.
-    return getCachedCollectables()
+    const cached = getCachedCollectables()
+    const timedOut =
+      err instanceof Error && err.message.includes('listOutputs timed out')
+    if (cached.length > 0) {
+      console.info(
+        `[collectables] listOutputs ${timedOut ? 'timed out' : 'failed'} — keeping ${cached.length} cached item(s)`,
+        timedOut ? undefined : err,
+      )
+    } else {
+      console.warn('[collectables] listOutputs failed', err)
+    }
+    return cached
   }
 
   const seenNow = Date.now()

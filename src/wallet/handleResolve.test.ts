@@ -1,6 +1,57 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
-import { resolveHandle, resolveHandleByIdentityKey } from './handleResolve'
+import {
+  parseHandleInput,
+  shouldResolveHandleInput,
+  createHandleResolveDebouncer,
+  resolveHandle,
+  resolveHandleByIdentityKey,
+} from './handleResolve'
+
+describe('shouldResolveHandleInput', () => {
+  it('waits until the local-part is at least three characters', () => {
+    expect(shouldResolveHandleInput('s')).toBe(false)
+    expect(shouldResolveHandleInput('si')).toBe(false)
+    expect(shouldResolveHandleInput('$s')).toBe(false)
+    expect(shouldResolveHandleInput('sam')).toBe(true)
+    expect(shouldResolveHandleInput('$sam')).toBe(true)
+  })
+})
+
+describe('createHandleResolveDebouncer', () => {
+  it('debounces resolve calls', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          handle: 'sam',
+          domain: 'handcash.io',
+          identityKey: '02' + 'ab'.repeat(32),
+        }),
+        { status: 200 },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    const debouncer = createHandleResolveDebouncer(200)
+    const resolved: string[] = []
+    debouncer.schedule('$sam', {
+      onResolved: (r) => resolved.push(r.handle),
+      onError: () => {},
+    })
+    debouncer.schedule('$samy', {
+      onResolved: (r) => resolved.push(r.handle),
+      onError: () => {},
+    })
+    expect(fetchMock).not.toHaveBeenCalled()
+    await vi.advanceTimersByTimeAsync(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toContain('handle=samy')
+    expect(resolved).toEqual(['sam'])
+    debouncer.cancel()
+    vi.useRealTimers()
+  })
+})
 
 afterEach(() => {
   vi.unstubAllGlobals()
