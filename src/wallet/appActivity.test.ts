@@ -37,6 +37,8 @@ import {
   pruneMissingOnChainActivity,
   removeActivityById,
   removeFailedActivity,
+  exportAllActivity,
+  listArchivedActivity,
   countFailedActivity,
   recordWalletEvent,
   isFailedMarketListingActivity,
@@ -455,7 +457,7 @@ describe('inbound receive activity', () => {
     })
   })
 
-  it('deletes one local attempt by id without touching another row', () => {
+  it('archives one local attempt by id without deleting it from storage', () => {
     noteOutboundSendPending({
       pendingId: 'delete-me',
       sats: 1,
@@ -472,10 +474,13 @@ describe('inbound receive activity', () => {
       false,
     )
     expect(listRecentActivity(10)).toHaveLength(1)
+    const archived = exportAllActivity().find((row) => row.id === attempt.id)
+    expect(archived?.archivedAt).toBeGreaterThan(0)
+    expect(listArchivedActivity()).toHaveLength(1)
     expect(removeActivityById(attempt.id)).toBe(false)
   })
 
-  it('counts and bulk-removes every failed send, keeping healthy rows', () => {
+  it('archives every failed send, keeping healthy rows', () => {
     for (const id of ['fail-a', 'fail-b', 'fail-c']) {
       noteOutboundSendPending({ pendingId: id, sats: 100, to: '1abc' })
       failOutboundSendPending({ pendingId: id, reason: 'Broadcast refused' })
@@ -488,6 +493,7 @@ describe('inbound receive activity', () => {
     expect(removeFailedActivity()).toBe(3)
     expect(countFailedActivity()).toBe(0)
     expect(removeFailedActivity()).toBe(0)
+    expect(listArchivedActivity()).toHaveLength(3)
 
     const rows = listRecentActivity(20)
     expect(rows.some((r) => r.pendingId === 'live')).toBe(true)

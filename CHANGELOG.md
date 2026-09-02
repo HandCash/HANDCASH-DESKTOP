@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.88] - 2026-09-02
+
+### Added
+
+- **Heal UTXO from history** — Settings → Wallet health scans Activity (including archived rows) and session logs for signed txids, releases stuck reservations, credits change, and runs change-heal paths.
+
+### Changed
+
+- **Activity archive** — clearing a row or bulk-clearing failed sends hides it from the feed but keeps it in storage (`archivedAt`) so heal scans and history backup still see txids.
+
 ## [1.3.87] - 2026-09-02
 
 ### Fixed

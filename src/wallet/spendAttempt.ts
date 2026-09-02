@@ -547,12 +547,12 @@ export async function releaseSpendAttemptFunds(): Promise<void> {
 }
 
 /**
- * Clear failed sends from history in one pass.
+ * Clear failed sends from history in one pass (archives rows — they stay in storage).
  *
- * Unsigned rows may repair local reservations first. Signed rows are dropped
+ * Unsigned rows may repair local reservations first. Signed rows are archived
  * only when every input is already spent on chain, and never through that
  * repair. Item transfers the payee can still broadcast are kept. Returns how
- * many rows were removed and how many were kept back.
+ * many rows were archived and how many were kept back.
  */
 export async function clearAllFailedSpends(): Promise<{
   removed: number

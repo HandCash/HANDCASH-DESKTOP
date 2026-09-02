@@ -79,6 +79,8 @@ export type ActivityEntry = {
   retry?: ActivityRetry
   /** Irreversible asset destruction economics (not a send/payment). */
   burn?: ActivityBurn
+  /** Set when the row is hidden from Activity but kept for heal / backup. */
+  archivedAt?: number
 }
 
 export type ActivityBurn = {
@@ -163,6 +165,12 @@ function readAll(): ActivityEntry[] {
             ? normalizeFailureReason(row.failureReason)
             : undefined
         const retry = normalizeActivityRetry(row.retry)
+        const archivedAt =
+          typeof row.archivedAt === 'number' &&
+          Number.isFinite(row.archivedAt) &&
+          row.archivedAt > 0
+            ? Math.trunc(row.archivedAt)
+            : undefined
         return {
           ...row,
           item: item ?? undefined,
@@ -170,6 +178,7 @@ function readAll(): ActivityEntry[] {
           ...(pendingId ? { pendingId } : {}),
           ...(failureReason ? { failureReason } : { failureReason: undefined }),
           ...(retry ? { retry } : { retry: undefined }),
+          ...(archivedAt ? { archivedAt } : { archivedAt: undefined }),
         }
       })
     parsedRaw = raw
@@ -1127,15 +1136,35 @@ export function removeActivityForTxids(txids: string[]): number {
   return removed
 }
 
-/** Delete one local Activity attempt. This never mutates or cancels a transaction. */
-export function removeActivityById(id: string): boolean {
+/** Activity row hidden from the feed but still in durable storage. */
+export function isArchivedActivity(entry: ActivityEntry): boolean {
+  return typeof entry.archivedAt === 'number' && entry.archivedAt > 0
+}
+
+function readVisible(): ActivityEntry[] {
+  return readAll().filter((entry) => !isArchivedActivity(entry))
+}
+
+/** Hide one Activity row (archive). Never mutates or cancels a transaction. */
+export function archiveActivityById(id: string): boolean {
   const key = id.trim()
   if (!key) return false
+  const at = Date.now()
   const prev = readAll()
-  const next = prev.filter((entry) => entry.id !== key)
-  if (next.length === prev.length) return false
+  let changed = false
+  const next = prev.map((entry) => {
+    if (entry.id !== key || isArchivedActivity(entry)) return entry
+    changed = true
+    return { ...entry, archivedAt: at }
+  })
+  if (!changed) return false
   writeAll(next)
   return true
+}
+
+/** @deprecated name — archives the row instead of deleting it. */
+export function removeActivityById(id: string): boolean {
+  return archiveActivityById(id)
 }
 
 /**
@@ -1149,15 +1178,20 @@ export function removeActivityById(id: string): boolean {
 export function countFailedActivity(
   keep?: (entry: ActivityEntry) => boolean,
 ): number {
-  return readAll().reduce(
+  return readVisible().reduce(
     (n, e) => (e.status === 'failed' && !keep?.(e) ? n + 1 : n),
     0,
   )
 }
 
-/** Failed send rows currently in Activity, in store order. */
+/** Failed send rows currently visible in Activity, in store order. */
 export function listFailedActivity(): ActivityEntry[] {
-  return readAll().filter((e) => e.status === 'failed')
+  return readVisible().filter((e) => e.status === 'failed')
+}
+
+/** Archived rows kept for heal scans and history backup. */
+export function listArchivedActivity(): ActivityEntry[] {
+  return readAll().filter(isArchivedActivity)
 }
 
 /**
@@ -1173,10 +1207,36 @@ export function removeFailedActivity(
   keep?: (entry: ActivityEntry) => boolean,
 ): number {
   const prev = readAll()
-  const next = prev.filter((entry) => entry.status !== 'failed' || keep?.(entry))
-  const removed = prev.length - next.length
-  if (removed > 0) writeAll(next)
-  return removed
+  const at = Date.now()
+  let archived = 0
+  const next = prev.map((entry) => {
+    if (entry.status !== 'failed' || keep?.(entry) || isArchivedActivity(entry)) {
+      return entry
+    }
+    archived += 1
+    return { ...entry, archivedAt: at }
+  })
+  if (archived > 0) writeAll(next)
+  return archived
+}
+
+const TXID_HEX = /^[0-9a-f]{64}$/i
+
+/** Txids from visible + archived Activity — used by UTXO heal from history. */
+export function collectActivityTxids(): {
+  txids: Set<string>
+  archived: number
+  total: number
+} {
+  const all = readAll()
+  const txids = new Set<string>()
+  let archived = 0
+  for (const row of all) {
+    if (isArchivedActivity(row)) archived += 1
+    const txid = row.txid?.trim().toLowerCase()
+    if (txid && TXID_HEX.test(txid)) txids.add(txid)
+  }
+  return { txids, archived, total: all.length }
 }
 
 /**
@@ -1753,9 +1813,9 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   return entry.note?.trim() || `From ${name}`
 }
 
-/** Newest-first activity feed for the history panel. */
+/** Newest-first activity feed for the history panel (excludes archived rows). */
 export function listRecentActivity(limit = 40): ActivityEntry[] {
-  const entries = [...readAll()]
+  const entries = [...readVisible()]
   entries.sort((a, b) => b.at - a.at)
   return entries.slice(0, Math.max(1, limit))
 }
