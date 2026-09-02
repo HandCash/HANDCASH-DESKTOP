@@ -34,7 +34,7 @@ import {
   parseLocalCommand,
   type ParsedAmount,
 } from '../wallet/brc218'
-import { openAddFriend } from '../wallet/navStore'
+import { clearNavChild, openAddFriend, openMessagesInbox, openMessagesWithFriend } from '../wallet/navStore'
 import { amountToSats, formatPrimaryFromSats, getCachedUsdPerBsv } from '../wallet/fx'
 import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
@@ -63,18 +63,22 @@ import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { EmptyState } from './EmptyState'
 import {
   AttachFileIcon,
+  CloseIcon,
   FileIcon,
   PayIcon,
   PersonAddIcon,
   RequestMoneyIcon,
   SendIcon,
 } from './icons'
+import { BrandLogo } from './BrandLogo'
 
 type Props = {
   chain: Chain
   identityKey?: string
   /** When set, open directly in this friend's thread (Friends → Message). */
   peerId?: string
+  /** Immersive split-pane chat — hides wallet chrome around the nav panel. */
+  fullscreen?: boolean
   onSent?: (balanceSats: number) => void
 }
 
@@ -452,8 +456,8 @@ function MessageBubble({
   )
 }
 
-export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
-  const threadOnly = Boolean(peerId)
+export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, onSent }: Props) {
+  const threadOnly = Boolean(peerId) && !fullscreen
   const [peers, setPeers] = useState(() => listMessagePeers())
   const [activePeerId, setActivePeerId] = useState<string | null>(() => peerId ?? null)
   const [draft, setDraft] = useState('')
@@ -1088,12 +1092,59 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
     }
   }
 
+  const selectPeer = (id: string) => {
+    playWalletSound('soft')
+    if (fullscreen) openMessagesWithFriend(id)
+    else setActivePeerId(id)
+  }
+
+  const backToList = () => {
+    playWalletSound('soft')
+    if (fullscreen) openMessagesInbox()
+    else setActivePeerId(null)
+  }
+
+  const closeChat = () => {
+    playWalletSound('soft')
+    clearNavChild()
+  }
+
+  const shellState = fullscreen
+    ? activePeerId
+      ? 'thread'
+      : 'list'
+    : threadOnly
+      ? 'thread-only'
+      : activePeerId
+        ? 'thread'
+        : 'list'
+
   return (
     <div
-      className="chat-shell"
+      className={`chat-shell${fullscreen ? ' chat-shell--fullscreen' : ''}`}
       data-aeon-scope="messages"
-      data-aeon-state={threadOnly ? 'thread-only' : activePeerId ? 'thread' : 'list'}
+      data-aeon-state={shellState}
     >
+      {fullscreen ? (
+        <header className="chat-topbar">
+          <div className="chat-topbar-brand">
+            <BrandLogo variant="green" showWordmark={false} size={26} className="chat-topbar-mark" />
+            <div className="chat-topbar-copy">
+              <span className="chat-topbar-title">Messages</span>
+              <span className="chat-topbar-sub">HandCash · P2P</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            className="chat-topbar-close btn btn-ghost btn-icon"
+            aria-label="Close messages"
+            title="Close"
+            onClick={closeChat}
+          >
+            <CloseIcon size={20} />
+          </button>
+        </header>
+      ) : null}
       {!threadOnly ? (
       <aside className="chat-sidebar">
         <div className="chat-sidebar-head panel-label-bar">
@@ -1143,7 +1194,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
                     type="button"
                     className="chat-peer-row"
                     data-selected={selected ? '' : undefined}
-                    onClick={() => setActivePeerId(id)}
+                    onClick={() => selectPeer(id)}
                   >
                     <span className="friend-avatar" aria-hidden>
                       {friendInitial(label)}
@@ -1180,7 +1231,7 @@ export function MessagesPanel({ chain, identityKey, peerId, onSent }: Props) {
                   type="button"
                   className="chat-back-btn btn btn-ghost btn-icon"
                   aria-label="Back to conversations"
-                  onClick={() => setActivePeerId(null)}
+                  onClick={backToList}
                 >
                   ←
                 </button>

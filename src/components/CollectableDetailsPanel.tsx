@@ -27,6 +27,7 @@ import {
   isOutpointSending, inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
+import { subscribeAppActivity } from '../wallet/appActivity'
 
 import {
   clearNavChild,
@@ -151,6 +152,13 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
       }),
     [outpoint],
   )
+  useEffect(
+    () =>
+      subscribeAppActivity(() => {
+        setSending(isOutpointSending(outpoint))
+      }),
+    [outpoint],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -230,6 +238,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   }
 
   const isModel = isCollectableModel({ mimeType: item.mimeType, url: item.imageUrl })
+  const inFlight = inFlightVerb(item.outpoint)
+  const burning = sending && /^burn/i.test(inFlight ?? '')
   const detailRows: CollectableTrait[] = [
     ...(item.app ? [{ name: 'App', value: item.app }] : []),
     ...(item.type ? [{ name: 'Type', value: item.type }] : []),
@@ -373,10 +383,10 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 className="btn btn-primary btn-icon"
                 onClick={startSend}
                 disabled={sending}
-                aria-busy={sending || undefined}
+                aria-busy={sending && !burning ? true : undefined}
               >
                 <SendIcon size={14} />
-                {sending ? 'Sending…' : 'Send item'}
+                {sending && !burning ? `${inFlight ?? 'Sending'}…` : 'Send item'}
               </button>
             )}
             {item.imageUrl && isModel ? (
@@ -418,15 +428,17 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
             {item.covenantLocked ? null : (
               <button
                 type="button"
-                className="btn btn-ghost btn-icon asset-burn-trigger asset-burn-last"
+                className={`btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`}
                 onClick={() => {
+                  if (burning) return
                   playWalletSound('soft')
                   openBurnCollectable(item.outpoint)
                 }}
                 disabled={sending}
+                aria-busy={burning || undefined}
               >
                 <WarningIcon size={14} />
-                Burn item
+                {burning ? 'Burning…' : 'Burn item'}
               </button>
             )}
           </div>

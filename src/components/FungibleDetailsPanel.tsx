@@ -52,7 +52,12 @@ import {
   getCachedUsdPerBsv,
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
-import { tokenMarketPriceHistory } from '../wallet/tokenMarketView'
+import {
+  isOutpointSending,
+  inFlightVerb,
+  subscribePaymentProgress,
+} from '../wallet/paymentProgress'
+import { CollectableSendingMark } from './CollectableSendingMark'
 
 type Props = {
   tokenId: string
@@ -172,16 +177,24 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
   })
   const [combineOpen, setCombineOpen] = useState(false)
   const [combining, setCombining] = useState(false)
+  const [sending, setSending] = useState(() => {
+    const op = initialToken?.outpoint
+    return op ? isOutpointSending(op) : false
+  })
 
   useEffect(() => {
     const sync = () => {
       const token = getFungible(tokenId)
       send({ type: 'LOAD', token, activity: listRecentActivity(500) })
+      const op = token?.outpoint
+      if (op) setSending(isOutpointSending(op))
     }
     sync()
     const unsubscribeTokens = subscribeFungibles(sync)
-    const unsubscribeActivity = subscribeAppActivity(() => {
-      send({ type: 'ACTIVITY_SYNCED', activity: listRecentActivity(500) })
+    const unsubscribeActivity = subscribeAppActivity(sync)
+    const unsubscribeProgress = subscribePaymentProgress(() => {
+      const op = getFungible(tokenId)?.outpoint
+      if (op) setSending(isOutpointSending(op))
     })
     let cancelled = false
     void listFungibles().then(() => {
@@ -191,6 +204,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       cancelled = true
       unsubscribeTokens()
       unsubscribeActivity()
+      unsubscribeProgress()
     }
   }, [tokenId, send])
 
@@ -255,6 +269,8 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         ? 'This balance combines multiple deploy IDs; burn each deploy separately.'
         : `Burn ${token.sym}`
     : `Burn ${token.sym}`
+  const inFlight = inFlightVerb(token.outpoint)
+  const burning = sending && /^burn/i.test(inFlight ?? '')
   const pageState = combining
     ? 'combining'
     : sendBlocked
@@ -296,12 +312,15 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
       data-aeon-state={pageState}
     >
       <header className="fungible-details-hero" data-aeon-part="hero">
-        <FungibleTokenFace
-          tokenId={token.tokenId}
-          sym={token.sym}
-          iconUrl={token.iconUrl}
-          size={72}
-        />
+        <div className="collectable-media collectable-media-token fungible-details-face">
+          <FungibleTokenFace
+            tokenId={token.tokenId}
+            sym={token.sym}
+            iconUrl={token.iconUrl}
+            size={72}
+          />
+          <CollectableSendingMark sending={sending} verb={inFlight ?? 'Sending'} />
+        </div>
         <div className="fungible-details-heading">
           <div className="fungible-details-title">
             <h2>{token.sym}</h2>
@@ -389,19 +408,20 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           type="button"
           className={
             isColour
-              ? 'btn btn-ghost btn-icon asset-burn-trigger asset-burn-last'
-              : 'btn btn-primary btn-icon asset-burn-trigger asset-burn-last'
+              ? `btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`
+              : `btn btn-primary btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`
           }
-          disabled={burnBlocked || combining}
-          title={burnTitle}
+          disabled={burnBlocked || combining || burning}
+          aria-busy={burning || undefined}
+          title={burning ? `${inFlight ?? 'Burning'} ${token.sym}` : burnTitle}
           onClick={() => {
-            if (burnBlocked) return
+            if (burnBlocked || burning) return
             playWalletSound('soft')
             openBurnFungible(token.tokenId)
           }}
         >
           <WarningIcon size={14} />
-          Burn token
+          {burning ? 'Burning…' : 'Burn token'}
         </button>
       </div>
 

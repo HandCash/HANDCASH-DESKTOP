@@ -17,8 +17,8 @@ function item(partial: Partial<Collectable> & Pick<Collectable, 'outpoint'>): Co
 }
 
 describe('groupCollectables', () => {
-  it('folds collections and leaves items with no axis loose', () => {
-    const { groups, loose } = groupCollectables([
+  it('folds collections and leaves items with no axis ungrouped', () => {
+    const { groups, singles, ungrouped } = groupCollectables([
       item({ outpoint: 'aa.0', collectionId: 'foxes', app: 'Zoo' }),
       item({ outpoint: 'bb.0', collectionId: 'foxes', app: 'Zoo' }),
       item({ outpoint: 'cc.0' }),
@@ -29,15 +29,17 @@ describe('groupCollectables', () => {
     expect(groups[0]?.quantity).toBe(2)
     expect(groups[0]?.faces.map((f) => f.outpoint)).toEqual(['aa.0', 'bb.0'])
     expect(groups[0]?.overflow).toBe(0)
-    expect(loose.map((i) => i.outpoint)).toEqual(['cc.0'])
+    expect(singles).toHaveLength(0)
+    expect(ungrouped.map((i) => i.outpoint)).toEqual(['cc.0'])
   })
 
   it('does not fold a collection of one', () => {
-    const { groups, loose } = groupCollectables([
+    const { groups, singles, ungrouped } = groupCollectables([
       item({ outpoint: 'aa.0', collectionId: 'solo', app: 'Zoo' }),
     ])
     expect(groups).toHaveLength(0)
-    expect(loose.map((i) => i.outpoint)).toEqual(['aa.0'])
+    expect(singles.map((i) => i.outpoint)).toEqual(['aa.0'])
+    expect(ungrouped).toHaveLength(0)
   })
 
   it('groups by app when the mint carried no collection', () => {

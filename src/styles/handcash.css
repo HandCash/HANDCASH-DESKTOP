@@ -4207,7 +4207,7 @@ a.history-row-link:hover .history-tx-hint {
 }
 
 .history-action-badge.is-burn {
-  background: #c44747;
+  background: #c9852a;
 }
 
 .history-action-badge.is-failed {
@@ -6104,11 +6104,14 @@ html[data-aeon-mode='light'] .shortcut-key {
   margin: 0;
 }
 
-.friends-panel-head > .connected-panel-head-actions {
-  margin-left: 0;
+.friends-panel-head > .connected-panel-head-actions,
+.friends-panel-head > .friends-panel-head-actions {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .friends-search {
@@ -6168,6 +6171,16 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .friends-add-btn:active {
   transform: scale(0.97);
+}
+
+.friends-messages-btn {
+  min-height: 26px;
+  padding-inline: 10px;
+  font-size: 0.74rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  white-space: nowrap;
 }
 
 .add-friend-panel {
@@ -7232,9 +7245,9 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collectable-sending-mark.is-burn {
-  border-color: color-mix(in srgb, #c44747 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c44747 88%, hsl(var(--background)));
-  color: #fff;
+  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
+  background: color-mix(in srgb, #c9852a 22%, hsl(var(--background)));
+  color: #e8b060;
 }
 
 .collectable-sending-mark.is-listing {
@@ -7287,9 +7300,9 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .history-pending-mark.is-burn {
-  color: #fff;
-  border-color: color-mix(in srgb, #c44747 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c44747 88%, hsl(var(--background)));
+  color: #e8b060;
+  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
+  background: color-mix(in srgb, #c9852a 18%, hsl(var(--background)));
 }
 
 .history-pending-mark.is-listing {
@@ -7936,6 +7949,18 @@ html[data-aeon-mode='light'] .skeleton {
   border-radius: 10px !important;
 }
 
+[data-aeon-scope='fungible-details'] .fungible-details-face {
+  position: relative;
+  width: 72px;
+  height: 72px;
+  flex-shrink: 0;
+}
+
+[data-aeon-scope='fungible-details'] .fungible-details-face .fungible-avatar {
+  width: 100% !important;
+  height: 100% !important;
+}
+
 .fungible-details-heading {
   display: flex;
   flex-direction: column;
@@ -8203,9 +8228,9 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .fungible-activity-icon.is-burn {
-  color: #fff;
-  border-color: #c44747;
-  background: #c44747;
+  color: #e8b060;
+  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
+  background: color-mix(in srgb, #c9852a 22%, hsl(var(--background)));
 }
 
 .fungible-activity-copy {
@@ -8300,6 +8325,19 @@ html[data-aeon-mode='light'] .skeleton {
 .collectable-burn-btn {
   color: hsl(var(--destructive));
   border-color: color-mix(in srgb, hsl(var(--destructive)) 45%, transparent);
+}
+
+.collectable-burn-btn.is-burning,
+.asset-burn-trigger.is-burning {
+  color: #e8b060;
+  border-color: color-mix(in srgb, #c9852a 55%, transparent);
+  background: color-mix(in srgb, #c9852a 14%, transparent);
+  opacity: 1;
+  cursor: wait;
+}
+
+.asset-burn-trigger.is-burning {
+  pointer-events: none;
 }
 
 .send-collectable-panel.send-panel {
@@ -10513,6 +10551,300 @@ html.platform-mobile .chat-shell[data-aeon-state='thread'] .chat-thread {
 html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
   margin: 0;
   padding-inline: 8px;
+}
+
+/* —— Fullscreen chat takeover (Telegram-style · HandCash) —— */
+.dashboard.dashboard--chat-fullscreen {
+  grid-template-columns: 1fr;
+  width: 100%;
+  max-width: none;
+  gap: 0;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.dashboard.dashboard--chat-fullscreen .wallet-hero,
+.dashboard.dashboard--chat-fullscreen .dashboard-side {
+  display: none;
+}
+
+.dashboard.dashboard--chat-fullscreen .dashboard-main {
+  grid-template-rows: minmax(0, 1fr);
+  gap: 0;
+  min-height: 0;
+  height: 100%;
+}
+
+@media (max-width: 900px) {
+  .dashboard.dashboard--chat-fullscreen {
+    height: 100%;
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .dashboard.dashboard--chat-fullscreen .dashboard-main {
+    min-height: 0;
+    height: 100%;
+  }
+}
+
+.wallet-nav-shell.wallet-nav-shell--chat-fullscreen {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .wallet-nav-stage {
+  padding: 0;
+  overflow: hidden;
+}
+
+.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .nav-child-body {
+  overflow: hidden;
+  padding: 0;
+}
+
+.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .wallet-nav-bar {
+  display: none;
+}
+
+.chat-shell.chat-shell--fullscreen {
+  --chat-sidebar-w: clamp(280px, 32vw, 380px);
+  --chat-topbar-h: 52px;
+  display: grid;
+  grid-template-columns: var(--chat-sidebar-w) minmax(0, 1fr);
+  grid-template-rows: var(--chat-topbar-h) minmax(0, 1fr);
+  min-height: 0;
+  height: 100%;
+  border-radius: 0;
+  background:
+    radial-gradient(1200px 520px at 12% -8%, rgba(87, 255, 151, 0.09), transparent 58%),
+    radial-gradient(900px 480px at 88% 108%, rgba(61, 207, 142, 0.06), transparent 55%),
+    linear-gradient(180deg, color-mix(in srgb, #050807 96%, #0f1813), color-mix(in srgb, #060908 94%, #101612));
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--hc-accent, #57ff97) 8%, transparent);
+}
+
+.chat-shell--fullscreen .chat-topbar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 14px 0 12px;
+  min-height: var(--chat-topbar-h);
+  border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 72%, transparent);
+  background: color-mix(in srgb, #060908 88%, transparent);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  position: sticky;
+  top: 0;
+  z-index: 8;
+}
+
+.chat-topbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.chat-topbar-mark.brand {
+  gap: 0;
+}
+
+.chat-topbar-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.chat-topbar-title {
+  font-family: var(--hc-display, var(--hc-font));
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--hc-text, #e8f5ef);
+}
+
+.chat-topbar-sub {
+  font-size: 0.68rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--hc-muted, #8a9a92);
+}
+
+.chat-topbar-close {
+  flex-shrink: 0;
+  color: var(--hc-muted, #8a9a92);
+}
+
+.chat-topbar-close:hover {
+  color: var(--hc-text, #e8f5ef);
+}
+
+.chat-shell--fullscreen .chat-sidebar {
+  grid-row: 2;
+  grid-column: 1;
+  border-right: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 65%, transparent);
+  background: color-mix(in srgb, #050807 92%, #0c1210);
+}
+
+.chat-shell--fullscreen .chat-thread {
+  grid-row: 2;
+  grid-column: 2;
+  min-width: 0;
+  background:
+    radial-gradient(680px 360px at 50% 0%, rgba(87, 255, 151, 0.035), transparent 70%),
+    color-mix(in srgb, #07100c 90%, #0d1612);
+}
+
+.chat-shell--fullscreen .chat-sidebar-head {
+  padding-top: 12px;
+}
+
+.chat-shell--fullscreen .chat-sidebar-head h2 {
+  font-size: 1.02rem;
+  font-weight: 700;
+}
+
+.chat-shell--fullscreen .chat-search {
+  padding: 0 12px 10px;
+}
+
+.chat-shell--fullscreen .chat-search input {
+  min-height: 36px;
+  padding-inline: 14px;
+  border: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 55%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.chat-shell--fullscreen .chat-peer-list {
+  padding-inline: 8px;
+}
+
+.chat-shell--fullscreen .chat-peer-row {
+  padding: 11px 10px;
+  border-radius: 14px;
+  transition: background 140ms ease, transform 140ms ease;
+}
+
+.chat-shell--fullscreen .chat-peer-row:hover {
+  transform: translateX(2px);
+}
+
+.chat-shell--fullscreen .chat-peer-row[data-selected] {
+  background: color-mix(in srgb, var(--hc-accent, #57ff97) 14%, #0f1813);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent, #57ff97) 22%, transparent);
+}
+
+.chat-shell--fullscreen .chat-unread-badge {
+  background: var(--hc-accent, #57ff97);
+  color: #04140a;
+  font-weight: 700;
+  min-width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  font-size: 0.68rem;
+}
+
+.chat-shell--fullscreen .chat-thread-head {
+  padding: 12px 16px 10px;
+  background: color-mix(in srgb, #060908 90%, transparent);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border-bottom: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 60%, transparent);
+}
+
+.chat-shell--fullscreen .chat-thread-messages {
+  flex: 1 1 auto;
+  min-height: 0;
+  background-image:
+    radial-gradient(circle at 20% 18%, rgba(87, 255, 151, 0.025) 0, transparent 42%),
+    radial-gradient(circle at 80% 72%, rgba(61, 207, 142, 0.02) 0, transparent 38%);
+}
+
+.chat-shell--fullscreen .chat-thread-list,
+.chat-shell--fullscreen .chat-thread-messages [data-aeon-part='list'] {
+  padding: 18px 20px 12px;
+}
+
+.chat-shell--fullscreen .chat-composer {
+  margin: 0;
+  padding: 10px 14px 14px;
+  border-radius: 0;
+  border: 0;
+  border-top: 1px solid color-mix(in srgb, var(--hc-border, #2a3330) 55%, transparent);
+  background: color-mix(in srgb, #060908 94%, #0c1210);
+  box-shadow: 0 -8px 28px rgba(0, 0, 0, 0.22);
+}
+
+.chat-shell--fullscreen .chat-composer-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.chat-shell--fullscreen .chat-input {
+  min-height: 40px;
+  padding: 10px 8px;
+  font-size: 0.94rem;
+}
+
+.chat-shell--fullscreen .chat-send-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 999px;
+  box-shadow:
+    0 6px 18px color-mix(in srgb, var(--hc-accent, #57ff97) 28%, transparent),
+    inset 0 1px 0 rgba(255, 255, 255, 0.25);
+}
+
+.chat-shell--fullscreen .chat-bubble {
+  box-shadow:
+    0 4px 14px rgba(0, 0, 0, 0.16),
+    inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.chat-shell--fullscreen .chat-placeholder {
+  flex: 1 1 auto;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+
+/* Desktop split-pane: keep inbox visible while a thread is open */
+html:not(.platform-mobile) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
+  display: flex;
+}
+
+html:not(.platform-mobile) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
+  display: flex;
+}
+
+html.platform-mobile .chat-shell--fullscreen {
+  grid-template-columns: 1fr;
+  grid-template-rows: var(--chat-topbar-h) minmax(0, 1fr);
+}
+
+html.platform-mobile .chat-shell--fullscreen .chat-sidebar,
+html.platform-mobile .chat-shell--fullscreen .chat-thread {
+  grid-column: 1;
+}
+
+html.platform-mobile .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
+  display: none;
+}
+
+html.platform-mobile .chat-shell--fullscreen[data-aeon-state='list'] .chat-thread {
+  display: none;
+}
+
+html.platform-mobile .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
+  grid-column: 1;
+  display: flex;
 }
 
 /* —— Light sheet: surfaces that were authored as literal near-black ——

@@ -1,4 +1,4 @@
-/** Map in-flight verb to overlay tone (send = accent, burn = destructive, market = accent-alt). */
+/** Map in-flight verb to overlay tone (send = accent, burn = warm amber, market = accent-alt). */
 export function sendingMarkTone(verb: string): 'burn' | 'listing' | 'default' {
   if (/^burn/i.test(verb)) return 'burn'
   if (/^(list|cancel|buy)/i.test(verb)) return 'listing'

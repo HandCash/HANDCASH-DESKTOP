@@ -6,8 +6,8 @@ import type { Collectable } from './collectables'
  *
  * Grouping is display-only: the key is the item's own `collectionId` (BRC-99
  * `collection:<id>` scope), and `app` is the fallback axis for items minted
- * without one. A group of one is not a collection worth folding, so those items
- * fall back through to `loose` and paint exactly as they do today.
+ * without one. A group of one is not folded into an accordion, but those items
+ * still belong to their collection and are listed under `singles`.
  */
 
 /** Faces shown before the pile collapses into a "+N" chip. */
@@ -39,8 +39,10 @@ export type CollectableGroup = {
 
 export type GroupedCollectables = {
   groups: CollectableGroup[]
-  /** Items with no collection axis, or the only member of theirs. */
-  loose: Collectable[]
+  /** One item from a collection/app — not folded, but still belongs to a set. */
+  singles: Collectable[]
+  /** No collection or app axis. */
+  ungrouped: Collectable[]
 }
 
 function shortId(value: string): string {
@@ -82,12 +84,13 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
     string,
     { axis: { key: string; collectionId?: string; app?: string }; items: Collectable[] }
   >()
-  const loose: Collectable[] = []
+  const singles: Collectable[] = []
+  const ungrouped: Collectable[] = []
 
   for (const item of items) {
     const axis = axisFor(item)
     if (!axis) {
-      loose.push(item)
+      ungrouped.push(item)
       continue
     }
     const bucket = buckets.get(axis.key)
@@ -98,7 +101,7 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
   const groups: CollectableGroup[] = []
   for (const bucket of buckets.values()) {
     if (bucket.items.length < MIN_GROUP_SIZE) {
-      loose.push(...bucket.items)
+      singles.push(...bucket.items)
       continue
     }
     const { faces, overflow } = facesFor(bucket.items)
@@ -127,7 +130,7 @@ export function groupCollectables(items: Collectable[]): GroupedCollectables {
   }
 
   groups.sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
-  return { groups, loose }
+  return { groups, singles, ungrouped }
 }
 
 /** Card subtitle: "12 items", plus verified count once any are proven. */

@@ -34,7 +34,7 @@ export type NavChild =
   | { type: 'payment'; entryId: string }
   | { type: 'friend'; friendId: string }
   | { type: 'add-friend'; identityKey?: string; label?: string }
-  | { type: 'messages'; friendId: string }
+  | { type: 'messages'; friendId?: string }
   | { type: 'collectable'; outpoint: string }
   | { type: 'send-collectable'; outpoint: string }
   | { type: 'burn-collectable'; outpoint: string }
@@ -177,6 +177,10 @@ export function openAddFriend(opts?: { identityKey?: string; label?: string }) {
   })
 }
 
+export function openMessagesInbox() {
+  openNavChild('friends', { type: 'messages' })
+}
+
 export function openMessagesWithFriend(friendId: string) {
   focusMessagePeer(friendId)
   openNavChild('friends', { type: 'messages', friendId })
@@ -184,6 +188,12 @@ export function openMessagesWithFriend(friendId: string) {
 
 /** @deprecated */
 export const openChatWithFriend = openMessagesWithFriend
+
+export function isMessagesNavChild(
+  child: NavChild | null,
+): child is { type: 'messages'; friendId?: string } {
+  return child?.type === 'messages'
+}
 
 export function openCollectableDetails(outpoint: string) {
   openNavChild('collectables', { type: 'collectable', outpoint })

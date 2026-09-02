@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.82] - 2026-09-02
+
+### Added
+
+- **Fullscreen Messages** — Telegram-style immersive chat (split-pane desktop, list/thread mobile), HandCash-branded chrome, Friends → Messages inbox entry.
+
+### Fixed
+
+- **Collectables grouping** — solo collection items label as **Singles**, not “Not in a collection”.
+- **Burn UX** — in-flight burns use warm amber (not error red) on Activity; Burn buttons and BSV-21 inventory show **Burning…** with live overlay via pending Activity rows.
+
 ## [1.3.81] - 2026-09-02
 
 ### Fixed

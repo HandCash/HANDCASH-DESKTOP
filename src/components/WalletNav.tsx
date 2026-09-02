@@ -24,6 +24,7 @@ import {
   clearNavChild,
   getNavState,
   getSettingBackStack,
+  isMessagesNavChild,
   openAppDetails,
   openCollectableDetails,
   openFungibleDetails,
@@ -332,8 +333,8 @@ export const WalletNav = memo(function WalletNav({
       return [root, { label: friend?.label || 'Friend' }]
     }
     if (stageChild.type === 'messages') {
-      const friend = getFriendById(stageChild.friendId)
-      return [root, { label: friend?.label || 'Message' }]
+      const friend = stageChild.friendId ? getFriendById(stageChild.friendId) : null
+      return [root, { label: friend?.label || 'Messages' }]
     }
     if (stageChild.type === 'collectable') {
       return [root, { label: collectableLabel }]
@@ -400,9 +401,11 @@ export const WalletNav = memo(function WalletNav({
     })
   }
 
+  const chatFullscreen = isMessagesNavChild(stageChild)
+
   return (
     <section
-      className="wallet-nav-shell panel"
+      className={`wallet-nav-shell panel${chatFullscreen ? ' wallet-nav-shell--chat-fullscreen' : ''}`}
       data-aeon-scope="wallet-nav"
       data-aeon-state={stateToAttr(aeonState)}
     >
@@ -410,7 +413,7 @@ export const WalletNav = memo(function WalletNav({
         <div className="wallet-nav-stage">
           {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
-              <NavBreadcrumb crumbs={crumbs} />
+              {!chatFullscreen ? <NavBreadcrumb crumbs={crumbs} /> : null}
               <div className="nav-child-body">
               {stageChild.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === stageChild.origin)
@@ -451,6 +454,7 @@ export const WalletNav = memo(function WalletNav({
                   chain={profile.chain}
                   identityKey={profile.identityKey}
                   peerId={stageChild.friendId}
+                  fullscreen
                   onSent={onSent}
                 />
               )}

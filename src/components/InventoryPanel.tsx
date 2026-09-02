@@ -33,7 +33,6 @@ import {
   type VerificationProgress,
 } from '../wallet/verificationProgress'
 import {
-  getPaymentProgress,
   inFlightVerb,
   isOutpointSending,
   subscribePaymentProgress,
@@ -347,6 +346,7 @@ function FungibleCarouselCard({
   const supplyBadge = isLegacy ? 'Legacy · burn only' : null
   const listPrice = token.marketListing?.priceSats ?? liveMarketListingPrice(token.outpoint)
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
+  const burning = sending && /^burn/i.test(verb)
   return (
     <li
       className="collect-token-card"
@@ -390,10 +390,11 @@ function FungibleCarouselCard({
       {isLegacy ? (
         <button
           type="button"
-          className="collectable-send-btn collectable-burn-btn"
-          title={sending ? `${verb} ${token.sym}` : `Burn legacy BSV-21 ${token.sym}`}
-          aria-label={sending ? `${verb} ${token.sym}` : `Burn ${token.sym}`}
+          className={`collectable-send-btn collectable-burn-btn${burning ? ' is-burning' : ''}`}
+          title={burning ? `${verb} ${token.sym}` : `Burn legacy BSV-21 ${token.sym}`}
+          aria-label={burning ? `${verb} ${token.sym}` : `Burn ${token.sym}`}
           disabled={sending}
+          aria-busy={burning || undefined}
           onClick={(e) => {
             e.stopPropagation()
             if (sending) return
@@ -402,7 +403,7 @@ function FungibleCarouselCard({
           }}
         >
           <FireIcon size={14} />
-          {sending ? verb : 'Burn'}
+          {burning ? 'Burning…' : 'Burn'}
         </button>
       ) : (
         <button
@@ -448,17 +449,13 @@ export function InventoryPanel() {
   const [verification, setVerification] = useState<VerificationProgress>(() =>
     getVerificationProgress(),
   )
-  const [sendingOutpoint, setSendingOutpoint] = useState<string | null>(() =>
-    getPaymentProgress().phase === 'idle' ? null : getPaymentProgress().outpoint,
-  )
   const [, bumpInFlight] = useState(0)
 
   useEffect(() => subscribeCollectionView(setView, 'collectables'), [])
   useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(
     () =>
-      subscribePaymentProgress((next) => {
-        setSendingOutpoint(next.phase === 'idle' ? null : next.outpoint)
+      subscribePaymentProgress(() => {
         bumpInFlight((n) => n + 1)
       }),
     [],
@@ -569,7 +566,7 @@ export function InventoryPanel() {
     [deferredItems, tokens],
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
-  const { groups, loose } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
+  const { groups, singles, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
   const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
 
   return (
@@ -595,9 +592,7 @@ export function InventoryPanel() {
               <FungibleCarouselCard
                 key={token.tokenId}
                 token={token}
-                sending={
-                  sendingOutpoint != null && isOutpointSending(token.outpoint)
-                }
+                sending={isOutpointSending(token.outpoint)}
               />
             ))}
           </ul>
@@ -621,13 +616,26 @@ export function InventoryPanel() {
             </Accordion.Root>
           ) : null}
 
-          {loose.length > 0 ? (
+          {singles.length > 0 ? (
             <>
               {groups.length > 0 ? (
+                <h3 className="collect-section-title">Singles</h3>
+              ) : null}
+              <CollectableItems
+                items={singles}
+                view={view}
+                verification={verification}
+              />
+            </>
+          ) : null}
+
+          {ungrouped.length > 0 ? (
+            <>
+              {groups.length > 0 || singles.length > 0 ? (
                 <h3 className="collect-section-title">Not in a collection</h3>
               ) : null}
               <CollectableItems
-                items={loose}
+                items={ungrouped}
                 view={view}
                 verification={verification}
               />

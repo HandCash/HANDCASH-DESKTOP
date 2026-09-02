@@ -11,11 +11,11 @@ import {
   subscribeCollectionView,
   type CollectionView,
 } from '../wallet/collectionView'
-import { openAddFriend, openFriendDetails } from '../wallet/navStore'
+import { openAddFriend, openFriendDetails, openMessagesInbox } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { EmptyState } from './EmptyState'
-import { PersonAddIcon } from './icons'
+import { MessagesIcon, PersonAddIcon } from './icons'
 
 type Props = {
   chain: Chain
@@ -120,20 +120,33 @@ export function FriendsPanel({ chain }: Props) {
     >
       <div className="connected-panel-head friends-panel-head">
         <h2>Friends</h2>
-        <button
-          type="button"
-          className="friends-add-btn"
-          aria-label="Add friend"
-          title="Add friend"
-          onClick={() => {
-            playWalletSound('soft')
-            openAddFriend()
-          }}
-        >
-          <PersonAddIcon size={18} />
-          <span>Add friend</span>
-        </button>
-        <div className="connected-panel-head-actions">
+        <div className="friends-panel-head-actions">
+          <button
+            type="button"
+            className="friends-messages-btn btn btn-primary btn-icon"
+            aria-label="Open messages"
+            title="Messages"
+            onClick={() => {
+              playWalletSound('soft')
+              openMessagesInbox()
+            }}
+          >
+            <MessagesIcon size={18} />
+            <span>Messages</span>
+          </button>
+          <button
+            type="button"
+            className="friends-add-btn"
+            aria-label="Add friend"
+            title="Add friend"
+            onClick={() => {
+              playWalletSound('soft')
+              openAddFriend()
+            }}
+          >
+            <PersonAddIcon size={18} />
+            <span>Add friend</span>
+          </button>
           <CollectionViewToggle label="Friends view" scope="friends" />
         </div>
       </div>
