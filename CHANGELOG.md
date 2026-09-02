@@ -4,7 +4,13 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **Collectable send speed** — finish as soon as the tx is signed and sealed (same optimistic miner path as BSV); messagebox delivery and BRC-150 remittance extend run in the background.
+- **Cached BRC-150** — reuse remembered or proven tip remittance instead of rebuilding the full proof before every send.
+- **Inventory trust** — skip the 1000-row basket scan when the in-memory collectables list already holds the tip.
+
+### Added
+
+- **Item remittance outbox** — retries failed peer inbox delivery without a second payment tx (Dashboard poll flushes alongside BRC-29).
 
 ## [1.3.70] - 2026-09-02
 
