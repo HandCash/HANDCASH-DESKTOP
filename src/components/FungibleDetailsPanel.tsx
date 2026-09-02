@@ -33,6 +33,9 @@ import {
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { combineColourTips } from '../wallet/sendColourCoins'
+import {
+  tokenMarketPriceHistory,
+} from '../wallet/tokenMarketView'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
   CollectablesIcon,

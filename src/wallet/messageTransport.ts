@@ -623,6 +623,8 @@ export type InboundPaymentHint = {
   tx?: number[]
   item?: boolean
   itemName?: string
+  itemOrigin?: string
+  itemCollectionId?: string
   asset?: ItemTransferAsset
 }
 

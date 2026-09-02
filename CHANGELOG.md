@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.84] - 2026-09-02
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
+## [1.3.84] - 2026-09-02
+
+### Fixed
+
+- **CI typecheck** — restore `tokenMarketPriceHistory` import, `InboundPaymentHint` item origin fields, and collectable seed paint fallback typing so release workflows pass.
+
 ## [1.3.83] - 2026-09-02
 
 ### Fixed

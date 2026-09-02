@@ -1207,12 +1207,12 @@ export function noteIngestedItem(args: {
         (origin || name || app || collectionId
           ? {
               origin: origin ?? target.replace(/\.(\d+)$/, '_$1'),
-              name: name ?? priorByOrigin?.name,
-              app: app ?? priorByOrigin?.app,
-              collectionId: collectionId ?? priorByOrigin?.collectionId,
-              content: content ?? priorByOrigin?.content,
-              traits: priorByOrigin?.traits ?? [],
-              extras: priorByOrigin?.extras ?? [],
+              ...(name ? { name } : {}),
+              ...(app ? { app } : {}),
+              ...(collectionId ? { collectionId } : {}),
+              ...(content ? { content } : {}),
+              traits: [],
+              extras: [],
             }
           : null),
     ),
