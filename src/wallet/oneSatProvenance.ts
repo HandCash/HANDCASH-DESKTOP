@@ -1396,6 +1396,42 @@ export async function tryBuildProvenanceForSend(args: {
   return tryBuildProvenanceV2(args)
 }
 
+function normalizeProvenanceOrigin(origin: string): string {
+  return toUnderscore(origin).toLowerCase()
+}
+
+/** Reuse cached BRC-150 when the tip is already proven; else build from chain. */
+export async function resolveProvenanceForCollectableSend(args: {
+  tipOutpoint: string
+  origin: string
+  wallet: ActiveWallet
+  contentType?: string
+  inputBeef?: number[]
+  priorProvenance?: unknown
+  provenTier: string | null
+}): Promise<ProvenanceRemittance | null> {
+  const want = normalizeProvenanceOrigin(args.origin)
+  const remembered = getRememberedProvenanceRemittance(args.tipOutpoint)
+  if (remembered && normalizeProvenanceOrigin(remembered.origin) === want) {
+    return remembered
+  }
+  const fromTip = parseProvenanceV2(args.priorProvenance)
+  if (fromTip && args.provenTier === 'brc150') {
+    if (normalizeProvenanceOrigin(fromTip.origin) === want) {
+      rememberProvenanceRemittance(fromTip)
+      return fromTip
+    }
+  }
+  return tryBuildProvenanceForSend({
+    tipOutpoint: args.tipOutpoint,
+    origin: args.origin,
+    wallet: args.wallet,
+    contentType: args.contentType,
+    inputBeef: args.inputBeef,
+    priorProvenance: args.priorProvenance,
+  })
+}
+
 /** Merge display fields + optional provenance into customInstructions JSON. */
 export function buildCollectableCustomInstructions(args: {
   origin: string

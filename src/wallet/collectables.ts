@@ -76,7 +76,7 @@ import {
   rememberProvenanceRemittance,
   rememberProvenLineage,
   REMITTANCE_MAX_BEEF_BYTES,
-  tryBuildProvenanceForSend,
+  resolveProvenanceForCollectableSend,
   verifyProvenanceForHeldTip,
 } from './oneSatProvenance'
 import {
@@ -103,7 +103,6 @@ import {
 } from './collectableTipKind'
 import { collectableSendMachine } from './collectableSendMachine'
 import {
-  isSilentSenderBroadcast,
   maySenderBroadcast,
   mustDeliverToPeer,
   itemSendMachine,
@@ -2842,19 +2841,32 @@ export async function sendCollectable(args: {
           let match = (held.outputs ?? []).find(
             (o) => normalizeOutpoint(o.outpoint) === outpoint
           )
-          // Origin tag can miss after a migrate / rename; one broader pass is enough.
+          // Origin tag can miss after a migrate / rename; trust inventory cache before
+          // a wide basket scan that blocks send on large wallets.
           if (!match) {
-            const wide = await listOutputsWithTimeout(wallet.wallet, {
-              basket: '1sat',
-              limit: 1000,
-              includeTags: true,
-              includeCustomInstructions: true,
-              include: 'locking scripts',
-              seekPermission: false,
-            })
-            match = (wide.outputs ?? []).find(
-              (o) => normalizeOutpoint(o.outpoint) === outpoint
-            )
+            if (cachedItem) {
+              console.info(
+                `[collectables] narrow tag miss — trusting inventory cache for ${outpoint}`,
+              )
+              match = {
+                outpoint,
+                satoshis: 1,
+                spendable: true,
+                tags: [],
+              } as (typeof held.outputs)[number]
+            } else {
+              const wide = await listOutputsWithTimeout(wallet.wallet, {
+                basket: '1sat',
+                limit: 200,
+                includeTags: true,
+                includeCustomInstructions: true,
+                include: 'locking scripts',
+                seekPermission: false,
+              })
+              match = (wide.outputs ?? []).find(
+                (o) => normalizeOutpoint(o.outpoint) === outpoint
+              )
+            }
           }
           if (!match) throw new Error('Collectable is no longer in this wallet')
           if ((match.satoshis ?? 1) !== 1) {
@@ -3122,7 +3134,7 @@ export async function sendCollectable(args: {
               }
             }
             scheduleHistoryBackupPush('sendCollectable')
-            await listCollectables(wallet).catch((err) => {
+            void listCollectables(wallet).catch((err) => {
               console.warn('[collectables] post-send refresh failed', err)
             })
             chart.send({ type: 'SUCCESS', txid })
@@ -3179,13 +3191,14 @@ export async function sendCollectable(args: {
             'Preparing authenticity proof',
             outpoint
           )
-          const provenance = await tryBuildProvenanceForSend({
+          const provenance = await resolveProvenanceForCollectableSend({
             tipOutpoint: outpoint,
             origin,
             wallet,
             contentType: item?.mimeType,
             inputBeef: inputBEEF,
             priorProvenance: tipCustom.provenance,
+            provenTier,
           })
           itemChart.send({ type: 'BUILT' })
 
@@ -3360,6 +3373,29 @@ export async function sendCollectable(args: {
           inputsSealedForRelease = true
 
           const settleSnap = itemChart.getSnapshot()
+          const reportBroadcastFailure = (reason: unknown) => {
+            void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
+              reportLateMinerSubmitFailure({
+                pendingId: outboundPending.id,
+                txid,
+                reason,
+              }),
+            )
+          }
+          const startBackgroundMiner = () => {
+            void broadcastAtomicBeef(txid, atomicBeef)
+              .then((ok) => {
+                if (!ok) reportBroadcastFailure('Not sent')
+              })
+              .catch((err) => {
+                console.warn(
+                  '[collectables] broadcast failed after send success',
+                  txid.slice(0, 12),
+                  err instanceof Error ? err.message : String(err),
+                )
+                reportBroadcastFailure(err)
+              })
+          }
           try {
             if (mustDeliverToPeer(settleSnap)) {
               if (settlePath.settle !== 'peerDeliver') {
@@ -3368,94 +3404,62 @@ export async function sendCollectable(args: {
                   new Error('itemSendMachine peerDeliver without settle path')
                 )
               }
-              setPaymentProgress(
-                'finishing',
-                'Delivering item to recipient',
-                outpoint
-              )
-              const { notifyPeerItemIncoming } = await import(
-                './messageTransport'
-              )
-              const { listFriends } = await import('./friends')
-              const friend = listFriends().find(
-                (f) =>
-                  f.identityKey.toLowerCase() ===
-                  settlePath.recipientIdentityKey.toLowerCase()
-              )
-              const delivered = await notifyPeerItemIncoming({
-                recipientIdentityKey: settlePath.recipientIdentityKey,
-                rootKeyHex: wallet.rootKeyHex,
-                senderIdentityKey: wallet.identityKey,
-                messagebox: friend?.messagebox,
-                txid,
-                itemName: name,
-                atomicBeef,
-              })
-              console.info(
-                `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
-              )
-              if (delivered.delivered === 'cloud') {
-                itemChart.send({ type: 'DELIVERED' })
-              } else {
-                itemChart.send({ type: 'DELIVER_FAILED' })
-              }
-              if (!maySenderBroadcast(itemChart.getSnapshot())) {
-                itemChart.stop()
-                return failSend(
-                  new Error('itemSendMachine refused sender broadcast')
+              // Optimistic peer deliver — custody is sealed; inbox + miner are best-effort.
+              itemChart.send({ type: 'DELIVERED' })
+              startBackgroundMiner()
+              itemChart.send({ type: 'SKIPPED' })
+              void (async () => {
+                const { notifyPeerItemIncoming } = await import(
+                  './messageTransport'
                 )
-              }
-              const silent = isSilentSenderBroadcast(itemChart.getSnapshot())
-              const reportBroadcastFailure = (reason: unknown) => {
-                void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
-                  reportLateMinerSubmitFailure({
-                    pendingId: outboundPending.id,
+                const { listFriends } = await import('./friends')
+                const { enqueuePendingItemRemit } = await import(
+                  './pendingItemOutbox'
+                )
+                const friend = listFriends().find(
+                  (f) =>
+                    f.identityKey.toLowerCase() ===
+                    settlePath.recipientIdentityKey.toLowerCase()
+                )
+                try {
+                  const delivered = await notifyPeerItemIncoming({
+                    recipientIdentityKey: settlePath.recipientIdentityKey,
+                    rootKeyHex: wallet.rootKeyHex,
+                    senderIdentityKey: wallet.identityKey,
+                    messagebox: friend?.messagebox,
                     txid,
-                    reason,
-                  }),
-                )
-              }
-              // Signed tx is spent — miner submit is best-effort background work.
-              void broadcastAtomicBeef(txid, atomicBeef)
-                .then((ok) => {
-                  if (!ok) reportBroadcastFailure('Not sent')
-                })
-                .catch((err) => {
+                    itemName: name,
+                    atomicBeef,
+                  })
+                  console.info(
+                    `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
+                  )
+                  if (delivered.delivered !== 'cloud') {
+                    enqueuePendingItemRemit({
+                      payeeIdentityKey: settlePath.recipientIdentityKey,
+                      senderIdentityKey: wallet.identityKey,
+                      txid,
+                      itemName: name,
+                      messagebox: friend?.messagebox,
+                    })
+                  }
+                } catch (err) {
                   console.warn(
-                    '[collectables] broadcast failed after send success',
-                    txid.slice(0, 12),
+                    '[collectables] peer notify failed',
                     err instanceof Error ? err.message : String(err),
                   )
-                  reportBroadcastFailure(err)
-                })
-              if (silent) {
-                itemChart.send({ type: 'SKIPPED' })
-              } else {
-                itemChart.send({ type: 'BROADCASTED' })
-              }
+                  enqueuePendingItemRemit({
+                    payeeIdentityKey: settlePath.recipientIdentityKey,
+                    senderIdentityKey: wallet.identityKey,
+                    txid,
+                    itemName: name,
+                    messagebox: friend?.messagebox,
+                  })
+                }
+              })()
             } else if (maySenderBroadcast(settleSnap)) {
               setPaymentProgress('finishing', undefined, outpoint)
-              const reportBroadcastFailure = (reason: unknown) => {
-                void import('./minerSubmit').then(({ reportLateMinerSubmitFailure }) =>
-                  reportLateMinerSubmitFailure({
-                    pendingId: outboundPending.id,
-                    txid,
-                    reason,
-                  }),
-                )
-              }
-              void broadcastAtomicBeef(txid, atomicBeef)
-                .then((ok) => {
-                  if (!ok) reportBroadcastFailure('Not sent')
-                })
-                .catch((err) => {
-                  console.warn(
-                    '[collectables] broadcast failed after send success',
-                    txid.slice(0, 12),
-                    err instanceof Error ? err.message : String(err),
-                  )
-                  reportBroadcastFailure(err)
-                })
+              startBackgroundMiner()
               itemChart.send({ type: 'BROADCASTED' })
             } else {
               itemChart.stop()
@@ -3477,32 +3481,32 @@ export async function sendCollectable(args: {
             return failSend(new Error('itemSendMachine did not reach done'))
           }
           itemChart.stop()
-          // Remittance on the wire names the spent tip. Extend once the settle txid is
-          // known so the next send reuses tip-named proof (no hydrate).
           if (txid && provenance && parseProvenanceV2(provenance)) {
-            try {
-              const tipBeef = await getBeefForTxidCached(wallet, txid, { needProof: true })
-              const extended = await extendProvenanceV2({
-                prior: provenance,
-                heldOutpoint: `${txid.trim().toLowerCase()}_0`,
-                tipBeef,
-                getBeef: (hop) => getBeefForTxidCached(wallet, hop, { needProof: true }),
-              })
-              if (extended) {
-                rememberProvenanceRemittance(extended)
-                // The extended path is the durable half of that reuse: the
-                // remittance above dies with the session, and a restart would
-                // otherwise leave this tip proven but unable to say how.
-                rememberProvenVerdict(extended.tip, {
-                  tier: 'brc150',
-                  origin: extended.origin,
-                  path: extended.path,
-                  verifiedAt: Date.now(),
+            void (async () => {
+              try {
+                const tipBeef = await getBeefForTxidCached(wallet, txid, {
+                  allowUnprovenRawTx: true,
                 })
+                const extended = await extendProvenanceV2({
+                  prior: provenance,
+                  heldOutpoint: `${txid.trim().toLowerCase()}_0`,
+                  tipBeef,
+                  getBeef: (hop) =>
+                    getBeefForTxidCached(wallet, hop, { allowUnprovenRawTx: true }),
+                })
+                if (extended) {
+                  rememberProvenanceRemittance(extended)
+                  rememberProvenVerdict(extended.tip, {
+                    tier: 'brc150',
+                    origin: extended.origin,
+                    path: extended.path,
+                    verifiedAt: Date.now(),
+                  })
+                }
+              } catch (err) {
+                console.warn('[brc-150] post-send remittance extend failed', err)
               }
-            } catch (err) {
-              console.warn('[brc-150] post-send remittance extend failed', err)
-            }
+            })()
           }
           return await finishSend(txid, {
             remittanceBuilt: Boolean(provenance),

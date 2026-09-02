@@ -301,6 +301,10 @@ export function Dashboard({
           '../wallet/pendingBrc29Outbox'
         )
         await flushPendingBrc29Outbox({ rootKeyHex: active.rootKeyHex })
+        const { flushPendingItemOutbox } = await import(
+          '../wallet/pendingItemOutbox'
+        )
+        await flushPendingItemOutbox({ rootKeyHex: active.rootKeyHex })
         const hints = await pollInboundTipHints({
           rootKeyHex: active.rootKeyHex,
           peerIdForSender: (ik) => map.get(ik.toLowerCase()) ?? null,
