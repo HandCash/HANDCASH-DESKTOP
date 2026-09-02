@@ -724,9 +724,10 @@ export function noteOutboundSendPending(args: {
 }): void {
   const pendingId = args.pendingId.trim()
   if (!pendingId) return
-  const recipient = args.friendLabel?.trim()
-    ? `${args.friendLabel.trim()} (${args.to.trim()})`
-    : args.to.trim()
+  const recipient = formatActivityRecipientDisplay({
+    friendLabel: args.friendLabel,
+    to: args.to,
+  })
   if (args.item) {
     const isToken = Boolean(args.item.tokenId)
     const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
@@ -780,6 +781,56 @@ export function noteOutboundSendPending(args: {
   })
 }
 
+function shortenActivityCounterparty(value: string): string {
+  const v = value.trim()
+  if (v.length <= 20) return v
+  return `${v.slice(0, 10)}…${v.slice(-8)}`
+}
+
+/** Human-readable counterparty for Activity titles and notes. */
+export function formatActivityRecipientDisplay(args: {
+  friendLabel?: string | null
+  to: string
+}): string {
+  const label = args.friendLabel?.trim()
+  const to = args.to.trim()
+  if (label) {
+    const normalized = label.toLowerCase() === 'me' ? 'myself' : label
+    // Identity keys and long addresses belong in detail rows, not parenthesized.
+    if (/^[0-9a-f]{64}$/i.test(to) || to.length >= 34) return normalized
+    if (to.length <= 20) return `${normalized} (${to})`
+    return normalized
+  }
+  return shortenActivityCounterparty(to)
+}
+
+/** Counterparty name for wallet payment rows — never the full identity key. */
+export function activityRecipientLabel(entry: ActivityEntry): string | null {
+  const retry = entry.retry
+  if (retry && 'toAddress' in retry) {
+    return formatActivityRecipientDisplay({
+      friendLabel: retry.friendLabel,
+      to: retry.toAddress,
+    })
+  }
+  const note = entry.note?.trim()
+  if (!note) return null
+  const match =
+    note.match(/^Sent(?:ing)?(?:\s+[\d,.\s]+)?(?:\s+\S+)?\s+to\s+(.+)$/i) ??
+    note.match(/^Received from\s+(.+)$/i)
+  if (!match) return null
+  let label = match[1]!.trim()
+  const paren = label.match(/^(.+?)\s+\(([^)]+)\)$/)
+  if (paren) {
+    const inner = paren[2]!.trim()
+    if (/^[0-9a-f]{64}$/i.test(inner) || inner.length >= 34) {
+      label = paren[1]!.trim()
+    }
+  }
+  if (label.toLowerCase() === 'me') return 'myself'
+  return label || null
+}
+
 /** Recipient + amount a payment row needs to be retried or explained after it dies. */
 function bsvRetry(args: {
   sats: number
@@ -815,9 +866,10 @@ export function noteOutboundSendComplete(args: {
   const txid = args.txid.trim().toLowerCase()
   if (!pendingId) return
   if (!/^[0-9a-f]{64}$/.test(txid) && !txid.startsWith('local-')) return
-  const recipient = args.friendLabel?.trim()
-    ? `${args.friendLabel.trim()} (${args.to.trim()})`
-    : args.to.trim()
+  const recipient = formatActivityRecipientDisplay({
+    friendLabel: args.friendLabel,
+    to: args.to,
+  })
   if (args.item) {
     const isToken = Boolean(args.item.tokenId)
     const name = args.item.name?.trim() || (isToken ? 'Token' : 'Collectable')
@@ -1638,8 +1690,10 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     return entry.note.trim()
   }
   if (entry.origin === WALLET_ACTIVITY_ORIGIN) {
-    const note = entry.note?.trim()
-    if (note && note !== 'Received' && note !== 'Sent') return note
+    const recipient = activityRecipientLabel(entry)
+    if (recipient) {
+      return entry.kind === 'spent' ? `Sent to ${recipient}` : `Received from ${recipient}`
+    }
     return entry.kind === 'spent' ? 'Sent coins' : 'Received coins'
   }
   const name = appDisplayName(entry.origin)

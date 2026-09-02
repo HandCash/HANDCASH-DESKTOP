@@ -2,6 +2,7 @@ import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   listRecentActivity,
   recordAppActivity,
+  formatActivityRecipientDisplay,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 
@@ -117,9 +118,10 @@ export function reconcilePendingSends(): number {
       continue
     }
     if (!activityAlreadyHas(entry) && entry.sats > 0) {
-      const recipientNote = entry.friendLabel
-        ? `${entry.friendLabel} (${entry.to})`
-        : entry.to
+      const recipientNote = formatActivityRecipientDisplay({
+        friendLabel: entry.friendLabel,
+        to: entry.to,
+      })
       recordAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',

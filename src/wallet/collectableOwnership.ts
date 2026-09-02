@@ -7,6 +7,9 @@
  * is basket ∩ live 1-sats, except a lagging scan must not relinquish a tip that
  * still locks to us (failed send). Unknown locking script → keep, never ghost-drop.
  */
+import { ownershipFate } from './collectableOwnershipFate'
+import { classifyTipKind } from './collectableTipKind'
+import { scriptPaysAddress } from './ordinalOwnership'
 
 /**
  * How long a tip missing from the address scan stays unjudged.
@@ -68,4 +71,41 @@ export function isOwnershipUnjudged(args: {
   if (args.firstSeenAt > args.liveAt) return true
   if (now - args.firstSeenAt < grace) return true
   return false
+}
+
+/**
+ * Send gate: only refuse when the address scan proves the tip is gone.
+ * A basket row the scan has not caught up to yet (fresh receive, self-send)
+ * must still be sendable — createAction spends from the basket, not the scan.
+ */
+export function shouldRejectSendForMissingLiveTip(args: {
+  outpoint: string
+  inLiveSet: boolean
+  firstSeenAt: number
+  liveScanAt: number
+  now?: number
+  lockingScriptHex?: string | null
+  walletAddress?: string | null
+  graceMs?: number
+}): boolean {
+  if (args.inLiveSet) return false
+  const now = args.now ?? Date.now()
+  const unjudged = isOwnershipUnjudged({
+    firstSeenAt: args.firstSeenAt,
+    liveAt: args.liveScanAt,
+    now,
+    graceMs: args.graceMs,
+  })
+  const paysOur =
+    args.lockingScriptHex && args.walletAddress
+      ? scriptPaysAddress(args.lockingScriptHex, args.walletAddress)
+      : null
+  return (
+    ownershipFate({
+      tipKind: classifyTipKind(args.lockingScriptHex),
+      inLiveSet: false,
+      unjudged,
+      paysOurAddress: paysOur,
+    }) === 'ghostDrop'
+  )
 }

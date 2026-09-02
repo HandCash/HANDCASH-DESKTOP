@@ -91,6 +91,7 @@ import {
   partitionByLiveUtxos,
   OWNERSHIP_SETTLE_GRACE_MS,
   isOwnershipUnjudged,
+  shouldRejectSendForMissingLiveTip,
 } from './collectableOwnership'
 import { ownershipFate } from './collectableOwnershipFate'
 import {
@@ -2937,11 +2938,29 @@ export async function sendCollectable(args: {
             awaitLiveOutpoints(wallet),
           ])
 
-          if (live && !live.oneSats.has(outpointKey(outpoint))) {
+          const liveKey = outpointKey(outpoint)
+          const liveScanAt = cachedLiveOneSats?.at ?? 0
+          const rejectForLiveScan =
+            live != null &&
+            liveScanAt > 0 &&
+            shouldRejectSendForMissingLiveTip({
+              outpoint,
+              inLiveSet: live.oneSats.has(liveKey),
+              firstSeenAt: firstSeenAt.get(liveKey) ?? Date.now(),
+              liveScanAt,
+              lockingScriptHex: normalizeLockingScriptHex(match.lockingScript),
+              walletAddress: wallet.address,
+            })
+          if (rejectForLiveScan) {
             markItemsSent([{ outpoint, txid: `spent-on-chain:${outpoint}` }])
             void listCollectables(wallet).catch(() => {})
             throw new Error(
               'This collectable is no longer unspent on your address (already sent). Inventory refreshed.'
+            )
+          }
+          if (live && !live.oneSats.has(liveKey)) {
+            console.info(
+              `[collectables] send trusting basket for ${liveKey} — scan lag or settle grace`
             )
           }
 
@@ -3495,6 +3514,7 @@ export async function sendCollectable(args: {
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)
+    forgetItemsSent([outpoint])
     failOutboundSendPending({
       pendingId: outboundPending.id,
       reason: err instanceof Error ? err.message : String(err),

@@ -15,6 +15,8 @@ import {
   activityEntryKey,
   activityEntryTitle,
   activityNavLabel,
+  activityRecipientLabel,
+  formatActivityRecipientDisplay,
   clearAppActivity,
   hasSettledActivityTxid,
   isEventActivity,
@@ -62,6 +64,22 @@ function entry(partial: Partial<ActivityEntry>): ActivityEntry {
 }
 
 describe('activityEntryTitle', () => {
+  it('shows a friendly recipient instead of a raw identity key', () => {
+    const row = entry({
+      kind: 'spent',
+      method: 'send',
+      note: `Sent to me (${'0'.repeat(64)})`,
+      retry: {
+        kind: 'send-bsv',
+        toAddress: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
+        satoshis: 1000,
+        friendLabel: 'me',
+      },
+    })
+    expect(activityRecipientLabel(row)).toBe('myself')
+    expect(activityEntryTitle(row)).toBe('Sent to myself')
+  })
+
   it('labels mint tips with quantity, distinct from send/receive', () => {
     expect(
       activityEntryTitle(
@@ -106,6 +124,23 @@ describe('activityEntryTitle', () => {
         }),
       ),
     ).toBe('Received 25 DEMO')
+  })
+})
+
+describe('formatActivityRecipientDisplay', () => {
+  it('drops parenthesized identity keys when a label is present', () => {
+    expect(
+      formatActivityRecipientDisplay({
+        friendLabel: 'Alice',
+        to: '0'.repeat(64),
+      }),
+    ).toBe('Alice')
+    expect(
+      formatActivityRecipientDisplay({
+        friendLabel: 'me',
+        to: '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2',
+      }),
+    ).toBe('myself')
   })
 })
 

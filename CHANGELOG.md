@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.69] - 2026-09-01
+
+### Fixed
+
+- **Payment details UI** — BSV rows use the coin logo + direction badge (not two arrows); titles show the recipient name instead of a raw identity key.
+
+## [1.3.68] - 2026-09-01
+
+### Fixed
+
+- **Collectable send after receive** — do not treat a fresh basket tip as already spent when the address scan has not caught up yet; failed sends no longer leave a false `spent-on-chain` hide on the item.
+
 ## [1.3.67] - 2026-09-01
 
 ### Changed

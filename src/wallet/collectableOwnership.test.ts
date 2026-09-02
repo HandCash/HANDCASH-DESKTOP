@@ -1,14 +1,19 @@
 import { describe, expect, it } from 'vitest'
+import { P2PKH } from '@bsv/sdk'
 import {
   isOwnershipUnjudged,
   liveOneSatKeys,
   outpointKey,
   partitionByLiveUtxos,
+  shouldRejectSendForMissingLiveTip,
   OWNERSHIP_SETTLE_GRACE_MS,
 } from './collectableOwnership'
 
 const TX = 'a'.repeat(64)
 const TX2 = 'b'.repeat(64)
+const OUR_ADDRESS = '1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2'
+const OUR_SCRIPT = new P2PKH().lock(OUR_ADDRESS).toHex()
+const OTHER_SCRIPT = new P2PKH().lock('1CounterpartyXXXXXXXXXXXXXXXUWLpVr').toHex()
 
 describe('collectableOwnership', () => {
   it('normalizes underscore outpoints to dotted keys', () => {
@@ -81,5 +86,49 @@ describe('collectableOwnership', () => {
         graceMs: OWNERSHIP_SETTLE_GRACE_MS,
       }),
     ).toBe(false)
+  })
+
+  it('does not reject a send when the tip is still inside settle grace', () => {
+    const now = 50_000
+    expect(
+      shouldRejectSendForMissingLiveTip({
+        outpoint: `${TX}.0`,
+        inLiveSet: false,
+        firstSeenAt: now - 60_000,
+        liveScanAt: now - 120_000,
+        now,
+        lockingScriptHex: OUR_SCRIPT,
+        walletAddress: OUR_ADDRESS,
+      }),
+    ).toBe(false)
+  })
+
+  it('does not reject a send when the tip arrived after the address scan', () => {
+    expect(
+      shouldRejectSendForMissingLiveTip({
+        outpoint: `${TX}.0`,
+        inLiveSet: false,
+        firstSeenAt: 5_000,
+        liveScanAt: 1_000,
+        now: 5_500,
+        lockingScriptHex: OUR_SCRIPT,
+        walletAddress: OUR_ADDRESS,
+      }),
+    ).toBe(false)
+  })
+
+  it('rejects a send when the scan proves an outbound remittance tip is gone', () => {
+    const now = 1_000 + OWNERSHIP_SETTLE_GRACE_MS + 5_000
+    expect(
+      shouldRejectSendForMissingLiveTip({
+        outpoint: `${TX}.0`,
+        inLiveSet: false,
+        firstSeenAt: 1_000,
+        liveScanAt: now - 1_000,
+        now,
+        lockingScriptHex: OTHER_SCRIPT,
+        walletAddress: OUR_ADDRESS,
+      }),
+    ).toBe(true)
   })
 })

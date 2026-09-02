@@ -7,6 +7,7 @@ import { appDisplayName } from '../wallet/appIdentity'
 import {
   activityDetailLabel,
   activityEntryTitle,
+  activityRecipientLabel,
   activityTokenAmountDisplay,
   getActivityById,
   isEventActivity,
@@ -46,7 +47,11 @@ import {
   openFungibleDetails,
   openSendFlow,
 } from '../wallet/navStore'
-import { playWalletSound } from '../wallet/soundService'
+import { bsvLogoForClassic } from '../assets/brand/bsvLogos'
+import {
+  getBsvLogoClassic,
+  subscribeBsvLogoClassic,
+} from '../wallet/bsvLogoPreference'
 import {
   clearSpendAttempt,
   isSpendAttempt,
@@ -126,6 +131,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const [currency, setCurrency] = useState<DisplayCurrency>(() =>
     getDisplayCurrency(),
   )
+  const [classicBsvLogo, setClassicBsvLogo] = useState(() => getBsvLogoClassic())
   const [iconReady, setIconReady] = useState(false)
   const [attemptFate, setAttemptFate] = useState<SpendAttemptFate>({
     kind: 'notAttempt',
@@ -137,6 +143,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => subscribeBsvLogoClassic(setClassicBsvLogo), [])
   useEffect(() => {
     setIconReady(false)
     const refresh = () => setEntry(getActivityById(entryId))
@@ -257,6 +264,8 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
+  const recipientLabel =
+    isWallet && !item && !token ? activityRecipientLabel(entry) : null
   const itemOutpoint = itemLinkOutpoint(entry, shownItem)
   const tokenId = tokenLinkId(shownItem ?? entry.item)
   const openItem = tokenId
@@ -404,6 +413,14 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
                   decoding="async"
                 />
               )
+            ) : isWallet && !item ? (
+              <img
+                className="history-asset-logo"
+                src={bsvLogoForClassic(classicBsvLogo)}
+                alt=""
+                width={32}
+                height={32}
+              />
             ) : isWallet ? (
               spent ? (
                 <SendIcon size={16} />
@@ -538,7 +555,17 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
             ) : null}
             <dt>Method</dt>
             <dd className="mono">{entry.method}</dd>
-            {entry.note ? (
+            {recipientLabel ? (
+              <>
+                <dt>Recipient</dt>
+                <dd>{recipientLabel}</dd>
+              </>
+            ) : null}
+            {entry.note &&
+            !(
+              recipientLabel &&
+              (entry.note.startsWith('Sent to ') || entry.note.startsWith('Sending to '))
+            ) ? (
               <>
                 <dt>Note</dt>
                 <dd>{entry.note}</dd>
