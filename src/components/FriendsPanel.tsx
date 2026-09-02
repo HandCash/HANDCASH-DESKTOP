@@ -114,16 +114,16 @@ export function FriendsPanel({ chain }: Props) {
 
   return (
     <div
-      className="nav-section-body"
+      className="nav-section-body nav-section-with-scroll"
       data-aeon-scope="friends"
       data-aeon-state={view}
     >
       <div className="connected-panel-head friends-panel-head">
         <h2>Friends</h2>
-        <div className="friends-panel-head-actions">
+        <div className="friends-panel-head-actions panel-icon-toolbar">
           <button
             type="button"
-            className="friends-messages-btn btn btn-primary btn-icon"
+            className="panel-icon-btn panel-icon-btn--accent"
             aria-label="Open messages"
             title="Messages"
             onClick={() => {
@@ -131,12 +131,11 @@ export function FriendsPanel({ chain }: Props) {
               openMessagesInbox()
             }}
           >
-            <MessagesIcon size={18} />
-            <span>Messages</span>
+            <MessagesIcon size={16} />
           </button>
           <button
             type="button"
-            className="friends-add-btn"
+            className="panel-icon-btn"
             aria-label="Add friend"
             title="Add friend"
             onClick={() => {
@@ -144,8 +143,7 @@ export function FriendsPanel({ chain }: Props) {
               openAddFriend()
             }}
           >
-            <PersonAddIcon size={18} />
-            <span>Add friend</span>
+            <PersonAddIcon size={16} />
           </button>
           <CollectionViewToggle label="Friends view" scope="friends" />
         </div>
@@ -170,7 +168,7 @@ export function FriendsPanel({ chain }: Props) {
           }
         />
       ) : (
-        <>
+        <div className="nav-section-scroll-body">
           <div className="friends-search">
             <input
               type="search"
@@ -195,7 +193,7 @@ export function FriendsPanel({ chain }: Props) {
               ))}
             </ul>
           )}
-        </>
+        </div>
       )}
     </div>
   )

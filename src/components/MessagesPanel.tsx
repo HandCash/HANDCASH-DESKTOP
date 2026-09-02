@@ -34,7 +34,7 @@ import {
   parseLocalCommand,
   type ParsedAmount,
 } from '../wallet/brc218'
-import { clearNavChild, openAddFriend, openMessagesInbox, openMessagesWithFriend } from '../wallet/navStore'
+import { openAddFriend, openMessagesInbox, openMessagesWithFriend } from '../wallet/navStore'
 import { amountToSats, formatPrimaryFromSats, getCachedUsdPerBsv } from '../wallet/fx'
 import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
@@ -63,14 +63,12 @@ import { CommandConfirmPrompt } from './CommandConfirmPrompt'
 import { EmptyState } from './EmptyState'
 import {
   AttachFileIcon,
-  CloseIcon,
   FileIcon,
   PayIcon,
   PersonAddIcon,
   RequestMoneyIcon,
   SendIcon,
 } from './icons'
-import { BrandLogo } from './BrandLogo'
 
 type Props = {
   chain: Chain
@@ -1104,11 +1102,6 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
     else setActivePeerId(null)
   }
 
-  const closeChat = () => {
-    playWalletSound('soft')
-    clearNavChild()
-  }
-
   const shellState = fullscreen
     ? activePeerId
       ? 'thread'
@@ -1125,26 +1118,6 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
       data-aeon-scope="messages"
       data-aeon-state={shellState}
     >
-      {fullscreen ? (
-        <header className="chat-topbar">
-          <div className="chat-topbar-brand">
-            <BrandLogo variant="green" showWordmark={false} size={26} className="chat-topbar-mark" />
-            <div className="chat-topbar-copy">
-              <span className="chat-topbar-title">Messages</span>
-              <span className="chat-topbar-sub">HandCash · P2P</span>
-            </div>
-          </div>
-          <button
-            type="button"
-            className="chat-topbar-close btn btn-ghost btn-icon"
-            aria-label="Close messages"
-            title="Close"
-            onClick={closeChat}
-          >
-            <CloseIcon size={20} />
-          </button>
-        </header>
-      ) : null}
       {!threadOnly ? (
       <aside className="chat-sidebar">
         <div className="chat-sidebar-head panel-label-bar">
@@ -1200,12 +1173,12 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
                       {friendInitial(label)}
                     </span>
                     <span className="chat-peer-body">
-                      <strong>
-                        {label}
+                      <span className="chat-peer-top">
+                        <strong className="chat-peer-name">{label}</strong>
                         {thread?.updatedAt ? (
                           <span className="chat-peer-when">{formatDay(thread.updatedAt)}</span>
                         ) : null}
-                      </strong>
+                      </span>
                       <span className="chat-peer-preview">{thread?.lastPreview || ' '}</span>
                     </span>
                     {unreadCount > 0 ? (

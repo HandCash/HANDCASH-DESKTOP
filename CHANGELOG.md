@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.83] - 2026-09-02
+
+### Fixed
+
+- **Friends / Collectables scroll on mobile** — pinned section heads with inner scroll bodies (same flex chain as Settings).
+- **Messages layout** — nested under Friends with breadcrumb + bottom tab bar kept; chat fills remaining nav height; composer pinned to thread bottom; peer row date/badge alignment; slim Friends toolbar (icon-only actions).
+
+### Changed
+
+- **Messages chrome** — removed duplicate fullscreen top bar; inbox uses Friends breadcrumb instead of hiding the dock.
+
 ## [1.3.82] - 2026-09-02
 
 ### Added

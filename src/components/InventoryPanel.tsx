@@ -571,7 +571,7 @@ export function InventoryPanel() {
 
   return (
     <div
-      className="nav-section-body"
+      className="nav-section-body nav-section-with-scroll"
       data-aeon-scope="collectables"
       data-aeon-state={view}
     >
@@ -580,6 +580,14 @@ export function InventoryPanel() {
         <CollectionViewToggle label="Collectables view" scope="collectables" />
       </div>
 
+      {empty && !showLoading ? (
+        <EmptyState
+          icon={<CollectablesIcon size={28} />}
+          title="No collectables here"
+          body="Items and tokens live on the install that received them. This device updates from the network automatically; send to move them."
+        />
+      ) : (
+        <div className="nav-section-scroll-body">
       {tokens.length > 0 ? (
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
@@ -666,13 +674,9 @@ export function InventoryPanel() {
           title="Looking for collectables…"
           body="Checking this device for one-sat items and tokens."
         />
-      ) : empty ? (
-        <EmptyState
-          icon={<CollectablesIcon size={28} />}
-          title="No collectables here"
-          body="Items and tokens live on the install that received them. This device updates from the network automatically; send to move them."
-        />
       ) : null}
+        </div>
+      )}
     </div>
   )
 }

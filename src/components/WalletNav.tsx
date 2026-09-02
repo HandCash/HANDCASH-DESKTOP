@@ -413,7 +413,7 @@ export const WalletNav = memo(function WalletNav({
         <div className="wallet-nav-stage">
           {stageChild ? (
             <div className="wallet-nav-panel nav-child-stage">
-              {!chatFullscreen ? <NavBreadcrumb crumbs={crumbs} /> : null}
+              <NavBreadcrumb crumbs={crumbs} />
               <div className="nav-child-body">
               {stageChild.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === stageChild.origin)
