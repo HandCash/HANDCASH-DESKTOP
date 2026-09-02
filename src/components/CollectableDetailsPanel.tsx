@@ -22,7 +22,7 @@ import {
   subscribeVerificationProgress,
   type VerificationProgress,
 } from '../wallet/verificationProgress'
-import { getGenesisFailure } from '../wallet/provenCache'
+import { getGenesisFailure, getProvenVerdict } from '../wallet/provenCache'
 import {
   isOutpointSending, inFlightVerb,
   subscribePaymentProgress,
@@ -92,7 +92,10 @@ function authenticityView(
   item: Collectable,
   verification: VerificationProgress,
 ): { label: string; tone: string; title: string } {
-  if (item.authenticity === 'brc150') {
+  if (
+    item.authenticity === 'brc150' ||
+    getProvenVerdict(item.outpoint)?.tier === 'brc150'
+  ) {
     return {
       label: 'Verified · BRC-150',
       tone: 'brc150',
@@ -188,7 +191,9 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   // Opening an unverified tip jumps it to the front of the lineage queue so the
   // badge can move from "Unverified" to "Verifying…" while the user is looking.
   useEffect(() => {
-    if (!item || item.authenticity !== 'unproven') return
+    if (!item) return
+    if (getProvenVerdict(item.outpoint)?.tier === 'brc150') return
+    if (item.authenticity !== 'unproven') return
     requestCollectableVerification(item.outpoint)
   }, [item?.outpoint, item?.authenticity])
 
@@ -313,6 +318,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
               skeletonRadius={10}
               skeletonClassName="skeleton-qr"
               decoding="async"
+              retainDecoded
               fallback={
                 <span className="collectable-media-fallback" aria-hidden>
                   <CollectablesIcon size={40} />

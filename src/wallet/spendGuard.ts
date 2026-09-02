@@ -19,11 +19,20 @@ import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoord
 /** True while {@link runExclusiveSpend} already promoted chained change. */
 let spendChainPromoted = false
 
+export type SpendPromoteMode = 'full' | 'light'
+
 /**
  * Rebuild script-less change rows and mark live pending change spendable for chaining.
  * Local toolbox only — no chain raw-tx sweep (that belongs on Dashboard Refresh).
+ *
+ * `light` skips the unscripted-output script sweep (thousands of rows on large
+ * wallets). Ordinal sends only need a fee UTXO — running the full sweep first
+ * blocked "Preparing payment" for minutes while change-script heal scanned ~2k
+ * outputs (see lab logs hc-ad7afbfaae0d01fffcb3).
  */
-async function promoteSpendableChange(): Promise<number> {
+async function promoteSpendableChange(
+  mode: SpendPromoteMode = 'full',
+): Promise<number> {
   let restored = 0
   let localHealed = 0
   try {
@@ -34,14 +43,17 @@ async function promoteSpendableChange(): Promise<number> {
     } = await import('./staleOutputRelease')
     await reclaimSealedInputsNeverSpent({ forSpendChain: true })
     await promotePendingLocalChangeOutputs({ forSpendChain: true })
-    const localSweep = await sweepChangeScripts({ fromChain: false })
-    localHealed = localSweep.healed
-    for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
+    if (mode === 'full') {
+      const localSweep = await sweepChangeScripts({ fromChain: false })
+      localHealed = localSweep.healed
+    }
+    const restorePasses = mode === 'full' ? 5 : 1
+    for (let pass = 0; pass < restorePasses && restored === 0; pass += 1) {
       restored += (
         await restoreLiveSpendableOutputs({ forSpendChain: true })
       ).restored
     }
-    if (restored === 0 && localHealed > 0) {
+    if (mode === 'full' && restored === 0 && localHealed > 0) {
       restored += (
         await restoreLiveSpendableOutputs({ forSpendChain: true })
       ).restored
@@ -55,6 +67,7 @@ async function promoteSpendableChange(): Promise<number> {
     logDiag('spend-guard', 'info', 'promoted', {
       restored,
       scriptsLocal: localHealed,
+      mode,
     })
   }
   return restored
@@ -64,9 +77,11 @@ async function promoteSpendableChange(): Promise<number> {
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
+  opts?: { promote?: SpendPromoteMode },
 ): Promise<T> {
+  const promote = opts?.promote ?? 'full'
   return runExclusiveSpendCoordinated(async () => {
-    await promoteSpendableChange()
+    await promoteSpendableChange(promote)
     spendChainPromoted = true
     try {
       return await fn()

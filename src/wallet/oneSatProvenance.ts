@@ -14,7 +14,8 @@
 import { Beef, type Transaction } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { hasOrdEnvelope } from './ordinalOwnership'
-import { getProvenVerdict } from './provenCache'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -520,30 +521,125 @@ export function encodeRemittanceBeef(
 }
 
 /**
- * Session cache of tip-named remittances built by extending a parent proof
- * after item settle (or imported). Avoids re-hydrate on the next send.
+ * Session + durable cache of tip-named remittances built by extending a parent
+ * proof after item settle (or imported). Avoids re-hydrate on the next send.
+ *
+ * Full `beefB64` is only persisted when it fits a per-entry cap — path + origin
+ * always travel so offline detail badges and send rebuilds survive restarts.
  */
 const remittanceByTip = new Map<string, ProvenanceV2>()
+const REMITTANCE_DURABLE_KEY = 'handcash.brc150.remittance.v1'
+const REMITTANCE_DURABLE_MAX_ENTRIES = 800
+/** ~36KB binary — keeps many slim proofs without blowing localStorage. */
+const REMITTANCE_DURABLE_MAX_BEEF_B64 = 48_000
+
+type StoredRemittance = {
+  tip: string
+  origin: string
+  path: string[]
+  beefB64?: string
+  at: number
+}
+
+let durableRemittanceLoaded = false
+
+function loadDurableRemittances(): void {
+  if (durableRemittanceLoaded) return
+  durableRemittanceLoaded = true
+  try {
+    const raw = durableGetItem(REMITTANCE_DURABLE_KEY)
+    if (!raw) return
+    const parsed = JSON.parse(raw) as Record<string, StoredRemittance>
+    for (const entry of Object.values(parsed)) {
+      if (!entry?.tip || !entry.origin || !Array.isArray(entry.path)) continue
+      const tip = toUnderscore(entry.tip).toLowerCase()
+      if (remittanceByTip.has(tip)) continue
+      remittanceByTip.set(tip, {
+        v: 2,
+        tip,
+        origin: toUnderscore(entry.origin).toLowerCase(),
+        path: entry.path.map((x) => toUnderscore(x).toLowerCase()),
+        beefB64: entry.beefB64 ?? '',
+      })
+    }
+  } catch {
+    // Optimisation only.
+  }
+}
+
+function persistDurableRemittance(p: ProvenanceV2): void {
+  try {
+    const raw = durableGetItem(REMITTANCE_DURABLE_KEY)
+    const map: Record<string, StoredRemittance> = raw ? JSON.parse(raw) : {}
+    const tip = toUnderscore(p.tip).toLowerCase()
+    const beefB64 =
+      p.beefB64 && p.beefB64.length <= REMITTANCE_DURABLE_MAX_BEEF_B64
+        ? p.beefB64
+        : undefined
+    map[tip] = {
+      tip,
+      origin: p.origin,
+      path: p.path,
+      ...(beefB64 ? { beefB64 } : {}),
+      at: Date.now(),
+    }
+    const keys = Object.keys(map)
+    if (keys.length > REMITTANCE_DURABLE_MAX_ENTRIES) {
+      const sorted = keys.sort((a, b) => (map[a]!.at ?? 0) - (map[b]!.at ?? 0))
+      for (let i = 0; i < keys.length - REMITTANCE_DURABLE_MAX_ENTRIES; i++) {
+        delete map[sorted[i]!]
+      }
+    }
+    durableSetItem(REMITTANCE_DURABLE_KEY, JSON.stringify(map))
+  } catch {
+    // Optimisation only.
+  }
+}
+
+function syncProvenPathFromRemittance(p: ProvenanceV2): void {
+  const tipDot = toDot(p.tip)
+  const existing = getProvenVerdict(tipDot)
+  if (existing?.path?.length) return
+  const path = p.path.map((x) => toDot(x))
+  if (!path.length) return
+  rememberProvenVerdict(tipDot, {
+    tier: 'brc150',
+    origin: toUnderscore(p.origin).toLowerCase(),
+    path,
+    verifiedAt: existing?.verifiedAt ?? Date.now(),
+  })
+}
 
 export function rememberProvenanceRemittance(p: ProvenanceV2): void {
+  loadDurableRemittances()
   const tip = toUnderscore(p.tip).toLowerCase()
-  remittanceByTip.set(tip, {
+  const normalized: ProvenanceV2 = {
     ...p,
     tip,
     origin: toUnderscore(p.origin).toLowerCase(),
     path: p.path.map((x) => toUnderscore(x).toLowerCase()),
-  })
+  }
+  remittanceByTip.set(tip, normalized)
+  persistDurableRemittance(normalized)
+  syncProvenPathFromRemittance(normalized)
 }
 
 export function getRememberedProvenanceRemittance(
   tipOutpoint: string,
 ): ProvenanceV2 | null {
+  loadDurableRemittances()
   return remittanceByTip.get(toUnderscore(tipOutpoint).toLowerCase()) ?? null
 }
 
 /** Test / logout helper. */
 export function clearRememberedProvenanceRemittances(): void {
   remittanceByTip.clear()
+  durableRemittanceLoaded = false
+  try {
+    durableRemoveItem(REMITTANCE_DURABLE_KEY)
+  } catch {
+    // Optimisation only.
+  }
 }
 
 /** Largest assembled lineage that still fits a remittance, in bytes. */
@@ -1205,6 +1301,11 @@ export async function tryBuildProvenanceV2(args: {
    * path (warm cache + slim remittance) over a cold walk on the send hot path.
    */
   allowLineageHydrate?: boolean
+  /**
+   * Tip already earned BRC-150 on this device — reuse cached remittance / path
+   * without a network lineage re-verify before attach.
+   */
+  trustProven?: boolean
 }): Promise<ProvenanceV2 | null> {
   const tip = toUnderscore(args.tipOutpoint)
   const origin = toUnderscore(args.origin)
@@ -1227,6 +1328,16 @@ export async function tryBuildProvenanceV2(args: {
 
     const remembered = getRememberedProvenanceRemittance(tipKey)
     if (remembered) {
+      if (
+        args.trustProven &&
+        remembered.origin === originKey &&
+        remembered.beefB64
+      ) {
+        const trusted = verifyProvenanceV2(remembered, tipDot, {
+          enforceBudget: true,
+        })
+        if (trusted.proven) return finish(remembered)
+      }
       const ok = await verifyProvenanceV2Async(remembered, tipDot, {
         enforceBudget: true,
         getBeef,
@@ -1256,11 +1367,16 @@ export async function tryBuildProvenanceV2(args: {
       remembered ??
       null
     if (prior) {
-      const direct = await verifyProvenanceV2Async(prior, tipDot, {
-        enforceBudget: true,
-        getBeef,
-      })
-      if (direct.proven) return finish(prior)
+      if (args.trustProven) {
+        const trusted = verifyProvenanceV2(prior, tipDot, { enforceBudget: true })
+        if (trusted.proven) return finish(prior)
+      } else {
+        const direct = await verifyProvenanceV2Async(prior, tipDot, {
+          enforceBudget: true,
+          getBeef,
+        })
+        if (direct.proven) return finish(prior)
+      }
       if (beef) {
         const extended = await extendProvenanceV2({
           prior,
@@ -1292,20 +1408,29 @@ export async function tryBuildProvenanceV2(args: {
       // walk we had already paid for.
       const known = knownProvenPath(tip, origin)
       if (known) {
-        const { warmBeefCache } = await import('./beefCache')
-        const txids = known.map((point) => point.split('_')[0]!)
-        await warmBeefCache(args.wallet, txids)
+        const txids = [...new Set(known.map((point) => point.split('_')[0]!))]
+        if (!args.trustProven) {
+          const { warmBeefCache } = await import('./beefCache')
+          await warmBeefCache(args.wallet, txids)
+        }
         console.info(
           `[brc-150] rebuilding remittance over ${known.length - 1} proven hop(s) for ${tip}`,
         )
         const replayed = new Beef()
-        let replayOk = true
-        for (const txid of [...new Set(txids)]) {
-          try {
-            replayed.mergeBeef((await getBeef(txid)).toBinary())
-          } catch {
-            replayOk = false
-            break
+        const bodies = await Promise.all(
+          txids.map((txid) =>
+            getBeef(txid).catch(() => null),
+          ),
+        )
+        let replayOk = bodies.every((body) => body != null)
+        if (replayOk) {
+          for (const body of bodies) {
+            try {
+              replayed.mergeBeef(body!.toBinary())
+            } catch {
+              replayOk = false
+              break
+            }
           }
         }
         if (replayOk) {
@@ -1392,6 +1517,8 @@ export async function tryBuildProvenanceForSend(args: {
   path?: string[]
   inputBeef?: number[]
   priorProvenance?: unknown
+  allowLineageHydrate?: boolean
+  trustProven?: boolean
 }): Promise<ProvenanceRemittance | null> {
   return tryBuildProvenanceV2(args)
 }
@@ -1422,6 +1549,8 @@ export async function resolveProvenanceForCollectableSend(args: {
       return fromTip
     }
   }
+  const verdict = getProvenVerdict(args.tipOutpoint)
+  const trustProven = args.provenTier === 'brc150'
   return tryBuildProvenanceForSend({
     tipOutpoint: args.tipOutpoint,
     origin: args.origin,
@@ -1429,6 +1558,9 @@ export async function resolveProvenanceForCollectableSend(args: {
     contentType: args.contentType,
     inputBeef: args.inputBeef,
     priorProvenance: args.priorProvenance,
+    allowLineageHydrate: !trustProven,
+    trustProven,
+    ...(verdict?.path?.length ? { path: verdict.path } : {}),
   })
 }
 

@@ -81,7 +81,7 @@ let warnedLive = false
  * it can be painted without the ceremony.
  */
 const decodedOnce = new Set<string>()
-const MAX_DECODED_URLS = 500
+const MAX_DECODED_URLS = 1_500
 
 export function rememberDecodedUrl(src: string): void {
   // Set insertion order doubles as a tiny LRU: revisits move to the end.

@@ -5,7 +5,22 @@ import {
   Transaction,
   UnlockingScript,
 } from '@bsv/sdk'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const durableStore = new Map<string, string>()
+
+vi.mock('./durableStorage', () => ({
+  durableGetItem: (key: string) => durableStore.get(key) ?? null,
+  durableSetItem: (key: string, value: string) => {
+    durableStore.set(key, value)
+    return true
+  },
+  durableRemoveItem: (key: string) => {
+    durableStore.delete(key)
+  },
+  durableForgetCached: () => {},
+}))
+
 import {
   parseProvenanceV2,
   clearRememberedProvenanceRemittances,
@@ -363,6 +378,7 @@ describe('BRC-150 remittance budget (isolated edge case)', () => {
 
 describe('keeping a proven lineage for the next send', () => {
   beforeEach(() => {
+    durableStore.clear()
     clearRememberedProvenanceRemittances()
   })
 
@@ -425,5 +441,22 @@ describe('keeping a proven lineage for the next send', () => {
       }),
     ).toBe(false)
     expect(getRememberedProvenanceRemittance(provenance.tip)).toBeNull()
+  })
+
+  it('reloads a kept remittance from durable storage after a cold start', async () => {
+    const { provenance, held } = buildV2Fixture()
+    rememberProvenLineage({
+      tipOutpoint: provenance.tip,
+      origin: provenance.origin,
+      path: provenance.path,
+      beef: bytesOf(provenance.beefB64),
+    })
+
+    vi.resetModules()
+    const fresh = await import('./oneSatProvenance')
+    const found = fresh.getRememberedProvenanceRemittance(provenance.tip)
+    expect(found).not.toBeNull()
+    expect(fresh.verifyProvenanceV2(found, held).proven).toBe(true)
+    fresh.clearRememberedProvenanceRemittances()
   })
 })

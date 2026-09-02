@@ -8,7 +8,11 @@ import {
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { resetBeefCacheForTests } from './beefCache'
 import { rememberProvenVerdict, resetProvenCacheForTests } from './provenCache'
-import { tryBuildProvenanceV2, verifyProvenanceV2 } from './oneSatProvenance'
+import {
+  rememberProvenLineage,
+  tryBuildProvenanceV2,
+  verifyProvenanceV2,
+} from './oneSatProvenance'
 import type { ActiveWallet } from './session'
 
 const ORD_ENVELOPE =
@@ -181,6 +185,54 @@ describe('tryBuildProvenanceV2', () => {
     expect(provenance).not.toBeNull()
     expect(provenance?.path).toEqual([tipPoint, hopPoint, originPoint])
     expect(verifyProvenanceV2(provenance, `${tip.id('hex')}.0`).proven).toBe(true)
+  })
+
+  it('trustProven skips async re-verify when remittance is already on disk', async () => {
+    const origin = inscription()
+    const tip = transfer(origin)
+    const { wallet: servedWallet } = walletServing([origin, tip])
+    const originPoint = `${origin.id('hex')}_0`
+    const tipPoint = `${tip.id('hex')}_0`
+    const inputBeef = minedBeef(tip, 900_002).toBinary()
+
+    const built = await tryBuildProvenanceV2({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      origin: originPoint,
+      wallet: servedWallet,
+      inputBeef,
+    })
+    expect(built).not.toBeNull()
+    rememberProvenLineage({
+      tipOutpoint: tipPoint,
+      origin: originPoint,
+      path: built!.path,
+      beef: Array.from(atob(built!.beefB64), (c) => c.charCodeAt(0)),
+    })
+    rememberProvenVerdict(tipPoint, {
+      tier: 'brc150',
+      origin: originPoint,
+      path: built!.path,
+      verifiedAt: Date.now(),
+    })
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('network should not run for trustProven remittance reuse')
+    })
+    const wallet = {
+      identityKey: '02'.repeat(33),
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const kept = await tryBuildProvenanceV2({
+      tipOutpoint: `${tip.id('hex')}.0`,
+      origin: originPoint,
+      wallet,
+      trustProven: true,
+      allowLineageHydrate: false,
+    })
+
+    expect(kept).not.toBeNull()
+    expect(getBeefForTxid).not.toHaveBeenCalled()
   })
 
 })

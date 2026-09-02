@@ -2,9 +2,11 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { ListRow } from '@aeon-ui/react'
 import { stateToAttr } from '@aeon-ui/core'
 import {
+  getCachedCollectable,
   getCollectable,
   listCollectables,
   sendCollectable,
+  subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
 import {
@@ -29,7 +31,8 @@ import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
-import { FriendsIcon, ScanQrIcon } from './icons'
+import { CollectablesIcon, FriendsIcon, ScanQrIcon } from './icons'
+import { EmptyState } from './EmptyState'
 import { RecipientQrScan } from './QrScanner'
 
 type Props = {
@@ -61,7 +64,10 @@ function resolvedRecipientName(
 }
 
 export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
-  const [item, setItem] = useState<Collectable | null>(null)
+  const [item, setItem] = useState<Collectable | null>(
+    () => getCachedCollectable(outpoint),
+  )
+  const [loading, setLoading] = useState(() => getCachedCollectable(outpoint) == null)
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [recipientQuery, setRecipientQuery] = useState('')
   const [to, setTo] = useState('')
@@ -79,11 +85,28 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   useEffect(() => {
     let cancelled = false
+    const cached = getCachedCollectable(outpoint)
+    if (cached) {
+      setItem(cached)
+      setLoading(false)
+    } else {
+      setItem(null)
+      setLoading(true)
+    }
+    setStage('edit')
+    setError(null)
     void getCollectable(outpoint).then((next) => {
       if (!cancelled) setItem(next)
+    }).finally(() => {
+      if (!cancelled) setLoading(false)
+    })
+    const unsubscribe = subscribeCollectables((list) => {
+      const found = list.find((i) => i.outpoint === outpoint)
+      if (found) setItem(found)
     })
     return () => {
       cancelled = true
+      unsubscribe()
     }
   }, [outpoint])
 
@@ -213,7 +236,21 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   }
 
   if (!item) {
-    return <p className="connected-empty-line">Collectable not found</p>
+    return loading ? (
+      <div
+        className="nav-child-panel send-panel send-collectable-panel"
+        data-aeon-scope="send-collectable"
+        data-aeon-state="loading"
+        aria-busy="true"
+        aria-label="Loading collectable"
+      />
+    ) : (
+      <EmptyState
+        icon={<CollectablesIcon size={22} />}
+        title="Item unavailable"
+        body="This collectable is no longer in the wallet or could not be loaded."
+      />
+    )
   }
 
   return (
@@ -237,6 +274,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                     skeletonHeight={48}
                     skeletonRadius={6}
                     skeletonClassName="skeleton-qr"
+                    retainDecoded
                   />
                 </div>
                 <div>
@@ -380,6 +418,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                     skeletonHeight={48}
                     skeletonRadius={6}
                     skeletonClassName="skeleton-qr"
+                    retainDecoded
                   />
                 </div>
                 <div>

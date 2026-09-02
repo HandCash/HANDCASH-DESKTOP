@@ -6,6 +6,6 @@ describe('DeferredImage decoded URL cache', () => {
     for (let i = 0; i < 750; i += 1) {
       rememberDecodedUrl(`https://images.example/${i}.png`)
     }
-    expect(decodedImageCacheSize()).toBeLessThanOrEqual(500)
+    expect(decodedImageCacheSize()).toBeLessThanOrEqual(1_500)
   })
 })

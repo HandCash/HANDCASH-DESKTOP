@@ -1,18 +1,21 @@
 # Changelog
 
+## [1.3.79] - 2026-09-02
+
+### Fixed
+
+- **Collectable send speed** — verified NFT sends skip the full change-script sweep (~2k rows) that blocked “Preparing payment” for minutes; light promote reclaims pending change only. Progress keeps “Waiting to send the collectable” instead of resetting to generic copy.
+- **BRC-150 offline + fast detail** — durable remittance store (`path` + slim `beefB64`), instant verified badges from `provenCache`, non-blocking item detail/indexer enrich, `trustProven` send path reuses cached proof without re-walking lineage.
+- **Collect / send UX** — instant child-panel nav (Send no longer deferred via `startTransition`); send panel seeds from inventory cache (no “not found” flash); detail/send images use `retainDecoded`; decoded thumbnail LRU raised to 1500 for large wallets.
+
 ## [1.3.78] - 2026-09-02
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Large inventory performance** — market inventory serves the durable cache immediately (700+ NFT wallets no longer block items-market on a 20s `listOutputs`); BRC-150 verdict projection yields in chunks; Collect defers ownership refresh and live scans while sending.
+- **Input lag** — BSV send amount uses local draft state; collectable grid grouping uses `useDeferredValue`; large cache updates notify subscribers after a UI yield.
 
 ## [1.3.77] - 2026-09-02
-
-### Changed
-
-- Patch release (every push must ship a new version).
-
-## [1.3.76] - 2026-09-02
 
 ### Fixed
 

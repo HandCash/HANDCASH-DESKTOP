@@ -33,6 +33,7 @@ import {
   subscribeNav,
   type NavSection,
   type NavState,
+  type NavChild,
 } from '../wallet/navStore'
 import { ConnectedAppsPanel } from './ConnectedAppsPanel'
 import { FriendsPanel } from './FriendsPanel'
@@ -71,7 +72,7 @@ import { LogViewerPanel } from './LogViewerPanel'
 import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
-import { getCollectable } from '../wallet/collectables'
+import { getCachedCollectable, getCollectable } from '../wallet/collectables'
 import { getFungible, getCachedFungibles } from '../wallet/fungibles'
 import {
   ActivityIcon,
@@ -114,6 +115,41 @@ function sectionLabel(section: NavSection): string {
   return SECTIONS.find((s) => s.value === section)?.label ?? section
 }
 
+function collectableChildOutpoint(child: NavChild | null): string | null {
+  if (!child) return null
+  if (
+    child.type === 'collectable' ||
+    child.type === 'send-collectable' ||
+    child.type === 'burn-collectable'
+  ) {
+    return child.outpoint
+  }
+  return null
+}
+
+function childPanelKey(state: NavState): string {
+  const child = state.child
+  if (!child) return `${state.section}:`
+  if ('outpoint' in child && typeof child.outpoint === 'string') {
+    return `${state.section}:${child.type}:${child.outpoint}`
+  }
+  if ('tokenId' in child && typeof child.tokenId === 'string') {
+    return `${state.section}:${child.type}:${child.tokenId}`
+  }
+  if ('entryId' in child && typeof child.entryId === 'string') {
+    return `${state.section}:${child.type}:${child.entryId}`
+  }
+  if ('friendId' in child && typeof child.friendId === 'string') {
+    return `${state.section}:${child.type}:${child.friendId}`
+  }
+  if ('origin' in child && typeof child.origin === 'string') {
+    return `${state.section}:${child.type}:${child.origin}`
+  }
+  return `${state.section}:${child.type}`
+}
+
+const MemoInventoryPanel = memo(InventoryPanel)
+
 export const WalletNav = memo(function WalletNav({
   profile,
   apps,
@@ -141,7 +177,14 @@ export const WalletNav = memo(function WalletNav({
   useEffect(
     () =>
       subscribeNav((next) => {
-        startTransition(() => setNav(next))
+        setNav((prev) => {
+          const panelOnly =
+            next.section === prev.section &&
+            childPanelKey(next) !== childPanelKey(prev)
+          if (panelOnly) return next
+          startTransition(() => setNav(next))
+          return prev
+        })
       }),
     [],
   )
@@ -208,18 +251,13 @@ export const WalletNav = memo(function WalletNav({
   }, [nav.section])
 
   useEffect(() => {
-    const child = nav.child
-    if (
-      !child ||
-      (child.type !== 'collectable' &&
-        child.type !== 'send-collectable' &&
-        child.type !== 'burn-collectable')
-    ) {
-      return
-    }
+    const outpoint = collectableChildOutpoint(nav.child)
+    if (!outpoint) return
+    const cached = getCachedCollectable(outpoint)
+    if (cached?.name) setCollectableLabel(cached.name)
     let cancelled = false
-    void getCollectable(child.outpoint).then((item) => {
-      if (!cancelled) setCollectableLabel(item?.name || 'Collectable')
+    void getCollectable(outpoint).then((item) => {
+      if (!cancelled && item?.name) setCollectableLabel(item.name)
     })
     return () => {
       cancelled = true
@@ -508,7 +546,9 @@ export const WalletNav = memo(function WalletNav({
             )}
             {/* Unmount Collect to free ordinal images. Remount paints the last
                 durable list (collectables.ts) — never an emptied cache. */}
-            {nav.section === 'collectables' && !mobileInlinePermission && <InventoryPanel />}
+            {nav.section === 'collectables' && !mobileInlinePermission && (
+              <MemoInventoryPanel />
+            )}
             {mountedLight.has('friends') && (
               <div
                 className="wallet-nav-slot"

@@ -72,6 +72,7 @@ import {
 import {
   buildCollectableCustomInstructions,
   extendProvenanceV2,
+  getRememberedProvenanceRemittance,
   parseProvenanceV2,
   rememberProvenanceRemittance,
   rememberProvenLineage,
@@ -505,6 +506,12 @@ export async function relistCollectablesAfterLocalStateReplace(): Promise<void> 
 
 export function getCachedCollectables(): Collectable[] {
   return cachedCollectables
+}
+
+/** One held tip from the painted inventory cache — no basket read. */
+export function getCachedCollectable(outpoint: string): Collectable | null {
+  const target = normalizeOutpoint(outpoint)
+  return cachedCollectables.find((i) => i.outpoint === target) ?? null
 }
 
 export function getCollectablePageStatus(): {
@@ -1349,11 +1356,14 @@ async function proveHeldGenesis(
       if (outpoint !== preferred && listInFlight && listInFlight !== ownRead) {
         break
       }
-      setVerificationProgress(
-        'verifying',
-        outpoint,
-        'Proving tip-to-origin lineage (BRC-150)'
-      )
+      const alreadyProven = getProvenVerdict(outpoint)?.tier === 'brc150'
+      if (!alreadyProven) {
+        setVerificationProgress(
+          'verifying',
+          outpoint,
+          'Proving tip-to-origin lineage (BRC-150)'
+        )
+      }
       let outcome: GenesisWalkOutcome = {
         kind: 'unavailable',
         reason: 'walk did not run',
@@ -2245,6 +2255,75 @@ async function listCollectablesNow(
   return deduped
 }
 
+function withProvenCacheBadge(item: Collectable): Collectable {
+  const fromProven = authenticityFromProvenCache(item.outpoint)
+  if (!fromProven.proven) return item
+  return { ...item, proven: true, authenticity: 'brc150' }
+}
+
+/** Indexer traits/mime — never block the detail panel; paint cache first. */
+async function enrichCollectableFromIndexer(
+  target: string,
+  item: Collectable,
+  wallet: ActiveWallet,
+): Promise<void> {
+  try {
+    const [txid, voutStr] = item.outpoint.split('.')
+    const vout = Number(voutStr)
+    if (!txid || !Number.isInteger(vout)) return
+
+    const cachedResolved = getResolvedInscription(target)
+    const thin = !cachedResolved || isThinResolution(cachedResolved)
+    const shouldAskIndexer =
+      item.traits.length === 0 &&
+      thin &&
+      (shouldResolveInscription(target) ||
+        shouldUpgradeResolution(target) ||
+        !!item.origin)
+    const knownOrigin =
+      getProvenVerdict(target)?.origin ??
+      cachedResolved?.origin ??
+      item.origin
+    const resolved =
+      cachedResolved && !thin
+        ? cachedResolved
+        : shouldAskIndexer
+        ? await resolveInscriptionPreferringOrigin(
+            target,
+            wallet.chain,
+            knownOrigin
+          ).catch(() => cachedResolved)
+        : cachedResolved
+    if (!resolved) return
+
+    rememberResolvedInscription(target, resolved)
+    const content =
+      resolveDerivativeContent({
+        claimed: resolved.content ?? item.content,
+      }) ?? item.content
+    const mediaOrigin = content ?? (resolved.origin || item.origin)
+    const enriched: Collectable = withProvenCacheBadge({
+      ...item,
+      origin: resolved.origin || item.origin,
+      ...(content ? { content } : {}),
+      name: resolved.name?.trim() || item.name,
+      app: resolved.app ?? item.app,
+      mimeType: resolved.mimeType ?? item.mimeType,
+      type: resolved.type ?? item.type,
+      subType: resolved.subType ?? item.subType,
+      collectionId: resolved.collectionId ?? item.collectionId,
+      traits: resolved.traits.length ? resolved.traits : item.traits,
+      extras: resolved.extras.length ? resolved.extras : item.extras,
+      imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
+    })
+    setCollectablesCache(
+      cachedCollectables.map((c) => (c.outpoint === target ? enriched : c))
+    )
+  } catch (err) {
+    console.warn('[collectables] detail enrich failed', err)
+  }
+}
+
 export async function getCollectable(
   outpoint: string,
   active?: ActiveWallet | null
@@ -2265,69 +2344,13 @@ export async function getCollectable(
   }
   if (!item || !wallet) return item
 
-  // Details: traits/mime come from the indexer. Prefer origin over tip — a
-  // fresh self-send tip often 404s for hours while the inscription origin has
-  // been indexed for months. Always fill empty traits, even on proven tips.
-  try {
-    const [txid, voutStr] = item.outpoint.split('.')
-    const vout = Number(voutStr)
-    if (txid && Number.isInteger(vout)) {
-      const cachedResolved = getResolvedInscription(target)
-      const thin = !cachedResolved || isThinResolution(cachedResolved)
-      const shouldAskIndexer =
-        item.traits.length === 0 &&
-        thin &&
-        (shouldResolveInscription(target) ||
-          shouldUpgradeResolution(target) ||
-          !!item.origin)
-      const knownOrigin =
-        getProvenVerdict(target)?.origin ??
-        cachedResolved?.origin ??
-        item.origin
-      const resolved =
-        cachedResolved && !thin
-          ? cachedResolved
-          : shouldAskIndexer
-          ? await resolveInscriptionPreferringOrigin(
-              target,
-              wallet.chain,
-              knownOrigin
-            ).catch(() => cachedResolved)
-          : cachedResolved
-      if (resolved) {
-        rememberResolvedInscription(target, resolved)
-        const content =
-          resolveDerivativeContent({
-            claimed: resolved.content ?? item.content,
-          }) ?? item.content
-        const mediaOrigin = content ?? (resolved.origin || item.origin)
-        item = {
-          ...item,
-          origin: resolved.origin || item.origin,
-          ...(content ? { content } : {}),
-          name: resolved.name?.trim() || item.name,
-          app: resolved.app ?? item.app,
-          mimeType: resolved.mimeType ?? item.mimeType,
-          type: resolved.type ?? item.type,
-          subType: resolved.subType ?? item.subType,
-          collectionId: resolved.collectionId ?? item.collectionId,
-          traits: resolved.traits.length ? resolved.traits : item.traits,
-          extras: resolved.extras.length ? resolved.extras : item.extras,
-          imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
-        }
-        setCollectablesCache(
-          cachedCollectables.map((c) => (c.outpoint === target ? item! : c))
-        )
-      }
-    }
-  } catch (err) {
-    console.warn('[collectables] detail enrich failed', err)
-  }
+  item = withProvenCacheBadge(item)
+
+  // Traits/mime from the indexer — background only so verified badges paint instantly.
+  void enrichCollectableFromIndexer(target, item, wallet)
 
   const proven = getProvenVerdict(target)
-  // BRC-150 is not final for hardened tips — verifyItemAuthenticity upgrades
-  // when the tip locking script / remittance says covenant.
-  if (!proven || proven.tier === 'brc150') {
+  if (!proven) {
     void verifyItemAuthenticity(target, item.origin, wallet)
       .then((result) => {
         applyAuthenticityResult(target, result)
@@ -2852,47 +2875,68 @@ export async function sendCollectable(args: {
             outpoint
           )
           const originTag = originGuess.replace(/_(\d+)$/, '.$1')
+          const provenTierEarly = getProvenVerdict(outpoint)?.tier ?? null
+          const trustVerifiedSend = provenTierEarly === 'brc150' && cachedItem != null
 
-          const held = await listOutputsWithTimeout(wallet.wallet, {
-            basket: '1sat',
-            tags: [`origin:${originTag}`],
-            tagQueryMode: 'all',
-            limit: 20,
-            includeTags: true,
-            // Locking script and satoshis are all this needs; remittance BEEF for every
-            // held item would be tens of megabytes on a full wallet.
-            includeCustomInstructions: true,
-            include: 'locking scripts',
-            seekPermission: false,
-          })
-          let match = (held.outputs ?? []).find(
-            (o) => normalizeOutpoint(o.outpoint) === outpoint
-          )
-          // Origin tag can miss after a migrate / rename; trust inventory cache before
-          // a wide basket scan that blocks send on large wallets.
-          if (!match) {
-            if (cachedItem) {
-              console.info(
-                `[collectables] narrow tag miss — trusting inventory cache for ${outpoint}`,
-              )
-              match = {
-                outpoint,
-                satoshis: 1,
-                spendable: true,
-                tags: [],
-              } as (typeof held.outputs)[number]
-            } else {
-              const wide = await listOutputsWithTimeout(wallet.wallet, {
-                basket: '1sat',
-                limit: 200,
-                includeTags: true,
-                includeCustomInstructions: true,
-                include: 'locking scripts',
-                seekPermission: false,
-              })
-              match = (wide.outputs ?? []).find(
-                (o) => normalizeOutpoint(o.outpoint) === outpoint
-              )
+          type HeldOutput = NonNullable<
+            Awaited<
+              ReturnType<ActiveWallet['wallet']['listOutputs']>
+            >['outputs']
+          >[number]
+
+          let match: HeldOutput | undefined
+          if (trustVerifiedSend) {
+            match = {
+              outpoint,
+              satoshis: 1,
+              spendable: true,
+              tags: [],
+              ...(cachedItem!.lockingScript
+                ? { lockingScript: cachedItem!.lockingScript }
+                : {}),
+            } as HeldOutput
+          } else {
+            const held = await listOutputsWithTimeout(wallet.wallet, {
+              basket: '1sat',
+              tags: [`origin:${originTag}`],
+              tagQueryMode: 'all',
+              limit: 20,
+              includeTags: true,
+              // Locking script and satoshis are all this needs; remittance BEEF for every
+              // held item would be tens of megabytes on a full wallet.
+              includeCustomInstructions: true,
+              include: 'locking scripts',
+              seekPermission: false,
+            })
+            match = (held.outputs ?? []).find(
+              (o) => normalizeOutpoint(o.outpoint) === outpoint
+            )
+            // Origin tag can miss after a migrate / rename; trust inventory cache before
+            // a wide basket scan that blocks send on large wallets.
+            if (!match) {
+              if (cachedItem) {
+                console.info(
+                  `[collectables] narrow tag miss — trusting inventory cache for ${outpoint}`,
+                )
+                match = {
+                  outpoint,
+                  satoshis: 1,
+                  spendable: true,
+                  tags: [],
+                } as HeldOutput
+              } else {
+                const wide = await listOutputsWithTimeout(wallet.wallet, {
+                  basket: '1sat',
+                  limit: 200,
+                  includeTags: true,
+                  includeCustomInstructions: true,
+                  include: 'locking scripts',
+                  seekPermission: false,
+                })
+                match = (wide.outputs ?? []).find(
+                  (o) => normalizeOutpoint(o.outpoint) === outpoint
+                )
+              }
             }
           }
           if (!match) throw new Error('Collectable is no longer in this wallet')
@@ -2937,7 +2981,7 @@ export async function sendCollectable(args: {
             resolveDerivativeContent({
               claimed: tipCustom.content ?? tagValue(match.tags, 'content:'),
             })
-          if (!content) {
+          if (!content && provenTierEarly !== 'brc150') {
             try {
               const originParts = origin.replace(/\.(\d+)$/, '_$1').split('_')
               const originTxid = originParts[0]?.toLowerCase()
@@ -2989,7 +3033,9 @@ export async function sendCollectable(args: {
               : null
           const [tipBeefBin, live] = await Promise.all([
             tipBeefPromise,
-            liveFromCache ?? awaitLiveOutpoints(wallet),
+            trustVerifiedSend
+              ? Promise.resolve(liveFromCache)
+              : liveFromCache ?? awaitLiveOutpoints(wallet),
           ])
 
           const liveKey = outpointKey(outpoint)
@@ -3052,7 +3098,7 @@ export async function sendCollectable(args: {
             recipientIdentityKey: args.recipientIdentityKey,
           })
           const tipKind = classifyTipKind(tipLockingScript)
-          const provenTier = getProvenVerdict(outpoint)?.tier ?? null
+          const provenTier = provenTierEarly ?? getProvenVerdict(outpoint)?.tier ?? null
           const sendPath = chooseSendPath({
             tipKind,
             provenTier,
@@ -3222,20 +3268,34 @@ export async function sendCollectable(args: {
           const itemChart = createActor(itemSendMachine).start()
           itemChart.send({ type: 'START', outpoint, settlePath })
 
-          setPaymentProgress(
-            'building',
-            'Preparing authenticity proof',
-            outpoint
-          )
-          const provenance = await resolveProvenanceForCollectableSend({
-            tipOutpoint: outpoint,
-            origin,
-            wallet,
-            contentType: item?.mimeType,
-            inputBeef: inputBEEF,
-            priorProvenance: tipCustom.provenance,
-            provenTier,
-          })
+          const rememberedRemittance = getRememberedProvenanceRemittance(outpoint)
+          let provenance: Awaited<
+            ReturnType<typeof resolveProvenanceForCollectableSend>
+          > | null = null
+          if (
+            provenTier === 'brc150' &&
+            rememberedRemittance &&
+            rememberedRemittance.beefB64
+          ) {
+            provenance = rememberedRemittance
+          } else {
+            setPaymentProgress(
+              'building',
+              provenTier === 'brc150'
+                ? 'Attaching cached authenticity proof'
+                : 'Preparing authenticity proof',
+              outpoint
+            )
+            provenance = await resolveProvenanceForCollectableSend({
+              tipOutpoint: outpoint,
+              origin,
+              wallet,
+              contentType: item?.mimeType,
+              inputBeef: inputBEEF,
+              priorProvenance: tipCustom.provenance,
+              provenTier,
+            })
+          }
           itemChart.send({ type: 'BUILT' })
 
           const recoverSendFailure = async (
@@ -3555,7 +3615,13 @@ export async function sendCollectable(args: {
           clearPaymentProgress()
         }
       },
-      () => setPaymentProgress('preparing', undefined, outpoint)
+      () =>
+        setPaymentProgress(
+          'preparing',
+          'Waiting to send the collectable',
+          outpoint,
+        ),
+      { promote: 'light' },
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)
