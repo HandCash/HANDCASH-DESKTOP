@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.73] - 2026-09-02
+
+### Fixed
+
+- **Arcade pin (defense in depth)** — `noteOutboundSendBroadcastFailed` and `removeActivityForTxids` also refuse to drop rows when Arcade was contacted on the initial `postBeef` round.
+
 ## [1.3.72] - 2026-09-02
 
 ### Fixed
