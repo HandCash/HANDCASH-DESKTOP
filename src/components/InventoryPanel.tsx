@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState, useDeferredValue } from 'react'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
@@ -533,13 +533,15 @@ export function InventoryPanel() {
     let deferTimer = 0
 
     if (hasCache) {
+      const cachedCount = getCachedCollectables().length
+      const delayMs = cachedCount > 100 ? 8_000 : 750
       deferTimer = window.setTimeout(() => {
         if (cancelled) return
         void refresh('ownership')
         intervalId = window.setInterval(() => {
           void refresh('interval')
         }, 5 * 60_000)
-      }, 750)
+      }, delayMs)
       return () => {
         cancelled = true
         window.clearTimeout(deferTimer)
@@ -561,9 +563,10 @@ export function InventoryPanel() {
     }
   }, [])
 
+  const deferredItems = useDeferredValue(items)
   const visibleItems = useMemo(
-    () => items.filter((item) => !collectableIsOnesatFt(item)),
-    [items, tokens],
+    () => deferredItems.filter((item) => !collectableIsOnesatFt(item)),
+    [deferredItems, tokens],
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, loose } = useMemo(() => groupCollectables(visibleItems), [visibleItems])

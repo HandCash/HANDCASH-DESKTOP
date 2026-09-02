@@ -9,8 +9,10 @@ import {
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
+import { yieldToUi } from './yieldToUi'
 
 const MARKET_LIST_TIMEOUT_MS = 20_000
+const MARKET_VERDICT_CHUNK = 64
 
 function normalizeOutpoint(value: unknown): string | null {
   const raw = String(value ?? '').trim().toLowerCase()
@@ -92,8 +94,8 @@ type ListOutputsResult = Awaited<ReturnType<WalletInterface['listOutputs']>>
 
 /**
  * Market inventory reads must not wedge behind a multi-minute toolbox basket
- * scan. Serve the durable paint when the wallet is busy, and cap live reads so
- * the BRC-100 bridge answer arrives before its 120s HTTP timeout.
+ * scan. Serve the durable paint immediately when we have it; live reads only on
+ * cold start so items-market inventory loads while the wallet is sending.
  */
 export async function listMarketBasketOutputs(
   wallet: WalletInterface,
@@ -104,14 +106,21 @@ export async function listMarketBasketOutputs(
       ? (args as { basket?: unknown }).basket
       : undefined
 
-  if (walletBusyForMarketRead()) {
-    const cached = cachedMarketListOutputs(basket)
-    if (cached && cached.outputs.length > 0) {
-      console.info(
-        `[market-inventory] wallet busy — serving cached ${String(basket ?? 'basket')} (${cached.outputs.length} row(s))`,
-      )
-      return cached as ListOutputsResult
+  const cached = cachedMarketListOutputs(basket)
+  if (cached && cached.outputs.length > 0) {
+    console.info(
+      `[market-inventory] serving cached ${String(basket ?? 'basket')} (${cached.outputs.length} row(s))`,
+    )
+    if (!walletBusyForMarketRead()) {
+      void refreshMarketBasketInBackground(wallet, args, basket)
     }
+    return cached as ListOutputsResult
+  }
+
+  if (walletBusyForMarketRead()) {
+    console.info(
+      `[market-inventory] wallet busy — no cache for ${String(basket ?? 'basket')}`,
+    )
   }
 
   try {
@@ -121,14 +130,37 @@ export async function listMarketBasketOutputs(
       MARKET_LIST_TIMEOUT_MS,
     )
   } catch (err) {
-    const cached = cachedMarketListOutputs(basket)
-    if (cached && cached.outputs.length > 0) {
+    const fallback = cachedMarketListOutputs(basket)
+    if (fallback && fallback.outputs.length > 0) {
       console.info(
-        `[market-inventory] listOutputs ${err instanceof Error ? err.message : 'failed'} — serving cache (${cached.outputs.length} row(s))`,
+        `[market-inventory] listOutputs ${err instanceof Error ? err.message : 'failed'} — serving cache (${fallback.outputs.length} row(s))`,
       )
-      return cached as ListOutputsResult
+      return fallback as ListOutputsResult
     }
     throw err
+  }
+}
+
+async function refreshMarketBasketInBackground(
+  wallet: WalletInterface,
+  args: ListOutputsArgs,
+  basket: unknown,
+): Promise<void> {
+  if (walletBusyForMarketRead()) return
+  try {
+    await listOutputsWithTimeout(
+      wallet as ActiveWallet['wallet'],
+      args,
+      MARKET_LIST_TIMEOUT_MS,
+    )
+    console.info(
+      `[market-inventory] background refresh ok for ${String(basket ?? 'basket')}`,
+    )
+  } catch (err) {
+    console.info(
+      `[market-inventory] background refresh skipped for ${String(basket ?? 'basket')}`,
+      err instanceof Error ? err.message : String(err),
+    )
   }
 }
 
@@ -146,26 +178,47 @@ export async function listMarketBasketOutputs(
  * minted or imported tip is just as genuine and rebuilds a publishable proof at
  * listing time. Requiring the blob here would hide almost every real item.
  */
+function projectMarketOutput(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw
+  const outpoint = normalizeOutpoint((raw as { outpoint?: unknown }).outpoint)
+  const verdict = outpoint
+    ? authenticityFromProvenCache(outpoint)
+    : { authenticity: 'unproven' as const, proven: false }
+  const proven = verdict.proven && verdict.authenticity === 'brc150'
+  const provenOrigin = proven && outpoint ? getProvenVerdict(outpoint)?.origin : undefined
+  return {
+    ...raw,
+    authenticity: verdict.authenticity,
+    originVerified: proven,
+    provenOrigin: provenOrigin ?? null,
+  }
+}
+
 export function addMarketOriginVerdicts(result: unknown): unknown {
   if (!result || typeof result !== 'object') return result
   const body = result as { outputs?: unknown[] }
   if (!Array.isArray(body.outputs)) return result
   return {
     ...body,
-    outputs: body.outputs.map((raw) => {
-      if (!raw || typeof raw !== 'object') return raw
-      const outpoint = normalizeOutpoint((raw as { outpoint?: unknown }).outpoint)
-      const verdict = outpoint
-        ? authenticityFromProvenCache(outpoint)
-        : { authenticity: 'unproven' as const, proven: false }
-      const proven = verdict.proven && verdict.authenticity === 'brc150'
-      const provenOrigin = proven && outpoint ? getProvenVerdict(outpoint)?.origin : undefined
-      return {
-        ...raw,
-        authenticity: verdict.authenticity,
-        originVerified: proven,
-        provenOrigin: provenOrigin ?? null,
-      }
-    }),
+    outputs: body.outputs.map(projectMarketOutput),
   }
+}
+
+/** Chunked projection so 700+ row market reads do not block the UI thread. */
+export async function addMarketOriginVerdictsAsync(result: unknown): Promise<unknown> {
+  if (!result || typeof result !== 'object') return result
+  const body = result as { outputs?: unknown[] }
+  if (!Array.isArray(body.outputs)) return result
+  const outputs = body.outputs
+  if (outputs.length <= MARKET_VERDICT_CHUNK) {
+    return addMarketOriginVerdicts(result)
+  }
+  const projected: unknown[] = []
+  for (let i = 0; i < outputs.length; i += MARKET_VERDICT_CHUNK) {
+    if (i > 0) await yieldToUi()
+    projected.push(
+      ...outputs.slice(i, i + MARKET_VERDICT_CHUNK).map(projectMarketOutput),
+    )
+  }
+  return { ...body, outputs: projected }
 }

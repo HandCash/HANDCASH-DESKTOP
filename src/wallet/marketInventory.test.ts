@@ -56,7 +56,29 @@ describe('market inventory listOutputs fast path', () => {
     const wallet = { listOutputs: vi.fn() }
     const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
     expect(result.outputs).toHaveLength(1)
-    expect(wallet.listOutputs).not.toHaveBeenCalled()
+    expect(listOutputsWithTimeout).not.toHaveBeenCalled()
+  })
+
+  it('serves cached rows immediately even when the wallet is idle', async () => {
+    getCachedCollectables.mockReturnValue([
+      {
+        outpoint: `${'a'.repeat(64)}.1`,
+        origin: `${'b'.repeat(64)}_0`,
+        name: 'Fox',
+        satoshis: 1,
+        imageUrl: '',
+        traits: [],
+        extras: [],
+        proven: true,
+        authenticity: 'brc150',
+      },
+    ])
+    listOutputsWithTimeout.mockImplementation(
+      () => new Promise(() => undefined),
+    )
+    const wallet = { listOutputs: vi.fn() }
+    const result = await listMarketBasketOutputs(wallet as never, { basket: '1sat' })
+    expect(result.outputs).toHaveLength(1)
   })
 
   it('falls back to cached bsv21 rows after a live read times out', async () => {

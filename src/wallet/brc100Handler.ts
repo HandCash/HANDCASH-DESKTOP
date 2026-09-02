@@ -54,7 +54,7 @@ import { rememberTokenIcon, getTokenIconDataUrl } from './tokenIconCache'
 import { resolveBsv21IconDataUrl } from './tokenIconResolve'
 import { stampBsv21IconOnListedOutputs } from './colourListing'
 import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
-import { addMarketOriginVerdicts } from './marketInventory'
+import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   enrichCreateActionForBsv21Issuer,
   finishBsv21IdentityMintCreateAction,
@@ -1381,7 +1381,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       } else if (isItemBasket(basket)) {
         result = filterItemOutputsForOrigin(originator, result, itemViewRequest)
         if (isMarketListingOrigin(originator)) {
-          result = addMarketOriginVerdicts(result)
+          result = await addMarketOriginVerdictsAsync(result)
         }
       } else if (isIndexBasket(basket)) {
         result = filterIndexOutputsForOrigin(

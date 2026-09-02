@@ -137,6 +137,8 @@ export function SendPanel({
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
   const [scanningTo, setScanningTo] = useState(false)
+  /** Local draft — syncing every keystroke through XState re-rendered the whole panel. */
+  const [amountDraft, setAmountDraft] = useState(() => sendSnap.context.amount)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
   const handleResolveRef = useRef(createHandleResolveDebouncer())
@@ -167,8 +169,8 @@ export function SendPanel({
     [recipientQuery, friends],
   )
 
-  const amountSats = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
-  const amountLabel = formatTypedAmount(sendSnap.context.amount, currency)
+  const amountSats = amountToSats(amountDraft, currency, usdPerBsv)
+  const amountLabel = formatTypedAmount(amountDraft, currency)
   const amountSecondary =
     amountSats > 0 ? formatSecondaryFromSats(amountSats, currency, usdPerBsv) : null
 
@@ -179,12 +181,19 @@ export function SendPanel({
     amountSats > 0 &&
     (currency === 'bsv' || usdPerBsv != null)
 
+  const syncAmountToMachine = (value: string) => {
+    if (value !== sendSnap.context.amount) {
+      send({ type: 'EDIT', amount: value })
+    }
+  }
+
   const goReview = async () => {
     if (reviewBusy || offlineBlock) return
     setReviewBusy(true)
     playWalletSound('soft')
+    syncAmountToMachine(amountDraft)
     try {
-      const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+      const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
       if (!Number.isFinite(satoshis) || satoshis <= 0) {
         throw new Error(
           currency === 'usd' && usdPerBsv == null
@@ -224,11 +233,14 @@ export function SendPanel({
 
   const toggleSendCurrency = () => {
     const next: DisplayCurrency = currency === 'usd' ? 'bsv' : 'usd'
-    const sats = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+    const sats = amountToSats(amountDraft, currency, usdPerBsv)
     playWalletSound('soft')
     if (sats > 0) {
       const converted = amountInputFromSats(sats, next, usdPerBsv)
-      if (converted) send({ type: 'EDIT', amount: converted })
+      if (converted) {
+        setAmountDraft(converted)
+        syncAmountToMachine(converted)
+      }
     }
     toggleDisplayCurrency()
   }
@@ -338,7 +350,8 @@ export function SendPanel({
    * still be edited.
    */
   const confirmSend = () => {
-    const satoshis = amountToSats(sendSnap.context.amount, currency, usdPerBsv)
+    syncAmountToMachine(amountDraft)
+    const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
     if (!Number.isFinite(satoshis) || satoshis <= 0) {
       send({
         type: 'FAIL',
@@ -413,8 +426,9 @@ export function SendPanel({
                   id="amount"
                   className="send-amount-input"
                   inputMode="decimal"
-                  value={sendSnap.context.amount}
-                  onChange={(e) => send({ type: 'EDIT', amount: e.target.value })}
+                  value={amountDraft}
+                  onChange={(e) => setAmountDraft(e.target.value)}
+                  onBlur={() => syncAmountToMachine(amountDraft)}
                   placeholder="0"
                   autoFocus
                   aria-label={currency === 'usd' ? 'Amount in USD' : 'Amount in BSV'}

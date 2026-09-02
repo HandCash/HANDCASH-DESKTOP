@@ -355,7 +355,14 @@ function persistDurableList(items: Collectable[]): void {
 }
 
 function notifyCollectables(items: Collectable[]) {
-  for (const listener of collectablesListeners) listener(items)
+  const emit = () => {
+    for (const listener of collectablesListeners) listener(items)
+  }
+  if (items.length > 120) {
+    void yieldToUi().then(emit)
+  } else {
+    emit()
+  }
 }
 
 /** createAction files the new tip before sign/broadcast finishes — suppress. */
@@ -766,9 +773,23 @@ let liveScan: Promise<void> | null = null
 
 function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
   if (liveScan != null) return
+  if (
+    getSpendPriorityDepth() > 0 ||
+    shouldYieldChainIngestToSpend() ||
+    getWalletCoordinatorSnapshot().spend === 'active'
+  ) {
+    return
+  }
   liveScan = scanLegacyAddress(wallet)
     .then((scan) => {
       rememberLiveOneSatOutpoints(scan.utxos)
+      if (
+        getSpendPriorityDepth() > 0 ||
+        shouldYieldChainIngestToSpend() ||
+        getWalletCoordinatorSnapshot().spend === 'active'
+      ) {
+        return
+      }
       // The rows on screen were filtered against a stale set (or none) — list
       // again now that the chain has answered, so ghosts leave without a tap.
       void listCollectables(wallet)
@@ -1272,7 +1293,13 @@ async function proveHeldGenesis(
     return
   }
   // A walk is never worth competing with a payment for the network.
-  if (getWalletCoordinatorSnapshot().spend === 'active') return
+  if (
+    getWalletCoordinatorSnapshot().spend === 'active' ||
+    getSpendPriorityDepth() > 0 ||
+    shouldYieldChainIngestToSpend()
+  ) {
+    return
+  }
 
   const held = lastItemOutputs
     .filter(isListableItem)
@@ -2951,9 +2978,18 @@ export async function sendCollectable(args: {
           ])
 
           const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
+          const liveFromCache =
+            cachedItem &&
+            cachedLiveOneSats != null &&
+            cachedLiveAllOutpoints != null
+              ? {
+                  oneSats: cachedLiveOneSats.keys,
+                  all: cachedLiveAllOutpoints.keys,
+                }
+              : null
           const [tipBeefBin, live] = await Promise.all([
             tipBeefPromise,
-            awaitLiveOutpoints(wallet),
+            liveFromCache ?? awaitLiveOutpoints(wallet),
           ])
 
           const liveKey = outpointKey(outpoint)
