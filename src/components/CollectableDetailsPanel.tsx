@@ -35,6 +35,7 @@ import {
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
+import { isItemSent } from '../wallet/sentItemGuard'
 import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon, WarningIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
@@ -214,11 +215,16 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
     )
   }
   if (!item) {
+    const spent = isItemSent(outpoint)
     return (
       <EmptyState
         icon={<CollectablesIcon size={22} />}
-        title="Item unavailable"
-        body="This collectable is no longer in the wallet or could not be loaded."
+        title={spent ? 'Already sent' : 'Item unavailable'}
+        body={
+          spent
+            ? 'This collectable is no longer in your wallet — it was sent recently or is already spent on chain.'
+            : 'This collectable is no longer in the wallet or could not be loaded.'
+        }
       />
     )
   }

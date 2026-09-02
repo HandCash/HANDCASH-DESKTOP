@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.80] - 2026-09-02
+
+### Fixed
+
+- **Re-entered collectables** — tips landing again pick up `collectionId` from remittance tags/CI and origin-keyed inscription cache, so they fold back into the right collection instead of loose/uncategorized; P2P notify carries `itemOrigin` + `itemCollectionId` for the payee.
+- **Art while verifying** — received/re-listed items keep genesis content URLs and painted thumbnails during BRC-150 walks instead of flashing skeletons on tip-as-origin placeholders; identity mismatch clears another wallet’s durable inventory cache.
+- **Send UX polish** — BSV-panel toasts center long send copy; Settings header stays pinned like Activity while the list scrolls; Add friend uses primary CTA styling; stuck sends say “Send timed out” (not bare “Timed out”) and spent collectables show “Already sent” instead of a vague unavailable state.
+
 ## [1.3.79] - 2026-09-02
 
 ### Fixed

@@ -524,8 +524,10 @@ describe('inbound receive activity', () => {
     expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
     const row = listRecentActivity(10)[0]!
     expect(isFailedActivity(row)).toBe(true)
-    expect(activityFailureReason(row)).toBe('Timed out')
-    expect(activityFailureLabel(row)).toBe('Timed out')
+    expect(activityFailureReason(row)).toBe(
+      'Send timed out — signing took too long and nothing was broadcast',
+    )
+    expect(activityFailureLabel(row)).toBe('Send timed out')
     expect(activityEntryTitle(row)).toBe('Send failed')
   })
 

@@ -9,6 +9,7 @@ import {
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
+import { isItemSent } from '../wallet/sentItemGuard'
 import {
   addressFromIdentityKey,
   identityKeyFromRecipient,
@@ -236,6 +237,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   }
 
   if (!item) {
+    const spent = isItemSent(outpoint)
     return loading ? (
       <div
         className="nav-child-panel send-panel send-collectable-panel"
@@ -247,8 +249,12 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     ) : (
       <EmptyState
         icon={<CollectablesIcon size={22} />}
-        title="Item unavailable"
-        body="This collectable is no longer in the wallet or could not be loaded."
+        title={spent ? 'Already sent' : 'Item unavailable'}
+        body={
+          spent
+            ? 'This collectable is no longer in your wallet — it was sent recently or is already spent on chain.'
+            : 'This collectable is no longer in the wallet or could not be loaded.'
+        }
       />
     )
   }

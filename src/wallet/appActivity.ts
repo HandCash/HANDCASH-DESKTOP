@@ -301,7 +301,9 @@ export function compactFailureLabel(reason: unknown): string {
   if (/already spent|doublespend|double spend|missing.?input|mempool-conflict|competing/i.test(raw)) {
     return 'Already spent'
   }
-  if (/timed? ?out|never confirmed|stopped hearing/i.test(raw)) return 'Timed out'
+  if (/timed? ?out|never confirmed|stopped hearing|signing took too long/i.test(raw)) {
+    return 'Send timed out'
+  }
   if (/unreachable|no network|connection|service error|fetch failed/i.test(raw)) {
     return 'No network'
   }
@@ -1077,8 +1079,9 @@ export function expireStaleOutboundPending(
     return {
       ...e,
       status: 'failed' as const,
-      failureReason: 'Timed out',
-      note: name ? `${name} was not sent` : 'Payment was not sent',
+      failureReason:
+        'Send timed out — signing took too long and nothing was broadcast',
+      note: name ? `${name} was not sent` : 'Collectable was not sent',
     }
   })
   if (expired > 0) writeAll(entries)

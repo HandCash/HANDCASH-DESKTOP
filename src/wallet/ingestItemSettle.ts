@@ -20,7 +20,7 @@ import {
   markOneSatImported,
   markOneSatImportFailed,
 } from './oneSatImportGuard'
-import { rememberResolvedInscription } from './inscriptionCache'
+import { rememberResolvedInscription, getResolvedInscriptionByOrigin } from './inscriptionCache'
 import { announceItemsReceived } from './itemArrivalToast'
 import { noteInboundReceiveComplete, noteInboundReceivePending, clearInboundReceivePending } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -61,6 +61,7 @@ export async function internalizePeerItemSettle(opts: {
   /** Optional BRC-150 origin hint from the messagebox notify. */
   origin?: string
   app?: string
+  collectionId?: string
   /** Inbox hints race sender postBeef and therefore use a short retry backoff. */
   beefPurpose?: AtomicBeefPurpose
 }): Promise<IngestItemSettleResult> {
@@ -101,12 +102,9 @@ export async function internalizePeerItemSettle(opts: {
 
   let tipVout = -1
   const originHint = opts.origin?.trim()
-  let origin =
-    originHint && /^[0-9a-f]{64}[._]\d+$/i.test(originHint)
-      ? originHint.replace(/\.(\d+)$/, '_$1').toLowerCase()
-      : `${id}_0`
   let name = opts.name?.trim() || 'Collectable'
   const app = opts.app?.trim() || undefined
+  let collectionId = opts.collectionId?.trim() || undefined
   try {
     const beef = Beef.fromBinary(atomic)
     const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
@@ -137,6 +135,16 @@ export async function internalizePeerItemSettle(opts: {
     }
   }
 
+  let origin =
+    originHint && /^[0-9a-f]{64}[._]\d+$/i.test(originHint)
+      ? originHint.replace(/\.(\d+)$/, '_$1').toLowerCase()
+      : `${id}_${tipVout}`
+  const priorByOrigin = getResolvedInscriptionByOrigin(origin)
+  if (priorByOrigin) {
+    name = priorByOrigin.name?.trim() || name
+    collectionId = collectionId || priorByOrigin.collectionId
+  }
+
   const tipOp = `${id}.${tipVout}`
   const allOps = [tipOp]
   const claimed = beginOneSatImport(allOps)
@@ -151,11 +159,13 @@ export async function internalizePeerItemSettle(opts: {
   // paint and spin exactly like any other receive.
   const paintReceivedTip = (): void => {
     rememberResolvedInscription(tipOp, {
+      ...(priorByOrigin ?? {}),
       origin,
       name,
-      ...(app ? { app } : {}),
-      traits: [],
-      extras: [],
+      ...(app ? { app } : priorByOrigin?.app ? { app: priorByOrigin.app } : {}),
+      ...(collectionId ? { collectionId } : {}),
+      traits: priorByOrigin?.traits ?? [],
+      extras: priorByOrigin?.extras ?? [],
     })
     noteInboundReceiveComplete({
       txid: id,
@@ -164,14 +174,17 @@ export async function internalizePeerItemSettle(opts: {
       itemOrigin: origin,
       outpoint: tipOp,
     })
-    // Paint off the ingest critical path — listOutputs(1sat) can take seconds.
-    // Seed the card before announcing: announcing an arrival the grid cannot
-    // show yet is what left Collect empty, and spinner-less, while Activity
-    // already had the row. Seeding announces through the collectables cache, so
-    // the trailing call only covers the case where the seed was skipped.
     void import('./collectables')
       .then(({ noteIngestedItem, listCollectables }) => {
-        noteIngestedItem({ outpoint: tipOp, chain: active.chain, origin, name })
+        noteIngestedItem({
+          outpoint: tipOp,
+          chain: active.chain,
+          origin,
+          name,
+          app,
+          collectionId,
+          content: priorByOrigin?.content,
+        })
         announceItemsReceived([tipOp])
         return listCollectables(active)
       })
@@ -205,11 +218,15 @@ export async function internalizePeerItemSettle(opts: {
             `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
             ...(name ? [`name:${name.slice(0, 80)}`] : []),
             ...(app ? [`app:${app.slice(0, 40)}`] : []),
+            ...(collectionId
+              ? [`collection:${collectionId.slice(0, 80)}`]
+              : []),
           ]),
           customInstructions: buildInternalizeCustomInstructions({
             origin,
             name,
             app,
+            collectionId,
           }),
         },
       },

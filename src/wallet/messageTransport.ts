@@ -223,6 +223,9 @@ type WireMessage = {
     brc29?: WireBrc29
     /** Item/token settle (Atomic BEEF on attachment or beefB64). */
     item?: boolean
+    /** Genesis origin for collectable settle — helps payee paint art while verifying. */
+    itemOrigin?: string
+    itemCollectionId?: string
     /** Tagged asset grammar; absent means legacy collectable. */
     asset?: ItemTransferAsset
     /** Atomic BEEF as standard base64 when it fits in the 16KB sendMessage cap. */
@@ -318,6 +321,14 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       attachment: message.meta?.attachment,
       brc29: validBrc29(message.meta?.brc29) ? message.meta.brc29 : undefined,
       item: message.meta?.item === true ? true : undefined,
+      itemOrigin:
+        typeof message.meta?.itemOrigin === 'string'
+          ? message.meta.itemOrigin
+          : undefined,
+      itemCollectionId:
+        typeof message.meta?.itemCollectionId === 'string'
+          ? message.meta.itemCollectionId
+          : undefined,
       asset: validItemTransferAsset(message.meta?.asset)
         ? message.meta.asset
         : undefined,
@@ -424,6 +435,14 @@ export function decodeMessageBody(body: string): {
             }
           : undefined,
         item: parsed.meta?.item === true ? true : undefined,
+        itemOrigin:
+          typeof parsed.meta?.itemOrigin === 'string'
+            ? parsed.meta.itemOrigin.trim() || undefined
+            : undefined,
+        itemCollectionId:
+          typeof parsed.meta?.itemCollectionId === 'string'
+            ? parsed.meta.itemCollectionId.trim() || undefined
+            : undefined,
         asset: validItemTransferAsset(parsed.meta?.asset)
           ? parsed.meta.asset
           : undefined,
@@ -728,6 +747,8 @@ export async function pollInboundTipHints(args: {
           tx: decodeBeefB64(decoded.meta?.beefB64),
           item,
           itemName,
+          itemOrigin: decoded.meta?.itemOrigin,
+          itemCollectionId: decoded.meta?.itemCollectionId,
           asset: decoded.meta?.asset,
         })
         // Do not ACK until ingest succeeds — otherwise remittance is deleted
@@ -765,6 +786,8 @@ export async function notifyPeerItemIncoming(args: {
   messagebox?: string | null
   txid: string
   itemName: string
+  itemOrigin?: string
+  itemCollectionId?: string
   asset?: ItemTransferAsset
   atomicBeef?: number[]
 }): Promise<PeerBeefNotifyResult> {
@@ -773,6 +796,8 @@ export async function notifyPeerItemIncoming(args: {
     return { delivered: 'local', beefInBox: false }
   }
   const name = args.itemName.trim() || 'item'
+  const itemOrigin = args.itemOrigin?.trim() || undefined
+  const itemCollectionId = args.itemCollectionId?.trim() || undefined
   const packed = withOptionalBeefB64(
     encodeMessageBody({
       kind: 'tip',
@@ -783,6 +808,8 @@ export async function notifyPeerItemIncoming(args: {
         status: 'Incoming',
         memo: name,
         item: true,
+        ...(itemOrigin ? { itemOrigin } : {}),
+        ...(itemCollectionId ? { itemCollectionId } : {}),
         asset: args.asset ?? { kind: 'collectable' },
       },
     }),

@@ -861,8 +861,10 @@ export type PaymentTipHint = {
   tx?: number[]
   /** Item/token settle — not a BSV payment. */
   item?: boolean
-  /** Collectable name from the tip card memo, when known. */
+    /** Collectable name from the tip card memo, when known. */
   itemName?: string
+  itemOrigin?: string
+  itemCollectionId?: string
   /** Tagged asset grammar; absent means legacy collectable. */
   asset?: ItemTransferAsset
 }
@@ -885,6 +887,14 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
         brc29: msg.meta?.brc29,
         item: isItem || undefined,
         itemName: msg.meta?.memo?.trim() || undefined,
+        itemOrigin:
+          typeof msg.meta?.itemOrigin === 'string'
+            ? msg.meta.itemOrigin.trim() || undefined
+            : undefined,
+        itemCollectionId:
+          typeof msg.meta?.itemCollectionId === 'string'
+            ? msg.meta.itemCollectionId.trim() || undefined
+            : undefined,
         asset: msg.meta?.asset,
       })
     }
@@ -925,6 +935,8 @@ export async function ingestPaymentsFromTipHints(
       tx: h.tx,
       item: h.item === true || undefined,
       itemName: h.itemName?.trim() || undefined,
+      itemOrigin: h.itemOrigin?.trim() || undefined,
+      itemCollectionId: h.itemCollectionId?.trim() || undefined,
       asset: h.asset,
     })
   }
@@ -939,6 +951,8 @@ export async function ingestPaymentsFromTipHints(
       (h.item && !prev.item) ||
       (h.asset && !prev.asset) ||
       (h.itemName && !prev.itemName) ||
+      (h.itemOrigin && !prev.itemOrigin) ||
+      (h.itemCollectionId && !prev.itemCollectionId) ||
       (h.beefUrl && !prev.beefUrl) ||
       (h.tx && !prev.tx)
     ) {
@@ -1034,6 +1048,8 @@ export async function ingestPaymentsFromTipHints(
                       tx: attempt === 0 ? atomic : undefined,
                       beefUrl: attempt === 0 ? undefined : hint.beefUrl,
                       name: hint.itemName,
+                      origin: hint.itemOrigin,
+                      collectionId: hint.itemCollectionId,
                       beefPurpose: 'inboundItemHint',
                     }),
                 )

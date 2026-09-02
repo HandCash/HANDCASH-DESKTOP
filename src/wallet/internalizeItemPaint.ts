@@ -23,6 +23,7 @@ export type InternalizedItemTip = {
   origin?: string
   name?: string
   app?: string
+  collectionId?: string
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -43,6 +44,7 @@ function parseCustomInstructions(raw: unknown): {
   origin?: string
   name?: string
   app?: string
+  collectionId?: string
 } {
   if (typeof raw !== 'string' || !raw.trim()) return {}
   try {
@@ -59,7 +61,11 @@ function parseCustomInstructions(raw: unknown): {
       typeof parsed.app === 'string' && parsed.app.trim()
         ? parsed.app.trim()
         : undefined
-    return { origin, name, app }
+    const collectionId =
+      typeof parsed.collectionId === 'string' && parsed.collectionId.trim()
+        ? parsed.collectionId.trim()
+        : undefined
+    return { origin, name, app, collectionId }
   } catch {
     return {}
   }
@@ -88,6 +94,7 @@ function tipsFromInsertionOutputs(
       origin: tagValue(tags, 'origin:'),
       name: tagValue(tags, 'name:'),
       app: tagValue(tags, 'app:'),
+      collectionId: tagValue(tags, 'collection:'),
     }
     const fromCustom = parseCustomInstructions(rem.customInstructions)
     tips.push({
@@ -95,6 +102,7 @@ function tipsFromInsertionOutputs(
       origin: fromCustom.origin ?? fromTags.origin ?? undefined,
       name: fromCustom.name ?? fromTags.name ?? undefined,
       app: fromCustom.app ?? fromTags.app ?? undefined,
+      collectionId: fromCustom.collectionId ?? fromTags.collectionId ?? undefined,
     })
   }
   return tips
@@ -173,6 +181,7 @@ export function paintAfterInternalizeItem(
       origin,
       name,
       ...(tip.app ? { app: tip.app } : {}),
+      ...(tip.collectionId ? { collectionId: tip.collectionId } : {}),
       traits: [],
       extras: [],
     })
@@ -206,6 +215,8 @@ export function paintAfterInternalizeItem(
           chain: active.chain,
           origin: tip.origin,
           name: tip.name,
+          app: tip.app,
+          collectionId: tip.collectionId,
         })
       }
       announceItemsReceived(tips.map((t) => t.outpoint))

@@ -99,6 +99,17 @@ function armStuckWatchdog(): void {
       progress.phase,
       progress.detail,
     )
+    const detail = progress.detail?.trim()
+    void import('./toast')
+      .then(({ toastError }) => {
+        toastError(
+          'Send timed out',
+          detail
+            ? `${detail} — nothing was broadcast. Wait a moment, then try again.`
+            : 'Signing took too long — nothing was broadcast. Wait a moment, then try again.',
+        )
+      })
+      .catch(() => {})
     clearPaymentProgress()
     // Activity "Sending…" is durable and was not cleared by the pill alone.
     void import('./appActivity')

@@ -189,8 +189,6 @@ export function SettingsPanel() {
     .join(' · ')
   useEffect(() => {
     rootRef.current?.scrollIntoView({ block: 'start' })
-    const stage = rootRef.current?.closest('.wallet-nav-stage')
-    if (stage instanceof HTMLElement) stage.scrollTop = 0
   }, [])
 
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
@@ -230,13 +228,14 @@ export function SettingsPanel() {
   return (
     <div
       ref={rootRef}
-      className="nav-section-body settings-nav"
+      className="nav-section-body settings-nav settings-with-scroll"
       data-aeon-scope="settings"
     >
       <div className="connected-panel-head settings-panel-head">
         <h2>Settings</h2>
       </div>
 
+      <div className="settings-scroll-body">
       <SettingsSection title="Security" part="security">
         <SecurityRows />
       </SettingsSection>
@@ -392,6 +391,7 @@ export function SettingsPanel() {
           />
         </ul>
       </SettingsSection>
+      </div>
     </div>
   )
 }

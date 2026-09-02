@@ -135,6 +135,19 @@ export function getResolvedInscription(outpoint: string): ResolvedInscription | 
   return hit
 }
 
+function normalizeOriginLookupKey(origin: string): string {
+  return origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+}
+
+/** Prior session metadata keyed by genesis origin — re-entered tips reuse it. */
+export function getResolvedInscriptionByOrigin(
+  origin: string,
+): ResolvedInscription | null {
+  const key = normalizeOriginLookupKey(origin)
+  if (!key) return null
+  return getResolvedInscription(key)
+}
+
 /**
  * True when a cached hit is only "this tip is its own origin" with no inscription
  * metadata — the answer GorillaPool gives for unindexed 1-sat outputs.

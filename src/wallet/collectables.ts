@@ -145,6 +145,7 @@ import {
 } from './walletCoordinator'
 import {
   getResolvedInscription,
+  getResolvedInscriptionByOrigin,
   isThinResolution,
   PENDING_RETRY_MS,
   rememberResolvedInscription,
@@ -612,6 +613,112 @@ function parseOrigin(
   return source.includes('.') ? source.replace(/\.(\d+)$/, '_$1') : source
 }
 
+function isSelfOrigin(origin: string, outpoint: string): boolean {
+  return originKey(origin) === originKey(outpoint.replace('.', '_'))
+}
+
+function resolvedForOutput(
+  o: { outpoint: string; tags?: string[]; customInstructions?: string },
+  claimedOrigin?: string,
+): Partial<ResolvedInscription> | null {
+  const outpoint = normalizeOutpoint(o.outpoint)
+  const direct = getResolvedInscription(outpoint)
+  if (direct) return direct
+  const custom = parseCustom(o.customInstructions)
+  const claimed =
+    claimedOrigin ??
+    custom.origin ??
+    tagValue(o.tags, 'origin:')
+  if (!claimed) return null
+  const byOrigin = getResolvedInscriptionByOrigin(claimed)
+  if (byOrigin) return byOrigin
+  const verdictOrigin = getProvenVerdict(outpoint)?.origin
+  if (verdictOrigin) return getResolvedInscriptionByOrigin(verdictOrigin)
+  return null
+}
+
+function mediaOriginForCollectable(args: {
+  outpoint: string
+  origin: string
+  content?: string
+  verdictOrigin?: string
+  resolved?: Partial<ResolvedInscription> | null
+}): string {
+  if (args.content) return args.content
+  if (!isSelfOrigin(args.origin, args.outpoint)) return args.origin
+  if (
+    args.verdictOrigin &&
+    !isSelfOrigin(args.verdictOrigin, args.outpoint)
+  ) {
+    return args.verdictOrigin
+  }
+  if (
+    args.resolved?.origin &&
+    !isSelfOrigin(args.resolved.origin, args.outpoint)
+  ) {
+    return args.resolved.content ?? args.resolved.origin
+  }
+  return args.origin
+}
+
+function heldByOrigin(origin: string): Collectable | undefined {
+  const key = originKey(origin)
+  return cachedCollectables.find(
+    (item) =>
+      originKey(item.origin) === key &&
+      (item.collectionId?.trim() ||
+        item.imageUrl?.trim() ||
+        (item.name && item.name !== shortOrigin(item.origin))),
+  )
+}
+
+function mergeCollectablePaint(next: Collectable, chain: Chain): Collectable {
+  const held = heldNamedCollectable(next.outpoint) ?? heldByOrigin(next.origin)
+  if (!held) return next
+  const collectionId = next.collectionId ?? held.collectionId
+  const content = next.content ?? held.content
+  const mediaOrigin = mediaOriginForCollectable({
+    outpoint: next.outpoint,
+    origin: next.origin,
+    content,
+    verdictOrigin: getProvenVerdict(next.outpoint)?.origin,
+    resolved: getResolvedInscription(normalizeOutpoint(next.outpoint)),
+  })
+  const nextImage = next.imageUrl?.trim()
+  const heldImage = held.imageUrl?.trim()
+  const imageUrl =
+    nextImage && !isSelfOrigin(next.origin, next.outpoint)
+      ? nextImage
+      : heldImage && !isSelfOrigin(held.origin, held.outpoint)
+        ? heldImage
+        : contentUrlForOrigin(
+            mediaOriginForCollectable({
+              outpoint: next.outpoint,
+              origin: held.origin,
+              content: content ?? held.content,
+              verdictOrigin: getProvenVerdict(next.outpoint)?.origin,
+              resolved: getResolvedInscriptionByOrigin(held.origin),
+            }),
+            chain,
+          ) || nextImage || heldImage || contentUrlForOrigin(mediaOrigin, chain)
+  return {
+    ...next,
+    collectionId,
+    app: next.app ?? held.app,
+    ...(content ? { content } : held.content ? { content: held.content } : {}),
+    name:
+      next.name === shortOrigin(next.origin) &&
+      held.name !== shortOrigin(held.origin)
+        ? held.name
+        : next.name,
+    imageUrl,
+    traits: next.traits.length ? next.traits : held.traits,
+    mimeType: next.mimeType ?? held.mimeType,
+    type: next.type ?? held.type,
+    subType: next.subType ?? held.subType,
+  }
+}
+
 function parseCustom(raw: string | undefined): {
   origin?: string
   name?: string
@@ -652,7 +759,7 @@ function toCollectable(
     lockingScript?: string
   },
   chain: Chain,
-  resolved?: Partial<ResolvedInscription> | null
+  hint?: Partial<ResolvedInscription> | null
 ): Collectable {
   const custom = parseCustom(o.customInstructions)
   // List paints from tags + cached verdicts. Full BEEF verify runs automatically
@@ -661,6 +768,7 @@ function toCollectable(
   const authenticity: AuthenticityTier = verdict?.tier ?? 'unproven'
   const proven = authenticity === 'brc150'
   const claimed = tagValue(o.tags, 'origin:') ?? custom.origin
+  const resolved = hint ?? resolvedForOutput(o, claimed)
   // An indexer walk that came back with real inscription content knows the
   // lineage; a remittance origin is only the sender's claim, and a wrong one
   // paints a 404 image forever.
@@ -680,14 +788,24 @@ function toCollectable(
     tagValue(o.tags, 'name:') ??
     shortOrigin(origin)
   const app = resolved?.app ?? custom.app ?? tagValue(o.tags, 'app:')
+  const collectionId =
+    resolved?.collectionId ??
+    custom.collectionId ??
+    tagValue(o.tags, 'collection:')
   const content =
     resolveDerivativeContent({
       claimed:
         custom.content ??
         tagValue(o.tags, 'content:') ??
-        (resolved as { content?: string } | null | undefined)?.content,
+        resolved?.content,
     }) ?? undefined
-  const mediaOrigin = content ?? origin
+  const mediaOrigin = mediaOriginForCollectable({
+    outpoint: normalizeOutpoint(o.outpoint),
+    origin,
+    content,
+    verdictOrigin: verdict?.origin,
+    resolved,
+  })
   return {
     outpoint: normalizeOutpoint(o.outpoint),
     origin,
@@ -700,7 +818,7 @@ function toCollectable(
     mimeType: resolved?.mimeType,
     type: resolved?.type,
     subType: resolved?.subType,
-    collectionId: resolved?.collectionId,
+    collectionId,
     traits: resolved?.traits ?? [],
     extras: resolved?.extras ?? [],
     proven,
@@ -732,6 +850,7 @@ export function dedupeByOrigin(
   const rank = (c: Collectable): number => {
     let score = 0
     if (c.proven) score += 4
+    if (c.collectionId) score += 2
     if (c.name && c.name !== shortOrigin(c.origin)) score += 2
     if (c.app) score += 1
     return score
@@ -1033,18 +1152,43 @@ export function noteIngestedItem(args: {
   chain: Chain
   origin?: string | null
   name?: string | null
+  app?: string | null
+  collectionId?: string | null
+  content?: string | null
 }): void {
   const target = normalizeOutpoint(args.outpoint)
   if (!target || isItemSent(target)) return
   const key = outpointKey(target)
   const origin = args.origin?.trim()
   const name = args.name?.trim()
+  const app = args.app?.trim()
+  const collectionId = args.collectionId?.trim()
+  const content = args.content?.trim()
+  const priorByOrigin = origin ? getResolvedInscriptionByOrigin(origin) : null
   const tags = [
     'ordinal',
     ...(origin ? [`origin:${origin.replace(/_(\d+)$/, '.$1')}`] : []),
     ...(name ? [`name:${name}`] : []),
+    ...(app ? [`app:${app.slice(0, 40)}`] : []),
+    ...(collectionId ? [`collection:${collectionId.slice(0, 80)}`] : []),
+    ...(content ? [`content:${content.replace(/_(\d+)$/, '.$1')}`] : []),
   ]
-  const output: ItemOutput = { outpoint: target, satoshis: 1, tags }
+  const output: ItemOutput = {
+    outpoint: target,
+    satoshis: 1,
+    tags,
+    ...(collectionId || app || content || priorByOrigin
+      ? {
+          customInstructions: JSON.stringify({
+            ...(origin ? { origin } : {}),
+            ...(name ? { name } : {}),
+            ...(app ? { app } : {}),
+            ...(collectionId ? { collectionId } : {}),
+            ...(content ? { content } : {}),
+          }),
+        }
+      : {}),
+  }
   const identityKey = getActiveWallet()?.identityKey
   if (identityKey) hydrateSeededItems(identityKey)
   // Judged against the scan that ran before this tip existed, it would look
@@ -1055,12 +1199,28 @@ export function noteIngestedItem(args: {
   if (cachedCollectables.some((c) => outpointKey(c.outpoint) === key)) return
   // A send to our own handle leaves the outgoing tip on the list until the next
   // ownership pass; without this the same collectable shows twice until then.
+  const seeded = mergeCollectablePaint(
+    toCollectable(
+      output,
+      args.chain,
+      priorByOrigin ??
+        (origin || name || app || collectionId
+          ? {
+              origin: origin ?? target.replace(/\.(\d+)$/, '_$1'),
+              name: name ?? priorByOrigin?.name,
+              app: app ?? priorByOrigin?.app,
+              collectionId: collectionId ?? priorByOrigin?.collectionId,
+              content: content ?? priorByOrigin?.content,
+              traits: priorByOrigin?.traits ?? [],
+              extras: priorByOrigin?.extras ?? [],
+            }
+          : null),
+    ),
+    args.chain,
+  )
   setCollectablesCache(
     dedupeByOrigin(
-      [
-        toCollectable(output, args.chain, getResolvedInscription(target)),
-        ...cachedCollectables,
-      ],
+      [seeded, ...cachedCollectables],
       (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0
     )
   )
@@ -1123,10 +1283,13 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
   const items: Collectable[] = []
   for (const o of outputs) {
     if (!isListableItem(o)) continue
-    const item = toCollectable(
-      o,
+    const item = mergeCollectablePaint(
+      toCollectable(
+        o,
+        chain,
+        getResolvedInscription(normalizeOutpoint(o.outpoint)),
+      ),
       chain,
-      getResolvedInscription(normalizeOutpoint(o.outpoint))
     )
     if (collectableIsOnesatFt(item)) {
       // Named items briefly lack remittance during sync — keep the painted card.
@@ -1608,6 +1771,9 @@ async function adoptProvenOrigin(
 ): Promise<void> {
   const point = originKey(origin)
   const existing = getResolvedInscription(outpoint)
+  const held = cachedCollectables.find(
+    (c) => normalizeOutpoint(c.outpoint) === normalizeOutpoint(outpoint),
+  )
   const sameOrigin = !!existing && originKey(existing.origin) === point
   // A thin hit that already names the right origin still needs the indexer —
   // that is exactly the "verified but no traits" card. Only a rich match may
@@ -1618,7 +1784,18 @@ async function adoptProvenOrigin(
   }
   const resolved = await resolveInscriptionAtOrigin(point, chain)
   const rich = resolved && !isThinResolution(resolved) ? resolved : null
-  const keep = sameOrigin ? existing : null
+  const keep = sameOrigin ? existing : held ? {
+    origin: held.origin,
+    name: held.name,
+    app: held.app,
+    collectionId: held.collectionId,
+    content: held.content,
+    mimeType: held.mimeType,
+    type: held.type,
+    subType: held.subType,
+    traits: held.traits,
+    extras: held.extras,
+  } : null
   const merged = {
     ...(rich ?? keep ?? { traits: [], extras: [] }),
     origin: point,
@@ -1626,6 +1803,12 @@ async function adoptProvenOrigin(
       ? { name: resolved?.name || keep?.name }
       : {}),
     ...(resolved?.app || keep?.app ? { app: resolved?.app || keep?.app } : {}),
+    ...(resolved?.collectionId || keep?.collectionId
+      ? { collectionId: resolved?.collectionId || keep?.collectionId }
+      : {}),
+    ...(resolved?.content || keep?.content
+      ? { content: resolved?.content || keep?.content }
+      : {}),
     ...(resolved?.mimeType || keep?.mimeType
       ? { mimeType: resolved?.mimeType || keep?.mimeType }
       : {}),
@@ -2009,6 +2192,15 @@ async function listCollectablesNow(
 ): Promise<Collectable[]> {
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
+
+  const cachedFor = durableListIdentity()
+  if (
+    wallet.identityKey &&
+    cachedFor &&
+    cachedFor !== wallet.identityKey
+  ) {
+    clearCollectablesCache({ notify: false })
+  }
 
   const coord = getWalletCoordinatorSnapshot()
   if (
@@ -2417,6 +2609,11 @@ function formatSendError(err: unknown): Error {
     }
     if (/doublespend/i.test(msg)) {
       return new Error('Already spent')
+    }
+    if (/timed? ?out/i.test(msg)) {
+      return new Error(
+        'Send timed out — nothing was broadcast. Wait a moment, then try again.'
+      )
     }
     return err
   }
@@ -3525,6 +3722,8 @@ export async function sendCollectable(args: {
                     messagebox: friend?.messagebox,
                     txid,
                     itemName: name,
+                    itemOrigin: origin,
+                    itemCollectionId: collectionId,
                     atomicBeef,
                   })
                   console.info(

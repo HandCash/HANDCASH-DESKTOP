@@ -95,6 +95,8 @@ export type ChatMessage = {
     }
     /** Item/token settle — Atomic BEEF rides inline; payee broadcasts. */
     item?: boolean
+    itemOrigin?: string
+    itemCollectionId?: string
     /** Tagged asset grammar; absent on older collectable messages. */
     asset?: ItemTransferAsset
   }
