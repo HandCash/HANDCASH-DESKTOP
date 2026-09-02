@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.85] - 2026-09-02
+
+### Changed
+
+- **Chat in nav** — Messages live under Friends → Chat inside the normal nav panel (no fullscreen dashboard breakout); breadcrumbs show Friends / Chat / thread.
+- **Chat payments** — Send-panel BRC-29 notifies stay in the Payments tab only; in-thread `/pay` and `/tip` cards use `chatRef` and still appear in Messages. New Payments tab lists all money moves between you and a friend (chat cards + Activity).
+- **Add friend** — Handle/key field first; label prompt only for `peerpay:` URIs; resolved handles show a verified badge when the registry certificate is real.
+
 ## [1.3.84] - 2026-09-02
 
 ### Changed

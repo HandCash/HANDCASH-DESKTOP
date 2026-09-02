@@ -230,6 +230,8 @@ type WireMessage = {
     asset?: ItemTransferAsset
     /** Atomic BEEF as standard base64 when it fits in the 16KB sendMessage cap. */
     beefB64?: string
+    /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
+    chatRef?: boolean
   }
 }
 
@@ -332,6 +334,7 @@ export function encodeMessageBody(message: Pick<ChatMessage, 'kind' | 'text' | '
       asset: validItemTransferAsset(message.meta?.asset)
         ? message.meta.asset
         : undefined,
+      chatRef: message.meta?.chatRef === true ? true : undefined,
     },
   }
   return `${WIRE_PREFIX}${JSON.stringify(wire)}`
@@ -450,6 +453,7 @@ export function decodeMessageBody(body: string): {
           typeof parsed.meta?.beefB64 === 'string' && parsed.meta.beefB64.trim()
             ? parsed.meta.beefB64.trim()
             : undefined,
+        chatRef: parsed.meta?.chatRef === true ? true : undefined,
       },
     }
   } catch {
@@ -856,6 +860,7 @@ export async function notifyPeerBrc29Payment(args: {
   }
   amountLabel?: string
   atomicBeef?: number[]
+  chatRef?: boolean
 }): Promise<PeerBeefNotifyResult> {
   const txid = args.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) {
@@ -885,6 +890,7 @@ export async function notifyPeerBrc29Payment(args: {
           derivationSuffix: args.remittance.derivationSuffix,
           outputIndex: args.remittance.outputIndex ?? 0,
         },
+        ...(args.chatRef ? { chatRef: true } : {}),
       },
     }),
     args.atomicBeef,

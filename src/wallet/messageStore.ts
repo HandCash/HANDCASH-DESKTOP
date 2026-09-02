@@ -99,7 +99,45 @@ export type ChatMessage = {
     itemCollectionId?: string
     /** Tagged asset grammar; absent on older collectable messages. */
     asset?: ItemTransferAsset
+    /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
+    chatRef?: boolean
   }
+}
+
+const PAYMENT_KINDS = new Set<MessageKind>(['pay-sent', 'tip', 'pay-request', 'escrow'])
+
+/** Settled / in-flight money cards — not pay-request prompts. */
+const PAYMENTS_TAB_KINDS = new Set<MessageKind>(['pay-sent', 'tip', 'escrow'])
+
+export function isPaymentMessageKind(kind: MessageKind): boolean {
+  return PAYMENT_KINDS.has(kind)
+}
+
+export function isPaymentsTabMessageKind(kind: MessageKind): boolean {
+  return PAYMENTS_TAB_KINDS.has(kind)
+}
+
+/** Pay/tip cards the user composed in chat (vs protocol notify from Send). */
+export function isChatReferencedPayment(msg: Pick<ChatMessage, 'kind' | 'meta'>): boolean {
+  return (msg.kind === 'pay-sent' || msg.kind === 'tip') && msg.meta?.chatRef === true
+}
+
+export type ChatThreadSection = 'messages' | 'files' | 'payments'
+
+export function messageBelongsInThreadSection(
+  msg: ChatMessage,
+  section: ChatThreadSection,
+): boolean {
+  if (section === 'files') return msg.kind === 'file'
+  if (section === 'payments') return isPaymentsTabMessageKind(msg.kind)
+  if (msg.kind === 'pay-sent' || msg.kind === 'tip') return isChatReferencedPayment(msg)
+  if (msg.kind === 'escrow') return false
+  return true
+}
+
+function threadPreviewEligible(msg: ChatMessage): boolean {
+  if (msg.kind === 'pay-sent' || msg.kind === 'tip') return isChatReferencedPayment(msg)
+  return true
 }
 
 export type ChatThread = {
@@ -169,8 +207,31 @@ export function listThreads(): ChatThread[] {
   const byPeer = new Map<string, { updatedAt: number; lastPreview: string; unread: number }>()
   for (const m of messages) {
     const prev = byPeer.get(m.peerId)
+    const previewEligible = threadPreviewEligible(m)
     const unreadInc =
-      m.direction === 'in' && !m.readAt && m.kind !== 'system' && m.kind !== 'whois' ? 1 : 0
+      previewEligible &&
+      m.direction === 'in' &&
+      !m.readAt &&
+      m.kind !== 'system' &&
+      m.kind !== 'whois'
+        ? 1
+        : 0
+    if (!previewEligible) {
+      if (!prev) {
+        byPeer.set(m.peerId, {
+          updatedAt: m.createdAt,
+          lastPreview: '',
+          unread: 0,
+        })
+      } else {
+        byPeer.set(m.peerId, {
+          updatedAt: Math.max(prev.updatedAt, m.createdAt),
+          lastPreview: prev.lastPreview,
+          unread: prev.unread,
+        })
+      }
+      continue
+    }
     const preview =
       m.kind === 'file' && m.meta?.attachment
         ? `${m.direction === 'out' ? 'You: ' : ''}File · ${m.meta.attachment.name}`

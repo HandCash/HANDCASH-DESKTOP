@@ -249,6 +249,12 @@ export async function addFriendFromRecipient(args: {
     identityKey = normalizeIdentityKey(value)
     const invalid = validateIdentityKey(identityKey)
     if (invalid) throw new Error(invalid)
+    if (!suggestedLabel) {
+      suggestedLabel =
+        identityKey.length <= 16
+          ? identityKey
+          : `${identityKey.slice(0, 8)}…${identityKey.slice(-6)}`
+    }
   }
 
   const label = args.label?.trim() || suggestedLabel

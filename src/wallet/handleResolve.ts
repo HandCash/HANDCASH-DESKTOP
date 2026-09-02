@@ -19,6 +19,27 @@ export type ResolvedHandle = {
   messagebox: string | null
 }
 
+/** True when resolve returned a real BRC-52 handle certificate (not a lab placeholder). */
+export function isVerifiedHandleCertificate(cert: unknown): boolean {
+  if (!cert || typeof cert !== 'object') return false
+  const row = cert as Record<string, unknown>
+  if (row._dev === true) return false
+  const sig = typeof row.signature === 'string' ? row.signature.trim() : ''
+  const serial = typeof row.serialNumber === 'string' ? row.serialNumber.trim() : ''
+  const certifier = typeof row.certifier === 'string' ? row.certifier.trim() : ''
+  const type = typeof row.type === 'string' ? row.type.trim() : ''
+  const revocation =
+    typeof row.revocationOutpoint === 'string' ? row.revocationOutpoint.trim() : ''
+  return (
+    type.length > 0 &&
+    certifier.length > 0 &&
+    serial.length > 0 &&
+    revocation.length > 0 &&
+    /^[0-9a-fA-F]+$/.test(sig) &&
+    sig.length >= 64
+  )
+}
+
 function normalizeBase(url: string): string {
   return url.trim().replace(/\/+$/, '')
 }

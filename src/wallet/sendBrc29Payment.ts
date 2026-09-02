@@ -205,6 +205,8 @@ export async function sendBrc29ToIdentityKey(opts: {
   satoshis: number
   friendLabel?: string | null
   description?: string
+  /** When true, inbox card is shown in Messages (not Payments-only notify). */
+  chatRef?: boolean
 }): Promise<SendBrc29Result> {
   const satoshis = opts.satoshis
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
@@ -442,6 +444,7 @@ export async function sendBrc29ToIdentityKey(opts: {
               remittance,
               atomicBeef,
               amountLabel: opts.friendLabel ?? undefined,
+              chatRef: opts.chatRef,
             })
           }
 

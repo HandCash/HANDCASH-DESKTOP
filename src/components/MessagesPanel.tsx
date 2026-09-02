@@ -20,9 +20,11 @@ import {
   listMessagePeers,
   listMessages,
   markThreadRead,
+  messageBelongsInThreadSection,
   subscribeMessages,
   updateMessage,
   type ChatMessage,
+  type ChatThreadSection,
 } from '../wallet/messageStore'
 import {
   COMMAND_PALETTE,
@@ -34,7 +36,7 @@ import {
   parseLocalCommand,
   type ParsedAmount,
 } from '../wallet/brc218'
-import { openAddFriend, openMessagesInbox, openMessagesWithFriend } from '../wallet/navStore'
+import { openAddFriend, openMessagesInbox, openMessagesWithFriend, openPaymentDetails } from '../wallet/navStore'
 import { amountToSats, formatPrimaryFromSats, getCachedUsdPerBsv } from '../wallet/fx'
 import { getDisplayCurrency, type DisplayCurrency } from '../wallet/displayCurrency'
 import { playWalletSound } from '../wallet/soundService'
@@ -48,6 +50,13 @@ import {
   type PaymentProgress,
 } from '../wallet/paymentProgress'
 import { subscribeMessageFocus, takeMessageFocus } from '../wallet/messageFocus'
+import {
+  activityEntryTitle,
+  activityMatchesFriend,
+  listRecentActivity,
+  subscribeAppActivity,
+  type ActivityEntry,
+} from '../wallet/appActivity'
 import { copyText } from '../wallet/clipboard'
 import { parseHandleInput, resolveHandle } from '../wallet/handleResolve'
 import {
@@ -75,9 +84,15 @@ type Props = {
   identityKey?: string
   /** When set, open directly in this friend's thread (Friends → Message). */
   peerId?: string
-  /** Immersive split-pane chat — hides wallet chrome around the nav panel. */
+  /** Friends → Chat nav child: route peers via navStore inside the nav panel. */
+  nestedInNav?: boolean
+  /** @deprecated Use nestedInNav — immersive breakout chrome (unused). */
   fullscreen?: boolean
   onSent?: (balanceSats: number) => void
+}
+
+function navRoutedChat(props: { nestedInNav?: boolean; fullscreen?: boolean }): boolean {
+  return Boolean(props.nestedInNav || props.fullscreen)
 }
 
 function friendInitial(label: string): string {
@@ -454,8 +469,16 @@ function MessageBubble({
   )
 }
 
-export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, onSent }: Props) {
-  const threadOnly = Boolean(peerId) && !fullscreen
+export function MessagesPanel({
+  chain,
+  identityKey,
+  peerId,
+  nestedInNav = false,
+  fullscreen = false,
+  onSent,
+}: Props) {
+  const navRouted = navRoutedChat({ nestedInNav, fullscreen })
+  const threadOnly = Boolean(peerId) && !navRouted
   const [peers, setPeers] = useState(() => listMessagePeers())
   const [activePeerId, setActivePeerId] = useState<string | null>(() => peerId ?? null)
   const [draft, setDraft] = useState('')
@@ -463,7 +486,8 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
   const [query, setQuery] = useState('')
   const [unreadOnly, setUnreadOnly] = useState(false)
   const [showCommands, setShowCommands] = useState(false)
-  const [threadSection, setThreadSection] = useState<'messages' | 'files'>('messages')
+  const [threadSection, setThreadSection] = useState<ChatThreadSection>('messages')
+  const [activityTick, setActivityTick] = useState(0)
   const [fileBusy, setFileBusy] = useState(false)
   const [boundMessageId, setBoundMessageId] = useState<string | null>(null)
   const [confirmCmd, setConfirmCmd] = useState<{
@@ -492,6 +516,7 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
 
   useEffect(() => subscribeFriends(refresh), [])
   useEffect(() => subscribeMessages(refresh), [])
+  useEffect(() => subscribeAppActivity(() => setActivityTick((n) => n + 1)), [])
 
   useEffect(() => {
     if (threadOnly) return
@@ -535,9 +560,33 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
     [activePeerId, peers],
   )
   const visibleMessages = useMemo(
-    () => (threadSection === 'files' ? messages.filter((m) => m.kind === 'file') : messages),
+    () => messages.filter((m) => messageBelongsInThreadSection(m, threadSection)),
     [messages, threadSection],
   )
+  const peerActivity = useMemo(() => {
+    if (!activeFriend || threadSection !== 'payments') return [] as ActivityEntry[]
+    void activityTick
+    const chatTxids = new Set(
+      messages
+        .map((m) => m.meta?.txid?.trim().toLowerCase())
+        .filter((txid): txid is string => Boolean(txid)),
+    )
+    return listRecentActivity(500)
+      .filter((entry) => activityMatchesFriend(entry, activeFriend))
+      .filter((entry) => !entry.txid || !chatTxids.has(entry.txid.trim().toLowerCase()))
+  }, [activeFriend, threadSection, messages, activityTick])
+  const paymentTimeline = useMemo(() => {
+    if (threadSection !== 'payments') return null
+    type Row =
+      | { kind: 'message'; at: number; message: ChatMessage }
+      | { kind: 'activity'; at: number; entry: ActivityEntry }
+    const rows: Row[] = [
+      ...visibleMessages.map((message) => ({ kind: 'message' as const, at: message.createdAt, message })),
+      ...peerActivity.map((entry) => ({ kind: 'activity' as const, at: entry.at, entry })),
+    ]
+    rows.sort((a, b) => a.at - b.at)
+    return rows
+  }, [threadSection, visibleMessages, peerActivity])
   const lastVisibleId = visibleMessages[visibleMessages.length - 1]?.id
   const lastVisibleDirection = visibleMessages[visibleMessages.length - 1]?.direction
 
@@ -636,6 +685,7 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
         boundMessageId: kind === 'tip' ? bindId || undefined : undefined,
         payStatus: 'pending',
         status: 'Confirm to send',
+        chatRef: true,
       },
     })
     if (kind === 'tip') setBoundMessageId(null)
@@ -683,6 +733,7 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
           satoshis: sats,
           friendLabel: msg.meta?.friendLabel,
           description,
+          chatRef: true,
         })
         txid = sent.txid
         balanceSats = sent.balanceSats
@@ -1092,17 +1143,17 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
 
   const selectPeer = (id: string) => {
     playWalletSound('soft')
-    if (fullscreen) openMessagesWithFriend(id)
+    if (navRouted) openMessagesWithFriend(id)
     else setActivePeerId(id)
   }
 
   const backToList = () => {
     playWalletSound('soft')
-    if (fullscreen) openMessagesInbox()
+    if (navRouted) openMessagesInbox()
     else setActivePeerId(null)
   }
 
-  const shellState = fullscreen
+  const shellState = navRouted
     ? activePeerId
       ? 'thread'
       : 'list'
@@ -1112,14 +1163,23 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
         ? 'thread'
         : 'list'
 
+  const shellClass = [
+    'chat-shell',
+    nestedInNav ? 'chat-shell--nested' : '',
+    fullscreen && !nestedInNav ? 'chat-shell--fullscreen' : '',
+  ]
+    .filter(Boolean)
+    .join(' ')
+
   return (
     <div
-      className={`chat-shell${fullscreen ? ' chat-shell--fullscreen' : ''}`}
+      className={shellClass}
       data-aeon-scope="messages"
       data-aeon-state={shellState}
     >
       {!threadOnly ? (
       <aside className="chat-sidebar">
+        {!nestedInNav ? (
         <div className="chat-sidebar-head panel-label-bar">
           <h2>Messages</h2>
           <div className="chat-sidebar-tools">
@@ -1142,6 +1202,27 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
             </button>
           </div>
         </div>
+        ) : (
+        <div className="chat-sidebar-toolbar panel-label-bar">
+          <label className="chat-unread-toggle" title="Unread only">
+            <input
+              type="checkbox"
+              checked={unreadOnly}
+              onChange={(e) => setUnreadOnly(e.target.checked)}
+            />
+            <span>Unread</span>
+          </label>
+          <button
+            type="button"
+            className="btn btn-ghost btn-icon"
+            title="Add friend"
+            aria-label="Add friend"
+            onClick={() => openAddFriend()}
+          >
+            <PersonAddIcon size={18} />
+          </button>
+        </div>
+        )}
         <div className="chat-search">
           <input
             type="search"
@@ -1198,6 +1279,7 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
       <section className="chat-thread">
         {activeFriend ? (
           <>
+            {!nestedInNav ? (
             <header className="chat-thread-head panel-label-bar">
               {!threadOnly ? (
                 <button
@@ -1217,6 +1299,7 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
                 <span className="chat-thread-sub">1:1 · Message · Tip · Pay · Files</span>
               </div>
             </header>
+            ) : null}
             <nav className="chat-thread-tabs panel-label-bar" aria-label="Thread sections">
               <button
                 type="button"
@@ -1236,6 +1319,15 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
               >
                 Files
               </button>
+              <button
+                type="button"
+                className="chat-thread-tab"
+                data-active={threadSection === 'payments' ? '' : undefined}
+                aria-current={threadSection === 'payments' ? 'page' : undefined}
+                onClick={() => setThreadSection('payments')}
+              >
+                Payments
+              </button>
               <button type="button" className="chat-thread-tab" disabled title="Coming soon">
                 Notes
               </button>
@@ -1243,15 +1335,77 @@ export function MessagesPanel({ chain, identityKey, peerId, fullscreen = false, 
 
             <Thread.Root className="chat-thread-messages">
               <Thread.List ref={threadListRef} className="chat-thread-list">
-                {visibleMessages.length === 0 ? (
+                {(threadSection === 'payments' ? paymentTimeline?.length === 0 : visibleMessages.length === 0) ? (
                   <EmptyState
-                    title={threadSection === 'files' ? 'No shared files' : 'No messages yet'}
+                    title={
+                      threadSection === 'files'
+                        ? 'No shared files'
+                        : threadSection === 'payments'
+                          ? 'No payments yet'
+                          : 'No messages yet'
+                    }
                     body={
                       threadSection === 'files'
                         ? 'Files shared in this conversation will appear here.'
-                        : 'Say hello, attach a file, or send an in-thread tip.'
+                        : threadSection === 'payments'
+                          ? 'Payments and tips between you — including sends from the wallet — appear here.'
+                          : 'Say hello, attach a file, or send an in-thread tip.'
                     }
                   />
+                ) : threadSection === 'payments' && paymentTimeline ? (
+                  paymentTimeline.map((row) =>
+                    row.kind === 'message' ? (
+                      <MessageBubble
+                        key={row.message.id}
+                        msg={row.message}
+                        peerLabel={activeFriend.label}
+                        onConfirmPay={(id) => {
+                          const m = messages.find((x) => x.id === id)
+                          if (!m) return
+                          setConfirmCmd({
+                            id,
+                            verb: m.kind === 'escrow' ? 'escrow' : m.kind === 'tip' ? 'tip' : 'pay',
+                            amountLabel: m.meta?.amountLabel ?? m.text,
+                            satsLabel:
+                              m.meta?.sats && m.meta.sats > 0
+                                ? formatSatsLabel(m.meta.sats)
+                                : null,
+                          })
+                        }}
+                        onCancelPay={cancelPay}
+                        onEscrowAccept={onEscrowAccept}
+                        onEscrowDecline={onEscrowDecline}
+                        onBindReply={(id) => {
+                          setBoundMessageId(id)
+                          setDraft('/tip ')
+                          setHint(`Bound tip to message ${id.slice(0, 8)}…`)
+                          playWalletSound('soft')
+                          requestAnimationFrame(() => inputRef.current?.focus())
+                        }}
+                      />
+                    ) : (
+                      <button
+                        key={row.entry.id}
+                        type="button"
+                        className="chat-payment-activity-row"
+                        onClick={() => openPaymentDetails(row.entry.id)}
+                      >
+                        <span className="chat-payment-activity-title">
+                          {activityEntryTitle(row.entry)}
+                        </span>
+                        <span className="chat-payment-activity-meta">
+                          {row.entry.sats > 0 ? formatSatsLabel(row.entry.sats) : null}
+                          {row.entry.sats > 0 ? ' · ' : null}
+                          {new Date(row.entry.at).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}
+                        </span>
+                      </button>
+                    ),
+                  )
                 ) : (
                   visibleMessages.map((m) => (
                     <MessageBubble

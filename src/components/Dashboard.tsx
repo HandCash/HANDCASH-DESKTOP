@@ -39,12 +39,9 @@ import {
   type ConnectedApp,
 } from '../wallet/permissions'
 import {
-  getNavState,
-  isMessagesNavChild,
   openReceiveFlow,
   openScanFlow,
   openSendFlow,
-  subscribeNav,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { WalletNav } from './WalletNav'
@@ -158,9 +155,6 @@ export function Dashboard({
   onFail,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
-  const [chatFullscreen, setChatFullscreen] = useState(() =>
-    isMessagesNavChild(getNavState().child),
-  )
 
   const onRevoke = useCallback((origin: string) => {
     revokeOrigin(origin)
@@ -175,13 +169,6 @@ export function Dashboard({
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
-  useEffect(
-    () =>
-      subscribeNav((nav) => {
-        setChatFullscreen(isMessagesNavChild(nav.child))
-      }),
-    [],
-  )
 
   useEffect(() => {
     const refresh = () => setClaimedHandle(claimedHandleForIdentity(profile.identityKey))
@@ -632,11 +619,7 @@ export function Dashboard({
   }, [profile.address])
 
   return (
-    <section
-      className={`dashboard${chatFullscreen ? ' dashboard--chat-fullscreen' : ''}`}
-      data-aeon-scope="dashboard"
-      data-aeon-state="ready"
-    >
+    <section className="dashboard" data-aeon-scope="dashboard" data-aeon-state="ready">
       <div className="dashboard-main">
         <div className="panel wallet-hero">
           <div className="connected-panel-head wallet-hero-head">

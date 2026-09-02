@@ -834,6 +834,22 @@ export function activityRecipientLabel(entry: ActivityEntry): string | null {
   return label || null
 }
 
+/** Whether an activity row is a payment/item move with this friend. */
+export function activityMatchesFriend(
+  entry: ActivityEntry,
+  friend: { identityKey: string; label: string },
+): boolean {
+  if (entry.origin !== WALLET_ACTIVITY_ORIGIN) return false
+  if (entry.kind !== 'spent' && entry.kind !== 'earned') return false
+  const ik = friend.identityKey.trim().toLowerCase()
+  const label = friend.label.trim().toLowerCase()
+  const retry = entry.retry
+  if (retry?.recipientIdentityKey?.trim().toLowerCase() === ik) return true
+  if (retry?.friendLabel?.trim().toLowerCase() === label) return true
+  const recipient = activityRecipientLabel(entry)?.trim().toLowerCase()
+  return Boolean(recipient && recipient === label)
+}
+
 /** Recipient + amount a payment row needs to be retried or explained after it dies. */
 function bsvRetry(args: {
   sats: number
