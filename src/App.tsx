@@ -31,6 +31,7 @@ import { playWalletSound } from './wallet/soundService'
 import { showToast, toastError, toastSuccess } from './wallet/toast'
 import { appDisplayName } from './wallet/appIdentity'
 import { refreshFromChain } from './wallet/chainIngest'
+import { isUtxoHealRunning } from './wallet/utxoHealFromHistory'
 import { softPullHistoryIfRemoteNewer } from './wallet/deviceSync'
 import { isDeviceParityEnabled } from './wallet/paymentPolicy'
 import { getSessionBackupPassword } from './wallet/sessionBackupAuth'
@@ -308,6 +309,13 @@ export function App() {
 
   const handleManualSync = useCallback(async () => {
     if (!walletUnlocked) return
+    if (isUtxoHealRunning()) {
+      toastError(
+        'Sync paused',
+        'Balance heal is running — wait for it to finish, then try again.',
+      )
+      return
+    }
     playWalletSound('soft')
     try {
       if (isDeviceParityEnabled() && getSessionBackupPassword()) {

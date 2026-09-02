@@ -52,6 +52,7 @@ Heal checkpoint rules:
 - **Always merge** checkpoint txids into candidates so prior heals are never lost.
 - **New txids** or pending change → run pass even inside overlap.
 - Auto passes: send-cleanup, pending-change background (3min cooldown). Manual Settings heal forces pass.
+- **Serialized with Refresh** via `runChainIngest`; manual Sync refuses while heal runs.
 - Activity row only when manual heal moves sats or still pending (no progress bar).
 
 ## Confirmation model

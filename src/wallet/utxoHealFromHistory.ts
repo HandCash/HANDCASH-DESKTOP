@@ -29,6 +29,13 @@ import {
 
 const TXID_RE = /\b([0-9a-f]{64})\b/gi
 
+let utxoHealDepth = 0
+
+/** True while any UTXO heal pass holds the chain-ingest region. */
+export function isUtxoHealRunning(): boolean {
+  return utxoHealDepth > 0
+}
+
 export type UtxoHealBalanceSnapshot = {
   spendable: number
   pendingChange: number
@@ -220,77 +227,79 @@ export async function runUtxoHealPass(
     pendingChange,
   })
 
-  try {
-    const core = await runHealCore(txidList, balanceBefore, deepHeal)
-    const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0
+  const { runChainIngest } = await import('./walletCoordinator')
+  return runChainIngest(async () => {
+    utxoHealDepth += 1
+    try {
+      const core = await runHealCore(txidList, balanceBefore, deepHeal)
+      const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0
 
-    writeHealCheckpoint({
-      at: Date.now(),
-      txids: txidList,
-      recoveredSats: core.recoveredSats,
-      pendingChangeAfter,
-      source: opts.source,
-    })
-
-    const result: UtxoHealFromHistoryResult = {
-      skipped: false,
-      activityRows: activity.total,
-      archivedRows: activity.archived,
-      txidsChecked: txidList.length,
-      txidsOnChain: core.txidsOnChain,
-      changeKept: core.changeKept,
-      heal: core.heal,
-      recoveredSats: core.recoveredSats,
-      balanceBefore,
-      balanceAfter: core.balanceAfter,
-    }
-
-    if (
-      opts.source === 'manual' &&
-      (core.recoveredSats > 0 || pendingChangeAfter > 0)
-    ) {
-      recordWalletEvent({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        method: UTXO_HEAL_METHOD,
-        sats: core.recoveredSats,
-        note:
-          core.recoveredSats > 0
-            ? `Recovered ${core.recoveredSats.toLocaleString()} sats`
-            : formatUtxoHealResult(result),
-        status: 'complete',
+      writeHealCheckpoint({
+        at: Date.now(),
+        txids: txidList,
+        recoveredSats: core.recoveredSats,
+        pendingChangeAfter,
+        source: opts.source,
       })
-    }
 
-    logDiag('utxo-heal', 'info', 'done', {
-      source: opts.source,
-      txidsChecked: result.txidsChecked,
-      recoveredSats: core.recoveredSats,
-      pendingChangeAfter,
-    })
+      const result: UtxoHealFromHistoryResult = {
+        skipped: false,
+        activityRows: activity.total,
+        archivedRows: activity.archived,
+        txidsChecked: txidList.length,
+        txidsOnChain: core.txidsOnChain,
+        changeKept: core.changeKept,
+        heal: core.heal,
+        recoveredSats: core.recoveredSats,
+        balanceBefore,
+        balanceAfter: core.balanceAfter,
+      }
 
-    return result
-  } catch (err) {
-    const reason = err instanceof Error ? err.message : String(err)
-    if (opts.source === 'manual') {
-      recordWalletEvent({
-        origin: WALLET_ACTIVITY_ORIGIN,
-        method: UTXO_HEAL_METHOD,
-        note: 'Balance heal failed',
-        status: 'failed',
-        failureReason: reason,
+      if (
+        opts.source === 'manual' &&
+        (core.recoveredSats > 0 || pendingChangeAfter > 0)
+      ) {
+        recordWalletEvent({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          method: UTXO_HEAL_METHOD,
+          sats: core.recoveredSats,
+          note:
+            core.recoveredSats > 0
+              ? `Recovered ${core.recoveredSats.toLocaleString()} sats`
+              : formatUtxoHealResult(result),
+          status: 'complete',
+        })
+      }
+
+      logDiag('utxo-heal', 'info', 'done', {
+        source: opts.source,
+        txidsChecked: result.txidsChecked,
+        recoveredSats: core.recoveredSats,
+        pendingChangeAfter,
       })
+
+      return result
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err)
+      if (opts.source === 'manual') {
+        recordWalletEvent({
+          origin: WALLET_ACTIVITY_ORIGIN,
+          method: UTXO_HEAL_METHOD,
+          note: 'Balance heal failed',
+          status: 'failed',
+          failureReason: reason,
+        })
+      }
+      logDiag('utxo-heal', 'warn', 'failed', { source: opts.source, reason })
+      throw err
+    } finally {
+      utxoHealDepth = Math.max(0, utxoHealDepth - 1)
     }
-    logDiag('utxo-heal', 'warn', 'failed', { source: opts.source, reason })
-    throw err
-  }
+  })
 }
 
 /** Settings → Wallet health manual heal. */
 let manualHealFlight: Promise<UtxoHealFromHistoryResult> | null = null
-
-export function isUtxoHealRunning(): boolean {
-  return manualHealFlight != null
-}
 
 export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistoryResult> {
   if (manualHealFlight) return manualHealFlight

@@ -68,6 +68,10 @@ vi.mock('./durableStorage', () => ({
   durableSetItem: mocks.durableSetItem,
 }))
 
+vi.mock('./walletCoordinator', () => ({
+  runChainIngest: vi.fn((fn: () => Promise<unknown>) => fn()),
+}))
+
 import {
   formatUtxoHealResult,
   healUtxoFromActivityHistory,

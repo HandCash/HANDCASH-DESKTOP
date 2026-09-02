@@ -494,6 +494,11 @@ export async function refreshFromChainExclusive(
               healMisfiledCollectables(active),
             ),
           )
+          .then(() =>
+            import('./healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
+              healMisfiledBsv21(active),
+            ),
+          )
           .then(() => listCollectables(active))
           .finally(() => {
             void import('./collectables').then(
