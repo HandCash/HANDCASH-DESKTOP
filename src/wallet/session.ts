@@ -484,6 +484,8 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
       } = await import('./staleOutputRelease')
       await promotePendingLocalChangeOutputs({ forSpendChain: true })
       await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+      const { scheduleHealCheckpointIfDue } = await import('./utxoHealFromHistory')
+      scheduleHealCheckpointIfDue('auto')
       lastBalanceBreakdown = ''
       bumpBalanceAfterHeal()
     } catch (err) {

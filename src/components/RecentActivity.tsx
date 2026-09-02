@@ -10,6 +10,7 @@ import {
   ReceiveIcon,
   SendIcon,
   FireIcon,
+  RefreshIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { useChunkedCount } from './useChunkedCount'
@@ -30,6 +31,7 @@ import {
   isFailedActivity,
   activityFailureLabel,
   countFailedActivity,
+  isUtxoHealActivity,
   listRecentActivity,
   subscribeAppActivity,
   WALLET_ACTIVITY_ORIGIN,
@@ -319,24 +321,18 @@ function HistoryRow({
     event &&
     pending &&
     (entry.method === 'index-install' || entry.method === 'index-sync')
+  const utxoHeal = isUtxoHealActivity(entry)
+  const utxoHealDone = utxoHeal && !failed && entry.sats > 0
   const indexDetail =
     indexInstall &&
     indexProgress?.kind === 'index-expansion' &&
     indexProgress.status === 'running'
       ? walletProgressDetail(indexProgress)
       : null
-  const showPending = pending && (spent || !inventoryProven || indexInstall)
+  const showPending =
+    pending && (spent || !inventoryProven || indexInstall)
   const listing = entry.method === 'market-list'
   const cancelling = entry.method === 'market-cancel'
-  const pendingLabel = burned
-    ? 'Burning…'
-    : listing
-      ? 'Listing…'
-      : cancelling
-        ? 'Cancelling…'
-        : spent
-          ? 'Sending…'
-          : 'Verifying…'
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const title = activityEntryTitle(shown ? { ...entry, item: shown } : entry)
@@ -344,42 +340,46 @@ function HistoryRow({
   // it is still clearing approval. Say so, rather than signing an empty amount
   // or falling through to the no-rate dash, which read as a stray "—".
   const approving = spent && showPending && entry.sats <= 0
-  const amountLabel = event
-    ? eventAmountLabel(entry)
-    : token
-    ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
-    : item
-    ? shown?.name || 'Collectable'
-    : approving
-    ? 'Approving'
-    : showPending && entry.sats <= 0
-    ? '…'
-    : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
-  const signed = event
-    ? amountLabel
-    : token
-    ? amountLabel
-    : item
-    ? 'Item'
-    : approving
-    ? amountLabel
-    : currency === 'usd' && usdPerBsv == null
-    ? '—'
-    : spent
-    ? `−${amountLabel}`
-    : `+${amountLabel}`
+  const amountLabel = utxoHealDone
+    ? formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+    : event
+        ? eventAmountLabel(entry)
+        : token
+          ? activityTokenAmountDisplay(shown ? { ...entry, item: shown } : entry)
+          : item
+            ? shown?.name || 'Collectable'
+            : approving
+              ? 'Approving'
+              : showPending && entry.sats <= 0
+                ? '…'
+                : formatPrimaryFromSats(entry.sats, currency, usdPerBsv)
+  const signed = utxoHealDone
+    ? `+${amountLabel}`
+    : event
+      ? amountLabel
+      : token
+        ? amountLabel
+        : item
+          ? 'Item'
+          : approving
+            ? amountLabel
+            : currency === 'usd' && usdPerBsv == null
+              ? '—'
+              : spent
+                ? `−${amountLabel}`
+                : `+${amountLabel}`
   const subtitle =
     failed && failureReason
       ? failureReason
       : indexDetail
-      ? indexDetail
-      : event
-      ? entry.origin !== WALLET_ACTIVITY_ORIGIN
-        ? entry.origin
-        : null
-      : item && shown?.app
-      ? shown.app
-      : null
+        ? indexDetail
+        : event
+            ? entry.origin !== WALLET_ACTIVITY_ORIGIN
+              ? entry.origin
+              : null
+            : item && shown?.app
+              ? shown.app
+              : null
 
   const entryKey = activityEntryKey(entry)
   const showVerify = Boolean(
@@ -393,6 +393,15 @@ function HistoryRow({
       ((listing || cancelling) && pending) ||
       indexInstall,
   )
+  const pendingLabel = burned
+      ? 'Burning…'
+      : listing
+        ? 'Listing…'
+        : cancelling
+          ? 'Cancelling…'
+          : spent
+            ? 'Sending…'
+            : 'Verifying…'
   const pendingMarkTone = burned ? 'burn' : listing || cancelling ? 'listing' : 'default'
 
   return (
@@ -407,6 +416,7 @@ function HistoryRow({
         className={`history-row history-row-btn${failed ? ' is-failed' : ''}`}
         onClick={() => {
           if (entry.id === LIVE_OUTBOUND_ID) return
+          if (utxoHeal) return
           playWalletSound('soft')
           openPaymentDetails(entry.id)
         }}
@@ -458,10 +468,22 @@ function HistoryRow({
               className={`history-pending-mark${pendingMarkTone === 'burn' ? ' is-burn' : pendingMarkTone === 'listing' ? ' is-listing' : ''}`}
               aria-live="polite"
               aria-label={
-                burned ? 'Burning' : listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'
+                burned
+                  ? 'Burning'
+                  : listing
+                    ? 'Listing'
+                    : cancelling
+                      ? 'Cancelling'
+                      : 'Sending'
               }
               title={
-                burned ? 'Burning' : listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'
+                burned
+                  ? 'Burning'
+                  : listing
+                    ? 'Listing'
+                    : cancelling
+                      ? 'Cancelling'
+                      : 'Sending'
               }
             >
               <span className="collectable-verify-spinner" aria-hidden />
@@ -469,7 +491,7 @@ function HistoryRow({
           ) : null}
           <HistoryActionBadge entry={entry} />
         </div>
-        <div className="history-body">
+        <div className="history-body history-progress-body">
           <strong className="history-title">{title}</strong>
           {subtitle ? (
             <span className="history-when" title={subtitle}>
@@ -480,9 +502,11 @@ function HistoryRow({
         <div className="history-amount-block">
           <span
             className={
-              event || item || failed || approving
-                ? 'history-amount history-amount-item'
-                : 'history-amount'
+              utxoHealDone
+                ? 'history-amount'
+                : event || item || failed || approving
+                  ? 'history-amount history-amount-item'
+                  : 'history-amount'
             }
             title={amountLabel}
           >
@@ -501,6 +525,7 @@ function HistoryRow({
 
 function eventAmountLabel(entry: ActivityEntry): string {
   const m = entry.method
+  if (m === 'utxo-heal') return 'Heal'
   if (m === 'connect' || m === 'approve') return 'Allowed'
   if (m === 'connect-deny' || m === 'deny') return 'Denied'
   if (m === 'disconnect') return 'Removed'
@@ -513,6 +538,7 @@ function eventAmountLabel(entry: ActivityEntry): string {
 
 function eventIcon(entry: ActivityEntry) {
   const m = entry.method
+  if (m === 'utxo-heal') return <RefreshIcon size={18} />
   if (m === 'add-friend') return <FriendsIcon size={18} />
   if (
     m.startsWith('connect') ||

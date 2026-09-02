@@ -1374,6 +1374,7 @@ export function recordWalletEvent(args: {
   origin?: string
   method: string
   note: string
+  sats?: number
   txid?: string
   item?: ActivityItem
   status?: ActivityStatus
@@ -1383,7 +1384,7 @@ export function recordWalletEvent(args: {
   recordAppActivity({
     origin: args.origin ?? WALLET_ACTIVITY_ORIGIN,
     kind: 'event',
-    sats: 0,
+    sats: Math.max(0, Math.trunc(args.sats ?? 0)),
     method: args.method,
     note: args.note.trim().slice(0, 160),
     ...(args.txid ? { txid: args.txid } : {}),
@@ -1399,6 +1400,12 @@ export function isIndexExpansionActivity(entry: ActivityEntry): boolean {
     entry.method === 'index-install' ||
     entry.method === 'index-sync'
   )
+}
+
+export const UTXO_HEAL_METHOD = 'utxo-heal'
+
+export function isUtxoHealActivity(entry: ActivityEntry): boolean {
+  return entry.method === UTXO_HEAL_METHOD
 }
 
 /** Overlay refused a listing that already has a txid. Rewrite that row as failed. */
@@ -1706,6 +1713,9 @@ export function activityEntryKey(entry: ActivityEntry): string {
   if (outpoint) return `item:${outpoint}:${kind}:${txid ?? entry.id}`
   if (txid) return `tx:${txid}:${kind}`
   if (kind === 'event') {
+    if (entry.method === UTXO_HEAL_METHOD && entry.pendingId) {
+      return `event:utxo-heal:${entry.pendingId}`
+    }
     if (entry.pendingId) return `event:${entry.pendingId}`
     const pack = entry.item?.origin?.trim().toLowerCase()
     if (
@@ -1724,6 +1734,7 @@ export function activityEntryKey(entry: ActivityEntry): string {
 /** Human title for an activity row (payment, collectable, or event). */
 export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.status === 'failed') {
+    if (entry.method === UTXO_HEAL_METHOD) return 'Balance heal failed'
     if (isBurnActivity(entry)) {
       return entry.item?.name ? `${entry.item.name} not burned` : 'Burn failed'
     }
@@ -1758,6 +1769,7 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     return 'Receiving…'
   }
   if (entry.status === 'pending' && entry.kind === 'event') {
+    if (entry.method === UTXO_HEAL_METHOD) return 'Healing balance…'
     if (entry.method === 'index-install') {
       return entry.item?.name
         ? `Installing ${entry.item.name}…`
@@ -1768,6 +1780,12 @@ export function activityEntryTitle(entry: ActivityEntry): string {
     }
   }
   if (entry.kind === 'event') {
+    if (entry.method === UTXO_HEAL_METHOD) {
+      if (entry.sats > 0) {
+        return `Recovered ${entry.sats.toLocaleString()} sats`
+      }
+      return entry.note?.trim() || 'Balance heal complete'
+    }
     if (entry.method === 'market-list' && entry.item?.name?.trim() && entry.item.name !== 'Collectable') {
       const price = entry.note?.match(/for ([\d,]+) sats/)?.[1]
       return price

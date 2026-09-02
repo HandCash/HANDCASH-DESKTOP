@@ -1,9 +1,14 @@
 /**
- * Reconcile local toolbox UTXOs using Activity + session logs, then run explicit
- * change-heal paths. Does not invent spend routes — only promotes outputs the
- * wallet already created or logged.
+ * Reconcile local toolbox UTXOs from Activity + logs + checkpoint txids.
+ * Auto/checkpoint passes are silent (like consolidateChange); manual writes
+ * Activity only when sats move or the pass fails.
  */
-import { collectActivityTxids } from './appActivity'
+import {
+  collectActivityTxids,
+  recordWalletEvent,
+  UTXO_HEAL_METHOD,
+  WALLET_ACTIVITY_ORIGIN,
+} from './appActivity'
 import { getAppLogs, getPreviousSessionLogs } from './appLog'
 import { runChangeHeal, type ChangeHealStats } from './chainedChangeHeal'
 import { logDiag, snapshotWalletBalance } from './diagnosticLog'
@@ -11,6 +16,16 @@ import { txExistsOnChain } from './legacyScan'
 import { bumpBalanceAfterHeal, getActiveWallet } from './session'
 import { releaseSpendAttemptFunds } from './spendAttempt'
 import { keepChangeOfSignedTx } from './staleOutputRelease'
+import {
+  canRunAutoHealCheckpoint,
+  healCheckpointFresh,
+  markAutoHealAttempt,
+  mergeTxidsWithCheckpoint,
+  readHealCheckpoint,
+  txidsMissingFromCheckpoint,
+  writeHealCheckpoint,
+  type UtxoHealCheckpointSource,
+} from './utxoHealCheckpoint'
 
 const TXID_RE = /\b([0-9a-f]{64})\b/gi
 
@@ -20,15 +35,21 @@ export type UtxoHealBalanceSnapshot = {
   displayed: number
 }
 
+export type UtxoHealPassOpts = {
+  source: UtxoHealCheckpointSource
+  /** Manual Settings heal — always runs, may write Activity. */
+  force?: boolean
+}
+
 export type UtxoHealFromHistoryResult = {
+  skipped: boolean
   activityRows: number
   archivedRows: number
-  txidsFromActivity: number
-  txidsFromLogs: number
   txidsChecked: number
   txidsOnChain: number
   changeKept: number
   heal: ChangeHealStats
+  recoveredSats: number
   balanceBefore: UtxoHealBalanceSnapshot | null
   balanceAfter: UtxoHealBalanceSnapshot | null
 }
@@ -59,30 +80,61 @@ function toBalanceSnapshot(
   }
 }
 
-/**
- * Scan Activity (including archived rows) and recent session logs for signed
- * txids, release stuck reservations, credit change, then run change-heal paths.
- */
-export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistoryResult> {
-  const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance())
+function mergeHealStats(a: ChangeHealStats, b: ChangeHealStats): ChangeHealStats {
+  return {
+    restored: a.restored + b.restored,
+    scriptsLocal: a.scriptsLocal + b.scriptsLocal,
+    scriptsChain: a.scriptsChain + b.scriptsChain,
+    pendingPromoted: a.pendingPromoted + b.pendingPromoted,
+    reclaimed: a.reclaimed + b.reclaimed,
+  }
+}
+
+export function formatUtxoHealResult(result: UtxoHealFromHistoryResult): string {
+  if (result.skipped) return 'Balance heal is current'
+  if (result.recoveredSats > 0) {
+    return `Recovered ${result.recoveredSats.toLocaleString()} sats`
+  }
+  if (result.heal.pendingPromoted > 0 || result.heal.restored > 0) {
+    return 'Promoted stuck change'
+  }
+  if (result.txidsChecked > 0) {
+    return `Checked ${result.txidsChecked} txid(s) — nothing to heal`
+  }
+  return 'Nothing to heal'
+}
+
+function collectCandidateTxids(): {
+  txids: Set<string>
+  activity: ReturnType<typeof collectActivityTxids>
+  fromLogs: number
+} {
   const activity = collectActivityTxids()
   const fromLogs = extractTxidsFromLogs()
-  const txids = new Set<string>([...activity.txids, ...fromLogs])
+  const txids = mergeTxidsWithCheckpoint(
+    new Set([...activity.txids, ...fromLogs]),
+  )
+  return { txids, activity, fromLogs: fromLogs.size }
+}
 
-  logDiag('utxo-heal', 'info', 'start', {
-    activityRows: activity.total,
-    archivedRows: activity.archived,
-    txidsFromActivity: activity.txids.size,
-    txidsFromLogs: fromLogs.size,
-  })
-
+async function runHealCore(
+  txidList: string[],
+  balanceBefore: UtxoHealBalanceSnapshot | null,
+  deepHeal: boolean,
+): Promise<{
+  changeKept: number
+  txidsOnChain: number
+  heal: ChangeHealStats
+  balanceAfter: UtxoHealBalanceSnapshot | null
+  recoveredSats: number
+}> {
   await releaseSpendAttemptFunds()
 
   const chain = getActiveWallet()?.chain
   let txidsOnChain = 0
   let changeKept = 0
 
-  for (const txid of txids) {
+  for (const txid of txidList) {
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain !== true) continue
@@ -93,6 +145,7 @@ export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistory
 
   let heal = await runChangeHeal({ path: 'spendGate' })
   if (
+    deepHeal &&
     heal.pendingPromoted === 0 &&
     heal.restored === 0 &&
     heal.reclaimed === 0
@@ -108,69 +161,164 @@ export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistory
 
   bumpBalanceAfterHeal()
   const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance())
+  const recoveredSats =
+    balanceBefore && balanceAfter
+      ? Math.max(0, balanceAfter.spendable - balanceBefore.spendable)
+      : 0
 
-  const result: UtxoHealFromHistoryResult = {
-    activityRows: activity.total,
-    archivedRows: activity.archived,
-    txidsFromActivity: activity.txids.size,
-    txidsFromLogs: fromLogs.size,
-    txidsChecked: txids.size,
-    txidsOnChain,
-    changeKept,
-    heal,
-    balanceBefore,
-    balanceAfter,
+  return { changeKept, txidsOnChain, heal, balanceAfter, recoveredSats }
+}
+
+/**
+ * One heal pass. Checkpoint txids are always merged so prior work is never lost.
+ */
+export async function runUtxoHealPass(
+  opts: UtxoHealPassOpts,
+): Promise<UtxoHealFromHistoryResult> {
+  const { txids, activity, fromLogs } = collectCandidateTxids()
+  const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance())
+  const missing = txidsMissingFromCheckpoint(txids)
+  const pendingChange = balanceBefore?.pendingChange ?? 0
+
+  const shouldSkip =
+    !opts.force &&
+    opts.source !== 'manual' &&
+    healCheckpointFresh() &&
+    missing.length === 0 &&
+    pendingChange <= 0
+
+  if (shouldSkip) {
+    const cp = readHealCheckpoint()
+    return {
+      skipped: true,
+      activityRows: activity.total,
+      archivedRows: activity.archived,
+      txidsChecked: cp?.txids.length ?? 0,
+      txidsOnChain: 0,
+      changeKept: 0,
+      heal: {
+        restored: 0,
+        scriptsLocal: 0,
+        scriptsChain: 0,
+        pendingPromoted: 0,
+        reclaimed: 0,
+      },
+      recoveredSats: 0,
+      balanceBefore,
+      balanceAfter: balanceBefore,
+    }
   }
 
-  logDiag('utxo-heal', 'info', 'done', {
-    txidsChecked: result.txidsChecked,
-    txidsOnChain: result.txidsOnChain,
-    changeKept: result.changeKept,
-    pendingPromoted: heal.pendingPromoted,
-    restored: heal.restored,
-    scriptsLocal: heal.scriptsLocal,
-    scriptsChain: heal.scriptsChain,
-    reclaimed: heal.reclaimed,
-    spendableBefore: balanceBefore?.spendable ?? null,
-    spendableAfter: balanceAfter?.spendable ?? null,
+  const txidList = [...txids]
+  const deepHeal = opts.force || opts.source === 'manual' || pendingChange > 0
+
+  logDiag('utxo-heal', 'info', 'start', {
+    source: opts.source,
+    force: opts.force === true,
+    txids: txidList.length,
+    missing: missing.length,
+    pendingChange,
   })
 
-  return result
+  try {
+    const core = await runHealCore(txidList, balanceBefore, deepHeal)
+    const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0
+
+    writeHealCheckpoint({
+      at: Date.now(),
+      txids: txidList,
+      recoveredSats: core.recoveredSats,
+      pendingChangeAfter,
+      source: opts.source,
+    })
+
+    const result: UtxoHealFromHistoryResult = {
+      skipped: false,
+      activityRows: activity.total,
+      archivedRows: activity.archived,
+      txidsChecked: txidList.length,
+      txidsOnChain: core.txidsOnChain,
+      changeKept: core.changeKept,
+      heal: core.heal,
+      recoveredSats: core.recoveredSats,
+      balanceBefore,
+      balanceAfter: core.balanceAfter,
+    }
+
+    if (
+      opts.source === 'manual' &&
+      (core.recoveredSats > 0 || pendingChangeAfter > 0)
+    ) {
+      recordWalletEvent({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        method: UTXO_HEAL_METHOD,
+        sats: core.recoveredSats,
+        note:
+          core.recoveredSats > 0
+            ? `Recovered ${core.recoveredSats.toLocaleString()} sats`
+            : formatUtxoHealResult(result),
+        status: 'complete',
+      })
+    }
+
+    logDiag('utxo-heal', 'info', 'done', {
+      source: opts.source,
+      txidsChecked: result.txidsChecked,
+      recoveredSats: core.recoveredSats,
+      pendingChangeAfter,
+    })
+
+    return result
+  } catch (err) {
+    const reason = err instanceof Error ? err.message : String(err)
+    if (opts.source === 'manual') {
+      recordWalletEvent({
+        origin: WALLET_ACTIVITY_ORIGIN,
+        method: UTXO_HEAL_METHOD,
+        note: 'Balance heal failed',
+        status: 'failed',
+        failureReason: reason,
+      })
+    }
+    logDiag('utxo-heal', 'warn', 'failed', { source: opts.source, reason })
+    throw err
+  }
 }
 
-function mergeHealStats(a: ChangeHealStats, b: ChangeHealStats): ChangeHealStats {
-  return {
-    restored: a.restored + b.restored,
-    scriptsLocal: a.scriptsLocal + b.scriptsLocal,
-    scriptsChain: a.scriptsChain + b.scriptsChain,
-    pendingPromoted: a.pendingPromoted + b.pendingPromoted,
-    reclaimed: a.reclaimed + b.reclaimed,
-  }
+/** Settings → Wallet health manual heal. */
+let manualHealFlight: Promise<UtxoHealFromHistoryResult> | null = null
+
+export function isUtxoHealRunning(): boolean {
+  return manualHealFlight != null
 }
 
-/** One-line summary for Settings UI. */
-export function formatUtxoHealResult(result: UtxoHealFromHistoryResult): string {
-  const parts: string[] = []
-  if (result.changeKept > 0) parts.push(`${result.changeKept} change output(s) credited`)
-  if (result.heal.pendingPromoted > 0) {
-    parts.push(`${result.heal.pendingPromoted} pending change promoted`)
-  }
-  if (result.heal.restored > 0) parts.push(`${result.heal.restored} output(s) restored`)
-  if (result.heal.scriptsLocal > 0 || result.heal.scriptsChain > 0) {
-    parts.push(
-      `${result.heal.scriptsLocal + result.heal.scriptsChain} script(s) healed`,
-    )
-  }
-  if (result.heal.reclaimed > 0) {
-    parts.push(`${result.heal.reclaimed} sealed input(s) reclaimed`)
-  }
-  if (result.balanceBefore && result.balanceAfter) {
-    const delta = result.balanceAfter.spendable - result.balanceBefore.spendable
-    if (delta > 0) parts.push(`+${delta} spendable sats`)
-    else if (delta < 0) parts.push(`${delta} spendable sats`)
-  }
-  if (parts.length === 0) {
-    return `Scanned ${result.txidsChecked} txid(s) from history — nothing to heal`
-  }
-  return parts.join(' · ')
+export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistoryResult> {
+  if (manualHealFlight) return manualHealFlight
+  manualHealFlight = runUtxoHealPass({ source: 'manual', force: true }).finally(() => {
+    manualHealFlight = null
+  })
+  return manualHealFlight
+}
+
+/** Silent checkpoint pass — send cleanup, pending-change background, unlock tail. */
+export function scheduleHealCheckpointIfDue(reason: UtxoHealCheckpointSource): void {
+  void (async () => {
+    if (!canRunAutoHealCheckpoint()) return
+    markAutoHealAttempt()
+    try {
+      const before = toBalanceSnapshot(await snapshotWalletBalance())
+      const pending = before?.pendingChange ?? 0
+      const { txids } = collectCandidateTxids()
+      if (
+        healCheckpointFresh() &&
+        pending <= 0 &&
+        txidsMissingFromCheckpoint(txids).length === 0
+      ) {
+        return
+      }
+      await runUtxoHealPass({ source: reason })
+    } catch (err) {
+      console.warn('[utxo-heal] checkpoint pass skipped', reason, err)
+    }
+  })()
 }

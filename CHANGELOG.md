@@ -4,7 +4,12 @@
 
 ### Changed
 
-- Patch release (every push must ship a new version).
+- **UTXO heal checkpoint** — durable txid checkpoint with 6h overlap; auto passes after send cleanup and pending-change background; Settings shows OK / last-healed hint (no Activity progress bar).
+- **Wallet health UX** — heal row matches dependency probes; Activity only logs manual heals that move sats.
+
+### Added
+
+- **Bitcoin interaction architecture** — `docs/bitcoin-interaction-architecture.md` (layers, Refresh order, send paths, heal rules).
 
 ## [1.3.88] - 2026-09-02
 

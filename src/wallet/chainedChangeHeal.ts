@@ -180,6 +180,8 @@ export function scheduleHealAfterSendCleanup(): void {
       if (gate.pendingPromoted === 0 && gate.restored === 0 && gate.reclaimed === 0) {
         await runChangeHeal({ path: 'chainingScriptHeal' })
       }
+      const { scheduleHealCheckpointIfDue } = await import('./utxoHealFromHistory')
+      scheduleHealCheckpointIfDue('send-cleanup')
     } catch (err) {
       console.warn(
         '[change-heal] post-cleanup heal skipped',

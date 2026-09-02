@@ -7,11 +7,18 @@ import {
   type DependencyProbeStatus,
 } from '../../wallet/dependencyHealth'
 import { playWalletSound } from '../../wallet/soundService'
+import { toastError, toastSuccess } from '../../wallet/toast'
+import {
+  healCheckpointAgeMs,
+  healCheckpointFresh,
+  readHealCheckpoint,
+} from '../../wallet/utxoHealCheckpoint'
 import {
   formatUtxoHealResult,
   healUtxoFromActivityHistory,
-  type UtxoHealFromHistoryResult,
+  isUtxoHealRunning,
 } from '../../wallet/utxoHealFromHistory'
+import { SETTINGS_APPLICATION_ICONS } from './settingIcons'
 import { SettingsControlRow } from './SettingsControlRow'
 import { SettingsSection } from './SettingsSection'
 
@@ -27,17 +34,48 @@ function statusLabel(status: DependencyProbeStatus): string {
   return 'Down'
 }
 
+function formatAgeShort(ageMs: number): string {
+  const hours = Math.floor(ageMs / 3_600_000)
+  const mins = Math.floor((ageMs % 3_600_000) / 60_000)
+  if (hours > 0) return `${hours}h ago`
+  if (mins > 0) return `${mins}m ago`
+  return 'just now'
+}
+
+function healRowDescription(): string {
+  const cp = readHealCheckpoint()
+  if (!cp) return 'Promotes stuck change from Activity and session logs.'
+  const age = healCheckpointAgeMs()
+  if (age == null) return 'Promotes stuck change from Activity and session logs.'
+  const ago = formatAgeShort(age)
+  if (healCheckpointFresh()) {
+    const rec =
+      cp.recoveredSats > 0 ? ` · +${cp.recoveredSats.toLocaleString()} sats` : ''
+    return `Healed ${ago}${rec}`
+  }
+  if (cp.pendingChangeAfter > 0) {
+    return `${cp.pendingChangeAfter.toLocaleString()} sats still pending · last pass ${ago}`
+  }
+  return `Last heal ${ago}`
+}
+
+function healRowStatus(): { label: string; tone: 'muted' | 'warn' | 'error' } {
+  const cp = readHealCheckpoint()
+  if (!cp) return { label: '—', tone: 'muted' }
+  if (healCheckpointFresh()) return { label: 'OK', tone: 'muted' }
+  if (cp.pendingChangeAfter > 0) return { label: 'Pending', tone: 'warn' }
+  return { label: 'Stale', tone: 'warn' }
+}
+
 /** Settings → Wallet health — upstream service probes + local UTXO heal. */
 export function WalletHealthPanel() {
   const [snap, setSnap] = useState<DependencyHealthSnapshot>(() =>
     getDependencyHealthSnapshot(),
   )
   const [checking, setChecking] = useState(false)
-  const [healing, setHealing] = useState(false)
-  const [healResult, setHealResult] = useState<UtxoHealFromHistoryResult | null>(
-    null,
-  )
-  const [healError, setHealError] = useState<string | null>(null)
+  const [healing, setHealing] = useState(() => isUtxoHealRunning())
+  const [healHint, setHealHint] = useState(healRowDescription)
+  const healStatus = healRowStatus()
 
   useEffect(() => subscribeDependencyHealth(setSnap), [])
 
@@ -66,26 +104,27 @@ export function WalletHealthPanel() {
   }
 
   const healFromHistory = async () => {
-    if (healing) return
+    if (healing || isUtxoHealRunning()) return
     playWalletSound('soft')
     setHealing(true)
-    setHealError(null)
-    setHealResult(null)
     try {
       const result = await healUtxoFromActivityHistory()
-      setHealResult(result)
+      setHealHint(healRowDescription())
+      const summary = formatUtxoHealResult(result)
+      if (result.recoveredSats > 0) {
+        toastSuccess('Balance healed', summary)
+        playWalletSound('receive')
+      } else {
+        toastSuccess('Heal complete', summary)
+      }
     } catch (err) {
-      setHealError(err instanceof Error ? err.message : String(err))
+      const message = err instanceof Error ? err.message : String(err)
+      toastError('Heal failed', message)
+      playWalletSound('error')
     } finally {
       setHealing(false)
     }
   }
-
-  const healSummary = healError
-    ? healError
-    : healResult
-      ? formatUtxoHealResult(healResult)
-      : 'Scan Activity and session logs for signed sends, then promote stuck change.'
 
   return (
     <div className="nav-section-body settings-nav" data-aeon-scope="wallet-health">
@@ -126,14 +165,22 @@ export function WalletHealthPanel() {
       <SettingsSection title="Local recovery" part="utxo-heal">
         <ul className="settings-list">
           <SettingsControlRow
-            label="Heal UTXO from history"
-            description={healSummary}
+            icon={SETTINGS_APPLICATION_ICONS.updates}
+            label="Heal balance from history"
+            description={healing ? 'Healing…' : healHint()}
           >
+            <span
+              className="status-pill status-pill-compact"
+              data-tone={healing ? 'warn' : healStatus.tone}
+              data-aeon-state={healing ? 'running' : healStatus.label.toLowerCase()}
+            >
+              {healing ? '…' : healStatus.label}
+            </span>
             <button
               type="button"
-              className="btn btn-secondary settings-action-btn"
+              className="btn btn-primary settings-action-btn"
               disabled={healing}
-              data-aeon-state={healing ? 'running' : healError ? 'failed' : 'idle'}
+              data-aeon-state={healing ? 'running' : 'idle'}
               onClick={() => {
                 void healFromHistory()
               }}
