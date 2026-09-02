@@ -22,7 +22,7 @@ const mockHealGhostSentItems = vi.fn(async (): Promise<string[]> => [])
 const mockPruneMissingOnChainActivity = vi.fn(async () => 0)
 const mockExpireStaleInboundPending = vi.fn(() => 0)
 const mockRehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
-const mockRestoreLiveSpendableOutputs = vi.fn(async () => 0)
+const mockRestoreLiveSpendableOutputs = vi.fn(async () => ({ restored: 0, unscripted: 0 }))
 const mockPromotePendingLocalChangeOutputs = vi.fn(async () => 0)
 const mockSweepChangeScripts = vi.fn(async () => ({
   scanned: 0,
@@ -212,9 +212,9 @@ describe('refreshFromChain pre-scan maintenance', () => {
     })
   })
 
-  it('runs every maintenance step before the address scan', async () => {
+  it('runs every maintenance step before the address scan when forceReview', async () => {
     const { refreshFromChain } = await import('./chainIngest')
-    await refreshFromChain({ announceReceive: false })
+    await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(mockReconcileDualLayerState).toHaveBeenCalledTimes(1)
     expect(mockHealGhostSentItems).toHaveBeenCalledTimes(1)
@@ -223,7 +223,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
     expect(mockSweepChangeScripts).toHaveBeenCalledWith({ fromChain: true })
     expect(mockRehideInputsOfLiveLocalTxs).toHaveBeenCalledTimes(1)
     expect(mockPromotePendingLocalChangeOutputs).toHaveBeenCalledTimes(1)
-    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
+    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalled()
     expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
   })
 
@@ -251,6 +251,15 @@ describe('refreshFromChain pre-scan maintenance', () => {
     )
   })
 
+  it('skips heavy maintenance on background refresh', async () => {
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ announceReceive: false })
+
+    expect(mockReconcileDualLayerState).not.toHaveBeenCalled()
+    expect(mockSweepChangeScripts).not.toHaveBeenCalled()
+    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+  })
+
   it('overlaps the independent steps instead of paying for each in turn', async () => {
     let inFlight = 0
     let peak = 0
@@ -269,7 +278,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
     mockRehideInputsOfLiveLocalTxs.mockImplementation(() => slow(undefined))
 
     const { refreshFromChain } = await import('./chainIngest')
-    await refreshFromChain({ announceReceive: false })
+    await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(peak).toBeGreaterThan(1)
   })
@@ -278,12 +287,12 @@ describe('refreshFromChain pre-scan maintenance', () => {
     mockReconcileDualLayerState.mockRejectedValue(new Error('reconcile exploded'))
 
     const { refreshFromChain } = await import('./chainIngest')
-    const sats = await refreshFromChain({ announceReceive: false })
+    const sats = await refreshFromChain({ forceReview: true, announceReceive: false })
 
     expect(sats).toBe(1000)
     // A failure must stay isolated — the rest of the batch and the scan still run.
     expect(mockHealGhostSentItems).toHaveBeenCalledTimes(1)
-    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalledTimes(1)
+    expect(mockRestoreLiveSpendableOutputs).toHaveBeenCalled()
     expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
   })
 
@@ -303,7 +312,7 @@ describe('refreshFromChain pre-scan maintenance', () => {
     mockHealGhostSentItems.mockResolvedValue(['aa.0', 'bb.1'])
 
     const { refreshFromChain } = await import('./chainIngest')
-    await refreshFromChain({ announceReceive: false })
+    await refreshFromChain({ forceReview: true, announceReceive: false })
 
     const { forgetOneSatImported } = await import('./oneSatImportGuard')
     expect(forgetOneSatImported).toHaveBeenCalledWith(['aa.0', 'bb.1'])

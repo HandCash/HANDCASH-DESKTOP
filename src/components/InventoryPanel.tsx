@@ -3,7 +3,7 @@ import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
-import { CollectableSendingMark } from './CollectableSendingMark'
+import { CollectableSendingMark, CollectableListedMark } from './CollectableSendingMark'
 import { useChunkedCount } from './useChunkedCount'
 import {
   getCollectionView,
@@ -57,11 +57,22 @@ import {
   getCachedUsdPerBsv,
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
-import { listActiveBsv21MarketListings } from '../wallet/tokenMarketView'
-import { TokenMarketListingCard } from './TokenMarketListingCard'
+import { getMarketListingAuthorization } from '../wallet/marketListing'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
+
+function liveMarketListingPrice(outpoint: string): number | null {
+  const auth = getMarketListingAuthorization({ outpoint })
+  if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return null
+  return auth.priceSats > 0 ? auth.priceSats : null
+}
+
+function listedMarkLabel(priceSats: number): string {
+  const displayCurrency = getDisplayCurrency()
+  const usdPerBsv = getCachedUsdPerBsv()
+  return `Listed · ${formatPrimaryFromSats(priceSats, displayCurrency, usdPerBsv)}`
+}
 
 function CollectableGridItem({
   item,
@@ -73,6 +84,7 @@ function CollectableGridItem({
   sending: boolean
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
+  const listPrice = liveMarketListingPrice(item.outpoint)
   return (
     <li
       className="collection-grid-card collectable-card"
@@ -104,6 +116,9 @@ function CollectableGridItem({
             }
           />
           <CollectableSendingMark sending={sending} verb={verb} />
+          {listPrice != null ? (
+            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          ) : null}
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <strong className="collection-grid-name" title={item.name}>
@@ -144,6 +159,7 @@ function CollectableListItem({
   sending: boolean
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
+  const listPrice = liveMarketListingPrice(item.outpoint)
   return (
     <li
       className="connected-app-row collectable-row"
@@ -175,6 +191,9 @@ function CollectableListItem({
             }
           />
           <CollectableSendingMark sending={sending} verb={verb} />
+          {listPrice != null ? (
+            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          ) : null}
           <CollectableVerifyMark verifying={verifying} outpoint={item.outpoint} />
         </div>
         <div className="connected-app-body">
@@ -326,9 +345,8 @@ function FungibleCarouselCard({
         : null
   const amountLabel = cap != null ? `${amount} / ${cap}` : amount
   const supplyBadge = isLegacy ? 'Legacy · burn only' : null
-  const displayCurrency = getDisplayCurrency()
-  const usdPerBsv = getCachedUsdPerBsv()
-  const listPrice = token.marketListing?.priceSats
+  const listPrice = token.marketListing?.priceSats ?? liveMarketListingPrice(token.outpoint)
+  const verb = inFlightVerb(token.outpoint) ?? 'Sending'
   return (
     <li
       className="collect-token-card"
@@ -343,12 +361,18 @@ function FungibleCarouselCard({
           openFungibleDetails(token.tokenId)
         }}
       >
-        <FungibleTokenFace
-          tokenId={token.tokenId}
-          sym={token.sym}
-          iconUrl={token.iconUrl}
-          size={56}
-        />
+        <div className="collectable-media collectable-media-token">
+          <FungibleTokenFace
+            tokenId={token.tokenId}
+            sym={token.sym}
+            iconUrl={token.iconUrl}
+            size={56}
+          />
+          <CollectableSendingMark sending={sending} verb={verb} />
+          {listPrice != null ? (
+            <CollectableListedMark label={listedMarkLabel(listPrice)} />
+          ) : null}
+        </div>
         <strong className="collect-token-card-sym">{token.sym}</strong>
         {token.issuer ? (
           <span
@@ -359,11 +383,6 @@ function FungibleCarouselCard({
           </span>
         ) : null}
         <span className="collect-token-card-amt">{amountLabel}</span>
-        {listPrice != null ? (
-          <span className="collect-token-card-list-price">
-            Listed · {formatPrimaryFromSats(listPrice, displayCurrency, usdPerBsv)}
-          </span>
-        ) : null}
         {supplyBadge ? (
           <span className="collect-token-card-meta">{supplyBadge}</span>
         ) : null}
@@ -372,16 +391,18 @@ function FungibleCarouselCard({
         <button
           type="button"
           className="collectable-send-btn collectable-burn-btn"
-          title={`Burn legacy BSV-21 ${token.sym}`}
-          aria-label={`Burn ${token.sym}`}
+          title={sending ? `${verb} ${token.sym}` : `Burn legacy BSV-21 ${token.sym}`}
+          aria-label={sending ? `${verb} ${token.sym}` : `Burn ${token.sym}`}
+          disabled={sending}
           onClick={(e) => {
             e.stopPropagation()
+            if (sending) return
             playWalletSound('soft')
             openBurnFungible(token.tokenId)
           }}
         >
           <FireIcon size={14} />
-          Burn
+          {sending ? verb : 'Burn'}
         </button>
       ) : (
         <button
@@ -393,12 +414,10 @@ function FungibleCarouselCard({
                 ? 'Cosigner required to send'
                 : 'Mixed plain / cosigned tips'
               : sending
-                ? `Sending ${token.sym}`
+                ? `${verb} ${token.sym}`
                 : `Send ${token.sym}`
           }
-          aria-label={
-            sending ? `Sending ${token.sym}` : `Send ${token.sym}`
-          }
+          aria-label={sending ? `${verb} ${token.sym}` : `Send ${token.sym}`}
           disabled={sending || sendBlocked}
           onClick={(e) => {
             e.stopPropagation()
@@ -408,7 +427,7 @@ function FungibleCarouselCard({
           }}
         >
           <SendIcon size={14} />
-          {sending ? 'Sending' : 'Send'}
+          {sending ? verb : 'Send'}
         </button>
       )}
     </li>
@@ -473,8 +492,9 @@ export function InventoryPanel() {
     let cancelled = false
 
     const refresh = async (reason: string) => {
-      const { shouldYieldChainIngestToSpend } = await import('../wallet/walletCoordinator')
-      if (shouldYieldChainIngestToSpend()) {
+      const { getSpendPriorityDepth, shouldYieldChainIngestToSpend } =
+        await import('../wallet/walletCoordinator')
+      if (shouldYieldChainIngestToSpend() || getSpendPriorityDepth() > 0) {
         console.info(`[collectables] deferring refresh (${reason}) — send waiting`)
         return
       }
@@ -548,12 +568,6 @@ export function InventoryPanel() {
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, loose } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
   const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
-  const marketListings = useMemo(
-    () => listActiveBsv21MarketListings(tokens),
-    [tokens],
-  )
-  const displayCurrency = getDisplayCurrency()
-  const usdPerBsv = getCachedUsdPerBsv()
 
   return (
     <div
@@ -584,31 +598,6 @@ export function InventoryPanel() {
               />
             ))}
           </ul>
-        </section>
-      ) : null}
-
-      {marketListings.length > 0 ? (
-        <section className="collect-market-section" aria-label="Token market listings">
-          <h3 className="collect-section-title">Listed on market</h3>
-          <div className="token-market-stack">
-            {marketListings.map((row) => (
-              <TokenMarketListingCard
-                key={row.tokenId}
-                tokenId={row.tokenId}
-                sym={row.sym}
-                iconUrl={row.iconUrl}
-                listAmt={row.listing.listAmt}
-                dec={row.dec}
-                priceSats={row.listing.priceSats}
-                currency={displayCurrency}
-                usdPerBsv={usdPerBsv}
-                onClick={() => {
-                  playWalletSound('soft')
-                  openFungibleDetails(row.tokenId)
-                }}
-              />
-            ))}
-          </div>
         </section>
       ) : null}
 

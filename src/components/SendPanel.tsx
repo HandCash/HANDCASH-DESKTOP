@@ -28,7 +28,7 @@ import {
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
 import {
-  assertSendableBalance,
+  assertSendableBalanceForReview,
   refreshSpendableBalance,
   sendSatsToAddress,
 } from '../wallet/sendPayment'
@@ -37,7 +37,6 @@ import {
   sendBrc29ToIdentityKey,
 } from '../wallet/sendBrc29Payment'
 import { tryParseBrc29SettlementUri } from '../wallet/brc29Uri'
-import { requestSpendPriority } from '../wallet/walletCoordinator'
 import { toastSuccess } from '../wallet/toast'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
@@ -71,6 +70,24 @@ function trimAmountInput(raw: number): string {
   while (end > 0 && formatted[end - 1] === '0') end -= 1
   if (end > 0 && formatted[end - 1] === '.') end -= 1
   return formatted.slice(0, end)
+}
+
+const REVIEW_BALANCE_TIMEOUT_MS = 10_000
+
+function withTimeout<T>(promise: Promise<T>, ms: number, message: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const id = window.setTimeout(() => reject(new Error(message)), ms)
+    promise.then(
+      (value) => {
+        window.clearTimeout(id)
+        resolve(value)
+      },
+      (err) => {
+        window.clearTimeout(id)
+        reject(err)
+      },
+    )
+  })
 }
 
 /** Keep the satoshi value when the send form swaps USD <-> BSV. */
@@ -175,27 +192,22 @@ export function SendPanel({
             : 'Invalid amount',
         )
       }
-      // Always verify confirmed spendable — display balance may credit pending
-      // change the toolbox has not promoted yet.
-      const release = requestSpendPriority('send-review-balance')
-      try {
-        const available = await assertSendableBalance(satoshis)
-        onSent(available)
-        send({ type: 'REVIEW' })
-      } finally {
-        release()
-      }
+      // Fast local read only — promotion/heal runs on Confirm inside runExclusiveSpend.
+      const available = await withTimeout(
+        assertSendableBalanceForReview(satoshis),
+        REVIEW_BALANCE_TIMEOUT_MS,
+        'Balance check timed out. Wallet storage may be busy — wait a moment and try again.',
+      )
+      onSent(available)
+      send({ type: 'REVIEW' })
     } catch (err) {
       playWalletSound('error')
       onFail(err instanceof Error ? err.message : String(err))
-      const release = requestSpendPriority('send-refresh-balance')
       try {
         const available = await refreshSpendableBalance()
         onSent(available)
       } catch {
         // ignore secondary refresh failure
-      } finally {
-        release()
       }
     } finally {
       setReviewBusy(false)

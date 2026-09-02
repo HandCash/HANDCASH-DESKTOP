@@ -45,6 +45,11 @@ const LIVE_LOCAL_TX = new Set([
   'nosend',
   'nonfinal',
   'unfail',
+  // Monitor proof pipeline — still ours until completed/failed (TaskCheckForProofs).
+  'unmined',
+  'callback',
+  'unconfirmed',
+  'unknown',
 ])
 
 type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
@@ -490,6 +495,10 @@ const PENDING_CHANGE_TX_STATUSES = [
   'nosend',
   'nonfinal',
   'unfail',
+  'unmined',
+  'callback',
+  'unconfirmed',
+  'unknown',
 ] as const
 
 /**
@@ -814,8 +823,14 @@ async function loadUnspendableChange(
  * txs (`completed` locally) that never got promoted back to spendable — the
  * usual cause of `spendable=0` with a large `pendingChange` display credit.
  *
- * @returns how many outputs were restored.
+ * @returns restore counts; {@link RestoreLiveSpendableResult.unscripted} is
+ * how many dead change rows lacked a locking script and were skipped.
  */
+export type RestoreLiveSpendableResult = {
+  restored: number
+  unscripted: number
+}
+
 export async function restoreLiveSpendableOutputs(opts?: {
   onlyLiveChange?: boolean
   /**
@@ -829,20 +844,21 @@ export async function restoreLiveSpendableOutputs(opts?: {
    * tx must run inside that same region.
    */
   forSpendChain?: boolean
-}): Promise<number> {
+}): Promise<RestoreLiveSpendableResult> {
+  const empty: RestoreLiveSpendableResult = { restored: 0, unscripted: 0 }
   const onlyLiveChange = opts?.onlyLiveChange === true
   const creatorTxid = opts?.creatorTxid?.trim().toLowerCase() || null
   const forSpendChain = opts?.forSpendChain === true
-  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return empty
   const active = getActiveWallet()
-  if (!active) return 0
+  if (!active) return empty
   const storage = active.wallet.storage
-  if (!storage || typeof storage.findOutputs !== 'function') return 0
-  if (typeof storage.runAsStorageProvider !== 'function') return 0
+  if (!storage || typeof storage.findOutputs !== 'function') return empty
+  if (typeof storage.runAsStorageProvider !== 'function') return empty
 
   try {
     const dead = await loadUnspendableChange(storage)
-    if (!dead.length) return 0
+    if (!dead.length) return empty
 
     let restored = 0
     let unscripted = 0
@@ -916,7 +932,9 @@ export async function restoreLiveSpendableOutputs(opts?: {
             output.spendable !== true &&
             creatorLiveness === 'none'
 
-          const healed = await healLockingScript(sp, output, txCache, { fromChain: forSpendChain })
+          // Spend-path restore stays local (toolbox raw tx). Chain fetches belong
+          // on Refresh — they stall Review when explorers are slow or down.
+          const healed = await healLockingScript(sp, output, txCache, { fromChain: false })
           if (healed == null && !hasLockingScript(output)) {
             unscripted += 1
             continue
@@ -957,9 +975,9 @@ export async function restoreLiveSpendableOutputs(opts?: {
     if (unscripted > 0) {
       logDiag('stale-output', 'warn', 'unscripted-skipped', { count: unscripted })
     }
-    return restored
+    return { restored, unscripted }
   } catch (err) {
     console.warn('[stale-output] restore failed', err)
-    return 0
+    return empty
   }
 }

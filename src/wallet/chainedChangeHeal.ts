@@ -14,6 +14,7 @@ import {
   reclaimSealedInputsNeverSpent,
   rehideInputsOfLiveLocalTxs,
   restoreLiveSpendableOutputs,
+  type RestoreLiveSpendableResult,
 } from './staleOutputRelease'
 
 /** Legal change-heal transitions — one path per caller context. */
@@ -47,6 +48,19 @@ function emptyStats(): ChangeHealStats {
   }
 }
 
+function restoreStillStuck(result: RestoreLiveSpendableResult): boolean {
+  return result.restored === 0 || result.unscripted > 0
+}
+
+async function retryRestoreAfterScriptHeal(
+  stats: ChangeHealStats,
+): Promise<RestoreLiveSpendableResult> {
+  stats.pendingPromoted += await promotePendingLocalChangeOutputs({ forSpendChain: true })
+  const next = await restoreLiveSpendableOutputs({ forSpendChain: true })
+  stats.restored += next.restored
+  return next
+}
+
 function noteHeal(stats: ChangeHealStats): void {
   if (
     stats.restored > 0 ||
@@ -76,7 +90,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 
     case 'spendGatePartialRetry': {
       stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      stats.restored = await restoreLiveSpendableOutputs({ forSpendChain: true })
+      stats.restored = (
+        await restoreLiveSpendableOutputs({ forSpendChain: true })
+      ).restored
       noteHeal(stats)
       return stats
     }
@@ -84,16 +100,17 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
     case 'chainingScriptHeal': {
       const localSweep = await sweepChangeScripts({ fromChain: false })
       stats.scriptsLocal = localSweep.healed
+      let restoreResult: RestoreLiveSpendableResult = { restored: 0, unscripted: 0 }
       if (localSweep.healed > 0) {
         stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-        stats.restored = await restoreLiveSpendableOutputs({ forSpendChain: true })
+        restoreResult = await restoreLiveSpendableOutputs({ forSpendChain: true })
+        stats.restored = restoreResult.restored
       }
-      if (stats.restored === 0) {
+      if (restoreStillStuck(restoreResult)) {
         const chainSweep = await sweepChangeScripts({ fromChain: true })
         stats.scriptsChain = chainSweep.healed
         if (chainSweep.healed > 0) {
-          stats.pendingPromoted += await promotePendingLocalChangeOutputs({ forSpendChain: true })
-          stats.restored += await restoreLiveSpendableOutputs({ forSpendChain: true })
+          restoreResult = await retryRestoreAfterScriptHeal(stats)
         }
       }
       noteHeal(stats)
@@ -104,7 +121,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       try {
         stats.reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
         stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-        stats.restored = await restoreLiveSpendableOutputs({ forSpendChain: true })
+        stats.restored = (
+          await restoreLiveSpendableOutputs({ forSpendChain: true })
+        ).restored
       } catch (err) {
         logDiag('change-heal', 'warn', 'spend-gate-skipped', {
           error: err instanceof Error ? err.message : String(err),
@@ -136,8 +155,8 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       for (let pass = 0; pass < 5; pass += 1) {
         throwIfYield()
         const batch = await restoreLiveSpendableOutputs()
-        if (batch === 0) break
-        stats.restored += batch
+        if (batch.restored === 0) break
+        stats.restored += batch.restored
       }
       for (let pass = 0; pass < 3; pass += 1) {
         throwIfYield()

@@ -38,6 +38,8 @@ import {
   removeActivityById,
   removeFailedActivity,
   countFailedActivity,
+  recordWalletEvent,
+  isFailedMarketListingActivity,
   removeActivityForTxids,
   reconcilePendingActivityWithHeldItems,
   healMisfiledOnesatFtReceives,
@@ -520,6 +522,19 @@ describe('inbound receive activity', () => {
     expect(activityFailureReason(row)).toBe('Timed out')
     expect(activityFailureLabel(row)).toBe('Timed out')
     expect(activityEntryTitle(row)).toBe('Send failed')
+  })
+
+  it('labels failed market listings separately from sends', () => {
+    recordWalletEvent({
+      method: 'market-list',
+      note: 'Failed: Listed KING for 5,000 sats',
+      status: 'failed',
+      failureReason: 'amt-mismatch',
+      item: { name: 'KING', origin: 'aa'.repeat(32) },
+    })
+    const row = listRecentActivity(10)[0]!
+    expect(activityEntryTitle(row)).toBe('KING listing failed')
+    expect(isFailedMarketListingActivity(row)).toBe(true)
   })
 
   it('surfaces amt-mismatch / ITEM_ORIGIN_UNPROVEN when failureReason is an object', () => {

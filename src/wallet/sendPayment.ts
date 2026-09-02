@@ -24,6 +24,7 @@ import {
   prepareSpendHeal,
   runExclusiveSpend,
   assertSendableBalance,
+  assertSendableBalanceForReview,
   refreshSpendableBalance,
 } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
@@ -53,7 +54,7 @@ export type SendSatsResult = {
 }
 
 
-export { assertSendableBalance, refreshSpendableBalance }
+export { assertSendableBalance, assertSendableBalanceForReview, refreshSpendableBalance }
 
 /** Broadcast a P2PKH payment from the active wallet. */
 export async function sendSatsToAddress(opts: {
@@ -195,7 +196,7 @@ export async function sendSatsToAddress(opts: {
                 : rawTx instanceof Uint8Array
                   ? Array.from(rawTx)
                   : undefined
-            if (atomic?.length && active.services?.postBeef) {
+            if (atomic?.length && realTxid) {
               signedAtomic = atomic
               // Retire the consumed coins before the next send can pick them —
               // chain-ingest's rehide pass defers while a spend is queued.

@@ -128,6 +128,64 @@ export type RepairFailedSpendOptions = {
   skipChangeSweep?: boolean
 }
 
+type ProvenTxReqRow = {
+  provenTxReqId: number
+  txid?: string
+  status?: string
+}
+
+/**
+ * Clear provenTxReq rows stuck in `doubleSpend` when HandCash Chain proves the
+ * tx never landed. Arcade status alone leaves them forever (unknown → no unfail).
+ */
+export async function releaseGhostDoubleSpendReqs(
+  active?: ActiveWallet | null,
+): Promise<number> {
+  const resolved = active ?? getActiveWallet()
+  const chain = resolved?.chain
+  const storage = resolved?.wallet?.storage
+  if (!chain || !storage?.runAsStorageProvider) return 0
+
+  let cleared = 0
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as {
+        findProvenTxReqs?: (args: {
+          partial: { status: string }
+          paged: { limit: number; offset: number }
+        }) => Promise<ProvenTxReqRow[]>
+        updateProvenTxReq?: (
+          ids: number[],
+          update: { status: string },
+        ) => Promise<unknown>
+      }
+      if (typeof sp.findProvenTxReqs !== 'function') return
+      const reqs = await sp.findProvenTxReqs({
+        partial: { status: 'doubleSpend' },
+        paged: { limit: 50, offset: 0 },
+      })
+      const toInvalid: number[] = []
+      for (const req of reqs ?? []) {
+        const txid = req.txid?.trim().toLowerCase()
+        if (!txid || !/^[0-9a-f]{64}$/.test(txid)) continue
+        const onChain = await txExistsOnChain(txid, chain).catch(() => null)
+        if (onChain === false) toInvalid.push(req.provenTxReqId)
+      }
+      if (toInvalid.length > 0 && typeof sp.updateProvenTxReq === 'function') {
+        await sp.updateProvenTxReq(toInvalid, { status: 'invalid' })
+        cleared = toInvalid.length
+      }
+    })
+  } catch (err) {
+    console.warn('[action-review] ghost doubleSpend clear skipped', err)
+    return 0
+  }
+  if (cleared > 0) {
+    console.info(`[action-review] cleared ${cleared} ghost doubleSpend req(s)`)
+  }
+  return cleared
+}
+
 /**
  * Fail abandoned unsigned/unprocessed txs, run toolbox reviewStatus to free
  * inputs stuck on failed spends, and abort leftover action-batch reservations.
@@ -191,6 +249,7 @@ export async function releaseUnsignedSpendReservations(
   }
 
   const batchesAborted = await abortReservedActionBatches(resolved)
+  await releaseGhostDoubleSpendReqs(resolved)
 
   return { failedTxs, reviewLog, batchesAborted }
 }

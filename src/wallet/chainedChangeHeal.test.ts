@@ -2,7 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const reclaimSealedInputsNeverSpent = vi.fn(async () => 0)
 const promotePendingLocalChangeOutputs = vi.fn(async () => 0)
-const restoreLiveSpendableOutputs = vi.fn(async () => 0)
+const restoreLiveSpendableOutputs = vi.fn(async () => ({ restored: 0, unscripted: 0 }))
 const rehideInputsOfLiveLocalTxs = vi.fn(async () => undefined)
 const sweepChangeScripts = vi.fn(async () => ({
   scanned: 0,
@@ -29,6 +29,10 @@ vi.mock('./staleOutputRelease', () => ({
   rehideInputsOfLiveLocalTxs: () => rehideInputsOfLiveLocalTxs(),
 }))
 
+vi.mock('./walletCoordinator', () => ({
+  shouldYieldChainIngestToSpend: vi.fn(() => false),
+}))
+
 vi.mock('./diagnosticLog', () => ({
   logDiag: vi.fn(),
 }))
@@ -51,7 +55,7 @@ describe('runChangeHeal', () => {
 
   it('spendGate reclaims, promotes, and restores locally without script sweep', async () => {
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(3)
-    restoreLiveSpendableOutputs.mockResolvedValueOnce(2)
+    restoreLiveSpendableOutputs.mockResolvedValueOnce({ restored: 2, unscripted: 0 })
 
     const { runChangeHeal } = await import('./chainedChangeHeal')
     const stats = await runChangeHeal({ path: 'spendGate' })
@@ -78,7 +82,7 @@ describe('runChangeHeal', () => {
       refused: 0,
     })
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(1)
-    restoreLiveSpendableOutputs.mockResolvedValueOnce(5)
+    restoreLiveSpendableOutputs.mockResolvedValueOnce({ restored: 5, unscripted: 0 })
 
     const { runChangeHeal } = await import('./chainedChangeHeal')
     const stats = await runChangeHeal({ path: 'chainMaintenance' })
@@ -99,7 +103,7 @@ describe('runChangeHeal', () => {
         refused: 0,
       })
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(1)
-    restoreLiveSpendableOutputs.mockResolvedValueOnce(1)
+    restoreLiveSpendableOutputs.mockResolvedValueOnce({ restored: 1, unscripted: 0 })
 
     const { runChangeHeal } = await import('./chainedChangeHeal')
     const stats = await runChangeHeal({ path: 'chainingScriptHeal' })
@@ -110,13 +114,15 @@ describe('runChangeHeal', () => {
     expect(sweepChangeScripts).not.toHaveBeenCalledWith({ fromChain: true })
   })
 
-  it('displayBackground promotes pending change without restore sweep', async () => {
+  it('displayBackground only promotes pending change locally', async () => {
     promotePendingLocalChangeOutputs.mockResolvedValueOnce(2)
+    reclaimSealedInputsNeverSpent.mockResolvedValueOnce(1)
 
     const { runChangeHeal } = await import('./chainedChangeHeal')
     const stats = await runChangeHeal({ path: 'displayBackground' })
 
     expect(stats.pendingPromoted).toBe(2)
+    expect(stats.reclaimed).toBe(1)
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
   })

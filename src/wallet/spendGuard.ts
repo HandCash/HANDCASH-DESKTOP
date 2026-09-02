@@ -4,20 +4,61 @@
  * - advisory lease on shared backup URL across devices
  * - assert against **local** spendable balance (toolbox / history backup)
  *
- * Local wallet state is the authority for pays. Do not force chainIngest /
- * legacy address scans before send — Refresh remains a Dashboard / background
- * concern. A stale local tip fails at broadcast and is released then.
+ * Local wallet state is the authority for what we own and what we can sign.
+ * Validity is established at sign time; miner/indexer response is delivery only.
+ * Refresh remains a Dashboard concern for reconciling with chain truth.
  */
 import { extractSatsFromArgs } from './appActivity'
-import { runChangeHeal } from './chainedChangeHeal'
 import { logDiag, logSpendFailure } from './diagnosticLog'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { fetchBalanceRead, getActiveWallet } from './session'
 import { acquireSpendLease } from './spendLease'
+import { restoreLiveSpendableOutputs } from './staleOutputRelease'
 import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoordinator'
 
-/** True while {@link runExclusiveSpend} already ran {@link ChangeHealPath.spendGate}. */
+/** True while {@link runExclusiveSpend} already promoted chained change. */
 let spendChainPromoted = false
+
+/**
+ * Rebuild script-less change rows and mark live pending change spendable for chaining.
+ * Local toolbox only — no chain raw-tx sweep (that belongs on Dashboard Refresh).
+ */
+async function promoteSpendableChange(): Promise<number> {
+  let restored = 0
+  let localHealed = 0
+  try {
+    const { sweepChangeScripts } = await import('./changeScriptFate')
+    const {
+      reclaimSealedInputsNeverSpent,
+      promotePendingLocalChangeOutputs,
+    } = await import('./staleOutputRelease')
+    await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+    await promotePendingLocalChangeOutputs({ forSpendChain: true })
+    const localSweep = await sweepChangeScripts({ fromChain: false })
+    localHealed = localSweep.healed
+    for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
+      restored += (
+        await restoreLiveSpendableOutputs({ forSpendChain: true })
+      ).restored
+    }
+    if (restored === 0 && localHealed > 0) {
+      restored += (
+        await restoreLiveSpendableOutputs({ forSpendChain: true })
+      ).restored
+    }
+  } catch (err) {
+    logDiag('spend-guard', 'warn', 'promote-skipped', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+  if (restored > 0 || localHealed > 0) {
+    logDiag('spend-guard', 'info', 'promoted', {
+      restored,
+      scriptsLocal: localHealed,
+    })
+  }
+  return restored
+}
 
 /** Run spend-related work one-at-a-time (selection + broadcast + cross-device lease). */
 export function runExclusiveSpend<T>(
@@ -25,7 +66,7 @@ export function runExclusiveSpend<T>(
   onSpendRegion?: () => void,
 ): Promise<T> {
   return runExclusiveSpendCoordinated(async () => {
-    await runChangeHeal({ path: 'spendGate' })
+    await promoteSpendableChange()
     spendChainPromoted = true
     try {
       return await fn()
@@ -78,6 +119,45 @@ export async function refreshSpendableBalance(): Promise<number> {
 }
 
 /**
+ * Fast pre-review gate — read local confirmed balance only.
+ * Does not promote change or sweep scripts (Review must stay snappy).
+ */
+export async function assertSendableBalanceForReview(satoshis: number): Promise<number> {
+  if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
+  assertOnlineForPayment()
+  const active = getActiveWallet()
+  if (!active) throw new Error('Wallet locked')
+
+  const confirmed = await readConfirmedSpendable(active)
+  if (satoshis <= confirmed) return confirmed
+
+  let confirming = 0
+  try {
+    const { unconfirmedChangeSats } = await import('./balanceView')
+    confirming = await unconfirmedChangeSats()
+  } catch (err) {
+    logDiag('spend-guard', 'warn', 'unconfirmed-credit-skipped', {
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
+
+  if (confirming > 0 && confirmed + confirming >= satoshis) {
+    const { insufficientFundsMessage } = await import('./insufficientFunds')
+    throw new Error(
+      insufficientFundsMessage({
+        confirmedSats: confirmed,
+        confirmingSats: confirming,
+        neededSats: satoshis,
+      }),
+    )
+  }
+
+  throw new Error(
+    `Insufficient balance (${confirmed} sats available, need ${satoshis}).`,
+  )
+}
+
+/**
  * Ensure local spendable covers `satoshis`.
  *
  * Confirmed toolbox balance is checked first. The unconfirmed-change scan only
@@ -96,11 +176,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
   // Display balance credits pending change; createAction only selects spendable
   // toolbox rows. Promote live change — never pass the gate on credit alone.
-  if (!spendChainPromoted) {
-    await runChangeHeal({ path: 'spendGate' })
-  } else {
-    await runChangeHeal({ path: 'spendGatePartialRetry' })
-  }
+  if (!spendChainPromoted) await promoteSpendableChange()
   confirmed = await readConfirmedSpendable(active)
   if (satoshis <= confirmed) return confirmed
 
@@ -115,10 +191,6 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   }
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
-    await runChangeHeal({ path: 'chainingScriptHeal' })
-    confirmed = await readConfirmedSpendable(active)
-    if (satoshis <= confirmed) return confirmed
-
     const { insufficientFundsMessage } = await import('./insufficientFunds')
     await logSpendFailure('chaining-required', {
       needed: satoshis,
@@ -142,7 +214,7 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
 
 /**
  * Pre-spend gate: online + local balance (optional amount check).
- * Runs {@link assertSendableBalance} when an amount is given (includes promote).
+ * Name kept for call-site stability; does not heal from chain.
  */
 export async function prepareSpendHeal(satoshis?: number): Promise<number> {
   if (typeof satoshis === 'number' && satoshis > 0) {

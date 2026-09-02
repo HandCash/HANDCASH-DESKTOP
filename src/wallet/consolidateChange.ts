@@ -26,6 +26,8 @@ import { getActiveWallet, type ActiveWallet } from './session'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
 import {
+  getSpendPriorityDepth,
+  getWalletCoordinatorSnapshot,
   isRecomposeCoordinatorActive,
   shouldYieldChainIngestToSpend,
 } from './walletCoordinator'
@@ -283,6 +285,10 @@ export async function maybeConsolidateChange(): Promise<ConsolidationOutcome> {
     return { ran: false, reason: 'cooldown' }
   }
   if (shouldYieldChainIngestToSpend()) return { ran: false, reason: 'spendPending' }
+  if (getSpendPriorityDepth() > 0) return { ran: false, reason: 'spendPending' }
+  if (getWalletCoordinatorSnapshot().spend === 'active') {
+    return { ran: false, reason: 'spendPending' }
+  }
   if (isRecomposeCoordinatorActive()) return { ran: false, reason: 'spendPending' }
   if (typeof document !== 'undefined' && document.hidden) {
     return { ran: false, reason: 'spendPending' }

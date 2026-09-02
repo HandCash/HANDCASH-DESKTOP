@@ -164,11 +164,12 @@ export function appFaviconCandidates(origin: string | undefined): string[] {
   const bare = host.split(':')[0] ?? host
   const home = appHomepage(origin)
   const urls: string[] = [
-    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(bare)}&sz=128`,
+    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(bare)}&sz=256`,
     `https://icons.duckduckgo.com/ip3/${encodeURIComponent(bare)}.ico`,
   ]
   if (home) {
-    urls.push(`${home}/favicon.ico`, `${home}/favicon.png`, `${home}/apple-touch-icon.png`)
+    // Prefer high-res touch icons before tiny legacy favicon.ico.
+    urls.push(`${home}/apple-touch-icon.png`, `${home}/favicon.png`, `${home}/favicon.ico`)
   }
   return urls
 }

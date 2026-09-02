@@ -5,9 +5,17 @@
  */
 
 import { DEFAULT_BRC_CLOUD_BASE_URL, MARKET_FEE_PAY_TO_ADDRESS } from './walletConfig'
+import { isViteDevBrowser } from './runtimePlatform'
 
 /** Known mainnet address — Kallubi GET /a/:address (balance + UTXOs). */
 const KALLUBI_PROBE_ADDRESS = MARKET_FEE_PAY_TO_ADDRESS
+
+function cloudBaseUrl(): string {
+  const configured = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  if (configured) return configured
+  if (typeof window !== 'undefined') return window.location.origin
+  return 'https://brc-cloud.bcryderman.workers.dev'
+}
 
 export type DependencyProbeStatus = 'ok' | 'degraded' | 'down' | 'unknown'
 
@@ -76,10 +84,12 @@ async function probeUrl(
 }
 
 async function probeArcadeV2(): Promise<DependencyProbe> {
-  const { code, timedOut, latencyMs } = await probeUrl(
-    'https://arcade-v2-us-1.bsvblockchain.tech/chaintracks/v2/height',
-    { headers: { Accept: 'application/json' } },
-  )
+  const url = isViteDevBrowser()
+    ? '/arcade-v2/chaintracks/v2/height'
+    : 'https://arcade-v2-us-1.bsvblockchain.tech/chaintracks/v2/height'
+  const { code, timedOut, latencyMs } = await probeUrl(url, {
+    headers: { Accept: 'application/json' },
+  })
   const status = statusFromHttp(code, timedOut)
   const detail =
     status === 'ok'
@@ -93,7 +103,7 @@ async function probeArcadeV2(): Promise<DependencyProbe> {
 }
 
 async function probeHandcashChain(): Promise<DependencyProbe> {
-  const base = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
+  const base = cloudBaseUrl()
   const started = performance.now()
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
@@ -169,7 +179,48 @@ async function probeBananaBlocks(): Promise<DependencyProbe> {
   return { id: 'bananablocks', label: 'BananaBlocks', status, detail, latencyMs }
 }
 
+async function probeKallubiFromChainHealth(): Promise<DependencyProbe | null> {
+  const base = cloudBaseUrl()
+  const started = performance.now()
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${base}/v1/chain/health`, {
+      signal: controller.signal,
+      cache: 'no-store',
+      headers: { Accept: 'application/json' },
+    })
+    const latencyMs = Math.round(performance.now() - started)
+    if (!res.ok) return null
+    const body = (await res.json()) as {
+      upstream?: Array<{ id?: string; ok?: boolean; latencyMs?: number }>
+    }
+    const row = body.upstream?.find((p) => p.id === 'kallubi')
+    if (!row) return null
+    const status: DependencyProbeStatus = row.ok === true ? 'ok' : 'down'
+    const detail =
+      status === 'ok'
+        ? `${typeof row.latencyMs === 'number' ? row.latencyMs : latencyMs}ms`
+        : 'Down'
+    return {
+      id: 'kallubi',
+      label: 'Kallubi',
+      status,
+      detail,
+      latencyMs: typeof row.latencyMs === 'number' ? row.latencyMs : latencyMs,
+    }
+  } catch {
+    return null
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function probeKallubi(): Promise<DependencyProbe> {
+  if (isViteDevBrowser()) {
+    const fromHealth = await probeKallubiFromChainHealth()
+    if (fromHealth) return fromHealth
+  }
   const { code, timedOut, latencyMs } = await probeUrl(
     `https://bsv.cx/a/${encodeURIComponent(KALLUBI_PROBE_ADDRESS)}`,
     { headers: { Accept: 'application/json' } },

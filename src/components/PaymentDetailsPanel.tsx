@@ -12,6 +12,7 @@ import {
   getActivityById,
   isEventActivity,
   isFailedActivity,
+  isFailedMarketListingActivity,
   activityFailureLabel,
   isItemActivity,
   isMintTokenActivity,
@@ -61,6 +62,7 @@ import {
   type SpendAttemptFate,
 } from '../wallet/spendAttempt'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { playWalletSound } from '../wallet/soundService'
 import {
   createCancelMarketListingAdvert,
   getMarketListingAuthorization,
@@ -264,6 +266,7 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   // Identity as the wallet knows it now, not as the row froze it on arrival.
   const shownItem = entry.item ? viewActivityItem(entry.item) : undefined
   const detailLabel = activityDetailLabel(entry)
+  const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const recipientLabel =
     isWallet && !item && !token ? activityRecipientLabel(entry) : null
   const itemOutpoint = itemLinkOutpoint(entry, shownItem)
@@ -301,7 +304,6 @@ export function PaymentDetailsPanel({ entryId, chain }: Props) {
   const explorer = isExplorerTxid(entry.txid)
     ? txExplorerUrl(entry.txid!, chain)
     : null
-  const isWallet = entry.origin === WALLET_ACTIVITY_ORIGIN
   const ready = isWallet || item || iconReady
 
   const retryAttempt = async () => {
@@ -692,6 +694,7 @@ function ListingActivityDetails({
 }) {
   const [cancelling, setCancelling] = useState(false)
   const [cancelError, setCancelError] = useState<string | null>(null)
+  const [clearing, setClearing] = useState(false)
   const shown = entry.item ? viewActivityItem(entry.item) : undefined
   const outpoint = listingOutpointFor(entry)
   const auth = outpoint ? getMarketListingAuthorization({ outpoint }) : null
@@ -731,6 +734,26 @@ function ListingActivityDetails({
       playWalletSound('error')
     } finally {
       setCancelling(false)
+    }
+  }
+
+  const clearFailedListing = async () => {
+    if (clearing) return
+    const ok = window.confirm(
+      `Remove this failed listing from Activity? ${name} is still in the wallet; only the broken listing record is dropped.`,
+    )
+    if (!ok) return
+    setClearing(true)
+    try {
+      const { removed } = await clearSpendAttempt(entry)
+      if (removed) clearNavChild()
+    } catch (err) {
+      toastError(
+        'Clear failed',
+        err instanceof Error ? err.message : String(err),
+      )
+    } finally {
+      setClearing(false)
     }
   }
 
@@ -862,6 +885,25 @@ function ListingActivityDetails({
               onClick={() => void cancelListing()}
             >
               {cancelling ? 'Cancelling…' : 'Cancel listing'}
+            </button>
+          </div>
+        </section>
+      ) : null}
+      {isFailedMarketListingActivity(entry) ? (
+        <section className="payment-attempt-actions">
+          <strong>Listing failed</strong>
+          <p>
+            The market could not verify this listing (amount or origin mismatch).
+            Your token is still in the wallet; dismiss this row to try listing again.
+          </p>
+          <div className="payment-attempt-buttons">
+            <button
+              type="button"
+              className="btn btn-danger"
+              disabled={clearing}
+              onClick={() => void clearFailedListing()}
+            >
+              {clearing ? 'Clearing…' : 'Clear from Activity'}
             </button>
           </div>
         </section>

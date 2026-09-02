@@ -45,6 +45,8 @@ vi.mock('./spendGuard', () => ({
 vi.mock('./walletCoordinator', () => ({
   shouldYieldChainIngestToSpend: () => shouldYield(),
   isRecomposeCoordinatorActive: () => recomposeActive(),
+  getSpendPriorityDepth: () => 0,
+  getWalletCoordinatorSnapshot: () => ({ spend: 'idle' }),
 }))
 
 vi.mock('./paymentPolicy', () => ({

@@ -64,7 +64,26 @@ export async function submitAtomicBeefToMiners(
   if (summary.accepted) {
     return { confirmed: true, submitted: true, summary }
   }
-  if (summary.doubleSpend || summary.missingInputs) {
+  if (summary.missingInputs) {
+    console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
+    await onAlreadySpentSend({ txid: id, atomic })
+    throw new Error(formatPostBeefFailure(summary))
+  }
+  if (summary.doubleSpend) {
+    const { postBeefConflictIsReal } = await import('./postBeefResult')
+    const conflictReal = await postBeefConflictIsReal({
+      txid: id,
+      atomic,
+      chain: active.chain,
+    })
+    if (!conflictReal) {
+      console.info(
+        '[minerSubmit] ghost doubleSpend — signed tx treated as submitted',
+        id.slice(0, 12),
+        summary.detail,
+      )
+      return { confirmed: false, submitted: true, summary }
+    }
     console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
     await onAlreadySpentSend({ txid: id, atomic })
     throw new Error(formatPostBeefFailure(summary))

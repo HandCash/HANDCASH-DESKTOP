@@ -129,6 +129,12 @@ describe('isLiveLocalTxStatus', () => {
     expect(isLiveLocalTxStatus('failed')).toBe(false)
     expect(isLiveLocalTxStatus('unsigned')).toBe(false)
   })
+
+  it('treats proof-pipeline statuses as live until completed', () => {
+    for (const status of ['unmined', 'callback', 'unconfirmed', 'unknown']) {
+      expect(isLiveLocalTxStatus(status)).toBe(true)
+    }
+  })
 })
 
 describe('restoreLiveSpendableOutputs', () => {
@@ -172,7 +178,10 @@ describe('restoreLiveSpendableOutputs', () => {
     ])
     isUtxo.mockResolvedValue(true)
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
     expect(updateOutput).not.toHaveBeenCalled()
     expect(isUtxo).not.toHaveBeenCalled()
   })
@@ -184,7 +193,10 @@ describe('restoreLiveSpendableOutputs', () => {
     findTransactions.mockResolvedValue([{ status: 'sending' }])
     isUtxo.mockResolvedValue(true)
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
     expect(updateOutput).not.toHaveBeenCalled()
     expect(isUtxo).not.toHaveBeenCalled()
   })
@@ -202,7 +214,10 @@ describe('restoreLiveSpendableOutputs', () => {
     findTransactions.mockResolvedValue([{ status: 'unproven' }])
     isUtxo.mockResolvedValue(false)
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 1,
+      unscripted: 0,
+    })
     expect(updateOutput).toHaveBeenCalledWith(2, {
       spendable: true,
       spentBy: undefined,
@@ -221,7 +236,10 @@ describe('restoreLiveSpendableOutputs', () => {
       },
     ])
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 1,
+      unscripted: 0,
+    })
     expect(updateOutput).toHaveBeenCalledWith(4, {
       spendable: true,
       spentBy: undefined,
@@ -240,7 +258,10 @@ describe('restoreLiveSpendableOutputs', () => {
     ])
     findTransactions.mockResolvedValue([{ status: 'completed' }])
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(1)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 1,
+      unscripted: 0,
+    })
     expect(updateOutput).toHaveBeenCalledWith(3, {
       spendable: true,
       spentBy: undefined,
@@ -250,7 +271,10 @@ describe('restoreLiveSpendableOutputs', () => {
   it('skips rows with no locking script instead of asking isUtxo', async () => {
     findOutputs.mockResolvedValue([{ outputId: 1, spendable: false }])
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 1,
+    })
     expect(isUtxo).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
   })
@@ -269,7 +293,10 @@ describe('restoreLiveSpendableOutputs', () => {
     isUtxo.mockResolvedValue(true)
     hideUtxo(`${txid}.0`, { spentBy: '' })
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
     expect(updateOutput).not.toHaveBeenCalled()
     expect(isUtxo).not.toHaveBeenCalled()
   })
@@ -280,7 +307,10 @@ describe('restoreLiveSpendableOutputs', () => {
     ])
     isUtxo.mockResolvedValue(true)
 
-    await expect(restoreLiveSpendableOutputs({ onlyLiveChange: true })).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs({ onlyLiveChange: true })).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
     expect(updateOutput).not.toHaveBeenCalled()
   })
 
@@ -296,14 +326,20 @@ describe('restoreLiveSpendableOutputs', () => {
     )
     findTransactions.mockResolvedValue([{ status: 'unproven' }])
 
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(60)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 60,
+      unscripted: 0,
+    })
     // Re-entering the provider per row is what made this seconds long on a phone.
     expect(runAsStorageProvider).toHaveBeenCalledTimes(1)
   })
 
   it('does nothing without an unlocked wallet', async () => {
     mockGetActiveWallet.mockReturnValue(null)
-    await expect(restoreLiveSpendableOutputs()).resolves.toBe(0)
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 0,
+      unscripted: 0,
+    })
   })
 })
 

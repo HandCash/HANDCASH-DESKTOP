@@ -16,6 +16,11 @@ vi.mock('./staleOutputRelease', () => ({
   onAlreadySpentSend: (...a: unknown[]) => onAlreadySpentSend(...a),
 }))
 
+vi.mock('./legacyScan', () => ({
+  txExistsOnChain: vi.fn(async () => false),
+  spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
+}))
+
 const TXID = 'a'.repeat(64)
 const ATOMIC = [1, 2, 3]
 
@@ -72,5 +77,18 @@ describe('submitAtomicBeefToMiners', () => {
     await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
     expect(onAlreadySpentSend).toHaveBeenCalled()
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('treats ghost doubleSpend as submitted', async () => {
+    postBeef.mockResolvedValueOnce([
+      {
+        status: 'error',
+        txidResults: [{ status: 'error', doubleSpend: true }],
+      },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.submitted).toBe(true)
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 })

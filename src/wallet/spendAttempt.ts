@@ -14,6 +14,7 @@ import { inputOutpointsFromRawTx } from './txOutpoints'
 import {
   countFailedActivity,
   isFailedActivity,
+  isFailedMarketListingActivity,
   listFailedActivity,
   removeActivityById,
   removeFailedActivity,
@@ -487,10 +488,16 @@ function fateAllowsClear(fate: SpendAttemptFate): boolean {
  * outputs. A signed row is only removed once every input is spent on chain.
  * Clearing that row keeps its change spendable and hides the spent inputs —
  * it does not undo the spend and does not run unsigned-tx repair.
+ *
+ * Failed market listings are local history only — always dismissable.
  */
 export async function clearSpendAttempt(
   entry: ActivityEntry,
 ): Promise<{ removed: boolean }> {
+  if (isFailedMarketListingActivity(entry)) {
+    const { dismissFailedMarketListingActivity } = await import('./marketListing')
+    return { removed: dismissFailedMarketListingActivity(entry) }
+  }
   if (isCounterpartySettlePending(entry)) {
     throw new Error(
       'The recipient can still broadcast this transfer, so it cannot be cleared yet.',
@@ -554,6 +561,11 @@ export async function clearAllFailedSpends(): Promise<{
   const toKeepChange: string[] = []
 
   for (const row of listFailedActivity()) {
+    if (isFailedMarketListingActivity(row)) {
+      const { releaseFailedMarketListingAuth } = await import('./marketListing')
+      releaseFailedMarketListingAuth(row)
+      continue
+    }
     if (isCounterpartySettlePending(row, now)) {
       keepIds.add(row.id)
       continue

@@ -131,7 +131,7 @@ async function runRecomposeBody(opts: RecomposeOpts): Promise<RecomposeResult> {
   if (runChain) {
     try {
       spendableSats = (await refreshFromChainExclusive({
-        forceReview: true,
+        forceReview: false,
         announceReceive: false,
       })).balanceSats
       if (spendableSats == null) {

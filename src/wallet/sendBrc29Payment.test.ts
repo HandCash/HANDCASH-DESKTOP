@@ -40,6 +40,14 @@ const notifyPeerBrc29Payment = vi.fn(
   }),
 )
 
+const txExistsOnChain = vi.fn(async () => false)
+const spentStatusOfOutpoint = vi.fn(async () => 'unspent' as const)
+
+vi.mock('./legacyScan', () => ({
+  txExistsOnChain: (...args: unknown[]) => txExistsOnChain(...args),
+  spentStatusOfOutpoint: (...args: unknown[]) => spentStatusOfOutpoint(...args),
+}))
+
 const walletState = {
   identityKey: '03aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
 }
@@ -61,6 +69,7 @@ vi.mock('./session', () => ({
     },
   }),
   fetchBalanceSats: async () => 90_000,
+  bumpBalanceAfterHeal: () => {},
 }))
 
 vi.mock('./messageTransport', () => ({
@@ -92,6 +101,9 @@ vi.mock('./appActivity', () => ({
   noteOutboundSendComplete: () => {},
   clearOutboundSendPending: () => {},
   failOutboundSendPending: () => {},
+  noteOutboundSendBroadcastFailed: () => false,
+  compactFailureLabel: (err: unknown) =>
+    err instanceof Error ? err.message : String(err),
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))
@@ -108,6 +120,7 @@ vi.mock('./staleOutputRelease', () => ({
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
   sealSpentInputsOfSignedTx: async () => 0,
+  keepChangeOfSignedTx: async () => 0,
 }))
 vi.mock('./actionReview', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./actionReview')>()
@@ -193,26 +206,27 @@ describe('sendBrc29ToIdentityKey', () => {
         txid: 'b'.repeat(64),
       }),
     )
-    expect(postBeef).toHaveBeenCalled()
+    await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
     expect(result.selfReceived).toBe(false)
     expect(result.peerDelivered).toBe(true)
   })
 
-  it('refuses success when the network rejects the delayed broadcast', async () => {
+  it('succeeds after sign when the network reports ghost doubleSpend', async () => {
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
         txidResults: [{ status: 'error', doubleSpend: true }],
       },
     ] as never)
+    txExistsOnChain.mockResolvedValueOnce(false)
+    spentStatusOfOutpoint.mockResolvedValueOnce('unspent')
     const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
-    await expect(
-      sendBrc29ToIdentityKey({
-        payeeIdentityKey: PAYEE,
-        satoshis: 1_000,
-      }),
-    ).rejects.toThrow(/already spent|blocking|network/i)
-    expect(notifyPeerBrc29Payment).not.toHaveBeenCalled()
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: PAYEE,
+      satoshis: 1_000,
+    })
+    expect(result.txid).toMatch(/^[0-9a-f]{64}$/)
+    expect(notifyPeerBrc29Payment).toHaveBeenCalled()
   })
 
   it('still succeeds when remittance is in the box without inline BEEF', async () => {

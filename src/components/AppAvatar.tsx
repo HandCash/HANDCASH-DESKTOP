@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { appFaviconCandidates, appInitials } from '../wallet/appIdentity'
+import { AppsIcon } from './icons'
 import { SkeletonAvatar } from './Skeleton'
 
 type Props = {
@@ -128,7 +129,11 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
           }}
         />
       ) : null}
-      {failed ? <span className="app-avatar-fallback">{appInitials(origin)}</span> : null}
+      {failed ? (
+        <span className="app-avatar-fallback" aria-label={appInitials(origin)}>
+          <AppsIcon size={size === 'lg' ? 28 : size === 'sm' ? 18 : 22} />
+        </span>
+      ) : null}
     </div>
   )
 }

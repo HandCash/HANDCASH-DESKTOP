@@ -1315,6 +1315,7 @@ async function proveHeldGenesis(
     for (const outpoint of candidates) {
       if (genesisWalkBudgetSpent()) break
       if (getWalletCoordinatorSnapshot().spend === 'active') break
+      if (shouldYieldChainIngestToSpend()) break
       // A basket read newer than the one that spawned us is somebody looking at
       // the panel right now. That read has its own timeout, and a walk fetching
       // through it is how the list ends up timing out instead of painting.
@@ -1355,6 +1356,10 @@ async function proveHeldGenesis(
           // tip the user is staring at on the details panel.
           shouldStop: () => {
             if (outpoint === preferred) return false
+            if (shouldYieldChainIngestToSpend()) {
+              aborted = true
+              return true
+            }
             if (listInFlight && listInFlight !== ownRead) {
               aborted = true
               return true
@@ -2763,6 +2768,7 @@ export async function sendCollectable(args: {
   }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
   setPaymentProgress('preparing', 'Waiting to send the collectable', outpoint)
+  setCollectableVerifyWalkDeferred(true)
   const spendPriority = leaseSpendPriority('send-collectable')
   const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
   const outboundPending = beginPendingSend({
@@ -3349,8 +3355,7 @@ export async function sendCollectable(args: {
           // the next BSV send reselected them, every broadcaster answered
           // "Missing inputs", and the send failed "Already spent" while the
           // balance dropped by whatever that attempt wrote off.
-          const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
-            await import('./staleOutputRelease')
+          const { sealSpentInputsOfSignedTx } = await import('./staleOutputRelease')
           await sealSpentInputsOfSignedTx(txid, atomicBeef)
           inputsSealedForRelease = true
 
@@ -3523,5 +3528,7 @@ export async function sendCollectable(args: {
   } finally {
     clearInterval(touchSpendPriority)
     spendPriority.release()
+    setCollectableVerifyWalkDeferred(false)
+    resumeCollectableVerifyWalk()
   }
 }

@@ -598,6 +598,32 @@ describe('clearAllFailedSpends', () => {
     expect(mocks.releaseUnsignedSpendReservations).not.toHaveBeenCalled()
   })
 
+  it('clears failed market listings without chain checks', async () => {
+    mocks.countFailedActivity.mockReturnValue(1)
+    mocks.listFailedActivity.mockReturnValue([
+      {
+        id: 'list-fail',
+        status: 'failed',
+        method: 'market-list',
+        kind: 'event',
+        at: Date.now() - 2 * 86400000,
+        sats: 0,
+        origin: 'handcash-wallet',
+        note: 'Failed: Listed KING for 5,000 sats',
+        failureReason: 'amt-mismatch',
+        item: { name: 'KING', origin: 'aa'.repeat(32) },
+        txid: TX,
+      },
+    ])
+    mocks.removeFailedActivity.mockReturnValue(1)
+
+    await expect(clearAllFailedSpends()).resolves.toEqual({
+      removed: 1,
+      kept: 0,
+    })
+    expect(mocks.txExistsOnChain).not.toHaveBeenCalled()
+  })
+
   it('clears a signed failed send whose inputs are still unspent when the tx never landed', async () => {
     mocks.txExistsOnChain.mockResolvedValue(false)
     mocks.getProvenOrRawTx.mockResolvedValue({ rawTx: spendTxRaw() })

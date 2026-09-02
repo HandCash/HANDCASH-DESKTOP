@@ -11,7 +11,16 @@ const { classifyOwnedCash, txLivenessFromStatus, unconfirmedChangeSats } =
 
 describe('txLivenessFromStatus', () => {
   it('separates pending sends from settled transactions', () => {
-    for (const status of ['sending', 'unproven', 'nosend', 'nonfinal']) {
+    for (const status of [
+      'sending',
+      'unproven',
+      'nosend',
+      'nonfinal',
+      'unmined',
+      'callback',
+      'unconfirmed',
+      'unknown',
+    ]) {
       expect(txLivenessFromStatus(status)).toBe('pending')
     }
     expect(txLivenessFromStatus('completed')).toBe('settled')

@@ -2,11 +2,7 @@ import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { installRawTxFallback } from './rawTxFallback'
-import { installArcadeV2Services } from './arcadeV2'
-import {
-  getOrCreateArcadeCallbackToken,
-  wireArcadeMonitor,
-} from './arcadeIntegration'
+import { installArcadeV2ChaintracksOnly } from './arcadeV2'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -124,38 +120,45 @@ function installHeaderFailover(services: Services, chain: Chain): void {
       }
     }
     chaintracks.findHeaderForHeight = async (height: number) => {
+      const publicHeader = await fetchBlockHeaderForHeight(chain, height)
+      if (publicHeader != null) return publicHeader
       try {
         const header = await withTimeout(original(height), 3_000)
         if (header != null) return header
       } catch {
-        // Same treatment as a miss: ask someone who can actually answer.
+        /* already tried public */
       }
-      return (await fetchBlockHeaderForHeight(chain, height)) ?? undefined
+      return undefined
     }
 
     // Merkle-path assembly asks hash→header after Bitails/WoC proofs; same hang.
     if (typeof chaintracks.findHeaderForBlockHash === 'function') {
       const originalHash = chaintracks.findHeaderForBlockHash.bind(chaintracks)
       chaintracks.findHeaderForBlockHash = async (hash: string) => {
+        if (chain === 'main' && /^[0-9a-f]{64}$/i.test(hash)) {
+          try {
+            const res = await fetch(`https://api.bitails.io/block/${hash}`, {
+              signal: AbortSignal.timeout(8_000),
+              headers: { Accept: 'application/json' },
+            })
+            if (res.ok) {
+              const body = (await res.json()) as { height?: number }
+              if (typeof body.height === 'number') {
+                const header = await fetchBlockHeaderForHeight(chain, body.height)
+                if (header != null) return header
+              }
+            }
+          } catch {
+            /* fall through */
+          }
+        }
         try {
           const header = await withTimeout(originalHash(hash), 3_000)
           if (header != null) return header
         } catch {
-          /* public below */
+          /* exhausted */
         }
-        if (chain !== 'main' || !/^[0-9a-f]{64}$/i.test(hash)) return undefined
-        try {
-          const res = await fetch(`https://api.bitails.io/block/${hash}`, {
-            signal: AbortSignal.timeout(8_000),
-            headers: { Accept: 'application/json' },
-          })
-          if (!res.ok) return undefined
-          const body = (await res.json()) as { height?: number }
-          if (typeof body.height !== 'number') return undefined
-          return (await fetchBlockHeaderForHeight(chain, body.height)) ?? undefined
-        } catch {
-          return undefined
-        }
+        return undefined
       }
     }
   } catch (err) {
@@ -187,9 +190,9 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
- * Broadcast: Arcade V2 first, then public ARC / Bitails before Taal.
- * Taal ARC returns 401 without a product API key — trying it first only adds
- * console noise, then soft-timeout rotation still succeeds elsewhere.
+ * Broadcast: public ARC (GorillaPool) first, then Bitails / WoC. Arcade V2 Teranode
+ * stays available as last resort for chaintracks + SSE; it often returns false
+ * doubleSpends when a tx never left the device.
  */
 function installPostBeefPreferFast(services: Services): void {
   try {
@@ -199,11 +202,11 @@ function installPostBeefPreferFast(services: Services): void {
       }
     ).postBeefServices
     preferServiceOrder(collection, [
-      'ArcadeBeef',
       'GorillaPoolArcBeef',
       'Bitails',
       'WhatsOnChain',
       'TaalArcBeef',
+      'ArcadeBeef',
     ])
     const s = services as Services & {
       postBeefUntilSuccessSoftTimeoutMs?: number
@@ -248,46 +251,50 @@ function installTipHeaderFailover(services: Services, chain: Chain): void {
       }
     }
     chaintracks.findChainTipHeader = async () => {
-      try {
-        // Browser ERR_TIMED_OUT on Chaintracks is ~30s; fail over in 3s.
-        const tip = await withTimeout(original(), 3_000)
-        if (tip != null) return tip
-      } catch {
-        // Public tip below.
-      }
       const tipUrl =
         chain === 'main'
           ? 'https://api.bitails.io/block/latest'
           : chain === 'test'
             ? 'https://test-api.bitails.io/block/latest'
             : null
-      if (tipUrl == null) throw new Error('No chain tip header provider')
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), 8_000)
-      try {
-        const res = await fetch(tipUrl, {
-          signal: controller.signal,
-          headers: { Accept: 'application/json' },
-        })
-        if (!res.ok) throw new Error(`tip ${res.status}`)
-        const body = (await res.json()) as { height?: number }
-        const height = body.height
-        if (typeof height !== 'number' || !Number.isFinite(height)) {
-          throw new Error('tip missing height')
+      if (tipUrl != null) {
+        const controller = new AbortController()
+        const timer = setTimeout(() => controller.abort(), 8_000)
+        try {
+          const res = await fetch(tipUrl, {
+            signal: controller.signal,
+            headers: { Accept: 'application/json' },
+          })
+          if (res.ok) {
+            const body = (await res.json()) as { height?: number }
+            const height = body.height
+            if (typeof height === 'number' && Number.isFinite(height)) {
+              const header = await fetchBlockHeaderForHeight(chain, height)
+              if (header != null) {
+                if (!logged) {
+                  logged = true
+                  appendAppLog(
+                    'info',
+                    `[headers] NewHeader tip from Bitails height ${height}`,
+                  )
+                }
+                return header
+              }
+            }
+          }
+        } catch {
+          /* try chaintracks below */
+        } finally {
+          clearTimeout(timer)
         }
-        const header = await fetchBlockHeaderForHeight(chain, height)
-        if (header == null) throw new Error(`no public header at ${height}`)
-        if (!logged) {
-          logged = true
-          appendAppLog(
-            'info',
-            `[headers] NewHeader tip from Bitails height ${height} (Chaintracks unreachable)`,
-          )
-        }
-        return header
-      } finally {
-        clearTimeout(timer)
       }
+      try {
+        const tip = await withTimeout(original(), 3_000)
+        if (tip != null) return tip
+      } catch {
+        /* public paths exhausted */
+      }
+      throw new Error('No chain tip header provider')
     }
   } catch (err) {
     console.warn('[chaintracker] could not install tip-header failover', err)
@@ -347,7 +354,8 @@ export async function bootWallet(args: {
   })
 
   installFallbackChainTracker(setup.services as Services, args.chain)
-  installArcadeV2Services(setup.services as Services, args.chain)
+  // Arcade V2 go-chaintracks (dev proxy / public host) — not Teranode broadcast.
+  installArcadeV2ChaintracksOnly(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
   installTipHeaderFailover(setup.services as Services, args.chain)
@@ -356,11 +364,11 @@ export async function bootWallet(args: {
   installRawTxFallback(setup.services as Services, args.chain)
   syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
 
-  try {
-    wireArcadeMonitor(setup.monitor, getOrCreateArcadeCallbackToken())
-  } catch (err) {
-    console.warn('[arcade-v2] monitor SSE wiring skipped', err)
-  }
+  // try {
+  //   wireArcadeMonitor(setup.monitor, getOrCreateArcadeCallbackToken())
+  // } catch (err) {
+  //   console.warn('[arcade-v2] monitor SSE wiring skipped', err)
+  // }
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes
@@ -470,9 +478,14 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
   chainedBalanceHealFlight = (async () => {
     chainedBalanceHealAt = Date.now()
     try {
-      const { runChangeHeal } = await import('./chainedChangeHeal')
-      await runChangeHeal({ path: 'displayBackground' })
+      const {
+        promotePendingLocalChangeOutputs,
+        reclaimSealedInputsNeverSpent,
+      } = await import('./staleOutputRelease')
+      await promotePendingLocalChangeOutputs({ forSpendChain: true })
+      await reclaimSealedInputsNeverSpent({ forSpendChain: true })
       lastBalanceBreakdown = ''
+      bumpBalanceAfterHeal()
     } catch (err) {
       console.warn('[balance] chained change heal skipped', err)
     } finally {

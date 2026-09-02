@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.3.70] - 2026-09-02
+
+### Fixed
+
+- **Send prepare hang** — spend path no longer runs full change-script sweeps (1865+ rows) before `createAction`; Review uses a fast local balance read.
+- **Ghost miner doubleSpend** — background `minerSubmit` ignores Arcade/Bitails false conflicts when inputs are still unspent on-chain.
+- **Balance during proofs** — `unmined` / `callback` / `unconfirmed` toolbox statuses count as live local spends so pending change does not drop mid-proof.
+- **Chaintracks** — Bitails-first header failover when Babbage chain host stalls; Arcade V2 chaintracks-only mode (no broadcast reorder).
+- **CI typecheck** — PaymentDetailsPanel `isWallet` ordering, send path `realTxid` guard, unused imports.
+
+### Changed
+
+- **Maintenance gating** — full chain script heal runs on explicit Dashboard Refresh only, not unlock/background poll.
+- **Inventory / activity** — listed badges, burn overlays, failed market listing rows, payment detail recipient labels.
+
 ## [1.3.69] - 2026-09-01
 
 ### Fixed

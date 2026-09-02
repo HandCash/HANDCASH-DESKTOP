@@ -55,6 +55,19 @@ export default defineConfig({
         changeOrigin: true,
         secure: true,
       },
+      // Toolbox Arcade client sends xdeployment-id; browser CORS blocks it direct.
+      '/arcade-v2': {
+        target: 'https://arcade-v2-us-1.bsvblockchain.tech',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/arcade-v2/, ''),
+      },
+      '/arcade-v2-testnet': {
+        target: 'https://arcade-v2-testnet-us-1.bsvblockchain.tech',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/arcade-v2-testnet/, ''),
+      },
     },
     watch: {
       // packaging writes here — don't restart Vite while launch:mac runs

@@ -1336,6 +1336,14 @@ export function isEventActivity(entry: ActivityEntry): boolean {
   return entry.kind === 'event'
 }
 
+/** Failed on-chain market listing the overlay rejected (amt/origin mismatch, etc.). */
+export function isFailedMarketListingActivity(entry: ActivityEntry): boolean {
+  return (
+    entry.status === 'failed' &&
+    (entry.method === 'market-list' || entry.method === 'market-cancel')
+  )
+}
+
 function normalizeActivityItem(
   raw: ActivityItem | undefined,
 ): ActivityItem | undefined {
@@ -1624,6 +1632,16 @@ export function activityEntryTitle(entry: ActivityEntry): string {
   if (entry.status === 'failed') {
     if (isBurnActivity(entry)) {
       return entry.item?.name ? `${entry.item.name} not burned` : 'Burn failed'
+    }
+    if (entry.method === 'market-list') {
+      return entry.item?.name
+        ? `${entry.item.name} listing failed`
+        : 'Listing failed'
+    }
+    if (entry.method === 'market-cancel') {
+      return entry.item?.name
+        ? `${entry.item.name} cancel failed`
+        : 'Cancel listing failed'
     }
     if (entry.item?.name) return `${entry.item.name} not sent`
     return 'Send failed'

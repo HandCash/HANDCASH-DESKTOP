@@ -50,6 +50,27 @@ function writeCache(usdPerBsv: number): void {
 }
 
 async function fetchFromCoinGecko(): Promise<number> {
+  const tryDirect = async (): Promise<number> => {
+    const res = await fetch(
+      'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
+    )
+    if (res.status === 429) {
+      noteFxRateLimited()
+      throw new Error('coingecko 429')
+    }
+    if (!res.ok) throw new Error(`coingecko ${res.status}`)
+    const data = (await res.json()) as { 'bitcoin-cash-sv'?: { usd?: number } }
+    const rate = data['bitcoin-cash-sv']?.usd
+    if (typeof rate !== 'number' || !(rate > 0)) throw new Error('bad coingecko rate')
+    return rate
+  }
+
+  // Dev uses the Vite proxy to BRC-CLOUD; when that route 502s the browser logs
+  // scary noise even though direct CoinGecko works. Prefer direct in dev.
+  if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) {
+    return tryDirect()
+  }
+
   const cloudBase =
     DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '') ||
     (typeof window !== 'undefined' ? window.location.origin : '')
@@ -72,18 +93,7 @@ async function fetchFromCoinGecko(): Promise<number> {
     }
   }
 
-  const res = await fetch(
-    'https://api.coingecko.com/api/v3/simple/price?ids=bitcoin-cash-sv&vs_currencies=usd',
-  )
-  if (res.status === 429) {
-    noteFxRateLimited()
-    throw new Error('coingecko 429')
-  }
-  if (!res.ok) throw new Error(`coingecko ${res.status}`)
-  const data = (await res.json()) as { 'bitcoin-cash-sv'?: { usd?: number } }
-  const rate = data['bitcoin-cash-sv']?.usd
-  if (typeof rate !== 'number' || !(rate > 0)) throw new Error('bad coingecko rate')
-  return rate
+  return tryDirect()
 }
 
 /** Cached BSV→USD. Returns null until a successful fetch. */

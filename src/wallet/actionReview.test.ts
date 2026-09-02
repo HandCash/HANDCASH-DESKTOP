@@ -22,6 +22,9 @@ const findOutputs = vi.fn(async () => [
 
 const findExpiredActionBatches = vi.fn(async () => [])
 const abortActionBatch = vi.fn(async () => ({ aborted: true }))
+const findProvenTxReqs = vi.fn(async () => [])
+const updateProvenTxReq = vi.fn(async () => {})
+const txExistsOnChain = vi.fn(async () => null as boolean | null)
 
 const {
   abortAction,
@@ -53,6 +56,8 @@ vi.mock('./session', () => ({
             validateOutputScript,
             updateOutput,
             findExpiredActionBatches,
+            findProvenTxReqs,
+            updateProvenTxReq,
           }),
         abortActionBatch,
       },
@@ -74,7 +79,9 @@ vi.mock('./changeScriptFate', () => ({
   sweepChangeScripts: (args?: unknown) => sweepChangeScripts(args),
 }))
 
-vi.mock('./legacyScan', () => ({ txExistsOnChain: async () => null }))
+vi.mock('./legacyScan', () => ({
+  txExistsOnChain: (...args: unknown[]) => txExistsOnChain(...args),
+}))
 vi.mock('./sentItemGuard', () => ({ healGhostSentItems: async () => [] }))
 vi.mock('./oneSatImportGuard', () => ({ forgetOneSatImported: () => {} }))
 
@@ -144,11 +151,21 @@ describe('actionReview', () => {
   })
 
   it('releaseUnsignedSpendReservations fails abandoned txs and reviews status without sweeping', async () => {
+    findProvenTxReqs.mockResolvedValueOnce([])
     const r = await releaseUnsignedSpendReservations()
     expect(r.failedTxs).toBe(1)
     expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
     expect(reviewStatus).toHaveBeenCalled()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
+  })
+
+  it('clears ghost doubleSpend reqs when the tx never reached the chain', async () => {
+    const txid = 'cc'.repeat(32)
+    findProvenTxReqs.mockResolvedValueOnce([{ provenTxReqId: 285, txid, status: 'doubleSpend' }])
+    txExistsOnChain.mockResolvedValueOnce(false)
+    const { releaseGhostDoubleSpendReqs } = await import('./actionReview')
+    await expect(releaseGhostDoubleSpendReqs()).resolves.toBe(1)
+    expect(updateProvenTxReq).toHaveBeenCalledWith([285], { status: 'invalid' })
   })
 
   it('repairFailedSpendState includes change-script sweep', async () => {

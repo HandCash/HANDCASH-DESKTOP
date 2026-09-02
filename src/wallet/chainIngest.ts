@@ -326,7 +326,7 @@ export async function refreshFromChainExclusive(
     })
   }
 
-  if (maintenanceDue(active, forceReview) && !shouldYieldChainIngestToSpend()) {
+  if (forceReview && maintenanceDue(active, forceReview) && !shouldYieldChainIngestToSpend()) {
     try {
       // Free abandoned noSend batches as part of repair, not every receipt poll.
       const { abortReservedActionBatches } = await import('./actionReview')
@@ -688,12 +688,14 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     { reconcileDualLayerState },
     { healGhostSentItems },
     { pruneMissingOnChainActivity, expireStaleInboundPending },
+    { rehideInputsOfLiveLocalTxs, restoreLiveSpendableOutputs, reclaimSealedInputsNeverSpent, promotePendingLocalChangeOutputs },
     { txExistsOnChain },
     { forgetOneSatImported },
   ] = await Promise.all([
     import('./txReconcile'),
     import('./sentItemGuard'),
     import('./appActivity'),
+    import('./staleOutputRelease'),
     import('./legacyScan'),
     import('./oneSatImportGuard'),
   ])
@@ -733,32 +735,44 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
       } catch (err) {
         console.warn('[chain-ingest] release stuck nosends skipped', err)
       }
-      // BRC-39 merges and device sync can leave change rows with satoshis but no
-      // locking script. Single explicit heal path — see chainedChangeHeal.ts.
       try {
-        const { runChangeHeal } = await import('./chainedChangeHeal')
-        const heal = await runChangeHeal({
-          path: 'chainMaintenance',
-          throwIfYield: throwIfYieldToSpend,
-        })
-        if (heal.scriptsChain > 0) {
-          console.info(
-            `[chain-ingest] rebuilt ${heal.scriptsChain} change locking script(s) before spendable restore`,
-          )
+        const { sweepChangeScripts } = await import('./changeScriptFate')
+        let scriptsHealed = 0
+        for (let pass = 0; pass < 4; pass += 1) {
+          throwIfYieldToSpend()
+          const sweep = await sweepChangeScripts({ fromChain: true })
+          scriptsHealed += sweep.healed
+          if (sweep.healed === 0) break
         }
-        if (heal.pendingPromoted > 0) {
+        if (scriptsHealed > 0) {
           console.info(
-            `[chain-ingest] promoted ${heal.pendingPromoted} pending local change output(s) before bulk restore`,
-          )
-        }
-        if (heal.restored > 0) {
-          console.info(
-            `[chain-ingest] restored ${heal.restored} change output(s) previously marked unspendable`,
+            `[chain-ingest] rebuilt ${scriptsHealed} change locking script(s) before spendable restore`,
           )
         }
       } catch (err) {
         if (err instanceof ChainIngestYieldToSpendError) throw err
-        console.warn('[chain-ingest] chained change heal skipped', err)
+        console.warn('[chain-ingest] change script sweep skipped', err)
+      }
+      throwIfYieldToSpend()
+      await rehideInputsOfLiveLocalTxs()
+      throwIfYieldToSpend()
+      await promotePendingLocalChangeOutputs()
+      let restored = 0
+      for (let pass = 0; pass < 5; pass += 1) {
+        throwIfYieldToSpend()
+        const batch = await restoreLiveSpendableOutputs()
+        if (batch.restored === 0) break
+        restored += batch.restored
+      }
+      if (restored > 0) {
+        console.info(
+          `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
+        )
+      }
+      for (let pass = 0; pass < 3; pass += 1) {
+        throwIfYieldToSpend()
+        const reclaimed = await reclaimSealedInputsNeverSpent()
+        if (reclaimed === 0) break
       }
     })(),
   ])

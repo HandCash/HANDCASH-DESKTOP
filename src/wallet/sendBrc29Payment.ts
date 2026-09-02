@@ -8,7 +8,7 @@
  *
  * Plain identity-address P2PKH stays in sendPayment.ts for external addresses.
  */
-import { Beef, createNonce, P2PKH, PublicKey } from '@bsv/sdk'
+import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
 import { createActor } from 'xstate'
 import {
   hasActivityTxid,

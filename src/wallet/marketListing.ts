@@ -38,7 +38,12 @@ import {
   MARKET_FEE_IDENTITY_KEY,
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
-import { failMarketListingActivity, recordWalletEvent } from './appActivity'
+import {
+  failMarketListingActivity,
+  recordWalletEvent,
+  removeActivityById,
+  type ActivityEntry,
+} from './appActivity'
 import { getCachedCollectables } from './collectables'
 import { getTokenIconDataUrl } from './tokenIconCache'
 import { rememberGhostTx } from './ghostTxSuppress'
@@ -2223,4 +2228,43 @@ export function markMarketListingPublishFailed(args: {
     txid: args.txid,
     reason: args.reason || 'Could not publish listing',
   })
+}
+
+function listingOutpointFromActivity(entry: {
+  txid?: string
+  item?: { outpoint?: string }
+}): string | null {
+  const fromItem = entry.item?.outpoint?.trim()
+  if (fromItem) return fromItem.replace('.', '_')
+  const txid = entry.txid?.trim().toLowerCase()
+  if (txid && /^[0-9a-f]{64}$/.test(txid)) return `${txid}_0`
+  return null
+}
+
+/** Cancel local listing auth after overlay rejected a signed listing. */
+export function releaseFailedMarketListingAuth(entry: ActivityEntry): void {
+  const outpoint = listingOutpointFromActivity(entry)
+  if (!outpoint) return
+  const auth = listMarketListingAuthorizations().find((row) => row.outpoint === outpoint)
+  if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return
+  try {
+    updateMarketListingAuthorization({
+      outpoint: auth.outpoint,
+      nonce: auth.nonce,
+      from: ['active', 'reserved'],
+      to: 'cancelled',
+      reason: 'dismissed-from-activity',
+    })
+  } catch {
+    // auth already moved
+  }
+}
+
+/**
+ * Drop a failed market listing row and release local listing auth so inventory
+ * can list again. On-chain offer UTXOs may still exist — cancel separately if needed.
+ */
+export function dismissFailedMarketListingActivity(entry: ActivityEntry): boolean {
+  releaseFailedMarketListingAuth(entry)
+  return removeActivityById(entry.id)
 }

@@ -389,9 +389,11 @@ function HistoryRow({
   // never resolve into an authenticity check for the tip it just gave away.
   const showSending = Boolean(
     (spent && !event && showPending) ||
+      (burned && pending) ||
       ((listing || cancelling) && pending) ||
       indexInstall,
   )
+  const pendingMarkTone = burned ? 'burn' : listing || cancelling ? 'listing' : 'default'
 
   return (
     <li
@@ -453,10 +455,14 @@ function HistoryRow({
           />
           {showSending ? (
             <span
-              className="history-pending-mark"
+              className={`history-pending-mark${pendingMarkTone === 'burn' ? ' is-burn' : pendingMarkTone === 'listing' ? ' is-listing' : ''}`}
               aria-live="polite"
-              aria-label={listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'}
-              title={listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'}
+              aria-label={
+                burned ? 'Burning' : listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'
+              }
+              title={
+                burned ? 'Burning' : listing ? 'Listing' : cancelling ? 'Cancelling' : 'Sending'
+              }
             >
               <span className="collectable-verify-spinner" aria-hidden />
             </span>
