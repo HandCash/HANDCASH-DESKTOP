@@ -52,6 +52,10 @@ import {
   isGhostTxSuppressed,
   rememberGhostTx,
 } from './ghostTxSuppress'
+import {
+  __resetArcadeSubmitGuardForTests,
+  rememberArcadeSubmitContact,
+} from './arcadeSubmitGuard'
 
 function entry(partial: Partial<ActivityEntry>): ActivityEntry {
   return {
@@ -265,6 +269,7 @@ describe('inbound receive activity', () => {
     store.clear()
     clearAppActivity()
     __resetGhostTxSuppressForTests()
+    __resetArcadeSubmitGuardForTests()
   })
 
   it('shows a verifying payment in Activity before internalize finishes', () => {
@@ -675,6 +680,21 @@ describe('inbound receive activity', () => {
     })
     expect(removeActivityForTxids([TX])).toBe(1)
     expect(listRecentActivity(10)).toHaveLength(0)
+  })
+
+  it('does not remove or fail rows pinned by Arcade submit', () => {
+    rememberArcadeSubmitContact(TX)
+    noteOutboundSendComplete({
+      pendingId: 'arc',
+      txid: TX,
+      sats: 500,
+      to: '1Pay',
+    })
+    expect(
+      noteOutboundSendBroadcastFailed({ txid: TX, reason: 'Not sent' }),
+    ).toBe(false)
+    expect(removeActivityForTxids([TX])).toBe(0)
+    expect(listRecentActivity(10)).toHaveLength(1)
   })
 
   it('labels irreversible burns as burns rather than sends', () => {

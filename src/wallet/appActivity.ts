@@ -984,6 +984,13 @@ export function noteOutboundSendBroadcastFailed(args: {
 }): boolean {
   const pendingId = args.pendingId?.trim()
   const txid = args.txid?.trim().toLowerCase()
+  if (txid && txHadArcadeSubmitContact(txid)) {
+    console.info(
+      '[activity] broadcast failure ignored — Arcade submit still in flight',
+      txid.slice(0, 12),
+    )
+    return false
+  }
   const reason = normalizeFailureReason(args.reason) ?? 'Broadcast failed'
   if (!pendingId && !txid) return false
   let changed = false
@@ -1083,7 +1090,7 @@ export function removeActivityForTxids(txids: string[]): number {
   const missing = new Set(
     txids
       .map((t) => t.trim().toLowerCase())
-      .filter((t) => /^[0-9a-f]{64}$/.test(t)),
+      .filter((t) => /^[0-9a-f]{64}$/.test(t) && !txHadArcadeSubmitContact(t)),
   )
   if (missing.size === 0) return 0
   const prev = readAll()
