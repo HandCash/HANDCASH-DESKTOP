@@ -1,10 +1,17 @@
 # Changelog
 
-## [1.3.76] - 2026-09-02
+## [1.3.77] - 2026-09-02
 
 ### Changed
 
 - Patch release (every push must ship a new version).
+
+## [1.3.76] - 2026-09-02
+
+### Fixed
+
+- **Large inventory performance** — market inventory serves the durable cache immediately (700+ NFT wallets no longer block items-market on a 20s `listOutputs`); BRC-150 verdict projection yields in chunks; Collect defers ownership refresh and live scans while sending.
+- **Input lag** — BSV send amount uses local draft state; collectable grid grouping uses `useDeferredValue`; large cache updates notify subscribers after a UI yield.
 
 ## [1.3.75] - 2026-09-02
 
