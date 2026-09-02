@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.86] - 2026-09-02
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
+## [1.3.86] - 2026-09-02
+
+### Fixed
+
+- **Chat vertical space** — Friends → Chat hides the balance hero (and BSV side panel) so the thread fills to the top of the dashboard.
+- **Chat back navigation** — breadcrumb Back and Chat crumb sync with nav state; leaving a thread returns to the inbox instead of staying on the stale peer.
+
 ## [1.3.85] - 2026-09-02
 
 ### Changed

@@ -10869,6 +10869,10 @@ html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
   display: none;
 }
 
+html.platform-mobile .dashboard.dashboard--chat-fullscreen .what-is-bsv {
+  display: none !important;
+}
+
 .dashboard.dashboard--chat-fullscreen .dashboard-main {
   grid-template-rows: minmax(0, 1fr);
   gap: 0;

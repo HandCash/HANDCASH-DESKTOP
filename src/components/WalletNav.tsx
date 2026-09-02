@@ -24,6 +24,7 @@ import {
   clearNavChild,
   getNavState,
   getSettingBackStack,
+  isMessagesNavChild,
   openAppDetails,
   openCollectableDetails,
   openFungibleDetails,
@@ -339,8 +340,15 @@ export const WalletNav = memo(function WalletNav({
         ...(friend ? { onClick: () => openMessagesInbox() } : {}),
       }
       return friend
-        ? [root, chatCrumb, { label: friend.label }]
-        : [root, chatCrumb]
+        ? [
+            { label: root.label, onClick: () => clearNavChild() },
+            chatCrumb,
+            { label: friend.label },
+          ]
+        : [
+            { label: root.label, onClick: () => clearNavChild() },
+            chatCrumb,
+          ]
     }
     if (stageChild.type === 'collectable') {
       return [root, { label: collectableLabel }]
@@ -407,9 +415,11 @@ export const WalletNav = memo(function WalletNav({
     })
   }
 
+  const chatFullscreen = isMessagesNavChild(stageChild)
+
   return (
     <section
-      className="wallet-nav-shell panel"
+      className={`wallet-nav-shell panel${chatFullscreen ? ' wallet-nav-shell--chat-fullscreen' : ''}`}
       data-aeon-scope="wallet-nav"
       data-aeon-state={stateToAttr(aeonState)}
     >

@@ -506,7 +506,7 @@ export function MessagesPanel({
   const refresh = () => setPeers(listMessagePeers())
 
   useEffect(() => {
-    if (peerId) setActivePeerId(peerId)
+    setActivePeerId(peerId ?? null)
   }, [peerId])
 
   useEffect(() => {
