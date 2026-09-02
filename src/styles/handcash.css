@@ -6370,6 +6370,45 @@ html[data-aeon-mode='light'] .shortcut-key {
   border-bottom: 1px solid hsl(var(--border));
 }
 
+.chat-with-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-with-scroll
+  ),
+.wallet-nav-stage:has(.nav-child-stage .chat-with-scroll) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.wallet-nav-stage:has(.nav-child-stage .chat-with-scroll)
+  > .wallet-nav-panel.nav-child-stage,
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .chat-with-scroll
+  )
+  > .wallet-nav-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.nav-child-body:has(.chat-with-scroll) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
 .chat-shell--nested {
   flex: 1 1 auto;
   min-height: 0;
@@ -10853,13 +10892,12 @@ html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
   padding-inline: 8px;
 }
 
-/* —— Fullscreen chat takeover (Telegram-style · HandCash) —— */
+/* —— Chat expanded: hide balance side chrome, keep nav panel container —— */
 .dashboard.dashboard--chat-fullscreen {
   grid-template-columns: 1fr;
   width: 100%;
   max-width: none;
-  gap: 0;
-  height: 100%;
+  gap: 8px;
   min-height: 0;
   overflow: hidden;
 }
@@ -10877,7 +10915,7 @@ html.platform-mobile .dashboard.dashboard--chat-fullscreen .what-is-bsv {
   grid-template-rows: minmax(0, 1fr);
   gap: 0;
   min-height: 0;
-  height: 100%;
+  flex: 1 1 auto;
 }
 
 @media (max-width: 900px) {
@@ -10893,48 +10931,7 @@ html.platform-mobile .dashboard.dashboard--chat-fullscreen .what-is-bsv {
   }
 }
 
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen {
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .wallet-nav {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .wallet-nav-stage {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding: 0;
-  overflow: hidden;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .nav-child-stage {
-  flex: 1 1 auto;
-  min-height: 0;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .nav-breadcrumb-head {
-  flex: 0 0 auto;
-  padding: 8px 12px;
-  margin-bottom: 0;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .nav-child-body {
-  flex: 1 1 auto;
-  min-height: 0;
-  overflow: hidden;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.wallet-nav-shell.wallet-nav-shell--chat-fullscreen .chat-shell {
+.dashboard.dashboard--chat-fullscreen .wallet-nav-shell {
   flex: 1 1 auto;
   min-height: 0;
 }

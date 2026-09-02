@@ -120,6 +120,9 @@ function armStuckWatchdog(): void {
         }
       })
       .catch(() => {})
+    void import('./chainedChangeHeal')
+      .then(({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup())
+      .catch(() => {})
   }, STUCK_PAYMENT_MS)
 }
 

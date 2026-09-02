@@ -169,3 +169,22 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
     }
   }
 }
+
+/** Release stuck send reservations and promote orphaned change after Activity cleanup. */
+export function scheduleHealAfterSendCleanup(): void {
+  void (async () => {
+    try {
+      const { releaseSpendAttemptFunds } = await import('./spendAttempt')
+      await releaseSpendAttemptFunds()
+      const gate = await runChangeHeal({ path: 'spendGate' })
+      if (gate.pendingPromoted === 0 && gate.restored === 0 && gate.reclaimed === 0) {
+        await runChangeHeal({ path: 'chainingScriptHeal' })
+      }
+    } catch (err) {
+      console.warn(
+        '[change-heal] post-cleanup heal skipped',
+        err instanceof Error ? err.message : String(err),
+      )
+    }
+  })()
+}

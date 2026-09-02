@@ -621,6 +621,10 @@ export async function clearAllFailedSpends(): Promise<{
     }
   }
   const removed = removeFailedActivity((entry) => keepIds.has(entry.id))
+  if (removed > 0 || toKeepChange.length > 0 || unsignedToClear) {
+    const { scheduleHealAfterSendCleanup } = await import('./chainedChangeHeal')
+    scheduleHealAfterSendCleanup()
+  }
   return { removed, kept: Math.max(0, failed - removed) }
 }
 

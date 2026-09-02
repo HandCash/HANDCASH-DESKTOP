@@ -1100,7 +1100,12 @@ export function expireStaleOutboundPending(
       note: name ? `${name} was not sent` : 'Collectable was not sent',
     }
   })
-  if (expired > 0) writeAll(entries)
+  if (expired > 0) {
+    writeAll(entries)
+    void import('./chainedChangeHeal').then(({ scheduleHealAfterSendCleanup }) =>
+      scheduleHealAfterSendCleanup(),
+    )
+  }
   return expired
 }
 

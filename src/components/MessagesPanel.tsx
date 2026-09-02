@@ -1165,7 +1165,7 @@ export function MessagesPanel({
 
   const shellClass = [
     'chat-shell',
-    nestedInNav ? 'chat-shell--nested' : '',
+    nestedInNav ? 'chat-shell--nested chat-with-scroll' : '',
     fullscreen && !nestedInNav ? 'chat-shell--fullscreen' : '',
   ]
     .filter(Boolean)

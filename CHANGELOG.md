@@ -1,10 +1,11 @@
 # Changelog
 
-## [1.3.86] - 2026-09-02
+## [1.3.87] - 2026-09-02
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Balance after clearing sends** — expiring stuck Activity rows or clearing failed sends now releases toolbox reservations and runs change promotion/script heal so pending change becomes spendable again.
+- **Chat layout** — Friends → Chat stays inside the normal nav panel (same container as Activity); balance + BSV row hide for extra height without breaking panel chrome.
 
 ## [1.3.86] - 2026-09-02
 

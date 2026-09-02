@@ -24,7 +24,6 @@ import {
   clearNavChild,
   getNavState,
   getSettingBackStack,
-  isMessagesNavChild,
   openAppDetails,
   openCollectableDetails,
   openFungibleDetails,
@@ -415,11 +414,9 @@ export const WalletNav = memo(function WalletNav({
     })
   }
 
-  const chatFullscreen = isMessagesNavChild(stageChild)
-
   return (
     <section
-      className={`wallet-nav-shell panel${chatFullscreen ? ' wallet-nav-shell--chat-fullscreen' : ''}`}
+      className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
       data-aeon-state={stateToAttr(aeonState)}
     >
