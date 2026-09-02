@@ -16,6 +16,14 @@ vi.mock('./staleOutputRelease', () => ({
   onAlreadySpentSend: (...a: unknown[]) => onAlreadySpentSend(...a),
 }))
 
+vi.mock('./arcadeSubmitGuard', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./arcadeSubmitGuard')>()
+  return {
+    ...actual,
+    rememberArcadeSubmitContact: vi.fn(actual.rememberArcadeSubmitContact),
+  }
+})
+
 vi.mock('./legacyScan', () => ({
   txExistsOnChain: vi.fn(async () => false),
   spentStatusOfOutpoint: vi.fn(async () => 'unspent' as const),
@@ -84,6 +92,26 @@ describe('submitAtomicBeefToMiners', () => {
       {
         status: 'error',
         txidResults: [{ status: 'error', doubleSpend: true }],
+      },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.submitted).toBe(true)
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
+  })
+
+  it('does not roll back when Arcade reports missing inputs but coins are unspent', async () => {
+    postBeef.mockResolvedValueOnce([
+      {
+        name: 'ArcadeBeef',
+        status: 'error',
+        txidResults: [
+          {
+            status: 'error',
+            doubleSpend: true,
+            notes: [{ what: 'postRawsErrorMissingInputs' }],
+          },
+        ],
       },
     ])
     const { submitAtomicBeefToMiners } = await import('./minerSubmit')

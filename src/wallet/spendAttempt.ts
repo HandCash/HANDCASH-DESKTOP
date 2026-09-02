@@ -36,6 +36,7 @@ import {
 } from './legacyScan'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { getActiveWallet } from './session'
+import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { itemSendMachine, maySenderBroadcast } from './itemSendMachine'
 import { getTxByTxid } from './txStore'
 import type { Chain } from './vault'
@@ -204,10 +205,15 @@ async function signedTxInputsFate(
 function mayClearSignedInputs(
   fate: SignedInputsFate,
   txConfirmedOnChain: boolean | null = null,
+  txid?: string | null,
 ): boolean {
   if (fate === 'unsigned' || fate === 'spent') return true
-  // Signed but never broadcast — inputs still local; safe to drop the history row.
-  if (fate === 'unspent' && txConfirmedOnChain === false) return true
+  // Signed but never broadcast — inputs still local; safe to drop the history row
+  // unless Arcade already saw the tx (may still be processing).
+  if (fate === 'unspent' && txConfirmedOnChain === false) {
+    if (txid && txHadArcadeSubmitContact(txid)) return false
+    return true
+  }
   return false
 }
 
@@ -286,7 +292,7 @@ export async function resolveSpendAttemptFate(
       message: isFailedActivity(entry)
         ? 'This send failed and cannot be retried — its original recipient details were not saved.'
         : 'This send did not confirm and cannot be retried — its original recipient details were not saved.',
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
     }
   }
 
@@ -298,7 +304,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? 'This payment never landed on chain. You can send it again from the Send screen.'
         : 'This payment failed before it reached the network. You can send it again from the Send screen, or clear it.',
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
     }
   }
 
@@ -319,7 +325,7 @@ export async function resolveSpendAttemptFate(
         reason: 'sourceNotSpendable',
         message:
           'This send cannot be retried — there is no longer enough of this token spendable in this wallet.',
-        mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+        mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
       }
     }
     return {
@@ -329,7 +335,7 @@ export async function resolveSpendAttemptFate(
       message: hasTxid(entry)
         ? 'This send did not confirm. The token tips are still unspent, so the signed transfer can be broadcast again.'
         : 'This send failed before it produced a transaction. The token is still spendable and can be retried.',
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
     }
   }
 
@@ -351,7 +357,7 @@ export async function resolveSpendAttemptFate(
       reason: 'sourceNotSpendable',
       message:
         'This send cannot be retried — the original item output is no longer spendable in this wallet.',
-      mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+      mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
     }
   }
 
@@ -362,7 +368,7 @@ export async function resolveSpendAttemptFate(
     message: hasTxid(entry)
       ? 'This send did not confirm. The item is still unspent, so the signed transfer can be broadcast again.'
       : 'This send failed before it produced a transaction. The item is still spendable and can be retried.',
-    mayClear: mayClearSignedInputs(inputsFate, txOnChain),
+    mayClear: mayClearSignedInputs(inputsFate, txOnChain, entry.txid),
   }
 }
 
@@ -587,7 +593,7 @@ export async function clearAllFailedSpends(): Promise<{
       }
     }
     const inputsFate = await signedTxInputsFate(row, chain)
-    if (!mayClearSignedInputs(inputsFate, txOnChain)) keepIds.add(row.id)
+    if (!mayClearSignedInputs(inputsFate, txOnChain, row.txid)) keepIds.add(row.id)
     else if (inputsFate === 'spent') toKeepChange.push(row.txid!)
   }
 

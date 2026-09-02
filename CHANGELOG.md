@@ -2,9 +2,9 @@
 
 ## [1.3.72] - 2026-09-02
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Arcade submit pinning** — once the initial `postBeef` round contacts Arcade, a signed tx is not cancelable, not pruned from Activity, and inputs stay sealed unless chain proof shows the spend failed (inputs spent elsewhere). Arcade false `missingInputs` / `doubleSpend` no longer roll back the send.
 
 ## [1.3.71] - 2026-09-02
 

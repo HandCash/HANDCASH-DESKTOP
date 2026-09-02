@@ -10,8 +10,18 @@ import {
   formatPostBeefFailure,
   summarizePostBeef,
   type PostBeefSummary,
+  type PostBeefServiceResult,
 } from './postBeefResult'
-import { onAlreadySpentSend, releaseSealedInputsOfUnsentTx } from './staleOutputRelease'
+import {
+  onAlreadySpentSend,
+  releaseSealedInputsOfUnsentTx,
+} from './staleOutputRelease'
+import {
+  postBeefResultsHitArcade,
+  rememberArcadeSubmitContact,
+  signedTxSpendConflictIsProven,
+  txHadArcadeSubmitContact,
+} from './arcadeSubmitGuard'
 
 export type MinerSubmitResult = {
   /** At least one miner reported mempool accept / already-known. */
@@ -46,9 +56,15 @@ export async function submitAtomicBeefToMiners(
   }
 
   let summary: PostBeefSummary | undefined
+  let rawResults: PostBeefServiceResult[] | undefined
   try {
     const results = await active.services.postBeef(Beef.fromBinary(atomic), [id])
-    summary = summarizePostBeef(results as never)
+    rawResults = results as PostBeefServiceResult[]
+    summary = summarizePostBeef(rawResults)
+    if (postBeefResultsHitArcade(rawResults)) {
+      rememberArcadeSubmitContact(id)
+      console.info('[minerSubmit] Arcade contacted — tx pinned', id.slice(0, 12))
+    }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
@@ -65,17 +81,38 @@ export async function submitAtomicBeefToMiners(
     return { confirmed: true, submitted: true, summary }
   }
   if (summary.missingInputs) {
+    if (txHadArcadeSubmitContact(id)) {
+      const conflictReal = await signedTxSpendConflictIsProven({
+        txid: id,
+        atomic,
+        chain: active.chain,
+      })
+      if (!conflictReal) {
+        console.info(
+          '[minerSubmit] Arcade missing-inputs not proven — tx stays submitted',
+          id.slice(0, 12),
+          summary.detail,
+        )
+        return { confirmed: false, submitted: true, summary }
+      }
+    }
     console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
     await onAlreadySpentSend({ txid: id, atomic })
     throw new Error(formatPostBeefFailure(summary))
   }
   if (summary.doubleSpend) {
     const { postBeefConflictIsReal } = await import('./postBeefResult')
-    const conflictReal = await postBeefConflictIsReal({
-      txid: id,
-      atomic,
-      chain: active.chain,
-    })
+    const conflictReal = txHadArcadeSubmitContact(id)
+      ? await signedTxSpendConflictIsProven({
+          txid: id,
+          atomic,
+          chain: active.chain,
+        })
+      : await postBeefConflictIsReal({
+          txid: id,
+          atomic,
+          chain: active.chain,
+        })
     if (!conflictReal) {
       console.info(
         '[minerSubmit] ghost doubleSpend — signed tx treated as submitted',
@@ -103,6 +140,23 @@ export async function reportLateMinerSubmitFailure(args: {
   txid?: string
   reason: unknown
 }): Promise<void> {
+  const txid = args.txid?.trim().toLowerCase()
+  if (txid && txHadArcadeSubmitContact(txid)) {
+    const active = getActiveWallet()
+    if (active) {
+      const proven = await signedTxSpendConflictIsProven({
+        txid,
+        chain: active.chain,
+      })
+      if (!proven) {
+        console.info(
+          '[minerSubmit] late failure ignored — Arcade submit still in flight',
+          txid.slice(0, 12),
+        )
+        return
+      }
+    }
+  }
   const { noteOutboundSendBroadcastFailed, compactFailureLabel } = await import(
     './appActivity'
   )

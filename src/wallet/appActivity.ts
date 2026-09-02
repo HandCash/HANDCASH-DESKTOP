@@ -2,6 +2,7 @@ import { errorText } from './errorText'
 import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
+import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
@@ -1189,6 +1190,7 @@ export async function pruneMissingOnChainActivity(
   for (const row of candidates) {
     const txid = row.txid!.toLowerCase()
     if (missing.has(txid)) continue
+    if (txHadArcadeSubmitContact(txid)) continue
     if (isGhostTxSuppressed(txid)) {
       missing.add(txid)
       continue
@@ -1196,6 +1198,7 @@ export async function pruneMissingOnChainActivity(
     try {
       const onChain = await exists(txid, chain)
       if (onChain === false) {
+        if (txHadArcadeSubmitContact(txid)) continue
         rememberGhostTx(txid)
         missing.add(txid)
       }

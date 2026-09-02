@@ -18,6 +18,7 @@
  * expire in case the send never confirmed and the item really is still ours.
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 
 const STORAGE_KEY = 'handcash.collectables.sentOutpoints.v1'
 const MAX_ENTRIES = 500
@@ -330,8 +331,9 @@ export async function healGhostSentItems(
     try {
       const { rememberGhostTx } = await import('./ghostTxSuppress')
       const { removeActivityForTxids } = await import('./appActivity')
-      for (const txid of ghostTxids) rememberGhostTx(txid)
-      removeActivityForTxids(ghostTxids)
+      const droppable = ghostTxids.filter((txid) => !txHadArcadeSubmitContact(txid))
+      for (const txid of droppable) rememberGhostTx(txid)
+      removeActivityForTxids(droppable)
     } catch (err) {
       console.warn('[sent-item-guard] activity ghost cleanup skipped', err)
     }
