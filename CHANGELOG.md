@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.81] - 2026-09-02
+
+### Fixed
+
+- **Settings scroll on mobile** — "Settings" header stays pinned like Activity; Security/Preferences/Support scroll underneath (flex height chain + mobile touch scroll).
+
+### Changed
+
+- **BRC-230 draft** — revised Index Catalog Mirrors spec: wallet-internal install/sync, read-only `p index read` via `listOutputs` (Babbage feedback alignment).
+
 ## [1.3.80] - 2026-09-02
 
 ### Fixed

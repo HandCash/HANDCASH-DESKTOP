@@ -2607,20 +2607,34 @@ button.wallet-detail-value.is-copied {
   flex-direction: column;
 }
 
-.settings-with-scroll .connected-panel-head {
+/* Beat .settings-nav min-content + gap so the list scrolls under a pinned head. */
+.settings-nav.settings-with-scroll {
+  gap: 0;
+  min-height: 0;
+  padding-bottom: 0;
+}
+
+.settings-with-scroll .connected-panel-head,
+.settings-with-scroll .settings-panel-head {
   flex: 0 0 auto;
+  position: relative;
+  top: auto;
 }
 
 .settings-scroll-body {
   flex: 1 1 auto;
   min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
-  padding-bottom: 8px;
+  padding-bottom: 24px;
 }
 
 .settings-scroll-body:hover,

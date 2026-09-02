@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Switch } from '@aeon-ui/ui'
 import { APP_VERSION } from '../version'
 import { openSetting, type SettingId } from '../wallet/navStore'
@@ -163,7 +163,6 @@ export function SettingsPanel() {
   const update = useUpdate()
   const { context, check, setMode } = update
   const checking = context.phase === 'checking'
-  const rootRef = useRef<HTMLDivElement>(null)
   const [sfxEnabled, setSfxEnabled] = useState(() => isWalletSfxEnabled())
   const [appearance, setAppearance] = useState<AppearancePreference>(() => getAppearancePreference())
   const [, setStatusTick] = useState(0)
@@ -187,10 +186,6 @@ export function SettingsPanel() {
   ]
     .filter(Boolean)
     .join(' · ')
-  useEffect(() => {
-    rootRef.current?.scrollIntoView({ block: 'start' })
-  }, [])
-
   useEffect(() => subscribeWalletSfx(setSfxEnabled), [])
 
   useEffect(
@@ -227,7 +222,6 @@ export function SettingsPanel() {
 
   return (
     <div
-      ref={rootRef}
       className="nav-section-body settings-nav settings-with-scroll"
       data-aeon-scope="settings"
     >
