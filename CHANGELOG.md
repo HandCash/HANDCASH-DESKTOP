@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.90] - 2026-09-02
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.89] - 2026-09-02
 
 ### Changed
