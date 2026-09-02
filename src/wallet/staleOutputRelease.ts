@@ -501,23 +501,11 @@ const PENDING_CHANGE_TX_STATUSES = [
   'unknown',
 ] as const
 
-/**
- * Promote change from live local sends without paging the whole unspendable set.
- *
- * `restoreLiveSpendableOutputs` only inspects the first {@link RESTORE_MAX} dead
- * rows. Wallets with hundreds of historical script-less change rows never reach
- * a small pending credit (e.g. 8822 sats) — displayed balance includes it but
- * Pay cannot select it. This walks pending local txids and calls
- * {@link keepChangeOfSignedTx} for each.
- */
-export async function promotePendingLocalChangeOutputs(opts?: {
-  forSpendChain?: boolean
-}): Promise<number> {
-  const forSpendChain = opts?.forSpendChain === true
-  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
+/** Live local send txids whose change may still be unspendable. */
+export async function listPendingLocalChangeTxids(): Promise<string[]> {
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
-  if (!storage?.runAsStorageProvider) return 0
+  if (!storage?.runAsStorageProvider) return []
 
   const txids = new Set<string>()
   try {
@@ -525,7 +513,6 @@ export async function promotePendingLocalChangeOutputs(opts?: {
       const sp = activeSp as LocalStorage
       if (typeof sp.findTransactions !== 'function') return
       for (const status of PENDING_CHANGE_TX_STATUSES) {
-        if (!forSpendChain && shouldYieldChainIngestToSpend()) break
         for (let page = 0; page < 5; page += 1) {
           const rows = await sp.findTransactions({
             partial: {},
@@ -544,9 +531,29 @@ export async function promotePendingLocalChangeOutputs(opts?: {
     })
   } catch (err) {
     console.warn('[stale-output] pending tx scan skipped', err)
-    return 0
   }
+  return [...txids]
+}
 
+/**
+ * Promote change from live local sends without paging the whole unspendable set.
+ *
+ * `restoreLiveSpendableOutputs` only inspects the first {@link RESTORE_MAX} dead
+ * rows. Wallets with hundreds of historical script-less change rows never reach
+ * a small pending credit (e.g. 8822 sats) — displayed balance includes it but
+ * Pay cannot select it. This walks pending local txids and calls
+ * {@link keepChangeOfSignedTx} for each.
+ */
+export async function promotePendingLocalChangeOutputs(opts?: {
+  forSpendChain?: boolean
+}): Promise<number> {
+  const forSpendChain = opts?.forSpendChain === true
+  if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return 0
+
+  const txids = new Set(await listPendingLocalChangeTxids())
   if (txids.size === 0) return 0
 
   let promoted = 0

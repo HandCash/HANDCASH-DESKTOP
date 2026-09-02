@@ -15,10 +15,15 @@ import { logDiag, snapshotWalletBalance } from './diagnosticLog'
 import { txExistsOnChain } from './legacyScan'
 import { bumpBalanceAfterHeal, getActiveWallet } from './session'
 import { releaseSpendAttemptFunds } from './spendAttempt'
-import { keepChangeOfSignedTx } from './staleOutputRelease'
 import {
+  keepChangeOfSignedTx,
+  listPendingLocalChangeTxids,
+} from './staleOutputRelease'
+import {
+  appendHealCheckpointBatch,
   canRunAutoHealCheckpoint,
   healCheckpointFresh,
+  HEAL_TXID_BATCH_SIZE,
   markAutoHealAttempt,
   mergeTxidsWithCheckpoint,
   readHealCheckpoint,
@@ -124,34 +129,55 @@ function collectCandidateTxids(): {
   return { txids, activity, fromLogs: fromLogs.size }
 }
 
-async function runHealCore(
-  txidList: string[],
+function orderTxidsForHeal(
+  all: Set<string>,
+  missing: string[],
+  pendingLive: string[],
+): string[] {
+  const seen = new Set<string>()
+  const out: string[] = []
+  const push = (txid: string) => {
+    const id = txid.toLowerCase()
+    if (!/^[0-9a-f]{64}$/.test(id) || seen.has(id)) return
+    seen.add(id)
+    out.push(id)
+  }
+  for (const txid of pendingLive) push(txid)
+  for (const txid of missing) push(txid)
+  for (const txid of all) push(txid)
+  return out
+}
+
+async function hasLocalSignedTx(txid: string): Promise<boolean> {
+  const storage = getActiveWallet()?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return false
+  try {
+    return await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as {
+        getProvenOrRawTx?: (id: string) => Promise<{ rawTx?: number[] } | undefined>
+      }
+      if (typeof sp.getProvenOrRawTx !== 'function') return false
+      const found = await sp.getProvenOrRawTx(txid)
+      return Array.isArray(found?.rawTx) && found.rawTx.length > 0
+    })
+  } catch {
+    return false
+  }
+}
+
+async function runPendingChangeHeal(
   balanceBefore: UtxoHealBalanceSnapshot | null,
   deepHeal: boolean,
-): Promise<{
-  changeKept: number
-  txidsOnChain: number
-  heal: ChangeHealStats
-  balanceAfter: UtxoHealBalanceSnapshot | null
-  recoveredSats: number
-}> {
-  await releaseSpendAttemptFunds()
-
-  const chain = getActiveWallet()?.chain
-  let txidsOnChain = 0
-  let changeKept = 0
-
-  for (const txid of txidList) {
-    if (chain) {
-      const onChain = await txExistsOnChain(txid, chain).catch(() => null)
-      if (onChain !== true) continue
-      txidsOnChain += 1
-    }
-    changeKept += await keepChangeOfSignedTx(txid)
-  }
-
+): Promise<ChangeHealStats> {
   let heal = await runChangeHeal({ path: 'spendGate' })
-  if (
+  const pending = balanceBefore?.pendingChange ?? 0
+  if (pending > 0 || deepHeal) {
+    heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
+  }
+  if (pending > 0) {
+    heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
+    heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
+  } else if (
     deepHeal &&
     heal.pendingPromoted === 0 &&
     heal.restored === 0 &&
@@ -159,11 +185,86 @@ async function runHealCore(
   ) {
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
   }
-  if (balanceBefore != null && balanceBefore.pendingChange > 0) {
-    heal = mergeHealStats(
-      heal,
-      await runChangeHeal({ path: 'spendGatePartialRetry' }),
-    )
+  return heal
+}
+
+async function processTxidBatch(
+  batch: string[],
+  chain: string | undefined,
+): Promise<{ changeKept: number; txidsOnChain: number; processed: string[] }> {
+  let changeKept = 0
+  let txidsOnChain = 0
+  const processed: string[] = []
+  for (const txid of batch) {
+    processed.push(txid)
+    const local = await hasLocalSignedTx(txid)
+    if (chain && !local) {
+      const onChain = await txExistsOnChain(txid, chain).catch(() => null)
+      if (onChain !== true) continue
+      txidsOnChain += 1
+    } else if (local) {
+      txidsOnChain += 1
+    }
+    changeKept += await keepChangeOfSignedTx(txid)
+  }
+  return { changeKept, txidsOnChain, processed }
+}
+
+async function runHealCore(
+  orderedTxids: string[],
+  balanceBefore: UtxoHealBalanceSnapshot | null,
+  deepHeal: boolean,
+  opts: UtxoHealPassOpts,
+): Promise<{
+  changeKept: number
+  txidsOnChain: number
+  heal: ChangeHealStats
+  balanceAfter: UtxoHealBalanceSnapshot | null
+  recoveredSats: number
+  txidsChecked: number
+}> {
+  await releaseSpendAttemptFunds()
+
+  let heal = await runPendingChangeHeal(balanceBefore, deepHeal)
+
+  const chain = getActiveWallet()?.chain
+  let changeKept = 0
+  let txidsOnChain = 0
+  let txidsChecked = 0
+  const allProcessed: string[] = []
+  const runAllBatches = opts.force || opts.source === 'manual'
+
+  for (let offset = 0; offset < orderedTxids.length; ) {
+    const batch = orderedTxids.slice(offset, offset + HEAL_TXID_BATCH_SIZE)
+    if (batch.length === 0) break
+    offset += batch.length
+
+    const batchResult = await processTxidBatch(batch, chain)
+    changeKept += batchResult.changeKept
+    txidsOnChain += batchResult.txidsOnChain
+    txidsChecked += batchResult.processed.length
+    allProcessed.push(...batchResult.processed)
+
+    bumpBalanceAfterHeal()
+    const mid = toBalanceSnapshot(await snapshotWalletBalance())
+    appendHealCheckpointBatch(batchResult.processed, {
+      pendingChangeAfter: mid?.pendingChange ?? 0,
+      recoveredSats:
+        balanceBefore && mid
+          ? Math.max(0, mid.spendable - balanceBefore.spendable)
+          : 0,
+      source: opts.source,
+    })
+
+    if ((mid?.pendingChange ?? 0) <= 0 && (balanceBefore?.pendingChange ?? 0) > 0) {
+      heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
+      break
+    }
+    if (!runAllBatches) break
+  }
+
+  if ((balanceBefore?.pendingChange ?? 0) > 0) {
+    heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
   }
 
   bumpBalanceAfterHeal()
@@ -173,7 +274,15 @@ async function runHealCore(
       ? Math.max(0, balanceAfter.spendable - balanceBefore.spendable)
       : 0
 
-  return { changeKept, txidsOnChain, heal, balanceAfter, recoveredSats }
+  writeHealCheckpoint({
+    at: Date.now(),
+    txids: [...new Set([...(readHealCheckpoint()?.txids ?? []), ...allProcessed])],
+    recoveredSats,
+    pendingChangeAfter: balanceAfter?.pendingChange ?? 0,
+    source: opts.source,
+  })
+
+  return { changeKept, txidsOnChain, heal, balanceAfter, recoveredSats, txidsChecked }
 }
 
 /**
@@ -216,7 +325,11 @@ export async function runUtxoHealPass(
     }
   }
 
-  const txidList = [...txids]
+  const txidList = orderTxidsForHeal(
+    txids,
+    missing,
+    pendingChange > 0 ? await listPendingLocalChangeTxids() : [],
+  )
   const deepHeal = opts.force || opts.source === 'manual' || pendingChange > 0
 
   logDiag('utxo-heal', 'info', 'start', {
@@ -225,28 +338,21 @@ export async function runUtxoHealPass(
     txids: txidList.length,
     missing: missing.length,
     pendingChange,
+    batchSize: HEAL_TXID_BATCH_SIZE,
   })
 
   const { runChainIngest } = await import('./walletCoordinator')
   return runChainIngest(async () => {
     utxoHealDepth += 1
     try {
-      const core = await runHealCore(txidList, balanceBefore, deepHeal)
+      const core = await runHealCore(txidList, balanceBefore, deepHeal, opts)
       const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0
-
-      writeHealCheckpoint({
-        at: Date.now(),
-        txids: txidList,
-        recoveredSats: core.recoveredSats,
-        pendingChangeAfter,
-        source: opts.source,
-      })
 
       const result: UtxoHealFromHistoryResult = {
         skipped: false,
         activityRows: activity.total,
         archivedRows: activity.archived,
-        txidsChecked: txidList.length,
+        txidsChecked: core.txidsChecked,
         txidsOnChain: core.txidsOnChain,
         changeKept: core.changeKept,
         heal: core.heal,

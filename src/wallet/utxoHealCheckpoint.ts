@@ -13,6 +13,9 @@ export const HEAL_CHECKPOINT_OVERLAP_MS = 6 * 60 * 60_000
 /** Minimum gap between silent auto checkpoint passes. */
 export const HEAL_AUTO_COOLDOWN_MS = 3 * 60_000
 
+/** Historical txids processed per auto pass (missing-first). */
+export const HEAL_TXID_BATCH_SIZE = 24
+
 export type UtxoHealCheckpointSource = 'manual' | 'auto' | 'send-cleanup'
 
 export type UtxoHealCheckpoint = {
@@ -103,4 +106,28 @@ export function canRunAutoHealCheckpoint(now = Date.now()): boolean {
 
 export function markAutoHealAttempt(now = Date.now()): void {
   lastAutoAttemptAt = now
+}
+
+/** Merge newly processed txids into checkpoint without waiting for full pass. */
+export function appendHealCheckpointBatch(
+  processedTxids: string[],
+  partial: {
+    pendingChangeAfter: number
+    recoveredSats: number
+    source: UtxoHealCheckpointSource
+  },
+): void {
+  if (processedTxids.length === 0) return
+  const prev = readHealCheckpoint()
+  const merged = new Set([
+    ...(prev?.txids ?? []),
+    ...processedTxids.map((t) => t.toLowerCase()),
+  ])
+  writeHealCheckpoint({
+    at: Date.now(),
+    txids: [...merged],
+    recoveredSats: Math.max(partial.recoveredSats, prev?.recoveredSats ?? 0),
+    pendingChangeAfter: partial.pendingChangeAfter,
+    source: partial.source,
+  })
 }

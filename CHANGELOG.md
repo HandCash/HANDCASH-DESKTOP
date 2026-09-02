@@ -2,9 +2,9 @@
 
 ## [1.3.91] - 2026-09-02
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **Stuck pending change heal** — promote live pending change and script-heal **before** historical txid scan; batch txids (24/pass) with incremental checkpoint so interrupted heals resume without re-walking 206 network lookups.
 
 ## [1.3.90] - 2026-09-02
 

@@ -61,6 +61,7 @@ vi.mock('./spendAttempt', () => ({
 
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
+  listPendingLocalChangeTxids: vi.fn(async () => []),
 }))
 
 vi.mock('./durableStorage', () => ({
@@ -87,42 +88,24 @@ function mockHealSuccess() {
     archived: 2,
     total: 10,
   })
-  mocks.snapshotWalletBalance
-    .mockResolvedValueOnce({
-      spendable: 4,
-      pendingChange: 2614,
-      displayed: 2618,
-    })
-    .mockResolvedValueOnce({
-      spendable: 2618,
-      pendingChange: 0,
-      displayed: 2618,
-    })
+  let balanceReads = 0
+  mocks.snapshotWalletBalance.mockImplementation(async () => {
+    balanceReads += 1
+    if (balanceReads === 1) {
+      return { spendable: 4, pendingChange: 2614, displayed: 2618 }
+    }
+    return { spendable: 2618, pendingChange: 0, displayed: 2618 }
+  })
   mocks.getActiveWallet.mockReturnValue({ chain: 'main' })
   mocks.txExistsOnChain.mockResolvedValue(true)
   mocks.keepChangeOfSignedTx.mockResolvedValue(1)
-  mocks.runChangeHeal
-    .mockResolvedValueOnce({
-      restored: 0,
-      scriptsLocal: 0,
-      scriptsChain: 0,
-      pendingPromoted: 0,
-      reclaimed: 0,
-    })
-    .mockResolvedValueOnce({
-      restored: 2,
-      scriptsLocal: 1,
-      scriptsChain: 0,
-      pendingPromoted: 1,
-      reclaimed: 0,
-    })
-    .mockResolvedValueOnce({
-      restored: 0,
-      scriptsLocal: 0,
-      scriptsChain: 0,
-      pendingPromoted: 0,
-      reclaimed: 0,
-    })
+  mocks.runChangeHeal.mockResolvedValue({
+    restored: 0,
+    scriptsLocal: 0,
+    scriptsChain: 0,
+    pendingPromoted: 0,
+    reclaimed: 0,
+  })
 }
 
 describe('healUtxoFromActivityHistory', () => {
