@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.92] - 2026-09-04
+
+### Fixed
+
+- **Linux / CI package builds** — TypeScript errors that blocked Release Linux/Mac/Windows packaging.
+
+### Changed
+
+- **Wallet shared helpers** — extract common base64 / ord-script / peer-ingest helpers without changing custody paths; BRC-100 activity side-effects split out of the handler.
+
 ## [1.3.91] - 2026-09-02
 
 ### Fixed
