@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.96] - 2026-09-04
+
+### Fixed
+
+- **Missing ~967k sats after ghost consolidate** — reclaim named + blank seals together; unseal clears `spentBy`; restore revives unspent coins under inconclusive explorers / `unsent` sealers; service-only miner errors no longer call `onAlreadySpentSend`.
+
 ## [1.3.95] - 2026-09-04
 
 ### Fixed

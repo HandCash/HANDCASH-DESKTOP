@@ -121,6 +121,20 @@ describe('submitAtomicBeefToMiners', () => {
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
+  it('treats service-only endpoint errors as submitted without hiding coins', async () => {
+    postBeef.mockResolvedValueOnce([
+      { name: 'arcGorillaPool', status: 'error' },
+      { name: 'BitailsPostRaws', status: 'error' },
+      { name: 'WoC', status: 'error' },
+      { name: 'arcTaal', status: 'error' },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.submitted).toBe(true)
+    expect(result.confirmed).toBe(false)
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
+  })
+
   it('does not roll back when Arcade reports missing inputs but coins are unspent', async () => {
     postBeef.mockResolvedValueOnce([
       {

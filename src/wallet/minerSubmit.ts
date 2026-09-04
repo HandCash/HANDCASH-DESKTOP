@@ -80,6 +80,15 @@ export async function submitAtomicBeefToMiners(
   if (summary.accepted) {
     return { confirmed: true, submitted: true, summary }
   }
+  // Pure transport / endpoint failures are not proof of a spent input.
+  if (summary.serviceOnlyErrors) {
+    console.info(
+      '[minerSubmit] no miner ack — signed tx treated as submitted',
+      id.slice(0, 12),
+      summary.detail,
+    )
+    return { confirmed: false, submitted: true, summary }
+  }
   if (summary.missingInputs) {
     const conflictReal = await (async () => {
       if (txHadArcadeSubmitContact(id)) {

@@ -16,6 +16,19 @@ vi.mock('./durableStorage', () => ({
   },
 }))
 
+const txExistsOnChain = vi.fn(async () => null as boolean | null)
+const spentStatusOfOutpoint = vi.fn(async () => 'unknown' as const)
+
+vi.mock('./legacyScan', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./legacyScan')>()
+  return {
+    ...actual,
+    txExistsOnChain: (...a: unknown[]) => txExistsOnChain(...(a as [string, never])),
+    spentStatusOfOutpoint: (...a: unknown[]) =>
+      spentStatusOfOutpoint(...(a as [string, never])),
+  }
+})
+
 const {
   isAlreadySpentInputError,
   isNoLongerSpendableError,
@@ -163,6 +176,10 @@ describe('restoreLiveSpendableOutputs', () => {
     findTransactions.mockResolvedValue([])
     overlayStore.clear()
     __resetUtxoLocksForTests()
+    txExistsOnChain.mockReset()
+    spentStatusOfOutpoint.mockReset()
+    txExistsOnChain.mockResolvedValue(null)
+    spentStatusOfOutpoint.mockResolvedValue('unknown')
     mockGetActiveWallet.mockReset()
     mockGetActiveWallet.mockReturnValue({
       chain: 'main',
@@ -279,18 +296,22 @@ describe('restoreLiveSpendableOutputs', () => {
     expect(updateOutput).not.toHaveBeenCalled()
   })
 
-  it('does not restore overlay-spent coins even when the indexer still lists them', async () => {
+  it('does not restore blank-seal overlay coins the indexer still marks spent', async () => {
     const txid = 'ab'.repeat(32)
     findOutputs.mockResolvedValue([
       {
         outputId: 1,
         txid,
         vout: 0,
+        change: true,
+        satoshis: 5000,
+        transactionId: 10,
         spendable: false,
         lockingScript: [118, 169],
       },
     ])
-    isUtxo.mockResolvedValue(true)
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+    isUtxo.mockResolvedValue(false)
     hideUtxo(`${txid}.0`, { spentBy: '' })
 
     await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
@@ -298,7 +319,35 @@ describe('restoreLiveSpendableOutputs', () => {
       unscripted: 0,
     })
     expect(updateOutput).not.toHaveBeenCalled()
-    expect(isUtxo).not.toHaveBeenCalled()
+    expect(isUtxo).toHaveBeenCalled()
+  })
+
+  it('restores blank-seal overlay change still unspent after ghost hide', async () => {
+    const txid = 'cd'.repeat(32)
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 2,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 5000,
+        transactionId: 11,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+    findTransactions.mockResolvedValue([{ status: 'completed' }])
+    isUtxo.mockResolvedValue(true)
+    hideUtxo(`${txid}.0`, { spentBy: '' })
+
+    await expect(restoreLiveSpendableOutputs()).resolves.toEqual({
+      restored: 1,
+      unscripted: 0,
+    })
+    expect(updateOutput).toHaveBeenCalledWith(2, {
+      spendable: true,
+      spentBy: undefined,
+    })
   })
 
   it('after already-spent restores only live local change, not indexer UTXOs', async () => {
