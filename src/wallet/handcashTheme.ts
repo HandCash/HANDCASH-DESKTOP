@@ -48,8 +48,8 @@ export const HANDCASH_DARK_PALETTE: BrandPaletteInput = {
  * Muted ink is charcoal-leaning for clarity without a washed-out grey fog.
  *
  * Load-bearing chrome is still black (`--primary` in CSS), not neon. Green
- * stays meaning-only (balance, live, success, logo). Accent here is deep
- * brand green so it can be used as *foreground* on paper (~4.5:1+).
+ * stays meaning-only (balance, live, success, logo). Palette accent stays mid
+ * brand green for fills; currency ink uses `--hc-accent-deep` (#0a3d22 on paper).
  */
 export const HANDCASH_LIGHT_PALETTE: BrandPaletteInput = {
   bg: '#fafbfa',

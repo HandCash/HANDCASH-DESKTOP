@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.97] - 2026-09-04
+
+### Fixed
+
+- **Light-mode balance green** — restore very dark HandCash green (`#0a3d22`) on balance and up-change figures (was mid `#0c8f3e`).
+
 ## [1.3.96] - 2026-09-04
 
 ### Fixed

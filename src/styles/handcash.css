@@ -155,7 +155,8 @@ html[data-aeon-mode='light'] {
   --hc-hover: rgba(20, 24, 20, 0.035);
   --hc-deep: #ffffff;
 
-  --hc-accent-deep: #0c8f3e;
+  /* Currency figures on paper — very dark HandCash green (not mid #0c8f3e). */
+  --hc-accent-deep: #0a3d22;
 
   /* Success as foreground on paper — brand hue, deep enough for small type. */
   --hc-success: hsl(143 72% 28%);
@@ -1293,8 +1294,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 }
 
 html[data-aeon-mode='light'] .wallet-balance .balance {
-  /* Deep HandCash green on paper — same at $0 and any balance. */
-  color: #0c8f3e !important;
+  /* Very dark HandCash green on paper — same at $0 and any balance. */
+  color: #0a3d22 !important;
 }
 
 .wallet-balance .balance-secondary {
@@ -11428,12 +11429,12 @@ html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] svg {
   color: inherit;
 }
 
-/* % change text stays green↑ / red↓ on paper — deep enough for AA on white. */
+/* % change text stays green↑ / red↓ on paper — very dark green for AA on white. */
 html[data-aeon-mode='light'] button.bsv-change.is-up,
 html[data-aeon-mode='light'] .bsv-change.is-up,
 html[data-aeon-mode='light'] .bsv-spark-up,
 html[data-aeon-mode='light'] .token-market-spark-up {
-  color: #0c8f3e !important;
+  color: #0a3d22 !important;
   font-weight: 650;
 }
 

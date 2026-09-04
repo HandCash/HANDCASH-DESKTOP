@@ -157,8 +157,8 @@ export function markOmarchyTheme(colors: OmarchyColors): void {
   // Brand mark / success fills expect HSL channels, not #rrggbb.
   setHsl('--hc-brand', colors.green)
   set('--hc-success', mode === 'light' ? colors.green : `hsl(var(--hc-brand))`)
-  // Currency ink: neon on dark, deep green on paper — never Omarchy accent.
-  set('--hc-accent-deep', mode === 'light' ? '#0c8f3e' : '#57ff97')
+  // Currency ink: neon on dark, very dark green on paper — never Omarchy accent.
+  set('--hc-accent-deep', mode === 'light' ? '#0a3d22' : '#57ff97')
 
   setHsl('--background', bg)
   setHsl('--foreground', text)

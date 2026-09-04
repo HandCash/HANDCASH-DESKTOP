@@ -462,7 +462,7 @@ html:is(.platform-mobile, .layout-compact):not([data-aeon-mode='light'])
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .what-is-bsv
   .bsv-change.is-up {
-  color: #0c8f3e !important;
+  color: #0a3d22 !important;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
