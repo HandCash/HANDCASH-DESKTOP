@@ -156,7 +156,10 @@ export async function onAlreadySpentSend(args: {
     if (raw?.length) inputs = inputOutpointsFromRawTx(raw)
   }
   if (inputs.length > 0) {
-    const hidden = await hideSpentOutpoints(inputs)
+    // Keep the sealing txid on the overlay. Calling hide without spentBy used to
+    // wipe it to '', so reclaim could not match dead sealers and restore left
+    // hundreds of inputs “locally-spent” forever (failed consolidate).
+    const hidden = await hideSpentOutpoints(inputs, txid)
     console.info(
       `[stale-output] hid ${hidden} already-spent input(s) without deleting them`,
     )
@@ -355,12 +358,77 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const storage = active?.wallet?.storage
   if (!storage?.runAsStorageProvider) return 0
 
-  const sealed = listUtxoLocks()
+  const sealedNamed = listUtxoLocks()
     .filter((rec) => !!rec.spentBy && /^[0-9a-f]{64}$/.test(rec.spentBy))
     .slice(0, RECLAIM_MAX)
+  // onAlreadySpentSend used to wipe spentBy to '' — those stay hidden forever
+  // unless we revive them when the indexer still reports the coin unspent.
+  const sealedBlank = listUtxoLocks()
+    .filter(
+      (rec) =>
+        rec.spendable === false &&
+        (!rec.spentBy || !/^[0-9a-f]{64}$/.test(rec.spentBy)),
+    )
+    .slice(0, RECLAIM_MAX)
+  const sealed = sealedNamed.length > 0 ? sealedNamed : sealedBlank
   if (sealed.length === 0) return 0
 
-  const sealerIds = [...new Set(sealed.map((rec) => rec.spentBy as string))]
+  if (sealedNamed.length === 0 && sealedBlank.length > 0) {
+    // Blank-sealer path: only revive on positive isUtxo.
+    if (typeof isUtxo !== 'function') return 0
+    const reviveBlank: string[] = []
+    for (const rec of sealedBlank) {
+      if (!forSpendChain && shouldYieldChainIngestToSpend()) break
+      const parsed = parseOutpoint(rec.outpoint)
+      if (!parsed) continue
+      try {
+        const result = await isUtxo({
+          txid: parsed.txid,
+          vout: parsed.vout,
+        } as never)
+        const alive =
+          result === true ||
+          (!!result &&
+            typeof result === 'object' &&
+            (result as { isUtxo?: unknown }).isUtxo === true)
+        if (alive) reviveBlank.push(rec.outpoint)
+      } catch {
+        /* leave sealed */
+      }
+    }
+    if (reviveBlank.length === 0) return 0
+    for (const outpoint of reviveBlank) {
+      releaseConsumedUtxo(outpoint, 'reclaim:blank-sealer')
+    }
+    try {
+      await storage.runAsStorageProvider(async (activeSp) => {
+        const sp = activeSp as unknown as LocalStorage
+        for (const outpoint of reviveBlank) {
+          const parsed = parseOutpoint(outpoint)
+          if (!parsed) continue
+          const rows = await findOutputsForTxid(sp, parsed.txid)
+          const match = rows.find(
+            (row) => Number(row.vout ?? row.outputIndex) === parsed.vout,
+          )
+          const outputId = positiveId(match?.outputId)
+          if (outputId == null) continue
+          try {
+            await sp.updateOutput(outputId, { spendable: true, spentBy: undefined })
+          } catch (err) {
+            console.warn('[stale-output] reclaim spendable=true skipped', outpoint, err)
+          }
+        }
+      })
+    } catch (err) {
+      console.warn('[stale-output] reclaim toolbox rows skipped', err)
+    }
+    console.info(
+      `[stale-output] reclaimed ${reviveBlank.length} blank-sealer input(s) still unspent`,
+    )
+    return reviveBlank.length
+  }
+
+  const sealerIds = [...new Set(sealedNamed.map((rec) => rec.spentBy as string))]
   const liveSealers = new Set<string>()
   const deadSealers = new Set<string>()
   try {

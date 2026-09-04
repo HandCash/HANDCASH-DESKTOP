@@ -166,17 +166,39 @@ async function hasLocalSignedTx(txid: string): Promise<boolean> {
   }
 }
 
+async function healShouldYieldToSpend(opts: UtxoHealPassOpts): Promise<boolean> {
+  if (opts.force || opts.source === 'manual') return false
+  const { shouldYieldChainIngestToSpend, getSpendPriorityDepth } = await import(
+    './walletCoordinator'
+  )
+  return shouldYieldChainIngestToSpend() || getSpendPriorityDepth() > 0
+}
+
 async function runPendingChangeHeal(
   balanceBefore: UtxoHealBalanceSnapshot | null,
   deepHeal: boolean,
+  opts: UtxoHealPassOpts,
 ): Promise<ChangeHealStats> {
+  const empty: ChangeHealStats = {
+    restored: 0,
+    scriptsLocal: 0,
+    scriptsChain: 0,
+    pendingPromoted: 0,
+    reclaimed: 0,
+  }
+  if (await healShouldYieldToSpend(opts)) return empty
+
   let heal = await runChangeHeal({ path: 'spendGate' })
+  if (await healShouldYieldToSpend(opts)) return heal
+
   const pending = balanceBefore?.pendingChange ?? 0
   if (pending > 0 || deepHeal) {
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
+    if (await healShouldYieldToSpend(opts)) return heal
   }
   if (pending > 0) {
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
+    if (await healShouldYieldToSpend(opts)) return heal
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
   } else if (
     deepHeal &&
@@ -184,6 +206,7 @@ async function runPendingChangeHeal(
     heal.restored === 0 &&
     heal.reclaimed === 0
   ) {
+    if (await healShouldYieldToSpend(opts)) return heal
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
   }
   return heal
@@ -226,7 +249,27 @@ async function runHealCore(
 }> {
   await releaseSpendAttemptFunds()
 
-  let heal = await runPendingChangeHeal(balanceBefore, deepHeal)
+  if (await healShouldYieldToSpend(opts)) {
+    logDiag('utxo-heal', 'info', 'yield-to-spend', { phase: 'before-pending' })
+    bumpBalanceAfterHeal()
+    const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance())
+    return {
+      changeKept: 0,
+      txidsOnChain: 0,
+      heal: {
+        restored: 0,
+        scriptsLocal: 0,
+        scriptsChain: 0,
+        pendingPromoted: 0,
+        reclaimed: 0,
+      },
+      balanceAfter,
+      recoveredSats: 0,
+      txidsChecked: 0,
+    }
+  }
+
+  let heal = await runPendingChangeHeal(balanceBefore, deepHeal, opts)
 
   const chain = getActiveWallet()?.chain
   let changeKept = 0
@@ -236,6 +279,13 @@ async function runHealCore(
   const runAllBatches = opts.force || opts.source === 'manual'
 
   for (let offset = 0; offset < orderedTxids.length; ) {
+    if (await healShouldYieldToSpend(opts)) {
+      logDiag('utxo-heal', 'info', 'yield-to-spend', {
+        checked: txidsChecked,
+        remaining: orderedTxids.length - offset,
+      })
+      break
+    }
     const batch = orderedTxids.slice(offset, offset + HEAL_TXID_BATCH_SIZE)
     if (batch.length === 0) break
     offset += batch.length
@@ -264,7 +314,10 @@ async function runHealCore(
     if (!runAllBatches) break
   }
 
-  if ((balanceBefore?.pendingChange ?? 0) > 0) {
+  if (
+    (balanceBefore?.pendingChange ?? 0) > 0 &&
+    !(await healShouldYieldToSpend(opts))
+  ) {
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
   }
 
@@ -420,6 +473,14 @@ export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistory
 export function scheduleHealCheckpointIfDue(reason: UtxoHealCheckpointSource): void {
   void (async () => {
     if (!canRunAutoHealCheckpoint()) return
+    try {
+      const { getSpendPriorityDepth, shouldYieldChainIngestToSpend } = await import(
+        './walletCoordinator'
+      )
+      if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) return
+    } catch {
+      /* coordinator optional at boot */
+    }
     markAutoHealAttempt()
     try {
       const before = toBalanceSnapshot(await snapshotWalletBalance())

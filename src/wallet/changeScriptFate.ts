@@ -460,12 +460,14 @@ export async function sweepChangeScripts(args?: {
 
   try {
     for (let offset = 0; offset < ordered.length; offset += SWEEP_BATCH_SIZE) {
+      const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+      if (shouldYieldChainIngestToSpend()) {
+        console.info(
+          `[change-script] yielding mid-sweep — send waiting (scanned ${offset}/${ordered.length})`,
+        )
+        break
+      }
       if (offset > 0) {
-        const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
-        if (shouldYieldChainIngestToSpend()) {
-          console.info('[change-script] yielding mid-sweep — send waiting')
-          break
-        }
         const { yieldToUi } = await import('./yieldToUi')
         await yieldToUi()
       }

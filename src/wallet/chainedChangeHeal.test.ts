@@ -67,9 +67,12 @@ describe('runChangeHeal', () => {
       pendingPromoted: 3,
       reclaimed: 0,
     })
-    expect(reclaimSealedInputsNeverSpent).toHaveBeenCalledWith({ forSpendChain: true })
-    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
-    expect(restoreLiveSpendableOutputs).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(reclaimSealedInputsNeverSpent).toHaveBeenCalled()
+    expect(reclaimSealedInputsNeverSpent.mock.calls[0]?.[0]).toBeUndefined()
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs.mock.calls[0]?.[0]).toBeUndefined()
+    expect(restoreLiveSpendableOutputs).toHaveBeenCalled()
+    expect(restoreLiveSpendableOutputs.mock.calls[0]?.[0]).toBeUndefined()
     expect(sweepChangeScripts).not.toHaveBeenCalled()
     expect(bumpBalanceAfterHeal).toHaveBeenCalledOnce()
   })
@@ -135,10 +138,13 @@ describe('runExclusiveBurn', () => {
 
   it('holds spend priority before FIFO acquire', async () => {
     const order: string[] = []
-    const requestSpendPriority = vi.fn(() => {
+    const leaseSpendPriority = vi.fn(() => {
       order.push('priority')
-      return () => {
-        order.push('release-priority')
+      return {
+        touch: () => undefined,
+        release: () => {
+          order.push('release-priority')
+        },
       }
     })
     const runExclusiveSpendCoordinated = vi.fn(async (fn: () => Promise<string>) => {
@@ -147,7 +153,7 @@ describe('runExclusiveBurn', () => {
     })
 
     vi.doMock('./walletCoordinator', () => ({
-      requestSpendPriority: (reason: string) => requestSpendPriority(reason),
+      leaseSpendPriority: (reason: string) => leaseSpendPriority(reason),
       runExclusiveSpend: runExclusiveSpendCoordinated,
     }))
     vi.doMock('./chainedChangeHeal', () => ({
@@ -166,6 +172,7 @@ describe('runExclusiveBurn', () => {
     const { runExclusiveBurn } = await import('./spendGuard')
     await expect(runExclusiveBurn('burn-collectable', async () => 'ok')).resolves.toBe('ok')
     expect(order).toEqual(['priority', 'fifo', 'release-priority'])
-    expect(requestSpendPriority).toHaveBeenCalledWith('burn-collectable')
+    expect(leaseSpendPriority).toHaveBeenCalledWith('burn-collectable')
   })
-})
+}
+)

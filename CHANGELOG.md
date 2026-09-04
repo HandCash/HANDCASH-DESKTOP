@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.95] - 2026-09-04
+
+### Fixed
+
+- **Burns hung behind auto UTXO heal** — background heal yields when a burn/send raises spend priority (no longer holds `chainIngest` through a long script sweep); burn leases heartbeat so priority does not expire mid-wait; `onAlreadySpentSend` keeps sealer `txid` on overlay locks; reclaim can revive blank-sealer coins still unspent on the indexer.
+
 ## [1.3.94] - 2026-09-04
 
 ### Fixed

@@ -99,12 +99,14 @@ export async function runExclusiveBurn<T>(
   reason: string,
   fn: () => Promise<T>,
 ): Promise<T> {
-  const { requestSpendPriority } = await import('./walletCoordinator')
-  const releasePriority = requestSpendPriority(reason)
+  const { leaseSpendPriority } = await import('./walletCoordinator')
+  const priority = leaseSpendPriority(reason)
+  const heartbeat = setInterval(() => priority.touch(), 30_000)
   try {
     return await runExclusiveSpend(fn)
   } finally {
-    releasePriority()
+    clearInterval(heartbeat)
+    priority.release()
   }
 }
 

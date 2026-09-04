@@ -55,8 +55,8 @@ function restoreStillStuck(result: RestoreLiveSpendableResult): boolean {
 async function retryRestoreAfterScriptHeal(
   stats: ChangeHealStats,
 ): Promise<RestoreLiveSpendableResult> {
-  stats.pendingPromoted += await promotePendingLocalChangeOutputs({ forSpendChain: true })
-  const next = await restoreLiveSpendableOutputs({ forSpendChain: true })
+  stats.pendingPromoted += await promotePendingLocalChangeOutputs()
+  const next = await restoreLiveSpendableOutputs()
   stats.restored += next.restored
   return next
 }
@@ -82,17 +82,16 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 
   switch (path.path) {
     case 'displayBackground': {
-      stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      stats.reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+      // Background — yield if a burn/send raised spend priority.
+      stats.pendingPromoted = await promotePendingLocalChangeOutputs()
+      stats.reclaimed = await reclaimSealedInputsNeverSpent()
       noteHeal(stats)
       return stats
     }
 
     case 'spendGatePartialRetry': {
-      stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-      stats.restored = (
-        await restoreLiveSpendableOutputs({ forSpendChain: true })
-      ).restored
+      stats.pendingPromoted = await promotePendingLocalChangeOutputs()
+      stats.restored = (await restoreLiveSpendableOutputs()).restored
       noteHeal(stats)
       return stats
     }
@@ -102,8 +101,8 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       stats.scriptsLocal = localSweep.healed
       let restoreResult: RestoreLiveSpendableResult = { restored: 0, unscripted: 0 }
       if (localSweep.healed > 0) {
-        stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-        restoreResult = await restoreLiveSpendableOutputs({ forSpendChain: true })
+        stats.pendingPromoted = await promotePendingLocalChangeOutputs()
+        restoreResult = await restoreLiveSpendableOutputs()
         stats.restored = restoreResult.restored
       }
       if (restoreStillStuck(restoreResult)) {
@@ -119,11 +118,11 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
 
     case 'spendGate': {
       try {
-        stats.reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
-        stats.pendingPromoted = await promotePendingLocalChangeOutputs({ forSpendChain: true })
-        stats.restored = (
-          await restoreLiveSpendableOutputs({ forSpendChain: true })
-        ).restored
+        // Auto heal + post-cleanup hold chainIngest; must yield so burns can acquire.
+        // Spend-path promote uses spendGuard.promoteSpendableChange (forSpendChain).
+        stats.reclaimed = await reclaimSealedInputsNeverSpent()
+        stats.pendingPromoted = await promotePendingLocalChangeOutputs()
+        stats.restored = (await restoreLiveSpendableOutputs()).restored
       } catch (err) {
         logDiag('change-heal', 'warn', 'spend-gate-skipped', {
           error: err instanceof Error ? err.message : String(err),
