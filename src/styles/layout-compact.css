@@ -616,8 +616,14 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
   flex: 1 1 0;
-  color: hsl(var(--primary));
-  background: color-mix(in srgb, hsl(var(--primary)) 12%, transparent);
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 10%, transparent);
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active svg,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'] svg,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] svg {
+  color: inherit;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active::after,
@@ -638,8 +644,8 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-b
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
-  color: hsl(var(--primary));
-  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
 }
 
 @media (max-width: 640px) {

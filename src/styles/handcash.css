@@ -47,8 +47,8 @@
   --hc-accent: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-2: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-dim: var(--colors-aeon-accent-dim, hsl(var(--primary) / 0.14));
-  /* Currency figures — HandCash dark green on every sheet (not theme accent). */
-  --hc-accent-deep: #0c8f3e;
+  /* Currency figures — neon on black; deep green on paper (see light block). */
+  --hc-accent-deep: #57ff97;
   --hc-danger: var(--colors-aeon-danger, hsl(var(--destructive)));
   --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.18), transparent 55%),
     radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.12), transparent 50%),
@@ -1155,8 +1155,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   position: relative;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  padding: 14px 16px;
+  justify-content: flex-start;
+  padding: 10px 16px 14px;
   flex-shrink: 0;
   min-width: 0;
   container-type: inline-size;
@@ -1271,7 +1271,12 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: 0.02em;
   line-height: 1.15;
   white-space: nowrap;
-  /* HandCash dark green on every sheet — not neon, not Omarchy accent. */
+  /* Neon HandCash green on dark — never Omarchy accent, never deep paper green. */
+  color: #57ff97;
+}
+
+html[data-aeon-mode='light'] .wallet-balance .balance {
+  /* Deep green on paper (readable); same token at any balance including $0. */
   color: #0c8f3e;
 }
 
@@ -2549,7 +2554,7 @@ button.wallet-detail-value.is-copied {
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: var(--hc-space-3) var(--hc-pad-panel);
+  padding: 8px var(--hc-pad-panel) var(--hc-space-3);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -3494,7 +3499,7 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-head {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .wallet-hero-identity {
@@ -3511,8 +3516,8 @@ li[data-aeon-state='failed'] .history-progress-range {
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
-  line-height: 32px;
-  height: 32px;
+  line-height: 1.2;
+  height: auto;
   cursor: pointer;
 }
 
@@ -3536,8 +3541,8 @@ li[data-aeon-state='failed'] .history-progress-range {
   font-variant-caps: all-small-caps;
   text-transform: none;
   letter-spacing: 0.05em;
-  line-height: 32px;
-  height: 32px;
+  line-height: 1.2;
+  height: auto;
   display: flex;
   align-items: center;
   flex: 1;
@@ -3621,14 +3626,15 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
   color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent) 28%, transparent);
+  background: color-mix(in srgb, var(--hc-text) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 .wallet-nav-tab.is-active svg,
 .wallet-nav-tab[aria-selected='true'] svg,
 .wallet-nav-tab[data-selected] svg {
-  color: var(--hc-accent);
+  /* Same ink as the label — never Omarchy/brand accent. */
+  color: inherit;
 }
 
 .wallet-nav-bar[data-permission] .wallet-nav-bar-track {
@@ -3918,7 +3924,7 @@ button.identity-qr-copy:focus-visible {
 
 .history-panel {
   margin-top: 0;
-  padding: 14px 16px;
+  padding: 10px 16px 14px;
   min-width: 0;
   display: flex;
   flex-direction: column;
@@ -4515,10 +4521,10 @@ button.payment-details-item-thumb-btn:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 0 0 12px;
+  margin: 0 0 10px;
   padding: 0 0 8px;
   border-bottom: 1px solid hsl(var(--border));
-  min-height: 32px;
+  min-height: 0;
   box-sizing: border-box;
   position: sticky;
   top: 0;
@@ -4536,7 +4542,7 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 /*
- * The scroll stage has 14px top padding. A sticky label starts below that
+ * The scroll stage has 8px top padding. A sticky label starts below that
  * padding, so scrolled content could show through the otherwise transparent
  * strip above it. Extend the label's solid plate across that strip.
  */
@@ -4550,10 +4556,10 @@ button.payment-details-item-thumb-btn:hover {
   content: '';
   position: absolute;
   z-index: -1;
-  top: -14px;
+  top: -8px;
   right: -14px;
   left: -14px;
-  height: 14px;
+  height: 8px;
   background: hsl(var(--card));
   pointer-events: none;
 }
@@ -4685,8 +4691,8 @@ button.payment-details-item-thumb-btn:hover {
   font-variant-caps: all-small-caps;
   text-transform: none;
   letter-spacing: 0.05em;
-  line-height: 32px;
-  height: 32px;
+  line-height: 1.2;
+  height: auto;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -11384,17 +11390,24 @@ html[data-aeon-mode='light'] .update-toast.aeonToast__root {
    (the live dot, success, a downward move's red counterpart). Scoped to the
    light selector so the dark theme is untouched. */
 
-/* Wordmark mark already matches sheet ink (dark/light PNGs); no invert filter. */
+/* Green brand mark on paper — no invert / ink filter. */
 html[data-aeon-mode='light'] .brand-logo-mark {
   filter: none;
 }
 
-/* Selected menu item. */
+/* Selected nav — ink matches label (black on paper), not accent. */
 html[data-aeon-mode='light'] .wallet-nav-tab.is-active,
 html[data-aeon-mode='light'] .wallet-nav-tab[aria-selected='true'],
 html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] {
-  color: hsl(var(--primary));
-  background: color-mix(in srgb, hsl(var(--primary)) 8%, transparent);
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-text) 12%, transparent);
+}
+
+html[data-aeon-mode='light'] .wallet-nav-tab.is-active svg,
+html[data-aeon-mode='light'] .wallet-nav-tab[aria-selected='true'] svg,
+html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] svg {
+  color: inherit;
 }
 
 /* % change text stays green↑ / red↓ on paper — deep enough for AA on white. */
