@@ -239,7 +239,14 @@ async function runSelfConsolidation(): Promise<string> {
     // Retire the coins this transaction consumed before anything else can pick
     // them — same protection the send paths use after createAction.
     await sealSpentInputsOfSignedTx(txid, atomicBeef)
-    await ensurePaymentBroadcasted(txid, atomicBeef)
+    try {
+      await ensurePaymentBroadcasted(txid, atomicBeef)
+    } catch (broadcastErr) {
+      // Hard reject / ghost conflict must not leave consolidate inputs retired.
+      const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')
+      await releaseSealedInputsOfUnsentTx(txid, atomicBeef)
+      throw broadcastErr
+    }
 
     // Internalize the single output back into managed change, silently. Direct
     // internalizeAction (not internalizeBrc29Payment) so there is no inbound
@@ -325,6 +332,15 @@ export async function maybeConsolidateChange(): Promise<ConsolidationOutcome> {
       '[consolidate] pass failed — pool left as-is',
       err instanceof Error ? err.message : String(err),
     )
+    try {
+      const { reclaimSealedInputsNeverSpent } = await import('./staleOutputRelease')
+      const reclaimed = await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+      if (reclaimed > 0) {
+        console.info(`[consolidate] reclaimed ${reclaimed} input(s) after failed pass`)
+      }
+    } catch (reclaimErr) {
+      console.warn('[consolidate] post-fail reclaim skipped', reclaimErr)
+    }
     return { ran: false, reason: 'error' }
   }
 }

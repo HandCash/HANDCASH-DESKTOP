@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.93] - 2026-09-04
+
+### Fixed
+
+- **Failed change consolidate hiding spendable sats** — ghost / unproven miner “Already spent” no longer calls `onAlreadySpentSend`; reclaim unseals inputs whose sealing tx never landed on chain (up to 200); consolidate releases seals on broadcast failure.
+
 ## [1.3.92] - 2026-09-04
 
 ### Fixed

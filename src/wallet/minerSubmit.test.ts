@@ -68,7 +68,9 @@ describe('submitAtomicBeefToMiners', () => {
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('throws and rolls back on missing inputs', async () => {
+  it('throws and rolls back on proven missing inputs', async () => {
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValueOnce(true)
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -85,6 +87,25 @@ describe('submitAtomicBeefToMiners', () => {
     await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
     expect(onAlreadySpentSend).toHaveBeenCalled()
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+  })
+
+  it('treats unproven missing-inputs as submitted without hiding coins', async () => {
+    postBeef.mockResolvedValueOnce([
+      {
+        status: 'error',
+        txidResults: [
+          {
+            status: 'error',
+            doubleSpend: true,
+            notes: [{ what: 'postRawsErrorMissingInputs' }],
+          },
+        ],
+      },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
+    expect(result.submitted).toBe(true)
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
   it('treats ghost doubleSpend as submitted', async () => {

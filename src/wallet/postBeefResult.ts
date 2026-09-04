@@ -193,7 +193,9 @@ export async function postBeefConflictIsReal(args: {
 
   const onChain = await txExistsOnChain(txid, args.chain).catch(() => null)
   if (onChain === true) return true
-  if (onChain === null) return true
+  // Unknown explorer answer must NOT count as a proven conflict — that used to
+  // call onAlreadySpentSend and hide live change forever (failed consolidate).
+  // Fall through and inspect inputs; inconclusive → not proven.
 
   let inputs: string[] = []
   if (args.atomic?.length) {
@@ -219,6 +221,7 @@ export async function postBeefConflictIsReal(args: {
   const statuses = await Promise.all(
     inputs.map((op) => spentStatusOfOutpoint(op, args.chain).catch(() => 'unknown' as const)),
   )
-  if (statuses.some((s) => s === 'unknown')) return true
+  // Any unknown answer → not proven. Prefer a ghost/retry over hiding spendable change.
+  if (statuses.some((s) => s === 'unknown')) return false
   return statuses.some((s) => s === 'spent')
 }

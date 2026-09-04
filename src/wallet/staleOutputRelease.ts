@@ -327,7 +327,7 @@ export async function hideSpentOutpoints(
 }
 
 /** Sealed coins to re-check per pass, so a long-lived wallet cannot stall. */
-const RECLAIM_MAX = 40
+const RECLAIM_MAX = 200
 
 /**
  * Give back coins sealed for a spend that never made it onto the chain.
@@ -361,8 +361,11 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
     .slice(0, RECLAIM_MAX)
   if (sealed.length === 0) return 0
 
-  // A sealing tx this wallet still treats as live is a real spend in flight.
+  // A sealing tx this wallet still treats as live is a real spend in flight —
+  // unless explorers prove that sealer never landed (failed consolidate / ghost
+  // doubleSpend). Those must be reclaimable or balance stays short forever.
   const liveSealers = new Set<string>()
+  const deadSealers = new Set<string>()
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage
@@ -386,6 +389,22 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   } catch (err) {
     console.warn('[stale-output] reclaim status sweep skipped', err)
     return 0
+  }
+
+  if (liveSealers.size > 0 && active.chain) {
+    const { txExistsOnChain } = await import('./legacyScan')
+    for (const txid of [...liveSealers]) {
+      const onChain = await txExistsOnChain(txid, active.chain).catch(() => null)
+      if (onChain === false) {
+        liveSealers.delete(txid)
+        deadSealers.add(txid)
+      }
+    }
+    if (deadSealers.size > 0) {
+      console.info(
+        `[stale-output] reclaiming seal(s) from ${deadSealers.size} unsent local tx(s)`,
+      )
+    }
   }
 
   const revive: string[] = []

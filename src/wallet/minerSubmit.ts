@@ -81,20 +81,32 @@ export async function submitAtomicBeefToMiners(
     return { confirmed: true, submitted: true, summary }
   }
   if (summary.missingInputs) {
-    if (txHadArcadeSubmitContact(id)) {
-      const conflictReal = await signedTxSpendConflictIsProven({
+    const conflictReal = await (async () => {
+      if (txHadArcadeSubmitContact(id)) {
+        return signedTxSpendConflictIsProven({
+          txid: id,
+          atomic,
+          chain: active.chain,
+        })
+      }
+      const { postBeefConflictIsReal } = await import('./postBeefResult')
+      return postBeefConflictIsReal({
         txid: id,
         atomic,
         chain: active.chain,
       })
-      if (!conflictReal) {
-        console.info(
-          '[minerSubmit] Arcade missing-inputs not proven — tx stays submitted',
-          id.slice(0, 12),
-          summary.detail,
-        )
-        return { confirmed: false, submitted: true, summary }
-      }
+    })()
+    if (!conflictReal) {
+      console.info(
+        '[minerSubmit] ghost missing-inputs — releasing seal, treating as submitted',
+        id.slice(0, 12),
+        summary.detail,
+      )
+      // Do not hide inputs: the signed body may still land. Keep seal only when
+      // we are optimistic; release when explorers prove the tx never spent them.
+      // Here conflict is unproven after hard reject noise — keep submitted so
+      // callers can retry broadcast, but do not call onAlreadySpentSend.
+      return { confirmed: false, submitted: true, summary }
     }
     console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
     await onAlreadySpentSend({ txid: id, atomic })
