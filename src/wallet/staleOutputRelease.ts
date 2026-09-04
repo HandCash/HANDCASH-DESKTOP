@@ -17,6 +17,7 @@ import { logDiag } from './diagnosticLog'
 import { getActiveWallet } from './session'
 import {
   creditUtxo,
+  getUtxoLock,
   hideUtxo,
   isUtxoBlockedFromRestore,
   listUtxoLocks,
@@ -338,12 +339,10 @@ const RECLAIM_MAX = 200
  * sends fail "Already spent". {@link releaseSealedInputsOfUnsentTx} handles the
  * attempt that is failing right now; this recovers the ones already stranded.
  *
- * Direction of trust matters. `isUtxo === false` is unreliable — an indexer
- * that has not caught up with our unconfirmed change answers false, and acting
- * on that is what destroys live coins (see this module's header). So this only
- * moves on `isUtxo === true`: positive proof from the network that the coin was
- * never actually spent. A sealing transaction this wallet still considers live
- * is left alone regardless.
+ * When explorers prove the sealing tx never landed (`txExists === false`), revive
+ * those inputs without waiting on indexer `isUtxo` — requiring a positive UTXO
+ * answer left ~967k sats sealed after a ghost consolidate (phone: restore kept
+ * 144 “locally-spent”, reclaim never logged). Otherwise still require `isUtxo`.
  */
 export async function reclaimSealedInputsNeverSpent(opts?: {
   /** Spend-path reclaim — do not defer while a send holds spend priority. */
@@ -354,23 +353,21 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const active = getActiveWallet()
   const isUtxo = active?.services?.isUtxo
   const storage = active?.wallet?.storage
-  if (typeof isUtxo !== 'function' || !storage?.runAsStorageProvider) return 0
+  if (!storage?.runAsStorageProvider) return 0
 
   const sealed = listUtxoLocks()
     .filter((rec) => !!rec.spentBy && /^[0-9a-f]{64}$/.test(rec.spentBy))
     .slice(0, RECLAIM_MAX)
   if (sealed.length === 0) return 0
 
-  // A sealing tx this wallet still treats as live is a real spend in flight —
-  // unless explorers prove that sealer never landed (failed consolidate / ghost
-  // doubleSpend). Those must be reclaimable or balance stays short forever.
+  const sealerIds = [...new Set(sealed.map((rec) => rec.spentBy as string))]
   const liveSealers = new Set<string>()
   const deadSealers = new Set<string>()
   try {
     await storage.runAsStorageProvider(async (activeSp) => {
       const sp = activeSp as unknown as LocalStorage
       if (typeof sp.findTransactions !== 'function') return
-      for (const txid of new Set(sealed.map((rec) => rec.spentBy as string))) {
+      for (const txid of sealerIds) {
         try {
           const rows = await sp.findTransactions({
             partial: { txid },
@@ -378,7 +375,6 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
           })
           if (rows?.some((row) => isLiveLocalTxStatus(row?.status))) liveSealers.add(txid)
         } catch (err) {
-          // Unknown status is not permission to resurrect a coin.
           if (!isUndefinedPartialFilterError(err)) {
             console.warn('[stale-output] sealer status skipped', txid.slice(0, 12), err)
           }
@@ -391,11 +387,48 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
     return 0
   }
 
-  if (liveSealers.size > 0 && active.chain) {
-    const { txExistsOnChain } = await import('./legacyScan')
-    for (const txid of [...liveSealers]) {
+  if (active.chain) {
+    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    for (const txid of sealerIds) {
       const onChain = await txExistsOnChain(txid, active.chain).catch(() => null)
+      if (onChain === true) {
+        liveSealers.add(txid)
+        deadSealers.delete(txid)
+        continue
+      }
       if (onChain === false) {
+        liveSealers.delete(txid)
+        deadSealers.add(txid)
+        continue
+      }
+      // Inconclusive explorer — sample one sealed input. Unspent → ghost sealer.
+      const sample = sealed.find((rec) => rec.spentBy === txid)
+      const parsed = sample ? parseOutpoint(sample.outpoint) : null
+      if (!parsed) continue
+      let unspent = false
+      if (typeof isUtxo === 'function') {
+        try {
+          const result = await isUtxo({
+            txid: parsed.txid,
+            vout: parsed.vout,
+          } as never)
+          unspent =
+            result === true ||
+            (!!result &&
+              typeof result === 'object' &&
+              (result as { isUtxo?: unknown }).isUtxo === true)
+        } catch {
+          unspent = false
+        }
+      }
+      if (!unspent) {
+        const status = await spentStatusOfOutpoint(
+          sample!.outpoint,
+          active.chain,
+        ).catch(() => 'unknown' as const)
+        unspent = status === 'unspent'
+      }
+      if (unspent) {
         liveSealers.delete(txid)
         deadSealers.add(txid)
       }
@@ -410,9 +443,14 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   const revive: string[] = []
   for (const rec of sealed) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
-    if (liveSealers.has(rec.spentBy as string)) continue
+    const sealer = rec.spentBy as string
+    if (deadSealers.has(sealer)) {
+      revive.push(rec.outpoint)
+      continue
+    }
+    if (liveSealers.has(sealer)) continue
     const parsed = parseOutpoint(rec.outpoint)
-    if (!parsed) continue
+    if (!parsed || typeof isUtxo !== 'function') continue
     try {
       const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
       const alive =
@@ -448,7 +486,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   }
 
   console.info(
-    `[stale-output] reclaimed ${revive.length} sealed input(s) the indexer still reports unspent`,
+    `[stale-output] reclaimed ${revive.length} sealed input(s) never spent on chain`,
   )
   return revive.length
 }
@@ -919,8 +957,22 @@ export async function restoreLiveSpendableOutputs(opts?: {
         if (basket === '1sat' || basket === 'bsv21') continue
         const overlayKey = outpointFromOutput(output)
         if (overlayKey && isUtxoBlockedFromRestore(overlayKey)) {
-          keptSpent += 1
-          continue
+          const lock = getUtxoLock(overlayKey)
+          const sealer =
+            lock?.spentBy && /^[0-9a-f]{64}$/.test(lock.spentBy) ? lock.spentBy : null
+          let deadSealer = false
+          if (sealer && active?.chain) {
+            const { txExistsOnChain } = await import('./legacyScan')
+            const onChain = await txExistsOnChain(sealer, active.chain).catch(() => null)
+            if (onChain === false) {
+              releaseConsumedUtxo(overlayKey, 'restore:unsent-sealer')
+              deadSealer = true
+            }
+          }
+          if (!deadSealer) {
+            keptSpent += 1
+            continue
+          }
         }
 
         try {
@@ -928,8 +980,20 @@ export async function restoreLiveSpendableOutputs(opts?: {
           if (spentBy != null) {
             const spender = await loadTxRow(sp, spentBy, txCache)
             if (isLiveLocalTxStatus(spender?.status)) {
-              keptSpent += 1
-              continue
+              const spenderTxid = txidFromRow(spender ?? {})?.toLowerCase()
+              let keep = true
+              if (spenderTxid && active?.chain) {
+                const { txExistsOnChain } = await import('./legacyScan')
+                const onChain = await txExistsOnChain(
+                  spenderTxid,
+                  active.chain,
+                ).catch(() => null)
+                if (onChain === false) keep = false
+              }
+              if (keep) {
+                keptSpent += 1
+                continue
+              }
             }
           }
 

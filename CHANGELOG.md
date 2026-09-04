@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.94] - 2026-09-04
+
+### Fixed
+
+- **Reclaim after ghost consolidate** — when a sealing tx is proven off-chain, revive sealed inputs without waiting on indexer `isUtxo`; restore also clears overlay blocks for unsent sealers (phone stuck at 7.78M / 144 locally-spent).
+
 ## [1.3.93] - 2026-09-04
 
 ### Fixed
