@@ -14,6 +14,7 @@ import { runChangeHeal, type ChangeHealStats } from './chainedChangeHeal'
 import { logDiag, snapshotWalletBalance } from './diagnosticLog'
 import { txExistsOnChain } from './legacyScan'
 import { bumpBalanceAfterHeal, getActiveWallet } from './session'
+import type { Chain } from './vault'
 import { releaseSpendAttemptFunds } from './spendAttempt'
 import {
   keepChangeOfSignedTx,
@@ -190,7 +191,7 @@ async function runPendingChangeHeal(
 
 async function processTxidBatch(
   batch: string[],
-  chain: string | undefined,
+  chain: Chain | undefined,
 ): Promise<{ changeKept: number; txidsOnChain: number; processed: string[] }> {
   let changeKept = 0
   let txidsOnChain = 0
@@ -291,7 +292,7 @@ async function runHealCore(
 export async function runUtxoHealPass(
   opts: UtxoHealPassOpts,
 ): Promise<UtxoHealFromHistoryResult> {
-  const { txids, activity, fromLogs } = collectCandidateTxids()
+  const { txids, activity } = collectCandidateTxids()
   const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance())
   const missing = txidsMissingFromCheckpoint(txids)
   const pendingChange = balanceBefore?.pendingChange ?? 0

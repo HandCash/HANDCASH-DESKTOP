@@ -167,7 +167,7 @@ export function WalletHealthPanel() {
           <SettingsControlRow
             icon={SETTINGS_APPLICATION_ICONS.updates}
             label="Heal balance from history"
-            description={healing ? 'Healing…' : healHint()}
+            description={healing ? 'Healing…' : healHint}
           >
             <span
               className="status-pill status-pill-compact"
