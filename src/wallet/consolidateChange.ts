@@ -37,7 +37,6 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import {
   BRC29_PROTOCOL_ID,
   atomicBeefFromCreateAction,
-  ensurePaymentBroadcasted,
 } from './sendBrc29Payment'
 import {
   planChangeConsolidation,
@@ -240,7 +239,25 @@ async function runSelfConsolidation(): Promise<string> {
     // them — same protection the send paths use after createAction.
     await sealSpentInputsOfSignedTx(txid, atomicBeef)
     try {
-      await ensurePaymentBroadcasted(txid, atomicBeef)
+      const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+      if (!atomicBeef?.length) {
+        throw new Error('Consolidate signed but no transaction body was returned')
+      }
+      const miner = await submitAtomicBeefToMiners(txid, atomicBeef)
+      // Ghost / service-only "submitted" must not internalize — that zeroed a
+      // phone wallet after hard-reject hide with no release (see lab logs).
+      if (
+        !miner.confirmed &&
+        (miner.summary?.doubleSpend ||
+          miner.summary?.missingInputs ||
+          miner.summary?.serviceOnlyErrors)
+      ) {
+        throw new Error(
+          miner.summary?.detail
+            ? `Consolidate broadcast failed (${miner.summary.detail})`
+            : 'Consolidate broadcast failed',
+        )
+      }
     } catch (broadcastErr) {
       // Hard reject / ghost conflict must not leave consolidate inputs retired.
       const { releaseSealedInputsOfUnsentTx } = await import('./staleOutputRelease')

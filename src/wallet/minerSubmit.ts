@@ -89,7 +89,7 @@ export async function submitAtomicBeefToMiners(
     )
     return { confirmed: false, submitted: true, summary }
   }
-  if (summary.missingInputs) {
+  if (summary.missingInputs || summary.doubleSpend) {
     const conflictReal = await (async () => {
       if (txHadArcadeSubmitContact(id)) {
         return signedTxSpendConflictIsProven({
@@ -107,43 +107,31 @@ export async function submitAtomicBeefToMiners(
     })()
     if (!conflictReal) {
       console.info(
-        '[minerSubmit] ghost missing-inputs — releasing seal, treating as submitted',
+        `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — releasing seal`,
         id.slice(0, 12),
         summary.detail,
       )
-      // Do not hide inputs: the signed body may still land. Keep seal only when
-      // we are optimistic; release when explorers prove the tx never spent them.
-      // Here conflict is unproven after hard reject noise — keep submitted so
-      // callers can retry broadcast, but do not call onAlreadySpentSend.
+      await releaseSealedInputsOfUnsentTx(id, atomic)
+      // Still "submitted" for optimistic send UX; callers that need a hard ACK
+      // (consolidate) must check confirmed / catch their own release.
       return { confirmed: false, submitted: true, summary }
     }
-    console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
-    await onAlreadySpentSend({ txid: id, atomic })
-    throw new Error(formatPostBeefFailure(summary))
-  }
-  if (summary.doubleSpend) {
-    const { postBeefConflictIsReal } = await import('./postBeefResult')
-    const conflictReal = txHadArcadeSubmitContact(id)
-      ? await signedTxSpendConflictIsProven({
-          txid: id,
-          atomic,
-          chain: active.chain,
-        })
-      : await postBeefConflictIsReal({
-          txid: id,
-          atomic,
-          chain: active.chain,
-        })
-    if (!conflictReal) {
-      console.info(
-        '[minerSubmit] ghost doubleSpend — signed tx treated as submitted',
-        id.slice(0, 12),
-        summary.detail,
-      )
-      return { confirmed: false, submitted: true, summary }
+
+    // Proven conflict — but only hide if OUR tx actually landed. Otherwise
+    // miner noise emptied a phone wallet (119 sealed → spendable=0).
+    const { txExistsOnChain } = await import('./legacyScan')
+    const onChain = await txExistsOnChain(id, active.chain).catch(() => null)
+    if (onChain === true) {
+      console.warn('[minerSubmit] hard reject — tx on chain, sealing inputs', id.slice(0, 12), summary.detail)
+      await onAlreadySpentSend({ txid: id, atomic })
+      throw new Error(formatPostBeefFailure(summary))
     }
-    console.warn('[minerSubmit] hard reject', id.slice(0, 12), summary.detail)
-    await onAlreadySpentSend({ txid: id, atomic })
+    console.warn(
+      '[minerSubmit] hard reject — releasing seal (tx not on chain)',
+      id.slice(0, 12),
+      summary.detail,
+    )
+    await releaseSealedInputsOfUnsentTx(id, atomic)
     throw new Error(formatPostBeefFailure(summary))
   }
 

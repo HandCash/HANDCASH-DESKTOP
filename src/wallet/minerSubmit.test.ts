@@ -7,6 +7,7 @@ const onAlreadySpentSend = vi.fn(async () => {})
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
+    chain: 'main',
     services: { postBeef },
   }),
 }))
@@ -33,11 +34,16 @@ const TXID = 'a'.repeat(64)
 const ATOMIC = [1, 2, 3]
 
 describe('submitAtomicBeefToMiners', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     postBeef.mockReset()
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
+    const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockReset()
+    vi.mocked(spentStatusOfOutpoint).mockReset()
+    vi.mocked(txExistsOnChain).mockResolvedValue(false)
+    vi.mocked(spentStatusOfOutpoint).mockResolvedValue('unspent')
   })
 
   it('returns confirmed when miners accept', async () => {
@@ -68,9 +74,9 @@ describe('submitAtomicBeefToMiners', () => {
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('throws and rolls back on proven missing inputs', async () => {
+  it('throws and hides when proven conflict and the signed tx is on chain', async () => {
     const { txExistsOnChain } = await import('./legacyScan')
-    vi.mocked(txExistsOnChain).mockResolvedValueOnce(true)
+    vi.mocked(txExistsOnChain).mockResolvedValue(true)
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -89,7 +95,7 @@ describe('submitAtomicBeefToMiners', () => {
     expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
   })
 
-  it('treats unproven missing-inputs as submitted without hiding coins', async () => {
+  it('treats unproven missing-inputs as submitted and releases the seal', async () => {
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -106,9 +112,10 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.submitted).toBe(true)
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
   })
 
-  it('treats ghost doubleSpend as submitted', async () => {
+  it('treats ghost doubleSpend as submitted and releases the seal', async () => {
     postBeef.mockResolvedValueOnce([
       {
         status: 'error',
@@ -119,6 +126,7 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.submitted).toBe(true)
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
   })
 
   it('treats service-only endpoint errors as submitted without hiding coins', async () => {
@@ -132,6 +140,29 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.submitted).toBe(true)
     expect(result.confirmed).toBe(false)
+    expect(onAlreadySpentSend).not.toHaveBeenCalled()
+  })
+
+  it('releases seals on proven conflict when the signed tx never landed', async () => {
+    const { txExistsOnChain } = await import('./legacyScan')
+    vi.mocked(txExistsOnChain).mockResolvedValueOnce(true) // conflictReal via onChain
+    // Second call inside hard-reject path: our tx not on chain → release
+    vi.mocked(txExistsOnChain).mockResolvedValueOnce(false)
+    postBeef.mockResolvedValueOnce([
+      {
+        status: 'error',
+        txidResults: [
+          {
+            status: 'error',
+            doubleSpend: true,
+            notes: [{ what: 'postRawsErrorMissingInputs' }],
+          },
+        ],
+      },
+    ])
+    const { submitAtomicBeefToMiners } = await import('./minerSubmit')
+    await expect(submitAtomicBeefToMiners(TXID, ATOMIC)).rejects.toThrow('Already spent')
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
   })
 
@@ -153,5 +184,6 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.submitted).toBe(true)
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
   })
 })

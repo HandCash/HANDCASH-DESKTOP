@@ -33,6 +33,9 @@ export function AddFriendPanel() {
   const trimmedRecipient = recipient.trim()
   const isHandleInput = Boolean(parseHandleInput(trimmedRecipient))
   const isPeerPayInput = Boolean(tryParsePeerPayUri(trimmedRecipient))
+  /** Handles are fixed identity — no custom label. Peerpay / identity key can set one. */
+  const canSetCustomLabel = Boolean(trimmedRecipient && !isHandleInput)
+  /** Peerpay has no useful default display — require a label. Identity key falls back. */
   const needsLabel = Boolean(trimmedRecipient && isPeerPayInput)
   const verifiedHandle =
     resolvedHandle && isVerifiedHandleCertificate(resolvedHandle.certificate)
@@ -69,7 +72,7 @@ export function AddFriendPanel() {
     setBusy(true)
     try {
       await addFriendFromRecipient({
-        label: needsLabel ? label : undefined,
+        label: canSetCustomLabel ? label.trim() || undefined : undefined,
         recipient: trimmedRecipient,
       })
       playWalletSound('soft')
@@ -117,9 +120,9 @@ export function AddFriendPanel() {
             </p>
           ) : null}
         </div>
-        {needsLabel ? (
+        {canSetCustomLabel ? (
           <div className="field">
-            <label htmlFor="friend-label">Label</label>
+            <label htmlFor="friend-label">Label{needsLabel ? '' : ' (optional)'}</label>
             <input
               id="friend-label"
               value={label}

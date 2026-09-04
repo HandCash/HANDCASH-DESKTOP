@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
   addressFromIdentityKey,
+  friendHasFixedHandle,
   getFriendById,
   removeFriend,
   subscribeFriends,
@@ -49,8 +50,12 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     address = 'Invalid key'
   }
 
+  const handleFixed = friendHasFixedHandle(friend)
+  const displayHandle = (friend.handle?.trim() || friend.label).trim()
+
   const onSave = (e: FormEvent) => {
     e.preventDefault()
+    if (handleFixed) return
     setError(null)
     try {
       updateFriend(friend.id, { label })
@@ -76,17 +81,24 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   return (
     <div className="nav-child-panel friend-details" data-aeon-scope="friend-details">
       <form className="friends-add-form" onSubmit={onSave}>
-        <div className="field">
-          <label htmlFor="friend-edit-label">Label</label>
-          <input
-            id="friend-edit-label"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
-            placeholder="Alice"
-            autoComplete="off"
-            autoFocus
-          />
-        </div>
+        {handleFixed ? (
+          <div className="field">
+            <span className="field-static-label">Handle</span>
+            <span className="wallet-detail-value">{displayHandle}</span>
+          </div>
+        ) : (
+          <div className="field">
+            <label htmlFor="friend-edit-label">Label</label>
+            <input
+              id="friend-edit-label"
+              value={label}
+              onChange={(e) => setLabel(e.target.value)}
+              placeholder="Alice"
+              autoComplete="off"
+              autoFocus
+            />
+          </div>
+        )}
 
         <div className="field">
           <span className="field-static-label">Identity key</span>
@@ -129,9 +141,15 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           >
             Message
           </button>
-          <button type="submit" className="btn btn-ghost" disabled={!label.trim() || label.trim() === friend.label}>
-            Save
-          </button>
+          {handleFixed ? null : (
+            <button
+              type="submit"
+              className="btn btn-ghost"
+              disabled={!label.trim() || label.trim() === friend.label}
+            >
+              Save
+            </button>
+          )}
           <button
             type="button"
             className="btn btn-ghost"

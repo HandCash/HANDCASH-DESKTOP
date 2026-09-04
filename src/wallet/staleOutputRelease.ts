@@ -165,7 +165,8 @@ export async function onAlreadySpentSend(args: {
     )
   }
   if (txid) await keepChangeOfSignedTx(txid)
-  await restoreLiveSpendableOutputs({ onlyLiveChange: true })
+  // Do not run restore here — it blocked for minutes on large wallets (Kallubi
+  // down) while already-spent hide left spendable=0. Callers / heal reclaim.
 }
 
 /** @deprecated Use {@link onAlreadySpentSend} so live change is not bulk-released. */
@@ -443,16 +444,24 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
             paged: { limit: 1, offset: 0 },
           })
           const status = String(rows?.[0]?.status ?? '').toLowerCase()
-          if (rows?.some((row) => isLiveLocalTxStatus(row?.status))) {
-            liveSealers.add(txid)
-          } else if (!rows?.length || status === 'unsent' || status === 'failed') {
+          // Failed / unsent / missing local row — ghost seal, revive without explorers.
+          if (
+            !rows?.length ||
+            status === 'unsent' ||
+            status === 'failed' ||
+            status === 'doublespend' ||
+            status === 'invalid'
+          ) {
             deadSealers.add(txid)
+            liveSealers.delete(txid)
+          } else if (rows.some((row) => isLiveLocalTxStatus(row?.status))) {
+            liveSealers.add(txid)
           }
         } catch (err) {
           if (!isUndefinedPartialFilterError(err)) {
             console.warn('[stale-output] sealer status skipped', txid.slice(0, 12), err)
           }
-          liveSealers.add(txid)
+          // Do not assume live on lookup failure — leave unclassified for chain check.
         }
       }
     })

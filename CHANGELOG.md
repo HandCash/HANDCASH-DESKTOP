@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.98] - 2026-09-04
+
+### Fixed
+
+- **Balance zeroed after failed consolidate** — hard-reject / ghost miner noise releases seals instead of hiding inputs when the signed tx is not on chain; consolidate refuses to internalize unconfirmed broadcasts; reclaim treats local failed/unsent sealers as dead without waiting on explorers.
+
+### Changed
+
+- **Friend labels** — custom local labels for identity-key / peerpay friends; handle-identified friends keep a fixed `$handle` display (no rename).
+
 ## [1.3.97] - 2026-09-04
 
 ### Fixed

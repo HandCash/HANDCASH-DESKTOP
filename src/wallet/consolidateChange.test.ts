@@ -22,7 +22,11 @@ const runAsStorageProvider = vi.fn(async (fn: (sp: unknown) => Promise<unknown>)
 const shouldYield = vi.fn(() => false)
 const recomposeActive = vi.fn(() => false)
 const sealSpentInputsOfSignedTx = vi.fn(async (..._a: unknown[]) => 1)
-const ensurePaymentBroadcasted = vi.fn(async (..._a: unknown[]) => undefined)
+const releaseSealedInputsOfUnsentTx = vi.fn(async (..._a: unknown[]) => 1)
+const submitAtomicBeefToMiners = vi.fn(async (..._a: unknown[]) => ({
+  confirmed: true,
+  submitted: true,
+}))
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -59,6 +63,7 @@ vi.mock('./legacyBeef', () => ({
 
 vi.mock('./staleOutputRelease', () => ({
   sealSpentInputsOfSignedTx: (...a: unknown[]) => sealSpentInputsOfSignedTx(...a),
+  releaseSealedInputsOfUnsentTx: (...a: unknown[]) => releaseSealedInputsOfUnsentTx(...a),
 }))
 
 vi.mock('./deviceSync', () => ({
@@ -68,7 +73,10 @@ vi.mock('./deviceSync', () => ({
 vi.mock('./sendBrc29Payment', () => ({
   BRC29_PROTOCOL_ID: [2, '3241645161d8'],
   atomicBeefFromCreateAction: (r: { tx?: number[] }) => r?.tx,
-  ensurePaymentBroadcasted: (...a: unknown[]) => ensurePaymentBroadcasted(...a),
+}))
+
+vi.mock('./minerSubmit', () => ({
+  submitAtomicBeefToMiners: (...a: unknown[]) => submitAtomicBeefToMiners(...a),
 }))
 
 vi.mock('./actionReview', () => ({
@@ -122,7 +130,7 @@ describe('maybeConsolidateChange', () => {
     // Consumed coins are retired, broadcast is confirmed, and the single output
     // is internalized back into managed change.
     expect(sealSpentInputsOfSignedTx).toHaveBeenCalledTimes(1)
-    expect(ensurePaymentBroadcasted).toHaveBeenCalledTimes(1)
+    expect(submitAtomicBeefToMiners).toHaveBeenCalledTimes(1)
     expect(internalizeAction).toHaveBeenCalledTimes(1)
   })
 
