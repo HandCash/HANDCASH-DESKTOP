@@ -14,9 +14,6 @@ export function focusMessagePeer(peerId: string | null): void {
   notify()
 }
 
-/** @deprecated */
-export const focusChatPeer = focusMessagePeer
-
 export function takeMessageFocus(): string | null {
   const next = focusPeerId
   focusPeerId = null
@@ -24,14 +21,8 @@ export function takeMessageFocus(): string | null {
   return next
 }
 
-/** @deprecated */
-export const takeChatFocus = takeMessageFocus
-
 export function subscribeMessageFocus(listener: Listener): () => void {
   listeners.add(listener)
   listener(focusPeerId)
   return () => listeners.delete(listener)
 }
-
-/** @deprecated */
-export const subscribeChatFocus = subscribeMessageFocus

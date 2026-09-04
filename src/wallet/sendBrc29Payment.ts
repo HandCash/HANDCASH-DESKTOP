@@ -68,6 +68,10 @@ import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
 import { formatPrimaryFromSats } from './fx'
 import { getDisplayCurrency } from './displayCurrency'
+import {
+  alreadyInternalizedError,
+  fetchAtomicBeefFromUrl,
+} from './peerIngestHelpers'
 
 /** BRC-29 protocol id — see BRCs/payments/0029.md */
 export const BRC29_PROTOCOL_ID: [2, '3241645161d8'] = [2, '3241645161d8']
@@ -88,17 +92,6 @@ export type SendBrc29Result = {
   atomicBeef?: number[]
   /** Messagebox accepted the payment envelope (`cloud`), else local-only. */
   peerDelivered?: boolean
-}
-
-async function fetchAtomicBeefFromUrl(url: string): Promise<number[] | undefined> {
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return undefined
-    const buf = new Uint8Array(await res.arrayBuffer())
-    return buf.length > 0 ? Array.from(buf) : undefined
-  } catch {
-    return undefined
-  }
 }
 
 /** Payee (or sender fallback) submits the signed payment to the network. */
@@ -190,11 +183,6 @@ function markInboundPaymentStatus(txid: string, status: string): void {
   } catch {
     /* chat UI is optional */
   }
-}
-
-function alreadyInternalizedError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return /already (?:spent|imported|internalized|in (?:the )?wallet|ours)/i.test(msg)
 }
 
 /**

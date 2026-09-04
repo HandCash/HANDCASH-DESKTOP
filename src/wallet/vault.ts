@@ -13,6 +13,7 @@
  * Never mint a second root while toolbox UTXOs or an existing vault identity exist.
  */
 import { Hash, HD, Mnemonic, PrivateKey } from '@bsv/sdk'
+import { base64ToBytes, bytesToBase64 } from './base64Binary'
 import {
   deviceAuthClear,
   deviceAuthEnroll,
@@ -104,16 +105,11 @@ type VaultSecretV2 = {
 
 function b64(bytes: ArrayBuffer | Uint8Array): string {
   const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-  let s = ''
-  for (const b of u8) s += String.fromCharCode(b)
-  return btoa(s)
+  return bytesToBase64(u8)
 }
 
 function fromB64(s: string): Uint8Array {
-  const bin = atob(s)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
+  return base64ToBytes(s)
 }
 
 function toBufferSource(bytes: Uint8Array): ArrayBuffer {

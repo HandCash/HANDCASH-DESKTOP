@@ -112,9 +112,8 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 | Concern | Module |
 |---------|--------|
 | Layers glossary | `HANDCASH-DESKTOP/src/wallet/layers.ts` |
-| Latch state (P2P identity) | `oneSatLatch.ts` |
-| Remittance (local proof) | `oneSatProvenance.ts` |
-| Soft-latch receive | `oneSatImport.ts` / `ingestLegacyAddress.ts` |
+| Item identity / remittance | `oneSatProvenance.ts` |
+| Soft-latch | withdrawn (do not revive `oneSatLatch*`) |
 | Chat transport | `messageTransport.ts` / `messageStore.ts` |
 | Handle + box URL | `handleResolve.ts` → BRC-CLOUD resolve |
 | Box host | `BRC-CLOUD/src/worker.js` `handleMessagebox` |

@@ -33,6 +33,9 @@ import type {
   MarketPurchaseIntent,
   MarketSettlementReceipt,
 } from './marketListing'
+import { bytesToBase64 } from './base64Binary'
+
+export { bytesToBase64 }
 
 const WIRE_PREFIX = 'handcash-message:'
 const MARKET_WIRE_PREFIX = 'handcash-market-v2:'
@@ -233,15 +236,6 @@ type WireMessage = {
     /** Intentional in-thread pay/tip card — not a silent Send-panel notify. */
     chatRef?: boolean
   }
-}
-
-export function bytesToBase64(bytes: Uint8Array): string {
-  const CHUNK = 0x8000
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += CHUNK) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + CHUNK))
-  }
-  return btoa(binary)
 }
 
 export function decodeBeefB64(raw?: string | null): number[] | undefined {

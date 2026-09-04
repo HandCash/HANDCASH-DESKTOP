@@ -4,6 +4,7 @@
  */
 import { getActiveWallet } from './session'
 import { appendAppLog } from './appLog'
+import { base64ToBytes, bytesToBase64 } from './base64Binary'
 
 export type LocalBrc39ArchiveMeta = {
   id: string
@@ -12,22 +13,6 @@ export type LocalBrc39ArchiveMeta = {
   bytes: number
   sha256: string
   path: string
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  const chunk = 0x8000
-  for (let i = 0; i < bytes.length; i += chunk) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + chunk))
-  }
-  return btoa(binary)
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const binary = atob(b64)
-  const out = new Uint8Array(binary.length)
-  for (let i = 0; i < binary.length; i++) out[i] = binary.charCodeAt(i)
-  return out
 }
 
 /** Persist a write-once local snapshot. No-op outside Electron. */

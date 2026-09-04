@@ -5,6 +5,7 @@ import type { ActiveWallet } from './session'
 import type { Collectable } from './collectables'
 import { getCachedFungibles } from './fungibles'
 import { authenticityFromProvenCache, getProvenVerdict } from './provenCache'
+import { toDottedOutpoint, toUnderscoreOutpoint } from './outpointFormat'
 import {
   getWalletCoordinatorSnapshot,
   shouldYieldChainIngestToSpend,
@@ -15,13 +16,14 @@ const MARKET_LIST_TIMEOUT_MS = 20_000
 const MARKET_VERDICT_CHUNK = 64
 
 function normalizeOutpoint(value: unknown): string | null {
-  const raw = String(value ?? '').trim().toLowerCase()
-  const match = /^([0-9a-f]{64})[._](0|[1-9]\d*)$/.exec(raw)
-  return match ? `${match[1]}.${match[2]}` : null
+  const raw = String(value ?? '').trim()
+  if (!raw) return null
+  const dotted = toDottedOutpoint(raw)
+  return /^[0-9a-f]{64}\.(0|[1-9]\d*)$/.test(dotted) ? dotted : null
 }
 
 function originTag(origin: string): string {
-  return origin.includes('.') ? origin.replace(/\.(\d+)$/, '_$1') : origin
+  return toUnderscoreOutpoint(origin)
 }
 
 function collectableToListOutput(item: Collectable): Record<string, unknown> {

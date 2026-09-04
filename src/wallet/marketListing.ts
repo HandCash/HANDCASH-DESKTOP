@@ -33,6 +33,7 @@ import { buildBsv21SendRemittance, buildBsv21ValueLock, planBsv21Send } from './
 import { getBeefForTxidCached } from './beefCache'
 import { mergeIconTxIntoBeef } from './tokenIconResolve'
 import { getProvenVerdict } from './provenCache'
+import { toUnderscoreOutpoint } from './outpointFormat'
 import {
   MARKET_FEE_BASIS_POINTS,
   MARKET_FEE_IDENTITY_KEY,
@@ -521,15 +522,13 @@ export function resolveOrdinalListingOrigin(args: {
 }
 
 function normalizeOutpoint(value: unknown): string {
-  const raw = String(value ?? '')
-    .trim()
-    .toLowerCase()
-  const match = /^([0-9a-f]{64})[._](0|[1-9]\d*)$/.exec(raw)
-  if (!match)
+  const underscored = toUnderscoreOutpoint(String(value ?? ''))
+  if (!/^[0-9a-f]{64}_(0|[1-9]\d*)$/.test(underscored)) {
     throw new Error(
       'Listing outpoint must be a transaction id and output index'
     )
-  return `${match[1]}_${match[2]}`
+  }
+  return underscored
 }
 
 function normalizeOriginOutpoint(value: unknown): string {

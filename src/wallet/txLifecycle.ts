@@ -8,6 +8,8 @@
  * Never treat HTTP 200 / postBeef accept as hard finality.
  */
 
+import { toUnderscoreOutpoint } from './outpointFormat'
+
 /** Durable local tx states — map 1:1 onto ARC pipeline where applicable. */
 export type TxStatus =
   | 'DRAFT'
@@ -109,7 +111,7 @@ export function diagnosticFromArc(arc: ArcStatus): TxDiagnosticCode | null {
 
 /** Normalize outpoint keys to `txid_vout`. */
 export function normalizeOutpointKey(outpoint: string): string {
-  return outpoint.trim().replace(/\./g, '_').toLowerCase()
+  return toUnderscoreOutpoint(outpoint)
 }
 
 export function isHardFinal(status: TxStatus): boolean {

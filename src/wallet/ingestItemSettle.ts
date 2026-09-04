@@ -26,31 +26,15 @@ import { noteInboundReceiveComplete, noteInboundReceivePending, clearInboundRece
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 import { stampBrc164Id } from './itemAccess'
+import {
+  alreadyInternalizedError,
+  fetchAtomicBeefFromUrl,
+} from './peerIngestHelpers'
 
 export type IngestItemSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
-}
-
-function alreadyInternalizedError(err: unknown): boolean {
-  const msg = err instanceof Error ? err.message : String(err)
-  return /already (?:spent|imported|internalized|in (?:the )?wallet|ours)/i.test(
-    msg,
-  )
-}
-
-async function fetchAtomicBeefFromUrl(
-  url: string,
-): Promise<number[] | undefined> {
-  try {
-    const res = await fetch(url)
-    if (!res.ok) return undefined
-    const buf = new Uint8Array(await res.arrayBuffer())
-    return buf.length > 0 ? Array.from(buf) : undefined
-  } catch {
-    return undefined
-  }
 }
 
 export async function internalizePeerItemSettle(opts: {

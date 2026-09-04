@@ -48,6 +48,7 @@ import { runExclusiveSpend } from './spendGuard'
 import { leaseSpendPriority } from './walletCoordinator'
 import { stampBrc164Id } from './itemAccess'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
+import { toDottedOutpoint } from './outpointFormat'
 import {
   clearAwaitingVerification,
   clearVerificationProgress,
@@ -542,7 +543,7 @@ export function subscribeCollectables(
 }
 
 export function normalizeOutpoint(outpoint: string): string {
-  return outpoint.includes('_') ? outpoint.replace(/_(\d+)$/, '.$1') : outpoint
+  return toDottedOutpoint(outpoint)
 }
 
 export function shortOrigin(origin: string): string {

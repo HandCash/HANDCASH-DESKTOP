@@ -13,6 +13,7 @@
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { ONESAT_FT_PROTOCOL } from './colourCoins'
+import { toUnderscoreOutpoint } from './outpointFormat'
 import { isItemSent } from './sentItemGuard'
 
 const KEY = 'handcash.onesat-ft.leftover.v1'
@@ -30,7 +31,7 @@ export type OnesatFtLeftover = {
 }
 
 export function normOnesatFtOutpoint(raw: string): string {
-  return raw.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
+  return toUnderscoreOutpoint(raw)
 }
 
 function readAll(): Record<string, OnesatFtLeftover> {

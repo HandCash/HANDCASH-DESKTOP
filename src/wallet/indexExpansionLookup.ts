@@ -9,6 +9,7 @@ import { parseMarketOffer } from './marketOverlayProtocol'
 import type { IndexEntryCustomInstructions } from './indexExpansionTypes'
 import type { IndexExpansionManifest } from './indexExpansionTypes'
 import { buildIndexEntryRecord } from './indexExpansionStore'
+import { bytesToBase64 } from './base64Binary'
 
 export type OverlayLookupOutput = {
   outpoint: string
@@ -41,13 +42,6 @@ type LookupAnswerOutput = {
   beef?: number[] | Uint8Array
   outputIndex?: number
   context?: number[] | Uint8Array | string
-}
-
-function bytesToBase64(bytes: number[] | Uint8Array): string {
-  const arr = bytes instanceof Uint8Array ? bytes : Uint8Array.from(bytes)
-  let binary = ''
-  for (const byte of arr) binary += String.fromCharCode(byte)
-  return btoa(binary)
 }
 
 function decodeContext(context: unknown): unknown {

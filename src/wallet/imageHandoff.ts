@@ -1,5 +1,6 @@
 import { playWalletSound } from './soundService'
 import { toastCopied, toastError, toastSuccess } from './toast'
+import { bytesToBase64 } from './base64Binary'
 
 export const MAX_IMAGE_BYTES = 20 * 1024 * 1024
 
@@ -43,14 +44,6 @@ function mimeLooksLikeImage(mime: string): boolean {
 
 async function blobToBytes(blob: Blob): Promise<Uint8Array> {
   return new Uint8Array(await blob.arrayBuffer())
-}
-
-function bytesToBase64(bytes: Uint8Array): string {
-  let binary = ''
-  for (let i = 0; i < bytes.length; i += 8192) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + 8192))
-  }
-  return btoa(binary)
 }
 
 async function toPngBlob(blob: Blob): Promise<Blob> {

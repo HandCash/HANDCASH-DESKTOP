@@ -16,6 +16,7 @@ import type { ActiveWallet } from './session'
 import { hasOrdEnvelope } from './ordinalOwnership'
 import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import { getProvenVerdict, rememberProvenVerdict } from './provenCache'
+import { base64ToBytes, bytesToBase64 } from './base64Binary'
 
 /** Soft cap on `beefB64` characters (~300KB binary). Over → omit, don’t truncate. */
 export const REMITTANCE_MAX_BEEF_B64_CHARS = 400_000
@@ -290,20 +291,6 @@ function toDot(outpoint: string): string {
   const n = outpoint.trim()
   if (n.includes('.')) return n
   return n.replace(/_(\d+)$/, '.$1')
-}
-
-function bytesToBase64(bytes: number[] | Uint8Array): string {
-  const u8 = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)
-  let s = ''
-  for (let i = 0; i < u8.length; i++) s += String.fromCharCode(u8[i]!)
-  return btoa(s)
-}
-
-function base64ToBytes(b64: string): Uint8Array {
-  const bin = atob(b64)
-  const out = new Uint8Array(bin.length)
-  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i)
-  return out
 }
 
 /** Isolated size gate — truncate is forbidden. */

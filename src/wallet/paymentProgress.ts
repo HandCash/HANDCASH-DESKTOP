@@ -11,6 +11,7 @@ import {
   findPendingOutpointFlight,
   pendingOutpointFlightVerb,
 } from './appActivity'
+import { toUnderscoreOutpoint } from './outpointFormat'
 
 export type PaymentPhase =
   | 'idle'
@@ -71,7 +72,7 @@ const COPY: Record<
 }
 
 function normalizeOutpointKey(outpoint: string): string {
-  return outpoint.trim().replace(/\./g, '_')
+  return toUnderscoreOutpoint(outpoint)
 }
 
 function emit(): void {

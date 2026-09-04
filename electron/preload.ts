@@ -45,6 +45,17 @@ type UpdateStatus = {
   canInstall: boolean
 }
 
+function subscribe<T>(
+  channel: string,
+  handler: (payload: T) => void,
+  onSubscribe?: () => void,
+): () => void {
+  const listener = (_: Electron.IpcRendererEvent, payload: T) => handler(payload)
+  ipcRenderer.on(channel, listener)
+  onSubscribe?.()
+  return () => ipcRenderer.removeListener(channel, listener)
+}
+
 const handcash = {
   platform: process.platform,
   getAppInfo: () =>
@@ -56,36 +67,18 @@ const handcash = {
     }>,
   getBridgeStatus: () => ipcRenderer.invoke('bridge:get-status') as Promise<BridgeStatus>,
   restartBridge: () => ipcRenderer.invoke('bridge:restart') as Promise<BridgeStatus>,
-  onBridgeStatus: (handler: (status: BridgeStatus) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, status: BridgeStatus) => handler(status)
-    ipcRenderer.on('bridge-status', listener)
-    return () => ipcRenderer.removeListener('bridge-status', listener)
-  },
-  onHttpRequest: (handler: (event: HttpRequestEvent) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, payload: HttpRequestEvent) => {
-      handler(payload)
-    }
-    ipcRenderer.on('http-request', listener)
-    // Registering the listener *is* the readiness signal — the bridge holds
-    // requests until it knows someone is listening.
-    ipcRenderer.send('bridge:renderer-ready')
-    return () => ipcRenderer.removeListener('http-request', listener)
-  },
-  onDevicePeerHttpRequest: (handler: (event: HttpRequestEvent) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, payload: HttpRequestEvent) => {
-      handler(payload)
-    }
-    ipcRenderer.on('device-peer-http-request', listener)
-    return () => ipcRenderer.removeListener('device-peer-http-request', listener)
-  },
-  onHttpRequestCancelled: (handler: (payload: { request_id: number; reason: string }) => void) => {
-    const listener = (
-      _: Electron.IpcRendererEvent,
-      payload: { request_id: number; reason: string },
-    ) => handler(payload)
-    ipcRenderer.on('http-request-cancelled', listener)
-    return () => ipcRenderer.removeListener('http-request-cancelled', listener)
-  },
+  onBridgeStatus: (handler: (status: BridgeStatus) => void) =>
+    subscribe('bridge-status', handler),
+  onHttpRequest: (handler: (event: HttpRequestEvent) => void) =>
+    subscribe('http-request', handler, () => {
+      // Registering the listener *is* the readiness signal — the bridge holds
+      // requests until it knows someone is listening.
+      ipcRenderer.send('bridge:renderer-ready')
+    }),
+  onDevicePeerHttpRequest: (handler: (event: HttpRequestEvent) => void) =>
+    subscribe('device-peer-http-request', handler),
+  onHttpRequestCancelled: (handler: (payload: { request_id: number; reason: string }) => void) =>
+    subscribe('http-request-cancelled', handler),
   respondHttp: (response: HttpResponseEvent) => {
     ipcRenderer.send('http-response', response)
   },
@@ -192,25 +185,16 @@ const handcash = {
     ipcRenderer.invoke('clipboard:screenshot') as Promise<
       { ok: true; version: string } | { ok: false; error: string }
     >,
-  onScreenshotCopied: (handler: (payload: { at: number; version: string }) => void) => {
-    const listener = (
-      _: Electron.IpcRendererEvent,
-      payload: { at: number; version: string },
-    ) => handler(payload)
-    ipcRenderer.on('screenshot:copied', listener)
-    return () => ipcRenderer.removeListener('screenshot:copied', listener)
-  },
+  onScreenshotCopied: (handler: (payload: { at: number; version: string }) => void) =>
+    subscribe('screenshot:copied', handler),
   getUpdateStatus: () => ipcRenderer.invoke('updater:get-status') as Promise<UpdateStatus>,
   checkForUpdates: () => ipcRenderer.invoke('updater:check') as Promise<UpdateStatus>,
   downloadUpdate: () => ipcRenderer.invoke('updater:download') as Promise<UpdateStatus>,
   setUpdateMode: (mode: UpdateMode) =>
     ipcRenderer.invoke('updater:set-mode', mode) as Promise<UpdateStatus>,
   installUpdate: () => ipcRenderer.invoke('updater:install') as Promise<void>,
-  onUpdateStatus: (handler: (status: UpdateStatus) => void) => {
-    const listener = (_: Electron.IpcRendererEvent, status: UpdateStatus) => handler(status)
-    ipcRenderer.on('updater:status', listener)
-    return () => ipcRenderer.removeListener('updater:status', listener)
-  },
+  onUpdateStatus: (handler: (status: UpdateStatus) => void) =>
+    subscribe('updater:status', handler),
 }
 
 contextBridge.exposeInMainWorld('handcash', handcash)
