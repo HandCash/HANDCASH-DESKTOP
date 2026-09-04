@@ -1,6 +1,6 @@
 import type { ConnectedApp } from './permissions'
 import { focusMessagePeer } from './messageFocus'
-import { isPhoneShell } from './runtimePlatform'
+import { isCompactShell } from './isCompactShell'
 
 export type NavSection =
   | 'activity'
@@ -147,9 +147,9 @@ export function closeSideScan() {
 }
 
 export function openScanFlow() {
-  // Phone: Scan is a full nav child under Activity.
-  // Desktop: overlay the side column only — keep Collect / Settings / etc.
-  if (!isPhoneShell()) {
+  // Compact (phone or portrait/narrow desktop): Scan is a full nav child.
+  // Wide desktop: overlay the side column only — keep Collect / Settings / etc.
+  if (!isCompactShell()) {
     sideScanOpen = true
     emitSideScan()
     return

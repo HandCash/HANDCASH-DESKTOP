@@ -39,6 +39,11 @@ import {
   writeBrc39ArchiveSnapshot,
 } from './brc39Archive.js'
 import {
+  createAppTray,
+  destroyAppTray,
+  handleWindowCloseToTray,
+} from './tray.js'
+import {
   checkForUpdates,
   downloadUpdate,
   getUpdateStatus,
@@ -56,6 +61,7 @@ import {
 import { isTrustedAppUrl } from './appUrlPolicy.js'
 import { grantsAppCameraPermission } from './cameraPermissions.js'
 import { guardStdioWrites } from './brokenPipe.js'
+import { readOmarchyTheme, startOmarchyThemeWatch } from './omarchyTheme.js'
 
 // Before any transport can write: a closed stdout must not surface as a crash.
 guardStdioWrites([process.stdout, process.stderr], (err) => {
@@ -120,13 +126,7 @@ if (!app.requestSingleInstanceLock()) {
 }
 
 app.on('second-instance', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) {
-    createWindow()
-    return
-  }
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
+  showMainWindow()
 })
 
 if (process.platform === 'linux') {
@@ -358,29 +358,63 @@ function installAppMenu(): void {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
+function showMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow()
+    return
+  }
+  if (mainWindow.isMinimized()) mainWindow.restore()
+  mainWindow.show()
+  mainWindow.focus()
+  if (process.platform === 'darwin') app.dock?.show()
+  app.focus({ steal: true })
+}
+
 function createWindow(): void {
   const appearance = durableGet('handcash.appearance')
   let light = false
   if (appearance === 'light') light = true
   else if (appearance === 'dark') light = false
   else {
-    try {
-      light = nativeTheme.shouldUseDarkColors === false
-    } catch {
-      light = false
+    const omarchy = readOmarchyTheme()
+    if (omarchy.ok && omarchy.detected) {
+      light = omarchy.colors.mode === 'light'
+    } else {
+      try {
+        light = nativeTheme.shouldUseDarkColors === false
+      } catch {
+        light = false
+      }
     }
   }
+
+  const omarchyBg =
+    appearance !== 'light' && appearance !== 'dark'
+      ? (() => {
+          const o = readOmarchyTheme()
+          return o.ok && o.detected
+            ? o.colors.mode === 'dark'
+              ? o.colors.darkerBackground
+              : o.colors.background
+            : null
+        })()
+      : null
 
   mainWindow = new BrowserWindow({
     width: 1180,
     height: 760,
-    minWidth: 880,
-    minHeight: 600,
-    backgroundColor: light ? '#f6f7f6' : '#000000',
+    // Tiled WMs (Omarchy/Hyprland) need to go narrow/short; the UI switches to
+    // compact/phone shell when height > width or width ≤ 720.
+    minWidth: 360,
+    minHeight: 420,
+    backgroundColor: omarchyBg ?? (light ? '#f3f5f3' : '#000000'),
     title: 'HandCash',
     icon: getIconPath(),
     show: false,
     titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',
+    // Linux/Windows: native Edit/View/Window bar sits on top of our titlebar and
+    // steals tile space. Keep accelerators; Alt reveals the menu when needed.
+    autoHideMenuBar: process.platform !== 'darwin',
     webPreferences: {
       // Sandboxed preloads must be CommonJS; build:preload emits this bundle.
       preload: path.join(__dirname, 'preload.cjs'),
@@ -442,6 +476,10 @@ function createWindow(): void {
     failPendingBridgeRequests('window closed')
     mainWindow = null
   })
+
+  mainWindow.on('close', (event) => {
+    handleWindowCloseToTray(event, mainWindow!, () => quitting)
+  })
 }
 
 async function ensureBridge(): Promise<void> {
@@ -490,22 +528,38 @@ app.whenReady().then(async () => {
 
   createWindow()
   installAppMenu()
+  createAppTray({
+    getMainWindow: () => mainWindow,
+    showMainWindow,
+    isQuitting: () => quitting,
+  })
   await ensureBridge()
+
+  startOmarchyThemeWatch((snap) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send('omarchy:theme', snap)
+    }
+  })
 
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) {
       createWindow()
       void ensureBridge()
+    } else {
+      showMainWindow()
     }
   })
 })
 
 app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit()
+  // Stay alive in the tray on Linux/Windows; macOS keeps the app for dock activate.
+  if (process.platform === 'darwin') return
+  if (quitting) app.quit()
 })
 
 app.on('before-quit', () => {
   quitting = true
+  destroyAppTray()
   void bridge?.stop()
   bridge = null
   void devicePeer?.stop()
@@ -519,6 +573,8 @@ ipcMain.handle('app:get-info', () => ({
   isPackaged: app.isPackaged,
   platform: process.platform,
 }))
+
+ipcMain.handle('theme:get-omarchy', () => readOmarchyTheme())
 
 ipcMain.handle('app:get-log-info', () => {
   try {
@@ -660,12 +716,7 @@ ipcMain.handle('bridge:restart', async () => {
 })
 
 ipcMain.handle('app:focus-window', () => {
-  if (!mainWindow || mainWindow.isDestroyed()) return
-  if (mainWindow.isMinimized()) mainWindow.restore()
-  mainWindow.show()
-  mainWindow.focus()
-  if (process.platform === 'darwin') app.dock?.show()
-  app.focus({ steal: true })
+  showMainWindow()
 })
 
 ipcMain.handle('app:open-external', async (_event, url: unknown) => {

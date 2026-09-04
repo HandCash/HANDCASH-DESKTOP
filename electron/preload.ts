@@ -195,6 +195,9 @@ const handcash = {
   installUpdate: () => ipcRenderer.invoke('updater:install') as Promise<void>,
   onUpdateStatus: (handler: (status: UpdateStatus) => void) =>
     subscribe('updater:status', handler),
+  getOmarchyTheme: () => ipcRenderer.invoke('theme:get-omarchy'),
+  onOmarchyTheme: (handler: (payload: unknown) => void) =>
+    subscribe('omarchy:theme', handler),
 }
 
 contextBridge.exposeInMainWorld('handcash', handcash)

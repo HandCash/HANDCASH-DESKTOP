@@ -239,6 +239,11 @@ export function SettingsPanel() {
           <SettingsControlRow
             icon={SETTINGS_APPLICATION_ICONS.appearance}
             label="Appearance"
+            description={
+              appearance === 'system'
+                ? 'Follows Omarchy when detected, otherwise OS light/dark.'
+                : undefined
+            }
           >
             <SettingsIconToggle
               ariaLabel="Appearance"

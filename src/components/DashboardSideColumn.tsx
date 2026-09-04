@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import type { WalletProfile } from '../machines/appMachine'
-import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
+import { useCompactShell } from '../wallet/isCompactShell'
 import {
   resolvePermission,
   subscribePermissionRequests,
@@ -34,8 +34,10 @@ type Props = {
 /**
  * Desktop right column — permission prompts, payment progress, activity feed.
  * Isolated so payment-progress ticks do not re-render WalletNav / collectables.
+ * Compact / phone shells collapse this to WhatIsBsvPanel (layout-compact.css).
  */
 export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }: Props) {
+  const compact = useCompactShell()
   const sideRef = useRef<HTMLElement>(null)
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const [paymentProgress, setPaymentProgressState] = useState<PaymentProgress>(() =>
@@ -43,22 +45,21 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
   )
   const [lastApproved, setLastApproved] = useState<PendingAction | null>(null)
   const [sideScanOpen, setSideScanOpen] = useState(
-    () => !isMobileWalletPlatform() && getSideScanOpen(),
+    () => !compact && getSideScanOpen(),
   )
 
   const sideBusy =
-    !isMobileWalletPlatform() &&
-    (pendingPrompt != null || paymentProgress.phase !== 'idle')
-  const sideApproval = !isMobileWalletPlatform() && pendingPrompt != null
+    !compact && (pendingPrompt != null || paymentProgress.phase !== 'idle')
+  const sideApproval = !compact && pendingPrompt != null
 
   useEffect(() => {
-    if (isMobileWalletPlatform()) return
+    if (compact) return
     return subscribePermissionRequests(setPendingPrompt)
-  }, [])
+  }, [compact])
   useEffect(() => {
-    if (isMobileWalletPlatform()) return
+    if (compact) return
     return subscribePaymentProgress(setPaymentProgressState)
-  }, [])
+  }, [compact])
   useEffect(() => {
     if (pendingPrompt) setLastApproved(null)
   }, [pendingPrompt?.id])
@@ -67,12 +68,12 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
     sideRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
   }, [sideBusy, pendingPrompt?.id, paymentProgress.phase])
   useEffect(() => {
-    if (isMobileWalletPlatform()) return
+    if (compact) return
     return subscribeSideScan((open) => {
       setSideScanOpen(open)
       if (!open) releaseWarmedQrCamera()
     })
-  }, [])
+  }, [compact])
 
   const onPermissionAllow = useCallback(
     (autoPay?: { enabled: boolean; maxUsd: number; windowHours: number }) => {
@@ -121,8 +122,8 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
     return true
   }, [pendingPrompt])
 
-  if (isMobileWalletPlatform()) {
-    // Mobile layout (see mobile-overrides.css) expects this between hero and nav;
+  if (compact) {
+    // Compact layout (see layout-compact.css) expects this between hero and nav;
     // it is also the only toast viewport on phone shells.
     return <WhatIsBsvPanel />
   }

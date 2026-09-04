@@ -1,0 +1,735 @@
+/* Shared compact / phone shell layout.
+ *
+ * Applied when `html` has `.platform-mobile` (Capacitor) or `.layout-compact`
+ * (Desktop portrait / narrow tiled window). Phone-only keyboard inset still
+ * keys off `.platform-mobile` in JS.
+ */
+
+html:is(.platform-mobile, .layout-compact),
+html:is(.platform-mobile, .layout-compact) body {
+  overscroll-behavior: none;
+}
+
+/*
+ * Full-screen shell. Do NOT bind height to the visual viewport / keyboard —
+ * that compresses flex children (Activity collapses to almost nothing).
+ * Android uses adjustPan: the OS shifts the window up; we only scroll the
+ * focused field into view (keyboardInset.ts).
+ */
+html:is(.platform-mobile, .layout-compact) .app-shell {
+  min-height: 100dvh;
+  min-height: 100svh;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
+  bottom: 0;
+  margin-bottom: 0;
+  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
+}
+
+html:is(.platform-mobile, .layout-compact) .chat-composer,
+html:is(.platform-mobile, .layout-compact) .send-stage-edit .send-actions,
+html:is(.platform-mobile, .layout-compact) .send-stage-confirm .send-actions,
+html:is(.platform-mobile, .layout-compact) .burn-forget,
+html:is(.platform-mobile, .layout-compact) .friend-recipient-field {
+  scroll-margin-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+}
+
+/*
+ * Send / burn child panels use height:100% + overflow:hidden on desktop so
+ * stages do not resize between edit → confirm. On phone that clips the tall
+ * confirm stack (breakdown, notes, Forget). Let nav-child-body scroll instead.
+ */
+html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.send-panel) {
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.send-panel) .send-panel {
+  height: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+  overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.send-panel) .send-stage {
+  height: auto;
+  flex: 1 0 auto;
+  min-height: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .aeonToast__viewport {
+  bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar {
+  /* Keep Aeon 12px chrome; add notch/status inset on phones (0 on desktop). */
+  padding-top: calc(12px + env(safe-area-inset-top, 0px));
+  padding-bottom: 12px;
+  padding-left: max(12px, env(safe-area-inset-left, 0px));
+  padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+/* Light sheet on phone: status-bar inset and chrome must match paper, not the
+   dark Electron defaults or WebView force-dark leftovers. */
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) body {
+  background: var(--hc-glow);
+  color: var(--hc-text);
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .titlebar {
+  background: color-mix(in srgb, hsl(var(--background)) 94%, transparent);
+  border-bottom-color: hsl(var(--border));
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-stage {
+  background: transparent;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .what-is-bsv.panel {
+  box-shadow: var(--shadow-section);
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage,
+html:is(.platform-mobile, .layout-compact) .settings-scroll,
+html:is(.platform-mobile, .layout-compact) .nav-section-body,
+html:is(.platform-mobile, .layout-compact) .nav-child-body {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── Dashboard: hero → compact BSV row → content ── */
+html:is(.platform-mobile, .layout-compact) .dashboard {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: none;
+  height: 100%;
+  min-height: 100%;
+  gap: 8px;
+  overflow: hidden;
+  padding-bottom: calc(3.75rem + env(safe-area-inset-bottom, 0px));
+  box-sizing: border-box;
+}
+
+html:is(.platform-mobile, .layout-compact) .dashboard-main,
+html:is(.platform-mobile, .layout-compact) .dashboard-side {
+  display: contents;
+}
+
+html:is(.platform-mobile, .layout-compact) .dashboard-side > .history-panel {
+  display: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-hero {
+  order: 1;
+  flex-shrink: 0;
+}
+
+/* Balance on its own line; actions below with labels */
+html:is(.platform-mobile, .layout-compact) .wallet-hero-main {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+  overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-balance-slot {
+  flex: 0 0 auto;
+  width: 100%;
+  max-width: none;
+  min-height: 2.75rem;
+  justify-content: center;
+  overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-balance {
+  flex-direction: row;
+  align-items: baseline;
+  justify-content: center;
+  flex-wrap: nowrap;
+  gap: 0.4em;
+  white-space: nowrap;
+  width: max-content;
+  max-width: 100%;
+  font-size: 26px;
+  line-height: 1.15;
+  /* Defeat FitSlot scale that can shrink amounts away on narrow phones */
+  transform: none !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-balance .balance {
+  font-size: 1em;
+  white-space: nowrap;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-balance .balance-secondary {
+  font-size: 0.55em;
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions {
+  flex: 0 0 auto;
+  width: 100%;
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  gap: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 2px;
+  overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-action-label {
+  display: block !important;
+  width: 100%;
+  max-width: none;
+  font-size: var(--hc-text-2xs);
+  letter-spacing: var(--hc-tracking-label);
+  text-transform: uppercase;
+  font-weight: 700;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: visible;
+  text-overflow: clip;
+  text-align: center;
+  color: inherit;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv {
+  order: 2;
+  flex: 0 0 auto;
+  min-height: 0 !important;
+  height: auto !important;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  position: relative;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-market-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-cover {
+  padding: 10px 14px;
+  flex-direction: row;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-title {
+  font-size: 0.82rem;
+  letter-spacing: 0.05em;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-toast-body {
+  font-size: 0.78rem;
+  font-weight: 700;
+}
+
+/* Identity tab — compact hero + field list (matches Settings / Apps density). */
+html:is(.platform-mobile, .layout-compact) .identity-nav {
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Settings — pinned "Settings" head; scroll sections underneath (matches Activity). */
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(.settings-with-scroll)
+  > .wallet-nav-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .settings-with-scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .settings-scroll-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  touch-action: pan-y;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-hero {
+  gap: 12px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-qr-frame {
+  padding: 8px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-qr-frame img,
+html:is(.platform-mobile, .layout-compact) .identity-qr-frame .skeleton-qr {
+  width: 108px;
+  height: 108px;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-handle {
+  font-size: 1.15rem;
+}
+
+html:is(.platform-mobile, .layout-compact) .identity-key {
+  padding: 10px 12px;
+  font-size: 0.78rem;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-shell {
+  order: 3;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage {
+  flex: 1;
+  min-height: 0;
+  padding-bottom: 8px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-child-stage) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-child-stage) > .wallet-nav-panel.nav-child-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-section-with-scroll),
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.nav-section-with-scroll) > .wallet-nav-panel,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.settings-with-scroll) > .wallet-nav-panel {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-section-with-scroll .connected-panel-head,
+html:is(.platform-mobile, .layout-compact) .settings-with-scroll .connected-panel-head,
+html:is(.platform-mobile, .layout-compact) .settings-with-scroll .settings-panel-head {
+  position: relative;
+  top: auto;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-child-body {
+  -webkit-overflow-scrolling: touch;
+}
+
+html:is(.platform-mobile, .layout-compact) .connected-panel-head,
+html:is(.platform-mobile, .layout-compact) .panel-label-bar {
+  position: sticky;
+  top: 0;
+  z-index: 6;
+  margin-bottom: 4px;
+}
+
+/* Apps open via Scan / deep links — not an inline URL field on this tab. */
+html:is(.platform-mobile, .layout-compact) .app-browser-launcher {
+  display: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.empty-state) {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.empty-state) > .wallet-nav-panel,
+html:is(.platform-mobile, .layout-compact) .nav-section-body:has(> .empty-state) {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .empty-state {
+  flex: 1 1 auto;
+  min-height: 0;
+  place-content: center;
+  padding: 16px 14px;
+}
+
+/* Compact BSV ticker: logo/name | sparkline | price */
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-row {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 42%;
+  gap: 8px;
+  order: 1;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-btn,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-stack,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-logo-skeleton {
+  width: 32px !important;
+  height: 32px !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-asset-text strong {
+  font-size: 0.78rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-change {
+  font-size: 0.68rem;
+}
+
+/* Compact must not force neon — neon fails on the light sheet. */
+html:is(.platform-mobile, .layout-compact):not([data-aeon-mode='light'])
+  .what-is-bsv
+  .bsv-change.is-up {
+  color: #57ff97 !important;
+}
+
+html:is(.platform-mobile, .layout-compact):not([data-aeon-mode='light'])
+  .what-is-bsv
+  .bsv-change.is-down {
+  color: #ff8e8e !important;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .what-is-bsv
+  .bsv-change.is-up {
+  color: #0c8f3e !important;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .what-is-bsv
+  .bsv-change.is-down {
+  color: #b91c1c !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage {
+  display: block !important;
+  order: 2;
+  position: relative;
+  flex: 1 1 auto;
+  min-width: 56px;
+  min-height: 28px;
+  height: 28px;
+  margin: 0 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-panel {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  pointer-events: none;
+  transform: none;
+  transition: opacity 160ms ease;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage[data-aeon-state~='chart'] .bsv-stage-chart {
+  opacity: 1;
+  pointer-events: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-stage-about {
+  display: none !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-spark-empty {
+  width: 100%;
+  height: 28px;
+  margin: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price,
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-price-skeleton {
+  order: 3;
+  margin: 0;
+  flex-shrink: 0;
+  font-size: 1.05rem;
+  letter-spacing: 0.02em;
+}
+
+html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-about {
+  display: none !important;
+}
+
+/* Aeon wallet-nav dock — fixed, lean, labels always on */
+html:is(.platform-mobile, .layout-compact) [data-aeon-scope='wallet-nav'] .wallet-nav-bar,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
+  position: fixed;
+  left: 4px;
+  right: 4px;
+  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
+  z-index: 40;
+  box-sizing: border-box;
+  padding: 3px;
+  border: 1px solid hsl(var(--border));
+  border-radius: calc(var(--radius, 0.5rem) * 1.75);
+  background: color-mix(in srgb, hsl(var(--background)) 90%, transparent);
+  backdrop-filter: blur(14px) saturate(1.15);
+  -webkit-backdrop-filter: blur(14px) saturate(1.15);
+  box-shadow:
+    0 4px 16px rgba(0, 0, 0, 0.32),
+    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 5%, transparent) inset;
+  overflow: hidden;
+  scroll-snap-type: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-bar-track {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  gap: 1px;
+  justify-content: stretch;
+  align-items: stretch;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
+  position: relative;
+  flex: 1 1 0;
+  min-width: 0;
+  min-height: 0;
+  height: 40px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  gap: 2px;
+  padding: 4px 1px;
+  border-radius: calc(var(--radius, 0.5rem) * 1.25);
+  scroll-snap-align: none;
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  background: transparent;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab svg {
+  width: 17px;
+  height: 17px;
+  flex-shrink: 0;
+}
+
+/* Mobile: short labels only on the selected tab; full names stay in aria-label/title */
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label {
+  display: none !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label-short {
+  display: none;
+  position: static;
+  left: auto;
+  top: auto;
+  transform: none;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  font-family: var(--font-display, var(--hc-display));
+  font-size: 0.5rem;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  text-align: center;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active .wallet-nav-tab-label-short,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'] .wallet-nav-tab-label-short,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] .wallet-nav-tab-label-short {
+  display: block;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab:hover {
+  background: color-mix(in srgb, hsl(var(--foreground)) 5%, transparent);
+  color: hsl(var(--foreground));
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
+  flex: 1 1 0;
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 12%, transparent);
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active::after,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true']::after,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after {
+  content: none;
+}
+
+/* Light sheet: the dark nav shadow reads muddy on paper. */
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
+  background: color-mix(in srgb, hsl(var(--background)) 94%, transparent);
+  border-color: hsl(var(--border));
+  box-shadow:
+    0 4px 16px rgba(15, 23, 42, 0.1),
+    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 8%, transparent) inset;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
+  color: hsl(var(--primary));
+  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
+}
+
+@media (max-width: 640px) {
+  html:is(.platform-mobile, .layout-compact) .auth-screen {
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  html:is(.platform-mobile, .layout-compact) .qr-scanner {
+    max-width: min(100%, 420px);
+  }
+
+  html:is(.platform-mobile, .layout-compact) .link-device-qr img {
+    max-width: min(100%, 360px);
+  }
+
+  html:is(.platform-mobile, .layout-compact) .send-collectable-panel .send-layout,
+  html:is(.platform-mobile, .layout-compact) .burn-panel .send-layout,
+  html:is(.platform-mobile, .layout-compact) .send-fungible-panel .send-layout {
+    padding-bottom: calc(12px + env(safe-area-inset-bottom, 0px));
+  }
+
+  html:is(.platform-mobile, .layout-compact) .scan-choice {
+    padding-bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  }
+}
+
+/* ── Chat expanded: hide balance + BSV row; nav panel stays in container ── */
+html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen {
+  gap: 8px;
+}
+
+html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .wallet-hero,
+html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .what-is-bsv {
+  display: none !important;
+}
+
+html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .wallet-nav-shell {
+  order: 3;
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.chat-with-scroll) {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-stage:has(.chat-with-scroll) > .wallet-nav-panel.nav-child-stage {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.chat-with-scroll) {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+/* ── Nested chat in nav (Friends → Chat) ── */
+html:is(.platform-mobile, .layout-compact) .chat-with-scroll,
+html:is(.platform-mobile, .layout-compact) .chat-shell--nested {
+  min-height: 0;
+  flex: 1 1 auto;
+}
+
+html:is(.platform-mobile, .layout-compact) .chat-shell--nested .chat-composer {
+  padding-bottom: calc(10px + env(safe-area-inset-bottom, 0px));
+}
+
+html:is(.platform-mobile, .layout-compact) .chat-shell--nested[data-aeon-state='thread'] .chat-thread {
+  min-height: 0;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .nav-section-scroll-body,
+html:is(.platform-mobile, .layout-compact) .settings-scroll-body {
+  -webkit-overflow-scrolling: touch;
+}
+
+/* Burn in-flight — warm amber, not error red (matches shared handcash.css). */
+html:is(.platform-mobile, .layout-compact) .history-pending-mark.is-burn,
+html:is(.platform-mobile, .layout-compact) .collectable-sending-mark.is-burn {
+  color: #e8b060;
+  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
+  background: color-mix(in srgb, #c9852a 18%, hsl(var(--background)));
+}
+
+html:is(.platform-mobile, .layout-compact) .collectable-burn-btn.is-burning,
+html:is(.platform-mobile, .layout-compact) .asset-burn-trigger.is-burning {
+  color: #e8b060;
+  border-color: color-mix(in srgb, #c9852a 55%, transparent);
+  background: color-mix(in srgb, #c9852a 14%, transparent);
+}
+
+html:is(.platform-mobile, .layout-compact) .collect-token-card[data-sending='true'] .collectable-burn-btn.is-burning {
+  opacity: 1;
+}

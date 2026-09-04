@@ -5,22 +5,22 @@
   --background: 0 0% 0%;
   --foreground: 0 0% 98%;
   --card: 0 0% 3.9%;
-  --card-foreground: 0 0% 98%;
-  --popover: 0 0% 3.9%;
-  --popover-foreground: 0 0% 98%;
+  --card-foreground: 0 0% 96%;
+  --popover: 0 0% 8.5%;
+  --popover-foreground: 0 0% 96%;
   --primary: 143 100% 67%;
-  --primary-foreground: 0 0% 14%;
+  --primary-foreground: 0 0% 8%;
   --secondary: 0 0% 14.9%;
-  --secondary-foreground: 0 0% 98%;
+  --secondary-foreground: 0 0% 96%;
   --secondary-background: 0 0% 20%;
   --muted: 0 0% 14.9%;
-  --muted-foreground: 0 0% 63.9%;
+  --muted-foreground: 240 5% 64.9%;
   --accent: 0 0% 14.9%;
-  --accent-foreground: 0 0% 98%;
+  --accent-foreground: 0 0% 96%;
   --destructive: 0 91% 71%;
   --destructive-foreground: 0 0% 98%;
-  --border: 0 0% 14.9%;
-  --input: 0 0% 14.9%;
+  --border: 0 0% 16.5%;
+  --input: 0 0% 16.5%;
   --ring: 0 0% 83.1%;
   --dark-green: 143 58% 54%;
   --bg-light: 0 0% 15%;
@@ -59,6 +59,39 @@
   --hc-radius: var(--aeon-radius, var(--radius));
   --hc-shadow: 0 20px 40px -12px rgba(0, 0, 0, 0.5);
 
+  /*
+   * Type scale (premium floor)
+   * — Syncopate only for brand / balance / hero moments (wide tracking needs room).
+   * — Archivo for UI chrome; never set body chrome below 11px (was 9px ghosts).
+   * — Tracking: display 0.06em, labels 0.04em, body near 0.01em.
+   */
+  --hc-text-2xs: 0.6875rem; /* 11px */
+  --hc-text-xs: 0.75rem; /* 12px */
+  --hc-text-sm: 0.8125rem; /* 13px */
+  --hc-text-md: 0.875rem; /* 14px */
+  --hc-text-lg: 1rem;
+  --hc-text-xl: 1.125rem;
+  --hc-text-balance: clamp(1.65rem, 3.6vw, 2.35rem);
+  --hc-leading-tight: 1.15;
+  --hc-leading-snug: 1.35;
+  --hc-leading-body: 1.5;
+  --hc-tracking-display: 0.06em;
+  --hc-tracking-label: 0.04em;
+  --hc-tracking-body: 0.01em;
+
+  /*
+   * Spacing rhythm (4px base)
+   * Panels: 16px inset. Stacks: 12px gap. Dense rows: 10×12. Avoid 14/18 one-offs.
+   */
+  --hc-space-1: 4px;
+  --hc-space-2: 8px;
+  --hc-space-3: 12px;
+  --hc-space-4: 16px;
+  --hc-space-5: 20px;
+  --hc-space-6: 24px;
+  --hc-pad-panel: var(--hc-space-4);
+  --hc-gap-stack: var(--hc-space-3);
+
   /* Recessed surfaces. Were literal rgba(0,0,0,x) everywhere, which is invisible
      on a white sheet — inset must darken on black and on paper alike. */
   --hc-sunken-soft: rgba(0, 0, 0, 0.22);
@@ -80,67 +113,62 @@
   --hc-claimed: #e0b35a;
 }
 
-/* White sheet — HSL product tokens when Settings appearance resolves to light.
-   Aeon --colors-aeon-* come from applyBrandPalette; these keep hsl(var(--*)) paths honest. */
+/* White sheet — keep hsl(var(--*)) paths in lockstep with HANDCASH_LIGHT_PALETTE.
+   Neutrals use hue ~140 (brand-adjacent), not cool slate 215 — that blue-gray
+   cast is what made paper whites feel “off” next to true #fff fields. */
 html[data-aeon-mode='light'] {
   color-scheme: light;
 
-  /* Neutrals and --primary mirror handcash.io's light :root. On paper the
-     brand's load-bearing colour is black, not green: primary fills (CTA,
-     focus ring, checkbox) are near-black with white text, and green is
-     demoted to an accent. Green keeps only the roles where it carries
-     meaning — see --hc-brand and --hc-accent. */
-  --background: 215 14% 97%;
-  --foreground: 220 12% 22%;
-  --card: 215 12% 99%;
-  --card-foreground: 220 12% 22%;
-  --popover: 215 12% 99%;
-  --popover-foreground: 220 12% 22%;
+  /* Black remains the load-bearing chrome colour; green is meaning-only. */
+  --background: 140 8% 96%;
+  --foreground: 140 8% 11%;
+  --card: 0 0% 100%;
+  --card-foreground: 140 8% 11%;
+  --popover: 0 0% 100%;
+  --popover-foreground: 140 8% 11%;
   --primary: 0 0% 9%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 215 14% 93%;
-  --secondary-foreground: 220 12% 22%;
-  --secondary-background: 215 12% 91%;
-  --muted: 215 12% 94%;
-  --muted-foreground: 220 10% 48%;
-  --accent: 215 12% 94%;
-  --accent-foreground: 220 12% 22%;
-  --destructive: 0 84% 60%;
+  --secondary: 140 8% 92%;
+  --secondary-foreground: 140 8% 11%;
+  --secondary-background: 140 7% 90%;
+  --muted: 140 7% 93%;
+  --muted-foreground: 140 5% 38%;
+  --accent: 140 7% 93%;
+  --accent-foreground: 140 8% 11%;
+  --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 215 14% 88%;
-  --input: 215 14% 88%;
-  --ring: 143 84% 33%;
-  --dark-green: 143 84% 33%;
-  --bg-light: 215 12% 94%;
-  --shadow-section: 0 1px 3px rgba(15, 23, 42, 0.06);
-  --shadow-section-hover: 0 4px 12px rgba(15, 23, 42, 0.08);
-  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.16), transparent 55%),
-    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.06), transparent 50%),
+  --border: 140 6% 84%;
+  --input: 140 6% 84%;
+  --ring: 143 84% 30%;
+  --dark-green: 143 84% 30%;
+  --bg-light: 140 7% 93%;
+  --shadow-section: 0 1px 2px rgba(26, 31, 26, 0.05), 0 1px 3px rgba(26, 31, 26, 0.04);
+  --shadow-section-hover: 0 4px 14px rgba(26, 31, 26, 0.08);
+  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.12), transparent 55%),
+    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.05), transparent 50%),
     var(--hc-bg);
-  --hc-shadow: 0 16px 36px -14px rgba(15, 23, 42, 0.16);
+  --hc-shadow: 0 16px 36px -14px rgba(26, 31, 26, 0.14);
 
-  --hc-sunken-soft: rgba(15, 23, 42, 0.03);
-  --hc-sunken: rgba(15, 23, 42, 0.045);
-  --hc-sunken-strong: rgba(15, 23, 42, 0.07);
+  --hc-sunken-soft: rgba(26, 31, 26, 0.035);
+  --hc-sunken: rgba(26, 31, 26, 0.05);
+  --hc-sunken-strong: rgba(26, 31, 26, 0.075);
   --hc-field: #ffffff;
-  --hc-hover: rgba(15, 23, 42, 0.05);
+  --hc-hover: rgba(26, 31, 26, 0.045);
   --hc-deep: #ffffff;
 
-  --hc-accent-deep: #0b4526;
+  --hc-accent-deep: #0a3d22;
 
-  /* Success is read as foreground (settings statuses, saved slices, banners).
-     The neon is ~1.4:1 on this sheet, so it deepens to the brand hue at L26%
-     — still HandCash green, legible as small type on paper. */
-  --hc-success: hsl(143 78% 26%);
+  /* Success as foreground on paper — brand hue, deep enough for small type. */
+  --hc-success: hsl(143 72% 28%);
 
-  --hc-warn: #a16207;
+  --hc-warn: #9a6700;
   --hc-error: #b91c1c;
   --hc-down: #dc2626;
   --hc-fail: #b91c1c;
   --hc-info: #1d4ed8;
-  --hc-gold: #a16207;
-  --hc-gold-soft: #92610a;
-  --hc-claimed: #a16207;
+  --hc-gold: #9a6700;
+  --hc-gold-soft: #8a5b0a;
+  --hc-claimed: #9a6700;
 }
 
 * {
@@ -156,12 +184,18 @@ input {
 /* Product atmosphere — shell/titlebar/stage/scrollbars live in Aeon electron.css */
 body {
   background: var(--hc-glow);
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-md);
+  line-height: var(--hc-leading-body);
+  letter-spacing: var(--hc-tracking-body);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
 
 .brand {
   display: flex;
   align-items: center;
-  gap: 12px;
+  gap: var(--hc-space-3);
 }
 
 .brand-wordmark {
@@ -213,17 +247,19 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 .brand-name {
   font-family: var(--hc-display);
   font-weight: 700;
-  letter-spacing: 0.08em;
+  letter-spacing: var(--hc-tracking-display);
   text-transform: uppercase;
-  font-size: 0.95rem;
-  line-height: 1.05;
+  font-size: var(--hc-text-lg);
+  line-height: var(--hc-leading-tight);
   margin: 0;
 }
 
 .brand-sub {
   color: var(--hc-muted);
-  font-size: 0.72rem;
-  letter-spacing: 0.06em;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-2xs);
+  font-weight: 600;
+  letter-spacing: var(--hc-tracking-label);
   text-transform: uppercase;
   display: inline-flex;
   align-items: center;
@@ -234,14 +270,15 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 
 .brand-beta {
   font-family: var(--hc-font);
-  font-size: 9px;
+  font-size: var(--hc-text-2xs);
   font-weight: 800;
-  letter-spacing: 0.08em;
-  padding: 0 4px;
+  letter-spacing: var(--hc-tracking-label);
+  padding: 0 var(--hc-space-1);
   border-radius: 3px;
-  border: 1px solid hsl(var(--primary) / 0.45);
-  background: hsl(var(--primary) / 0.12);
-  color: var(--hc-accent);
+  /* Always HandCash yellow — never follows Omarchy / sheet accent. */
+  border: 1px solid color-mix(in srgb, #f5c518 55%, transparent);
+  background: color-mix(in srgb, #f5c518 16%, transparent);
+  color: #f5c518;
   line-height: 1.2;
   text-transform: uppercase;
 }
@@ -249,24 +286,24 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 /* Spec / BRC markers — same family as Beta, quieter. */
 .spec-tag {
   font-family: var(--hc-font);
-  font-size: 9px;
+  font-size: var(--hc-text-2xs);
   font-weight: 650;
-  letter-spacing: 0.05em;
+  letter-spacing: var(--hc-tracking-label);
   padding: 0 5px;
   border-radius: 3px;
   border: 1px solid hsl(var(--border));
   background: var(--hc-hover);
   color: var(--hc-muted);
-  line-height: 1.35;
+  line-height: var(--hc-leading-snug);
   text-transform: uppercase;
   white-space: nowrap;
 }
 
 .brand-version {
   font-family: var(--hc-font);
-  font-size: 9px;
+  font-size: var(--hc-text-2xs);
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--hc-tracking-label);
   color: var(--hc-muted);
   font-variant-numeric: tabular-nums;
   text-transform: none;
@@ -280,7 +317,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   border-radius: 999px;
   border: 1px solid hsl(var(--border));
   background: hsl(var(--secondary));
-  color: var(--hc-accent);
+  /* Synced / live stays HandCash neon — not Omarchy accent. */
+  color: #57ff97;
   /* Shared by button + static pill — never let `font: inherit` wipe these. */
   font-family: inherit;
   font-size: 0.875rem;
@@ -299,6 +337,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   line-height: inherit;
 }
 
+.status-pill[data-tone='ok'],
+.status-pill[data-tone='busy'] {
+  color: #57ff97;
+}
+
 .status-pill[data-tone='muted'] {
   color: var(--hc-muted);
 }
@@ -309,10 +352,6 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 
 .status-pill[data-tone='error'] {
   color: var(--hc-error);
-}
-
-.status-pill[data-tone='busy'] {
-  color: var(--hc-accent);
 }
 
 .status-pill-btn {
@@ -341,15 +380,20 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   opacity: 0.9;
 }
 
-/* Live/OK indicator: green is the meaning here, so it does not follow
-   --primary to black on the light sheet. */
+/* Live/OK indicator: always HandCash neon — theme accent must not recolor it. */
 .status-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--hc-accent);
-  box-shadow: 0 0 10px hsl(var(--hc-brand) / 0.8);
+  background: #57ff97;
+  box-shadow: 0 0 10px rgba(87, 255, 151, 0.8);
   flex-shrink: 0;
+}
+
+.status-dot[data-tone='ok'],
+.status-dot[data-tone='busy'] {
+  background: #57ff97;
+  box-shadow: 0 0 10px rgba(87, 255, 151, 0.8);
 }
 
 .status-dot[data-tone='muted'],
@@ -772,7 +816,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   border: 1px solid hsl(var(--input));
   background: hsl(var(--secondary));
   color: var(--hc-text);
-  padding: 12px 14px;
+  padding: var(--hc-space-3) var(--hc-space-4);
   outline: none;
   transition: border-color 160ms ease, box-shadow 160ms ease;
 }
@@ -838,12 +882,14 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   appearance: none;
   border: 1px solid transparent;
   border-radius: var(--radius);
-  padding: 11px 16px;
+  padding: 10px var(--hc-space-4);
   cursor: pointer;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-family: var(--hc-font);
+  font-weight: 650;
+  letter-spacing: var(--hc-tracking-label);
   text-transform: uppercase;
-  font-size: 0.78rem;
+  font-size: var(--hc-text-sm);
+  line-height: 1.2;
   transition: transform 140ms ease, background 140ms ease, border-color 140ms ease,
     box-shadow 140ms ease, filter 140ms ease;
 }
@@ -877,14 +923,40 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 .btn-ghost {
-  background: transparent;
-  border-color: hsl(var(--border));
+  background: color-mix(in srgb, var(--hc-text) 6%, var(--hc-surface));
+  border-color: color-mix(in srgb, var(--hc-text) 22%, transparent);
   color: var(--hc-text);
 }
 
 .btn-ghost:hover {
-  background: hsl(var(--primary) / 0.1);
-  border-color: hsl(var(--primary) / 0.35);
+  background: color-mix(in srgb, var(--hc-accent) 14%, var(--hc-surface));
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  color: var(--hc-text);
+}
+
+/* Wallet quick actions — peer set; no single filled CTA. */
+.wallet-actions .btn,
+.wallet-actions .btn-ghost,
+.wallet-actions .btn-primary {
+  background: color-mix(in srgb, var(--hc-text) 8%, var(--hc-surface));
+  border-color: color-mix(in srgb, var(--hc-text) 28%, transparent);
+  color: var(--hc-text);
+  animation: none;
+  filter: none;
+}
+
+.wallet-actions .btn:hover,
+.wallet-actions .btn-ghost:hover,
+.wallet-actions .btn-primary:hover {
+  background: color-mix(in srgb, var(--hc-accent) 14%, var(--hc-surface));
+  border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
+  color: var(--hc-text);
+  filter: none;
+}
+
+.wallet-actions .btn svg {
+  opacity: 1;
+  color: inherit;
 }
 
 .btn-danger {
@@ -926,29 +998,30 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 
 .balance {
   font-family: var(--hc-display);
-  font-size: clamp(1.55rem, 3.4vw, 2.2rem);
+  font-size: var(--hc-text-balance);
   font-weight: 700;
   letter-spacing: 0.02em;
-  margin: 4px 0 0;
+  line-height: var(--hc-leading-tight);
+  margin: var(--hc-space-1) 0 0;
 }
 
 .balance-usd {
   color: var(--hc-text);
-  letter-spacing: 0.01em;
+  letter-spacing: var(--hc-tracking-body);
 }
 
 .balance-unit {
-  font-size: 0.45em;
-  letter-spacing: 0.12em;
+  font-size: 0.42em;
+  letter-spacing: 0.08em;
   color: var(--hc-muted);
   vertical-align: middle;
 }
 
 .balance-sats {
-  margin: 4px 0 0;
+  margin: var(--hc-space-1) 0 0;
   color: var(--hc-muted);
-  font-size: 0.8rem;
-  letter-spacing: 0.04em;
+  font-size: var(--hc-text-sm);
+  letter-spacing: var(--hc-tracking-label);
 }
 
 .balance-rate {
@@ -1232,7 +1305,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   height: 100%;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
-  gap: 12px;
+  gap: var(--hc-gap-stack);
   min-width: 0;
   overflow: hidden;
   animation: rise 420ms cubic-bezier(0.22, 1, 0.36, 1) both;
@@ -1243,7 +1316,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   min-height: 0;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
-  gap: 12px;
+  gap: var(--hc-gap-stack);
   overflow: hidden;
 }
 
@@ -1259,7 +1332,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   height: 100%;
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: var(--hc-gap-stack);
   overflow: hidden;
 }
 
@@ -1273,8 +1346,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   min-height: 280px;
   height: 100%;
   max-height: 100%;
-  padding: 14px 16px 16px;
-  gap: 12px;
+  padding: var(--hc-pad-panel);
+  gap: var(--hc-gap-stack);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1294,9 +1367,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 .scan-side-title {
   margin: 0;
   font-family: var(--hc-font);
-  font-size: 0.88rem;
+  font-size: var(--hc-text-md);
   font-weight: 650;
-  letter-spacing: 0.01em;
+  font-variant-caps: all-small-caps;
+  text-transform: none;
+  letter-spacing: 0.05em;
   line-height: 28px;
   color: var(--hc-text);
 }
@@ -1516,7 +1591,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
     background-color 200ms ease;
 }
 
-/* Soft CRT: sparse scanlines + faint phosphor haze (not a pixel grid). */
+/* Soft life — faint glow + vignette only. No scanlines / pixel grid. */
 .bsv-toast-cover::before {
   content: '';
   position: absolute;
@@ -1524,25 +1599,18 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   z-index: 0;
   border-radius: inherit;
   pointer-events: none;
-  background-image:
-    repeating-linear-gradient(
-      0deg,
-      transparent 0,
-      transparent 5px,
-      rgba(0, 0, 0, 0.028) 5px,
-      rgba(0, 0, 0, 0.028) 6px
+  background:
+    radial-gradient(
+      ellipse 85% 70% at 50% 35%,
+      color-mix(in srgb, #fff 14%, transparent) 0%,
+      transparent 58%
     ),
     radial-gradient(
-      ellipse 90% 70% at 50% 45%,
-      rgba(0, 0, 0, 0.04) 0%,
-      transparent 72%
+      ellipse 120% 100% at 50% 100%,
+      color-mix(in srgb, #000 10%, transparent) 0%,
+      transparent 55%
     );
-  background-size:
-    100% 6px,
-    100% 100%;
   opacity: 0.55;
-  mix-blend-mode: multiply;
-  filter: blur(0.35px);
 }
 
 .bsv-toast-cover::after {
@@ -1552,12 +1620,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   z-index: 0;
   border-radius: inherit;
   pointer-events: none;
-  background: radial-gradient(
-    ellipse 130% 90% at 50% 40%,
-    transparent 55%,
-    rgba(0, 0, 0, 0.08) 100%
-  );
-  opacity: 0.4;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+  opacity: 0.7;
 }
 
 .bsv-toast-cover > * {
@@ -1571,10 +1635,17 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   transform: translateY(0);
 }
 
-/* Bright success — brand green, not --primary; black type for contrast. */
+/* Bright success — brand green; dark type only when the fill stays luminous. */
 .bsv-toast-cover[data-tone='success'] {
   background: color-mix(in srgb, hsl(var(--hc-brand)) 88%, #c8ffe0);
-  color: #0a0a0a;
+  color: #0a120e;
+}
+
+html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='success'] {
+  /* Paper sheet: soft mint fill + deep brand ink (not neon on white). */
+  background: color-mix(in srgb, hsl(var(--dark-green)) 18%, #ffffff);
+  color: hsl(143 72% 22%);
+  border: 1px solid color-mix(in srgb, hsl(var(--dark-green)) 28%, transparent);
 }
 
 /* Dark error — keep light type. */
@@ -1584,13 +1655,17 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 .bsv-toast-cover[data-tone='error']::before {
-  mix-blend-mode: soft-light;
-  opacity: 0.5;
+  opacity: 0.45;
 }
 
+/* Neutral: raised surface + readable ink (never force black on dark Omarchy). */
 .bsv-toast-cover[data-tone='neutral'] {
-  background: color-mix(in srgb, var(--colors-aeon-surface-raised, hsl(var(--card))) 70%, hsl(var(--primary)));
-  color: #0a0a0a;
+  background: color-mix(
+    in srgb,
+    var(--colors-aeon-surface-raised, hsl(var(--card))) 82%,
+    var(--colors-aeon-accent, hsl(var(--primary)))
+  );
+  color: var(--hc-text);
 }
 
 .bsv-toast-title {
@@ -1712,7 +1787,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   font: inherit;
   font-size: 0.82rem;
   font-variant-numeric: tabular-nums;
-  color: inherit;
+  color: var(--hc-text);
   cursor: pointer;
   border-radius: 4px;
   text-align: left;
@@ -1724,7 +1799,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 .bsv-change:focus-visible {
-  outline: 2px solid var(--hc-accent, #38d39f);
+  outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
   outline-offset: 2px;
 }
 
@@ -1775,20 +1850,24 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   background: rgba(255, 255, 255, 0.03);
 }
 
+/* Market direction is semantic — never Omarchy accent / sheet primary. */
 .bsv-spark-up {
-  color: var(--hc-accent);
+  color: #57ff97;
 }
 
 .bsv-spark-down {
-  color: var(--hc-down);
+  color: #ff8e8e;
 }
 
+/* % change text — green↑ / red↓ only (never theme accent). */
+button.bsv-change.is-up,
 .bsv-change.is-up {
-  color: var(--hc-accent);
+  color: #57ff97 !important;
 }
 
+button.bsv-change.is-down,
 .bsv-change.is-down {
-  color: var(--hc-down);
+  color: #ff8e8e !important;
 }
 
 .bsv-about {
@@ -1874,13 +1953,13 @@ html[data-aeon-mode='light'] .brand-logo-mark {
     overflow: auto;
   }
 
+  /* Short tiles: don't force 70vh panels — compact class handles phone shell. */
   .dashboard-main {
-    min-height: min(70vh, 640px);
+    min-height: 0;
   }
 
-  /* Keep the approval column tall enough when the grid stacks. */
   .dashboard-side[data-aeon-state='permission'] {
-    min-height: min(70vh, 560px);
+    min-height: 0;
   }
 
   .wallet-hero-main {
@@ -2443,7 +2522,7 @@ button.wallet-detail-value.is-copied {
 
 .connected-panel {
   margin-top: 0;
-  padding: 14px 16px;
+  padding: var(--hc-pad-panel);
 }
 
 .wallet-nav-shell {
@@ -2470,7 +2549,7 @@ button.wallet-detail-value.is-copied {
   min-width: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 12px 14px;
+  padding: var(--hc-space-3) var(--hc-pad-panel);
   scrollbar-gutter: stable;
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
@@ -3450,17 +3529,20 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .wallet-hero-title {
   margin: 0;
-  font-family: var(--hc-display);
-  font-size: 0.78rem;
-  font-weight: 700;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-md);
+  font-weight: 650;
+  /* Unicase: caps and lowercase render the same — no ALL-CAPS shout. */
+  font-variant-caps: all-small-caps;
+  text-transform: none;
+  letter-spacing: 0.05em;
   line-height: 28px;
   height: 28px;
   display: flex;
   align-items: center;
   flex: 1;
   min-width: 0;
+  color: color-mix(in srgb, var(--hc-text) 82%, transparent);
 }
 
 .wallet-sync-note {
@@ -3476,7 +3558,7 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .wallet-nav-bar {
   display: block;
-  padding: 8px 10px;
+  padding: 10px var(--hc-space-3);
   border-top: 1px solid hsl(var(--border));
   background: var(--hc-sunken);
   flex-shrink: 0;
@@ -3517,7 +3599,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   border: 0;
   border-radius: 10px;
   background: transparent;
-  color: var(--hc-muted);
+  color: color-mix(in srgb, var(--hc-text) 72%, transparent);
   cursor: pointer;
   font: inherit;
   scroll-snap-align: start;
@@ -3538,8 +3620,15 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-nav-tab.is-active,
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-accent) 16%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent) 28%, transparent);
+}
+
+.wallet-nav-tab.is-active svg,
+.wallet-nav-tab[aria-selected='true'] svg,
+.wallet-nav-tab[data-selected] svg {
   color: var(--hc-accent);
-  background: color-mix(in srgb, var(--hc-accent) 10%, transparent);
 }
 
 .wallet-nav-bar[data-permission] .wallet-nav-bar-track {
@@ -4506,13 +4595,14 @@ button.payment-details-item-thumb-btn:hover {
 
 .collection-view-btn:hover {
   color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
+  background: var(--hc-hover);
 }
 
 .collection-view-btn[data-active],
 .collection-view-btn[aria-pressed='true'] {
-  color: var(--hc-accent);
-  background: color-mix(in srgb, var(--hc-accent) 12%, transparent);
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-accent) 18%, var(--hc-surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent) 35%, transparent);
 }
 
 .collection-grid {
@@ -4534,13 +4624,14 @@ button.payment-details-item-thumb-btn:hover {
   display: grid;
   border-radius: calc(var(--hc-radius) + 4px);
   border: 1px solid hsl(var(--border));
-  background: rgba(255, 255, 255, 0.02);
+  background: var(--hc-surface);
   overflow: hidden;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 6%, transparent);
 }
 
 .collection-grid-card:hover {
-  border-color: color-mix(in srgb, var(--hc-accent) 35%, transparent);
-  background: rgba(87, 255, 151, 0.04);
+  border-color: color-mix(in srgb, var(--hc-accent) 35%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--hc-accent) 8%, var(--hc-surface));
 }
 
 .collection-grid-main {
@@ -4589,10 +4680,11 @@ button.payment-details-item-thumb-btn:hover {
 .nav-breadcrumb {
   margin: 0;
   font-family: var(--hc-font);
-  font-size: 0.88rem;
+  font-size: var(--hc-text-md);
   font-weight: 650;
-  letter-spacing: 0.01em;
+  font-variant-caps: all-small-caps;
   text-transform: none;
+  letter-spacing: 0.05em;
   line-height: 28px;
   height: 28px;
   display: flex;
@@ -4761,7 +4853,7 @@ button.payment-details-item-thumb-btn:hover {
 }
 
 .connected-app-row:hover {
-  background: rgba(87, 255, 151, 0.04);
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
 }
 
 .connected-app-row-live {
@@ -5689,16 +5781,16 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-row:hover {
-  background: rgba(87, 255, 151, 0.04);
+  background: color-mix(in srgb, var(--hc-accent) 8%, transparent);
 }
 
 .settings-row-main {
   display: flex;
   align-items: flex-start;
-  gap: 12px;
+  gap: var(--hc-space-3);
   width: 100%;
   margin: 0;
-  padding: 8px;
+  padding: 10px var(--hc-space-3);
   border: 0;
   border-radius: 10px;
   background: transparent;
@@ -5738,12 +5830,14 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 .settings-row-body {
   min-width: 0;
   display: grid;
-  gap: 2px;
+  gap: var(--hc-space-1);
 }
 
 .settings-row-label {
-  font-size: 0.92rem;
+  font-size: var(--hc-text-md);
   font-weight: 600;
+  letter-spacing: var(--hc-tracking-body);
+  line-height: var(--hc-leading-snug);
   display: inline-flex;
   align-items: center;
   gap: 7px;
@@ -5751,8 +5845,9 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-row-desc {
-  font-size: 0.78rem;
-  line-height: 1.35;
+  font-size: var(--hc-text-sm);
+  line-height: var(--hc-leading-snug);
+  letter-spacing: var(--hc-tracking-body);
   color: var(--hc-muted);
 }
 
@@ -5768,7 +5863,7 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-row-static {
-  padding: 8px;
+  padding: 10px var(--hc-space-3);
 }
 
 .settings-control-row {
@@ -5918,8 +6013,8 @@ html[data-aeon-mode='light'] .shortcut-key {
   min-width: min(18rem, calc(100vw - 2rem));
   max-width: min(24rem, calc(100vw - 2rem));
   border: 1px solid hsl(var(--border));
-  background: color-mix(in srgb, var(--hc-surface-2) 92%, #000);
-  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--hc-surface-2) 92%, var(--hc-bg));
+  box-shadow: var(--hc-shadow);
   padding-right: 2rem;
 }
 
@@ -5934,8 +6029,8 @@ html[data-aeon-mode='light'] .shortcut-key {
 .update-toast.aeonToast__root {
   min-width: min(20rem, calc(100vw - 2rem));
   border: 1px solid color-mix(in srgb, var(--hc-accent) 28%, var(--hc-border));
-  background: color-mix(in srgb, var(--hc-surface-2) 92%, #000);
-  box-shadow: 0 0 0 1px rgba(87, 255, 151, 0.06), 0 18px 48px rgba(0, 0, 0, 0.55);
+  background: color-mix(in srgb, var(--hc-surface-2) 92%, var(--hc-bg));
+  box-shadow: var(--hc-shadow);
   padding-right: 2rem;
 }
 
@@ -5986,8 +6081,12 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .settings-section-title {
   margin: 0;
-  font-size: 0.92rem;
-  font-weight: 600;
+  font-family: var(--hc-font);
+  font-size: var(--hc-text-md);
+  font-weight: 650;
+  font-variant-caps: all-small-caps;
+  text-transform: none;
+  letter-spacing: 0.05em;
   color: var(--hc-text);
 }
 
@@ -7504,9 +7603,9 @@ html[data-aeon-mode='light'] .skeleton {
   color: var(--hc-accent, #57ff97);
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
-  font-size: 9px;
+  font-size: var(--hc-text-2xs);
   font-weight: 700;
-  letter-spacing: 0.04em;
+  letter-spacing: var(--hc-tracking-label);
   text-transform: uppercase;
   line-height: 1;
 }
@@ -7515,7 +7614,7 @@ html[data-aeon-mode='light'] .skeleton {
   left: 2px;
   top: 2px;
   padding: 2px 5px 2px 3px;
-  font-size: 8px;
+  font-size: var(--hc-text-2xs);
   gap: 3px;
 }
 
@@ -8113,11 +8212,11 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .token-market-spark-up {
-  color: var(--hc-accent, #38d385);
+  color: #57ff97;
 }
 
 .token-market-spark-down {
-  color: hsl(var(--destructive));
+  color: #ff8e8e;
 }
 
 .collect-token-card-meta {
@@ -9941,20 +10040,20 @@ body > div.statechart-mermaid-host {
   font-weight: 700;
 }
 
-html.platform-mobile .chat-shell {
+html:is(.platform-mobile, .layout-compact) .chat-shell {
   grid-template-columns: 1fr;
   min-height: 0;
 }
 
-html.platform-mobile .chat-shell[data-aeon-state='thread'] .chat-sidebar {
+html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread'] .chat-sidebar {
   display: none;
 }
 
-html.platform-mobile .chat-shell[data-aeon-state='list'] .chat-thread {
+html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='list'] .chat-thread {
   display: none;
 }
 
-html.platform-mobile .chat-sidebar {
+html:is(.platform-mobile, .layout-compact) .chat-sidebar {
   max-height: none;
   border-right: 0;
 }
@@ -9964,7 +10063,7 @@ html.platform-mobile .chat-sidebar {
   flex-shrink: 0;
 }
 
-html.platform-mobile .chat-back-btn {
+html:is(.platform-mobile, .layout-compact) .chat-back-btn {
   display: inline-flex;
 }
 
@@ -10393,11 +10492,11 @@ html.platform-mobile .chat-back-btn {
   margin: 0 12px 4px;
 }
 
-html.platform-mobile .chat-composer {
+html:is(.platform-mobile, .layout-compact) .chat-composer {
   margin: 6px 8px calc(8px + env(safe-area-inset-bottom, 0px));
 }
 
-html.platform-mobile .chat-shell[data-aeon-state='thread'] .chat-thread {
+html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-state='thread'] .chat-thread {
   min-height: 0;
 }
 
@@ -10887,7 +10986,7 @@ html.platform-mobile .chat-shell[data-aeon-state='thread'] .chat-thread {
   border-radius: var(--hc-radius);
 }
 
-html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
+html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-scope='messages'] .chat-composer {
   margin: 0;
   padding-inline: 8px;
 }
@@ -10907,7 +11006,7 @@ html.platform-mobile .chat-shell[data-aeon-scope='messages'] .chat-composer {
   display: none;
 }
 
-html.platform-mobile .dashboard.dashboard--chat-fullscreen .what-is-bsv {
+html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .what-is-bsv {
   display: none !important;
 }
 
@@ -11157,33 +11256,33 @@ html.platform-mobile .dashboard.dashboard--chat-fullscreen .what-is-bsv {
 }
 
 /* Desktop split-pane: keep inbox visible while a thread is open */
-html:not(.platform-mobile) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
+html:not(:is(.platform-mobile, .layout-compact)) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
   display: flex;
 }
 
-html:not(.platform-mobile) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
+html:not(:is(.platform-mobile, .layout-compact)) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
   display: flex;
 }
 
-html.platform-mobile .chat-shell--fullscreen {
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen {
   grid-template-columns: 1fr;
   grid-template-rows: minmax(0, 1fr);
 }
 
-html.platform-mobile .chat-shell--fullscreen .chat-sidebar,
-html.platform-mobile .chat-shell--fullscreen .chat-thread {
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen .chat-sidebar,
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen .chat-thread {
   grid-column: 1;
 }
 
-html.platform-mobile .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-sidebar {
   display: none;
 }
 
-html.platform-mobile .chat-shell--fullscreen[data-aeon-state='list'] .chat-thread {
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen[data-aeon-state='list'] .chat-thread {
   display: none;
 }
 
-html.platform-mobile .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
+html:is(.platform-mobile, .layout-compact) .chat-shell--fullscreen[data-aeon-state='thread'] .chat-thread {
   grid-column: 1;
   display: flex;
   flex-direction: column;
@@ -11299,18 +11398,43 @@ html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] {
   background: color-mix(in srgb, hsl(var(--primary)) 8%, transparent);
 }
 
-/* Price line: an upward move is black data ink, not green. A downward move
-   stays red, so direction is still readable. */
-html[data-aeon-mode='light'] .bsv-spark-up {
-  color: hsl(var(--primary));
+/* % change text stays green↑ / red↓ on paper — deep enough for AA on white. */
+html[data-aeon-mode='light'] button.bsv-change.is-up,
+html[data-aeon-mode='light'] .bsv-change.is-up,
+html[data-aeon-mode='light'] .bsv-spark-up,
+html[data-aeon-mode='light'] .token-market-spark-up {
+  color: #0c8f3e !important;
+  font-weight: 650;
 }
 
-/* BETA pill keeps its dark chip on the light sheet: black fill carrying the
-   neon border and type, which the demoted --hc-accent green cannot do here. */
+html[data-aeon-mode='light'] button.bsv-change.is-down,
+html[data-aeon-mode='light'] .bsv-change.is-down,
+html[data-aeon-mode='light'] .bsv-spark-down,
+html[data-aeon-mode='light'] .token-market-spark-down {
+  color: #b91c1c !important;
+  font-weight: 650;
+}
+
+/* BETA stays yellow on paper too — dark chip so the yellow reads cleanly. */
 html[data-aeon-mode='light'] .brand-beta {
   background: #0a0a0a;
-  border-color: hsl(var(--hc-brand) / 0.55);
-  color: hsl(var(--hc-brand));
+  border-color: color-mix(in srgb, #f5c518 65%, transparent);
+  color: #f5c518;
+}
+
+/* Synced / live stay neon on paper (deep green would fight the meaning). */
+html[data-aeon-mode='light'] .status-pill[data-tone='ok'],
+html[data-aeon-mode='light'] .status-pill[data-tone='busy'],
+html[data-aeon-mode='light'] .status-pill:not([data-tone]),
+html[data-aeon-mode='light'] .status-pill[data-tone=''] {
+  color: #0c8f3e;
+}
+
+html[data-aeon-mode='light'] .status-dot,
+html[data-aeon-mode='light'] .status-dot[data-tone='ok'],
+html[data-aeon-mode='light'] .status-dot[data-tone='busy'] {
+  background: #0c8f3e;
+  box-shadow: 0 0 8px rgba(12, 143, 62, 0.45);
 }
 
 /* Payment-request panel. A 35% neon ring plus a neon glow reads as a washed

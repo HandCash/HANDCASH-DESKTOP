@@ -2,10 +2,17 @@ import { applyBrandPalette, type BrandPaletteInput } from '@aeon-ui/core'
 import {
   notifySystemAppearanceChanged,
   resolveColorMode,
+  getAppearancePreference,
   subscribeAppearance,
   type AppearancePreference,
   type ResolvedColorMode,
 } from './themePrefs'
+import {
+  clearOmarchyThemeMarkers,
+  markOmarchyTheme,
+  omarchyPalette,
+  type OmarchyThemeSnapshot,
+} from './omarchyTheme'
 
 const FONTS = {
   font: "'Archivo', ui-sans-serif, system-ui, sans-serif",
@@ -13,13 +20,19 @@ const FONTS = {
   radius: '0.5rem',
 } as const
 
-/** Classic HandCash dark sheet. */
+/**
+ * Classic HandCash dark sheet.
+ *
+ * True black stage (`#000`) keeps the neon `#57ff97` at max pop — that pairing
+ * *is* the brand. Surfaces step up in neutral zinc, not green-tinted grey, so
+ * panels read as depth instead of “muddy black”.
+ */
 export const HANDCASH_DARK_PALETTE: BrandPaletteInput = {
   bg: '#000000',
   surface: '#0a0a0a',
-  surfaceRaised: '#141414',
-  border: '#262626',
-  text: '#fafafa',
+  surfaceRaised: '#161616',
+  border: '#2a2a2a',
+  text: '#f4f4f5',
   muted: '#a1a1aa',
   accent: '#57ff97',
   accentDim: 'rgba(87, 255, 151, 0.14)',
@@ -28,32 +41,27 @@ export const HANDCASH_DARK_PALETTE: BrandPaletteInput = {
 }
 
 /**
- * White / light sheet.
+ * HandCash light / paper sheet.
  *
- * Neutrals are handcash.io's own light `:root` — cool slate (hue 215/220), not
- * a green-tinted grey, and a soft #31363f ink rather than near-black.
+ * Previous cool-slate neutrals (hue ~215) made “white” look bluish and dirty
+ * next to true `#fff` fields. Neutrals now sit on a *whisper* of brand green
+ * (hue ~140, very low chroma): paper feels clean, cards are pure white for
+ * clear elevation, and ink stays near-black without a blue cast.
  *
- * On the light sheet the load-bearing colour is black, not green: the site
- * sets `--primary` to near-black, so CTAs, focus rings and checkboxes are
- * black with white type (see the light block in `handcash.css`). Green is
- * demoted to an accent and keeps only the roles where it carries meaning —
- * balance, live/OK state, success, links, the logo glyph.
- *
- * `accent` is read as *foreground* by ~60 rules, so it cannot be the neon
- * #57ff97 (near 1.3:1 on white). It is the same brand hue (143) at L33% —
- * bright enough to read as HandCash green, dark enough to stay legible on
- * paper. The neon itself survives as `--hc-brand` for fills and glows.
+ * Load-bearing chrome is still black (`--primary` in CSS), not neon. Green
+ * stays meaning-only (balance, live, success, logo). Accent here is deep
+ * brand green so it can be used as *foreground* on paper (~4.5:1+).
  */
 export const HANDCASH_LIGHT_PALETTE: BrandPaletteInput = {
-  bg: '#f6f7f8',
-  surface: '#fcfcfd',
-  surfaceRaised: '#ebedf0',
-  border: '#dce0e5',
-  text: '#31363f',
-  muted: '#6e7687',
-  accent: '#0d9b44',
-  accentDim: 'rgba(13, 155, 68, 0.12)',
-  danger: '#ef4444',
+  bg: '#f3f5f3',
+  surface: '#ffffff',
+  surfaceRaised: '#e8ece8',
+  border: '#d2d8d2',
+  text: '#1a1f1a',
+  muted: '#5a635c',
+  accent: '#0c8f3e',
+  accentDim: 'rgba(12, 143, 62, 0.11)',
+  danger: '#dc2626',
   ...FONTS,
 }
 
@@ -61,12 +69,42 @@ export function paletteForMode(mode: ResolvedColorMode): BrandPaletteInput {
   return mode === 'light' ? HANDCASH_LIGHT_PALETTE : HANDCASH_DARK_PALETTE
 }
 
-export function applyHandCashTheme(mode: ResolvedColorMode = resolveColorMode()): ResolvedColorMode {
+let lastOmarchy: OmarchyThemeSnapshot | null = null
+
+function omarchyActiveForPref(pref: AppearancePreference): boolean {
+  return (
+    pref === 'system' &&
+    lastOmarchy?.ok === true &&
+    lastOmarchy.detected === true
+  )
+}
+
+export function applyHandCashTheme(
+  mode: ResolvedColorMode = resolveColorMode(),
+): ResolvedColorMode {
+  const pref = getAppearancePreference()
+  if (omarchyActiveForPref(pref) && lastOmarchy && lastOmarchy.ok && lastOmarchy.detected) {
+    const colors = lastOmarchy.colors
+    applyBrandPalette(omarchyPalette(colors), {
+      mode: colors.mode,
+      themeId: `omarchy-${colors.name.toLowerCase().replace(/\s+/g, '-')}`,
+    })
+    markOmarchyTheme(colors)
+    return colors.mode
+  }
+  clearOmarchyThemeMarkers()
   applyBrandPalette(paletteForMode(mode), { mode, themeId: 'handcash' })
   return mode
 }
 
-/** Boot + live updates (Settings + OS scheme when preference is system). */
+function ingestOmarchy(snap: OmarchyThemeSnapshot): void {
+  lastOmarchy = snap
+  if (getAppearancePreference() === 'system') {
+    applyHandCashTheme(resolveColorMode('system'))
+  }
+}
+
+/** Boot + live updates (Settings + OS scheme + Omarchy theme-set). */
 export function startHandCashTheme(): () => void {
   applyHandCashTheme()
 
@@ -82,8 +120,18 @@ export function startHandCashTheme(): () => void {
     media.addEventListener('change', onMedia)
   }
 
+  let unsubOmarchy: (() => void) | null = null
+  const bridge = typeof window !== 'undefined' ? window.handcash : undefined
+  if (bridge?.getOmarchyTheme) {
+    void bridge.getOmarchyTheme().then(ingestOmarchy).catch(() => {})
+  }
+  if (bridge?.onOmarchyTheme) {
+    unsubOmarchy = bridge.onOmarchyTheme(ingestOmarchy)
+  }
+
   return () => {
     unsubPref()
+    unsubOmarchy?.()
     if (media && onMedia) media.removeEventListener('change', onMedia)
   }
 }

@@ -18,7 +18,7 @@ import {
 import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
 import { activityNavLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
-import { isMobileWalletPlatform } from '../wallet/isMobilePlatform'
+import { useCompactShell } from '../wallet/isCompactShell'
 import { setAutoPaySettings } from '../wallet/autoPay'
 import {
   clearNavChild,
@@ -58,7 +58,6 @@ import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
 import { ReceivePanel } from './ReceivePanel'
-import { isPhoneShell } from '../wallet/runtimePlatform'
 import { PaymentDetailsPanel } from './PaymentDetailsPanel'
 import { SettingsPanel, settingLabel } from './SettingsPanel'
 import { WalletHealthPanel } from './settings/WalletHealthPanel'
@@ -158,13 +157,14 @@ export const WalletNav = memo(function WalletNav({
   onSent,
   onFail,
 }: Props) {
+  const compact = useCompactShell()
   const [nav, setNav] = useState<NavState>(() => getNavState())
   const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
   const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const [decisionApi, setDecisionApi] = useState<PermissionDecisionApi | null>(null)
-  const mobileInlinePermission = isMobileWalletPlatform() && pendingPrompt != null
+  const mobileInlinePermission = compact && pendingPrompt != null
   /**
    * Light tabs stay mounted once visited — remounting Activity/Identity on every
    * tap was the 2.6s stall in the latest log. Collectables never stays mounted:
@@ -193,9 +193,9 @@ export const WalletNav = memo(function WalletNav({
     setOptimisticSection(null)
   }, [nav.section, nav.child?.type])
   useEffect(() => {
-    if (!isMobileWalletPlatform()) return
+    if (!compact) return
     return subscribePermissionRequests(setPendingPrompt)
-  }, [])
+  }, [compact])
 
   useEffect(() => {
     if (!mobileInlinePermission) return
@@ -283,7 +283,7 @@ export const WalletNav = memo(function WalletNav({
 
   const child = nav.child
   // Desktop hosts Scan in the BSV price column — keep the activity feed visible.
-  const scanInSide = child?.type === 'scan' && !isPhoneShell()
+  const scanInSide = child?.type === 'scan' && !compact
   const stageChild = scanInSide ? null : child
   const aeonState = stageChild ? `${nav.section}.${stageChild.type}` : nav.section
 

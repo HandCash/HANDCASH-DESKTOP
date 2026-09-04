@@ -694,7 +694,7 @@ export function Dashboard({
 
             <div className="actions wallet-actions">
               <button
-                className="btn btn-primary btn-icon"
+                className="btn btn-ghost btn-icon"
                 onClick={() => {
                   playWalletSound('soft')
                   openSendFlow()

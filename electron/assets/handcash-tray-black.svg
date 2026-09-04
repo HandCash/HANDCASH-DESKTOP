@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none" role="img" aria-label="HandCash">
+  <g fill="#000000">
+    <path d="M64 20
+             A44 44 0 0 0 64 108
+             L64 96
+             A32 32 0 0 1 64 32
+             Z"/>
+    <path d="M64 20
+             A44 44 0 0 1 64 108
+             L64 96
+             A32 32 0 0 0 64 32
+             Z"/>
+    <circle cx="64" cy="64" r="12"/>
+    <rect x="64" y="57" width="36" height="14" rx="1"/>
+  </g>
+</svg>

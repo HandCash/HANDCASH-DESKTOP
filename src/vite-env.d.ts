@@ -197,6 +197,59 @@ interface HandCashBridge {
   setUpdateMode?: (mode: UpdateMode) => Promise<UpdateStatus>
   installUpdate?: () => Promise<void>
   onUpdateStatus?: (handler: (status: UpdateStatus) => void) => () => void
+  getOmarchyTheme?: () => Promise<
+    | {
+        ok: true
+        detected: true
+        colors: {
+          mode: 'light' | 'dark'
+          name: string
+          background: string
+          darkBackground: string
+          darkerBackground: string
+          lighterBackground: string
+          foreground: string
+          darkForeground: string
+          lightForeground: string
+          brightForeground: string
+          accent: string
+          muted: string
+          selection: string
+          red: string
+          green: string
+        }
+      }
+    | { ok: true; detected: false }
+    | { ok: false; error: string }
+  >
+  onOmarchyTheme?: (
+    handler: (
+      payload:
+        | {
+            ok: true
+            detected: true
+            colors: {
+              mode: 'light' | 'dark'
+              name: string
+              background: string
+              darkBackground: string
+              darkerBackground: string
+              lighterBackground: string
+              foreground: string
+              darkForeground: string
+              lightForeground: string
+              brightForeground: string
+              accent: string
+              muted: string
+              selection: string
+              red: string
+              green: string
+            }
+          }
+        | { ok: true; detected: false }
+        | { ok: false; error: string },
+    ) => void,
+  ) => () => void
 }
 
 interface Window {
