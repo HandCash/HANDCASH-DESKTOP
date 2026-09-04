@@ -43,22 +43,21 @@ export const HANDCASH_DARK_PALETTE: BrandPaletteInput = {
 /**
  * HandCash light / paper sheet.
  *
- * Previous cool-slate neutrals (hue ~215) made “white” look bluish and dirty
- * next to true `#fff` fields. Neutrals now sit on a *whisper* of brand green
- * (hue ~140, very low chroma): paper feels clean, cards are pure white for
- * clear elevation, and ink stays near-black without a blue cast.
+ * Keep the canvas near-white (not dingy grey-green). Cards stay pure `#fff`.
+ * Borders and raised steps stay soft so the sheet feels bright, not gloomy.
+ * Muted ink is charcoal-leaning for clarity without a washed-out grey fog.
  *
  * Load-bearing chrome is still black (`--primary` in CSS), not neon. Green
  * stays meaning-only (balance, live, success, logo). Accent here is deep
  * brand green so it can be used as *foreground* on paper (~4.5:1+).
  */
 export const HANDCASH_LIGHT_PALETTE: BrandPaletteInput = {
-  bg: '#f3f5f3',
+  bg: '#fafbfa',
   surface: '#ffffff',
-  surfaceRaised: '#e8ece8',
-  border: '#d2d8d2',
-  text: '#1a1f1a',
-  muted: '#5a635c',
+  surfaceRaised: '#f3f5f3',
+  border: '#e4e8e4',
+  text: '#141814',
+  muted: '#4a524c',
   accent: '#0c8f3e',
   accentDim: 'rgba(12, 143, 62, 0.11)',
   danger: '#dc2626',

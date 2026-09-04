@@ -118,41 +118,41 @@
 html[data-aeon-mode='light'] {
   color-scheme: light;
 
-  /* Black remains the load-bearing chrome colour; green is meaning-only. */
-  --background: 140 8% 96%;
-  --foreground: 140 8% 11%;
+  /* Brighter paper — near-white canvas, soft borders, less grey fog. */
+  --background: 140 10% 98.5%;
+  --foreground: 140 10% 8%;
   --card: 0 0% 100%;
-  --card-foreground: 140 8% 11%;
+  --card-foreground: 140 10% 8%;
   --popover: 0 0% 100%;
-  --popover-foreground: 140 8% 11%;
+  --popover-foreground: 140 10% 8%;
   --primary: 0 0% 9%;
   --primary-foreground: 0 0% 100%;
-  --secondary: 140 8% 92%;
-  --secondary-foreground: 140 8% 11%;
-  --secondary-background: 140 7% 90%;
-  --muted: 140 7% 93%;
-  --muted-foreground: 140 5% 38%;
-  --accent: 140 7% 93%;
-  --accent-foreground: 140 8% 11%;
+  --secondary: 140 8% 96%;
+  --secondary-foreground: 140 10% 8%;
+  --secondary-background: 140 7% 95%;
+  --muted: 140 8% 96.5%;
+  --muted-foreground: 140 6% 32%;
+  --accent: 140 8% 96.5%;
+  --accent-foreground: 140 10% 8%;
   --destructive: 0 72% 51%;
   --destructive-foreground: 0 0% 100%;
-  --border: 140 6% 84%;
-  --input: 140 6% 84%;
+  --border: 140 6% 90%;
+  --input: 140 6% 90%;
   --ring: 143 84% 30%;
   --dark-green: 143 84% 30%;
-  --bg-light: 140 7% 93%;
-  --shadow-section: 0 1px 2px rgba(26, 31, 26, 0.05), 0 1px 3px rgba(26, 31, 26, 0.04);
-  --shadow-section-hover: 0 4px 14px rgba(26, 31, 26, 0.08);
-  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.12), transparent 55%),
-    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.05), transparent 50%),
+  --bg-light: 140 8% 96.5%;
+  --shadow-section: 0 1px 2px rgba(20, 24, 20, 0.04), 0 1px 3px rgba(20, 24, 20, 0.03);
+  --shadow-section-hover: 0 4px 14px rgba(20, 24, 20, 0.06);
+  --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.08), transparent 55%),
+    radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.03), transparent 50%),
     var(--hc-bg);
-  --hc-shadow: 0 16px 36px -14px rgba(26, 31, 26, 0.14);
+  --hc-shadow: 0 16px 36px -14px rgba(20, 24, 20, 0.1);
 
-  --hc-sunken-soft: rgba(26, 31, 26, 0.035);
-  --hc-sunken: rgba(26, 31, 26, 0.05);
-  --hc-sunken-strong: rgba(26, 31, 26, 0.075);
+  --hc-sunken-soft: rgba(20, 24, 20, 0.025);
+  --hc-sunken: rgba(20, 24, 20, 0.035);
+  --hc-sunken-strong: rgba(20, 24, 20, 0.055);
   --hc-field: #ffffff;
-  --hc-hover: rgba(26, 31, 26, 0.045);
+  --hc-hover: rgba(20, 24, 20, 0.035);
   --hc-deep: #ffffff;
 
   --hc-accent-deep: #0c8f3e;
@@ -215,12 +215,12 @@ body {
   box-shadow: 0 0 20px -6px hsl(var(--primary) / 0.45);
 }
 
-/* The mark is a transparent-background glyph. handcash.io sets it on its light
-   sheet with no plate, ring or glow — the black tile only exists to carry the
-   neon on the dark sheet. */
+/* The mark is a transparent-background glyph. On paper, black the ink
+   (handcash.io light); on dark, keep neon green on the black plate. */
 html[data-aeon-mode='light'] .brand-logo-mark {
   background: transparent;
   box-shadow: none;
+  filter: brightness(0);
 }
 
 .brand-mark {
@@ -927,6 +927,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   color: var(--hc-text);
 }
 
+html[data-aeon-mode='light'] .btn-ghost {
+  background: #ffffff;
+  border-color: color-mix(in srgb, var(--hc-text) 14%, transparent);
+}
+
 .btn-ghost:hover {
   background: color-mix(in srgb, var(--hc-accent) 14%, var(--hc-surface));
   border-color: color-mix(in srgb, var(--hc-accent) 45%, transparent);
@@ -942,6 +947,13 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   color: var(--hc-text);
   animation: none;
   filter: none;
+}
+
+html[data-aeon-mode='light'] .wallet-actions .btn,
+html[data-aeon-mode='light'] .wallet-actions .btn-ghost,
+html[data-aeon-mode='light'] .wallet-actions .btn-primary {
+  background: #ffffff;
+  border-color: color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 .wallet-actions .btn:hover,
@@ -1156,7 +1168,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  padding: 10px 16px 14px;
+  padding: 8px 16px 12px;
   flex-shrink: 0;
   min-width: 0;
   container-type: inline-size;
@@ -1191,6 +1203,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 
 .wallet-action-label {
   display: inline;
+  font-family: var(--hc-font);
+  font-variant-caps: all-small-caps;
+  text-transform: none;
+  letter-spacing: 0.03em;
+  font-weight: 650;
 }
 
 .wallet-balance-slot {
@@ -1276,8 +1293,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
 }
 
 html[data-aeon-mode='light'] .wallet-balance .balance {
-  /* Deep green on paper (readable); same token at any balance including $0. */
-  color: #0c8f3e;
+  /* Deep HandCash green on paper — same at $0 and any balance. */
+  color: #0c8f3e !important;
 }
 
 .wallet-balance .balance-secondary {
@@ -2703,6 +2720,8 @@ button.wallet-detail-value.is-copied {
   flex: 0 0 auto;
   position: relative;
   top: auto;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
 }
 
 .settings-scroll-body {
@@ -5737,7 +5756,7 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-panel-head {
-  margin-bottom: 12px;
+  margin-bottom: 10px;
 }
 
 .settings-grid {
@@ -11390,9 +11409,8 @@ html[data-aeon-mode='light'] .update-toast.aeonToast__root {
    (the live dot, success, a downward move's red counterpart). Scoped to the
    light selector so the dark theme is untouched. */
 
-/* Green brand mark on paper — no invert / ink filter. */
-html[data-aeon-mode='light'] .brand-logo-mark {
-  filter: none;
+html[data-aeon-mode='light'] .wallet-nav-bar {
+  background: #ffffff;
 }
 
 /* Selected nav — ink matches label (black on paper), not accent. */

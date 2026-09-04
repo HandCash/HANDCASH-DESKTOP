@@ -71,7 +71,7 @@ export function readOmarchyTheme(): OmarchyThemeSnapshot {
       /* ignore */
     }
     const mode = map.mode === 'light' ? 'light' : 'dark'
-    const background = requireHex(map, 'background', mode === 'light' ? '#f3f5f3' : '#1a1b26')
+    const background = requireHex(map, 'background', mode === 'light' ? '#fafbfa' : '#1a1b26')
     const colors: OmarchyColors = {
       mode,
       name,

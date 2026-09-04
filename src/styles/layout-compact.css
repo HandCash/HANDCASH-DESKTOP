@@ -181,18 +181,20 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
   min-width: 0;
   overflow: hidden;
   font-size: inherit;
+  text-transform: none;
+  letter-spacing: inherit;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
   flex-direction: column;
-  gap: 2px;
-  padding: 6px 1px;
+  gap: 3px;
+  padding: 6px 2px;
   overflow: hidden;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon svg {
-  width: 14px;
-  height: 14px;
+  width: 15px;
+  height: 15px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-action-label {
@@ -200,11 +202,12 @@ html:is(.platform-mobile, .layout-compact) .wallet-action-label {
   width: 100%;
   max-width: 100%;
   box-sizing: border-box;
-  /* Same face as other chrome — tighter so “Add money” fits a fifth of the row. */
   font-family: var(--hc-font);
-  font-size: 0.625rem; /* 10px */
-  letter-spacing: 0.01em;
-  text-transform: none;
+  /* Unicase like section titles — bigger when the fifth fits. */
+  font-size: clamp(0.625rem, 2.6vw, 0.75rem);
+  font-variant-caps: all-small-caps;
+  letter-spacing: 0.02em;
+  text-transform: none !important;
   font-weight: 650;
   line-height: 1.1;
   white-space: nowrap;
@@ -371,6 +374,8 @@ html:is(.platform-mobile, .layout-compact) .settings-with-scroll .connected-pane
 html:is(.platform-mobile, .layout-compact) .settings-with-scroll .settings-panel-head {
   position: relative;
   top: auto;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
 }
 
 html:is(.platform-mobile, .layout-compact) .nav-child-body {
@@ -632,13 +637,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after
   content: none;
 }
 
-/* Light sheet: the dark nav shadow reads muddy on paper. */
+/* Light sheet: keep bottom nav bright, not dingy grey. */
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
-  background: color-mix(in srgb, hsl(var(--background)) 94%, transparent);
+  background: #ffffff;
   border-color: hsl(var(--border));
   box-shadow:
-    0 4px 16px rgba(15, 23, 42, 0.1),
-    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 8%, transparent) inset;
+    0 4px 16px rgba(20, 24, 20, 0.06),
+    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 6%, transparent) inset;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,

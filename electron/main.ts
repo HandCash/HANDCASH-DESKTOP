@@ -407,7 +407,7 @@ function createWindow(): void {
     // compact/phone shell when height > width or width ≤ 720.
     minWidth: 360,
     minHeight: 420,
-    backgroundColor: omarchyBg ?? (light ? '#f3f5f3' : '#000000'),
+    backgroundColor: omarchyBg ?? (light ? '#fafbfa' : '#000000'),
     title: 'HandCash',
     icon: getIconPath(),
     show: false,
