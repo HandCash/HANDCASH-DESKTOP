@@ -1056,7 +1056,7 @@ export function RecentActivityPanel({ chain }: { chain?: Chain }) {
   return (
     <ActivityFeed
       chain={chain}
-      title="Recent activity"
+      title="Your activity"
       limit={15}
       showCount={false}
       viewAllLabel="View full activity"

@@ -173,34 +173,43 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions {
   width: 100%;
   justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 4px;
+  gap: 2px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
   flex: 1 1 0;
   min-width: 0;
-  overflow: visible;
+  overflow: hidden;
+  font-size: inherit;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
   flex-direction: column;
-  gap: 3px;
-  padding: 8px 2px;
-  overflow: visible;
+  gap: 2px;
+  padding: 6px 1px;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon svg {
+  width: 14px;
+  height: 14px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-action-label {
   display: block !important;
   width: 100%;
-  max-width: none;
-  font-size: var(--hc-text-2xs);
-  letter-spacing: var(--hc-tracking-label);
-  text-transform: uppercase;
-  font-weight: 700;
-  line-height: 1.15;
+  max-width: 100%;
+  box-sizing: border-box;
+  /* Same face as other chrome — tighter so “Add money” fits a fifth of the row. */
+  font-family: var(--hc-font);
+  font-size: 0.625rem; /* 10px */
+  letter-spacing: 0.01em;
+  text-transform: none;
+  font-weight: 650;
+  line-height: 1.1;
   white-space: nowrap;
-  overflow: visible;
-  text-overflow: clip;
+  overflow: hidden;
+  text-overflow: ellipsis;
   text-align: center;
   color: inherit;
 }

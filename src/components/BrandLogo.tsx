@@ -1,9 +1,10 @@
+import { useEffect, useState } from 'react'
 import { handcashBrand, type HandCashMarkVariant } from '../assets/brand'
 import { APP_VERSION } from '../version'
 import { DeferredImage } from './DeferredImage'
 
 type Props = {
-  variant?: HandCashMarkVariant
+  variant?: HandCashMarkVariant | 'auto'
   showWordmark?: boolean
   size?: number
   className?: string
@@ -22,17 +23,40 @@ function productLine(): string {
   return 'Desktop'
 }
 
+function markForSheet(mode: 'light' | 'dark'): HandCashMarkVariant {
+  // Match wordmark ink — no extra brand green in the chrome.
+  return mode === 'light' ? 'dark' : 'light'
+}
+
+function readSheetMode(): 'light' | 'dark' {
+  if (typeof document === 'undefined') return 'dark'
+  return document.documentElement.dataset.aeonMode === 'light' ? 'light' : 'dark'
+}
+
 export function BrandLogo({
-  variant = 'green',
+  variant = 'auto',
   showWordmark = true,
   size = 34,
   className = '',
 }: Props) {
+  const [sheet, setSheet] = useState<'light' | 'dark'>(readSheetMode)
+  useEffect(() => {
+    const root = document.documentElement
+    const sync = () => setSheet(readSheetMode())
+    sync()
+    const obs = new MutationObserver(sync)
+    obs.observe(root, { attributes: true, attributeFilter: ['data-aeon-mode'] })
+    return () => obs.disconnect()
+  }, [])
+
+  const resolved: HandCashMarkVariant =
+    variant === 'auto' ? markForSheet(sheet) : variant
+
   return (
     <div className={`brand ${className}`.trim()} data-aeon-scope="identity" data-aeon-part="root">
       <DeferredImage
         className="brand-logo-mark"
-        src={markSrc[variant]}
+        src={markSrc[resolved]}
         width={size}
         height={size}
         alt="HandCash"

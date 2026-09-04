@@ -343,7 +343,7 @@ export function App() {
     <UpdateProvider>
       <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
         <header className="titlebar aeon-titlebar">
-          <BrandLogo variant="green" />
+          <BrandLogo />
           <WalletStatusPill
             session={sessionFromMachine(snapshot.value)}
             bridgeOnline={snapshot.context.bridgeOnline}

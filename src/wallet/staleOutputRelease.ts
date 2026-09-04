@@ -387,10 +387,11 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
     return 0
   }
 
-  if (active.chain) {
+  const chain = active?.chain
+  if (chain) {
     const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
     for (const txid of sealerIds) {
-      const onChain = await txExistsOnChain(txid, active.chain).catch(() => null)
+      const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain === true) {
         liveSealers.add(txid)
         deadSealers.delete(txid)
@@ -424,7 +425,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
       if (!unspent) {
         const status = await spentStatusOfOutpoint(
           sample!.outpoint,
-          active.chain,
+          chain,
         ).catch(() => 'unknown' as const)
         unspent = status === 'unspent'
       }

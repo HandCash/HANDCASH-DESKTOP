@@ -47,9 +47,8 @@
   --hc-accent: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-2: var(--colors-aeon-accent, hsl(var(--primary)));
   --hc-accent-dim: var(--colors-aeon-accent-dim, hsl(var(--primary) / 0.14));
-  /* Currency figures. On black the neon accent is the right ink; on the light
-     sheet a mid green reads loud next to black chrome, so it deepens there. */
-  --hc-accent-deep: var(--hc-accent);
+  /* Currency figures — HandCash dark green on every sheet (not theme accent). */
+  --hc-accent-deep: #0c8f3e;
   --hc-danger: var(--colors-aeon-danger, hsl(var(--destructive)));
   --hc-glow: radial-gradient(ellipse 70% 50% at 50% -20%, hsl(var(--hc-brand) / 0.18), transparent 55%),
     radial-gradient(ellipse 40% 30% at 90% 100%, hsl(var(--dark-green) / 0.12), transparent 50%),
@@ -156,7 +155,7 @@ html[data-aeon-mode='light'] {
   --hc-hover: rgba(26, 31, 26, 0.045);
   --hc-deep: #ffffff;
 
-  --hc-accent-deep: #0a3d22;
+  --hc-accent-deep: #0c8f3e;
 
   /* Success as foreground on paper — brand hue, deep enough for small type. */
   --hc-success: hsl(143 72% 28%);
@@ -1272,7 +1271,8 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: 0.02em;
   line-height: 1.15;
   white-space: nowrap;
-  color: var(--hc-accent-deep);
+  /* HandCash dark green on every sheet — not neon, not Omarchy accent. */
+  color: #0c8f3e;
 }
 
 .wallet-balance .balance-secondary {
@@ -3511,8 +3511,8 @@ li[data-aeon-state='failed'] .history-progress-range {
   font: inherit;
   font-size: 0.78rem;
   font-weight: 600;
-  line-height: 28px;
-  height: 28px;
+  line-height: 32px;
+  height: 32px;
   cursor: pointer;
 }
 
@@ -3530,14 +3530,14 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-hero-title {
   margin: 0;
   font-family: var(--hc-font);
-  font-size: var(--hc-text-md);
+  font-size: var(--hc-text-xl);
   font-weight: 650;
   /* Unicase: caps and lowercase render the same — no ALL-CAPS shout. */
   font-variant-caps: all-small-caps;
   text-transform: none;
   letter-spacing: 0.05em;
-  line-height: 28px;
-  height: 28px;
+  line-height: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   flex: 1;
@@ -4518,7 +4518,7 @@ button.payment-details-item-thumb-btn:hover {
   margin: 0 0 12px;
   padding: 0 0 8px;
   border-bottom: 1px solid hsl(var(--border));
-  min-height: 28px;
+  min-height: 32px;
   box-sizing: border-box;
   position: sticky;
   top: 0;
@@ -4680,13 +4680,13 @@ button.payment-details-item-thumb-btn:hover {
 .nav-breadcrumb {
   margin: 0;
   font-family: var(--hc-font);
-  font-size: var(--hc-text-md);
+  font-size: var(--hc-text-xl);
   font-weight: 650;
   font-variant-caps: all-small-caps;
   text-transform: none;
   letter-spacing: 0.05em;
-  line-height: 28px;
-  height: 28px;
+  line-height: 32px;
+  height: 32px;
   display: flex;
   align-items: center;
   min-width: 0;
@@ -11384,10 +11384,9 @@ html[data-aeon-mode='light'] .update-toast.aeonToast__root {
    (the live dot, success, a downward move's red counterpart). Scoped to the
    light selector so the dark theme is untouched. */
 
-/* Wordmark glyph is a single-colour PNG; brightness(0) blacks the ink and
-   leaves the alpha cut-out, which is how handcash.io renders it on white. */
+/* Wordmark mark already matches sheet ink (dark/light PNGs); no invert filter. */
 html[data-aeon-mode='light'] .brand-logo-mark {
-  filter: brightness(0);
+  filter: none;
 }
 
 /* Selected menu item. */
