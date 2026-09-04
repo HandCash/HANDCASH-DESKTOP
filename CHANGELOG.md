@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.99] - 2026-09-04
+
+### Fixed
+
+- **Mobile nav dock shadow** — remove the soft drop shadow that bled onto the sheet behind the bottom bar.
+
 ## [1.3.98] - 2026-09-04
 
 ### Fixed

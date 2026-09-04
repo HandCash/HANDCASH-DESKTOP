@@ -536,9 +536,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   background: color-mix(in srgb, hsl(var(--background)) 90%, transparent);
   backdrop-filter: blur(14px) saturate(1.15);
   -webkit-backdrop-filter: blur(14px) saturate(1.15);
-  box-shadow:
-    0 4px 16px rgba(0, 0, 0, 0.32),
-    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 5%, transparent) inset;
+  /* No drop shadow — soft blur bled onto the sheet behind the dock. */
+  box-shadow: none;
   overflow: hidden;
   scroll-snap-type: none;
 }
@@ -641,9 +640,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   background: #ffffff;
   border-color: hsl(var(--border));
-  box-shadow:
-    0 4px 16px rgba(20, 24, 20, 0.06),
-    0 0 0 1px color-mix(in srgb, hsl(var(--foreground)) 6%, transparent) inset;
+  box-shadow: none;
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
