@@ -680,10 +680,13 @@ export function cancelPendingPermissions(reason = 'cancelled'): void {
   notify()
 }
 
-export function requestOriginPermission(origin: string | undefined, method: string): Promise<PermissionDecision> {
+export async function requestOriginPermission(
+  origin: string | undefined,
+  method: string,
+): Promise<PermissionDecision> {
   const key = normalizeOrigin(origin)
 
-  if (isOriginAllowed(key)) return Promise.resolve('allow')
+  if (isOriginAllowed(key)) return 'allow'
 
   if (current?.request.kind === 'connect' && current.request.origin === key) {
     return new Promise((resolve) => {
@@ -711,23 +714,26 @@ export function requestOriginPermission(origin: string | undefined, method: stri
     })
   }
 
+  let spendingAuthorization:
+    | { amountSats: number; description: string }
+    | undefined
+  try {
+    const { fetchAppSpendingAuthorization } = await import('./spendingAuthorization')
+    const found = await fetchAppSpendingAuthorization(
+      origin?.trim() || `https://${key}`,
+    )
+    if (found) spendingAuthorization = found
+  } catch {
+    // Connect still works without a manifest.
+  }
+
   return enqueuePrompt({
     id: idCounter++,
     kind: 'connect',
     origin: key,
     method,
     createdAt: Date.now(),
-    ...(await (async () => {
-      try {
-        const { fetchAppSpendingAuthorization } = await import('./spendingAuthorization')
-        const spendingAuthorization = await fetchAppSpendingAuthorization(
-          origin?.trim() || `https://${key}`,
-        )
-        return spendingAuthorization ? { spendingAuthorization } : {}
-      } catch {
-        return {}
-      }
-    })()),
+    ...(spendingAuthorization ? { spendingAuthorization } : {}),
   })
 }
 

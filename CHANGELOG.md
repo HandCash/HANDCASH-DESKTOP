@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.101] - 2026-09-05
+
+### Fixed
+
+- **Connect spendingAuthorization fetch** — `requestOriginPermission` is async so Vite/Rollup can bundle the manifest lookup (Mobile APK build).
+
 ## [1.3.100] - 2026-09-05
 
 ### Fixed
