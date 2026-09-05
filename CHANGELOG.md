@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.106] - 2026-09-05
+
+### Fixed
+
+- **Bottom nav end caps** — connected muted runs stay joined; outer corners use the dock’s `--wallet-nav-pill-radius` (not `999px` floating capsules).
+
 ## [1.3.105] - 2026-09-05
 
 ### Fixed

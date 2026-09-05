@@ -568,8 +568,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar-track {
   min-height: 40px;
   gap: 0;
   justify-content: stretch;
-  /* Center so muted pills float and show rounded bottoms like the old selected chip. */
-  align-items: center;
+  align-items: stretch;
   overflow: visible;
   border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
@@ -579,22 +578,21 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  /* Floating capsule — full pill top + bottom, not flush to the track floor. */
-  height: 34px;
-  align-self: center;
+  height: auto;
+  align-self: stretch;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   gap: 2px;
   padding: 4px 1px;
-  /* Default: mid-run unselected — square edges so adjacent grays join. */
+  /* Mid-run unselected — square edges so adjacent muted tabs join. */
   border-radius: 0;
   scroll-snap-align: none;
   overflow: hidden;
   color: hsl(var(--muted-foreground));
   background: var(--wallet-nav-unselected);
   box-shadow: none;
-  /* Color/bg only — animating radius flashes square joins on selection change. */
+  /* Color/bg only — do not animate radius (flashes square joins). */
   transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
@@ -658,8 +656,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
   background: transparent;
   box-shadow: none;
   border-radius: 0;
-  height: 100%;
-  min-height: 40px;
+  height: auto;
+  min-height: 0;
   align-self: stretch;
 }
 
@@ -683,8 +681,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after
 }
 
 /*
- * Cap the ends of each unselected run as a full pill (top + bottom),
- * matching the old selected-chip silhouette — not flat to the track floor.
+ * Cap each unselected run with the same radius as the dock (not 999px capsules).
+ * Mid joins stay square so adjacent muted tabs read as one connected plate.
  */
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):first-child,
@@ -697,8 +695,8 @@ html:is(.platform-mobile, .layout-compact)
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-tab[data-selected]
   + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]) {
-  border-top-left-radius: 999px;
-  border-bottom-left-radius: 999px;
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
 
 html:is(.platform-mobile, .layout-compact)
@@ -715,8 +713,8 @@ html:is(.platform-mobile, .layout-compact)
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
     + [data-selected]
   ) {
-  border-top-right-radius: 999px;
-  border-bottom-right-radius: 999px;
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
 
 /* Light: white select track; soft unselected pills (not heavy gray). */
