@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.105] - 2026-09-05
+
+### Fixed
+
+- **Bottom nav connected pills** — restore joined unselected runs (square mid-edges + capped ends). 1.3.104’s per-tab gap/radius split adjacent muted tabs into separate pills.
+
 ## [1.3.104] - 2026-09-05
 
 ### Fixed
@@ -10,7 +16,7 @@
 ### Changed
 
 - **Loading rings** — shared `LoadingSpinner`; burn pending marks use the same accent as send.
-- **Bottom nav pills** — full tab radius so the dock does not flash square edges.
+- **Bottom nav pills** — (superseded in 1.3.105 — connected adjacent runs restored).
 
 ## [1.3.103] - 2026-09-05
 
