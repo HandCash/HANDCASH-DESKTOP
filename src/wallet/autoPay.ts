@@ -2,6 +2,10 @@ import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { getCachedUsdPerBsv, satsToUsd } from './fx'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
+import {
+  getSpendingAuthorizationGrant,
+  spendingAuthorizationAllowsPayment,
+} from './spendingAuthorization'
 
 const STORAGE_KEY = 'handcash.brc100.autoPay'
 
@@ -123,6 +127,11 @@ export function canAutoProcessPayment(
 
   const sats = typeof amountSats === 'number' ? Math.max(0, amountSats) : 0
   if (sats <= 0) return false
+
+  // BRC spendingAuthorization grant (monthly sats) takes precedence when present.
+  if (getSpendingAuthorizationGrant(origin)) {
+    return spendingAuthorizationAllowsPayment(origin, sats)
+  }
 
   const rate = getCachedUsdPerBsv()
   if (!rate) return false

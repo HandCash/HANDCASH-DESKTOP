@@ -575,6 +575,48 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   return revived + revive.length
 }
 
+/**
+ * After an app `createAction`: hide spent inputs and promote this tx's unspent
+ * outs so the next bet / payout spend can chain without waiting on confirmation.
+ */
+export async function sealAfterAppCreateAction(
+  txid: string,
+  result: unknown,
+): Promise<void> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return
+  try {
+    const { inputOutpointsFromAtomicBeef, inputOutpointsFromRawTx } =
+      await import('./txOutpoints')
+    const raw = (result as { tx?: unknown } | null)?.tx
+    let inputs: string[] = []
+    if (Array.isArray(raw) && raw.every((n) => typeof n === 'number')) {
+      const binary = raw as number[]
+      inputs = inputOutpointsFromAtomicBeef(binary, id)
+      if (inputs.length === 0) inputs = inputOutpointsFromRawTx(binary)
+    } else if (raw instanceof Uint8Array) {
+      const binary = Array.from(raw)
+      inputs = inputOutpointsFromAtomicBeef(binary, id)
+      if (inputs.length === 0) inputs = inputOutpointsFromRawTx(binary)
+    }
+    if (inputs.length > 0) await hideSpentOutpoints(inputs, id)
+  } catch (err) {
+    console.warn('[stale-output] seal inputs after createAction skipped', err)
+  }
+  try {
+    await keepChangeOfSignedTx(id)
+  } catch (err) {
+    console.warn('[stale-output] keep change after createAction skipped', err)
+  }
+}
+
+/**
+ * Mark this wallet's unspent default-basket outs of `txid` spendable so the next
+ * createAction can chain them immediately — change after an app spend, or BSV
+ * the app just internalized — without waiting on indexer confirmation.
+ *
+ * Item / BSV-21 basket tips stay untouched (identity remittance path).
+ */
 export async function keepChangeOfSignedTx(txid: string): Promise<number> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return 0
@@ -596,8 +638,9 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
         const basket = String(row.basket ?? '').toLowerCase()
         if (basket === '1sat' || basket === 'bsv21') continue
         const sats = Math.max(0, Math.trunc(Number(row.satoshis) || 0))
-        const isChange = row.change === true || sats > 1
-        if (!isChange) continue
+        // Change after createAction *and* plain BSV received via internalize —
+        // apps must chain either without waiting for confirmation.
+        if (sats < 1) continue
 
         const healed = await healLockingScript(sp, row, txCache)
         const scripted = healed != null || hasLockingScript(row)
@@ -613,7 +656,7 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
       }
       if (kept > 0) {
         console.info(
-          `[stale-output] kept ${kept} change output(s) of ${id.slice(0, 12)}`,
+          `[stale-output] kept ${kept} spendable output(s) of ${id.slice(0, 12)}`,
         )
       }
       return kept

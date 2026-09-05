@@ -444,6 +444,27 @@ describe('keepChangeOfSignedTx', () => {
       spentBy: undefined,
     })
   })
+
+  it('promotes received (non-change) BSV outs so apps can chain them', async () => {
+    const txid = 'ab'.repeat(32)
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 3,
+        txid,
+        vout: 0,
+        change: false,
+        satoshis: 2500,
+        spendable: false,
+        lockingScript: [118, 169],
+      },
+    ])
+
+    await expect(keepChangeOfSignedTx(txid)).resolves.toBe(1)
+    expect(updateOutput).toHaveBeenCalledWith(3, {
+      spendable: true,
+      spentBy: undefined,
+    })
+  })
 })
 
 describe('promotePendingLocalChangeOutputs', () => {

@@ -89,9 +89,19 @@ import {
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
 import { assertOnlineForPayment } from './paymentPolicy'
-import { prepareBrcActionSpend, runExclusiveSpend } from './spendGuard'
+import {
+  isChangeChainingRequiredError,
+  prepareBrcActionSpend,
+  runExclusiveSpend,
+} from './spendGuard'
 import { spendBlockedMessage } from './walletCoordinator'
 import { canAutoProcessPayment } from './autoPay'
+import {
+  isAlreadySpentInputError,
+  keepChangeOfSignedTx,
+  sealAfterAppCreateAction,
+} from './staleOutputRelease'
+import { isInsufficientFundsError } from './insufficientFunds'
 import {
   clearPaymentProgress,
   marketBusyCopy,
@@ -112,6 +122,28 @@ import {
 
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
+
+/** Map spend / broadcast failures to stable BRC-100 codes for app clients. */
+function brcSpendErrorCode(err: unknown): {
+  status: number
+  code: string
+  description: string
+} {
+  const description = err instanceof Error ? err.message : String(err)
+  if (/offline/i.test(description)) {
+    return { status: 503, code: 'OFFLINE_PAYMENTS_DISABLED', description }
+  }
+  if (isChangeChainingRequiredError(err) || /chains unconfirmed change/i.test(description)) {
+    return { status: 400, code: 'CHANGE_CHAINING_REQUIRED', description }
+  }
+  if (isAlreadySpentInputError(err)) {
+    return { status: 400, code: 'DOUBLE_SPENT', description }
+  }
+  if (isInsufficientFundsError(err) || /insufficient balance/i.test(description)) {
+    return { status: 400, code: 'INSUFFICIENT_FUNDS', description }
+  }
+  return { status: 400, code: 'INSUFFICIENT_OR_STALE_FUNDS', description }
+}
 
 function marketOutpointFromArgs(args: unknown): string {
   if (args && typeof args === 'object' && !Array.isArray(args)) {
@@ -742,14 +774,13 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
           await prepareBrcActionSpend(method, args)
         }
       } catch (err) {
-        const description = err instanceof Error ? err.message : String(err)
-        const offline = /offline/i.test(description)
+        const mapped = brcSpendErrorCode(err)
         return {
-          status: offline ? 503 : 400,
+          status: mapped.status,
           body: JSON.stringify({
             status: 'error',
-            code: offline ? 'OFFLINE_PAYMENTS_DISABLED' : 'INSUFFICIENT_OR_STALE_FUNDS',
-            description,
+            code: mapped.code,
+            description: mapped.description,
           }),
         }
       }
@@ -877,15 +908,15 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       } catch (err) {
         clearPaymentProgress()
         const blocked = spendBlockedMessage(err)
-        const description =
-          blocked ?? (err instanceof Error ? err.message : String(err))
-        const offline = /offline/i.test(description)
+        const mapped = brcSpendErrorCode(
+          blocked ? new Error(blocked) : err,
+        )
         return {
-          status: offline ? 503 : 400,
+          status: mapped.status,
           body: JSON.stringify({
             status: 'error',
-            code: offline ? 'OFFLINE_PAYMENTS_DISABLED' : 'INSUFFICIENT_OR_STALE_FUNDS',
-            description,
+            code: mapped.code,
+            description: mapped.description,
           }),
         }
       } finally {
@@ -977,6 +1008,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       if (txid) {
         cacheImageIconsFromCreateAction(txid, args, result)
         void cacheCreateActionBeef(active, txid, result)
+        // Await so the HTTP response lands after change is spendable — rapid
+        // app createAction / internalize chains must not race this promote.
+        await sealAfterAppCreateAction(txid, result)
       }
       if (isBsv21IdentityMintArgs(method, args) && txid) {
         recordIdentityMintActivity(txid, args, originator)
@@ -1009,6 +1043,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       playWalletSound('soft')
       scheduleHistoryBackupPush('signAction')
     } else if (method === 'internalizeAction') {
+      // BSV the app just credited must be selectable for the next createAction.
+      const receivedTxid = extractTxid(result) ?? extractTxid(args)
+      if (receivedTxid) await keepChangeOfSignedTx(receivedTxid)
       if (isItemReceiveArgs(method, args)) {
         paintAfterInternalizeItem(
           active,
@@ -1025,7 +1062,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
             kind: 'earned',
             sats,
             method,
-            txid: extractTxid(result) ?? extractTxid(args),
+            txid: receivedTxid,
           })
           playWalletSound('receive')
         } else {

@@ -16,6 +16,7 @@ import {
   getAutoPaySettings,
   type AutoPaySettings,
 } from '../wallet/autoPay'
+import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorization'
 import type { AutoPayChoice } from './ActionPermissionDialog'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
@@ -253,8 +254,9 @@ export function PermissionRequestPanel({
         </div>
 
         <p className="permission-note">
-          Payments and items still need separate approval. Disconnect anytime in Connected
-          apps.
+          {pending.spendingAuthorization
+            ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. Authorizing enables Auto-pay within that monthly cap. Disconnect anytime in Connected apps.`
+            : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
         </p>
       </>,
     )

@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import { Prompt } from '@aeon-ui/react'
 import type { PendingPermission } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
+import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorization'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
 
@@ -94,8 +95,9 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                 </div>
 
                 <p className="permission-note">
-                  Payments and items still need separate approval. Disconnect anytime in Connected
-                  apps.
+                  {pending.spendingAuthorization
+                    ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. Authorizing enables Auto-pay within that monthly cap. Disconnect anytime in Connected apps.`
+                    : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
                 </p>
 
                 <Prompt.Actions className="actions connect-actions">

@@ -154,6 +154,48 @@ describe('refreshSpendableBalance', () => {
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
   })
 
+  it('assertSendableBalance force-promotes again when confirming covers the gap', async () => {
+    mockConfirmed(2)
+    unconfirmedChangeSats.mockResolvedValue(162_767)
+    let promotePasses = 0
+    promotePendingLocalChangeOutputs.mockImplementation(async () => {
+      promotePasses += 1
+      if (promotePasses >= 2) {
+        mockConfirmed(50_000)
+        return 1
+      }
+      return 0
+    })
+    restoreLiveSpendableOutputs.mockResolvedValue({ restored: 0, unscripted: 0 })
+    const { assertSendableBalance } = await import('./spendGuard')
+    await expect(assertSendableBalance(50_000)).resolves.toBe(50_000)
+    expect(promotePendingLocalChangeOutputs.mock.calls.length).toBeGreaterThanOrEqual(2)
+  })
+
+  it('assertSendableBalance throws ChangeChainingRequiredError when promote cannot cover', async () => {
+    mockConfirmed(2)
+    unconfirmedChangeSats.mockResolvedValue(162_767)
+    restoreLiveSpendableOutputs.mockResolvedValue({ restored: 0, unscripted: 0 })
+    const { assertSendableBalance, isChangeChainingRequiredError } = await import('./spendGuard')
+    await expect(assertSendableBalance(50_000)).rejects.toSatisfy(
+      (err: unknown) =>
+        isChangeChainingRequiredError(err) &&
+        /chains unconfirmed change/.test(err instanceof Error ? err.message : ''),
+    )
+  })
+
+  it('prepareBrcActionSpend adds a fee buffer to the gate', async () => {
+    mockConfirmed(1500)
+    const { prepareBrcActionSpend, BRC_ACTION_FEE_BUFFER_SATS } = await import('./spendGuard')
+    // Payment 600 + buffer 1000 = 1600 > 1500 → refuse
+    await expect(
+      prepareBrcActionSpend('createAction', {
+        outputs: [{ satoshis: 600, lockingScript: '00' }],
+      }),
+    ).rejects.toThrow(/Insufficient balance/)
+    expect(BRC_ACTION_FEE_BUFFER_SATS).toBe(1000)
+  })
+
   it('assertSendableBalance refuses when credit exists but change was not promoted', async () => {
     mockConfirmed(2)
     unconfirmedChangeSats.mockResolvedValue(162_767)

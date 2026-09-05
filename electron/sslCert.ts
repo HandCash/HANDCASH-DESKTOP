@@ -9,25 +9,24 @@ export type CertificateKeyPair = {
   certPath: string
 }
 
-export async function generateSelfSignedCert(): Promise<CertificateKeyPair> {
-  const userDataPath = app.getPath('userData')
-  const certDir = path.join(userDataPath, 'certs')
-  const certPath = path.join(certDir, 'server.crt')
-  const keyPath = path.join(certDir, 'server.key')
-
-  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
-    try {
-      const cert = fs.readFileSync(certPath, 'utf8')
-      const key = fs.readFileSync(keyPath, 'utf8')
-      const forgeCert = forge.pki.certificateFromPem(cert)
-      if (forgeCert.validity.notAfter > new Date()) {
-        return { cert, key, certPath }
-      }
-    } catch {
-      // regenerate below
-    }
+/** True when the PEM cert lists IPv6 loopback in SAN (needed for localhost → ::1). */
+export function certHasIpv6LoopbackSan(certPem: string): boolean {
+  try {
+    const forgeCert = forge.pki.certificateFromPem(certPem)
+    const ext = forgeCert.getExtension('subjectAltName') as
+      | { altNames?: Array<{ type?: number; ip?: string; value?: string }> }
+      | false
+      | null
+    if (!ext || !Array.isArray(ext.altNames)) return false
+    return ext.altNames.some(
+      (n) => n.type === 7 && typeof n.ip === 'string' && n.ip === '::1',
+    )
+  } catch {
+    return false
   }
+}
 
+function writeNewCert(certDir: string, certPath: string, keyPath: string): CertificateKeyPair {
   if (!fs.existsSync(certDir)) fs.mkdirSync(certDir, { recursive: true })
 
   const keys = forge.pki.rsa.generateKeyPair(2048)
@@ -61,6 +60,7 @@ export async function generateSelfSignedCert(): Promise<CertificateKeyPair> {
       altNames: [
         { type: 2, value: 'localhost' },
         { type: 7, ip: '127.0.0.1' },
+        { type: 7, ip: '::1' },
       ],
     },
   ])
@@ -72,6 +72,32 @@ export async function generateSelfSignedCert(): Promise<CertificateKeyPair> {
   fs.writeFileSync(keyPath, keyPem, { mode: 0o600 })
 
   return { cert: certPem, key: keyPem, certPath }
+}
+
+export async function generateSelfSignedCert(): Promise<CertificateKeyPair> {
+  const userDataPath = app.getPath('userData')
+  const certDir = path.join(userDataPath, 'certs')
+  const certPath = path.join(certDir, 'server.crt')
+  const keyPath = path.join(certDir, 'server.key')
+
+  if (fs.existsSync(certPath) && fs.existsSync(keyPath)) {
+    try {
+      const cert = fs.readFileSync(certPath, 'utf8')
+      const key = fs.readFileSync(keyPath, 'utf8')
+      const forgeCert = forge.pki.certificateFromPem(cert)
+      if (
+        forgeCert.validity.notAfter > new Date() &&
+        certHasIpv6LoopbackSan(cert)
+      ) {
+        return { cert, key, certPath }
+      }
+      // Expired or missing ::1 SAN — regenerate so WalletClient('auto') on ::1 works.
+    } catch {
+      // regenerate below
+    }
+  }
+
+  return writeNewCert(certDir, certPath, keyPath)
 }
 
 /** Best-effort trust prompt stub — OS trust varies; apps can still use HTTP :3321. */

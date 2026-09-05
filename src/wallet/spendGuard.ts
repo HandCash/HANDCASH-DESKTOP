@@ -22,6 +22,43 @@ let spendChainPromoted = false
 export type SpendPromoteMode = 'full' | 'light'
 
 /**
+ * Fee headroom for BRC-100 createAction / signAction gates.
+ * Apps often pass only payment outputs; toolbox still needs fee UTXOs.
+ */
+export const BRC_ACTION_FEE_BUFFER_SATS = 1000
+
+/** Distinguishes "wait / retry — change is chaining" from hard insufficient. */
+export class ChangeChainingRequiredError extends Error {
+  readonly code = 'CHANGE_CHAINING_REQUIRED' as const
+  readonly confirmedSats: number
+  readonly confirmingSats: number
+  readonly neededSats: number
+
+  constructor(opts: {
+    message: string
+    confirmedSats: number
+    confirmingSats: number
+    neededSats: number
+  }) {
+    super(opts.message)
+    this.name = 'ChangeChainingRequiredError'
+    this.confirmedSats = opts.confirmedSats
+    this.confirmingSats = opts.confirmingSats
+    this.neededSats = opts.neededSats
+  }
+}
+
+export function isChangeChainingRequiredError(
+  err: unknown,
+): err is ChangeChainingRequiredError {
+  return (
+    err instanceof ChangeChainingRequiredError ||
+    (err instanceof Error &&
+      (err as { code?: string }).code === 'CHANGE_CHAINING_REQUIRED')
+  )
+}
+
+/**
  * Rebuild script-less change rows and mark live pending change spendable for chaining.
  * Local toolbox only — no chain raw-tx sweep (that belongs on Dashboard Refresh).
  *
@@ -160,13 +197,16 @@ export async function assertSendableBalanceForReview(satoshis: number): Promise<
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
     const { insufficientFundsMessage } = await import('./insufficientFunds')
-    throw new Error(
-      insufficientFundsMessage({
+    throw new ChangeChainingRequiredError({
+      message: insufficientFundsMessage({
         confirmedSats: confirmed,
         confirmingSats: confirming,
         neededSats: satoshis,
       }),
-    )
+      confirmedSats: confirmed,
+      confirmingSats: confirming,
+      neededSats: satoshis,
+    })
   }
 
   throw new Error(
@@ -208,19 +248,28 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   }
 
   if (confirming > 0 && confirmed + confirming >= satoshis) {
+    // One more light promote even inside an exclusive spend — prior createAction
+    // / internalize may have written outs after the region-entry promote ran.
+    await promoteSpendableChange('light')
+    confirmed = await readConfirmedSpendable(active)
+    if (satoshis <= confirmed) return confirmed
+
     const { insufficientFundsMessage } = await import('./insufficientFunds')
     await logSpendFailure('chaining-required', {
       needed: satoshis,
       confirmed,
       confirming,
     })
-    throw new Error(
-      insufficientFundsMessage({
+    throw new ChangeChainingRequiredError({
+      message: insufficientFundsMessage({
         confirmedSats: confirmed,
         confirmingSats: confirming,
         neededSats: satoshis,
       }),
-    )
+      confirmedSats: confirmed,
+      confirmingSats: confirming,
+      neededSats: satoshis,
+    })
   }
 
   await logSpendFailure('insufficient', { needed: satoshis, confirmed, confirming })
@@ -249,6 +298,6 @@ export async function prepareBrcActionSpend(
     method === 'createAction' || method === 'signAction'
       ? extractSatsFromArgs(method, args)
       : 0
-  if (sats > 0) return prepareSpendHeal(sats)
+  if (sats > 0) return prepareSpendHeal(sats + BRC_ACTION_FEE_BUFFER_SATS)
   return prepareSpendHeal()
 }

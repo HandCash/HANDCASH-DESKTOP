@@ -2,7 +2,7 @@ import {
   appDisplayName,
   normalizeAppHost,
 } from './appIdentity'
-import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
+import { canAutoProcessPayment, clearAutoPaySettings, setAutoPaySettings } from './autoPay'
 import {
   grantableCollectionIdsFromOutputs,
   grantableCollectionsFromOutputs,
@@ -77,6 +77,11 @@ export type PendingPermission = {
   origin: string
   method: string
   createdAt: number
+  /** BRC spendingAuthorization from the app's manifest.json (if any). */
+  spendingAuthorization?: {
+    amountSats: number
+    description: string
+  }
 }
 
 export type PendingAction = {
@@ -504,6 +509,9 @@ export function revokeOrigin(origin: string): void {
   const name = appDisplayName(key)
   writeConnected(readConnected().filter((a) => a.origin !== key))
   clearAutoPaySettings(key)
+  void import('./spendingAuthorization').then(({ clearSpendingAuthorization }) => {
+    clearSpendingAuthorization(key)
+  })
   clearPermissionSession(key)
   // Keep history — only drop the live connection. Activity still shows the unlink.
   void import('./appActivity').then(({ recordWalletEvent }) => {
@@ -518,6 +526,9 @@ export function revokeOrigin(origin: string): void {
 export function revokeAllOrigins(): void {
   writeConnected([])
   clearAutoPaySettings()
+  void import('./spendingAuthorization').then(({ clearSpendingAuthorization }) => {
+    clearSpendingAuthorization()
+  })
   clearPermissionSession()
 }
 
@@ -634,6 +645,13 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
   })
   const appName = appDisplayName(prompt.origin)
   if (prompt.kind === 'connect' && decision === 'allow') {
+    if (prompt.spendingAuthorization && prompt.spendingAuthorization.amountSats > 0) {
+      void import('./spendingAuthorization').then(({ grantSpendingAuthorization }) => {
+        grantSpendingAuthorization(prompt.origin, prompt.spendingAuthorization!)
+      })
+      // Enable Auto-pay so monthly-cap createAction can skip approve dialogs.
+      setAutoPaySettings(prompt.origin, { enabled: true })
+    }
     dispatchWalletUiEvent('handcash:wallet-connected', {
       origin: prompt.origin,
       appName,
@@ -699,6 +717,17 @@ export function requestOriginPermission(origin: string | undefined, method: stri
     origin: key,
     method,
     createdAt: Date.now(),
+    ...(await (async () => {
+      try {
+        const { fetchAppSpendingAuthorization } = await import('./spendingAuthorization')
+        const spendingAuthorization = await fetchAppSpendingAuthorization(
+          origin?.trim() || `https://${key}`,
+        )
+        return spendingAuthorization ? { spendingAuthorization } : {}
+      } catch {
+        return {}
+      }
+    })()),
   })
 }
 
