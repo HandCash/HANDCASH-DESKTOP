@@ -1036,8 +1036,8 @@ export function ActivityFeed({
         data-aeon-state={filtersOpen ? 'filters-open' : 'filters-closed'}
       >
         {filtersPanel}
-        {body}
         {head}
+        {body}
       </div>
     )
   }
@@ -1045,8 +1045,8 @@ export function ActivityFeed({
   return (
     <section className="history-panel panel" data-aeon-scope="recent-activity">
       {filtersPanel}
-      {body}
       {head}
+      {body}
     </section>
   )
 }

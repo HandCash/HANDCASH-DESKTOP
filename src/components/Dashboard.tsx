@@ -627,63 +627,7 @@ export function Dashboard({
     >
       <div className="dashboard-main">
         <div className="panel wallet-hero">
-          <div className="wallet-hero-main">
-            <div className="wallet-balance-slot" ref={balanceSlotRef}>
-              <button
-                ref={balanceBtnRef}
-                type="button"
-                className="wallet-balance"
-                data-aeon-part="balance"
-                data-aeon-state={currency}
-                aria-label={
-                  currency === 'usd'
-                    ? 'Balance in USD. Click to show BSV first.'
-                    : 'Balance in BSV. Click to show USD first.'
-                }
-                title="Click to swap currency"
-                onClick={() => {
-                  playWalletSound('soft')
-                  toggleDisplayCurrency()
-                }}
-              >
-                {currency === 'usd' ? (
-                  <>
-                    <span className="balance balance-primary balance-fiat">{usdLabel}</span>
-                    <span className="balance-secondary balance-bsv">{bsvLabel}</span>
-                  </>
-                ) : (
-                  <>
-                    <span className="balance balance-primary balance-bsv">{bsvLabel}</span>
-                    <span className="balance-secondary balance-fiat">{usdLabel}</span>
-                  </>
-                )}
-              </button>
-            </div>
-
-            <div className="actions wallet-actions">
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openSendFlow()
-                }}
-              >
-                <SendIcon size={18} />
-                <span className="wallet-action-label">Send</span>
-              </button>
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openReceiveFlow()
-                }}
-              >
-                <ReceiveIcon size={18} />
-                <span className="wallet-action-label">Receive</span>
-              </button>
-            </div>
-          </div>
-          <div className="connected-panel-head wallet-hero-head wallet-hero-foot">
+          <div className="connected-panel-head wallet-hero-head">
             <h2 className="wallet-hero-title">Your balance</h2>
             {(() => {
               const identity = walletIdentityChip(profile, claimedHandle)
@@ -702,6 +646,64 @@ export function Dashboard({
                 </button>
               )
             })()}
+          </div>
+          <div className="wallet-hero-main">
+            <div className="wallet-balance-block">
+              <div className="wallet-balance-slot" ref={balanceSlotRef}>
+                <button
+                  ref={balanceBtnRef}
+                  type="button"
+                  className="wallet-balance"
+                  data-aeon-part="balance"
+                  data-aeon-state={currency}
+                  aria-label={
+                    currency === 'usd'
+                      ? 'Balance in USD. Click to show BSV first.'
+                      : 'Balance in BSV. Click to show USD first.'
+                  }
+                  title="Click to swap currency"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    toggleDisplayCurrency()
+                  }}
+                >
+                  {currency === 'usd' ? (
+                    <>
+                      <span className="balance balance-primary balance-fiat">{usdLabel}</span>
+                      <span className="balance-secondary balance-bsv">{bsvLabel}</span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="balance balance-primary balance-bsv">{bsvLabel}</span>
+                      <span className="balance-secondary balance-fiat">{usdLabel}</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+
+            <div className="actions wallet-actions">
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openSendFlow()
+                }}
+              >
+                <SendIcon size={22} />
+                <span className="wallet-action-label">Send</span>
+              </button>
+              <button
+                className="btn btn-ghost btn-icon"
+                onClick={() => {
+                  playWalletSound('soft')
+                  openReceiveFlow()
+                }}
+              >
+                <ReceiveIcon size={22} />
+                <span className="wallet-action-label">Receive</span>
+              </button>
+            </div>
           </div>
         </div>
 

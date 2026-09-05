@@ -161,43 +161,47 @@ export function ConnectedAppsPanel({ apps }: Props) {
 
   return (
     <div
-      className="nav-section-body"
+      className="nav-section-body nav-section-with-scroll"
       data-aeon-scope="connected-apps"
       data-aeon-state={view}
     >
+      <div className="connected-panel-head">
+        <h2>Connected apps</h2>
+        <CollectionViewToggle label="Connected apps view" scope="apps" />
+      </div>
       {orderedApps.length === 0 ? (
         <EmptyState
           icon={<AppsIcon size={28} />}
           title="No apps connected"
           body="When a site connects through BRC-100, it shows up here with spend and permission history."
         />
-      ) : view === 'grid' ? (
-        <ul className="collection-grid">
-          {orderedApps.map((app) => (
-            <AppGridItem
-              key={app.origin}
-              app={app}
-              currency={currency}
-              usdPerBsv={usdPerBsv}
-            />
-          ))}
-        </ul>
       ) : (
-        <ul className="connected-app-list">
-          {orderedApps.map((app) => (
-            <AppListItem
-              key={app.origin}
-              app={app}
-              currency={currency}
-              usdPerBsv={usdPerBsv}
-            />
-          ))}
-        </ul>
+        <div className="nav-section-scroll-body">
+          {view === 'grid' ? (
+            <ul className="collection-grid">
+              {orderedApps.map((app) => (
+                <AppGridItem
+                  key={app.origin}
+                  app={app}
+                  currency={currency}
+                  usdPerBsv={usdPerBsv}
+                />
+              ))}
+            </ul>
+          ) : (
+            <ul className="connected-app-list">
+              {orderedApps.map((app) => (
+                <AppListItem
+                  key={app.origin}
+                  app={app}
+                  currency={currency}
+                  usdPerBsv={usdPerBsv}
+                />
+              ))}
+            </ul>
+          )}
+        </div>
       )}
-      <div className="connected-panel-head">
-        <h2>Connected apps</h2>
-        <CollectionViewToggle label="Connected apps view" scope="apps" />
-      </div>
     </div>
   )
 }

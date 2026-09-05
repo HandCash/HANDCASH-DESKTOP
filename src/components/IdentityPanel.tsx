@@ -78,80 +78,82 @@ export function IdentityPanel({ profile }: Props) {
   }
 
   return (
-    <div className="nav-section-body identity-nav identity-scroll" data-aeon-scope="identity">
-      <div className="identity-body">
-        <div className="identity-hero">
-          <button
-            type="button"
-            className="identity-qr-frame identity-qr-copy"
-            title="Click to copy identity key"
-            onClick={() => void copyIdentity()}
-          >
-            {dataUrl ? (
-              <img
-                src={dataUrl}
-                alt="Identity key QR code"
-                width={140}
-                height={140}
-                decoding="async"
-              />
-            ) : (
-              <SkeletonQr size={140} />
-            )}
-          </button>
-
-          <div className="identity-hero-meta">
-            <div className="identity-field">
-              <span className="identity-field-label">Handle</span>
-              {handleLabel ? (
-                <button
-                  type="button"
-                  className="identity-handle"
-                  title={`Click to copy ${handleLabel}`}
-                  onClick={() => void copyHandle()}
-                >
-                  {handleLabel}
-                </button>
-              ) : (
-                <div className="identity-handle-empty">
-                  <p className="identity-handle-missing">No handle claimed yet</p>
-                  <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
-                    Claim your $handle
-                  </button>
-                </div>
-              )}
-            </div>
-            <p className="identity-qr-hint">Tap QR to copy identity key</p>
-          </div>
-        </div>
-
-        <ul className="identity-list">
-          <li className="identity-field">
-            <span className="identity-field-label">Identity key</span>
-            <button
-              type="button"
-              className="mono identity-key"
-              title={`Click to copy identity key\n${profile.identityKey}`}
-              onClick={() => void copyIdentity()}
-            >
-              {shortIdentityKey(profile.identityKey)}
-            </button>
-          </li>
-
-          <li className="identity-field">
-            <span className="identity-field-label">Network</span>
-            <strong className="identity-network">
-              {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
-            </strong>
-          </li>
-        </ul>
-
-        <p className="identity-key-note">
-          Your identity key is not a payment address — use Receive for BSV.
-        </p>
-      </div>
+    <div className="nav-section-body identity-nav nav-section-with-scroll" data-aeon-scope="identity">
       <div className="connected-panel-head">
         <h2>Identity</h2>
+      </div>
+      <div className="identity-scroll nav-section-scroll-body">
+        <div className="identity-body">
+          <div className="identity-hero">
+            <button
+              type="button"
+              className="identity-qr-frame identity-qr-copy"
+              title="Click to copy identity key"
+              onClick={() => void copyIdentity()}
+            >
+              {dataUrl ? (
+                <img
+                  src={dataUrl}
+                  alt="Identity key QR code"
+                  width={140}
+                  height={140}
+                  decoding="async"
+                />
+              ) : (
+                <SkeletonQr size={140} />
+              )}
+            </button>
+
+            <div className="identity-hero-meta">
+              <div className="identity-field">
+                <span className="identity-field-label">Handle</span>
+                {handleLabel ? (
+                  <button
+                    type="button"
+                    className="identity-handle"
+                    title={`Click to copy ${handleLabel}`}
+                    onClick={() => void copyHandle()}
+                  >
+                    {handleLabel}
+                  </button>
+                ) : (
+                  <div className="identity-handle-empty">
+                    <p className="identity-handle-missing">No handle claimed yet</p>
+                    <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
+                      Claim your $handle
+                    </button>
+                  </div>
+                )}
+              </div>
+              <p className="identity-qr-hint">Tap QR to copy identity key</p>
+            </div>
+          </div>
+
+          <ul className="identity-list">
+            <li className="identity-field">
+              <span className="identity-field-label">Identity key</span>
+              <button
+                type="button"
+                className="mono identity-key"
+                title={`Click to copy identity key\n${profile.identityKey}`}
+                onClick={() => void copyIdentity()}
+              >
+                {shortIdentityKey(profile.identityKey)}
+              </button>
+            </li>
+
+            <li className="identity-field">
+              <span className="identity-field-label">Network</span>
+              <strong className="identity-network">
+                {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
+              </strong>
+            </li>
+          </ul>
+
+          <p className="identity-key-note">
+            Your identity key is not a payment address — use Receive for BSV.
+          </p>
+        </div>
       </div>
     </div>
   )

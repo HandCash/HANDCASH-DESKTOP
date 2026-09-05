@@ -21,18 +21,13 @@ html:is(.platform-mobile, .layout-compact) .app-shell {
   min-height: 100svh;
 }
 
-html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
-  bottom: 0;
-  margin-bottom: 0;
-  padding-bottom: calc(8px + env(safe-area-inset-bottom, 0px));
-}
-
 html:is(.platform-mobile, .layout-compact) .chat-composer,
 html:is(.platform-mobile, .layout-compact) .send-stage-edit .send-actions,
 html:is(.platform-mobile, .layout-compact) .send-stage-confirm .send-actions,
 html:is(.platform-mobile, .layout-compact) .burn-forget,
 html:is(.platform-mobile, .layout-compact) .friend-recipient-field {
-  scroll-margin-bottom: calc(5.5rem + env(safe-area-inset-bottom, 0px));
+  /* Bar is in-flow under the stage; only clear a little for keyboard / composer. */
+  scroll-margin-bottom: calc(1.25rem + env(safe-area-inset-bottom, 0px));
 }
 
 /*
@@ -59,7 +54,7 @@ html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.send-panel) .sen
 }
 
 html:is(.platform-mobile, .layout-compact) .aeonToast__viewport {
-  bottom: calc(4.25rem + env(safe-area-inset-bottom, 0px));
+  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar {
@@ -107,7 +102,7 @@ html:is(.platform-mobile, .layout-compact) .dashboard {
   min-height: 100%;
   gap: 8px;
   overflow: hidden;
-  padding-bottom: calc(3.75rem + env(safe-area-inset-bottom, 0px));
+  padding-bottom: env(safe-area-inset-bottom, 0px);
   box-sizing: border-box;
 }
 
@@ -125,12 +120,22 @@ html:is(.platform-mobile, .layout-compact) .wallet-hero {
   flex-shrink: 0;
 }
 
-/* Balance on its own line; actions below with labels */
+/* Balance + label, then Send/Receive below */
 html:is(.platform-mobile, .layout-compact) .wallet-hero-main {
   flex-direction: column;
   align-items: stretch;
-  gap: 12px;
+  gap: 14px;
   overflow: visible;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-balance-block {
+  flex: 0 0 auto;
+  width: 100%;
+  gap: 4px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-hero > .wallet-hero-head.connected-panel-head {
+  padding: 0 0 6px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-balance-slot {
@@ -171,9 +176,10 @@ html:is(.platform-mobile, .layout-compact) .wallet-balance .balance-secondary {
 html:is(.platform-mobile, .layout-compact) .wallet-actions {
   flex: 0 0 auto;
   width: 100%;
+  max-width: none;
   justify-content: space-between;
   flex-wrap: nowrap;
-  gap: 2px;
+  gap: 10px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
@@ -187,16 +193,16 @@ html:is(.platform-mobile, .layout-compact) .wallet-actions .btn {
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon {
   flex-direction: row;
-  gap: 8px;
-  padding: 12px 16px;
+  gap: 10px;
+  padding: 14px 18px;
   overflow: hidden;
   justify-content: center;
-  min-height: 48px;
+  min-height: 56px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-actions .btn-icon svg {
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-action-label {
@@ -204,12 +210,12 @@ html:is(.platform-mobile, .layout-compact) .wallet-action-label {
   width: auto;
   max-width: none;
   box-sizing: border-box;
-  font-family: var(--hc-font);
-  font-size: var(--hc-text-sm);
+  font-family: var(--hc-display);
+  font-size: 1.2rem;
   font-variant-caps: all-small-caps;
   letter-spacing: 0.04em;
   text-transform: none !important;
-  font-weight: 650;
+  font-weight: 700;
   line-height: 1.1;
   white-space: nowrap;
   overflow: visible;
@@ -376,10 +382,10 @@ html:is(.platform-mobile, .layout-compact) .settings-with-scroll .settings-panel
   position: relative;
   top: auto;
   bottom: auto;
-  margin-top: 10px;
-  margin-bottom: 0;
-  padding-top: 8px;
-  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 10px;
+  padding-top: 0;
+  padding-bottom: 8px;
 }
 
 html:is(.platform-mobile, .layout-compact) .nav-child-body {
@@ -389,11 +395,11 @@ html:is(.platform-mobile, .layout-compact) .nav-child-body {
 html:is(.platform-mobile, .layout-compact) .connected-panel-head,
 html:is(.platform-mobile, .layout-compact) .panel-label-bar {
   position: sticky;
-  bottom: 0;
-  top: auto;
+  top: 0;
+  bottom: auto;
   z-index: 6;
-  margin-top: 4px;
-  margin-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 4px;
 }
 
 /* Apps open via Scan / deep links — not an inline URL field on this tab. */
@@ -527,24 +533,31 @@ html:is(.platform-mobile, .layout-compact) .what-is-bsv .bsv-about {
   display: none !important;
 }
 
-/* Aeon wallet-nav dock — fixed, lean, labels always on */
+/* Aeon wallet-nav dock — inside the shell panel, not fixed to the viewport.
+ * Track = select plate; unselected tabs are gray pills; selected is unpilled. */
 html:is(.platform-mobile, .layout-compact) [data-aeon-scope='wallet-nav'] .wallet-nav-bar,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
-  position: fixed;
-  left: 4px;
-  right: 4px;
-  bottom: calc(6px + env(safe-area-inset-bottom, 0px));
-  z-index: 40;
+  position: relative;
+  left: auto;
+  right: auto;
+  bottom: auto;
+  z-index: 20;
   box-sizing: border-box;
-  padding: 3px;
+  flex-shrink: 0;
+  width: auto;
+  margin: 0 8px 8px;
+  --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
+  /* Dark: clearer gray pills against the select plate. */
+  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 22%, transparent);
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  padding: 2px;
   border: 1px solid hsl(var(--border));
-  border-radius: calc(var(--radius, 0.5rem) * 1.75);
-  background: color-mix(in srgb, hsl(var(--background)) 90%, transparent);
-  backdrop-filter: blur(14px) saturate(1.15);
-  -webkit-backdrop-filter: blur(14px) saturate(1.15);
-  /* No drop shadow — soft blur bled onto the sheet behind the dock. */
-  box-shadow: none;
-  overflow: hidden;
+  border-radius: var(--wallet-nav-pill-radius);
+  background: var(--wallet-nav-select);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  overflow: visible;
   scroll-snap-type: none;
 }
 
@@ -552,10 +565,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar-track {
   display: flex;
   width: 100%;
   min-width: 0;
-  gap: 1px;
+  min-height: 40px;
+  gap: 0;
   justify-content: stretch;
-  align-items: stretch;
-  overflow: hidden;
+  /* Center so muted pills float and show rounded bottoms like the old selected chip. */
+  align-items: center;
+  overflow: visible;
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
@@ -563,18 +579,22 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  height: 40px;
+  /* Floating capsule — full pill top + bottom, not flush to the track floor. */
+  height: 34px;
+  align-self: center;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   gap: 2px;
   padding: 4px 1px;
-  border-radius: calc(var(--radius, 0.5rem) * 1.25);
+  /* Default: mid-run unselected — square edges so adjacent grays join. */
+  border-radius: 0;
   scroll-snap-align: none;
   overflow: hidden;
   color: hsl(var(--muted-foreground));
-  background: transparent;
-  transition: color 140ms ease, background 140ms ease;
+  background: var(--wallet-nav-unselected);
+  box-shadow: none;
+  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab svg {
@@ -583,20 +603,23 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab svg {
   flex-shrink: 0;
 }
 
-/* Mobile: short labels only on the selected tab; full names stay in aria-label/title */
+/* Compact: icon-only tabs (Accept/Decline keep short labels). */
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label {
   display: none !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label-short {
   display: none;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab
+  .wallet-nav-tab-label-short {
+  display: block;
   position: static;
-  left: auto;
-  top: auto;
-  transform: none;
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
   width: 100%;
   max-width: 100%;
   font-family: var(--font-display, var(--hc-display));
@@ -608,41 +631,42 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab-label-short {
   white-space: nowrap;
   text-align: center;
   overflow: hidden;
+  text-overflow: ellipsis;
   pointer-events: none;
-}
-
-html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active .wallet-nav-tab-label-short,
-html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'] .wallet-nav-tab-label-short,
-html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] .wallet-nav-tab-label-short {
-  display: none;
-}
-
-/* Permission Accept/Decline keep visible labels. */
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab
-  .wallet-nav-tab-label-short {
-  display: block;
 }
 
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab
   .wallet-nav-tab-label {
-  display: none;
+  display: none !important;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab:hover {
-  background: color-mix(in srgb, hsl(var(--foreground)) 5%, transparent);
-  color: hsl(var(--foreground));
+  color: var(--hc-text);
+  background: color-mix(in srgb, var(--hc-text) 18%, transparent);
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
   flex: 1 1 0;
-  color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-text) 10%, transparent);
+  /* Dark: white selected icon; light override below. */
+  color: #fafafa;
+  /* Unpilled — stretch flush with the select track. */
+  background: transparent;
+  box-shadow: none;
+  border-radius: 0;
+  height: 100%;
+  min-height: 40px;
+  align-self: stretch;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active:hover,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true']:hover,
+html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]:hover {
+  background: transparent;
+  color: #fafafa;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active svg,
@@ -657,18 +681,64 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after
   content: none;
 }
 
-/* Light sheet: keep bottom nav bright, not dingy grey. */
+/*
+ * Cap the ends of each unselected run as a full pill (top + bottom),
+ * matching the old selected-chip silhouette — not flat to the track floor.
+ */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):first-child,
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab.is-active
+  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[aria-selected='true']
+  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab[data-selected]
+  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]) {
+  border-top-left-radius: 999px;
+  border-bottom-left-radius: 999px;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):last-child,
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
+    + .is-active
+  ),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
+    + [aria-selected='true']
+  ),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
+    + [data-selected]
+  ) {
+  border-top-right-radius: 999px;
+  border-bottom-right-radius: 999px;
+}
+
+/* Light: white select track; soft unselected pills (not heavy gray). */
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
-  background: #ffffff;
+  --wallet-nav-select: #fff;
+  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 5%, #f4f5f4);
+  background: var(--wallet-nav-select);
   border-color: hsl(var(--border));
-  box-shadow: none;
+  box-shadow: 0 1px 3px rgba(20, 24, 20, 0.08);
 }
 
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
 html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
-  color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  color: hsl(var(--primary));
+  background: transparent;
+  box-shadow: none;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active:hover,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true']:hover,
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]:hover {
+  color: hsl(var(--primary));
 }
 
 @media (max-width: 640px) {

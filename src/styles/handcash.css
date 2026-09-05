@@ -968,7 +968,6 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
 
 .wallet-actions .btn svg {
   opacity: 1;
-  color: inherit;
 }
 
 .btn-danger {
@@ -1169,6 +1168,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
+  gap: 8px;
   padding: 8px 16px 12px;
   flex-shrink: 0;
   min-width: 0;
@@ -1176,15 +1176,44 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   container-name: wallet-hero;
 }
 
+/* Full-width label + identity across the wallet section. */
+.wallet-hero > .wallet-hero-head.connected-panel-head {
+  position: relative;
+  top: auto;
+  bottom: auto;
+  z-index: auto;
+  width: 100%;
+  margin: 0;
+  padding: 0 0 8px;
+  border-top: 0;
+  border-bottom: 1px solid hsl(var(--border));
+  min-height: 0;
+  background: transparent;
+  flex-shrink: 0;
+}
+
+.wallet-hero > .wallet-hero-head.connected-panel-head::before {
+  display: none;
+}
+
 .wallet-hero-main {
   display: flex;
   flex-direction: row;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   width: 100%;
   min-width: 0;
   overflow: hidden;
   text-align: left;
+}
+
+.wallet-balance-block {
+  flex: 1 1 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
 }
 
 .wallet-actions {
@@ -1194,28 +1223,40 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   align-items: center;
   flex-wrap: nowrap;
   min-width: 0;
-  gap: 8px;
+  gap: 10px;
 }
 
 .wallet-actions .btn {
   flex: 1 1 0;
   min-width: 0;
   justify-content: center;
-  min-height: 42px;
-  font-size: var(--hc-text-sm);
+  min-height: 52px;
+  font-size: 1.05rem;
+}
+
+.wallet-actions .btn-icon {
+  gap: 10px;
+  padding: 12px 18px;
+}
+
+.wallet-actions .btn-icon svg {
+  width: 22px;
+  height: 22px;
 }
 
 .wallet-action-label {
   display: inline;
-  font-family: var(--hc-font);
+  font-family: var(--hc-display);
+  font-size: 1.15rem;
   font-variant-caps: all-small-caps;
   text-transform: none;
-  letter-spacing: 0.03em;
-  font-weight: 650;
+  letter-spacing: 0.04em;
+  font-weight: 700;
+  line-height: 1.1;
 }
 
 .wallet-balance-slot {
-  flex: 1 1 0;
+  flex: 0 1 auto;
   min-width: 0;
   max-width: 100%;
   display: flex;
@@ -1247,29 +1288,23 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   line-height: 1.15;
 }
 
-@container wallet-hero (max-width: 640px) {
-  .wallet-action-label {
-    display: none;
-  }
-
-  .wallet-actions .btn-icon {
-    gap: 0;
-    padding-inline: 10px;
-  }
-}
-
 @container wallet-hero (max-width: 420px) {
   .wallet-hero-main {
     flex-wrap: wrap;
-    gap: 6px;
+    gap: 10px;
   }
 
   .wallet-actions {
-    gap: 4px;
+    gap: 8px;
+    width: 100%;
   }
 
   .wallet-actions .btn-icon {
-    padding-inline: 8px;
+    padding-inline: 14px;
+  }
+
+  .wallet-action-label {
+    font-size: 1.05rem;
   }
 
   .wallet-backup-warn {
@@ -1284,7 +1319,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   border-radius: 6px;
 }
 
-.wallet-balance .balance {
+.wallet-balance .balance,
+.wallet-balance .balance-primary {
   margin: 0;
   font-size: 1em;
   font-weight: 700;
@@ -1296,8 +1332,9 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   color: #57ff97;
 }
 
-html[data-aeon-mode='light'] .wallet-balance .balance {
-  /* Very dark HandCash green on paper — same at $0 and any balance. */
+html[data-aeon-mode='light'] .wallet-balance .balance,
+html[data-aeon-mode='light'] .wallet-balance .balance-primary {
+  /* Very dark HandCash green on paper — primary amount only. */
   color: #0a3d22 !important;
 }
 
@@ -1667,13 +1704,6 @@ html[data-aeon-mode='light'] .wallet-balance .balance {
   color: #0a120e;
 }
 
-html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='success'] {
-  /* Paper sheet: soft mint fill + deep brand ink (not neon on white). */
-  background: color-mix(in srgb, hsl(var(--dark-green)) 18%, #ffffff);
-  color: hsl(143 72% 22%);
-  border: 1px solid color-mix(in srgb, hsl(var(--dark-green)) 28%, transparent);
-}
-
 /* Dark error — keep light type. */
 .bsv-toast-cover[data-tone='error'] {
   background: color-mix(in srgb, hsl(var(--destructive, 0 72% 51%)) 78%, #1a0808);
@@ -1692,6 +1722,38 @@ html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='success'] {
     var(--colors-aeon-accent, hsl(var(--primary)))
   );
   color: var(--hc-text);
+}
+
+/*
+ * Light sheet: every BSV-slot toast is black plate + white type
+ * (same as floating app/update toasts — no mint success wash).
+ */
+html[data-aeon-mode='light'] .bsv-toast-cover,
+html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='success'],
+html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='error'],
+html[data-aeon-mode='light'] .bsv-toast-cover[data-tone='neutral'] {
+  background: #0a0a0a;
+  color: #fafafa;
+  border: 1px solid #262626;
+}
+
+html[data-aeon-mode='light'] .bsv-toast-cover::before {
+  opacity: 0.35;
+  background:
+    radial-gradient(
+      ellipse 85% 70% at 50% 35%,
+      color-mix(in srgb, #fff 10%, transparent) 0%,
+      transparent 58%
+    ),
+    radial-gradient(
+      ellipse 120% 100% at 50% 100%,
+      color-mix(in srgb, #000 35%, transparent) 0%,
+      transparent 55%
+    );
+}
+
+html[data-aeon-mode='light'] .bsv-toast-cover::after {
+  box-shadow: inset 0 1px 0 color-mix(in srgb, #fff 12%, transparent);
 }
 
 .bsv-toast-title {
@@ -1992,12 +2054,14 @@ button.bsv-change.is-down,
     flex-wrap: wrap;
   }
 
+  .wallet-balance-block,
   .wallet-balance-slot {
     width: 100%;
   }
 
   .wallet-actions {
-    margin-left: auto;
+    margin-left: 0;
+    width: 100%;
   }
 
 }
@@ -2725,10 +2789,15 @@ button.wallet-detail-value.is-copied {
   position: relative;
   top: auto;
   bottom: auto;
-  margin-top: 10px;
-  margin-bottom: 0;
-  padding-top: 8px;
-  padding-bottom: 0;
+  margin-top: 0;
+  margin-bottom: 10px;
+  padding-top: 0;
+  padding-bottom: 8px;
+}
+
+.settings-with-scroll .connected-panel-head::before,
+.settings-with-scroll .settings-panel-head::before {
+  display: none;
 }
 
 .settings-scroll-body {
@@ -2801,6 +2870,11 @@ button.wallet-detail-value.is-copied {
   flex: 0 0 auto;
   position: relative;
   top: auto;
+  bottom: auto;
+}
+
+.identity-nav.nav-section-with-scroll .connected-panel-head::before {
+  display: none;
 }
 
 .nav-section-scroll-body {
@@ -3525,19 +3599,14 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-head {
-  margin-top: 10px;
-  margin-bottom: 0;
-}
-
-.wallet-hero-foot {
-  margin-top: 10px;
+  margin: 0;
 }
 
 .wallet-hero-identity {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  max-width: min(56%, 220px);
+  max-width: min(70%, 420px);
   min-width: 0;
   margin: 0;
   padding: 0 2px 0 8px;
@@ -3656,15 +3725,15 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-nav-tab.is-active,
 .wallet-nav-tab[aria-selected='true'],
 .wallet-nav-tab[data-selected] {
-  color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-text) 10%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-text) 14%, transparent);
+  color: #fafafa;
+  /* Match preferences theme toggle: soft raised chip, not accent ring. */
+  background: var(--hc-panel, var(--hc-surface));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 .wallet-nav-tab.is-active svg,
 .wallet-nav-tab[aria-selected='true'] svg,
 .wallet-nav-tab[data-selected] svg {
-  /* Same ink as the label — never Omarchy/brand accent. */
   color: inherit;
 }
 
@@ -3717,8 +3786,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   white-space: nowrap;
 }
 
-/* Section titles live on the panel foot — tabs are icon-only (Accept/Decline keep labels). */
-.wallet-nav-bar:not([data-permission]) .wallet-nav-tab-label,
+/* Wide desktop shows full labels; short labels stay off (compact is icon-only). */
 .wallet-nav-bar:not([data-permission]) .wallet-nav-tab-label-short {
   display: none !important;
 }
@@ -3765,7 +3833,6 @@ li[data-aeon-state='failed'] .history-progress-range {
   min-height: 0;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
-  padding-bottom: 8px;
 }
 
 .identity-body {
@@ -4558,15 +4625,16 @@ button.payment-details-item-thumb-btn:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 10px 0 0;
-  padding: 8px 0 0;
-  border-top: 1px solid hsl(var(--border));
-  border-bottom: 0;
-  min-height: 0;
+  margin: 0 0 10px;
+  padding: 0 0 8px;
+  border-top: 0;
+  border-bottom: 1px solid hsl(var(--border));
+  /* Match rows that include a 28px list/grid (or filter) control. */
+  min-height: calc(8px + 28px);
   box-sizing: border-box;
   position: sticky;
-  bottom: 0;
-  top: auto;
+  top: 0;
+  bottom: auto;
   z-index: 5;
   /* Match the panel card — avoid a second near-black plate over the stage. */
   background: hsl(var(--card));
@@ -4575,16 +4643,16 @@ button.payment-details-item-thumb-btn:hover {
 
 .panel-label-bar {
   position: sticky;
-  bottom: 0;
-  top: auto;
+  top: 0;
+  bottom: auto;
   z-index: 6;
   flex-shrink: 0;
   background: hsl(var(--card));
 }
 
 /*
- * Sticky foot sits above stage bottom padding — extend the solid plate
- * downward so scrolled content does not show through.
+ * Sticky head sits below stage top padding — extend the solid plate
+ * upward so scrolled content does not show through.
  */
 .wallet-nav-stage .connected-panel-head,
 .wallet-nav-stage .panel-label-bar {
@@ -4596,8 +4664,8 @@ button.payment-details-item-thumb-btn:hover {
   content: '';
   position: absolute;
   z-index: -1;
-  bottom: -8px;
-  top: auto;
+  top: -8px;
+  bottom: auto;
   right: -14px;
   left: -14px;
   height: 8px;
@@ -4648,8 +4716,8 @@ button.payment-details-item-thumb-btn:hover {
 .collection-view-btn[data-active],
 .collection-view-btn[aria-pressed='true'] {
   color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-accent) 18%, var(--hc-surface));
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-accent) 35%, transparent);
+  background: var(--hc-panel, var(--hc-surface));
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 .collection-grid {
@@ -6936,9 +7004,9 @@ html[data-aeon-mode='light'] .shortcut-key {
 }
 
 .send-currency-opt[data-active] {
-  background: hsl(var(--card));
+  background: var(--hc-panel, var(--hc-surface));
   color: var(--hc-text);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 .send-dest-field,
@@ -7035,7 +7103,9 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
 }
 
 .receive-mode-actions {
-  margin-bottom: 12px;
+  margin: 8px 0 0;
+  width: 100%;
+  justify-content: center;
 }
 
 @container receive (max-width: 560px) {
@@ -11591,9 +11661,10 @@ html[data-aeon-mode='light'] .statecharts-nav-btn.is-active {
 }
 
 html[data-aeon-mode='light'] .screenshot-toast {
-  background: var(--hc-surface);
-  color: var(--hc-text);
-  box-shadow: var(--shadow-section-hover);
+  background: #0a0a0a;
+  color: #fafafa;
+  border-color: #262626;
+  box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.35);
 }
 
 /* Chat keeps its own sheet; give it a paper one instead of a second dark app. */
@@ -11632,7 +11703,14 @@ html[data-aeon-mode='light'] .app-toast.aeonToast__root,
 html[data-aeon-mode='light'] .update-toast.aeonToast__root {
   background: #0a0a0a;
   color: #fafafa;
+  border-color: #262626;
   box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.35);
+}
+
+html[data-aeon-mode='light'] .app-toast[data-aeon-state='success'],
+html[data-aeon-mode='light'] .app-toast[data-aeon-state='error'],
+html[data-aeon-mode='light'] .update-toast[data-aeon-state='error'] {
+  border-color: #262626;
 }
 
 html[data-aeon-mode='light'] .app-toast .aeonToast__title,
@@ -11642,22 +11720,28 @@ html[data-aeon-mode='light'] .update-toast .aeonToast__description {
   color: #fafafa;
 }
 
+html[data-aeon-mode='light'] .app-toast .aeonToast__closeTrigger,
+html[data-aeon-mode='light'] .update-toast .aeonToast__closeTrigger {
+  color: #fafafa;
+}
+
 /* —— Light sheet: black takes the roles green holds in the dark theme ——
    Chrome and data ink go black; green is kept only where it is a *state*
    (the live dot, success, a downward move's red counterpart). Scoped to the
    light selector so the dark theme is untouched. */
 
 html[data-aeon-mode='light'] .wallet-nav-bar {
-  background: #ffffff;
+  /* Soft track like preferences theme toggle — white selected chip needs a tinted rail. */
+  background: color-mix(in srgb, var(--hc-text) 8%, #ffffff);
 }
 
-/* Selected nav — ink matches label (black on paper), not accent. */
+/* Selected nav — soft raised chip; primary ink on paper. */
 html[data-aeon-mode='light'] .wallet-nav-tab.is-active,
 html[data-aeon-mode='light'] .wallet-nav-tab[aria-selected='true'],
 html[data-aeon-mode='light'] .wallet-nav-tab[data-selected] {
-  color: var(--hc-text);
-  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hc-text) 12%, transparent);
+  color: hsl(var(--primary));
+  background: #fff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 html[data-aeon-mode='light'] .wallet-nav-tab.is-active svg,
@@ -11739,15 +11823,22 @@ html[data-aeon-mode='light'] .settings-scroll {
   --hc-accent-2: hsl(143 78% 26%);
 }
 
-/* Grid/list selector: an active view is chrome, not state, so it goes black. */
+/* Grid/list selector: soft raised chip (same language as preferences toggle). */
 html[data-aeon-mode='light'] .collection-view-btn:hover {
   background: color-mix(in srgb, hsl(var(--primary)) 7%, transparent);
 }
 
 html[data-aeon-mode='light'] .collection-view-btn[data-active],
 html[data-aeon-mode='light'] .collection-view-btn[aria-pressed='true'] {
-  color: hsl(var(--primary));
-  background: color-mix(in srgb, hsl(var(--primary)) 10%, transparent);
+  color: var(--hc-text);
+  background: #fff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
+}
+
+html[data-aeon-mode='light'] .send-currency-opt[data-active] {
+  color: var(--hc-text);
+  background: #fff;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--hc-text) 14%, transparent);
 }
 
 /* Burn inherits .send-panel / .send-layout / .send-stage. Compact stacked

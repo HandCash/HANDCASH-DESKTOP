@@ -46,6 +46,14 @@ import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
+import {
+  buildSellBsvSwapUrl,
+  fetchSwapCurrencies,
+  NATIVE_BSV_ETA,
+  openMarketSwap,
+  SWAP_ETA,
+  type MarketSwapCurrency,
+} from '../wallet/marketSwap'
 
 type Props = {
   chain: Chain
@@ -56,21 +64,6 @@ type Props = {
   onFail: (error: string) => void
   onClose: () => void
 }
-
-type DestAssetId = 'bsv' | 'btc' | 'eth'
-
-type DestAsset = {
-  id: DestAssetId
-  label: string
-  eta: string
-  ready: boolean
-}
-
-const DEST_ASSETS: DestAsset[] = [
-  { id: 'bsv', label: 'BSV', eta: 'Instant', ready: true },
-  { id: 'btc', label: 'BTC', eta: '~10–60 min', ready: false },
-  { id: 'eth', label: 'ETH', eta: '~10–60 min', ready: false },
-]
 
 function shortenAddress(value: string): string {
   const v = value.trim()
@@ -152,20 +145,37 @@ export function SendPanel({
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
   const [scanningTo, setScanningTo] = useState(false)
-  const [destAssetId, setDestAssetId] = useState<DestAssetId>('bsv')
+  const [destAssetId, setDestAssetId] = useState('bsv')
+  const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
   /** Local draft — syncing every keystroke through XState re-rendered the whole panel. */
   const [amountDraft, setAmountDraft] = useState(() => sendSnap.context.amount)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
   const handleResolveRef = useRef(createHandleResolveDebouncer())
 
-  const destAsset = DEST_ASSETS.find((a) => a.id === destAssetId) ?? DEST_ASSETS[0]!
-  const destReady = destAsset.ready
+  const destIsNative = destAssetId === 'bsv'
+  const destAsset = destIsNative
+    ? { id: 'bsv', label: 'BSV', eta: NATIVE_BSV_ETA }
+    : {
+        id: destAssetId,
+        label: swapCoins.find((c) => c.code === destAssetId)?.code ?? destAssetId,
+        eta: SWAP_ETA,
+      }
+  const destReady = destIsNative
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
+  useEffect(() => {
+    const ac = new AbortController()
+    void fetchSwapCurrencies({ signal: ac.signal, limit: 12 })
+      .then(setSwapCoins)
+      .catch(() => {
+        /* Native BSV send still works without the catalog. */
+      })
+    return () => ac.abort()
+  }, [])
   useEffect(() => {
     const sync = () => setOfflineBlock(offlinePaymentBlockedMessage())
     sync()
@@ -585,13 +595,17 @@ export function SendPanel({
                   value={destAssetId}
                   onChange={(e) => {
                     playWalletSound('soft')
-                    setDestAssetId(e.target.value as DestAssetId)
+                    const next = e.target.value
+                    setDestAssetId(next)
+                    if (next !== 'bsv') {
+                      openMarketSwap(buildSellBsvSwapUrl(next))
+                    }
                   }}
                 >
-                  {DEST_ASSETS.map((asset) => (
-                    <option key={asset.id} value={asset.id}>
-                      {asset.label} — {asset.eta}
-                      {asset.ready ? '' : ' (Coming soon)'}
+                  <option value="bsv">BSV — {NATIVE_BSV_ETA}</option>
+                  {swapCoins.map((coin) => (
+                    <option key={coin.code} value={coin.code}>
+                      {coin.code} — {coin.eta}
                     </option>
                   ))}
                 </select>
@@ -601,19 +615,32 @@ export function SendPanel({
                 </p>
                 {!destReady ? (
                   <p className="send-dest-soon" role="status">
-                    Cross-chain send is coming soon. Choose BSV for Instant settlement.
+                    Opening HandCash swap to send BSV as {destAsset.label}. Native Instant send stays
+                    on BSV.
                   </p>
                 ) : null}
               </div>
 
               <div className="actions send-actions">
-                <button
-                  className="btn btn-primary"
-                  disabled={!canReview}
-                  onClick={() => void goReview()}
-                >
-                  {reviewBusy ? 'Checking balance…' : 'Review'}
-                </button>
+                {destReady ? (
+                  <button
+                    className="btn btn-primary"
+                    disabled={!canReview}
+                    onClick={() => void goReview()}
+                  >
+                    {reviewBusy ? 'Checking balance…' : 'Review'}
+                  </button>
+                ) : (
+                  <button
+                    className="btn btn-primary"
+                    onClick={() => {
+                      playWalletSound('soft')
+                      openMarketSwap(buildSellBsvSwapUrl(destAssetId))
+                    }}
+                  >
+                    Continue on HandCash
+                  </button>
+                )}
                 <button className="btn btn-ghost" onClick={onClose}>
                   Cancel
                 </button>

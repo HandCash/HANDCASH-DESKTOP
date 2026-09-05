@@ -4,31 +4,22 @@ import { copyText } from '../wallet/clipboard'
 import { buildPeerPayUri } from '../wallet/peerPayUri'
 import { toastError } from '../wallet/toast'
 import { playWalletSound } from '../wallet/soundService'
-import { ADD_MONEY_URL } from '../wallet/walletConfig'
+import {
+  buildBuyBsvSwapUrl,
+  fetchSwapCurrencies,
+  NATIVE_BSV_ETA,
+  openMarketSwap,
+  SWAP_ETA,
+  type MarketSwapCurrency,
+} from '../wallet/marketSwap'
 import { DeferredImage } from './DeferredImage'
 import { SkeletonQr } from './Skeleton'
 
 export type ReceiveMode = 'peerpay' | 'address'
 
 export function defaultReceiveMode(): ReceiveMode {
-  return 'address'
+  return 'peerpay'
 }
-
-type ReceiveViaId = 'bsv' | 'btc' | 'eth' | 'usd'
-
-type ReceiveVia = {
-  id: ReceiveViaId
-  label: string
-  eta: string
-  kind: 'native' | 'swap'
-}
-
-const RECEIVE_VIA: ReceiveVia[] = [
-  { id: 'bsv', label: 'BSV', eta: 'Instant', kind: 'native' },
-  { id: 'btc', label: 'BTC', eta: '~10–60 min', kind: 'swap' },
-  { id: 'eth', label: 'ETH', eta: '~10–60 min', kind: 'swap' },
-  { id: 'usd', label: 'USD / card', eta: '~a few minutes', kind: 'swap' },
-]
 
 type Props = {
   address: string
@@ -36,11 +27,20 @@ type Props = {
 }
 
 export function ReceivePanel({ address, identityKey }: Props) {
-  const [mode, setMode] = useState<ReceiveMode>(defaultReceiveMode())
+  const [mode, setMode] = useState<ReceiveMode>(() =>
+    // Prefer PeerPay when we can build a URI; fall back to address otherwise.
+    (() => {
+      try {
+        buildPeerPayUri(identityKey)
+        return defaultReceiveMode()
+      } catch {
+        return 'address'
+      }
+    })(),
+  )
   const [dataUrl, setDataUrl] = useState<string | null>(null)
-  const [viaId, setViaId] = useState<ReceiveViaId>('bsv')
-
-  const via = RECEIVE_VIA.find((v) => v.id === viaId) ?? RECEIVE_VIA[0]!
+  const [viaId, setViaId] = useState('bsv')
+  const [swapCoins, setSwapCoins] = useState<MarketSwapCurrency[]>([])
 
   const peerpayUri = useMemo(() => {
     try {
@@ -50,11 +50,32 @@ export function ReceivePanel({ address, identityKey }: Props) {
     }
   }, [identityKey])
 
+  useEffect(() => {
+    if (!peerpayUri && mode === 'peerpay') setMode('address')
+  }, [peerpayUri, mode])
+
+  useEffect(() => {
+    const ac = new AbortController()
+    void fetchSwapCurrencies({ signal: ac.signal, limit: 12 })
+      .then(setSwapCoins)
+      .catch(() => {
+        /* Keep BSV Instant only if catalog is unreachable. */
+      })
+    return () => ac.abort()
+  }, [])
+
   const value = mode === 'peerpay' && peerpayUri ? peerpayUri : address
   const subtitle =
     mode === 'peerpay'
       ? 'PeerPay (BRC-125) — identity key payment link'
       : 'Payment address — scan or copy to receive BSV'
+
+  const viaIsSwap = viaId !== 'bsv'
+  const viaLabel =
+    viaId === 'bsv'
+      ? 'BSV'
+      : (swapCoins.find((c) => c.code === viaId)?.name ?? viaId)
+  const viaEta = viaIsSwap ? SWAP_ETA : NATIVE_BSV_ETA
 
   useEffect(() => {
     let cancelled = false
@@ -82,9 +103,15 @@ export function ReceivePanel({ address, identityKey }: Props) {
     await copyText(value, { label: mode === 'peerpay' ? 'PeerPay link' : 'address' })
   }
 
-  const openAddMoney = () => {
+  const openAddMoney = (fromCoin?: string) => {
     playWalletSound('soft')
-    void window.handcash?.openExternal?.(ADD_MONEY_URL)
+    openMarketSwap(buildBuyBsvSwapUrl(fromCoin))
+  }
+
+  const onViaChange = (next: string) => {
+    playWalletSound('soft')
+    setViaId(next)
+    if (next !== 'bsv') openAddMoney(next)
   }
 
   return (
@@ -121,38 +148,6 @@ export function ReceivePanel({ address, identityKey }: Props) {
             )}
           </button>
           <p className="receive-qr-hint">Tap QR to copy</p>
-        </div>
-
-        <div className="receive-info">
-          <div className="field receive-via-field">
-            <label htmlFor="receive-via">Receive via</label>
-            <select
-              id="receive-via"
-              className="receive-via-select"
-              value={viaId}
-              onChange={(e) => {
-                playWalletSound('soft')
-                setViaId(e.target.value as ReceiveViaId)
-              }}
-            >
-              {RECEIVE_VIA.map((option) => (
-                <option key={option.id} value={option.id}>
-                  {option.kind === 'native'
-                    ? `${option.label} — ${option.eta}`
-                    : `Swap from ${option.label} — ${option.eta}`}
-                </option>
-              ))}
-            </select>
-            <p className="receive-eta-row" data-native={via.kind === 'native' ? '' : undefined}>
-              <span className="receive-eta-label">Arrival</span>
-              <strong className="receive-eta-value">{via.eta}</strong>
-            </p>
-            {via.kind === 'swap' ? (
-              <p className="receive-swap-note">
-                You’ll still receive BSV here. Use Add money to buy or swap from {via.label}.
-              </p>
-            ) : null}
-          </div>
 
           {peerpayUri ? (
             <div className="actions receive-mode-actions">
@@ -178,6 +173,35 @@ export function ReceivePanel({ address, identityKey }: Props) {
               </button>
             </div>
           ) : null}
+        </div>
+
+        <div className="receive-info">
+          <div className="field receive-via-field">
+            <label htmlFor="receive-via">Receive via</label>
+            <select
+              id="receive-via"
+              className="receive-via-select"
+              value={viaId}
+              onChange={(e) => onViaChange(e.target.value)}
+            >
+              <option value="bsv">BSV — {NATIVE_BSV_ETA}</option>
+              {swapCoins.map((coin) => (
+                <option key={coin.code} value={coin.code}>
+                  Swap from {coin.code} — {coin.eta}
+                </option>
+              ))}
+            </select>
+            <p className="receive-eta-row" data-native={viaIsSwap ? undefined : ''}>
+              <span className="receive-eta-label">Arrival</span>
+              <strong className="receive-eta-value">{viaEta}</strong>
+            </p>
+            {viaIsSwap ? (
+              <p className="receive-swap-note">
+                You’ll still receive BSV here. Opening HandCash swap for {viaLabel}…
+              </p>
+            ) : null}
+          </div>
+
           <p className="qr-subtitle receive-subtitle">{subtitle}</p>
           <button
             type="button"
@@ -191,7 +215,7 @@ export function ReceivePanel({ address, identityKey }: Props) {
             <button type="button" className="btn btn-primary" onClick={() => void copy()}>
               {mode === 'peerpay' ? 'Copy PeerPay' : 'Copy address'}
             </button>
-            <button type="button" className="btn btn-ghost" onClick={openAddMoney}>
+            <button type="button" className="btn btn-ghost" onClick={() => openAddMoney()}>
               Add money
             </button>
           </div>
