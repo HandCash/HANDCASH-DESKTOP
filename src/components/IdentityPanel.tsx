@@ -79,10 +79,6 @@ export function IdentityPanel({ profile }: Props) {
 
   return (
     <div className="nav-section-body identity-nav identity-scroll" data-aeon-scope="identity">
-      <div className="connected-panel-head">
-        <h2>Identity</h2>
-      </div>
-
       <div className="identity-body">
         <div className="identity-hero">
           <button
@@ -153,6 +149,9 @@ export function IdentityPanel({ profile }: Props) {
         <p className="identity-key-note">
           Your identity key is not a payment address — use Receive for BSV.
         </p>
+      </div>
+      <div className="connected-panel-head">
+        <h2>Identity</h2>
       </div>
     </div>
   )

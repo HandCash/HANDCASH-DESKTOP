@@ -1194,12 +1194,15 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   align-items: center;
   flex-wrap: nowrap;
   min-width: 0;
-  gap: 6px;
+  gap: 8px;
 }
 
 .wallet-actions .btn {
-  flex-shrink: 1;
+  flex: 1 1 0;
   min-width: 0;
+  justify-content: center;
+  min-height: 42px;
+  font-size: var(--hc-text-sm);
 }
 
 .wallet-action-label {
@@ -2721,8 +2724,11 @@ button.wallet-detail-value.is-copied {
   flex: 0 0 auto;
   position: relative;
   top: auto;
-  margin-bottom: 10px;
-  padding-bottom: 8px;
+  bottom: auto;
+  margin-top: 10px;
+  margin-bottom: 0;
+  padding-top: 8px;
+  padding-bottom: 0;
 }
 
 .settings-scroll-body {
@@ -3519,7 +3525,12 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-head {
-  margin-bottom: 10px;
+  margin-top: 10px;
+  margin-bottom: 0;
+}
+
+.wallet-hero-foot {
+  margin-top: 10px;
 }
 
 .wallet-hero-identity {
@@ -3704,6 +3715,12 @@ li[data-aeon-state='failed'] .history-progress-range {
   font-weight: 700;
   line-height: 1.1;
   white-space: nowrap;
+}
+
+/* Section titles live on the panel foot — tabs are icon-only (Accept/Decline keep labels). */
+.wallet-nav-bar:not([data-permission]) .wallet-nav-tab-label,
+.wallet-nav-bar:not([data-permission]) .wallet-nav-tab-label-short {
+  display: none !important;
 }
 
 .wallet-nav-tab-label-short {
@@ -4541,30 +4558,33 @@ button.payment-details-item-thumb-btn:hover {
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  margin: 0 0 10px;
-  padding: 0 0 8px;
-  border-bottom: 1px solid hsl(var(--border));
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px solid hsl(var(--border));
+  border-bottom: 0;
   min-height: 0;
   box-sizing: border-box;
   position: sticky;
-  top: 0;
+  bottom: 0;
+  top: auto;
   z-index: 5;
   /* Match the panel card — avoid a second near-black plate over the stage. */
   background: hsl(var(--card));
+  flex-shrink: 0;
 }
 
 .panel-label-bar {
   position: sticky;
-  top: 0;
+  bottom: 0;
+  top: auto;
   z-index: 6;
   flex-shrink: 0;
   background: hsl(var(--card));
 }
 
 /*
- * The scroll stage has 8px top padding. A sticky label starts below that
- * padding, so scrolled content could show through the otherwise transparent
- * strip above it. Extend the label's solid plate across that strip.
+ * Sticky foot sits above stage bottom padding — extend the solid plate
+ * downward so scrolled content does not show through.
  */
 .wallet-nav-stage .connected-panel-head,
 .wallet-nav-stage .panel-label-bar {
@@ -4576,7 +4596,8 @@ button.payment-details-item-thumb-btn:hover {
   content: '';
   position: absolute;
   z-index: -1;
-  top: -8px;
+  bottom: -8px;
+  top: auto;
   right: -14px;
   left: -14px;
   height: 8px;
@@ -5757,7 +5778,8 @@ html[data-aeon-mode='light'] .settings-icon-toggle-btn[data-selected] {
 }
 
 .settings-panel-head {
-  margin-bottom: 10px;
+  margin-top: 10px;
+  margin-bottom: 0;
 }
 
 .settings-grid {
@@ -6862,6 +6884,172 @@ html[data-aeon-mode='light'] .shortcut-key {
   outline: none;
 }
 
+.send-panel-intro,
+.receive-panel-intro {
+  display: grid;
+  gap: 4px;
+  text-align: center;
+  margin: 0 0 4px;
+}
+
+.send-panel-title,
+.receive-panel-title {
+  margin: 0;
+  font-family: var(--hc-display);
+  font-size: clamp(1.15rem, 3.2cqi, 1.45rem);
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: var(--hc-text);
+}
+
+.send-panel-lede,
+.receive-panel-lede {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.86rem;
+  line-height: 1.35;
+}
+
+.send-currency-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--hc-muted) 12%, transparent);
+}
+
+.send-currency-opt {
+  appearance: none;
+  margin: 0;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--hc-muted);
+  font: inherit;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.send-currency-opt[data-active] {
+  background: hsl(var(--card));
+  color: var(--hc-text);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+
+.send-dest-field,
+.receive-via-field {
+  display: grid;
+  gap: 6px;
+}
+
+.send-dest-select,
+.receive-via-select {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: hsl(var(--card));
+  color: var(--hc-text);
+  font: inherit;
+  font-size: 0.92rem;
+}
+
+.send-eta-row,
+.receive-eta-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-muted) 8%, transparent);
+}
+
+.send-eta-label,
+.receive-eta-label {
+  color: var(--hc-muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.send-eta-value,
+.receive-eta-value {
+  font-size: 0.92rem;
+  font-weight: 700;
+  color: var(--hc-text);
+}
+
+.send-eta-row[data-ready],
+.receive-eta-row[data-native] {
+  background: color-mix(in srgb, #57ff97 12%, transparent);
+}
+
+.send-eta-row[data-ready] .send-eta-value,
+.receive-eta-row[data-native] .receive-eta-value {
+  color: color-mix(in srgb, #0c8f3e 70%, var(--hc-text));
+}
+
+html[data-aeon-mode='dark'] .send-eta-row[data-ready] .send-eta-value,
+html[data-aeon-mode='dark'] .receive-eta-row[data-native] .receive-eta-value {
+  color: #57ff97;
+}
+
+.send-dest-soon,
+.receive-swap-note {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
+}
+
+.receive-layout-premium {
+  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
+  gap: 24px 32px;
+  max-width: 760px;
+  padding-top: 8px;
+}
+
+.receive-layout-premium .receive-panel-intro {
+  grid-column: 1 / -1;
+}
+
+.receive-layout-premium .receive-qr-frame.qr-frame {
+  width: min(260px, 100%);
+  padding: 14px;
+  background: #fff;
+  border-radius: 12px;
+  box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.35);
+}
+
+html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
+  box-shadow: 0 12px 32px -14px rgba(0, 0, 0, 0.65);
+}
+
+.receive-mode-actions {
+  margin-bottom: 12px;
+}
+
+@container receive (max-width: 560px) {
+  .receive-layout-premium {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+
+  .receive-layout-premium .receive-info {
+    width: 100%;
+  }
+}
+
+
 /* One reserved line under the amount: converted value, or the rate warning. */
 .send-amount-note {
   display: flex;
@@ -7197,6 +7385,48 @@ html[data-aeon-mode='light'] .shortcut-key {
     align-items: flex-start;
     gap: 2px;
   }
+}
+
+.titlebar-end {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
+  flex-shrink: 0;
+}
+
+.titlebar-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.titlebar-action-btn {
+  appearance: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hc-text);
+  cursor: pointer;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.titlebar-action-btn:hover {
+  background: var(--hc-hover);
+  color: var(--hc-text);
+}
+
+.titlebar-action-btn svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
 }
 
 /* ---- Skeletons / deferred images ---- */
@@ -11400,9 +11630,16 @@ html[data-aeon-mode='light'] .chat-bubble {
 
 html[data-aeon-mode='light'] .app-toast.aeonToast__root,
 html[data-aeon-mode='light'] .update-toast.aeonToast__root {
-  background: var(--hc-surface);
-  color: var(--hc-text);
-  box-shadow: var(--hc-shadow);
+  background: #0a0a0a;
+  color: #fafafa;
+  box-shadow: 0 12px 28px -10px rgba(0, 0, 0, 0.35);
+}
+
+html[data-aeon-mode='light'] .app-toast .aeonToast__title,
+html[data-aeon-mode='light'] .app-toast .aeonToast__description,
+html[data-aeon-mode='light'] .update-toast .aeonToast__title,
+html[data-aeon-mode='light'] .update-toast .aeonToast__description {
+  color: #fafafa;
 }
 
 /* —— Light sheet: black takes the roles green holds in the dark theme ——

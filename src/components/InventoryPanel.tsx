@@ -575,11 +575,6 @@ export function InventoryPanel() {
       data-aeon-scope="collectables"
       data-aeon-state={view}
     >
-      <div className="connected-panel-head">
-        <h2>Collectables</h2>
-        <CollectionViewToggle label="Collectables view" scope="collectables" />
-      </div>
-
       {empty && !showLoading ? (
         <EmptyState
           icon={<CollectablesIcon size={28} />}
@@ -677,6 +672,10 @@ export function InventoryPanel() {
       ) : null}
         </div>
       )}
+      <div className="connected-panel-head">
+        <h2>Collectables</h2>
+        <CollectionViewToggle label="Collectables view" scope="collectables" />
+      </div>
     </div>
   )
 }

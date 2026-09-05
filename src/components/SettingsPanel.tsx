@@ -225,10 +225,6 @@ export function SettingsPanel() {
       className="nav-section-body settings-nav settings-with-scroll"
       data-aeon-scope="settings"
     >
-      <div className="connected-panel-head settings-panel-head">
-        <h2>Settings</h2>
-      </div>
-
       <div className="settings-scroll-body">
       <SettingsSection title="Security" part="security">
         <SecurityRows />
@@ -390,6 +386,9 @@ export function SettingsPanel() {
           />
         </ul>
       </SettingsSection>
+      </div>
+      <div className="connected-panel-head settings-panel-head">
+        <h2>Settings</h2>
       </div>
     </div>
   )

@@ -18,9 +18,6 @@ import type { WalletProfile } from '../machines/appMachine'
 import {
   SendIcon,
   ReceiveIcon,
-  LockIcon,
-  AddMoneyIcon,
-  ScanQrIcon,
 } from './icons'
 import { copyText } from '../wallet/clipboard'
 import {
@@ -42,7 +39,6 @@ import {
   getNavState,
   isMessagesNavChild,
   openReceiveFlow,
-  openScanFlow,
   openSendFlow,
   subscribeNav,
 } from '../wallet/navStore'
@@ -55,7 +51,6 @@ import { softPullHistoryIfRemoteNewer } from '../wallet/deviceSync'
 import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { getActiveWallet } from '../wallet/session'
-import { ADD_MONEY_URL } from '../wallet/walletConfig'
 import { identityQrDataUrl } from '../wallet/identityQr'
 import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 import { whenRecomposeIdle } from '../wallet/recompose'
@@ -117,7 +112,6 @@ type Props = {
   balanceSats: number
   onSent: (balanceSats: number) => void
   onRefreshBalance: (balanceSats: number) => void
-  onLock: () => void
   onFail: (error: string) => void
 }
 
@@ -154,7 +148,6 @@ export function Dashboard({
   balanceSats,
   onSent,
   onRefreshBalance,
-  onLock,
   onFail,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
@@ -222,11 +215,6 @@ export function Dashboard({
     minPx: 8,
     watch: `${currency}|${usdLabel}|${bsvLabel}`,
   })
-
-  const addMoney = () => {
-    playWalletSound('soft')
-    void window.handcash?.openExternal?.(ADD_MONEY_URL)
-  }
 
   useEffect(() => {
     const onOnline = () => {
@@ -639,26 +627,6 @@ export function Dashboard({
     >
       <div className="dashboard-main">
         <div className="panel wallet-hero">
-          <div className="connected-panel-head wallet-hero-head">
-            <h2 className="wallet-hero-title">Your balance</h2>
-            {(() => {
-              const identity = walletIdentityChip(profile, claimedHandle)
-              if (!identity) return null
-              return (
-                <button
-                  type="button"
-                  className="wallet-hero-identity"
-                  title={`Click to copy ${identity.copy}`}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    void copyText(identity.copy, { label: 'identity' })
-                  }}
-                >
-                  <span>{identity.label}</span>
-                </button>
-              )
-            })()}
-          </div>
           <div className="wallet-hero-main">
             <div className="wallet-balance-slot" ref={balanceSlotRef}>
               <button
@@ -700,7 +668,7 @@ export function Dashboard({
                   openSendFlow()
                 }}
               >
-                <SendIcon size={16} />
+                <SendIcon size={18} />
                 <span className="wallet-action-label">Send</span>
               </button>
               <button
@@ -710,43 +678,30 @@ export function Dashboard({
                   openReceiveFlow()
                 }}
               >
-                <ReceiveIcon size={16} />
+                <ReceiveIcon size={18} />
                 <span className="wallet-action-label">Receive</span>
               </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon"
-                aria-label="Add money — buy BSV with other crypto"
-                title="Buy BSV with other crypto (opens handcash.io in your browser)"
-                onClick={addMoney}
-              >
-                <AddMoneyIcon size={16} />
-                <span className="wallet-action-label">Add money</span>
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost btn-icon"
-                aria-label="Scan QR code"
-                title="Scan QR code"
-                onClick={() => {
-                  playWalletSound('soft')
-                  openScanFlow()
-                }}
-              >
-                <ScanQrIcon size={16} />
-                <span className="wallet-action-label">Scan</span>
-              </button>
-              <button
-                className="btn btn-ghost btn-icon"
-                onClick={() => {
-                  playWalletSound('soft')
-                  onLock()
-                }}
-              >
-                <LockIcon size={16} />
-                <span className="wallet-action-label">Lock</span>
-              </button>
             </div>
+          </div>
+          <div className="connected-panel-head wallet-hero-head wallet-hero-foot">
+            <h2 className="wallet-hero-title">Your balance</h2>
+            {(() => {
+              const identity = walletIdentityChip(profile, claimedHandle)
+              if (!identity) return null
+              return (
+                <button
+                  type="button"
+                  className="wallet-hero-identity"
+                  title={`Click to copy ${identity.copy}`}
+                  onClick={() => {
+                    playWalletSound('soft')
+                    void copyText(identity.copy, { label: 'identity' })
+                  }}
+                >
+                  <span>{identity.label}</span>
+                </button>
+              )
+            })()}
           </div>
         </div>
 

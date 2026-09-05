@@ -15,7 +15,7 @@ import {
 import {
   getDisplayCurrency,
   subscribeDisplayCurrency,
-  toggleDisplayCurrency,
+  setDisplayCurrency,
   type DisplayCurrency,
 } from '../wallet/displayCurrency'
 import {
@@ -56,6 +56,21 @@ type Props = {
   onFail: (error: string) => void
   onClose: () => void
 }
+
+type DestAssetId = 'bsv' | 'btc' | 'eth'
+
+type DestAsset = {
+  id: DestAssetId
+  label: string
+  eta: string
+  ready: boolean
+}
+
+const DEST_ASSETS: DestAsset[] = [
+  { id: 'bsv', label: 'BSV', eta: 'Instant', ready: true },
+  { id: 'btc', label: 'BTC', eta: '~10–60 min', ready: false },
+  { id: 'eth', label: 'ETH', eta: '~10–60 min', ready: false },
+]
 
 function shortenAddress(value: string): string {
   const v = value.trim()
@@ -137,11 +152,15 @@ export function SendPanel({
   const [offlineBlock, setOfflineBlock] = useState(() => offlinePaymentBlockedMessage())
   const [reviewBusy, setReviewBusy] = useState(false)
   const [scanningTo, setScanningTo] = useState(false)
+  const [destAssetId, setDestAssetId] = useState<DestAssetId>('bsv')
   /** Local draft — syncing every keystroke through XState re-rendered the whole panel. */
   const [amountDraft, setAmountDraft] = useState(() => sendSnap.context.amount)
   const sendState = stateToAttr(sendSnap.value)
   const appliedPrefill = useRef(false)
   const handleResolveRef = useRef(createHandleResolveDebouncer())
+
+  const destAsset = DEST_ASSETS.find((a) => a.id === destAssetId) ?? DEST_ASSETS[0]!
+  const destReady = destAsset.ready
 
   useEffect(() => subscribeFriends(setFriends), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
@@ -175,6 +194,7 @@ export function SendPanel({
     amountSats > 0 ? formatSecondaryFromSats(amountSats, currency, usdPerBsv) : null
 
   const canReview =
+    destReady &&
     !offlineBlock &&
     !reviewBusy &&
     sendSnap.context.to.trim().length > 0 &&
@@ -188,7 +208,7 @@ export function SendPanel({
   }
 
   const goReview = async () => {
-    if (reviewBusy || offlineBlock) return
+    if (reviewBusy || offlineBlock || !destReady) return
     setReviewBusy(true)
     playWalletSound('soft')
     syncAmountToMachine(amountDraft)
@@ -231,8 +251,8 @@ export function SendPanel({
     sendSnap.context.payeeIdentityKey,
   )
 
-  const toggleSendCurrency = () => {
-    const next: DisplayCurrency = currency === 'usd' ? 'bsv' : 'usd'
+  const setSendCurrency = (next: DisplayCurrency) => {
+    if (next === currency) return
     const sats = amountToSats(amountDraft, currency, usdPerBsv)
     playWalletSound('soft')
     if (sats > 0) {
@@ -242,7 +262,7 @@ export function SendPanel({
         syncAmountToMachine(converted)
       }
     }
-    toggleDisplayCurrency()
+    setDisplayCurrency(next)
   }
 
   const selectFriend = (friend: Friend) => {
@@ -350,6 +370,7 @@ export function SendPanel({
    * still be edited.
    */
   const confirmSend = () => {
+    if (!destReady) return
     syncAmountToMachine(amountDraft)
     const satoshis = amountToSats(amountDraft, currency, usdPerBsv)
     if (!Number.isFinite(satoshis) || satoshis <= 0) {
@@ -417,6 +438,11 @@ export function SendPanel({
       {sendSnap.matches('editing') && (
         <div className="send-stage send-stage-edit">
           <div className="send-layout">
+            <header className="send-panel-intro">
+              <h3 className="send-panel-title">Send BSV</h3>
+              <p className="send-panel-lede">Pay anyone on Bitcoin SV — instantly settled.</p>
+            </header>
+
             <div className="send-amount-hero" data-currency={currency}>
               <label htmlFor="amount" className="send-amount-label">
                 Amount
@@ -434,24 +460,26 @@ export function SendPanel({
                   aria-label={currency === 'usd' ? 'Amount in USD' : 'Amount in BSV'}
                 />
               </div>
-              <button
-                type="button"
-                className="send-amount-unit"
-                onClick={toggleSendCurrency}
-                aria-label={
-                  currency === 'usd'
-                    ? 'Amount in USD. Click to enter BSV.'
-                    : 'Amount in BSV. Click to enter USD.'
-                }
-                title="Click to swap currency"
-              >
-                {currency === 'usd' ? 'USD' : 'BSV'}
-              </button>
-              {/*
-                One reserved line for whichever note applies. Mounting these as
-                they became true moved the amount under the caret while it was
-                being typed.
-              */}
+              <div className="send-currency-toggle" role="group" aria-label="Amount currency">
+                <button
+                  type="button"
+                  className="send-currency-opt"
+                  data-active={currency === 'usd' ? '' : undefined}
+                  aria-pressed={currency === 'usd'}
+                  onClick={() => setSendCurrency('usd')}
+                >
+                  USD
+                </button>
+                <button
+                  type="button"
+                  className="send-currency-opt"
+                  data-active={currency === 'bsv' ? '' : undefined}
+                  aria-pressed={currency === 'bsv'}
+                  onClick={() => setSendCurrency('bsv')}
+                >
+                  BSV
+                </button>
+              </div>
               <div className="send-amount-note" aria-live="polite">
                 {currency === 'usd' && usdPerBsv == null ? (
                   <span className="send-amount-warning">
@@ -514,7 +542,8 @@ export function SendPanel({
                   </div>
                 )}
                 <p className="friend-recipient-hint send-recipient-hint">
-                  PeerPay links, $handles, and identity keys resolve to a payment address on this network.
+                  PeerPay links, $handles, and identity keys resolve to a payment address on this
+                  network.
                 </p>
                 {resolvedName ? (
                   <p className="send-resolved" aria-live="polite">
@@ -548,6 +577,35 @@ export function SendPanel({
                 ) : null}
               </div>
 
+              <div className="field send-dest-field">
+                <label htmlFor="send-dest">Destination</label>
+                <select
+                  id="send-dest"
+                  className="send-dest-select"
+                  value={destAssetId}
+                  onChange={(e) => {
+                    playWalletSound('soft')
+                    setDestAssetId(e.target.value as DestAssetId)
+                  }}
+                >
+                  {DEST_ASSETS.map((asset) => (
+                    <option key={asset.id} value={asset.id}>
+                      {asset.label} — {asset.eta}
+                      {asset.ready ? '' : ' (Coming soon)'}
+                    </option>
+                  ))}
+                </select>
+                <p className="send-eta-row" data-ready={destReady ? '' : undefined}>
+                  <span className="send-eta-label">Arrival</span>
+                  <strong className="send-eta-value">{destAsset.eta}</strong>
+                </p>
+                {!destReady ? (
+                  <p className="send-dest-soon" role="status">
+                    Cross-chain send is coming soon. Choose BSV for Instant settlement.
+                  </p>
+                ) : null}
+              </div>
+
               <div className="actions send-actions">
                 <button
                   className="btn btn-primary"
@@ -576,6 +634,10 @@ export function SendPanel({
                   <span className="send-amount-secondary">≈ {amountSecondary}</span>
                 ) : null}
               </div>
+              <p className="send-eta-row" data-ready="">
+                <span className="send-eta-label">{destAsset.label}</span>
+                <strong className="send-eta-value">{destAsset.eta}</strong>
+              </p>
             </div>
             <div className="send-side">
               <p className="send-confirm-to">
@@ -585,7 +647,11 @@ export function SendPanel({
                 <p className="mono send-confirm-address">{sendSnap.context.to}</p>
               ) : null}
               <div className="actions send-actions">
-                <button className="btn btn-primary" onClick={confirmSend}>
+                <button
+                  className="btn btn-primary"
+                  disabled={!destReady}
+                  onClick={confirmSend}
+                >
                   Confirm
                 </button>
                 <button className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>

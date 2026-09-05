@@ -20,6 +20,9 @@ import { AuthScreen } from './components/AuthScreen'
 import { Dashboard } from './components/Dashboard'
 import { BrandLogo } from './components/BrandLogo'
 import { WalletStatusPill, sessionFromMachine } from './components/WalletStatusPill'
+import { LockIcon, ScanQrIcon } from './components/icons'
+import { openScanFlow } from './wallet/navStore'
+import { playWalletSound } from './wallet/soundService'
 import { ConnectPermissionDialog } from './components/ConnectPermissionDialog'
 import { ActionPermissionDialog } from './components/ActionPermissionDialog'
 import { UpdatePrompt } from './components/UpdatePrompt'
@@ -27,7 +30,6 @@ import { ScreenshotToast } from './components/ScreenshotToast'
 import { AppToastHost } from './components/AppToastHost'
 import { setAutoPaySettings } from './wallet/autoPay'
 import { UpdateProvider } from './wallet/updateProvider'
-import { playWalletSound } from './wallet/soundService'
 import { showToast, toastError, toastSuccess } from './wallet/toast'
 import { appDisplayName } from './wallet/appIdentity'
 import { refreshFromChain } from './wallet/chainIngest'
@@ -344,11 +346,41 @@ export function App() {
       <div className="app-shell" data-aeon-scope="app" data-aeon-state={stateAttr}>
         <header className="titlebar aeon-titlebar">
           <BrandLogo variant="green" />
-          <WalletStatusPill
-            session={sessionFromMachine(snapshot.value)}
-            bridgeOnline={snapshot.context.bridgeOnline}
-            onManualSync={walletUnlocked ? handleManualSync : undefined}
-          />
+          <div className="titlebar-end" data-aeon-no-drag>
+            {(snapshot.matches('ready') || snapshot.matches('sending')) && (
+              <div className="titlebar-actions">
+                <button
+                  type="button"
+                  className="titlebar-action-btn"
+                  aria-label="Scan QR code"
+                  title="Scan QR code"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    openScanFlow()
+                  }}
+                >
+                  <ScanQrIcon size={18} />
+                </button>
+                <button
+                  type="button"
+                  className="titlebar-action-btn"
+                  aria-label="Lock wallet"
+                  title="Lock wallet"
+                  onClick={() => {
+                    playWalletSound('soft')
+                    lockWallet('manual')
+                  }}
+                >
+                  <LockIcon size={18} />
+                </button>
+              </div>
+            )}
+            <WalletStatusPill
+              session={sessionFromMachine(snapshot.value)}
+              bridgeOnline={snapshot.context.bridgeOnline}
+              onManualSync={walletUnlocked ? handleManualSync : undefined}
+            />
+          </div>
         </header>
 
         <main className="stage">
@@ -391,7 +423,6 @@ export function App() {
               balanceSats={snapshot.context.balanceSats}
               onSent={onSent}
               onRefreshBalance={handleBalanceRefresh}
-              onLock={() => lockWallet('manual')}
               onFail={onWalletFail}
             />
           )}

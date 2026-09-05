@@ -118,37 +118,6 @@ export function FriendsPanel({ chain }: Props) {
       data-aeon-scope="friends"
       data-aeon-state={view}
     >
-      <div className="connected-panel-head friends-panel-head">
-        <h2>Friends</h2>
-        <div className="friends-panel-head-actions panel-icon-toolbar">
-          <button
-            type="button"
-            className="panel-icon-btn panel-icon-btn--accent"
-            aria-label="Open messages"
-            title="Messages"
-            onClick={() => {
-              playWalletSound('soft')
-              openMessagesInbox()
-            }}
-          >
-            <MessagesIcon size={16} />
-          </button>
-          <button
-            type="button"
-            className="panel-icon-btn"
-            aria-label="Add friend"
-            title="Add friend"
-            onClick={() => {
-              playWalletSound('soft')
-              openAddFriend()
-            }}
-          >
-            <PersonAddIcon size={16} />
-          </button>
-          <CollectionViewToggle label="Friends view" scope="friends" />
-        </div>
-      </div>
-
       {friends.length === 0 ? (
         <EmptyState
           icon={<PersonAddIcon size={28} />}
@@ -195,6 +164,36 @@ export function FriendsPanel({ chain }: Props) {
           )}
         </div>
       )}
+      <div className="connected-panel-head friends-panel-head">
+        <h2>Friends</h2>
+        <div className="friends-panel-head-actions panel-icon-toolbar">
+          <button
+            type="button"
+            className="panel-icon-btn panel-icon-btn--accent"
+            aria-label="Open messages"
+            title="Messages"
+            onClick={() => {
+              playWalletSound('soft')
+              openMessagesInbox()
+            }}
+          >
+            <MessagesIcon size={16} />
+          </button>
+          <button
+            type="button"
+            className="panel-icon-btn"
+            aria-label="Add friend"
+            title="Add friend"
+            onClick={() => {
+              playWalletSound('soft')
+              openAddFriend()
+            }}
+          >
+            <PersonAddIcon size={16} />
+          </button>
+          <CollectionViewToggle label="Friends view" scope="friends" />
+        </div>
+      </div>
     </div>
   )
 }
