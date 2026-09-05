@@ -2,7 +2,7 @@ import {
   appDisplayName,
   normalizeAppHost,
 } from './appIdentity'
-import { canAutoProcessPayment, clearAutoPaySettings, setAutoPaySettings } from './autoPay'
+import { canAutoProcessPayment, clearAutoPaySettings } from './autoPay'
 import {
   grantableCollectionIdsFromOutputs,
   grantableCollectionsFromOutputs,
@@ -649,8 +649,8 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       void import('./spendingAuthorization').then(({ grantSpendingAuthorization }) => {
         grantSpendingAuthorization(prompt.origin, prompt.spendingAuthorization!)
       })
-      // Enable Auto-pay so monthly-cap createAction can skip approve dialogs.
-      setAutoPaySettings(prompt.origin, { enabled: true })
+      // Auto-pay stays a pay-request choice — Connect only stores the monthly
+      // sat grant so later Auto-pay uses BRC monthly semantics.
     }
     dispatchWalletUiEvent('handcash:wallet-connected', {
       origin: prompt.origin,
@@ -714,27 +714,45 @@ export async function requestOriginPermission(
     })
   }
 
-  let spendingAuthorization:
-    | { amountSats: number; description: string }
-    | undefined
-  try {
-    const { fetchAppSpendingAuthorization } = await import('./spendingAuthorization')
-    const found = await fetchAppSpendingAuthorization(
-      origin?.trim() || `https://${key}`,
-    )
-    if (found) spendingAuthorization = found
-  } catch {
-    // Connect still works without a manifest.
-  }
-
-  return enqueuePrompt({
+  // Show Connect immediately — never await a remote manifest. A hung/slow
+  // fetch (common on Android when explorers are timing out) used to delay the
+  // prompt so waitForAuthentication looked broken.
+  const decision = enqueuePrompt({
     id: idCounter++,
     kind: 'connect',
     origin: key,
     method,
     createdAt: Date.now(),
-    ...(spendingAuthorization ? { spendingAuthorization } : {}),
   })
+
+  void (async () => {
+    try {
+      const { fetchAppSpendingAuthorization } = await import('./spendingAuthorization')
+      const found = await fetchAppSpendingAuthorization(
+        origin?.trim() || `https://${key}`,
+      )
+      if (!found) return
+      const patch = (prompt: PendingPrompt): boolean => {
+        if (prompt.kind !== 'connect' || prompt.origin !== key) return false
+        prompt.spendingAuthorization = found
+        return true
+      }
+      if (current?.request && patch(current.request)) {
+        notify()
+        return
+      }
+      for (const item of queue) {
+        if (patch(item.request)) {
+          notify()
+          return
+        }
+      }
+    } catch {
+      // Connect works without a monthly grant label.
+    }
+  })()
+
+  return decision
 }
 
 function asRecord(args: unknown): Record<string, unknown> {

@@ -3,16 +3,17 @@
  *
  * Apps declare `{ amount, description }` in their web manifest under
  * `metanet.groupPermissions.spendingAuthorization` (legacy:
- * `babbage.groupPermissions`). On Connect Allow we persist the grant and enable
- * Auto-pay so rapid createAction (e.g. Plinko) can skip the approve dialog
- * within the calendar-month cap.
+ * `babbage.groupPermissions`). On Connect Allow we persist the grant.
+ * Auto-pay is still enabled on a payment approve prompt; once on, silent
+ * createAction uses this monthly cap instead of the default USD / hours window.
  */
 import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 
 const STORAGE_KEY = 'handcash.brc100.spendingAuthorization'
-const MANIFEST_FETCH_MS = 4_000
+/** Keep short — Connect must never wait on this (see requestOriginPermission). */
+const MANIFEST_FETCH_MS = 1_500
 
 export type SpendingAuthorizationDeclaration = {
   amountSats: number

@@ -46,7 +46,7 @@ Yes (BRC-73 / BRC-116). Declare in your web `manifest.json`:
 }
 ```
 
-On Connect **Authorize**, HandCash grants that **monthly satoshis** cap and enables Auto-pay for the origin. Silent `createAction` then stays within the UTC calendar-month total. Disconnect clears the grant.
+On Connect **Authorize**, HandCash stores that **monthly satoshis** cap (manifest is fetched in the background and never blocks the Connect prompt). **Auto-pay is still chosen on a payment approve prompt** (the Auto-pay checkbox). Once Auto-pay is on, silent `createAction` stays within the UTC calendar-month total from `spendingAuthorization` (instead of the default `$` / hours window). Disconnect clears the grant.
 
 Settings still expose Auto-pay (`$` / rolling hours) when no spendingAuthorization grant is present.
 

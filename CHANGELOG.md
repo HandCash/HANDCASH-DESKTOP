@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.102] - 2026-09-05
+
+### Fixed
+
+- **Mobile Connect hung** — never await app `manifest.json` before showing the Connect prompt; spendingAuthorization loads in the background (regression from 1.3.100).
+
 ## [1.3.101] - 2026-09-05
 
 ### Fixed
@@ -14,7 +20,7 @@
 
 ### Added
 
-- **BRC spendingAuthorization** — Connect reads app `manifest.json` monthly sat grant; Authorize enables Auto-pay within that UTC-month cap.
+- **BRC spendingAuthorization** — Connect reads app `manifest.json` monthly sat grant in the background (never blocks the Connect prompt); Authorize stores the grant. Auto-pay is still chosen on a payment approve prompt.
 - **Clearer BRC-100 spend codes** — `CHANGE_CHAINING_REQUIRED`, `INSUFFICIENT_FUNDS`, `DOUBLE_SPENT` (replacing a catch-all stale-funds code for those cases).
 - **TLS `::1` SAN** — Desktop self-signed cert includes IPv6 loopback; regenerates if an old cert lacks it.
 - **Partner FAQ** — `docs/partner-brc100-faq.md`.

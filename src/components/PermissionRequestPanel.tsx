@@ -255,7 +255,7 @@ export function PermissionRequestPanel({
 
         <p className="permission-note">
           {pending.spendingAuthorization
-            ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. Authorizing enables Auto-pay within that monthly cap. Disconnect anytime in Connected apps.`
+            ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. Payments still need approval (or Auto-pay on a pay request) within that monthly cap. Disconnect anytime in Connected apps.`
             : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
         </p>
       </>,
