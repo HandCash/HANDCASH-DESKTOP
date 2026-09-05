@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.103] - 2026-09-05
+
+### Changed
+
+- **Wallet chrome** — docked nav pills, top breadcrumbs, full-width hero; Send/Receive restructure with foot labels.
+
 ## [1.3.102] - 2026-09-05
 
 ### Fixed
