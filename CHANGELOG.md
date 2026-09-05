@@ -2,9 +2,16 @@
 
 ## [1.3.100] - 2026-09-05
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- **App rapid createAction / Plinko chaining** — after `createAction` and `internalizeAction`, promote unspent default-basket outs (change + received) so the next spend can select them without waiting on confirmation; spend gate retries a light promote and adds a fee buffer.
+
+### Added
+
+- **BRC spendingAuthorization** — Connect reads app `manifest.json` monthly sat grant; Authorize enables Auto-pay within that UTC-month cap.
+- **Clearer BRC-100 spend codes** — `CHANGE_CHAINING_REQUIRED`, `INSUFFICIENT_FUNDS`, `DOUBLE_SPENT` (replacing a catch-all stale-funds code for those cases).
+- **TLS `::1` SAN** — Desktop self-signed cert includes IPv6 loopback; regenerates if an old cert lacks it.
+- **Partner FAQ** — `docs/partner-brc100-faq.md`.
 
 ## [1.3.99] - 2026-09-04
 
