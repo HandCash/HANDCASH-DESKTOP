@@ -40,6 +40,7 @@ import { isItemSent } from '../wallet/sentItemGuard'
 import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon, WarningIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
+import { LoadingSpinner } from './LoadingSpinner'
 import { EmptyState } from './EmptyState'
 import { DeferredModelViewer } from './DeferredModelViewer'
 
@@ -353,7 +354,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
           >
             {authenticity.tone === 'verifying' ? (
               <span className="collectable-authenticity-busy">
-                <span className="collectable-verify-spinner" aria-hidden />
+                <LoadingSpinner size="sm" />
                 {authenticity.label}
               </span>
             ) : (

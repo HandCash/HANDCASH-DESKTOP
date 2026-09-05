@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.104] - 2026-09-05
+
+### Fixed
+
+- **Heal vs burn deadlock** — manual UTXO heal yields to spend between batches so burns/sends are not wedged behind a 10-minute chainIngest hold.
+- **Ghost pending change** — local sends explorers prove never landed (e.g. miner hard-reject) are failed and retired instead of keepChange forever (`pendingChange=2614` stuck on `cb36a9099dfc`).
+
+### Changed
+
+- **Loading rings** — shared `LoadingSpinner`; burn pending marks use the same accent as send.
+- **Bottom nav pills** — full tab radius so the dock does not flash square edges.
+
 ## [1.3.103] - 2026-09-05
 
 ### Changed

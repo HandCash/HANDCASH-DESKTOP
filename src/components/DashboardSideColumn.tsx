@@ -18,6 +18,7 @@ import { ScanPanel } from './ScanPanel'
 import { RecentActivityPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { PermissionItemPreview } from './PermissionItemPreview'
+import { LoadingSpinner } from './LoadingSpinner'
 import {
   clearPaymentProgress,
   getPaymentProgress,
@@ -150,7 +151,9 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
           aria-label={paymentProgress.label || 'Working'}
           aria-busy="true"
         >
-          <div className="send-spinner" aria-hidden />
+          <div className="loading-spinner-wrap">
+            <LoadingSpinner size="lg" />
+          </div>
           <p className="send-status-title">{paymentProgress.label || 'Working…'}</p>
           <p className="send-status-sub">
             {paymentProgress.detail ||

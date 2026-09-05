@@ -4508,6 +4508,7 @@ a.history-row-link:hover .history-tx-hint {
   height: 14px;
 }
 
+.history-icon-wrap .loading-spinner--sm,
 .history-icon-wrap .collectable-verify-spinner {
   width: 7px;
   height: 7px;
@@ -4904,6 +4905,7 @@ button.payment-details-item-thumb-btn:hover {
   background: color-mix(in srgb, var(--hc-accent, #57ff97) 8%, var(--hc-panel));
 }
 
+.collectable-authenticity-verifying .loading-spinner--sm,
 .collectable-authenticity-verifying .collectable-verify-spinner {
   width: 9px;
   height: 9px;
@@ -7344,14 +7346,86 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
   font-size: 0.9rem;
 }
 
+/* Uniform loading ring — Activity / items / tokens / side-column busy. */
+.loading-spinner {
+  box-sizing: border-box;
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border-style: solid;
+  border-color: color-mix(in srgb, currentColor 40%, transparent);
+  border-top-color: currentColor;
+  animation: loading-spin 0.7s linear infinite;
+  color: var(--hc-accent, #57ff97);
+}
+
+.loading-spinner--sm {
+  width: 8px;
+  height: 8px;
+  border-width: 1.5px;
+}
+
+.loading-spinner--md {
+  width: 18px;
+  height: 18px;
+  border-width: 2px;
+}
+
+.loading-spinner--lg {
+  width: 36px;
+  height: 36px;
+  border-width: 3px;
+  color: var(--hc-accent);
+  border-color: color-mix(in srgb, var(--hc-accent) 25%, transparent);
+  border-top-color: var(--hc-accent);
+}
+
+.loading-spinner-wrap {
+  display: flex;
+  justify-content: center;
+  margin-bottom: 8px;
+  color: var(--hc-accent);
+}
+
+/* Back-compat aliases (prefer LoadingSpinner). */
+.send-spinner,
+.collectable-verify-spinner {
+  box-sizing: border-box;
+  display: block;
+  flex-shrink: 0;
+  border-radius: 50%;
+  border-style: solid;
+  border-color: color-mix(in srgb, currentColor 40%, transparent);
+  border-top-color: currentColor;
+  animation: loading-spin 0.7s linear infinite;
+}
+
 .send-spinner {
   width: 36px;
   height: 36px;
   margin-bottom: 8px;
-  border-radius: 50%;
-  border: 3px solid color-mix(in srgb, var(--hc-accent) 25%, transparent);
+  border-width: 3px;
+  color: var(--hc-accent);
+  border-color: color-mix(in srgb, var(--hc-accent) 25%, transparent);
   border-top-color: var(--hc-accent);
-  animation: send-spin 0.75s linear infinite;
+}
+
+.collectable-verify-spinner {
+  width: 8px;
+  height: 8px;
+  border-width: 1.5px;
+}
+
+.collectable-media-sm .loading-spinner--sm,
+.collectable-media-sm .collectable-verify-spinner {
+  width: 7px;
+  height: 7px;
+}
+
+@keyframes loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
 }
 
 @keyframes send-spin {
@@ -7950,17 +8024,6 @@ html[data-aeon-mode='light'] .skeleton {
   white-space: nowrap;
 }
 
-.collectable-sending-mark.is-burn {
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c9852a 22%, hsl(var(--background)));
-  color: #e8b060;
-}
-
-.collectable-sending-mark.is-listing {
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-  color: #e8b060;
-}
-
 .collectable-listed-mark {
   position: absolute;
   right: 3px;
@@ -8005,17 +8068,6 @@ html[data-aeon-mode='light'] .skeleton {
   height: 100% !important;
 }
 
-.history-pending-mark.is-burn {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c9852a 18%, hsl(var(--background)));
-}
-
-.history-pending-mark.is-listing {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-}
-
 .collectable-card[data-sending='true'],
 .collectable-row[data-sending='true'] {
   opacity: 0.92;
@@ -8024,21 +8076,6 @@ html[data-aeon-mode='light'] .skeleton {
 .collectable-send-btn:disabled {
   opacity: 0.45;
   cursor: not-allowed;
-}
-
-.collectable-verify-spinner {
-  box-sizing: border-box;
-  width: 8px;
-  height: 8px;
-  border-radius: 50%;
-  border: 1.5px solid color-mix(in srgb, currentColor 40%, hsl(var(--background)));
-  border-top-color: currentColor;
-  animation: send-spin 0.7s linear infinite;
-}
-
-.collectable-media-sm .collectable-verify-spinner {
-  width: 7px;
-  height: 7px;
 }
 
 @keyframes collectable-verify-fade {

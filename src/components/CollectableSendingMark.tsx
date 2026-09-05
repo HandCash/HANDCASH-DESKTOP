@@ -1,12 +1,8 @@
-/** Map in-flight verb to overlay tone (send = accent, burn = warm amber, market = accent-alt). */
-export function sendingMarkTone(verb: string): 'burn' | 'listing' | 'default' {
-  if (/^burn/i.test(verb)) return 'burn'
-  if (/^(list|cancel|buy)/i.test(verb)) return 'listing'
-  return 'default'
-}
+import { LoadingSpinner } from './LoadingSpinner'
 
 /**
  * Corner / media overlay while a collectable send, burn, or listing is in flight.
+ * Spinner always uses the shared accent ring — verb text carries the action name.
  */
 export function CollectableSendingMark({
   sending,
@@ -17,16 +13,14 @@ export function CollectableSendingMark({
 }) {
   if (!sending) return null
 
-  const tone = sendingMarkTone(verb)
-
   return (
     <span
-      className={`collectable-sending-mark${tone === 'burn' ? ' is-burn' : tone === 'listing' ? ' is-listing' : ''}`}
+      className="collectable-sending-mark"
       aria-live="polite"
       aria-label={verb}
       title={verb}
     >
-      <span className="collectable-verify-spinner" aria-hidden />
+      <LoadingSpinner size="sm" />
       <span className="collectable-sending-mark-label">{verb}</span>
     </span>
   )

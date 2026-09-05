@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { CheckIcon } from './icons'
+import { LoadingSpinner } from './LoadingSpinner'
 import { isItemProven } from '../wallet/provenCache'
 
 type VerifyMarkPhase = 'hidden' | 'busy' | 'done'
@@ -51,7 +52,7 @@ export function CollectableVerifyMark({
       title={phase === 'busy' ? 'Verifying authenticity' : 'Verified'}
     >
       {phase === 'busy' ? (
-        <span className="collectable-verify-spinner" aria-hidden />
+        <LoadingSpinner size="sm" />
       ) : (
         <CheckIcon size={10} />
       )}

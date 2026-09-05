@@ -41,6 +41,7 @@ const {
   rehideInputsOfLiveLocalTxs,
   sealSpentInputsOfSignedTx,
   releaseSealedInputsOfUnsentTx,
+  failUnsentLocalTx,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
@@ -471,11 +472,15 @@ describe('promotePendingLocalChangeOutputs', () => {
   const findTransactions = vi.fn()
   const findOutputs = vi.fn()
   const updateOutput = vi.fn()
+  const updateTransactionStatus = vi.fn()
 
   beforeEach(() => {
     findTransactions.mockReset()
     findOutputs.mockReset()
     updateOutput.mockReset()
+    updateTransactionStatus.mockReset()
+    txExistsOnChain.mockReset()
+    txExistsOnChain.mockResolvedValue(null)
     overlayStore.clear()
     __resetUtxoLocksForTests()
     mockGetActiveWallet.mockReset()
@@ -486,11 +491,13 @@ describe('promotePendingLocalChangeOutputs', () => {
         storage: {
           findTransactions,
           findOutputs,
+          updateTransactionStatus,
           runAsStorageProvider: async (
             fn: (sp: {
               updateOutput: typeof updateOutput
               findOutputs: typeof findOutputs
               findTransactions: typeof findTransactions
+              updateTransactionStatus: typeof updateTransactionStatus
               getProvenOrRawTx: () => Promise<undefined>
             }) => Promise<unknown>,
           ) =>
@@ -498,6 +505,7 @@ describe('promotePendingLocalChangeOutputs', () => {
               updateOutput,
               findOutputs,
               findTransactions,
+              updateTransactionStatus,
               getProvenOrRawTx: async () => undefined,
             }),
         },
@@ -507,6 +515,7 @@ describe('promotePendingLocalChangeOutputs', () => {
 
   it('promotes change from live pending txs without paging unspendable rows', async () => {
     const txid = 'ef'.repeat(32)
+    txExistsOnChain.mockResolvedValue(true)
     findTransactions.mockImplementation(async (args: { status?: string[] }) => {
       if (args.status?.includes('unproven')) {
         return [{ txid, status: 'unproven' }]
@@ -531,6 +540,38 @@ describe('promotePendingLocalChangeOutputs', () => {
       3,
       expect.objectContaining({ spendable: true }),
     )
+  })
+
+  it('fails pending txs explorers prove never landed instead of promoting them', async () => {
+    const txid = 'cd'.repeat(32)
+    txExistsOnChain.mockResolvedValue(false)
+    findTransactions.mockImplementation(async (args: {
+      status?: string[]
+      partial?: { txid?: string }
+    }) => {
+      if (args.partial?.txid === txid || args.status?.includes('unproven')) {
+        return [{ transactionId: 11, txid, status: 'unproven' }]
+      }
+      return []
+    })
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 4,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 2614,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(0)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 11)
+    expect(updateOutput).toHaveBeenCalledWith(4, {
+      spendable: false,
+      spentBy: undefined,
+    })
   })
 })
 
@@ -634,10 +675,15 @@ describe('rehideInputsOfLiveLocalTxs', () => {
 describe('sealSpentInputsOfSignedTx', () => {
   const findOutputs = vi.fn()
   const updateOutput = vi.fn()
+  const findTransactions = vi.fn()
+  const updateTransactionStatus = vi.fn()
 
   beforeEach(() => {
     findOutputs.mockReset()
     updateOutput.mockReset()
+    findTransactions.mockReset()
+    updateTransactionStatus.mockReset()
+    findTransactions.mockResolvedValue([])
     overlayStore.clear()
     __resetUtxoLocksForTests()
     mockGetActiveWallet.mockReset()
@@ -646,12 +692,22 @@ describe('sealSpentInputsOfSignedTx', () => {
       wallet: {
         storage: {
           findOutputs,
+          findTransactions,
+          updateTransactionStatus,
           runAsStorageProvider: async (
             fn: (sp: {
               updateOutput: typeof updateOutput
               findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+              updateTransactionStatus: typeof updateTransactionStatus
             }) => Promise<unknown>,
-          ) => fn({ updateOutput, findOutputs }),
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              updateTransactionStatus,
+            }),
         },
       },
     })
@@ -728,6 +784,21 @@ describe('sealSpentInputsOfSignedTx', () => {
     await sealSpentInputsOfSignedTx(tx.id('hex'), tx.toBinary())
     expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
 
+    findTransactions.mockResolvedValue([
+      { transactionId: 42, txid: tx.id('hex'), status: 'unproven' },
+    ])
+    findOutputs.mockResolvedValue([
+      { outputId: 9, txid: prevTxid, vout: 0, satoshis: 5000, spendable: true },
+      {
+        outputId: 10,
+        txid: tx.id('hex'),
+        vout: 0,
+        satoshis: 900,
+        spendable: true,
+        change: true,
+      },
+    ])
+
     await expect(
       releaseSealedInputsOfUnsentTx(tx.id('hex'), tx.toBinary()),
     ).resolves.toBe(1)
@@ -736,5 +807,63 @@ describe('sealSpentInputsOfSignedTx', () => {
     expect(lock?.spendable).toBe(true)
     expect(lock?.spentBy).toBeNull()
     expect(updateOutput).toHaveBeenCalledWith(9, { spendable: true })
+    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 42)
+    expect(updateOutput).toHaveBeenCalledWith(10, {
+      spendable: false,
+      spentBy: undefined,
+    })
+  })
+})
+
+describe('failUnsentLocalTx', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const findTransactions = vi.fn()
+  const updateTransactionStatus = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    findTransactions.mockReset()
+    updateTransactionStatus.mockReset()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+              updateTransactionStatus: typeof updateTransactionStatus
+            }) => Promise<unknown>,
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              updateTransactionStatus,
+            }),
+        },
+      },
+    })
+  })
+
+  it('fails a live local ghost and retires its outs', async () => {
+    const txid = 'ab'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 7, txid, status: 'sending' },
+    ])
+    findOutputs.mockResolvedValue([
+      { outputId: 1, txid, vout: 0, satoshis: 2614, spendable: false, change: true },
+    ])
+
+    await expect(failUnsentLocalTx(txid)).resolves.toBe(true)
+    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
+    expect(updateOutput).toHaveBeenCalledWith(1, {
+      spendable: false,
+      spentBy: undefined,
+    })
   })
 })

@@ -17,6 +17,7 @@ import { bumpBalanceAfterHeal, getActiveWallet } from './session'
 import type { Chain } from './vault'
 import { releaseSpendAttemptFunds } from './spendAttempt'
 import {
+  failUnsentLocalTx,
   keepChangeOfSignedTx,
   listPendingLocalChangeTxids,
 } from './staleOutputRelease'
@@ -166,8 +167,10 @@ async function hasLocalSignedTx(txid: string): Promise<boolean> {
   }
 }
 
-async function healShouldYieldToSpend(opts: UtxoHealPassOpts): Promise<boolean> {
-  if (opts.force || opts.source === 'manual') return false
+async function healShouldYieldToSpend(_opts: UtxoHealPassOpts): Promise<boolean> {
+  // Manual heal used to refuse yield and held chainIngest for minutes while
+  // burns/sends timed out ("Wallet is busy · spend waiting"). Checkpoint +
+  // auto resume cover the rest of the txid list after the spend finishes.
   const { shouldYieldChainIngestToSpend, getSpendPriorityDepth } = await import(
     './walletCoordinator'
   )
@@ -222,12 +225,18 @@ async function processTxidBatch(
   for (const txid of batch) {
     processed.push(txid)
     const local = await hasLocalSignedTx(txid)
-    if (chain && !local) {
+    if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
-      if (onChain !== true) continue
-      txidsOnChain += 1
-    } else if (local) {
-      txidsOnChain += 1
+      if (onChain === false) {
+        // Ghost local send (miner hard-reject / never broadcast) — do not keep
+        // promoting its change; that freezes pendingChange forever.
+        if (local) await failUnsentLocalTx(txid)
+        continue
+      }
+      if (onChain === true) txidsOnChain += 1
+      else if (!local) continue
+    } else if (!local) {
+      continue
     }
     changeKept += await keepChangeOfSignedTx(txid)
   }

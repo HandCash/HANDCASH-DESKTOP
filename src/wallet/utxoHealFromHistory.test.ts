@@ -62,6 +62,7 @@ vi.mock('./spendAttempt', () => ({
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
   listPendingLocalChangeTxids: vi.fn(async () => []),
+  failUnsentLocalTx: vi.fn(async () => false),
 }))
 
 vi.mock('./durableStorage', () => ({
@@ -71,6 +72,8 @@ vi.mock('./durableStorage', () => ({
 
 vi.mock('./walletCoordinator', () => ({
   runChainIngest: vi.fn((fn: () => Promise<unknown>) => fn()),
+  shouldYieldChainIngestToSpend: vi.fn(() => false),
+  getSpendPriorityDepth: vi.fn(() => 0),
 }))
 
 import {

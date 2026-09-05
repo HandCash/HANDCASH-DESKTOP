@@ -566,12 +566,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar-track {
   width: 100%;
   min-width: 0;
   min-height: 40px;
-  gap: 0;
+  /* Gap so each muted tab is its own rounded pill — no square join edges
+   * that flash when the selected slot moves. */
+  gap: 3px;
   justify-content: stretch;
-  /* Center so muted pills float and show rounded bottoms like the old selected chip. */
-  align-items: center;
+  align-items: stretch;
   overflow: visible;
-  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-radius: var(--wallet-nav-pill-radius);
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
@@ -579,22 +580,25 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab {
   flex: 1 1 0;
   min-width: 0;
   min-height: 0;
-  /* Floating capsule — full pill top + bottom, not flush to the track floor. */
-  height: 34px;
-  align-self: center;
+  height: auto;
+  align-self: stretch;
   flex-direction: column;
   justify-content: center;
   align-items: center;
   gap: 2px;
   padding: 4px 1px;
-  /* Default: mid-run unselected — square edges so adjacent grays join. */
-  border-radius: 0;
+  /* Same radius as the dock on every corner — never mid-run squares. */
+  border-radius: var(--wallet-nav-pill-radius);
   scroll-snap-align: none;
   overflow: hidden;
   color: hsl(var(--muted-foreground));
   background: var(--wallet-nav-unselected);
   box-shadow: none;
-  transition: color 140ms ease, background 140ms ease, box-shadow 140ms ease;
+  transition:
+    color 180ms ease,
+    background 180ms ease,
+    box-shadow 180ms ease,
+    border-radius 180ms ease;
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab svg {
@@ -653,12 +657,12 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
   flex: 1 1 0;
   /* Dark: white selected icon; light override below. */
   color: #fafafa;
-  /* Unpilled — stretch flush with the select track. */
+  /* Unpilled — fade into the select track; keep radius so it does not flash square. */
   background: transparent;
   box-shadow: none;
-  border-radius: 0;
-  height: 100%;
-  min-height: 40px;
+  border-radius: var(--wallet-nav-pill-radius);
+  height: auto;
+  min-height: 0;
   align-self: stretch;
 }
 
@@ -679,43 +683,6 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active::after,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true']::after,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after {
   content: none;
-}
-
-/*
- * Cap the ends of each unselected run as a full pill (top + bottom),
- * matching the old selected-chip silhouette — not flat to the track floor.
- */
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):first-child,
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab.is-active
-  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab[aria-selected='true']
-  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab[data-selected]
-  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]) {
-  border-top-left-radius: 999px;
-  border-bottom-left-radius: 999px;
-}
-
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):last-child,
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
-    + .is-active
-  ),
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
-    + [aria-selected='true']
-  ),
-html:is(.platform-mobile, .layout-compact)
-  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
-    + [data-selected]
-  ) {
-  border-top-right-radius: 999px;
-  border-bottom-right-radius: 999px;
 }
 
 /* Light: white select track; soft unselected pills (not heavy gray). */
@@ -823,14 +790,7 @@ html:is(.platform-mobile, .layout-compact) .settings-scroll-body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Burn in-flight — warm amber, not error red (matches shared handcash.css). */
-html:is(.platform-mobile, .layout-compact) .history-pending-mark.is-burn,
-html:is(.platform-mobile, .layout-compact) .collectable-sending-mark.is-burn {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, hsl(var(--border)));
-  background: color-mix(in srgb, #c9852a 18%, hsl(var(--background)));
-}
-
+/* Burn CTA chrome — spinner marks stay accent (LoadingSpinner). */
 html:is(.platform-mobile, .layout-compact) .collectable-burn-btn.is-burning,
 html:is(.platform-mobile, .layout-compact) .asset-burn-trigger.is-burning {
   color: #e8b060;

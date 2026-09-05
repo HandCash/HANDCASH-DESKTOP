@@ -281,7 +281,93 @@ export async function releaseSealedInputsOfUnsentTx(
   console.info(
     `[stale-output] released ${unique.length} input(s) of ${id.slice(0, 12)} — never reached a node`,
   )
+  // Inputs are free again; the local signed row must not keep crediting pending
+  // change or looking "live" to heal/promote (lab: cb36a9099dfc × pendingChange).
+  await failUnsentLocalTx(id)
   return unique.length
+}
+
+/**
+ * Mark a signed local tx as failed and retire its outputs.
+ *
+ * Call when explorers prove the tx never landed (or miner hard-reject released
+ * the seal). Leaving it `unproven`/`sending` freezes `pendingChange` and makes
+ * heal keepChange the ghost forever.
+ */
+export async function failUnsentLocalTx(txid: string): Promise<boolean> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return false
+  const storage = getActiveWallet()?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return false
+
+  try {
+    const failed = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return false
+
+      let rows: TxStatusRow[] | undefined
+      try {
+        rows = await sp.findTransactions({
+          partial: { txid: id },
+          noRawTx: true,
+          paged: { limit: 1, offset: 0 },
+        })
+      } catch (err) {
+        if (!isUndefinedPartialFilterError(err)) {
+          console.warn('[stale-output] fail-unsent tx lookup skipped', id.slice(0, 12), err)
+        }
+        return false
+      }
+      const row = rows?.[0] as
+        | (TxStatusRow & { transactionId?: number; status?: string })
+        | undefined
+      const transactionId = positiveId(row?.transactionId)
+      if (transactionId == null) return false
+
+      const status = String(row?.status ?? '').toLowerCase()
+      if (status === 'failed' || status === 'completed') return false
+
+      if (typeof sp.updateTransactionStatus === 'function') {
+        try {
+          await sp.updateTransactionStatus('failed', transactionId)
+        } catch (err) {
+          console.warn(
+            '[stale-output] fail-unsent status skipped',
+            id.slice(0, 12),
+            err,
+          )
+        }
+      }
+
+      const outs = await findOutputsForTxid(sp, id)
+      for (const out of outs) {
+        const outputId = positiveId(out.outputId)
+        if (outputId == null) continue
+        try {
+          await sp.updateOutput(outputId, {
+            spendable: false,
+            spentBy: undefined,
+          })
+        } catch (err) {
+          console.warn(
+            '[stale-output] fail-unsent output skipped',
+            outputId,
+            err,
+          )
+        }
+      }
+      return true
+    })
+    if (failed) {
+      console.info(
+        `[stale-output] failed ghost local tx ${id.slice(0, 12)} — pending change retired`,
+      )
+    }
+    return failed === true
+  } catch (err) {
+    console.warn('[stale-output] fail-unsent skipped', id.slice(0, 12), err)
+    return false
+  }
 }
 
 /**
@@ -735,9 +821,26 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const txids = new Set(await listPendingLocalChangeTxids())
   if (txids.size === 0) return 0
 
+  const chain = active?.chain
   let promoted = 0
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
+    if (chain) {
+      try {
+        const { txExistsOnChain } = await import('./legacyScan')
+        const onChain = await txExistsOnChain(txid, chain)
+        if (onChain === false) {
+          await failUnsentLocalTx(txid)
+          continue
+        }
+      } catch (err) {
+        console.warn(
+          '[stale-output] pending on-chain check skipped',
+          txid.slice(0, 12),
+          err,
+        )
+      }
+    }
     promoted += await keepChangeOfSignedTx(txid)
   }
   if (promoted > 0) {
@@ -788,6 +891,10 @@ type LocalStorage = {
   findOutputs?: (args: unknown) => Promise<unknown>
   findTransactions?: (args: unknown) => Promise<TxStatusRow[] | undefined>
   getProvenOrRawTx?: (txid: string) => Promise<{ rawTx?: number[] } | undefined>
+  updateTransactionStatus?: (
+    status: string,
+    transactionId: number,
+  ) => Promise<unknown>
 }
 
 async function loadTxRow(

@@ -15,6 +15,7 @@ import {
 import { DeferredImage } from './DeferredImage'
 import { useChunkedCount } from './useChunkedCount'
 import { CollectableVerifyMark } from './CollectableVerifyMark'
+import { LoadingSpinner } from './LoadingSpinner'
 import {
   activityEntryKey,
   activityEntryTitle,
@@ -162,7 +163,7 @@ function PendingPhraseImportRow({
             aria-label="Import paused"
             title="Import paused safely"
           >
-            <span className="collectable-verify-spinner" aria-hidden />
+            <LoadingSpinner size="sm" />
           </span>
         </div>
         <div className="history-body">
@@ -402,7 +403,7 @@ function HistoryRow({
           : spent
             ? 'Sending…'
             : 'Verifying…'
-  const pendingMarkTone = burned ? 'burn' : listing || cancelling ? 'listing' : 'default'
+  // Spinner chrome is uniform (accent) for send / burn / list — only the label differs.
 
   return (
     <li
@@ -465,7 +466,7 @@ function HistoryRow({
           />
           {showSending ? (
             <span
-              className={`history-pending-mark${pendingMarkTone === 'burn' ? ' is-burn' : pendingMarkTone === 'listing' ? ' is-listing' : ''}`}
+              className="history-pending-mark"
               aria-live="polite"
               aria-label={
                 burned
@@ -486,7 +487,7 @@ function HistoryRow({
                       : 'Sending'
               }
             >
-              <span className="collectable-verify-spinner" aria-hidden />
+              <LoadingSpinner size="sm" />
             </span>
           ) : null}
           <HistoryActionBadge entry={entry} />
