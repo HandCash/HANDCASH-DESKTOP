@@ -165,7 +165,7 @@ export async function onAlreadySpentSend(args: {
     )
   }
   if (txid) await keepChangeOfSignedTx(txid)
-  // Do not run restore here — it blocked for minutes on large wallets (Kallubi
+  // Do not run restore here — it blocked for minutes on large wallets (explorer
   // down) while already-spent hide left spendable=0. Callers / heal reclaim.
 }
 
@@ -569,6 +569,7 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
       if (onChain === false) {
         liveSealers.delete(txid)
         deadSealers.add(txid)
+        await failUnsentLocalTx(txid)
         continue
       }
       // Inconclusive explorer — sample one sealed input. Unspent → ghost sealer.
@@ -1197,7 +1198,7 @@ export async function restoreLiveSpendableOutputs(opts?: {
               releaseConsumedUtxo(overlayKey, 'restore:unsent-sealer')
               deadSealer = true
             } else if (onChain !== true) {
-              // Explorer inconclusive (Kallubi down) — coin still unspent ⇒ ghost seal.
+              // Explorer inconclusive — coin still unspent ⇒ ghost seal.
               const parsed = parseOutpoint(overlayKey)
               let unspent = false
               const isUtxo = active.services?.isUtxo
@@ -1289,8 +1290,11 @@ export async function restoreLiveSpendableOutputs(opts?: {
                   spenderTxid,
                   active.chain,
                 ).catch(() => null)
-                if (onChain === false) keep = false
-                else if (onChain !== true && overlayKey) {
+                if (onChain === false) {
+                  keep = false
+                  // Retire the ghost so pendingChange stops crediting its outs.
+                  await failUnsentLocalTx(spenderTxid)
+                } else if (onChain !== true && overlayKey) {
                   const parsed = parseOutpoint(overlayKey)
                   let unspent = false
                   const isUtxo = active.services?.isUtxo

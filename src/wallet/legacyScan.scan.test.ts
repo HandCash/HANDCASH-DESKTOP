@@ -31,7 +31,6 @@ const wocBody = (sats: number) =>
 
 const isBitails = (url: unknown) => String(url).includes('bitails')
 const isBanana = (url: unknown) => String(url).includes('bananablocks')
-const isKallubi = (url: unknown) => String(url).includes('bsv.cx')
 const isWoc = (url: unknown) => String(url).includes('whatsonchain')
 const isCloud = (url: unknown) => String(url).includes('/v1/chain/')
 
@@ -58,7 +57,7 @@ afterEach(() => {
 describe('scanLegacyAddress', () => {
   it('answers from Bitails alone — no hedge request on the happy path', async () => {
     const fetchMock = cloudSilent(async (url: string) => {
-      if (isBanana(url) || isKallubi(url)) throw new Error('fast explorer down')
+      if (isBanana(url)) throw new Error('fast explorer down')
       if (!isBitails(url)) throw new Error(`unexpected host ${url}`)
       return new Response(bitailsBody(500), { status: 200 })
     })
@@ -68,7 +67,8 @@ describe('scanLegacyAddress', () => {
 
     expect(scan.source).toBe('bitails')
     expect(scan.sats).toBe(500)
-    expect(fetchMock).toHaveBeenCalledTimes(3)
+    // banana fail + bitails ok (Kallubi removed)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
@@ -165,7 +165,7 @@ describe('scanLegacyAddress', () => {
       'fetch',
       vi.fn(async (url: string) => {
         if (isCloud(url)) return new Response('', { status: 503 })
-        if (isBitails(url) || isBanana(url) || isKallubi(url)) {
+        if (isBitails(url) || isBanana(url)) {
           throw new Error('explorer down')
         }
         if (!isWoc(url)) throw new Error(`unexpected host ${url}`)

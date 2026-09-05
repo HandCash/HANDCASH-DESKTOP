@@ -4,11 +4,8 @@
  * before they wedge sends behind a long sync.
  */
 
-import { DEFAULT_BRC_CLOUD_BASE_URL, MARKET_FEE_PAY_TO_ADDRESS } from './walletConfig'
+import { DEFAULT_BRC_CLOUD_BASE_URL } from './walletConfig'
 import { isViteDevBrowser } from './runtimePlatform'
-
-/** Known mainnet address — Kallubi GET /a/:address (balance + UTXOs). */
-const KALLUBI_PROBE_ADDRESS = MARKET_FEE_PAY_TO_ADDRESS
 
 function cloudBaseUrl(): string {
   const configured = DEFAULT_BRC_CLOUD_BASE_URL.replace(/\/+$/, '')
@@ -179,64 +176,6 @@ async function probeBananaBlocks(): Promise<DependencyProbe> {
   return { id: 'bananablocks', label: 'BananaBlocks', status, detail, latencyMs }
 }
 
-async function probeKallubiFromChainHealth(): Promise<DependencyProbe | null> {
-  const base = cloudBaseUrl()
-  const started = performance.now()
-  const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), PROBE_TIMEOUT_MS)
-  try {
-    const res = await fetch(`${base}/v1/chain/health`, {
-      signal: controller.signal,
-      cache: 'no-store',
-      headers: { Accept: 'application/json' },
-    })
-    const latencyMs = Math.round(performance.now() - started)
-    if (!res.ok) return null
-    const body = (await res.json()) as {
-      upstream?: Array<{ id?: string; ok?: boolean; latencyMs?: number }>
-    }
-    const row = body.upstream?.find((p) => p.id === 'kallubi')
-    if (!row) return null
-    const status: DependencyProbeStatus = row.ok === true ? 'ok' : 'down'
-    const detail =
-      status === 'ok'
-        ? `${typeof row.latencyMs === 'number' ? row.latencyMs : latencyMs}ms`
-        : 'Down'
-    return {
-      id: 'kallubi',
-      label: 'Kallubi',
-      status,
-      detail,
-      latencyMs: typeof row.latencyMs === 'number' ? row.latencyMs : latencyMs,
-    }
-  } catch {
-    return null
-  } finally {
-    clearTimeout(timer)
-  }
-}
-
-async function probeKallubi(): Promise<DependencyProbe> {
-  if (isViteDevBrowser()) {
-    const fromHealth = await probeKallubiFromChainHealth()
-    if (fromHealth) return fromHealth
-  }
-  const { code, timedOut, latencyMs } = await probeUrl(
-    `https://bsv.cx/a/${encodeURIComponent(KALLUBI_PROBE_ADDRESS)}`,
-    { headers: { Accept: 'application/json' } },
-  )
-  const status = statusFromHttp(code, timedOut)
-  const detail =
-    status === 'ok'
-      ? `${latencyMs}ms`
-      : timedOut
-        ? 'Timeout'
-        : code === 0
-          ? 'Down'
-          : `HTTP ${code}`
-  return { id: 'kallubi', label: 'Kallubi', status, detail, latencyMs }
-}
-
 async function probeGorillaPool(): Promise<DependencyProbe> {
   const { code, timedOut, latencyMs } = await probeUrl(
     'https://ordinals.gorillapool.io/favicon.ico',
@@ -288,16 +227,15 @@ export function subscribeDependencyHealth(listener: Listener): () => void {
 
 /** Run probes once; safe to call from Settings or after Refresh. */
 export async function refreshDependencyHealth(): Promise<DependencyHealthSnapshot> {
-  const [arcadeV2, handcashChain, bitails, bananablocks, kallubi, gorillapool] =
+  const [arcadeV2, handcashChain, bitails, bananablocks, gorillapool] =
     await Promise.all([
       probeArcadeV2(),
       probeHandcashChain(),
       probeBitails(),
       probeBananaBlocks(),
-      probeKallubi(),
       probeGorillaPool(),
     ])
-  const probes = [arcadeV2, handcashChain, bitails, bananablocks, kallubi, gorillapool]
+  const probes = [arcadeV2, handcashChain, bitails, bananablocks, gorillapool]
   const summary = summarize(probes)
   cached = { at: Date.now(), probes, summary }
   console.info(`[dependency-health] ${summary}`)

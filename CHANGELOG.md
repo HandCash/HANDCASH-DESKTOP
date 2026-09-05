@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.107] - 2026-09-05
+
+### Removed
+
+- **Kallubi (bsv.cx)** — dropped from legacy scan, Settings health probes, and HandCash Chain upstream (never reliable on lab devices).
+
+### Fixed
+
+- **Ghost sealer reclaim** — when a local sealer is proven off-chain, fail that tx so pending change retires and sealed inputs can return to spendable.
+
 ## [1.3.106] - 2026-09-05
 
 ### Fixed

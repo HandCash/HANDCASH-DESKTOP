@@ -37,7 +37,7 @@ export type LegacyScanResult = {
   chain: Chain
   sats: number
   utxos: LegacyUtxo[]
-  source: 'services' | 'whatsonchain' | 'bitails' | 'handcash-chain' | 'bananablocks' | 'kallubi'
+  source: 'services' | 'whatsonchain' | 'bitails' | 'handcash-chain' | 'bananablocks'
   error?: string
 }
 
@@ -73,11 +73,6 @@ function bananablocksBase(chain: Chain): string | null {
   return null
 }
 
-function kallubiBase(chain: Chain): string | null {
-  if (chain === 'main') return 'https://bsv.cx'
-  return null
-}
-
 /**
  * A throttled provider can hold a socket open far longer than anyone is willing
  * to wait, and this scan sits between a tap on Collect and the grid. Give up and
@@ -109,7 +104,6 @@ let wocNextSlotAt = 0
 let bitailsCooldownUntil = 0
 let handcashChainCooldownUntil = 0
 let bananablocksCooldownUntil = 0
-let kallubiCooldownUntil = 0
 
 /** Skip slow cloud proxy when Settings already marked HandCash Chain down. */
 function handcashChainLikelyUp(): boolean {
@@ -126,7 +120,6 @@ export function resetLegacyScanCooldownForTests(): void {
   bitailsCooldownUntil = 0
   handcashChainCooldownUntil = 0
   bananablocksCooldownUntil = 0
-  kallubiCooldownUntil = 0
 }
 
 async function fetchWithDeadline(
@@ -194,19 +187,6 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
       if (res.ok) return true
     } catch (err) {
       console.warn('[legacy-scan] BananaBlocks tx lookup failed', err)
-    }
-  }
-
-  const kallubi = kallubiBase(chain)
-  if (kallubi) {
-    try {
-      const res = await fetchWithDeadline(`${kallubi}/tx/${id}`, {
-        headers: { Accept: 'application/json' },
-      })
-      if (res.status === 404) return false
-      if (res.ok) return true
-    } catch (err) {
-      console.warn('[legacy-scan] Kallubi tx lookup failed', err)
     }
   }
 
@@ -434,35 +414,6 @@ export async function scanAddressViaBananaBlocks(
   return scanAddressViaWocRest(base, address, chain, 'bananablocks', fetchWithDeadline)
 }
 
-/** Kallubi BSV Explorer (bsv.cx) — address balance + UTXO JSON. */
-export async function scanAddressViaKallubi(
-  address: string,
-  chain: Chain,
-): Promise<LegacyScanResult> {
-  const base = kallubiBase(chain)
-  if (!base) throw new Error(`Kallubi has no endpoint for chain ${chain}`)
-  const url = `${base}/a/${encodeURIComponent(address)}`
-  const res = await fetchWithDeadline(url, {
-    headers: { Accept: 'application/json' },
-  })
-  if (!res.ok) {
-    throw new Error(`Kallubi ${res.status}: ${await res.text()}`)
-  }
-  const body = (await res.json()) as {
-    utxos?: Array<{ txid: string; vout: number; satoshis: number; height?: number }>
-  }
-  const rows = body.utxos ?? []
-  const utxos: LegacyUtxo[] = rows.map((r) => ({
-    outpoint: `${r.txid}.${r.vout}`,
-    txid: r.txid,
-    vout: r.vout,
-    satoshis: r.satoshis,
-    height: r.height,
-  }))
-  const sats = utxos.reduce((s, u) => s + u.satoshis, 0)
-  return { address, chain, sats, utxos, source: 'kallubi' }
-}
-
 /** Scan via HandCash Chain on BRC-CLOUD (provider rotation server-side). */
 export async function scanAddressViaHandcashChain(
   address: string,
@@ -631,24 +582,6 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
       })
     } else {
       console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
-    }
-  }
-
-  if (kallubiBase(wallet.chain)) {
-    if (now >= kallubiCooldownUntil) {
-      starters.push(async () => {
-        try {
-          const result = await scanAddressViaKallubi(wallet.address, wallet.chain)
-          kallubiCooldownUntil = 0
-          return result
-        } catch (err) {
-          kallubiCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-          console.warn('[legacy-scan] Kallubi failed', err)
-          throw err
-        }
-      })
-    } else {
-      console.info('[legacy-scan] skipping Kallubi (recently failed)')
     }
   }
 

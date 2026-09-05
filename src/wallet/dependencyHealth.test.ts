@@ -14,10 +14,7 @@ describe('dependencyHealth', () => {
           return new Response(
             JSON.stringify({
               ok: true,
-              upstream: [
-                { id: 'kallubi', ok: true, latencyMs: 42 },
-                { id: 'arcade-v2', ok: true, latencyMs: 55 },
-              ],
+              upstream: [{ id: 'arcade-v2', ok: true, latencyMs: 55 }],
             }),
             { status: 200 },
           )
@@ -25,8 +22,7 @@ describe('dependencyHealth', () => {
         if (
           url.includes('bitails') ||
           url.includes('bsvblockchain.tech') ||
-          url.includes('bananablocks.com') ||
-          url.includes('bsv.cx/a/')
+          url.includes('bananablocks.com')
         ) {
           return new Response('{}', { status: 200 })
         }
@@ -43,6 +39,7 @@ describe('dependencyHealth', () => {
     const snap = await refreshDependencyHealth()
     expect(snap.probes.find((p) => p.id === 'handcash-chain')?.status).toBe('ok')
     expect(snap.probes.find((p) => p.id === 'bitails')?.status).toBe('ok')
+    expect(snap.probes.find((p) => p.id === 'kallubi')).toBeUndefined()
     expect(snap.summary).toBe('All OK')
   })
 
@@ -56,8 +53,7 @@ describe('dependencyHealth', () => {
         if (
           url.includes('bitails') ||
           url.includes('bsvblockchain.tech') ||
-          url.includes('bananablocks.com') ||
-          url.includes('bsv.cx/a/')
+          url.includes('bananablocks.com')
         ) {
           return new Response('{}', { status: 200 })
         }
@@ -70,18 +66,5 @@ describe('dependencyHealth', () => {
     expect(snap.summary).toBe('HandCash Chain down')
     const { dependencyHealthAlert } = await import('./dependencyHealth')
     expect(dependencyHealthAlert(snap)).toBe('error')
-  })
-
-  it('derives Kallubi status from HandCash Chain health in Vite dev browser', async () => {
-    const { isViteDevBrowser } = await import('./runtimePlatform')
-    vi.mocked(isViteDevBrowser).mockReturnValue(true)
-
-    const snap = await refreshDependencyHealth()
-    expect(snap.probes.find((p) => p.id === 'kallubi')?.status).toBe('ok')
-    expect(snap.probes.find((p) => p.id === 'kallubi')?.detail).toBe('42ms')
-    expect(globalThis.fetch).not.toHaveBeenCalledWith(
-      expect.stringContaining('bsv.cx/a/'),
-      expect.anything(),
-    )
   })
 })
