@@ -14,7 +14,7 @@ import {
   mayAbortMarketPurchase,
 } from '../machines/marketPurchaseMachine'
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
-import { getBeefForTxidCached } from './beefCache'
+import { getBeefForTxidCached, rememberBeefBinary } from './beefCache'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
   buildMarketHeldRemittance,
@@ -65,6 +65,27 @@ import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
 const SETTLEMENT_TIMEOUT_MS = 90_000
+
+/**
+ * Overlay already stored the listing tx at admit time. Prefer that BEEF over
+ * indexer `getBeefForTxid`, which currently times out (8s) and refuses the buy.
+ */
+export function overlayListingBeefBinary(
+  listing: MarketListingAdvert & { listingBeefB64?: string | null },
+  itemTxid: string,
+): number[] | null {
+  const b64 = listing.listingBeefB64?.trim()
+  const txid = itemTxid.trim().toLowerCase()
+  if (!b64 || !/^[0-9a-f]{64}$/.test(txid)) return null
+  try {
+    const binary = Utils.toArray(b64, 'base64')
+    const beef = Beef.fromBinary(binary)
+    if (!beef.findTxid(txid)?.tx) return null
+    return beef.toBinary()
+  } catch {
+    return null
+  }
+}
 
 type PendingPurchase = {
   saleId: string
@@ -513,7 +534,13 @@ export async function executeMarketPurchase(
     if (itemTxid !== offerTxid) {
       throw new Error('Market item and offer token must come from the same listing transaction')
     }
-    const inputBeef = (await getBeefForTxidCached(active, itemTxid!, { needProof: true })).toBinary()
+    const overlayBeef = overlayListingBeefBinary(listing, itemTxid!)
+    if (overlayBeef) rememberBeefBinary(itemTxid!, overlayBeef)
+    const inputBeef = overlayBeef
+      ?? (await getBeefForTxidCached(active, itemTxid!, {
+        needProof: true,
+        allowUnprovenRawTx: true,
+      })).toBinary()
     let created: Awaited<ReturnType<typeof active.wallet.createAction>>
     try {
       created = await active.wallet.createAction({

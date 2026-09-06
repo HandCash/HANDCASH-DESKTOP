@@ -12,6 +12,7 @@ import type { MarketListingAdvert } from './marketListing'
 import {
   marketSettlementCommitment,
   mergePendingPurchase,
+  overlayListingBeefBinary,
   validateMarketSettlementOutputs,
 } from './marketSettlement'
 import {
@@ -288,6 +289,29 @@ describe('market exact settlement contract', () => {
     expect(recovered.phase).toBe('recovery')
     expect(recovered.txid).toBe(previous.txid)
     expect(recovered.atomicBeef).toEqual([1, 2, 3])
+  })
+
+  it('decodes overlay listing BEEF for the listing txid and rejects mismatches', async () => {
+    const { Utils } = await import('@bsv/sdk')
+    const tx = new Transaction()
+    tx.addOutput({ satoshis: 1, lockingScript: new LockingScript() })
+    tx.addInput({
+      sourceTXID: 'f'.repeat(64),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+      sequence: 0xffffffff,
+    })
+    const beef = new Beef()
+    beef.mergeTxidOnly('f'.repeat(64))
+    beef.mergeTransaction(tx)
+    const listingTxid = tx.id('hex') as string
+    const listingBeefB64 = Utils.toBase64(beef.toBinary())
+    const listing = { listingBeefB64 } as MarketListingAdvert & { listingBeefB64: string }
+    const decoded = overlayListingBeefBinary(listing, listingTxid)
+    expect(decoded).not.toBeNull()
+    expect(Beef.fromBinary(decoded!).findTxid(listingTxid)?.tx).toBeTruthy()
+    expect(overlayListingBeefBinary(listing, 'a'.repeat(64))).toBeNull()
+    expect(overlayListingBeefBinary({} as MarketListingAdvert, listingTxid)).toBeNull()
   })
 })
 

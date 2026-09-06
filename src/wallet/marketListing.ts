@@ -95,6 +95,8 @@ export type MarketListingAdvert = {
   listedAt: number
   expiresAt: number | null
   nonce: string
+  /** Overlay-admitted listing BEEF. Prefer this over indexer getBeefForTxid. */
+  listingBeefB64?: string | null
 }
 
 export type CreateMarketListingArgs = {
