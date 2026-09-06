@@ -1,6 +1,6 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
 
-/** Survives wallet wipe (not under handcash.brc100.*). Default off — opt-in. */
+/** Survives wallet wipe (allowlisted in wipePolicy). Default off — opt-in. */
 export const SFX_PREF_KEY = 'handcash.sfx.enabled'
 
 type Listener = (enabled: boolean) => void

@@ -198,20 +198,37 @@ export function durableSafeStorageAvailable(): boolean {
 }
 
 /**
- * Factory-reset wallet prefs: vault, backups, history, friends, apps, etc.
- * Does not touch unrelated keys (e.g. update mode).
+ * Keys that intentionally survive wipe (device prefs, not wallet state).
+ * Keep in sync with `src/wallet/wipePolicy.ts`.
+ */
+const WIPE_SURVIVE_KEYS = new Set([
+  'handcash.appearance',
+  'handcash.sfx.enabled',
+  'handcash.logs.uploadUrl',
+  'handcash.update.mode',
+])
+
+function shouldWipeHandcashKey(key: string): boolean {
+  if (!key.startsWith('handcash.')) return false
+  return !WIPE_SURVIVE_KEYS.has(key)
+}
+
+/**
+ * Factory-reset wallet prefs: vault, backups, history, friends, apps, caches,
+ * outboxes, etc. Does not touch device prefs (appearance / sfx / update /
+ * log-upload URL).
+ *
+ * Must clear every `handcash.*` wallet-state key — not only `handcash.brc100.*`.
+ * Fungibles list, BRC-29 outbox, and remittance maps used other prefixes and
+ * survived wipe, so a new wallet painted the previous King token and replayed
+ * foreign activity.
  */
 export function durableWipeWallet(): { removed: number } {
   try {
     const store = readStore()
     let removed = 0
     for (const key of Object.keys(store)) {
-      if (
-        key.startsWith('handcash.brc100') ||
-        key === VAULT_KEY ||
-        key === VAULT_BACKUP_KEY ||
-        key.startsWith(VAULT_HISTORY_PREFIX)
-      ) {
+      if (shouldWipeHandcashKey(key)) {
         delete store[key]
         removed++
       }

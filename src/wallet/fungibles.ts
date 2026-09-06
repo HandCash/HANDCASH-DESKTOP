@@ -25,7 +25,7 @@ import {
   type FungibleToken,
 } from './bsv21'
 import { tipFromBsv21Script } from './bsv21Send'
-import { durableGetItem, durableSetItem } from './durableStorage'
+import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
 import {
   beginOneSatImport,
   markOneSatImportFailed,
@@ -289,6 +289,15 @@ async function hydrateMissingTokenIcons(
   tokens: FungibleToken[],
 ): Promise<void> {
   await hydrateCachedTokenIcons(wallet, tokens)
+}
+
+/** Drop in-memory + durable token list so a wiped wallet cannot paint ghosts. */
+export function clearFungiblesCache(options?: { notify?: boolean }): void {
+  cached = []
+  hydrated = false
+  listInFlight = null
+  durableRemoveItem(LIST_CACHE_KEY)
+  if (options?.notify !== false) notify()
 }
 
 export function getCachedFungibles(): FungibleToken[] {

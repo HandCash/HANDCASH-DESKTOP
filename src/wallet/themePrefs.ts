@@ -1,7 +1,7 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 /**
- * Appearance preference — survives wallet wipe (not under handcash.brc100.*).
+ * Appearance preference — survives wallet wipe (allowlisted in wipePolicy).
  * Default: system (follow OS light/dark).
  */
 export const APPEARANCE_PREF_KEY = 'handcash.appearance'

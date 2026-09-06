@@ -6,21 +6,19 @@ import { unlockVault, unlockVaultWithDevice } from './vault'
 import { clearActiveWallet } from './session'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
-import { durableForgetCached } from './durableStorage'
+import { clearFungiblesCache } from './fungibles'
+import { durableForgetCached, durableRemoveItem } from './durableStorage'
+import { listLocalHandcashKeysToWipe } from './wipePolicy'
 
-const KEY_PREFIX = 'handcash.brc100'
 const PENDING_IDB_WIPE = 'handcash.brc100.pendingIdbWipe'
 
 function wipeLocalStorage(): number {
   let removed = 0
   try {
-    const keys: string[] = []
-    for (let i = 0; i < localStorage.length; i++) {
-      const key = localStorage.key(i)
-      if (key && key.startsWith(KEY_PREFIX)) keys.push(key)
-    }
+    const keys = listLocalHandcashKeysToWipe()
     for (const key of keys) {
-      localStorage.removeItem(key)
+      // Clear Electron durable store + localStorage + in-memory durable cache.
+      durableRemoveItem(key)
       removed++
     }
   } catch {
@@ -122,6 +120,7 @@ export async function wipeAllWalletData(password: string | null): Promise<void> 
   clearPermissionSession()
   clearActiveWallet()
   clearCollectablesCache()
+  clearFungiblesCache({ notify: false })
 
   wipeLocalStorage()
   await wipeIndexedDatabases()
