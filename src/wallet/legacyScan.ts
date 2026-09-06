@@ -565,7 +565,8 @@ async function enrichZeroSatRows(
 }
 
 /**
- * Fast 2026 explorers first; slow cloud proxy last.
+ * Bitails is the primary explorer. Known hosts next. BananaBlocks is last-resort
+ * only — unknown reliability, never the preferred or hedge partner.
  *
  * Hosts are staggered rather than raced outright: the common case stays a single
  * request, and only a stalled host costs a second one.
@@ -609,27 +610,6 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
       })
     } else {
       console.info('[legacy-scan] skipping Bitails (recently failed)')
-    }
-  }
-
-  if (bananablocksBase(wallet.chain)) {
-    if (now >= bananablocksCooldownUntil) {
-      starters.push(async () => {
-        try {
-          const result = await scanAddressViaBananaBlocks(wallet.address, wallet.chain)
-          bananablocksCooldownUntil = 0
-          return result
-        } catch (err) {
-          // Abort = deadline under load, not a dead host — keep asking next poll.
-          if (!isAbortError(err)) {
-            bananablocksCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-          }
-          console.warn('[legacy-scan] BananaBlocks failed', err)
-          throw err
-        }
-      })
-    } else {
-      console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
     }
   }
 
@@ -683,6 +663,28 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
       }
       return viaServices
     })
+  }
+
+  // BananaBlocks last — optional GorillaPool mirror, never preferred / never hedge #2.
+  if (bananablocksBase(wallet.chain)) {
+    if (now >= bananablocksCooldownUntil) {
+      starters.push(async () => {
+        try {
+          const result = await scanAddressViaBananaBlocks(wallet.address, wallet.chain)
+          bananablocksCooldownUntil = 0
+          return result
+        } catch (err) {
+          // Abort = deadline under load, not a dead host — keep asking next poll.
+          if (!isAbortError(err)) {
+            bananablocksCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          }
+          console.warn('[legacy-scan] BananaBlocks failed', err)
+          throw err
+        }
+      })
+    } else {
+      console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
+    }
   }
 
   return firstSuccessStaggered(starters, SCAN_HEDGE_MS)

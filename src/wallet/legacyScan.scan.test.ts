@@ -72,25 +72,27 @@ describe('scanLegacyAddress', () => {
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
-  it('promotes BananaBlocks immediately when Bitails fails fast', async () => {
+  it('promotes WhatsOnChain immediately when Bitails fails fast', async () => {
     const started = Date.now()
     vi.stubGlobal(
       'fetch',
       cloudSilent(async (url: string) => {
         if (isBitails(url)) throw new Error('bitails down')
+        if (isBanana(url)) throw new Error('banana should not be preferred')
         return new Response(wocBody(300), { status: 200 })
       }),
     )
 
     const scan = await scanLegacyAddress(wallet())
 
-    expect(scan.source).toBe('bananablocks')
+    // BananaBlocks is last-resort only — known hosts (WoC) come first.
+    expect(scan.source).toBe('whatsonchain')
     expect(scan.sats).toBe(300)
     // Must not sit out the stagger behind a host that already gave up.
     expect(Date.now() - started).toBeLessThan(600)
   })
 
-  it('hedges to BananaBlocks when Bitails stalls, and takes the first answer', async () => {
+  it('hedges to WhatsOnChain when Bitails stalls, and takes the first answer', async () => {
     vi.stubGlobal(
       'fetch',
       cloudSilent(async (url: string) => {
@@ -98,6 +100,7 @@ describe('scanLegacyAddress', () => {
           await new Promise((r) => setTimeout(r, 5_000))
           return new Response(bitailsBody(999), { status: 200 })
         }
+        if (isBanana(url)) throw new Error('banana should not be the hedge')
         return new Response(wocBody(300), { status: 200 })
       }),
     )
@@ -107,7 +110,7 @@ describe('scanLegacyAddress', () => {
       const pending = scanLegacyAddress(wallet())
       await vi.advanceTimersByTimeAsync(1_300)
       const scan = await pending
-      expect(scan.source).toBe('bananablocks')
+      expect(scan.source).toBe('whatsonchain')
       expect(scan.sats).toBe(300)
     } finally {
       vi.useRealTimers()
@@ -154,11 +157,12 @@ describe('scanLegacyAddress', () => {
 
     const scan = await scanLegacyAddress(wallet())
 
-    // First pass: Bitails fail + BananaBlocks ok. Second pass skips Bitails cooldown.
-    expect(afterFirst).toBe(2)
-    expect(scan.source).toBe('bananablocks')
+    // First pass: Bitails fail (+ HandCash 503) + WhatsOnChain ok.
+    // Second pass skips Bitails cooldown and uses WhatsOnChain again.
+    expect(afterFirst).toBeGreaterThanOrEqual(2)
+    expect(scan.source).toBe('whatsonchain')
     expect(fetchMock.mock.calls.some(([url]) => isBitails(url))).toBe(false)
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls.some(([url]) => isBanana(url))).toBe(false)
   })
 
   it('borrows missing sat amounts from services when WoC-class hosts omit them', async () => {

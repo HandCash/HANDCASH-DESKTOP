@@ -4,7 +4,7 @@
 
 ### Fixed
 
-- **Legacy address scan starved on mobile** — leftover BRC-29 ingest flooded the WebView network stack; BananaBlocks probes then hit the 7s `AbortError` and entered a 45s cooldown, so funding never swept. Prefer Bitails first, do not cooldown on abort timeouts, and give phone scans a longer deadline.
+- **Legacy address scan starved on mobile** — leftover BRC-29 ingest flooded the WebView network stack; BananaBlocks probes then hit the 7s `AbortError` and entered a 45s cooldown, so funding never swept. Prefer Bitails first with BananaBlocks last-resort only, do not cooldown on abort timeouts, and give phone scans a longer deadline.
 - **Wipe left ghost tokens / activity** — factory wipe only cleared `handcash.brc100.*`, so `handcash.fungibles.list.v1` (BSV-21 King token paint), `handcash.brc29.pendingOutbox.v1`, BRC-150 remittance maps, and the cloud-backup watchdog survived. A new or reinstalled wallet reused those caches: collectables showed King, Activity filled with failed remittance noise. Wipe now clears all `handcash.*` wallet state (appearance / SFX / update mode / log-upload URL still survive).
 
 ## [1.3.107] - 2026-09-05
