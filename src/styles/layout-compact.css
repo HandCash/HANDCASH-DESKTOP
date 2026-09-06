@@ -547,8 +547,8 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   width: auto;
   margin: 0 8px 8px;
   --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
-  /* Dark: clearer gray pills against the select plate. */
-  --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 22%, transparent);
+  /* Dark: pure black inactive pills against the select plate. */
+  --wallet-nav-unselected: #000;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px;
   border: 1px solid hsl(var(--border));
