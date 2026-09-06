@@ -10,7 +10,7 @@ import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { appendAppLog } from './appLog'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
-import { preferServiceOrder } from './serviceOrder'
+import { POST_BEEF_PREFER, preferServiceOrder } from './serviceOrder'
 
 const { specOpWalletBalance } = sdk
 
@@ -190,9 +190,8 @@ function installMerklePreferBitails(services: Services): void {
 }
 
 /**
- * Broadcast: public ARC (GorillaPool) first, then Bitails / WoC. Arcade V2 Teranode
- * stays available as last resort for chaintracks + SSE; it often returns false
- * doubleSpends when a tx never left the device.
+ * Broadcast: Arcade first. Its first success is enough to treat the send as
+ * complete — do not wait for GP/WoC ACK or a seen-on-chain callback.
  */
 function installPostBeefPreferFast(services: Services): void {
   try {
@@ -201,22 +200,16 @@ function installPostBeefPreferFast(services: Services): void {
         postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void }
       }
     ).postBeefServices
-    preferServiceOrder(collection, [
-      'GorillaPoolArcBeef',
-      'Bitails',
-      'WhatsOnChain',
-      'TaalArcBeef',
-      'ArcadeBeef',
-    ])
+    preferServiceOrder(collection, POST_BEEF_PREFER)
     const s = services as Services & {
       postBeefUntilSuccessSoftTimeoutMs?: number
       postBeefUntilSuccessSoftTimeoutMaxMs?: number
     }
     if (typeof s.postBeefUntilSuccessSoftTimeoutMs === 'number') {
-      s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 8_000 : 5_000
+      s.postBeefUntilSuccessSoftTimeoutMs = isPhoneShell() ? 4_000 : 3_000
     }
     if (typeof s.postBeefUntilSuccessSoftTimeoutMaxMs === 'number') {
-      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 30_000 : 20_000
+      s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 8_000 : 6_000
     }
   } catch (err) {
     console.warn('[postBeef] could not prefer ARC broadcasters', err)

@@ -96,6 +96,7 @@ import {
 } from './spendGuard'
 import { spendBlockedMessage } from './walletCoordinator'
 import { canAutoProcessPayment } from './autoPay'
+import { withImmediateAppBroadcast } from './appCreateAction'
 import {
   isAlreadySpentInputError,
   keepChangeOfSignedTx,
@@ -873,6 +874,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
                 // through to createAction or the toolbox error is opaque.
                 if (isBsv21IdentityMintArgs('createAction', args)) throw err
               }
+              // Return once signed + handed to miners. Do not wait for merkle /
+              // seen-on-chain callback (Plinko on lilb.it sat 2–3 min per bet).
+              actionArgs = withImmediateAppBroadcast(actionArgs)
             }
             setPaymentProgress(
               'broadcasting',
@@ -903,6 +907,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
           () => {
             setPaymentProgress('preparing', 'Preparing payment')
           },
+          // Light: skip the unscripted change-script sweep. Full promote blocked
+          // Plinko createAction in "Preparing payment" for ~2 minutes per bet.
+          { promote: 'light' },
         )
         setPaymentProgress('finishing', 'Updating your balance')
       } catch (err) {

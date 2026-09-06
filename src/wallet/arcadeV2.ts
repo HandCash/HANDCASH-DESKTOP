@@ -15,7 +15,7 @@ import {
 } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { getOrCreateArcadeCallbackToken } from './arcadeIntegration'
-import { preferServiceOrder } from './serviceOrder'
+import { POST_BEEF_PREFER, preferServiceOrder } from './serviceOrder'
 
 const ARCADE_V2_MAIN = 'https://arcade-v2-us-1.bsvblockchain.tech'
 const ARCADE_V2_TEST = 'https://arcade-v2-testnet-us-1.bsvblockchain.tech'
@@ -60,7 +60,7 @@ type ServicesPatchTarget = {
 
 /**
  * Chaintracks only — no postBeef / status reorder. Arcade V2 go-chaintracks replaces
- * dead `mainnet-chaintracks.babbage.systems`; broadcast stays GorillaPool-first.
+ * dead `mainnet-chaintracks.babbage.systems`. Broadcast order is set in session.
  */
 export function installArcadeV2ChaintracksOnly(services: Services, chain: Chain): void {
   const base = arcadeV2BaseUrl(chain)
@@ -111,7 +111,7 @@ export function installArcadeV2Services(services: Services, chain: Chain): void 
     preferServiceOrder(
       (s as unknown as { postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void } })
         .postBeefServices,
-      ['GorillaPoolArcBeef', 'Bitails', 'WhatsOnChain', 'TaalArcBeef', 'ArcadeBeef'],
+      POST_BEEF_PREFER,
     )
     preferServiceOrder(
       (s as unknown as { getStatusForTxidsServices?: { services?: Array<{ name: string }>; reset?: () => void } })

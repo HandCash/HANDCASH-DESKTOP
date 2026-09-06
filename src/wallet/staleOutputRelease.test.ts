@@ -42,6 +42,7 @@ const {
   sealSpentInputsOfSignedTx,
   releaseSealedInputsOfUnsentTx,
   failUnsentLocalTx,
+  reclaimSealedInputsNeverSpent,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
@@ -865,5 +866,52 @@ describe('failUnsentLocalTx', () => {
       spendable: false,
       spentBy: undefined,
     })
+  })
+})
+
+describe('reclaimSealedInputsNeverSpent', () => {
+  const findTransactions = vi.fn()
+  const updateOutput = vi.fn()
+  const isUtxo = vi.fn()
+
+  beforeEach(() => {
+    findTransactions.mockReset()
+    updateOutput.mockReset()
+    isUtxo.mockReset()
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    txExistsOnChain.mockReset()
+    spentStatusOfOutpoint.mockReset()
+    txExistsOnChain.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('unspent')
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      services: { isUtxo },
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findTransactions: typeof findTransactions
+            }) => Promise<unknown>,
+          ) => fn({ updateOutput, findTransactions }),
+        },
+      },
+    })
+  })
+
+  it('does not un-deduct inputs of a live callback spend just because explorers lag', async () => {
+    const prevTxid = 'aa'.repeat(32)
+    const sealer = 'bb'.repeat(32)
+    hideUtxo(`${prevTxid}_0`, { spentBy: sealer, satoshis: 1299000 })
+    findTransactions.mockResolvedValue([{ txid: sealer, status: 'callback' }])
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+    expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(sealer)
   })
 })

@@ -1,6 +1,7 @@
 /**
  * Arcade (bsv-blockchain/arcade) helpers kept for tests / future Cloud parity.
- * BRC wallet boot (`session.ts`) broadcasts through Taal/GP ARC, not Arcade.
+ * BRC wallet boot (`session.ts`) now prefers ArcadeBeef first on postBeef;
+ * chaintracks still comes from Arcade V2. Monitor SSE remains optional.
  *
  * Wires (when used):
  * - Shared X-CallbackToken on Services (broadcast) + Monitor (SSE)

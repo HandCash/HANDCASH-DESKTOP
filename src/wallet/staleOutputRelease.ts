@@ -560,6 +560,10 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
   if (chain) {
     const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
     for (const txid of sealerIds) {
+      // Local `callback` / unmined / sending spends are already ours. Explorers
+      // often answer "not on chain" for minutes after Arcade accepts the BEEF;
+      // treating that as unsent un-deducts change (Plinko bets on a580).
+      if (liveSealers.has(txid)) continue
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain === true) {
         liveSealers.add(txid)

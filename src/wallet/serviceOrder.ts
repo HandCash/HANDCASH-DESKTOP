@@ -15,6 +15,18 @@ type MutableCollection = {
 }
 
 /**
+ * postBeef order: Arcade's first success is a completed broadcast.
+ * Do not wait for GorillaPool / WoC / seen-on-chain callbacks after that.
+ */
+export const POST_BEEF_PREFER = [
+  'ArcadeBeef',
+  'GorillaPoolArcBeef',
+  'Bitails',
+  'WhatsOnChain',
+  'TaalArcBeef',
+] as const
+
+/**
  * Move `preferred` names to the front (in that order). Unknown names are ignored.
  * Remaining providers keep relative order after the preferred ones.
  */
