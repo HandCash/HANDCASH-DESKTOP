@@ -362,28 +362,128 @@ export async function ingestLegacyAddressUtxos(
   // Inscribed outputs (1Sat NFT) are P2PKH + ord envelope — absent from the
   // plain address scan. Ordinal index covers NFT tips. Legacy BSV-21 is
   // burn-only for tips already in basket `bsv21` — do not re-scan / import more.
-  const [addressScan, ordinalTxos, basketListed] = await Promise.all([
-    scanLegacyAddress(active),
-    fundingOnly
-      ? Promise.resolve<LegacyUtxo[]>([])
-      : scanAddressOrdinalTxos(active.address, active.chain),
-    fundingOnly
-      ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
-      : listOneSatBasketOutpointKeys(active).catch((err) => {
-          console.warn('[chain-ingest] 1sat basket list failed', err)
-          return null
-        }),
+  //
+  // Start ordinal / basket work immediately, but never block ordinary P2PKH
+  // funding on GorillaPool pagination. Payments must credit as soon as Bitails
+  // (or the next host) answers the address scan.
+  const ordinalTxosPromise = fundingOnly
+    ? Promise.resolve<LegacyUtxo[]>([])
+    : scanAddressOrdinalTxos(active.address, active.chain)
+  const basketListedPromise = fundingOnly
+    ? Promise.resolve<{ keys: Set<string>; fullyListed: boolean } | null>(null)
+    : listOneSatBasketOutpointKeys(active).catch((err) => {
+        console.warn('[chain-ingest] 1sat basket list failed', err)
+        return null
+      })
+
+  const addressScan = await scanLegacyAddress(active)
+  console.info(
+    `[chain-ingest] legacy address scan: ${addressScan.utxos.length} UTXO(s), ${addressScan.sats} sats via ${addressScan.source}`,
+  )
+
+  // Sweep plain-address funding before awaiting the ordinal index.
+  let importedFunding = 0
+  let fundingFailed = 0
+  let fundingSkippedKnown = 0
+  let importedFundingOutpoints: string[] = []
+  let partialWarn: string | null = null
+  const sweptFundingKeys = new Set<string>()
+
+  if (addressScan.utxos.length > 0) {
+    const earlyRemittance = await loadCollectableRemittance()
+    const earlyKnown = collectableKeySet([
+      ...earlyRemittance.keys(),
+      ...addressScan.utxos
+        .filter((u) => u.satoshis === 1 && isOneSatOutpointKnown(u.outpoint))
+        .map((u) => u.outpoint),
+    ])
+    const early = await classifyLegacyUtxos(
+      addressScan.utxos,
+      active.chain,
+      opts.knownItems ?? [],
+      {
+        fundingOnly: true,
+        knownCollectableOutpoints: earlyKnown,
+        collectableRemittance: earlyRemittance,
+      },
+    )
+    if (early.funding.length > 0) {
+      yieldToSpendIfNeeded()
+      let result = await importLegacyUtxos(early.funding, active)
+      importedFunding = result.imported
+      fundingFailed = result.failed
+      fundingSkippedKnown = result.skippedKnown
+      importedFundingOutpoints = result.importedOutpoints
+      recordFundingReceipts(result.importedReceipts)
+      for (const u of early.funding) sweptFundingKeys.add(outpointKey(u.outpoint))
+
+      if (result.imported === 0 && result.skippedKnown > 0 && addressScan.sats > 0) {
+        const retryable = await retryableStuckSweeps(early.funding, active.chain)
+        if (retryable.length > 0) {
+          forgetLegacyImported(retryable)
+          console.warn(
+            `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${addressScan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
+          )
+          result = await importLegacyUtxos(early.funding, active)
+          importedFunding = result.imported
+          fundingFailed = result.failed
+          fundingSkippedKnown = result.skippedKnown
+          importedFundingOutpoints = result.importedOutpoints
+          recordFundingReceipts(result.importedReceipts)
+        }
+      }
+      if (result.failed > 0) {
+        console.warn('[chain-ingest] legacy funding import partial', result)
+        partialWarn =
+          partialWarn ??
+          `Some funds didn’t import (${result.failed}). Retrying automatically.`
+      } else if (result.imported > 0) {
+        console.info(
+          `[chain-ingest] early funding sweep imported ${result.imported} out(s) before ordinal index`,
+        )
+      }
+    }
+  }
+
+  if (fundingOnly) {
+    await Promise.all([ordinalTxosPromise, basketListedPromise])
+    return {
+      scan: addressScan,
+      importedFunding,
+      importedItems: 0,
+      fundingFailed,
+      itemsFailed: 0,
+      fundingSkippedKnown,
+      importedFundingOutpoints,
+      heldOneSats: 0,
+      pendingTips: 0,
+      pendingOutpoints: [],
+      newOneSatOutpoints: [],
+      partialWarn,
+    }
+  }
+
+  const [ordinalTxos, basketListed] = await Promise.all([
+    ordinalTxosPromise,
+    basketListedPromise,
   ])
 
   const scan = mergeTokenTxos(addressScan, ordinalTxos)
-  if (scan.utxos.length > 0) {
-    console.info(
-      `[chain-ingest] legacy address scan: ${scan.utxos.length} UTXO(s), ${scan.sats} sats via ${scan.source}`,
-    )
-  }
-
   if (scan.utxos.length === 0) {
-    return emptyIngest(scan)
+    return {
+      scan,
+      importedFunding,
+      importedItems: 0,
+      fundingFailed,
+      itemsFailed: 0,
+      fundingSkippedKnown,
+      importedFundingOutpoints,
+      heldOneSats: 0,
+      pendingTips: 0,
+      pendingOutpoints: [],
+      newOneSatOutpoints: [],
+      partialWarn,
+    }
   }
 
   // A send / app request may have arrived while the scan ran. Still sweep funding
@@ -455,7 +555,7 @@ export async function ingestLegacyAddressUtxos(
   let importedItems = 0
   let itemsFailed = 0
   let newOneSatOutpoints: string[] = []
-  let partialWarn: string | null = null
+  // partialWarn / funding counters may already be set by the early P2PKH sweep.
 
   // BSV-21 address-scan ingress is disabled — tokens arrive via remittance / settle.
   if (bsv21.length > 0 && !fundingOnly) {
@@ -498,6 +598,61 @@ export async function ingestLegacyAddressUtxos(
 
 
   await yieldToUi()
+
+  // Prefer remaining funding only — early sweep already credited plain-address payments.
+  const remainingFunding = funding.filter(
+    (u) => !sweptFundingKeys.has(outpointKey(u.outpoint)),
+  )
+
+  if (remainingFunding.length > 0) {
+    yieldToSpendIfNeeded()
+    let result = await importLegacyUtxos(remainingFunding, active)
+    importedFunding += result.imported
+    fundingFailed += result.failed
+    fundingSkippedKnown += result.skippedKnown
+    importedFundingOutpoints = [
+      ...importedFundingOutpoints,
+      ...result.importedOutpoints,
+    ]
+    recordFundingReceipts(result.importedReceipts)
+
+    // Everything marked imported, yet the coins are still sitting on the address:
+    // that is the stuck-sweep signature. Only reachable in that exact state, so
+    // the txid checks below cost nothing on a healthy wallet.
+    if (result.imported === 0 && result.skippedKnown > 0 && scan.sats > 0) {
+      const retryable = await retryableStuckSweeps(remainingFunding, active.chain)
+      if (retryable.length > 0) {
+        forgetLegacyImported(retryable)
+        console.warn(
+          `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${scan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
+        )
+        result = await importLegacyUtxos(remainingFunding, active)
+        importedFunding += result.imported
+        fundingFailed += result.failed
+        fundingSkippedKnown += result.skippedKnown
+        importedFundingOutpoints = [
+          ...importedFundingOutpoints,
+          ...result.importedOutpoints,
+        ]
+        recordFundingReceipts(result.importedReceipts)
+      } else {
+        console.info(
+          `[chain-ingest] ${result.skippedKnown} legacy out(s) already swept — waiting for the indexer instead of sweeping again`,
+        )
+      }
+    }
+
+    if (result.failed > 0) {
+      console.warn('[chain-ingest] legacy funding import partial', result)
+      partialWarn =
+        partialWarn ??
+        `Some funds didn’t import (${result.failed}). Retrying automatically.`
+    } else if (result.imported === 0 && result.skippedKnown > 0) {
+      console.info(
+        `[chain-ingest] ${result.skippedKnown} funding out(s) already marked imported — balance should already include them`,
+      )
+    }
+  }
 
   // Large orphan re-ingests (hundreds of tips) can run for minutes. Chunk so
   // Collect paints after each batch instead of staying on a stale 9-item cache
@@ -559,54 +714,6 @@ export async function ingestLegacyAddressUtxos(
     }
   }
 
-  let importedFunding = 0
-  let fundingFailed = 0
-  let fundingSkippedKnown = 0
-  let importedFundingOutpoints: string[] = []
-
-  if (funding.length > 0) {
-    yieldToSpendIfNeeded()
-    let result = await importLegacyUtxos(funding, active)
-    importedFunding = result.imported
-    fundingFailed = result.failed
-    fundingSkippedKnown = result.skippedKnown
-    importedFundingOutpoints = result.importedOutpoints
-    recordFundingReceipts(result.importedReceipts)
-
-    // Everything marked imported, yet the coins are still sitting on the address:
-    // that is the stuck-sweep signature. Only reachable in that exact state, so
-    // the txid checks below cost nothing on a healthy wallet.
-    if (result.imported === 0 && result.skippedKnown > 0 && scan.sats > 0) {
-      const retryable = await retryableStuckSweeps(funding, active.chain)
-      if (retryable.length > 0) {
-        forgetLegacyImported(retryable)
-        console.warn(
-          `[chain-ingest] ${retryable.length} legacy out(s) marked imported but ${scan.sats} sats still on address and no sweep tx on chain — retrying sweep`,
-        )
-        result = await importLegacyUtxos(funding, active)
-        importedFunding = result.imported
-        fundingFailed = result.failed
-        fundingSkippedKnown = result.skippedKnown
-        importedFundingOutpoints = result.importedOutpoints
-        recordFundingReceipts(result.importedReceipts)
-      } else {
-        console.info(
-          `[chain-ingest] ${result.skippedKnown} legacy out(s) already swept — waiting for the indexer instead of sweeping again`,
-        )
-      }
-    }
-
-    if (result.failed > 0) {
-      console.warn('[chain-ingest] legacy funding import partial', result)
-      partialWarn =
-        partialWarn ??
-        `Some funds didn’t import (${result.failed}). Retrying automatically.`
-    } else if (result.imported === 0 && result.skippedKnown > 0) {
-      console.info(
-        `[chain-ingest] ${result.skippedKnown} funding out(s) already marked imported — balance should already include them`,
-      )
-    }
-  }
 
   return {
     scan,

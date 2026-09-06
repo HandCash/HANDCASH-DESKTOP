@@ -87,6 +87,14 @@ const CHAIN_POLL_PARITY_MS = 2 * 60_000
  */
 const CHAIN_POLL_PENDING_MS = 30_000
 /**
+ * After unlock (or while spendable balance is still 0), poll with fundingOnly so
+ * a plain P2PKH payment is not stuck behind the 2-minute full address+ordinal
+ * scan. Cheap Bitails unspent checks — not the 800k-row ordinal pull.
+ */
+const CHAIN_POLL_WATCHING_MS = 8_000
+/** How long after unlock we keep the fast funding-only cadence. */
+const CHAIN_POLL_WATCHING_WINDOW_MS = 3 * 60_000
+/**
  * Stale inbox / chat tip cards must not re-run funding-only Refresh every 5s.
  * pollInboundTipHints also dispatches `handcash:payment-hint`, so the same
  * txids used to be chased twice per tick. New txids still ingest immediately.
@@ -98,10 +106,18 @@ function paymentHintTxid(raw: string | { txid?: string } | null | undefined): st
   return /^[0-9a-f]{64}$/.test(id) ? id : ''
 }
 
-function nextChainPollMs(pendingTips: number): number {
+function nextChainPollMs(
+  pendingTips: number,
+  opts?: { balanceSats?: number; watchingUntil?: number },
+): number {
   if (pendingTips > 0) return CHAIN_POLL_PENDING_MS
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     return CHAIN_POLL_HIDDEN_MS
+  }
+  const balanceSats = opts?.balanceSats ?? 0
+  const watchingUntil = opts?.watchingUntil ?? 0
+  if (balanceSats <= 0 && Date.now() < watchingUntil) {
+    return CHAIN_POLL_WATCHING_MS
   }
   if (isDeviceParityEnabled()) return CHAIN_POLL_PARITY_MS
   return isPhoneShell() ? CHAIN_POLL_PHONE_MS : CHAIN_POLL_DESKTOP_MS
@@ -229,6 +245,7 @@ export function Dashboard({
 
   useEffect(() => {
     let cancelled = false
+    const watchingUntil = Date.now() + CHAIN_POLL_WATCHING_WINDOW_MS
     let lastHistoryPull = 0
     let tickInFlight = false
     let pollTimer: number | null = null
@@ -266,7 +283,12 @@ export function Dashboard({
     const scheduleNext = (delayMs?: number) => {
       if (cancelled) return
       if (pollTimer != null) window.clearTimeout(pollTimer)
-      const delay = delayMs ?? nextChainPollMs(getSyncHealth().pendingTips)
+      const delay =
+        delayMs ??
+        nextChainPollMs(getSyncHealth().pendingTips, {
+          balanceSats,
+          watchingUntil,
+        })
       scheduledDelayMs = delay
       pollTimer = window.setTimeout(() => {
         void sync().finally(() => scheduleNext())
@@ -478,9 +500,14 @@ export function Dashboard({
         // Background polls never audit: reviewSpendableOutputs is report-only and
         // was colliding with nav taps right after unlock. Manual Refresh / online
         // recovery still force the audit.
+        // While spendable balance is still 0 after unlock, stay on fundingOnly so
+        // a P2PKH payment is not waiting on the ordinal index / 2-minute cadence.
+        const watching = balanceSats <= 0 && Date.now() < watchingUntil
         const sats = await refreshFromChain({
           audit: opts?.forceReview === true,
           forceReview: opts?.forceReview === true,
+          fundingOnly: watching && opts?.forceReview !== true,
+          announceReceive: true,
         })
         if (cancelled) return
         if (sats != null) onRefreshBalance(sats)
@@ -617,7 +644,7 @@ export function Dashboard({
       if (deferTimer != null) window.clearTimeout(deferTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.address])
+  }, [profile.address, balanceSats, onRefreshBalance])
 
   return (
     <section

@@ -237,6 +237,47 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     expect(result.scan.utxos).toEqual([])
   })
 
+
+  it('sweeps funding before the ordinal index resolves', async () => {
+    let releaseOrdinals: (v: unknown[]) => void = () => {}
+    const ordinalGate = new Promise<unknown[]>((resolve) => {
+      releaseOrdinals = resolve
+    })
+    const { scanAddressOrdinalTxos } = await import('./tokenAddressScan')
+    vi.mocked(scanAddressOrdinalTxos).mockImplementationOnce(async () => {
+      await ordinalGate
+      return []
+    })
+    mockClassifyLegacyUtxos.mockResolvedValue({
+      funding: [FUNDING],
+      oneSats: [],
+      bsv21: [],
+      heldOneSats: [],
+      heldUneconomical: [],
+      pendingTips: [],
+    })
+    mockImportLegacyUtxos.mockResolvedValue({
+      imported: 1,
+      failed: 0,
+      errors: [],
+      skippedOneSats: 0,
+      skippedKnown: 0,
+      importedOutpoints: [OUTPOINT],
+      importedReceipts: [
+        { outpoint: OUTPOINT, satoshis: 5000, receiveTxid: 'bb', sweepTxid: SWEEP_TXID },
+      ],
+    })
+    const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
+    const pending = ingestLegacyAddressUtxos({ active })
+    // Funding must finish while ordinals are still blocked.
+    await vi.waitFor(() => {
+      expect(mockImportLegacyUtxos).toHaveBeenCalled()
+    })
+    releaseOrdinals([])
+    const result = await pending
+    expect(result.importedFunding).toBe(1)
+  })
+
   it('still scans when fundingOnly even if a send is waiting', async () => {
     mockShouldYield.mockReturnValue(true)
     mockScanLegacyAddress.mockResolvedValue({
