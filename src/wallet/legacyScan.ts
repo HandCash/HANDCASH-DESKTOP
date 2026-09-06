@@ -8,7 +8,7 @@ import type { Services } from '@bsv/wallet-toolbox-client'
 import { getActiveWallet, type ActiveWallet } from './session'
 import type { Chain } from './vault'
 import { getDependencyHealthSnapshot } from './dependencyHealth'
-import { isViteDevBrowser } from './runtimePlatform'
+import { isPhoneShell, isViteDevBrowser } from './runtimePlatform'
 import {
   beginLegacyImport,
   markLegacyImported,
@@ -122,12 +122,25 @@ export function resetLegacyScanCooldownForTests(): void {
   bananablocksCooldownUntil = 0
 }
 
+function isAbortError(err: unknown): boolean {
+  return (
+    (typeof DOMException !== 'undefined' &&
+      err instanceof DOMException &&
+      err.name === 'AbortError') ||
+    (err instanceof Error && err.name === 'AbortError')
+  )
+}
+
 async function fetchWithDeadline(
   url: string,
   init?: RequestInit,
 ): Promise<Response> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), SCAN_TIMEOUT_MS)
+  // Phone WebViews share one network stack with leftover BRC-29 ingest / BEEF
+  // fetches. Under that load a 7s BananaBlocks abort is common — give the
+  // address scan a little more room so Bitails is not racing a cooldown.
+  const budget = isPhoneShell() ? SCAN_TIMEOUT_MS + 3_000 : SCAN_TIMEOUT_MS
+  const timer = setTimeout(() => controller.abort(), budget)
   try {
     return await fetch(url, { ...init, signal: controller.signal })
   } finally {
@@ -179,17 +192,8 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return null
 
-  const banana = bananablocksBase(chain)
-  if (banana) {
-    try {
-      const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
-      if (res.status === 404) return false
-      if (res.ok) return true
-    } catch (err) {
-      console.warn('[legacy-scan] BananaBlocks tx lookup failed', err)
-    }
-  }
-
+  // Bitails first — BananaBlocks aborts under phone WebView contention and was
+  // starving every probe (mobile logs: AbortError code=20 on /tx/hash).
   const bitails = bitailsBase(chain)
   if (bitails) {
     try {
@@ -197,9 +201,25 @@ export async function txExistsOnChain(txid: string, chain: Chain): Promise<boole
       if (res.status === 404) return false
       if (res.ok) return true
     } catch (err) {
-      console.warn('[legacy-scan] Bitails tx lookup failed', err)
+      if (!isAbortError(err)) {
+        console.warn('[legacy-scan] Bitails tx lookup failed', err)
+      }
     }
   }
+
+  const banana = bananablocksBase(chain)
+  if (banana) {
+    try {
+      const res = await fetchWithDeadline(`${banana}/tx/hash/${id}`)
+      if (res.status === 404) return false
+      if (res.ok) return true
+    } catch (err) {
+      if (!isAbortError(err)) {
+        console.warn('[legacy-scan] BananaBlocks tx lookup failed', err)
+      }
+    }
+  }
+
 
   if (handcashChainLikelyUp()) {
     try {
@@ -275,21 +295,6 @@ export async function spentStatusOfOutpoint(
 
   let bitailsUnknown = false
 
-  const banana = bananablocksBase(chain)
-  if (banana) {
-    try {
-      const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
-      if (res.status === 404) return 'unspent'
-      if (!res.ok) return 'unknown'
-      const body = (await res.json()) as { txid?: unknown }
-      const spendTxid = String(body.txid ?? '').toLowerCase()
-      if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
-      return 'unknown'
-    } catch (err) {
-      console.warn('[legacy-scan] BananaBlocks utxo status failed', err)
-    }
-  }
-
   const bitails = bitailsBase(chain)
   if (bitails) {
     try {
@@ -303,7 +308,26 @@ export async function spentStatusOfOutpoint(
         bitailsUnknown = true
       }
     } catch (err) {
-      console.warn('[legacy-scan] Bitails utxo status failed', err)
+      if (!isAbortError(err)) {
+        console.warn('[legacy-scan] Bitails utxo status failed', err)
+      }
+    }
+  }
+
+  const banana = bananablocksBase(chain)
+  if (banana) {
+    try {
+      const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
+      if (res.status === 404) return 'unspent'
+      if (!res.ok) return 'unknown'
+      const body = (await res.json()) as { txid?: unknown }
+      const spendTxid = String(body.txid ?? '').toLowerCase()
+      if (/^[0-9a-f]{64}$/.test(spendTxid)) return 'spent'
+      return 'unknown'
+    } catch (err) {
+      if (!isAbortError(err)) {
+        console.warn('[legacy-scan] BananaBlocks utxo status failed', err)
+      }
     }
   }
 
@@ -567,24 +591,6 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
     })
   }
 
-  if (bananablocksBase(wallet.chain)) {
-    if (now >= bananablocksCooldownUntil) {
-      starters.push(async () => {
-        try {
-          const result = await scanAddressViaBananaBlocks(wallet.address, wallet.chain)
-          bananablocksCooldownUntil = 0
-          return result
-        } catch (err) {
-          bananablocksCooldownUntil = Date.now() + HOST_COOLDOWN_MS
-          console.warn('[legacy-scan] BananaBlocks failed', err)
-          throw err
-        }
-      })
-    } else {
-      console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
-    }
-  }
-
   if (bitailsBase(wallet.chain)) {
     if (now >= bitailsCooldownUntil) {
       starters.push(async () => {
@@ -593,13 +599,37 @@ export async function scanLegacyAddress(active?: ActiveWallet | null): Promise<L
           bitailsCooldownUntil = 0
           return result
         } catch (err) {
-          bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          // Abort = deadline under load, not a dead host — keep asking next poll.
+          if (!isAbortError(err)) {
+            bitailsCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          }
           console.warn('[legacy-scan] Bitails failed', err)
           throw err
         }
       })
     } else {
       console.info('[legacy-scan] skipping Bitails (recently failed)')
+    }
+  }
+
+  if (bananablocksBase(wallet.chain)) {
+    if (now >= bananablocksCooldownUntil) {
+      starters.push(async () => {
+        try {
+          const result = await scanAddressViaBananaBlocks(wallet.address, wallet.chain)
+          bananablocksCooldownUntil = 0
+          return result
+        } catch (err) {
+          // Abort = deadline under load, not a dead host — keep asking next poll.
+          if (!isAbortError(err)) {
+            bananablocksCooldownUntil = Date.now() + HOST_COOLDOWN_MS
+          }
+          console.warn('[legacy-scan] BananaBlocks failed', err)
+          throw err
+        }
+      })
+    } else {
+      console.info('[legacy-scan] skipping BananaBlocks (recently failed)')
     }
   }
 

@@ -67,8 +67,8 @@ describe('scanLegacyAddress', () => {
 
     expect(scan.source).toBe('bitails')
     expect(scan.sats).toBe(500)
-    // banana fail + bitails ok (Kallubi removed)
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // Bitails is primary — happy path is a single request.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
     expect(getUtxoStatus).not.toHaveBeenCalled()
   })
 
@@ -154,7 +154,8 @@ describe('scanLegacyAddress', () => {
 
     const scan = await scanLegacyAddress(wallet())
 
-    expect(afterFirst).toBe(1)
+    // First pass: Bitails fail + BananaBlocks ok. Second pass skips Bitails cooldown.
+    expect(afterFirst).toBe(2)
     expect(scan.source).toBe('bananablocks')
     expect(fetchMock.mock.calls.some(([url]) => isBitails(url))).toBe(false)
     expect(fetchMock).toHaveBeenCalledTimes(1)

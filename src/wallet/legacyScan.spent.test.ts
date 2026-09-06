@@ -66,13 +66,18 @@ describe('spentStatusOfOutpoint', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(spentStatusOfOutpoint(`${PREV}.0`, 'main')).resolves.toBe('spent')
-    expect(fetchMock).toHaveBeenCalledTimes(2)
+    // Bitails answers first — no second host on a definitive spent.
+    expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
   it('returns unspent from BananaBlocks 404 without asking WhatsOnChain', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async (url: string) => {
+        // Bitails is primary; force fallback to BananaBlocks.
+        if (String(url).includes('bitails')) {
+          return jsonResponse(200, { status: 'unknown' })
+        }
         if (String(url).includes('bananablocks')) {
           return new Response('', { status: 404 })
         }

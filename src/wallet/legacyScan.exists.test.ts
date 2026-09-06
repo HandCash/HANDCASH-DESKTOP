@@ -38,7 +38,8 @@ describe('txExistsOnChain', () => {
     vi.stubGlobal('fetch', fetchMock)
 
     await expect(txExistsOnChain(TXID, 'main')).resolves.toBe(false)
-    expect(order).toEqual(['banana', 'bitails'])
+    // Bitails is primary under phone WebView load; BananaBlocks is fallback.
+    expect(order).toEqual(['bitails'])
     expect(fetchMock.mock.calls.some(([u]) => isWoc(u))).toBe(false)
   })
 
