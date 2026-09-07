@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.109] - 2026-09-07
+
+### Fixed
+
+- **Plinko / Arcade createAction hung on seen-on-chain** — third-party `createAction` now returns once Arcade accepts the BEEF (`acceptDelayedBroadcast`). Apps deduct change immediately instead of waiting minutes for a merkle callback.
+- **Market buy refused on indexer timeout** — overlay already has the listing BEEF at admit time; prefer that over `getBeefForTxid` so an 8s indexer timeout cannot block the purchase.
+
 ## [1.3.108] - 2026-09-06
 
 ### Fixed
