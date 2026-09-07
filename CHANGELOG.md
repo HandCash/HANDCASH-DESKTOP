@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.110] - 2026-09-07
+
+### Fixed
+
+- **Send success is Arcade POST `/tx` ACK** — boot now installs ArcadeBeef first (it was chaintracks-only, so phones never posted to Arcade). Drop `XDeployment-ID` so Capacitor `https://localhost` CORS can submit. No SSE / callback webhook.
+- **Heal un-deducted a just-submitted tx** — send-cleanup treated Bitails `exists=false` as a ghost and failed live `unmined` rows (hc-a580a `ad40b4db`). Explorer lag no longer retires pending change after a successful submit.
+
 ## [1.3.109] - 2026-09-07
 
 ### Fixed

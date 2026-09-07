@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     if (value) durableStore[key] = value
     else delete durableStore[key]
   }),
+  failUnsentLocalTx: vi.fn(async () => false),
   clearDurableStore: () => {
     for (const key of Object.keys(durableStore)) delete durableStore[key]
   },
@@ -62,7 +63,7 @@ vi.mock('./spendAttempt', () => ({
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
   listPendingLocalChangeTxids: vi.fn(async () => []),
-  failUnsentLocalTx: vi.fn(async () => false),
+  failUnsentLocalTx: (...args: unknown[]) => mocks.failUnsentLocalTx(...args),
 }))
 
 vi.mock('./durableStorage', () => ({
@@ -176,5 +177,27 @@ describe('healUtxoFromActivityHistory', () => {
     const saved = mocks.durableSetItem.mock.calls.at(-1)?.[1] as string
     expect(saved).toContain(other)
     expect(saved).toContain(TX)
+  })
+
+  it('keeps local change when explorers have not seen a just-submitted tx', async () => {
+    mocks.txExistsOnChain.mockResolvedValue(false)
+    mocks.failUnsentLocalTx.mockResolvedValue(false)
+    mocks.getActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              getProvenOrRawTx: (id: string) => Promise<{ rawTx: number[] }>
+            }) => Promise<unknown>,
+          ) => fn({ getProvenOrRawTx: async () => ({ rawTx: [1, 2, 3] }) }),
+        },
+      },
+    })
+
+    await runUtxoHealPass({ source: 'send-cleanup', force: true })
+
+    expect(mocks.failUnsentLocalTx).toHaveBeenCalledWith(TX)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
   })
 })

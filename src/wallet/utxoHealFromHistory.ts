@@ -228,9 +228,12 @@ async function processTxidBatch(
     if (chain) {
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain === false) {
-        // Ghost local send (miner hard-reject / never broadcast) — do not keep
-        // promoting its change; that freezes pendingChange forever.
-        if (local) await failUnsentLocalTx(txid)
+        // Explorer "not on chain" is not a ghost after a successful submit.
+        // failUnsent refuses live unmined/sending rows; keep their change.
+        if (local) {
+          const failed = await failUnsentLocalTx(txid)
+          if (!failed) changeKept += await keepChangeOfSignedTx(txid)
+        }
         continue
       }
       if (onChain === true) txidsOnChain += 1

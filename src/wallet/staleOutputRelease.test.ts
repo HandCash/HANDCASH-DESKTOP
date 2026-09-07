@@ -543,7 +543,7 @@ describe('promotePendingLocalChangeOutputs', () => {
     )
   })
 
-  it('fails pending txs explorers prove never landed instead of promoting them', async () => {
+  it('promotes pending txs while explorers lag instead of failing the submit', async () => {
     const txid = 'cd'.repeat(32)
     txExistsOnChain.mockResolvedValue(false)
     findTransactions.mockImplementation(async (args: {
@@ -567,12 +567,12 @@ describe('promotePendingLocalChangeOutputs', () => {
       },
     ])
 
-    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(0)
-    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 11)
-    expect(updateOutput).toHaveBeenCalledWith(4, {
-      spendable: false,
-      spentBy: undefined,
-    })
+    await expect(promotePendingLocalChangeOutputs()).resolves.toBe(1)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+    expect(updateOutput).toHaveBeenCalledWith(
+      4,
+      expect.objectContaining({ spendable: true }),
+    )
   })
 })
 
@@ -851,21 +851,18 @@ describe('failUnsentLocalTx', () => {
     })
   })
 
-  it('fails a live local ghost and retires its outs', async () => {
+  it('refuses to fail a live submitted tx while explorers lag', async () => {
     const txid = 'ab'.repeat(32)
     findTransactions.mockResolvedValue([
-      { transactionId: 7, txid, status: 'sending' },
+      { transactionId: 7, txid, status: 'unmined' },
     ])
     findOutputs.mockResolvedValue([
       { outputId: 1, txid, vout: 0, satoshis: 2614, spendable: false, change: true },
     ])
 
-    await expect(failUnsentLocalTx(txid)).resolves.toBe(true)
-    expect(updateTransactionStatus).toHaveBeenCalledWith('failed', 7)
-    expect(updateOutput).toHaveBeenCalledWith(1, {
-      spendable: false,
-      spentBy: undefined,
-    })
+    await expect(failUnsentLocalTx(txid)).resolves.toBe(false)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 })
 

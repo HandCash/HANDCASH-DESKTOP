@@ -1,7 +1,7 @@
 /**
  * Arcade (bsv-blockchain/arcade) helpers kept for tests / future Cloud parity.
- * BRC wallet boot (`session.ts`) now prefers ArcadeBeef first on postBeef;
- * chaintracks still comes from Arcade V2. Monitor SSE remains optional.
+ * BRC wallet boot (`session.ts`) prefers ArcadeBeef first on postBeef;
+ * POST /tx success completes the send — no SSE / callback webhook.
  *
  * Wires (when used):
  * - Shared X-CallbackToken on Services (broadcast) + Monitor (SSE)

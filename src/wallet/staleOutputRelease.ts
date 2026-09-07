@@ -283,18 +283,21 @@ export async function releaseSealedInputsOfUnsentTx(
   )
   // Inputs are free again; the local signed row must not keep crediting pending
   // change or looking "live" to heal/promote (lab: cb36a9099dfc × pendingChange).
-  await failUnsentLocalTx(id)
+  await failUnsentLocalTx(id, { force: true })
   return unique.length
 }
 
 /**
  * Mark a signed local tx as failed and retire its outputs.
  *
- * Call when explorers prove the tx never landed (or miner hard-reject released
- * the seal). Leaving it `unproven`/`sending` freezes `pendingChange` and makes
- * heal keepChange the ghost forever.
+ * Default refuses live `unmined`/`sending` rows — explorer lag after a
+ * successful submit is not a ghost. Pass `{ force: true }` only when this
+ * caller already proved the spend never reached a node (unseal path).
  */
-export async function failUnsentLocalTx(txid: string): Promise<boolean> {
+export async function failUnsentLocalTx(
+  txid: string,
+  opts?: { force?: boolean },
+): Promise<boolean> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id)) return false
   const storage = getActiveWallet()?.wallet?.storage
@@ -326,6 +329,15 @@ export async function failUnsentLocalTx(txid: string): Promise<boolean> {
 
       const status = String(row?.status ?? '').toLowerCase()
       if (status === 'failed' || status === 'completed') return false
+      // Submit ACK is success. Explorers lag for minutes after Arcade accepts
+      // the BEEF (hc-a580a: unmined + post.status success, then send-cleanup
+      // heal marked the tx failed and un-deducted change).
+      if (!opts?.force && isLiveLocalTxStatus(status)) {
+        console.info(
+          `[stale-output] skip fail-unsent — ${id.slice(0, 12)} still ${status} after submit`,
+        )
+        return false
+      }
 
       if (typeof sp.updateTransactionStatus === 'function') {
         try {
@@ -835,8 +847,9 @@ export async function promotePendingLocalChangeOutputs(opts?: {
         const { txExistsOnChain } = await import('./legacyScan')
         const onChain = await txExistsOnChain(txid, chain)
         if (onChain === false) {
-          await failUnsentLocalTx(txid)
-          continue
+          // Submit already succeeded; indexer lag must not un-deduct change.
+          const failed = await failUnsentLocalTx(txid)
+          if (failed) continue
         }
       } catch (err) {
         console.warn(

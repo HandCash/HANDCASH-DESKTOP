@@ -2,7 +2,7 @@ import { PrivateKey, type ChainTracker, type WalletInterface } from '@bsv/sdk'
 import { fetchBlockHeaderForHeight } from './blockHeaders'
 import { createFallbackChainTracker } from './chainTrackerFallback'
 import { installRawTxFallback } from './rawTxFallback'
-import { installArcadeV2ChaintracksOnly } from './arcadeV2'
+import { installArcadeV2Services } from './arcadeV2'
 import { SetupClient, Wallet, sdk, type Services } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
 import { BALANCE_DEFAULT_BASKET } from './brc112'
@@ -347,8 +347,8 @@ export async function bootWallet(args: {
   })
 
   installFallbackChainTracker(setup.services as Services, args.chain)
-  // Arcade V2 go-chaintracks (dev proxy / public host) — not Teranode broadcast.
-  installArcadeV2ChaintracksOnly(setup.services as Services, args.chain)
+  // Arcade V2: POST /tx success completes the send. No SSE / callback webhook.
+  installArcadeV2Services(setup.services as Services, args.chain)
   installHeightFailover(setup.services as Services, args.chain)
   installHeaderFailover(setup.services as Services, args.chain)
   installTipHeaderFailover(setup.services as Services, args.chain)
@@ -356,12 +356,6 @@ export async function bootWallet(args: {
   installPostBeefPreferFast(setup.services as Services)
   installRawTxFallback(setup.services as Services, args.chain)
   syncMonitorChaintracks(setup.monitor, (setup.services as Services).options.chaintracks)
-
-  // try {
-  //   wireArcadeMonitor(setup.monitor, getOrCreateArcadeCallbackToken())
-  // } catch (err) {
-  //   console.warn('[arcade-v2] monitor SSE wiring skipped', err)
-  // }
 
   try {
     // MonitorCallHistory JSON.stringifies the entire services call log and writes
