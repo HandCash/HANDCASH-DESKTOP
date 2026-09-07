@@ -21,6 +21,7 @@ const internalizePeerItemSettle = vi.fn(async (_opts: unknown) => ({
   outpoints: ['a'.repeat(64) + '.0'],
 }))
 const isAtomicBeefInBackoff = vi.fn((_txid: string) => false)
+const restoreOnChainLocalTx = vi.fn(async () => false)
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -92,6 +93,7 @@ vi.mock('./pendingSend', () => ({
 vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   onAlreadySpentSend: async () => {},
+  restoreOnChainLocalTx: (...args: unknown[]) => restoreOnChainLocalTx(...args),
 }))
 vi.mock('./paymentPolicy', () => ({ assertOnlineForPayment: () => {} }))
 vi.mock('./paymentProgress', () => ({
@@ -128,6 +130,8 @@ beforeEach(() => {
   })
   isAtomicBeefInBackoff.mockReset()
   isAtomicBeefInBackoff.mockReturnValue(false)
+  restoreOnChainLocalTx.mockReset()
+  restoreOnChainLocalTx.mockResolvedValue(false)
   vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
 })
 
@@ -215,6 +219,33 @@ describe('internalizeBrc29Payment broadcast overlap', () => {
     expect(result.accepted).toBe(true)
     expect(internalizeStartedBeforePostBeefDone).toBe(true)
     expect(postBeef).toHaveBeenCalledTimes(1)
+  })
+
+  it('retries internalize after restoring a ghost-failed local row', async () => {
+    let attempts = 0
+    internalizeAction.mockImplementation(async () => {
+      attempts += 1
+      if (attempts === 1) {
+        throw new Error(
+          'The tx parameter must be target transaction of internalizeAction has invalid status failed.',
+        )
+      }
+      return { accepted: true }
+    })
+    restoreOnChainLocalTx.mockResolvedValue(true)
+
+    const { internalizeBrc29Payment } = await import('./sendBrc29Payment')
+    const result = await internalizeBrc29Payment({
+      txid: 'd'.repeat(64),
+      remittance: { derivationPrefix: 'pre', derivationSuffix: 'suf', outputIndex: 0 },
+      senderIdentityKey: SENDER,
+      satoshis: 500,
+      tx: ATOMIC,
+    })
+
+    expect(result.accepted).toBe(true)
+    expect(attempts).toBe(2)
+    expect(restoreOnChainLocalTx).toHaveBeenCalledWith('d'.repeat(64))
   })
 })
 

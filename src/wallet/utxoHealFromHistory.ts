@@ -19,7 +19,9 @@ import { releaseSpendAttemptFunds } from './spendAttempt'
 import {
   failUnsentLocalTx,
   keepChangeOfSignedTx,
+  listFailedLocalTxids,
   listPendingLocalChangeTxids,
+  restoreOnChainLocalTx,
 } from './staleOutputRelease'
 import {
   appendHealCheckpointBatch,
@@ -236,7 +238,10 @@ async function processTxidBatch(
         }
         continue
       }
-      if (onChain === true) txidsOnChain += 1
+      if (onChain === true) {
+        txidsOnChain += 1
+        await restoreOnChainLocalTx(txid)
+      }
       else if (!local) continue
     } else if (!local) {
       continue
@@ -361,13 +366,15 @@ export async function runUtxoHealPass(
   const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance())
   const missing = txidsMissingFromCheckpoint(txids)
   const pendingChange = balanceBefore?.pendingChange ?? 0
+  const failedTxids = await listFailedLocalTxids()
 
   const shouldSkip =
     !opts.force &&
     opts.source !== 'manual' &&
     healCheckpointFresh() &&
     missing.length === 0 &&
-    pendingChange <= 0
+    pendingChange <= 0 &&
+    failedTxids.length === 0
 
   if (shouldSkip) {
     const cp = readHealCheckpoint()
@@ -394,7 +401,10 @@ export async function runUtxoHealPass(
   const txidList = orderTxidsForHeal(
     txids,
     missing,
-    pendingChange > 0 ? await listPendingLocalChangeTxids() : [],
+    [
+      ...(pendingChange > 0 ? await listPendingLocalChangeTxids() : []),
+      ...failedTxids,
+    ],
   )
   const deepHeal = opts.force || opts.source === 'manual' || pendingChange > 0
 

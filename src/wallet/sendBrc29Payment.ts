@@ -71,6 +71,7 @@ import { getDisplayCurrency } from './displayCurrency'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
+  withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 
 /** BRC-29 protocol id — see BRCs/payments/0029.md */
@@ -709,9 +710,39 @@ async function internalizeBrc29PaymentOnce(opts: {
       })()
       const internalizeP = (async () => {
         const t0 = Date.now()
-        await withVisibleOnChainBeef(() =>
+        await withRestoredInternalizeStatus(id, () =>
+          withVisibleOnChainBeef(() =>
+            active.wallet.internalizeAction({
+              tx: atomic!,
+              description: 'BRC-29 payment received',
+              labels: ['brc29'],
+              outputs: [
+                {
+                  outputIndex,
+                  protocol: 'wallet payment',
+                  paymentRemittance: {
+                    derivationPrefix: prefix,
+                    derivationSuffix: suffix,
+                    senderIdentityKey: sender,
+                  },
+                },
+              ],
+              seekPermission: false,
+            }),
+          ),
+        )
+        internalizeMs = Date.now() - t0
+      })()
+      await Promise.all([broadcastP, internalizeP])
+      markIngest(
+        `parallel exists/postBeef=${existsMs}ms internalize=${internalizeMs}ms`,
+      )
+    } else {
+      const t0 = Date.now()
+      await withRestoredInternalizeStatus(id, () =>
+        withVisibleOnChainBeef(() =>
           active.wallet.internalizeAction({
-            tx: atomic!,
+            tx: atomic,
             description: 'BRC-29 payment received',
             labels: ['brc29'],
             outputs: [
@@ -727,33 +758,7 @@ async function internalizeBrc29PaymentOnce(opts: {
             ],
             seekPermission: false,
           }),
-        )
-        internalizeMs = Date.now() - t0
-      })()
-      await Promise.all([broadcastP, internalizeP])
-      markIngest(
-        `parallel exists/postBeef=${existsMs}ms internalize=${internalizeMs}ms`,
-      )
-    } else {
-      const t0 = Date.now()
-      await withVisibleOnChainBeef(() =>
-        active.wallet.internalizeAction({
-          tx: atomic,
-          description: 'BRC-29 payment received',
-          labels: ['brc29'],
-          outputs: [
-            {
-              outputIndex,
-              protocol: 'wallet payment',
-              paymentRemittance: {
-                derivationPrefix: prefix,
-                derivationSuffix: suffix,
-                senderIdentityKey: sender,
-              },
-            },
-          ],
-          seekPermission: false,
-        }),
+        ),
       )
       markIngest(`internalize-only ${Date.now() - t0}ms`)
     }

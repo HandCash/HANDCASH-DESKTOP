@@ -12,7 +12,7 @@
  * is affirmative evidence our set is stale, and it is the only trigger for the
  * release here.
  */
-import { parseOutpoint } from './legacyScan'
+import { parseOutpoint, txExistsOnChain } from './legacyScan'
 import { logDiag } from './diagnosticLog'
 import { getActiveWallet } from './session'
 import {
@@ -53,7 +53,20 @@ const LIVE_LOCAL_TX = new Set([
   'unknown',
 ])
 
-type TxStatusRow = { status?: string; rawTx?: number[]; txid?: string }
+type TxStatusRow = {
+  status?: string
+  rawTx?: number[]
+  txid?: string
+  transactionId?: number
+}
+
+/** Statuses toolbox `internalizeAction` will merge into an existing row. */
+const INTERNALIZE_OK_TX = new Set([
+  'completed',
+  'unproven',
+  'sending',
+  'nosend',
+])
 
 function positiveId(value: unknown): number | null {
   const n = Number(value)
@@ -380,6 +393,138 @@ export async function failUnsentLocalTx(
     console.warn('[stale-output] fail-unsent skipped', id.slice(0, 12), err)
     return false
   }
+}
+
+/**
+ * Revive a local tx so `internalizeAction` can merge into it.
+ *
+ * Toolbox refuses merge unless status is completed/unproven/sending/nosend,
+ * and `updateTransactionStatus` cannot un-fail a `failed` row. Ghost-fail from
+ * explorer lag (hc-a580a ad40b4db) leaves an on-chain send stuck `failed`,
+ * then BRC-29 ingest throws `invalid status failed`.
+ *
+ * Failed rows restore only when `txExistsOnChain === true`. Live monitor
+ * statuses (unmined/callback/…) coerce to unproven without an explorer trip.
+ */
+export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
+  const id = txid.trim().toLowerCase()
+  if (!/^[0-9a-f]{64}$/.test(id)) return false
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return false
+
+  try {
+    const looked = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return null
+      let rows: TxStatusRow[] | undefined
+      try {
+        rows = await sp.findTransactions({
+          partial: { txid: id },
+          noRawTx: true,
+          paged: { limit: 1, offset: 0 },
+        })
+      } catch (err) {
+        if (!isUndefinedPartialFilterError(err)) {
+          console.warn(
+            '[stale-output] restore tx lookup skipped',
+            id.slice(0, 12),
+            err,
+          )
+        }
+        return null
+      }
+      const row = rows?.[0]
+      const transactionId = positiveId(row?.transactionId)
+      if (transactionId == null) return null
+      return {
+        transactionId,
+        status: String(row?.status ?? '').toLowerCase(),
+      }
+    })
+    if (!looked) return false
+    if (INTERNALIZE_OK_TX.has(looked.status)) return false
+
+    if (looked.status === 'failed') {
+      const chain = active?.chain
+      if (!chain) return false
+      const onChain = await txExistsOnChain(id, chain).catch(() => null)
+      if (onChain !== true) {
+        console.info(
+          `[stale-output] skip restore ${id.slice(0, 12)} failed — on-chain=${onChain}`,
+        )
+        return false
+      }
+    }
+
+    const restored = await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as unknown as LocalStorage
+      if (looked.status === 'failed') {
+        // updateTransactionStatus refuses un-fail; write the row directly.
+        if (typeof sp.updateTransaction !== 'function') return false
+        await sp.updateTransaction(looked.transactionId, { status: 'unproven' })
+        return true
+      }
+      if (typeof sp.updateTransactionStatus === 'function') {
+        try {
+          await sp.updateTransactionStatus('unproven', looked.transactionId)
+          return true
+        } catch (err) {
+          console.warn(
+            '[stale-output] restore status coerce skipped',
+            id.slice(0, 12),
+            err,
+          )
+        }
+      }
+      if (typeof sp.updateTransaction !== 'function') return false
+      await sp.updateTransaction(looked.transactionId, { status: 'unproven' })
+      return true
+    })
+    if (!restored) return false
+
+    console.info(
+      `[stale-output] restored on-chain local tx ${id.slice(0, 12)} ${looked.status} → unproven`,
+    )
+    await keepChangeOfSignedTx(id)
+    await sealSpentInputsOfSignedTx(id, undefined)
+    return true
+  } catch (err) {
+    console.warn('[stale-output] restore skipped', id.slice(0, 12), err)
+    return false
+  }
+}
+
+/** Failed local txids that may need an on-chain restore (capped). */
+export async function listFailedLocalTxids(): Promise<string[]> {
+  const active = getActiveWallet()
+  const storage = active?.wallet?.storage
+  if (!storage?.runAsStorageProvider) return []
+
+  const txids = new Set<string>()
+  try {
+    await storage.runAsStorageProvider(async (activeSp) => {
+      const sp = activeSp as LocalStorage
+      if (typeof sp.findTransactions !== 'function') return
+      for (let page = 0; page < 2; page += 1) {
+        const rows = await sp.findTransactions({
+          partial: {},
+          status: ['failed'],
+          noRawTx: true,
+          paged: { limit: 25, offset: page * 25 },
+        })
+        if (!rows?.length) break
+        for (const row of rows) {
+          const txid = String(row.txid ?? '').trim().toLowerCase()
+          if (/^[0-9a-f]{64}$/.test(txid)) txids.add(txid)
+        }
+        if (rows.length < 25) break
+      }
+    })
+  } catch (err) {
+    console.warn('[stale-output] failed tx scan skipped', err)
+  }
+  return [...txids]
 }
 
 /**
@@ -912,6 +1057,10 @@ type LocalStorage = {
   updateTransactionStatus?: (
     status: string,
     transactionId: number,
+  ) => Promise<unknown>
+  updateTransaction?: (
+    transactionId: number,
+    update: Record<string, unknown>,
   ) => Promise<unknown>
 }
 

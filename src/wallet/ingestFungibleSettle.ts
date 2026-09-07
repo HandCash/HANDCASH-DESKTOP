@@ -36,6 +36,7 @@ import type { ItemTransferAsset } from './messageStore'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
+  withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 
 type FungibleAsset = Extract<ItemTransferAsset, { kind: 'fungible' }>
@@ -185,39 +186,41 @@ export async function internalizePeerFungibleSettle(opts: {
     // peerDeliver: the payee is the intended first broadcaster.
     await broadcastAtomicBeef(id, atomic)
     rememberBeefTree(atomic, id)
-    await active.wallet.internalizeAction({
-      tx: atomic,
-      description: `Receive ${opts.token.sym}`.slice(0, 50),
-      labels: [BSV21_BASKET, 'handcash-token-p2p'],
-      outputs: [
-        {
-          outputIndex: tipVout,
-          protocol: 'basket insertion',
-          insertionRemittance: {
-            basket: BSV21_BASKET,
-            tags: stampBrc164Id(
-              bsv21Tags({
+    await withRestoredInternalizeStatus(id, () =>
+      active.wallet.internalizeAction({
+        tx: atomic,
+        description: `Receive ${opts.token.sym}`.slice(0, 50),
+        labels: [BSV21_BASKET, 'handcash-token-p2p'],
+        outputs: [
+          {
+            outputIndex: tipVout,
+            protocol: 'basket insertion',
+            insertionRemittance: {
+              basket: BSV21_BASKET,
+              tags: stampBrc164Id(
+                bsv21Tags({
+                  tokenId,
+                  amt: amount,
+                  sym: opts.token.sym,
+                  issuer: opts.token.issuer,
+                  op: 'transfer',
+                }),
+              ),
+              customInstructions: buildBsv21CustomInstructions({
                 tokenId,
                 amt: amount,
-                sym: opts.token.sym,
-                issuer: opts.token.issuer,
                 op: 'transfer',
+                sym: opts.token.sym,
+                icon: opts.token.icon,
+                dec: opts.token.dec,
+                issuer: opts.token.issuer,
               }),
-            ),
-            customInstructions: buildBsv21CustomInstructions({
-              tokenId,
-              amt: amount,
-              op: 'transfer',
-              sym: opts.token.sym,
-              icon: opts.token.icon,
-              dec: opts.token.dec,
-              issuer: opts.token.issuer,
-            }),
+            },
           },
-        },
-      ],
-      seekPermission: false,
-    })
+        ],
+        seekPermission: false,
+      }),
+    )
     markOneSatImported([tipOp])
     rememberBeefTree(atomic, id)
     noteInboundReceiveComplete({

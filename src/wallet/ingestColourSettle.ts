@@ -33,6 +33,7 @@ import type { ItemTransferAsset } from './messageStore'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
+  withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 
 type ColourAsset = Extract<ItemTransferAsset, { kind: '1sat-ft' }>
@@ -188,35 +189,37 @@ export async function internalizePeerColourSettle(opts: {
     }
     const tokenId = binary?.tokenId ?? origin
     const amtStr = binary?.amount.toString() ?? String(faceAmt)
-    await active.wallet.internalizeAction({
-      tx: atomic,
-      description: `Receive ${sym}`.slice(0, 50),
-      labels: [BSV21_BASKET, 'handcash-token-p2p'],
-      outputs: [
-        {
-          outputIndex: tipVout,
-          protocol: 'basket insertion',
-          insertionRemittance: {
-            basket: BSV21_BASKET,
-            tags: stampBrc164Id(
-              bsv21Tags({
+    await withRestoredInternalizeStatus(id, () =>
+      active.wallet.internalizeAction({
+        tx: atomic,
+        description: `Receive ${sym}`.slice(0, 50),
+        labels: [BSV21_BASKET, 'handcash-token-p2p'],
+        outputs: [
+          {
+            outputIndex: tipVout,
+            protocol: 'basket insertion',
+            insertionRemittance: {
+              basket: BSV21_BASKET,
+              tags: stampBrc164Id(
+                bsv21Tags({
+                  tokenId,
+                  amt: amtStr,
+                  sym,
+                  op: 'transfer',
+                }),
+              ),
+              customInstructions: buildBsv21CustomInstructions({
                 tokenId,
                 amt: amtStr,
-                sym,
                 op: 'transfer',
+                sym,
               }),
-            ),
-            customInstructions: buildBsv21CustomInstructions({
-              tokenId,
-              amt: amtStr,
-              op: 'transfer',
-              sym,
-            }),
+            },
           },
-        },
-      ],
-      seekPermission: false,
-    })
+        ],
+        seekPermission: false,
+      }),
+    )
 
     markOneSatImported(allOps)
     rememberBeefTree(atomic, id)

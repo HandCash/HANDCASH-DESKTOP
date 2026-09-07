@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.111] - 2026-09-07
+
+### Fixed
+
+- **Ghost-failed on-chain tx blocked BRC-29 ingest** — hc-a580a `ad40b4db` landed but local status stayed `failed`, so `internalizeAction` refused merge and the phone looped on “Importing BRC-29 payment.” Restore that one row only when explorers prove it exists (`txExistsOnChain === true`); unlock heal scans failed txs the same way. No blanket `listFailedActions(unfail)`.
+
 ## [1.3.110] - 2026-09-07
 
 ### Fixed

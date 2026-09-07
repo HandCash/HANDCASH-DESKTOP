@@ -29,6 +29,7 @@ import { stampBrc164Id } from './itemAccess'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
+  withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
 
 export type IngestItemSettleResult = {
@@ -216,13 +217,15 @@ export async function internalizePeerItemSettle(opts: {
       },
     ]
 
-    await active.wallet.internalizeAction({
-      tx: atomic,
-      description: 'Receive item',
-      labels: ['1sat', 'handcash-item-p2p'],
-      outputs: remittanceOutputs,
-      seekPermission: false,
-    })
+    await withRestoredInternalizeStatus(id, () =>
+      active.wallet.internalizeAction({
+        tx: atomic,
+        description: 'Receive item',
+        labels: ['1sat', 'handcash-item-p2p'],
+        outputs: remittanceOutputs,
+        seekPermission: false,
+      }),
+    )
 
     markOneSatImported(allOps)
     rememberBeefTree(atomic, id)

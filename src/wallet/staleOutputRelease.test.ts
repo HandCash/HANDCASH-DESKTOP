@@ -43,6 +43,7 @@ const {
   releaseSealedInputsOfUnsentTx,
   failUnsentLocalTx,
   reclaimSealedInputsNeverSpent,
+  restoreOnChainLocalTx,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
@@ -863,6 +864,104 @@ describe('failUnsentLocalTx', () => {
     await expect(failUnsentLocalTx(txid)).resolves.toBe(false)
     expect(updateTransactionStatus).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+})
+
+describe('restoreOnChainLocalTx', () => {
+  const findOutputs = vi.fn()
+  const updateOutput = vi.fn()
+  const findTransactions = vi.fn()
+  const updateTransactionStatus = vi.fn()
+  const updateTransaction = vi.fn()
+
+  beforeEach(() => {
+    findOutputs.mockReset()
+    updateOutput.mockReset()
+    findTransactions.mockReset()
+    updateTransactionStatus.mockReset()
+    updateTransaction.mockReset()
+    txExistsOnChain.mockReset()
+    txExistsOnChain.mockResolvedValue(null)
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    mockGetActiveWallet.mockReset()
+    mockGetActiveWallet.mockReturnValue({
+      chain: 'main',
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (
+            fn: (sp: {
+              updateOutput: typeof updateOutput
+              findOutputs: typeof findOutputs
+              findTransactions: typeof findTransactions
+              updateTransactionStatus: typeof updateTransactionStatus
+              updateTransaction: typeof updateTransaction
+              getProvenOrRawTx: () => Promise<undefined>
+            }) => Promise<unknown>,
+          ) =>
+            fn({
+              updateOutput,
+              findOutputs,
+              findTransactions,
+              updateTransactionStatus,
+              updateTransaction,
+              getProvenOrRawTx: async () => undefined,
+            }),
+        },
+      },
+    })
+  })
+
+  it('unfails a local failed row only when explorers prove the tx landed', async () => {
+    const txid = 'ad'.repeat(32)
+    txExistsOnChain.mockResolvedValue(true)
+    findTransactions.mockResolvedValue([
+      { transactionId: 9, txid, status: 'failed' },
+    ])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 3,
+        txid,
+        vout: 1,
+        satoshis: 2614,
+        spendable: false,
+        change: true,
+        lockingScript: [118, 169],
+      },
+    ])
+
+    await expect(restoreOnChainLocalTx(txid)).resolves.toBe(true)
+    expect(updateTransaction).toHaveBeenCalledWith(9, { status: 'unproven' })
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+    expect(updateOutput).toHaveBeenCalledWith(
+      3,
+      expect.objectContaining({ spendable: true }),
+    )
+  })
+
+  it('refuses to unfail when the explorer is silent or says absent', async () => {
+    const txid = 'ad'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 9, txid, status: 'failed' },
+    ])
+
+    txExistsOnChain.mockResolvedValue(null)
+    await expect(restoreOnChainLocalTx(txid)).resolves.toBe(false)
+    txExistsOnChain.mockResolvedValue(false)
+    await expect(restoreOnChainLocalTx(txid)).resolves.toBe(false)
+    expect(updateTransaction).not.toHaveBeenCalled()
+  })
+
+  it('coerces unmined to unproven without an explorer round-trip', async () => {
+    const txid = 'cd'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 4, txid, status: 'unmined' },
+    ])
+    findOutputs.mockResolvedValue([])
+
+    await expect(restoreOnChainLocalTx(txid)).resolves.toBe(true)
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 4)
   })
 })
 

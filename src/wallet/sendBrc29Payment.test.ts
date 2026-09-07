@@ -121,6 +121,7 @@ vi.mock('./staleOutputRelease', () => ({
   sealLocalSpendChange: async () => {},
   sealSpentInputsOfSignedTx: async () => 0,
   keepChangeOfSignedTx: async () => 0,
+  restoreOnChainLocalTx: async () => false,
 }))
 vi.mock('./actionReview', async (importOriginal) => {
   const actual = await importOriginal<typeof import('./actionReview')>()
@@ -141,7 +142,7 @@ vi.mock('./messageStore', () => ({
   updateMessage: () => null,
 }))
 vi.mock('./walletHealth', () => ({ setSyncHealth: () => {} }))
-vi.mock('./toast', () => ({ toastSuccess: () => {} }))
+vi.mock('./toast', () => ({ toastSuccess: () => {}, toastError: () => {} }))
 
 const PAYEE =
   '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
