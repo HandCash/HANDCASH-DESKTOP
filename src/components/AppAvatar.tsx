@@ -15,6 +15,8 @@ type Props = {
 const CANDIDATE_TIMEOUT_MS = 2500
 /** After all candidates fail, retry from the top (network may have come up). */
 const RETRY_AFTER_MS = 8_000
+/** Tiny legacy favicons look visibly pixelated in app cards and badges. */
+const MIN_ICON_EDGE_PX = 24
 
 export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
   const candidates = useMemo(() => appFaviconCandidates(origin), [origin])
@@ -70,6 +72,13 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
     const img = imgRef.current
     if (!img || !src || failed) return
     if (img.complete && img.naturalWidth > 0) {
+      if (
+        img.naturalWidth < MIN_ICON_EDGE_PX ||
+        img.naturalHeight < MIN_ICON_EDGE_PX
+      ) {
+        advanceOrFail()
+        return
+      }
       setLoaded(true)
       return
     }
@@ -123,7 +132,17 @@ export function AppAvatar({ origin, name, size = 'md', onReady }: Props) {
           alt=""
           decoding="async"
           referrerPolicy="no-referrer"
-          onLoad={() => setLoaded(true)}
+          onLoad={(event) => {
+            const image = event.currentTarget
+            if (
+              image.naturalWidth < MIN_ICON_EDGE_PX ||
+              image.naturalHeight < MIN_ICON_EDGE_PX
+            ) {
+              advanceOrFail()
+              return
+            }
+            setLoaded(true)
+          }}
           onError={() => {
             advanceOrFail()
           }}

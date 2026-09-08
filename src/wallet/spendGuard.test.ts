@@ -137,6 +137,23 @@ describe('refreshSpendableBalance', () => {
     expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
   })
 
+  it('skips recovery and status checks for latency-sensitive app spends', async () => {
+    mockConfirmed(2)
+    unconfirmedChangeSats.mockResolvedValue(2614)
+
+    const { runExclusiveSpend, assertSendableBalance } = await import('./spendGuard')
+    await expect(
+      runExclusiveSpend(
+        () => assertSendableBalance(50),
+        undefined,
+        { promote: false },
+      ),
+    ).rejects.toThrow(/chains unconfirmed change/)
+    expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
+    expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+  })
+
   it('assertSendableBalanceForReview does not promote change', async () => {
     mockConfirmed(100)
     const { assertSendableBalanceForReview } = await import('./spendGuard')

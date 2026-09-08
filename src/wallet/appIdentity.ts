@@ -157,19 +157,35 @@ export function appHomepage(origin: string | undefined): string | null {
   return `https://${host}`
 }
 
-/** Favicon candidates — Google/DuckDuckGo first (reliable), then site icon. */
+/**
+ * Favicon candidates.
+ *
+ * Shared hosting domains return the platform's generic favicon for every app.
+ * Only trust icons served by the app itself there; a missing icon should fall
+ * back to our crisp vector app mark instead of a blurry Workers/Pages badge.
+ */
 export function appFaviconCandidates(origin: string | undefined): string[] {
   const host = normalizeAppHost(origin)
   if (host === 'unknown-app') return []
   const bare = host.split(':')[0] ?? host
   const home = appHomepage(origin)
-  const urls: string[] = [
-    `https://www.google.com/s2/favicons?domain=${encodeURIComponent(bare)}&sz=256`,
-    `https://icons.duckduckgo.com/ip3/${encodeURIComponent(bare)}.ico`,
-  ]
+  const urls: string[] = []
   if (home) {
-    // Prefer high-res touch icons before tiny legacy favicon.ico.
-    urls.push(`${home}/apple-touch-icon.png`, `${home}/favicon.png`, `${home}/favicon.ico`)
+    urls.push(
+      `${home}/apple-touch-icon.png`,
+      `${home}/favicon.svg`,
+      `${home}/favicon.png`,
+      `${home}/favicon.ico`,
+    )
+  }
+  const sharedHost = APP_SUBDOMAIN_SUFFIXES.some(
+    (suffix) => bare === suffix || bare.endsWith(`.${suffix}`),
+  )
+  if (!sharedHost) {
+    urls.push(
+      `https://www.google.com/s2/favicons?domain=${encodeURIComponent(bare)}&sz=256`,
+      `https://icons.duckduckgo.com/ip3/${encodeURIComponent(bare)}.ico`,
+    )
   }
   return urls
 }

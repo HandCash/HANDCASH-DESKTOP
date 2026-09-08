@@ -4491,6 +4491,38 @@ a.history-row-link:hover .history-tx-hint {
   line-height: 1;
 }
 
+.history-app-badge {
+  position: absolute;
+  left: -3px;
+  bottom: -3px;
+  width: 16px;
+  height: 16px;
+  overflow: hidden;
+  border: 2px solid hsl(var(--background));
+  border-radius: 50%;
+  background: var(--hc-sunken);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.history-app-badge .app-avatar {
+  width: 12px !important;
+  height: 12px !important;
+  min-width: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+}
+
+.history-app-badge .app-avatar-img {
+  padding: 0;
+  object-fit: cover;
+}
+
+.history-app-badge .app-avatar-fallback svg {
+  width: 8px;
+  height: 8px;
+}
+
 .history-row.is-failed .history-title,
 .history-row.is-failed .history-amount {
   color: #c44747;
