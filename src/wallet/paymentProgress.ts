@@ -12,6 +12,11 @@ import {
   pendingOutpointFlightVerb,
 } from './appActivity'
 import { toUnderscoreOutpoint } from './outpointFormat'
+import {
+  recordPaymentProgressStage,
+  recordTransactionStage,
+  type TransactionFlow,
+} from './transactionTelemetry'
 
 export type PaymentPhase =
   | 'idle'
@@ -43,6 +48,20 @@ let progress: PaymentProgress = {
   label: null,
   detail: null,
   outpoint: null,
+}
+let telemetryFlow: TransactionFlow = 'payment'
+
+function inferTelemetryFlow(
+  label: string | null | undefined,
+  outpoint: string | null | undefined,
+): TransactionFlow {
+  const value = (label || '').replace(/…/g, '').trim().toLowerCase()
+  if (value.startsWith('listing')) return 'market_listing'
+  if (value.startsWith('cancelling')) return 'market_cancel'
+  if (value.startsWith('buying')) return 'market_purchase'
+  if (value.startsWith('burning')) return 'burn'
+  if (outpoint) return 'item_transfer'
+  return 'payment'
 }
 
 const COPY: Record<
@@ -95,6 +114,7 @@ function armStuckWatchdog(): void {
   stuckWatchdog = setTimeout(() => {
     stuckWatchdog = null
     if (progress.phase === 'idle') return
+    const stuckPhase = progress.phase
     console.warn(
       '[payment-progress] stuck watchdog fired — clearing',
       progress.phase,
@@ -124,6 +144,10 @@ function armStuckWatchdog(): void {
     void import('./chainedChangeHeal')
       .then(({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup())
       .catch(() => {})
+    recordTransactionStage('retry_exhausted', {
+      flow: telemetryFlow,
+      blockerCode: `stuck_${stuckPhase}`,
+    })
   }, STUCK_PAYMENT_MS)
 }
 
@@ -195,6 +219,7 @@ export function setPaymentProgress(
   detail?: string | null,
   outpoint?: string | null,
   label?: string | null,
+  flow?: TransactionFlow,
 ): void {
   if (phase === 'idle') {
     progress = { phase: 'idle', label: null, detail: null, outpoint: null }
@@ -203,6 +228,7 @@ export function setPaymentProgress(
     return
   }
   const copy = COPY[phase]
+  const previousPhase = progress.phase
   const nextOutpoint =
     outpoint === undefined
       ? progress.outpoint
@@ -220,6 +246,14 @@ export function setPaymentProgress(
     label: nextLabel,
     detail: detail?.trim() || copy.detail,
     outpoint: nextOutpoint,
+  }
+  telemetryFlow =
+    flow ??
+    (previousPhase === 'idle'
+      ? inferTelemetryFlow(nextLabel, nextOutpoint)
+      : telemetryFlow)
+  if (phase !== previousPhase) {
+    recordPaymentProgressStage(telemetryFlow, phase)
   }
   armStuckWatchdog()
   emit()

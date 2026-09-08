@@ -73,6 +73,7 @@ import {
   fetchAtomicBeefFromUrl,
   withRestoredInternalizeStatus,
 } from './peerIngestHelpers'
+import { recordTransactionStage } from './transactionTelemetry'
 
 /** BRC-29 protocol id — see BRCs/payments/0029.md */
 export const BRC29_PROTOCOL_ID: [2, '3241645161d8'] = [2, '3241645161d8']
@@ -147,7 +148,15 @@ export async function ensurePaymentBroadcasted(
     )
   }
   const { submitAtomicBeefToMiners } = await import('./minerSubmit')
-  await submitAtomicBeefToMiners(txid, atomic)
+  const result = await submitAtomicBeefToMiners(txid, atomic)
+  if (result.summary) {
+    const { getTxByTxid } = await import('./txStore')
+    const record = getTxByTxid(txid)
+    if (record) {
+      const { noteDualLayerPostBeef } = await import('./dualLayerSend')
+      noteDualLayerPostBeef(record.id, result.summary)
+    }
+  }
 }
 
 export function atomicBeefFromCreateAction(result: unknown): number[] | undefined {
@@ -201,7 +210,7 @@ export async function sendBrc29ToIdentityKey(opts: {
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
   const payeeEarly = normalizeIdentityKey(opts.payeeIdentityKey)
 
-  setPaymentProgress('preparing', 'Waiting to send')
+  setPaymentProgress('preparing', 'Waiting to send', null, null, 'brc29')
   const pending = beginPendingSend({
     to: payeeEarly,
     sats: satoshis,
@@ -277,9 +286,18 @@ export async function sendBrc29ToIdentityKey(opts: {
         // so a balance read beside it could under-report and refuse a valid send.
         // Confirmed toolbox balance is checked first; the unconfirmed-change
         // graveyard scan only runs when that is short.
-        await prepareSpendHeal(satoshis)
+        const availableSats = await prepareSpendHeal(satoshis)
         mark('ready')
         chart.send({ type: 'READY' })
+        const { beginDualLayerSend } = await import('./dualLayerSend')
+        const dual = beginDualLayerSend({
+          satoshis,
+          availableSats,
+          to: payee,
+          skipSoftLock: true,
+        })
+        if (!dual.ok) throw new Error(dual.detail)
+        const dualId = dual.record.id
 
         noteOutboundSendPending({
           pendingId: pending.id,
@@ -370,6 +388,8 @@ export async function sendBrc29ToIdentityKey(opts: {
             )
           }
           const txid = realTxid
+          const { noteDualLayerTxid } = await import('./dualLayerSend')
+          noteDualLayerTxid(dualId, txid)
           mark(`createAction ${txid.slice(0, 12)}…`)
           // Retire the coins this transaction just consumed before the next send
           // can pick them. Chain-ingest's rehide pass yields while a spend is
@@ -479,6 +499,17 @@ export async function sendBrc29ToIdentityKey(opts: {
             try {
               const delivered = await notifyPayee(settlePath.recipientIdentityKey)
               peerDelivered = delivered.delivered === 'cloud'
+              recordTransactionStage(
+                peerDelivered ? 'peer_delivered' : 'peer_delivery_queued',
+                {
+                  flow: 'brc29',
+                  txid,
+                  ...(peerDelivered ? {} : { blockerCode: 'peer_box_unreachable' }),
+                },
+              )
+              if (peerDelivered) {
+                recordTransactionStage('completed', { flow: 'brc29', txid })
+              }
               if (delivered.delivered === 'cloud' && delivered.beefInBox) {
                 chart.send({ type: 'BEEF_IN_BOX' })
               } else if (delivered.delivered === 'cloud') {
@@ -511,6 +542,11 @@ export async function sendBrc29ToIdentityKey(opts: {
                 messagebox: friend?.messagebox,
                 amountLabel: opts.friendLabel ?? undefined,
               })
+              recordTransactionStage('peer_delivery_queued', {
+                flow: 'brc29',
+                txid,
+                blockerCode: 'peer_delivery_error',
+              })
             }
           }
 
@@ -524,6 +560,14 @@ export async function sendBrc29ToIdentityKey(opts: {
           }
         } catch (err) {
           clearPendingSend(pending.id)
+          if (!signedTxid) {
+            const { failDualLayerSend } = await import('./dualLayerSend')
+            failDualLayerSend(
+              dualId,
+              isInsufficientFundsError(err) ? 'INSUFFICIENT_FUNDS' : 'UNKNOWN',
+              err instanceof Error ? err.message : String(err),
+            )
+          }
           if (isAlreadySpentInputError(err)) {
             await onAlreadySpentSend({ txid: signedTxid, atomic: signedAtomic })
           }
@@ -585,6 +629,12 @@ export async function sendBrc29ToIdentityKey(opts: {
     () => setPaymentProgress('preparing', 'Preparing payment'),
     )
   } catch (err) {
+    recordTransactionStage('hard_rejected', {
+      flow: 'brc29',
+      blockerCode: isInsufficientFundsError(err)
+        ? 'insufficient_funds'
+        : 'local_send_failed',
+    })
     clearPendingSend(pending.id)
     failOutboundSendPending({
       pendingId: pending.id,

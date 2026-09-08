@@ -171,7 +171,7 @@ export function PermissionRequestPanel({
   ])
 
   const actionButtons = inlineActions ? (
-    <div className="actions connect-actions permission-request-actions">
+    <div className="actions connect-actions permission-request-actions wallet-action-bar">
       <button
         type="button"
         className="btn btn-ghost"

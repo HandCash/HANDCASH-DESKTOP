@@ -5134,6 +5134,131 @@ a.app-details-host:hover {
   flex-wrap: wrap;
 }
 
+/* Connected-app identity stays unboxed; the parent card owns the surface. */
+.connected-app-row .app-avatar,
+.collection-grid-card .app-avatar,
+.app-details-head .app-avatar {
+  border: 0;
+  background: transparent;
+}
+
+.connected-app-row-live {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  overflow: visible;
+}
+
+.connected-app-card-top {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 6px;
+}
+
+.collection-grid-main {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0;
+  padding: 0;
+  text-align: left;
+  cursor: default;
+}
+
+.collection-grid-card .connected-app-main {
+  padding: 6px;
+}
+
+.collection-grid-card .connected-app-usd {
+  justify-items: end;
+  justify-self: end;
+}
+
+.collection-grid-card .connected-app-usd-amounts {
+  justify-content: flex-end;
+}
+
+.connected-app-card-actions,
+.wallet-action-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  width: 100%;
+  padding: 8px;
+  border-top: 1px solid hsl(var(--border));
+  background: color-mix(in srgb, var(--hc-surface) 92%, transparent);
+}
+
+.connected-app-card-actions > .btn,
+.connected-app-card-actions > .app-launch-menu {
+  flex: 1 1 0;
+}
+
+.connected-app-card-actions .btn,
+.connected-app-card-actions .app-launch-menu > summary {
+  width: 100%;
+  justify-content: center;
+}
+
+.app-launch-menu {
+  position: relative;
+}
+
+.app-launch-menu > summary {
+  list-style: none;
+  user-select: none;
+  cursor: pointer;
+}
+
+.app-launch-menu > summary::-webkit-details-marker {
+  display: none;
+}
+
+.app-launch-options {
+  position: absolute;
+  z-index: 20;
+  right: 0;
+  bottom: calc(100% + 6px);
+  display: grid;
+  min-width: 210px;
+  padding: 5px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: var(--hc-surface);
+}
+
+.app-launch-options button {
+  border: 0;
+  border-radius: calc(var(--hc-radius) - 2px);
+  padding: 9px 10px;
+  background: transparent;
+  color: var(--hc-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.app-launch-options button:hover {
+  background: var(--hc-hover);
+}
+
+.permission-modal .wallet-action-bar {
+  position: sticky;
+  bottom: 0;
+  margin: 12px -16px -14px;
+  padding: 12px 16px;
+}
+
+.permission-modal .wallet-action-bar .btn,
+.permission-request-panel .wallet-action-bar .btn {
+  flex: 1 1 0;
+}
+
 .app-money-row {
   display: grid;
   grid-template-columns: 1fr 1fr;

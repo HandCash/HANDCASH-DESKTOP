@@ -329,6 +329,54 @@ export function clearActiveWallet(): void {
   clearSessionBackupPassword()
 }
 
+let propagationRecoveryStarted = false
+
+async function flushDurablePropagation(): Promise<void> {
+  const wallet = active
+  if (!wallet?.rootKeyHex) return
+  const [
+    { flushPendingMinerOutbox },
+    { flushPendingBrc29Outbox },
+    { flushPendingItemOutbox },
+    { flushTransactionTelemetry },
+  ] = await Promise.all([
+    import('./pendingMinerOutbox'),
+    import('./pendingBrc29Outbox'),
+    import('./pendingItemOutbox'),
+    import('./transactionTelemetry'),
+  ])
+  await flushPendingMinerOutbox()
+  await Promise.all([
+    flushPendingBrc29Outbox({ rootKeyHex: wallet.rootKeyHex }),
+    flushPendingItemOutbox({ rootKeyHex: wallet.rootKeyHex }),
+    flushTransactionTelemetry(),
+  ])
+}
+
+function startDurablePropagationRecovery(): void {
+  void flushDurablePropagation().catch((error) => {
+    console.warn(
+      '[propagation] boot flush deferred',
+      error instanceof Error ? error.message : String(error),
+    )
+  })
+  if (propagationRecoveryStarted || typeof window === 'undefined') return
+  propagationRecoveryStarted = true
+  const retry = () => {
+    void flushDurablePropagation().catch((error) => {
+      console.warn(
+        '[propagation] retry deferred',
+        error instanceof Error ? error.message : String(error),
+      )
+    })
+  }
+  window.addEventListener('online', retry)
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') retry()
+  })
+  window.setInterval(retry, 60_000)
+}
+
 export async function bootWallet(args: {
   rootKeyHex: string
   handle: string
@@ -412,6 +460,7 @@ export async function bootWallet(args: {
   // never another wallet's figure and never a fabricated address balance.
   lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
   lastBalanceBreakdown = ''
+  startDurablePropagationRecovery()
   return active
 }
 

@@ -301,6 +301,8 @@ export async function sendColourCoins(args: {
     'preparing',
     args.skipPeerNotify ? 'Waiting to combine tips' : 'Waiting to send token',
     primary.outpoint,
+    null,
+    'token_transfer',
   )
   const releaseSpendHint = requestSpendPriority('send-fungible')
   const outboundPending = beginPendingSend({
@@ -607,23 +609,69 @@ export async function sendColourCoins(args: {
         const friend = listFriends().find(
           (f) => f.identityKey.toLowerCase() === peerKey,
         )
-        await notifyPeerItemIncoming({
-          recipientIdentityKey: peerKey,
-          rootKeyHex: wallet.rootKeyHex,
-          senderIdentityKey: wallet.identityKey,
-          messagebox: friend?.messagebox,
-          txid,
-          itemName: sym,
-          asset: {
-            kind: 'fungible',
-            tokenId: origin,
-            amount: String(amount),
-            sym,
-            dec: 0,
-            ...(args.icon ? { icon: args.icon } : {}),
-          },
-          atomicBeef: atomic,
-        })
+        const asset = {
+          kind: 'fungible' as const,
+          tokenId: origin,
+          amount: String(amount),
+          sym,
+          dec: 0,
+          ...(args.icon ? { icon: args.icon } : {}),
+        }
+        const { recordTransactionStage } = await import('./transactionTelemetry')
+        try {
+          const delivered = await notifyPeerItemIncoming({
+            recipientIdentityKey: peerKey,
+            rootKeyHex: wallet.rootKeyHex,
+            senderIdentityKey: wallet.identityKey,
+            messagebox: friend?.messagebox,
+            txid,
+            itemName: sym,
+            asset,
+            atomicBeef: atomic,
+          })
+          if (delivered.delivered === 'cloud') {
+            recordTransactionStage('peer_delivered', {
+              flow: 'token_transfer',
+              txid,
+            })
+          } else {
+            const { enqueuePendingItemRemit } = await import('./pendingItemOutbox')
+            enqueuePendingItemRemit({
+              payeeIdentityKey: peerKey,
+              senderIdentityKey: wallet.identityKey,
+              txid,
+              itemName: sym,
+              messagebox: friend?.messagebox,
+              asset,
+              flow: 'token_transfer',
+            })
+            recordTransactionStage('peer_delivery_queued', {
+              flow: 'token_transfer',
+              txid,
+              blockerCode: 'peer_box_unreachable',
+            })
+          }
+        } catch (error) {
+          const { enqueuePendingItemRemit } = await import('./pendingItemOutbox')
+          enqueuePendingItemRemit({
+            payeeIdentityKey: peerKey,
+            senderIdentityKey: wallet.identityKey,
+            txid,
+            itemName: sym,
+            messagebox: friend?.messagebox,
+            asset,
+            flow: 'token_transfer',
+          })
+          recordTransactionStage('peer_delivery_queued', {
+            flow: 'token_transfer',
+            txid,
+            blockerCode: 'peer_delivery_error',
+          })
+          console.warn(
+            '[send-colour] peer delivery queued',
+            error instanceof Error ? error.message : String(error),
+          )
+        }
       }
 
       setPaymentProgress('broadcasting', 'Broadcasting token transfer', primary.outpoint)
@@ -632,7 +680,6 @@ export async function sendColourCoins(args: {
         await releaseSealedInputsOfUnsentTx(txid, atomic)
         throw new Error('Token transfer was not accepted by the network')
       }
-
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
       markItemsSent(spent.map((outpoint) => ({ outpoint, txid })))
       noteOutboundSendComplete({
