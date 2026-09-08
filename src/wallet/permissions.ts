@@ -69,6 +69,8 @@ export type ConnectedApp = {
   tokenAccess?: TokenAccess
   /** BRC-230 index expansion packs — grade-C catalogs, not custody. */
   indexAccess?: IndexAccess
+  /** User-approved automatic ingestion of plain incoming BSV from this app. */
+  acceptIncomingFunds?: boolean
 }
 
 export type PendingPermission = {
@@ -194,6 +196,7 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
           indexAccess: a.indexAccess ? normalizeIndexAccess(a.indexAccess) : undefined,
+          acceptIncomingFunds: a.acceptIncomingFunds === true || undefined,
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -449,6 +452,8 @@ export function allowOrigin(origin: string | undefined): void {
       // a prior View items / View tokens Allow so catalog reloads do not re-prompt.
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
+      indexAccess: prior?.indexAccess,
+      acceptIncomingFunds: prior?.acceptIncomingFunds,
     },
     ...existing,
   ])
@@ -468,6 +473,21 @@ export function getTokenAccess(origin: string | undefined): TokenAccess {
 export function getIndexAccess(origin: string | undefined): IndexAccess {
   const { idx, apps } = findConnectedApp(origin)
   return normalizeIndexAccess(idx >= 0 ? apps[idx]?.indexAccess : undefined)
+}
+
+export function acceptsIncomingFunds(origin: string | undefined): boolean {
+  const { idx, apps } = findConnectedApp(origin)
+  return idx >= 0 && apps[idx]?.acceptIncomingFunds === true
+}
+
+export function setAcceptIncomingFunds(
+  origin: string | undefined,
+  enabled: boolean,
+): void {
+  const { idx, apps } = ensureConnectedApp(origin)
+  const copy = [...apps]
+  copy[idx] = { ...copy[idx]!, acceptIncomingFunds: enabled || undefined }
+  writeConnected(copy)
 }
 
 function patchIndexAccess(
@@ -1059,7 +1079,7 @@ export function summarizeAction(method: string, args: unknown): {
 
   if (method === 'internalizeAction') {
     return {
-      title: 'Accept funds',
+      title: 'Accept incoming funds',
       summary: 'Add incoming coins to your HandCash wallet',
       details: typeof body.description === 'string' ? [body.description] : [],
     }
@@ -1267,6 +1287,7 @@ export function requestActionApproval(
     isColourSpendArgs(method, args) ||
     isColourIssuanceArgs(method, args)
   const itemReceive = isItemReceiveArgs(method, args) || isBsv21ReceiveArgs(method, args)
+  const incomingFunds = method === 'internalizeAction' && !itemReceive
   const identityMint = isBsv21IdentityMintArgs(method, args)
 
   // Item send / receive and identity-backed token mints are never covered by
@@ -1276,6 +1297,8 @@ export function requestActionApproval(
   } else if (itemReceive) {
     const access = getItemAccess(key)
     if (access.canReceive) return Promise.resolve('allow')
+  } else if (incomingFunds && acceptsIncomingFunds(key)) {
+    return Promise.resolve('allow')
   } else if (canAutoProcessPayment(key, method, amountSats)) {
     return Promise.resolve('allow')
   }

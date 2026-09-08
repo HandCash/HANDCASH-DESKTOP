@@ -1,6 +1,10 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { useMachine } from '@xstate/react'
-import type { PendingPrompt } from '../wallet/permissions'
+import {
+  acceptsIncomingFunds,
+  setAcceptIncomingFunds,
+  type PendingPrompt,
+} from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
@@ -66,6 +70,7 @@ export function PermissionRequestPanel({
   const decisionCommittedRef = useRef(false)
   const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
+  const [acceptIncoming, setAcceptIncoming] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
   const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
   const inlineActions = actions === 'inline'
@@ -78,6 +83,7 @@ export function PermissionRequestPanel({
 
   useEffect(() => {
     if (pending.kind !== 'action') return
+    setAcceptIncoming(acceptsIncomingFunds(pending.origin))
     const existing: AutoPaySettings | null = getAutoPaySettings(pending.origin)
     if (existing?.enabled) {
       setAutoEnabled(true)
@@ -92,6 +98,8 @@ export function PermissionRequestPanel({
 
   const name = appDisplayName(pending.origin)
   const showAutoPay = isBsvPaymentAction(pending)
+  const showAcceptIncoming =
+    pending.kind === 'action' && pending.title === 'Accept incoming funds'
   const parsedMaxUsd = Number.parseFloat(maxUsd)
   const parsedHours = Number.parseFloat(windowHours)
   const maxUsdValid = Number.isFinite(parsedMaxUsd) && parsedMaxUsd > 0
@@ -112,6 +120,9 @@ export function PermissionRequestPanel({
             windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
           })
     if (accepted) {
+      if (showAcceptIncoming) {
+        setAcceptIncomingFunds(pending.origin, acceptIncoming)
+      }
       sendDecision({ type: 'APPROVE' })
       return
     }
@@ -271,6 +282,21 @@ export function PermissionRequestPanel({
           ) : null}
         </div>
       )}
+
+      {showAcceptIncoming ? (
+        <div className="auto-pay" data-aeon-part="accept-incoming">
+          <label className="auto-pay-toggle">
+            <input
+              type="checkbox"
+              checked={acceptIncoming}
+              onChange={(event) => setAcceptIncoming(event.target.checked)}
+            />
+            <span>
+              Accept funds automatically from <strong>{name}</strong>
+            </span>
+          </label>
+        </div>
+      ) : null}
 
       <dl className="permission-meta">
         <div>

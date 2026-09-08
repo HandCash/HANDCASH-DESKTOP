@@ -1907,3 +1907,14 @@ export function extractSatsFromArgs(method: string, args: unknown): number {
   }
   return 0
 }
+
+/** Prefer the wallet's validated credit value; remittance args usually omit it. */
+export function extractInternalizedSats(
+  result: unknown,
+  args: unknown,
+): number {
+  return (
+    extractSatsFromArgs('internalizeAction', result) ||
+    extractSatsFromArgs('internalizeAction', args)
+  )
+}

@@ -1,5 +1,6 @@
 import { Transaction, type WalletInterface } from '@bsv/sdk'
 import { withVisibleOnChainBeef } from './legacyBeef'
+import { alreadyInternalizedError } from './peerIngestHelpers'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
 
 function atomicBytes(args: unknown): number[] {
@@ -36,9 +37,25 @@ export async function internalizeActionWithBroadcast(
   const transaction = Transaction.fromAtomicBEEF(Uint8Array.from(atomic))
   const txid = transaction.id('hex')
 
-  const result = await withVisibleOnChainBeef(() =>
-    wallet.internalizeAction(args as never, originator),
-  )
+  let result: unknown
+  try {
+    result = await withVisibleOnChainBeef(() =>
+      wallet.internalizeAction(args as never, originator),
+    )
+  } catch (error) {
+    if (!alreadyInternalizedError(error)) throw error
+    const outputIndexes =
+      args && typeof args === 'object' && Array.isArray((args as { outputs?: unknown }).outputs)
+        ? ((args as { outputs: Array<{ outputIndex?: unknown }> }).outputs)
+            .map((output) => Number(output?.outputIndex))
+            .filter((index) => Number.isInteger(index) && index >= 0)
+        : []
+    const satoshis = outputIndexes.reduce(
+      (sum, index) => sum + Number(transaction.outputs[index]?.satoshis || 0),
+      0,
+    )
+    result = { accepted: true, isMerge: true, txid, satoshis }
+  }
 
   const submitted = await broadcastAtomicBeef(txid, atomic)
   console.info(
