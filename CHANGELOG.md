@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.116] - 2026-09-08
+
+### Fixed
+
+- **Item send stays Not found after Arcade ACK** — 1.3.114 posted BEEF only to Arcade. Explorers 404, and the payee SPV-fetches because large fox proofs do not fit in the inbox. Arcade stays first; Bitails / WhatsOnChain / GorillaPool postBeef again so the tx is findable.
+
 ## [1.3.115] - 2026-09-08
 
 ### Fixed
