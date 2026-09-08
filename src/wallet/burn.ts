@@ -51,7 +51,7 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
-import { prepareSpendHeal, runExclusiveBurn } from './spendGuard'
+import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { getActiveWallet, type ActiveWallet } from './session'
 import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
 
@@ -66,7 +66,10 @@ const MIN_BURN_FEE_SATS = 50
 
 async function assertBurnFeeAvailable(minSats = MIN_BURN_FEE_SATS): Promise<void> {
   try {
-    await prepareSpendHeal(minSats)
+    const spendable = await refreshSpendableBalance()
+    if (spendable < minSats) {
+      throw new Error(`Insufficient funds: ${spendable} sats available, ${minSats} needed`)
+    }
   } catch (err) {
     if (isInsufficientFundsError(err)) {
       const active = getActiveWallet()
