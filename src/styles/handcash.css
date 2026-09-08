@@ -5299,6 +5299,10 @@ a.app-details-host:hover {
   background: color-mix(in srgb, var(--hc-muted) 20%, transparent);
 }
 
+.connected-app-limit--empty {
+  visibility: hidden;
+}
+
 .connected-app-limit > span {
   display: block;
   height: 100%;

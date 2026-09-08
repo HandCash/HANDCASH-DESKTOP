@@ -46,7 +46,14 @@ function AppSpendLimit({
   usdPerBsv: number | null
 }) {
   const autoPay = getAutoPaySettings(origin)
-  if (!autoPay?.enabled || !usdPerBsv) return null
+  if (!autoPay?.enabled || !usdPerBsv) {
+    return (
+      <div
+        className="connected-app-limit connected-app-limit--empty"
+        aria-hidden="true"
+      />
+    )
+  }
   const since = Date.now() - autoPay.windowHours * 60 * 60_000
   const spentUsd = satsToUsd(getSpentSatsSince(origin, since), usdPerBsv)
   const progress = spentUsd / autoPay.maxUsd
