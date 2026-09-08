@@ -15,7 +15,6 @@ import {
 } from '../machines/marketPurchaseMachine'
 import { marketSellerSettlementMachine } from '../machines/marketSellerSettlementMachine'
 import { getBeefForTxidCached, rememberBeefBinary } from './beefCache'
-import { scriptPaysAddress } from './ordinalOwnership'
 import {
   buildMarketHeldRemittance,
   calculateMarketSettlement,
@@ -253,20 +252,19 @@ export function marketSettlementCommitment(tx: Transaction): string {
 }
 
 
-function isBuyerP2pkhLock(scriptHex: string, buyerP2pkh: string): boolean {
-  return scriptHex === buyerP2pkh.toLowerCase()
-}
-
-/** BSV change may be bare P2PKH or inscription-wrapped P2PKH from the toolbox. */
-function isBuyerBsvChangeOutput(
+/**
+ * Additional ordinary BSV outputs are funded entirely by buyer inputs. Toolbox
+ * change uses private derived scripts, not the buyer's public identity address,
+ * so the seller cannot and need not match its exact lock.
+ */
+function isBuyerFundedBsvChangeOutput(
   scriptHex: string,
   sats: number | undefined,
-  buyerAddress: string,
-  buyerP2pkh: string,
 ): boolean {
   if (!Number.isSafeInteger(sats) || sats == null || sats < 1) return false
-  if (isBuyerP2pkhLock(scriptHex, buyerP2pkh)) return true
-  return scriptPaysAddress(scriptHex, buyerAddress)
+  if (!scriptHex) return false
+  // Token-like extras remain subject to the buyer/token conservation check.
+  return decodeBsv21Binary(scriptHex) == null
 }
 
 /** 162 value lock whose remainder P2PKH pays the buyer. */
@@ -378,13 +376,14 @@ export function validateMarketSettlementOutputs(args: {
     throw new Error('Settlement outputs do not match listing terms')
   }
   // Extra outputs after the market fee are optional. Zero extra is valid
-  // (exact BSV funds, no change). Otherwise only buyer BSV change (P2PKH)
-  // and, for BSV-21, leftover 162 token-change paying the buyer.
+  // (exact BSV funds, no change). Ordinary BSV change may use any wallet-derived
+  // lock because it is funded by buyer inputs. BSV-21 extras must remain the
+  // listed token and explicitly pay the buyer.
   for (let i = 3; i < args.tx.outputs.length; i++) {
     const output = args.tx.outputs[i]
     const script = output?.lockingScript?.toHex().toLowerCase() ?? ''
     const sats = output?.satoshis
-    const bsvChange = isBuyerBsvChangeOutput(script, sats, buyerAddress, buyerChangeLock)
+    const bsvChange = isBuyerFundedBsvChangeOutput(script, sats)
     const tokenChange =
       args.listing.assetType === 'bsv21' &&
       sats === 1 &&

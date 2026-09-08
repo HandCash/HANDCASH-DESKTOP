@@ -149,13 +149,15 @@ describe('market exact settlement contract', () => {
     expect(validate).toThrow(/outputs do not match/i)
   })
 
-  it('rejects foreign change, duplicate seller inputs, and swapped item/offer', () => {
-    const foreign = fixture()
-    foreign.tx.outputs[3]!.lockingScript = new P2PKH().lock(
+  it('accepts private wallet-derived buyer BSV change', () => {
+    const derivedChange = fixture()
+    derivedChange.tx.outputs[3]!.lockingScript = new P2PKH().lock(
       PrivateKey.fromRandom().toPublicKey().toAddress(),
     )
-    expect(foreign.validate).toThrow(/non-buyer change/i)
+    expect(derivedChange.validate).not.toThrow()
+  })
 
+  it('rejects duplicate seller inputs and swapped item/offer', () => {
     const duplicate = fixture()
     duplicate.tx.inputs[2]!.sourceTXID = duplicate.tx.inputs[0]!.sourceTXID
     duplicate.tx.inputs[2]!.sourceOutputIndex = 0
