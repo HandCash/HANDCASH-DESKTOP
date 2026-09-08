@@ -101,6 +101,7 @@
       }
     ],
     "mac": {
+      "icon": "build/icon.icns",
       "category": "public.app-category.finance",
       "target": [
         {
@@ -127,6 +128,7 @@
       "writeUpdateInfo": true
     },
     "win": {
+      "icon": "build/icon.ico",
       "target": [
         {
           "target": "nsis",
@@ -154,6 +156,7 @@
       "uninstallerIcon": "build/icon.ico"
     },
     "linux": {
+      "icon": "build/icon.png",
       "target": [
         "AppImage",
         "deb"
