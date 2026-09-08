@@ -628,6 +628,59 @@ export function getFungible(tokenId: string): FungibleToken | null {
 }
 
 /**
+ * Recover a painted legacy tip when toolbox has not projected its `bsv21`
+ * basket row yet. The cached card identifies the exact held outpoint; the
+ * locally retained BEEF supplies the authoritative script and JSON amount.
+ */
+async function recoverCachedLegacyTips(
+  active: ActiveWallet,
+  wanted: Set<string>,
+): Promise<Bsv21Utxo[]> {
+  const recovered: Bsv21Utxo[] = []
+  const { getLocalBeefForTxid } = await import('./beefCache')
+  for (const token of cached) {
+    const tokenId = normalizeTokenId(token.tokenId)
+    if (!tokenId || !wanted.has(tokenId) || isItemSent(token.outpoint)) continue
+    const point = token.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+    const match = /^([0-9a-f]{64})\.(\d+)$/.exec(point)
+    if (!match) continue
+    const txid = match[1]!
+    const vout = Number(match[2])
+    try {
+      const beef = await getLocalBeefForTxid(active, txid)
+      const output = beef?.findTxid(txid)?.tx?.outputs[vout]
+      const lockingScript = output?.lockingScript?.toHex()
+      const envelope = parseOrdEnvelope(lockingScript)
+      if (!lockingScript || !envelope?.body?.length) continue
+      const payload = parseBsv21Json(
+        JSON.parse(new TextDecoder().decode(envelope.body)),
+      )
+      if (!payload?.amt) continue
+      const payloadTokenId =
+        payload.op === 'deploy+mint' || payload.op === 'deploy+auth'
+          ? normalizeTokenId(point)
+          : normalizeTokenId(payload.id ?? '')
+      if (payloadTokenId !== tokenId || BigInt(payload.amt) <= 0n) continue
+      recovered.push({
+        outpoint: point,
+        tokenId,
+        amt: payload.amt,
+        op: payload.op,
+        dec: payload.dec ?? token.dec,
+        satoshis: output?.satoshis ?? 1,
+        ...(payload.sym || token.sym ? { sym: payload.sym || token.sym } : {}),
+        ...(payload.icon || token.icon ? { icon: payload.icon || token.icon } : {}),
+        lockingScript,
+      })
+      console.info(`[bsv21] recovered cached legacy tip ${point} for spend`)
+    } catch {
+      // The normal basket path remains authoritative when local BEEF is absent.
+    }
+  }
+  return recovered
+}
+
+/**
  * Live tips for one or more token ids — used by wallet-native send to pick
  * inputs. Includes locking scripts so cosign classification can fail closed.
  */
@@ -667,6 +720,9 @@ export async function listFungibleTips(
     if (!wanted.has(tip.tokenId)) continue
     if ((tip.satoshis ?? 1) !== 1) continue
     tips.push(tip)
+  }
+  if (tips.length === 0) {
+    tips.push(...(await recoverCachedLegacyTips(active, wanted)))
   }
   return tips
 }

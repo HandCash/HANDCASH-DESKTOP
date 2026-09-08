@@ -7,12 +7,12 @@
  * Pixel Fox. Send attaches stored remittance when present and does not
  * re-walk hops.
  *
- * Send stays inactive only while authenticity is still in flight or unproven.
- * A verified unconfirmed tip is chainable and must not wait for a Merkle bump.
+ * Authenticity is an advisory badge, not a custody gate. Indexers and BRC-150
+ * verification continue asynchronously; a held tip remains sendable while that
+ * work is pending or when cryptographic lineage is unavailable.
  */
 import { Beef, Utils } from '@bsv/sdk'
 import { getRememberedProvenanceRemittance } from './oneSatProvenance'
-import { getProvenVerdict } from './provenCache'
 
 export type CollectableSendReadyReason =
   | 'verifying'
@@ -60,16 +60,10 @@ export function inspectCollectableSendReady(args: {
   proven: boolean
   verifying: boolean
 }): CollectableSendReady {
-  if (args.verifying && !args.proven) {
-    return { ready: false, reason: 'verifying' }
-  }
-  const verdict = getProvenVerdict(args.outpoint)
-  if (!args.proven && verdict?.tier !== 'brc150') {
-    return { ready: false, reason: 'unproven' }
-  }
-  // Verification proves the lineage and wallet custody. A missing Merkle bump
-  // is not a send blocker: Arcade accepts unconfirmed chains and receives the
-  // source transaction through the wallet's BEEF package.
+  void args
+  // Wallet custody and a spendable locking script authorize sending. Identity
+  // verification never blocks ownership actions; Arcade receives the chain
+  // through the wallet's BEEF package.
   return { ready: true }
 }
 

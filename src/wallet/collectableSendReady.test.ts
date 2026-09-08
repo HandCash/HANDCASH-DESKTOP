@@ -58,7 +58,7 @@ describe('inspectCollectableSendReady', () => {
     clearRememberedProvenanceRemittances()
   })
 
-  it('refuses unverified tips', () => {
+  it('allows held tips while indexer and authenticity verification remain pending', () => {
     const tx = tipTx()
     const outpoint = `${tx.id('hex')}.0`
     expect(
@@ -67,10 +67,10 @@ describe('inspectCollectableSendReady', () => {
         proven: false,
         verifying: false,
       }),
-    ).toEqual({ ready: false, reason: 'unproven' })
+    ).toEqual({ ready: true })
   })
 
-  it('refuses while authenticity is still verifying', () => {
+  it('does not block sends while authenticity is still verifying', () => {
     const tx = tipTx()
     const outpoint = `${tx.id('hex')}.0`
     expect(
@@ -79,7 +79,7 @@ describe('inspectCollectableSendReady', () => {
         proven: false,
         verifying: true,
       }),
-    ).toEqual({ ready: false, reason: 'verifying' })
+    ).toEqual({ ready: true })
   })
 
   it('allows a BRC-150 verified tip even when remittance BEEF was omitted', () => {
