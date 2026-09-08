@@ -100,7 +100,7 @@ describe('inspectCollectableSendReady', () => {
     ).toEqual({ ready: true })
   })
 
-  it('refuses a proven tip only when local BEEF shows it is still unconfirmed', () => {
+  it('allows a verified unconfirmed tip so Arcade can accept the chain', () => {
     const tx = tipTx()
     const outpoint = `${tx.id('hex')}.0`
     const origin = `${tx.id('hex')}_0`
@@ -122,7 +122,7 @@ describe('inspectCollectableSendReady', () => {
         proven: true,
         verifying: false,
       }),
-    ).toEqual({ ready: false, reason: 'unconfirmed' })
+    ).toEqual({ ready: true })
   })
 
   it('allows a proven tip with stored remittance and a merkle bump', () => {

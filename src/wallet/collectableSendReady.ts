@@ -7,39 +7,20 @@
  * Pixel Fox. Send attaches stored remittance when present and does not
  * re-walk hops.
  *
- * Send stays inactive only when authenticity is still in flight, the tip is
- * unproven, or we *know* the tip tx has no merkle bump yet (unconfirmed).
+ * Send stays inactive only while authenticity is still in flight or unproven.
+ * A verified unconfirmed tip is chainable and must not wait for a Merkle bump.
  */
 import { Beef, Utils } from '@bsv/sdk'
-import { peekSessionBeef } from './beefCache'
 import { getRememberedProvenanceRemittance } from './oneSatProvenance'
 import { getProvenVerdict } from './provenCache'
 
 export type CollectableSendReadyReason =
   | 'verifying'
   | 'unproven'
-  | 'unconfirmed'
 
 export type CollectableSendReady =
   | { ready: true }
   | { ready: false; reason: CollectableSendReadyReason }
-
-const knownUnconfirmed = new Map<string, boolean>()
-
-function tipTxid(outpoint: string): string | null {
-  const id = outpoint
-    .trim()
-    .toLowerCase()
-    .replace(/_(\d+)$/, '.$1')
-    .split('.')[0]
-  return id && /^[0-9a-f]{64}$/.test(id) ? id : null
-}
-
-function beefTipHasMerkle(beef: Beef, txid: string): boolean | null {
-  const entry = beef.findTxid(txid)
-  if (!entry?.tx || entry.isTxidOnly) return null
-  return typeof entry.bumpIndex === 'number' && entry.bumpIndex >= 0
-}
 
 function remittanceBeef(outpoint: string): Beef | null {
   const rem = getRememberedProvenanceRemittance(outpoint)
@@ -71,29 +52,7 @@ export function collectableSendReadyMessage(
   if (reason === 'unproven') {
     return 'Send is available after authenticity is verified.'
   }
-  return 'This collectable is not confirmed on chain yet.'
-}
-
-/**
- * Known-unconfirmed only: a local tip body with no merkle bump.
- * Missing BEEF is not unconfirmed — verified inventory would all go gray.
- */
-function tipKnownUnconfirmed(outpoint: string, txid: string): boolean {
-  if (knownUnconfirmed.get(txid) === true) return true
-  let known = false
-  try {
-    const fromRem = remittanceBeef(outpoint)
-    const remMerkle = fromRem ? beefTipHasMerkle(fromRem, txid) : null
-    if (remMerkle === false) known = true
-    else if (remMerkle !== true) {
-      const cached = peekSessionBeef(txid)
-      if (cached && beefTipHasMerkle(cached, txid) === false) known = true
-    }
-  } catch {
-    known = false
-  }
-  if (known) knownUnconfirmed.set(txid, true)
-  return known
+  return 'This collectable is not ready to send.'
 }
 
 export function inspectCollectableSendReady(args: {
@@ -108,15 +67,13 @@ export function inspectCollectableSendReady(args: {
   if (!args.proven && verdict?.tier !== 'brc150') {
     return { ready: false, reason: 'unproven' }
   }
-  const txid = tipTxid(args.outpoint)
-  if (!txid) return { ready: false, reason: 'unproven' }
-  if (tipKnownUnconfirmed(args.outpoint, txid)) {
-    return { ready: false, reason: 'unconfirmed' }
-  }
+  // Verification proves the lineage and wallet custody. A missing Merkle bump
+  // is not a send blocker: Arcade accepts unconfirmed chains and receives the
+  // source transaction through the wallet's BEEF package.
   return { ready: true }
 }
 
 /** Test helper. */
 export function resetCollectableSendReadyForTests(): void {
-  knownUnconfirmed.clear()
+  // No mutable readiness state.
 }
