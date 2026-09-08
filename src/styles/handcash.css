@@ -12504,3 +12504,110 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   background: transparent;
   box-shadow: none;
 }
+
+/* Wide desktop request actions use the same inverted selector treatment as the
+ * normal activity dock: muted choices surround the transparent primary action. */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission] {
+  box-sizing: border-box;
+  width: auto;
+  margin: 0 var(--hc-space-3) var(--hc-space-3);
+  --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
+  --wallet-nav-unselected: color-mix(
+    in srgb,
+    var(--hc-text) 22%,
+    transparent
+  );
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  padding: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius);
+  background: var(--wallet-nav-select);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  overflow: visible;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-bar-track {
+  min-width: 0;
+  gap: 0;
+  overflow: hidden;
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 0;
+  color: hsl(var(--muted-foreground));
+  background: var(--wallet-nav-unselected);
+  box-shadow: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected],
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected]:hover {
+  color: #fafafa;
+  background: transparent;
+  box-shadow: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab:not([data-selected]):first-child {
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab:not([data-selected]):last-child {
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission] {
+  --wallet-nav-select: #fff;
+  --wallet-nav-unselected: color-mix(
+    in srgb,
+    var(--hc-text) 5%,
+    #f4f5f4
+  );
+}
+
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected]:hover {
+  color: hsl(var(--primary));
+}
+
+/* Desktop activity dock is deliberately denser than its touch counterpart. */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab {
+  gap: 7px;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab
+  svg {
+  width: 15.3px;
+  height: 15.3px;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab-label {
+  font-size: 0.527rem;
+}
