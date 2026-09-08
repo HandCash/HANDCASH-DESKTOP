@@ -320,117 +320,159 @@ function CollectionGroupItem({
   )
 }
 
-function FungibleCarouselCard({
+function FungibleAction({
   token,
   sending,
+  row = false,
 }: {
   token: FungibleToken
   sending: boolean
+  row?: boolean
 }) {
-  const amount = formatFungibleAmount(token.amt, token.dec)
   const sendBlocked =
     !token.colourSupply ||
     token.spendKind === 'cosigned' ||
     token.spendKind === 'mixed'
-  // Live BRC-162 tips set colourSupply. Old JSON BSV-21 (no 162) stays burn-only.
   const isLegacy = !token.colourSupply
-  // 162 is fixed-supply. Cap lives on the deploy output; transfer tips do not
-  // carry it. Never paint ∞ for locked 162 just because this UTXO is not genesis.
-  const cap =
-    token.colourMaxSupply != null
-      ? formatFungibleAmount(String(token.colourMaxSupply), token.dec)
-      : token.colourSupply === 'open'
-        ? '∞'
-        : null
-  const amountLabel = cap != null ? `${amount} / ${cap}` : amount
-  const supplyBadge = isLegacy ? 'Legacy · burn only' : null
-  const listPrice = token.marketListing?.priceSats ?? liveMarketListingPrice(token.outpoint)
   const verb = inFlightVerb(token.outpoint) ?? 'Sending'
   const burning = sending && /^burn/i.test(verb)
+  const className = `collectable-send-btn${row ? ' collectable-send-btn--row' : ''}${
+    isLegacy ? ' collectable-burn-btn' : ''
+  }${burning ? ' is-burning' : ''}`
+  const blockedTitle =
+    token.spendKind === 'cosigned'
+      ? 'Cosigner required to send'
+      : 'Mixed plain / cosigned tips'
+
+  return (
+    <button
+      type="button"
+      className={className}
+      title={
+        isLegacy
+          ? burning
+            ? `${verb} ${token.sym}`
+            : `Burn legacy BSV-21 ${token.sym}`
+          : sendBlocked
+            ? blockedTitle
+            : sending
+              ? `${verb} ${token.sym}`
+              : `Send ${token.sym}`
+      }
+      aria-label={
+        isLegacy
+          ? burning
+            ? `${verb} ${token.sym}`
+            : `Burn ${token.sym}`
+          : sending
+            ? `${verb} ${token.sym}`
+            : `Send ${token.sym}`
+      }
+      disabled={sending || (!isLegacy && sendBlocked)}
+      aria-busy={burning || undefined}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (sending || (!isLegacy && sendBlocked)) return
+        playWalletSound('soft')
+        if (isLegacy) openBurnFungible(token.tokenId)
+        else openSendFungible(token.tokenId)
+      }}
+    >
+      {isLegacy ? <FireIcon size={14} /> : <SendIcon size={14} />}
+      {burning ? 'Burning…' : sending ? verb : isLegacy ? 'Burn' : 'Send'}
+    </button>
+  )
+}
+
+function FungibleItem({
+  token,
+  sending,
+  view,
+}: {
+  token: FungibleToken
+  sending: boolean
+  view: CollectionView
+}) {
+  const amount = formatFungibleAmount(token.amt, token.dec)
+  const issuer = token.issuer
+    ? token.issuerHandle || shortIssuerLabel(token.issuer)
+    : !token.colourSupply
+      ? 'Legacy BSV-21'
+      : 'BSV-21'
+  const listPrice =
+    token.marketListing?.priceSats ??
+    liveMarketListingPrice(token.outpoint)
+  const verb = inFlightVerb(token.outpoint) ?? 'Sending'
+  const openDetails = () => {
+    playWalletSound('soft')
+    openFungibleDetails(token.tokenId)
+  }
+
+  if (view === 'list') {
+    return (
+      <li
+        className="connected-app-row collectable-row fungible-row"
+        data-sending={sending ? 'true' : undefined}
+      >
+        <button
+          type="button"
+          className="connected-app-main collectable-row-main"
+          onClick={openDetails}
+        >
+          <div className="collectable-media collectable-media-sm collectable-media-token">
+            <FungibleTokenFace
+              tokenId={token.tokenId}
+              sym={token.sym}
+              iconUrl={token.iconUrl}
+              size={48}
+            />
+            <CollectableSendingMark sending={sending} verb={verb} />
+            {listPrice != null ? (
+              <CollectableListedMark label={listedMarkLabel(listPrice)} />
+            ) : null}
+          </div>
+          <div className="connected-app-body">
+            <strong className="connected-app-name">{token.sym}</strong>
+            <span className="connected-app-host">{issuer}</span>
+          </div>
+          <strong className="fungible-card-amount">{amount}</strong>
+        </button>
+        <FungibleAction token={token} sending={sending} row />
+      </li>
+    )
+  }
+
   return (
     <li
-      className="collect-token-card"
+      className="collection-grid-card collectable-card fungible-card"
       data-sending={sending ? 'true' : undefined}
-      data-legacy={isLegacy ? 'true' : undefined}
     >
       <button
         type="button"
-        className="collect-token-card-main"
-        onClick={() => {
-          playWalletSound('soft')
-          openFungibleDetails(token.tokenId)
-        }}
+        className="collection-grid-main collectable-main"
+        onClick={openDetails}
       >
         <div className="collectable-media collectable-media-token">
           <FungibleTokenFace
             tokenId={token.tokenId}
             sym={token.sym}
             iconUrl={token.iconUrl}
-            size={56}
+            size={120}
           />
           <CollectableSendingMark sending={sending} verb={verb} />
           {listPrice != null ? (
             <CollectableListedMark label={listedMarkLabel(listPrice)} />
           ) : null}
         </div>
-        <strong className="collect-token-card-sym">{token.sym}</strong>
-        {token.issuer ? (
-          <span
-            className="collect-token-card-id"
-            title={token.issuerHandle ? `${token.issuerHandle} · ${token.issuer}` : token.issuer}
-          >
-            {token.issuerHandle || shortIssuerLabel(token.issuer)}
-          </span>
-        ) : null}
-        <span className="collect-token-card-amt">{amountLabel}</span>
-        {supplyBadge ? (
-          <span className="collect-token-card-meta">{supplyBadge}</span>
-        ) : null}
+        <strong className="collection-grid-name" title={token.sym}>
+          {token.sym}
+        </strong>
+        <span className="collection-grid-host" title={issuer}>
+          {issuer}
+        </span>
+        <strong className="fungible-card-amount">{amount}</strong>
       </button>
-      {isLegacy ? (
-        <button
-          type="button"
-          className={`collectable-send-btn collectable-burn-btn${burning ? ' is-burning' : ''}`}
-          title={burning ? `${verb} ${token.sym}` : `Burn legacy BSV-21 ${token.sym}`}
-          aria-label={burning ? `${verb} ${token.sym}` : `Burn ${token.sym}`}
-          disabled={sending}
-          aria-busy={burning || undefined}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (sending) return
-            playWalletSound('soft')
-            openBurnFungible(token.tokenId)
-          }}
-        >
-          <FireIcon size={14} />
-          {burning ? 'Burning…' : 'Burn'}
-        </button>
-      ) : (
-        <button
-          type="button"
-          className="collectable-send-btn"
-          title={
-            sendBlocked
-              ? token.spendKind === 'cosigned'
-                ? 'Cosigner required to send'
-                : 'Mixed plain / cosigned tips'
-              : sending
-                ? `${verb} ${token.sym}`
-                : `Send ${token.sym}`
-          }
-          aria-label={sending ? `${verb} ${token.sym}` : `Send ${token.sym}`}
-          disabled={sending || sendBlocked}
-          onClick={(e) => {
-            e.stopPropagation()
-            if (sendBlocked) return
-            playWalletSound('soft')
-            openSendFungible(token.tokenId)
-          }}
-        >
-          <SendIcon size={14} />
-          {sending ? verb : 'Send'}
-        </button>
-      )}
+      <FungibleAction token={token} sending={sending} />
     </li>
   )
 }
@@ -591,15 +633,16 @@ export function InventoryPanel() {
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
           <ul
-            className="collect-token-carousel"
+            className={view === 'grid' ? 'collection-grid' : 'connected-app-list'}
             role="list"
-            aria-label="Token carousel"
+            aria-label="Tokens"
           >
             {tokens.map((token) => (
-              <FungibleCarouselCard
+              <FungibleItem
                 key={token.tokenId}
                 token={token}
                 sending={isOutpointSending(token.outpoint)}
+                view={view}
               />
             ))}
           </ul>

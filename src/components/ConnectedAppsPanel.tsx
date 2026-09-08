@@ -6,8 +6,8 @@ import { appDisplayName, appHomepage } from '../wallet/appIdentity'
 import type { ConnectedApp } from '../wallet/permissions'
 import {
   formatPrimaryFromSats,
-  formatSecondaryFromSats,
   getCachedUsdPerBsv,
+  satsToUsd,
   subscribeUsdRate,
 } from '../wallet/fx'
 import {
@@ -19,8 +19,14 @@ import {
   getAppActivityVolume,
   getAppLastActivityAt,
   getAppMoneySummary,
+  getSpentSatsSince,
   subscribeAppActivity,
 } from '../wallet/appActivity'
+import { getAutoPaySettings, subscribeAutoPay } from '../wallet/autoPay'
+import {
+  getSpendingAuthorizationGrant,
+  startOfUtcMonth,
+} from '../wallet/spendingAuthorization'
 import {
   getCollectionView,
   subscribeCollectionView,
@@ -34,6 +40,46 @@ import { AppLaunchMenu } from './AppLaunchMenu'
 
 type Props = {
   apps: ConnectedApp[]
+}
+
+function AppSpendLimit({
+  origin,
+  usdPerBsv,
+}: {
+  origin: string
+  usdPerBsv: number | null
+}) {
+  const grant = getSpendingAuthorizationGrant(origin)
+  const autoPay = getAutoPaySettings(origin)
+  let progress: number | null = null
+  let title = ''
+
+  if (grant) {
+    const spent = getSpentSatsSince(origin, startOfUtcMonth())
+    progress = spent / grant.amountSats
+    title = `${spent.toLocaleString()} of ${grant.amountSats.toLocaleString()} sats used this month`
+  } else if (autoPay?.enabled && usdPerBsv) {
+    const since = Date.now() - autoPay.windowHours * 60 * 60_000
+    const spentUsd = satsToUsd(getSpentSatsSince(origin, since), usdPerBsv)
+    progress = spentUsd / autoPay.maxUsd
+    title = `$${spentUsd.toFixed(2)} of $${autoPay.maxUsd.toFixed(2)} used over ${autoPay.windowHours}h`
+  }
+
+  if (progress == null || !Number.isFinite(progress)) return null
+  const percent = Math.min(100, Math.max(0, progress * 100))
+  return (
+    <div
+      className="connected-app-limit"
+      role="progressbar"
+      aria-label="Spend limit used"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={Math.round(percent)}
+      title={title}
+    >
+      <span style={{ width: `${percent}%` }} />
+    </div>
+  )
 }
 
 function AppListItem({
@@ -51,7 +97,6 @@ function AppListItem({
   const home = appHomepage(app.origin)
   const spent24 = money.spent24h
   const primary = formatPrimaryFromSats(spent24, currency, usdPerBsv)
-  const secondary = formatSecondaryFromSats(spent24, currency, usdPerBsv)
 
   return (
     <li className="connected-app-row" data-ready={ready ? true : undefined}>
@@ -77,12 +122,10 @@ function AppListItem({
         </div>
         <div className="connected-app-stats">
           <div className="connected-app-usd" data-currency={currency}>
-            <span className="connected-app-usd-amounts">
-              <span className="connected-app-usd-primary">{primary}</span>
-              <span className="connected-app-usd-secondary">{secondary}</span>
-            </span>
+            <span className="connected-app-usd-primary">{primary}</span>
             <span className="connected-app-usd-label">spent 24h</span>
           </div>
+          <AppSpendLimit origin={app.origin} usdPerBsv={usdPerBsv} />
         </div>
         <div className="connected-app-card-actions">
           <button
@@ -116,7 +159,6 @@ function AppGridItem({
   const home = appHomepage(app.origin)
   const spent24 = money.spent24h
   const primary = formatPrimaryFromSats(spent24, currency, usdPerBsv)
-  const secondary = formatSecondaryFromSats(spent24, currency, usdPerBsv)
 
   return (
     <li className="collection-grid-card" data-ready={ready ? true : undefined}>
@@ -142,12 +184,10 @@ function AppGridItem({
           </div>
           <div className="connected-app-stats">
             <span className="connected-app-usd" data-currency={currency}>
-            <span className="connected-app-usd-amounts">
               <span className="connected-app-usd-primary">{primary}</span>
-              <span className="connected-app-usd-secondary">{secondary}</span>
-            </span>
             <span className="connected-app-usd-label">spent 24h</span>
             </span>
+            <AppSpendLimit origin={app.origin} usdPerBsv={usdPerBsv} />
           </div>
           <div className="connected-app-card-actions">
             <button
@@ -177,6 +217,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
   useEffect(() => subscribeCollectionView(setView, 'apps'), [])
   useEffect(() => subscribeAppActivity(() => setTick((n) => n + 1)), [])
+  useEffect(() => subscribeAutoPay(() => setTick((n) => n + 1)), [])
 
   const orderedApps = useMemo(() => {
     void tick
