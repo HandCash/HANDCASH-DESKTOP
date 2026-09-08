@@ -192,7 +192,7 @@ function installMerklePreferBitails(services: Services): void {
   }
 }
 
-/** Broadcast only through Arcade V2; other providers are read/proof sources. */
+/** Arcade first; public miners stay so explorers can see the tx. */
 function installPostBeefPreferFast(services: Services): void {
   try {
     const collection = (

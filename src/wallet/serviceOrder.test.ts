@@ -23,7 +23,7 @@ describe('preferServiceOrder', () => {
     expect(services.map((s) => s.name)).toEqual(['Bitails', 'WhatsOnChain'])
   })
 
-  it('keeps Arcade V2 as the only transaction broadcaster', () => {
+  it('puts ArcadeBeef first without dropping public miners', () => {
     const services = [
       { name: 'GorillaPoolArcBeef' },
       { name: 'Bitails' },

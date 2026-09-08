@@ -14,8 +14,18 @@ type MutableCollection = {
   reset?: () => void
 }
 
-/** Arcade V2 is the wallet's single canonical transaction submission path. */
-export const POST_BEEF_PREFER = ['ArcadeBeef'] as const
+/**
+ * postBeef order: Arcade's first success completes the send. Keep Bitails /
+ * WhatsOnChain / GorillaPool in the list so explorers can see the tx — item
+ * peerDeliver often omits AtomicBEEF (box cap) and the payee SPV-fetches.
+ */
+export const POST_BEEF_PREFER = [
+  'ArcadeBeef',
+  'GorillaPoolArcBeef',
+  'Bitails',
+  'WhatsOnChain',
+  'TaalArcBeef',
+] as const
 
 /**
  * Move `preferred` names to the front (in that order). Unknown names are ignored.
@@ -45,15 +55,11 @@ export function preferServiceOrder(
 }
 
 /**
- * Keep one transaction submission authority. Explorer and legacy ARC services
- * remain available elsewhere for read/proof reconciliation, never broadcast.
+ * Arcade first, public miners still in the list. Stripping Bitails/WoC made
+ * Arcade-ACK'd item sends 404 on explorers (hc-ad7afb 627fb26bee9f).
  */
 export function configurePostBeefServices(
   collection: MutableCollection | null | undefined,
 ): void {
-  const services = collection?.services
-  if (!Array.isArray(services)) return
-  const arcade = services.filter((service) => service.name === 'ArcadeBeef')
-  services.splice(0, services.length, ...arcade)
   preferServiceOrder(collection, POST_BEEF_PREFER)
 }
