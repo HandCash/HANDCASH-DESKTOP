@@ -32,9 +32,16 @@ import { fetchBalanceSats, getActiveWallet } from '../wallet/session'
 import type { Chain } from '../wallet/vault'
 import { DeferredImage } from './DeferredImage'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
-import { CollectablesIcon, FriendsIcon, ScanQrIcon } from './icons'
+import {
+  CheckIcon,
+  CloseIcon,
+  CollectablesIcon,
+  FriendsIcon,
+  ScanQrIcon,
+} from './icons'
 import { EmptyState } from './EmptyState'
 import { RecipientQrScan } from './QrScanner'
+import { useWalletActionDock } from './WalletActionDock'
 
 type Props = {
   outpoint: string
@@ -236,6 +243,54 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     })()
   }
 
+  const goReview = () => {
+    try {
+      const address = resolvePaymentAddress(to, chain)
+      setTo(address)
+      setError(null)
+      setStage('confirm')
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      setError(message)
+      playWalletSound('deny')
+    }
+  }
+
+  useWalletActionDock(
+    item
+      ? stage === 'edit'
+        ? {
+            ariaLabel: 'Collectable send actions',
+            secondary: {
+              label: 'Cancel',
+              onClick: () => openCollectableDetails(item.outpoint),
+              icon: <CloseIcon size={18} />,
+            },
+            primary: {
+              label: 'Review',
+              onClick: goReview,
+              disabled: !canReview,
+              icon: <CheckIcon size={18} />,
+              tone: 'primary',
+            },
+          }
+        : {
+            ariaLabel: 'Confirm collectable transfer',
+            secondary: {
+              label: 'Cancel',
+              onClick: () => openCollectableDetails(item.outpoint),
+              icon: <CloseIcon size={18} />,
+            },
+            primary: {
+              label: 'Confirm',
+              onClick: confirmSend,
+              icon: <CheckIcon size={18} />,
+              tone: 'primary',
+            },
+          }
+      : null,
+  )
+
   if (!item) {
     const spent = isItemSent(outpoint)
     return loading ? (
@@ -376,34 +431,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                 ) : null}
               </div>
 
-              <div className="actions send-actions">
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  disabled={!canReview}
-                  onClick={() => {
-                    try {
-                      const address = resolvePaymentAddress(to, chain)
-                      setTo(address)
-                      setError(null)
-                      setStage('confirm')
-                    } catch (err) {
-                      const message = err instanceof Error ? err.message : String(err)
-                      setError(message)
-                      playWalletSound('deny')
-                    }
-                  }}
-                >
-                  Review
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  onClick={() => openCollectableDetails(item.outpoint)}
-                >
-                  Back
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -438,14 +465,6 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                 to <strong>{recipientLabel}</strong>
               </p>
               {friendLabel ? <p className="mono send-confirm-address">{to}</p> : null}
-              <div className="actions send-actions">
-                <button type="button" className="btn btn-primary" onClick={confirmSend}>
-                  Confirm
-                </button>
-                <button type="button" className="btn btn-ghost" onClick={() => setStage('edit')}>
-                  Back
-                </button>
-              </div>
             </div>
           </div>
         </div>

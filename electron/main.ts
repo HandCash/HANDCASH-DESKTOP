@@ -726,6 +726,44 @@ ipcMain.handle('app:open-external', async (_event, url: unknown) => {
   await shell.openExternal(url)
 })
 
+ipcMain.handle('app:open-in-app-browser', async (_event, url: unknown) => {
+  if (typeof url !== 'string' || !isSafeExternalUrl(url) || url.startsWith('mailto:')) {
+    return { ok: false, error: 'Invalid app URL' }
+  }
+  const browser = new BrowserWindow({
+    width: 1120,
+    height: 820,
+    minWidth: 420,
+    minHeight: 520,
+    title: 'HandCash App',
+    autoHideMenuBar: true,
+    backgroundColor: '#0f1110',
+    webPreferences: {
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: true,
+      partition: 'persist:handcash-app-browser',
+    },
+  })
+  browser.webContents.setWindowOpenHandler(({ url: next }) => {
+    if (isSafeExternalUrl(next)) void shell.openExternal(next)
+    return { action: 'deny' }
+  })
+  browser.webContents.on('will-navigate', (event, next) => {
+    if (!isSafeExternalUrl(next) || next.startsWith('mailto:')) event.preventDefault()
+  })
+  try {
+    await browser.loadURL(url)
+    return { ok: true }
+  } catch (err) {
+    browser.close()
+    return {
+      ok: false,
+      error: err instanceof Error ? err.message : String(err),
+    }
+  }
+})
+
 ipcMain.on('storage:get-sync', (event, key: unknown) => {
   event.returnValue = typeof key === 'string' ? durableGet(key) : null
 })

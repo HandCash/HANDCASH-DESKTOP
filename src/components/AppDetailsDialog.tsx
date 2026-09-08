@@ -128,7 +128,7 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
           <AppCatalogPacksPanel origin={app.origin} />
 
           <div className="actions qr-actions app-details-actions wallet-action-bar">
-            {home ? <AppLaunchMenu url={home} /> : null}
+            {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
             {autoPay?.enabled ? (
               <button
                 className="btn btn-ghost"

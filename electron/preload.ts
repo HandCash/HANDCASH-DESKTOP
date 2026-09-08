@@ -87,6 +87,10 @@ const handcash = {
   },
   focusWindow: () => ipcRenderer.invoke('app:focus-window') as Promise<void>,
   openExternal: (url: string) => ipcRenderer.invoke('app:open-external', url) as Promise<void>,
+  openAppBrowser: (url: string) =>
+    ipcRenderer.invoke('app:open-in-app-browser', url) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   getLogInfo: () =>
     ipcRenderer.invoke('app:get-log-info') as Promise<{
       file: string | null

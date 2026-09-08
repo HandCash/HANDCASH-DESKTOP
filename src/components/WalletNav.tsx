@@ -54,6 +54,7 @@ import {
   type PermissionDecisionApi,
 } from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
+import { AppLaunchPanel } from './AppLaunchPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
@@ -87,6 +88,10 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
 import { WalletActionBar } from './WalletActionBar'
+import {
+  WalletActionDockProvider,
+  type WalletDockActions,
+} from './WalletActionDock'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -165,7 +170,22 @@ export const WalletNav = memo(function WalletNav({
   const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
   const [decisionApi, setDecisionApi] = useState<PermissionDecisionApi | null>(null)
+  const [registeredDock, setRegisteredDock] = useState<{
+    owner: symbol
+    actions: WalletDockActions
+  } | null>(null)
   const mobileInlinePermission = compact && pendingPrompt != null
+  const contextualDock = mobileInlinePermission || registeredDock != null
+
+  const registerDock = useCallback(
+    (owner: symbol, actions: WalletDockActions | null) => {
+      setRegisteredDock((current) => {
+        if (actions) return { owner, actions }
+        return current?.owner === owner ? null : current
+      })
+    },
+    [],
+  )
   /**
    * Light tabs stay mounted once visited — remounting Activity/Identity on every
    * tap was the 2.6s stall in the latest log. Collectables never stays mounted:
@@ -298,6 +318,14 @@ export const WalletNav = memo(function WalletNav({
       const app = apps.find((a) => a.origin === stageChild.origin)
       return [root, { label: app?.name || appDisplayName(stageChild.origin) }]
     }
+    if (stageChild.type === 'app-launch') {
+      const app = apps.find((a) => a.origin === stageChild.origin)
+      return [
+        root,
+        { label: app?.name || appDisplayName(stageChild.origin) },
+        { label: 'Launch' },
+      ]
+    }
     if (stageChild.type === 'permission') {
       const app = apps.find((a) => a.origin === stageChild.origin)
       const scope = getPermissionScope(stageChild.scopeId)
@@ -416,6 +444,7 @@ export const WalletNav = memo(function WalletNav({
   }
 
   return (
+    <WalletActionDockProvider register={registerDock}>
     <section
       className="wallet-nav-shell panel"
       data-aeon-scope="wallet-nav"
@@ -435,6 +464,16 @@ export const WalletNav = memo(function WalletNav({
                     app={app}
                     onRevoke={onRevoke}
                     onDone={() => clearNavChild()}
+                  />
+                )
+              })()}
+              {stageChild.type === 'app-launch' && (() => {
+                const app = apps.find((a) => a.origin === stageChild.origin)
+                return (
+                  <AppLaunchPanel
+                    origin={stageChild.origin}
+                    name={app?.name || appDisplayName(stageChild.origin)}
+                    url={stageChild.url}
                   />
                 )
               })()}
@@ -594,9 +633,9 @@ export const WalletNav = memo(function WalletNav({
 
         <div
           className="wallet-nav-bar"
-          role={mobileInlinePermission ? 'group' : 'tablist'}
-          aria-label={mobileInlinePermission ? 'Permission decision' : 'Wallet sections'}
-          data-permission={mobileInlinePermission ? '' : undefined}
+          role={contextualDock ? 'group' : 'tablist'}
+          aria-label={contextualDock ? 'Wallet action' : 'Wallet sections'}
+          data-permission={contextualDock ? '' : undefined}
         >
           <div className="wallet-nav-bar-track">
             {mobileInlinePermission ? (
@@ -616,6 +655,11 @@ export const WalletNav = memo(function WalletNav({
                   icon: <CheckIcon size={18} />,
                   tone: 'primary',
                 }}
+              />
+            ) : registeredDock ? (
+              <WalletActionBar
+                {...registeredDock.actions}
+                placement="nav"
               />
             ) : (
               SECTIONS.map(({ value, label, shortLabel, Icon }) => {
@@ -643,5 +687,6 @@ export const WalletNav = memo(function WalletNav({
         </div>
       </div>
     </section>
+    </WalletActionDockProvider>
   )
 })

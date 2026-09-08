@@ -44,8 +44,9 @@ import { offlinePaymentBlockedMessage } from '../wallet/paymentPolicy'
 import type { Chain } from '../wallet/vault'
 import { useDisplayBalanceSats } from '../hooks/useDisplayBalanceSats'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
-import { FriendsIcon, ScanQrIcon } from './icons'
+import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
+import { useWalletActionDock } from './WalletActionDock'
 import {
   buildSellBsvSwapUrl,
   fetchSwapCurrencies,
@@ -438,6 +439,62 @@ export function SendPanel({
     })()
   }
 
+  useWalletActionDock(
+    sendSnap.matches('editing')
+      ? {
+          ariaLabel: 'Send actions',
+          secondary: {
+            label: 'Cancel',
+            onClick: onClose,
+            icon: <CloseIcon size={18} />,
+          },
+          primary: destReady
+            ? {
+                label: reviewBusy ? 'Checking…' : 'Review',
+                onClick: () => void goReview(),
+                disabled: !canReview,
+                icon: <CheckIcon size={18} />,
+                tone: 'primary',
+              }
+            : {
+                label: 'Continue',
+                onClick: () => openMarketSwap(buildSellBsvSwapUrl(destAssetId)),
+                icon: <CheckIcon size={18} />,
+                tone: 'primary',
+              },
+        }
+      : sendSnap.matches('confirming')
+        ? {
+            ariaLabel: 'Confirm transaction',
+            secondary: {
+              label: 'Cancel',
+              onClick: onClose,
+              icon: <CloseIcon size={18} />,
+            },
+            primary: {
+              label: 'Confirm',
+              onClick: confirmSend,
+              disabled: !destReady,
+              icon: <CheckIcon size={18} />,
+              tone: 'primary',
+            },
+          }
+        : {
+            ariaLabel: 'Send failure actions',
+            secondary: {
+              label: 'Close',
+              onClick: onClose,
+              icon: <CloseIcon size={18} />,
+            },
+            primary: {
+              label: 'Edit',
+              onClick: () => send({ type: 'BACK' }),
+              icon: <CheckIcon size={18} />,
+              tone: 'primary',
+            },
+          },
+  )
+
   return (
     <div className="nav-child-panel send-panel" data-aeon-scope="send" data-aeon-state={sendState}>
       {offlineBlock ? (
@@ -621,30 +678,6 @@ export function SendPanel({
                 ) : null}
               </div>
 
-              <div className="actions send-actions">
-                {destReady ? (
-                  <button
-                    className="btn btn-primary"
-                    disabled={!canReview}
-                    onClick={() => void goReview()}
-                  >
-                    {reviewBusy ? 'Checking balance…' : 'Review'}
-                  </button>
-                ) : (
-                  <button
-                    className="btn btn-primary"
-                    onClick={() => {
-                      playWalletSound('soft')
-                      openMarketSwap(buildSellBsvSwapUrl(destAssetId))
-                    }}
-                  >
-                    Continue on HandCash
-                  </button>
-                )}
-                <button className="btn btn-ghost" onClick={onClose}>
-                  Cancel
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -673,18 +706,6 @@ export function SendPanel({
               {sendSnap.context.friendLabel ? (
                 <p className="mono send-confirm-address">{sendSnap.context.to}</p>
               ) : null}
-              <div className="actions send-actions">
-                <button
-                  className="btn btn-primary"
-                  disabled={!destReady}
-                  onClick={confirmSend}
-                >
-                  Confirm
-                </button>
-                <button className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-                  Back
-                </button>
-              </div>
             </div>
           </div>
         </div>
@@ -695,14 +716,6 @@ export function SendPanel({
           <div className="send-stage-body send-stage-body-center">
             <p className="send-status-title">Couldn’t send</p>
             <p className="error send-failure-error">{sendSnap.context.error}</p>
-          </div>
-          <div className="actions send-actions">
-            <button className="btn btn-primary" onClick={() => send({ type: 'BACK' })}>
-              Edit
-            </button>
-            <button className="btn btn-ghost" onClick={onClose}>
-              Close
-            </button>
           </div>
         </div>
       )}
