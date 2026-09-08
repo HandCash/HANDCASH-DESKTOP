@@ -38,6 +38,7 @@ import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
 import { attachMarketListingToToken } from './tokenMarketView'
+import { parseOrdEnvelope } from './ordinalOwnership'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -131,6 +132,46 @@ function setFungiblesCache(items: FungibleToken[]): void {
   hydrated = true
   persistDurableList(cached)
   notify()
+}
+
+/** Recover settled receives written before immediate token painting existed. */
+async function recoverReceivedTokensFromActivity(
+  items: FungibleToken[],
+): Promise<FungibleToken[]> {
+  const { exportAllActivity } = await import('./appActivity')
+  const known = new Set(items.map(tokenKey))
+  const recovered = new Map<string, FungibleToken>()
+  for (const row of exportAllActivity()) {
+    const item = row.item
+    if (
+      row.kind !== 'earned' ||
+      row.method !== 'receive-token' ||
+      row.status === 'pending' ||
+      row.status === 'failed' ||
+      !item?.tokenId ||
+      !item.amt ||
+      !item.outpoint ||
+      isItemSent(item.outpoint)
+    ) {
+      continue
+    }
+    const tokenId = normalizeTokenId(item.tokenId)
+    if (!tokenId || known.has(tokenId) || !/^\d+$/.test(item.amt)) continue
+    const amount = BigInt(item.amt)
+    if (amount <= 0n) continue
+    const prior = recovered.get(tokenId)
+    recovered.set(tokenId, {
+      tokenId,
+      sym: item.name?.trim() || prior?.sym || shortTokenLabel(tokenId),
+      amt: ((prior ? BigInt(prior.amt) : 0n) + amount).toString(),
+      dec: item.dec ?? prior?.dec ?? 0,
+      utxoCount: (prior?.utxoCount ?? 0) + 1,
+      outpoint: prior?.outpoint ?? item.outpoint,
+      spendKind: 'plain',
+      ...(item.icon || prior?.icon ? { icon: item.icon || prior?.icon } : {}),
+    })
+  }
+  return recovered.size > 0 ? mergeLiveFungibles([...recovered.values()], items) : items
 }
 
 function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
@@ -248,6 +289,15 @@ export function leftoverFloorWouldClobber(
     cached = durable
     hydrated = true
   }
+  void recoverReceivedTokensFromActivity(cached)
+    .then((repaired) => {
+      const currentIds = new Set(cached.map(tokenKey))
+      const additions = repaired.filter((token) => !currentIds.has(tokenKey(token)))
+      if (additions.length > 0) {
+        setFungiblesCache(mergeLiveFungibles(additions, cached))
+      }
+    })
+    .catch(() => {})
   // 1sat-ft leftover remittance is not painted as Tokens.
 }
 
@@ -255,14 +305,67 @@ function notify() {
   for (const cb of listeners) cb(cached)
 }
 
+async function recoverBsv21DeployMetadata(
+  wallet: ActiveWallet,
+  tokenId: string,
+): Promise<{ sym?: string; dec?: number; icon?: string; iconUrl?: string } | null> {
+  const normalized = normalizeTokenId(tokenId)
+  if (!normalized) return null
+  const [txid, rawVout] = normalized.split('_')
+  const vout = Number(rawVout)
+  if (!txid || !Number.isInteger(vout) || vout < 0) return null
+  const { getLocalBeefForTxid, rememberBeefTree } = await import('./beefCache')
+  const beef = await getLocalBeefForTxid(wallet, txid)
+  if (!beef) return null
+  rememberBeefTree(beef.toBinary(), txid)
+  const scriptHex = beef.findTxid(txid)?.tx?.outputs[vout]?.lockingScript?.toHex()
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (!envelope?.body?.length) return null
+  try {
+    const payload = parseBsv21Json(
+      JSON.parse(new TextDecoder().decode(envelope.body)),
+    )
+    const icon = payload?.icon
+      ? normalizeTokenId(payload.icon) ?? undefined
+      : undefined
+    const iconUrl = icon
+      ? cacheTokenIconFromBeef(icon, beef) ??
+        (await resolveTokenIconDataUrl(icon, wallet))
+      : undefined
+    return {
+      ...(payload?.sym ? { sym: payload.sym } : {}),
+      ...(payload?.dec != null ? { dec: payload.dec } : {}),
+      ...(icon ? { icon } : {}),
+      ...(iconUrl ? { iconUrl } : {}),
+    }
+  } catch {
+    return null
+  }
+}
+
 export async function hydrateCachedTokenIcons(
   wallet: ActiveWallet,
   tokens: FungibleToken[] = cached,
 ): Promise<void> {
   let changed = false
-  for (const token of tokens) {
+  for (let token of tokens) {
     if (token.iconUrl) continue
     if (!cacheExtraLooksLikeFungible(token)) continue
+    if (!token.colourSupply && !token.icon) {
+      const metadata = await recoverBsv21DeployMetadata(wallet, token.tokenId)
+      if (metadata) {
+        const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
+        if (idx >= 0) {
+          token = {
+            ...cached[idx]!,
+            ...metadata,
+            sym: metadata.sym || cached[idx]!.sym,
+          }
+          cached[idx] = token
+          changed = true
+        }
+      }
+    }
     const url = token.colourSupply
       ? (await resolveOnesatFtIconDataUrl({
           origin: token.tokenId,
@@ -398,6 +501,10 @@ async function listFungiblesNow(
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
+  const repaired = await recoverReceivedTokensFromActivity(getCachedFungibles())
+  if (repaired.length !== getCachedFungibles().length) {
+    setFungiblesCache(repaired)
+  }
 
   const {
     getSpendPriorityDepth,
