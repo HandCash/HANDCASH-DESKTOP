@@ -188,6 +188,47 @@ describe('mergeLiveFungibles', () => {
     expect(merged[0]!.amt).toBe('240')
   })
 
+  it('lists a legacy JSON BSV-21 tip for the burn planner', async () => {
+    const { listFungibleTips } = await import('./fungibles')
+    const icon = `${'5a'.repeat(32)}_1`
+    const held = `${'e0'.repeat(32)}.0`
+    const active = {
+      identityKey: `02${'11'.repeat(32)}`,
+      wallet: {
+        listOutputs: async () => ({
+          outputs: [
+            {
+              outpoint: held,
+              satoshis: 1,
+              lockingScript: `76a914${'22'.repeat(20)}88ac`,
+              tags: ['bsv21', `bsv21:${KING_ORIGIN}`, 'amt:240'],
+              customInstructions: JSON.stringify({
+                p: 'bsv-20',
+                op: 'transfer',
+                id: KING_ORIGIN,
+                amt: '240',
+                sym: 'KING',
+                icon,
+              }),
+            },
+          ],
+        }),
+      },
+    }
+
+    await expect(
+      listFungibleTips(active as never, { tokenIds: [KING_ORIGIN] }),
+    ).resolves.toMatchObject([
+      {
+        outpoint: held,
+        tokenId: KING_ORIGIN,
+        amt: '240',
+        sym: 'KING',
+        icon,
+      },
+    ])
+  })
+
   it('does not keep inflated prior 275586 over live 69000', async () => {
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [

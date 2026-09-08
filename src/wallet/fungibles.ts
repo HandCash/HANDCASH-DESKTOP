@@ -498,9 +498,20 @@ function parseListedOutput(
     customInstructions: raw.customInstructions,
     tags: raw.tags,
   })
-  if (!from162) return null
   const ci = parseBsv21CustomInstructions(raw.customInstructions)
-  const op = (from162.tokenId === from162.outpoint ? 'deploy+mint' : 'transfer') as Bsv21Op
+  const legacyTokenId =
+    ci?.op === 'deploy+mint' || ci?.op === 'deploy+auth'
+      ? normalizeTokenId(outpoint)
+      : normalizeTokenId(ci?.id ?? '')
+  if (!from162 && (!ci?.amt || !legacyTokenId)) return null
+  const tokenId = from162?.tokenId ?? legacyTokenId!
+  const amount = from162?.amt ?? BigInt(ci!.amt!)
+  if (amount <= 0n) return null
+  const op = from162
+    ? ((from162.tokenId === from162.outpoint
+        ? 'deploy+mint'
+        : 'transfer') as Bsv21Op)
+    : ci!.op
   const cosign = cosignFromRemittance({
     customInstructions: raw.customInstructions,
     tags: raw.tags,
@@ -519,9 +530,9 @@ function parseListedOutput(
     issuerAttested = true
   }
   return {
-    outpoint: from162.outpoint,
-    tokenId: from162.tokenId,
-    amt: from162.amt.toString(),
+    outpoint,
+    tokenId,
+    amt: amount.toString(),
     op,
     dec: ci?.dec ?? 0,
     satoshis: 1,
