@@ -774,9 +774,10 @@ export async function pollInboundTipHints(args: {
 }
 
 /**
- * Deliver a signed collectable or fungible tip to the peer (card ± Atomic BEEF).
- * `/files` is not used — Android WebView cannot POST binary reliably.
- * If BEEF does not fit in sendMessage, payee SPV-fetches after sender broadcast.
+ * Deliver a signed collectable or fungible tip with its Atomic BEEF.
+ * Small proofs ride inline; larger proofs use the messagebox file store as a
+ * Blob and the inbox card carries the authenticated URL. Never silently drop a
+ * supplied proof and force the receiver back onto indexer discovery.
  */
 export async function notifyPeerItemIncoming(args: {
   recipientIdentityKey: string
@@ -798,7 +799,7 @@ export async function notifyPeerItemIncoming(args: {
   const name = args.itemName.trim() || 'item'
   const itemOrigin = args.itemOrigin?.trim() || undefined
   const itemCollectionId = args.itemCollectionId?.trim() || undefined
-  const packed = withOptionalBeefB64(
+  const itemMessage = (attachment?: ChatAttachment) =>
     encodeMessageBody({
       kind: 'tip',
       text: `Sent you ${name}`,
@@ -811,12 +812,32 @@ export async function notifyPeerItemIncoming(args: {
         ...(itemOrigin ? { itemOrigin } : {}),
         ...(itemCollectionId ? { itemCollectionId } : {}),
         asset: args.asset ?? { kind: 'collectable' },
+        ...(attachment ? { attachment } : {}),
       },
-    }),
+    })
+  let packed = withOptionalBeefB64(
+    itemMessage(),
     args.atomicBeef,
   )
 
   const recipient = args.recipientIdentityKey.trim().toLowerCase()
+  if (
+    !packed.beefInBox &&
+    Array.isArray(args.atomicBeef) &&
+    args.atomicBeef.length > 0
+  ) {
+    const attachment = await uploadMessageboxBytes({
+      bytes: Uint8Array.from(args.atomicBeef),
+      filename: `${txid}.beef`,
+      contentType: 'application/octet-stream',
+      recipientIdentityKey: recipient,
+      senderIdentityKey: args.senderIdentityKey,
+      rootKeyHex: args.rootKeyHex,
+      messagebox: args.messagebox,
+    })
+    packed = { body: itemMessage(attachment), beefInBox: false }
+  }
+
   for (let attempt = 0; attempt < 5; attempt++) {
     const delivered = await deliverOutbound({
       recipientIdentityKey: recipient,

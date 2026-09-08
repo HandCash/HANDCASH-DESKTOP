@@ -325,6 +325,56 @@ describe('messagebox base URL', () => {
     expect(urls.some((u) => u.includes('/sendMessage'))).toBe(true)
   })
 
+  it('attaches large collectable BEEF instead of dropping the supplied proof', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    const recipient = '02' + 'ab'.repeat(32)
+    const txid = 'a'.repeat(64)
+    const urls: string[] = []
+    let sentBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        urls.push(url)
+        if (url.endsWith('/files')) {
+          return new Response(
+            JSON.stringify({
+              status: 'success',
+              file: {
+                id: txid,
+                name: `${txid}.beef`,
+                contentType: 'application/octet-stream',
+                size: 20_000,
+                url: `https://mb.peer.example/v1/messagebox/files/${recipient}/${txid}`,
+                expiresAt: Date.now() + 60_000,
+              },
+            }),
+            { status: 200 },
+          )
+        }
+        sentBody = String(init?.body || '')
+        return new Response(JSON.stringify({ status: 'success' }), { status: 200 })
+      }),
+    )
+
+    const result = await notifyPeerItemIncoming({
+      recipientIdentityKey: recipient,
+      rootKeyHex: root.toHex(),
+      senderIdentityKey: root.toPublicKey().toString(),
+      messagebox: 'https://mb.peer.example/v1/messagebox',
+      txid,
+      itemName: 'Large proof item',
+      atomicBeef: Array.from({ length: 20_000 }, (_, i) => i % 256),
+    })
+
+    expect(result.delivered).toBe('cloud')
+    expect(urls[0]).toContain('/files')
+    expect(urls[1]).toContain('/sendMessage')
+    expect(decodeMessageBody(JSON.parse(sentBody).message.body).meta?.attachment?.url)
+      .toContain(`/files/${recipient}/${txid}`)
+  })
+
   it('omits inline BEEF when it would exceed the sendMessage cap', async () => {
     const base = encodeMessageBody({
       kind: 'pay-sent',
