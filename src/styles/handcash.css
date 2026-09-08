@@ -2839,6 +2839,9 @@ button.wallet-detail-value.is-copied {
 /* Friends / Collectables / other nav tabs — pinned head + inner scroll (mirrors Settings). */
 .wallet-nav-stage:has(
     .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
+  ),
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
   ) {
   overflow: hidden;
   display: flex;
@@ -2847,6 +2850,10 @@ button.wallet-detail-value.is-copied {
 
 .wallet-nav-stage:has(
     .wallet-nav-panel:not([hidden]) > .wallet-nav-slot:not([hidden]) .nav-section-with-scroll
+  )
+  > .wallet-nav-panel,
+.wallet-nav-stage:has(
+    .wallet-nav-panel:not([hidden]) > .nav-section-with-scroll
   )
   > .wallet-nav-panel {
   flex: 1 1 auto;
@@ -2891,6 +2898,16 @@ button.wallet-detail-value.is-copied {
   scrollbar-width: thin;
   scrollbar-color: transparent transparent;
   padding-bottom: 24px;
+}
+
+[data-aeon-scope='collectables'] .nav-section-scroll-body,
+[data-aeon-scope='collectables'] .collection-grid,
+[data-aeon-scope='collectables'] .collection-grid-card,
+[data-aeon-scope='collectables'] .collection-grid-main,
+[data-aeon-scope='collectables'] .connected-app-list,
+[data-aeon-scope='collectables'] .connected-app-row,
+[data-aeon-scope='collectables'] .connected-app-main {
+  touch-action: pan-y;
 }
 
 .nav-section-scroll-body:hover,
@@ -7947,6 +7964,21 @@ html[data-aeon-mode='light'] .skeleton {
   padding-top: 12px;
 }
 
+.collectable-card .collection-grid-main {
+  display: grid;
+  justify-items: center;
+  align-items: start;
+  gap: 8px;
+  padding: 12px 12px;
+  text-align: center;
+  cursor: pointer;
+}
+
+.collectable-card .collectable-media,
+.collectable-card .fungible-card-amount {
+  justify-self: center;
+}
+
 .collectable-media {
   width: 120px;
   height: 120px;
@@ -8308,6 +8340,17 @@ html[data-aeon-mode='light'] .skeleton {
   width: 56px;
   height: 56px;
   border-radius: 8px;
+}
+
+.collection-grid-card .collectable-media-token {
+  width: 120px;
+  height: 120px;
+  border-radius: 10px;
+}
+
+.fungible-row .collectable-media-token {
+  width: 48px;
+  height: 48px;
 }
 
 .collectable-media-token .fungible-avatar {
