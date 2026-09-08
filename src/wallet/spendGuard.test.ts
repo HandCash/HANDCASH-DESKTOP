@@ -75,6 +75,10 @@ vi.mock('./walletCoordinator', () => ({
       await release()
     }
   },
+  leaseSpendPriority: () => ({
+    touch: vi.fn(),
+    release: vi.fn(),
+  }),
 }))
 
 vi.mock('./spendLease', () => ({
@@ -152,6 +156,15 @@ describe('refreshSpendableBalance', () => {
     expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
     expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
     expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+  })
+
+  it('starts burns without blocking on recovery or status checks', async () => {
+    const { runExclusiveBurn } = await import('./spendGuard')
+    await expect(runExclusiveBurn('burn-token', async () => 'built')).resolves.toBe('built')
+    expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs).not.toHaveBeenCalled()
+    expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+    expect(sweepChangeScripts).not.toHaveBeenCalled()
   })
 
   it('assertSendableBalanceForReview does not promote change', async () => {

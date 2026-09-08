@@ -13,6 +13,8 @@ describe('bridge deadlines', () => {
     expect(bridgeDeadlineMs('/createAction')).toBe(SPEND_DEADLINE_MS)
     expect(bridgeDeadlineMs('/signAction')).toBe(SPEND_DEADLINE_MS)
     expect(bridgeDeadlineMs('/internalizeAction')).toBe(SPEND_DEADLINE_MS)
+    expect(bridgeDeadlineMs('/createMarketListingAdvert')).toBe(SPEND_DEADLINE_MS)
+    expect(bridgeDeadlineMs('/purchaseMarketListing')).toBe(SPEND_DEADLINE_MS)
     expect(bridgeDeadlineMs('/listOutputs')).toBe(BRIDGE_DEADLINE_MS)
     expect(SPEND_DEADLINE_MS).toBeGreaterThan(BRIDGE_DEADLINE_MS)
   })

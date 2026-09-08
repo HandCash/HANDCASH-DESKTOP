@@ -118,6 +118,10 @@
 html[data-aeon-mode='light'] {
   color-scheme: light;
 
+  /* One semantic green on paper: use the dark currency ink everywhere that
+     brand/success/accent green is rendered as foreground or decoration. */
+  --hc-brand: 148 72% 14%;
+
   /* Brighter paper — near-white canvas, soft borders, less grey fog. */
   --background: 140 10% 98.5%;
   --foreground: 140 10% 8%;
@@ -138,8 +142,8 @@ html[data-aeon-mode='light'] {
   --destructive-foreground: 0 0% 100%;
   --border: 140 6% 90%;
   --input: 140 6% 90%;
-  --ring: 143 84% 30%;
-  --dark-green: 143 84% 30%;
+  --ring: 148 72% 14%;
+  --dark-green: 148 72% 14%;
   --bg-light: 140 8% 96.5%;
   --shadow-section: 0 1px 2px rgba(20, 24, 20, 0.04), 0 1px 3px rgba(20, 24, 20, 0.03);
   --shadow-section-hover: 0 4px 14px rgba(20, 24, 20, 0.06);
@@ -157,9 +161,11 @@ html[data-aeon-mode='light'] {
 
   /* Currency figures on paper — very dark HandCash green (not mid #0c8f3e). */
   --hc-accent-deep: #0a3d22;
+  --hc-accent: var(--hc-accent-deep);
+  --hc-accent-2: var(--hc-accent-deep);
+  --hc-accent-dim: color-mix(in srgb, var(--hc-accent-deep) 14%, transparent);
 
-  /* Success as foreground on paper — brand hue, deep enough for small type. */
-  --hc-success: hsl(143 72% 28%);
+  --hc-success: var(--hc-accent-deep);
 
   --hc-warn: #9a6700;
   --hc-error: #b91c1c;

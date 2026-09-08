@@ -22,6 +22,10 @@ const SPEND_METHODS = new Set([
   'createaction',
   'signaction',
   'internalizeaction',
+  'createmarketlistingadvert',
+  'createmarketpurchaseintent',
+  'purchasemarketlisting',
+  'createcancelmarketlistingadvert',
 ])
 
 function methodOf(path: string): string {

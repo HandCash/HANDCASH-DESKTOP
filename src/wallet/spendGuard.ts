@@ -211,7 +211,10 @@ export async function runExclusiveBurn<T>(
   const priority = leaseSpendPriority(reason)
   const heartbeat = setInterval(() => priority.touch(), 30_000)
   try {
-    return await runExclusiveSpend(fn)
+    // A burn already has concrete wallet-owned inputs and only needs a local
+    // fee UTXO. Recovery/indexer status work must not block transaction
+    // construction; background reconciliation can heal stale state later.
+    return await runExclusiveSpend(fn, undefined, { promote: false })
   } finally {
     clearInterval(heartbeat)
     priority.release()
