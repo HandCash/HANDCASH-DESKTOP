@@ -5290,7 +5290,7 @@ a.app-details-host:hover {
   min-width: 0;
   padding: 8px 10px;
   border-top: 1px solid hsl(var(--border));
-  background: color-mix(in srgb, var(--hc-surface) 96%, var(--hc-text));
+  background: transparent;
 }
 
 .connected-app-stats .connected-app-usd {
