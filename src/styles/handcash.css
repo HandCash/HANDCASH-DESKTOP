@@ -5086,7 +5086,7 @@ a.connected-app-host:hover {
 }
 
 .connected-app-usd-primary {
-  color: var(--hc-accent-deep);
+  color: var(--hc-text);
   font-weight: 700;
   font-size: 0.9rem;
 }
