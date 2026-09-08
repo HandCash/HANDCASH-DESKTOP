@@ -132,6 +132,7 @@ const ACTION_METHODS = new Set([
   'relinquishOutput',
   'relinquishCertificate',
   'createSignature',
+  'createAdminIdentityProof',
   'createMarketListingAdvert',
   'createMarketPurchaseIntent',
   'purchaseMarketListing',
@@ -152,6 +153,7 @@ const ACTION_METHODS = new Set([
  */
 const NO_COALESCE_ACTIONS = new Set([
   'createSignature',
+  'createAdminIdentityProof',
   'createMarketListingAdvert',
   'createMarketPurchaseIntent',
   'purchaseMarketListing',
@@ -1119,6 +1121,17 @@ export function summarizeAction(method: string, args: unknown): {
       title: 'Sign with wallet',
       summary: 'Create a signature proving you control this wallet',
       details: [],
+    }
+  }
+
+  if (method === 'createAdminIdentityProof') {
+    return {
+      title: 'Open transaction operations',
+      summary: 'Prove this wallet is the configured operations administrator',
+      details: [
+        'Signs a short-lived handcash.io login challenge',
+        'Does not authorize a payment or reveal private keys',
+      ],
     }
   }
 

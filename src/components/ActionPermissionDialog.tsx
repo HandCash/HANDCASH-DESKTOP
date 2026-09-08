@@ -270,7 +270,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   </div>
                 ) : null}
 
-                <Prompt.Actions className="actions connect-actions">
+                <Prompt.Actions className="actions connect-actions wallet-action-bar">
                   <Prompt.Secondary
                     className="btn btn-ghost"
                     disabled={committing}

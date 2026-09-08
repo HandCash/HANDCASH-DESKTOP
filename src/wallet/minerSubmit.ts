@@ -22,6 +22,15 @@ import {
   signedTxSpendConflictIsProven,
   txHadArcadeSubmitContact,
 } from './arcadeSubmitGuard'
+import {
+  enqueuePendingMinerSubmit,
+  removePendingMinerSubmit,
+} from './pendingMinerOutbox'
+import {
+  activeTransactionTrace,
+  recordTransactionStage,
+  type TransactionFlow,
+} from './transactionTelemetry'
 
 export type MinerSubmitResult = {
   /** At least one miner reported mempool accept / already-known. */
@@ -42,6 +51,13 @@ function isInvalidBeefTransport(msg: string): boolean {
 export async function submitAtomicBeefToMiners(
   txid: string,
   atomic: number[],
+  opts?: {
+    fromOutbox?: boolean
+    traceId?: string
+    requestId?: string
+    flow?: TransactionFlow
+    retryCount?: number
+  },
 ): Promise<MinerSubmitResult> {
   const id = txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(id) || !atomic.length) {
@@ -49,9 +65,23 @@ export async function submitAtomicBeefToMiners(
       'Payment was signed but no transaction body was returned — try Send again.',
     )
   }
+  if (!opts?.fromOutbox) enqueuePendingMinerSubmit(id, atomic)
+  const trace = activeTransactionTrace()
+  const telemetry = {
+    traceId: opts?.traceId ?? trace?.traceId,
+    requestId: opts?.requestId ?? trace?.requestId,
+    flow: opts?.flow ?? trace?.flow,
+    retryCount: opts?.retryCount,
+    txid: id,
+  }
+  recordTransactionStage('provider_attempt', telemetry)
   const active = getActiveWallet()
   if (!active?.services?.postBeef) {
     console.info('[minerSubmit] offline — treating signed tx as submitted', id.slice(0, 12))
+    recordTransactionStage('propagation_queued', {
+      ...telemetry,
+      blockerCode: 'provider_offline',
+    })
     return { confirmed: false, submitted: true }
   }
 
@@ -69,15 +99,33 @@ export async function submitAtomicBeefToMiners(
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[minerSubmit] postBeef transport failed — treating as submitted', id.slice(0, 12), msg)
     if (isInvalidBeefTransport(msg)) {
+      removePendingMinerSubmit(id)
+      recordTransactionStage('hard_rejected', {
+        ...telemetry,
+        blockerCode: 'invalid_beef',
+      })
       await releaseSealedInputsOfUnsentTx(id, atomic)
       throw new Error(
         'Payment was signed but the transaction body is invalid — try Send again.',
       )
     }
+    recordTransactionStage('propagation_queued', {
+      ...telemetry,
+      blockerCode: 'provider_transport',
+    })
     return { confirmed: false, submitted: true }
   }
 
   if (summary.accepted) {
+    removePendingMinerSubmit(id)
+    recordTransactionStage('provider_accepted', telemetry)
+    if (
+      telemetry.flow !== 'brc29' &&
+      telemetry.flow !== 'item_transfer' &&
+      telemetry.flow !== 'token_transfer'
+    ) {
+      recordTransactionStage('completed', telemetry)
+    }
     return { confirmed: true, submitted: true, summary }
   }
   // Pure transport / endpoint failures are not proof of a spent input.
@@ -87,6 +135,10 @@ export async function submitAtomicBeefToMiners(
       id.slice(0, 12),
       summary.detail,
     )
+    recordTransactionStage('propagation_queued', {
+      ...telemetry,
+      blockerCode: 'provider_service_error',
+    })
     return { confirmed: false, submitted: true, summary }
   }
   if (summary.missingInputs || summary.doubleSpend) {
@@ -122,10 +174,24 @@ export async function submitAtomicBeefToMiners(
     const { txExistsOnChain } = await import('./legacyScan')
     const onChain = await txExistsOnChain(id, active.chain).catch(() => null)
     if (onChain === true) {
+      removePendingMinerSubmit(id)
+      recordTransactionStage('hard_rejected', {
+        ...telemetry,
+        blockerCode: summary.doubleSpend
+          ? 'provider_double_spend'
+          : 'provider_missing_inputs',
+      })
       console.warn('[minerSubmit] hard reject — tx on chain, sealing inputs', id.slice(0, 12), summary.detail)
       await onAlreadySpentSend({ txid: id, atomic })
       throw new Error(formatPostBeefFailure(summary))
     }
+    removePendingMinerSubmit(id)
+    recordTransactionStage('hard_rejected', {
+      ...telemetry,
+      blockerCode: summary.doubleSpend
+        ? 'provider_double_spend'
+        : 'provider_missing_inputs',
+    })
     console.warn(
       '[minerSubmit] hard reject — releasing seal (tx not on chain)',
       id.slice(0, 12),
@@ -140,6 +206,10 @@ export async function submitAtomicBeefToMiners(
     id.slice(0, 12),
     summary.detail,
   )
+  recordTransactionStage('propagation_queued', {
+    ...telemetry,
+    blockerCode: 'provider_no_ack',
+  })
   return { confirmed: false, submitted: true, summary }
 }
 
@@ -170,6 +240,13 @@ export async function reportLateMinerSubmitFailure(args: {
     './appActivity'
   )
   const { toastError } = await import('./toast')
+  if (txid) {
+    const { getTxByTxid, markTxFailed } = await import('./txStore')
+    const record = getTxByTxid(txid)
+    if (record && record.status !== 'FAILED_REJECTED') {
+      markTxFailed(record.id, 'ARC_REJECTED', compactFailureLabel(args.reason))
+    }
+  }
   if (!noteOutboundSendBroadcastFailed(args)) return
   const label = compactFailureLabel(args.reason)
   toastError('Send issue', label)

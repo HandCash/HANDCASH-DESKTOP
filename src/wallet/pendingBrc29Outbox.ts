@@ -5,6 +5,11 @@
 import { durableGetItem, durableSetItem } from './durableStorage'
 import type { Brc29Remittance } from './sendBrc29Payment'
 import { mapPool } from './asyncPool'
+import {
+  activeTransactionTrace,
+  recordTransactionStage,
+  type TransactionFlow,
+} from './transactionTelemetry'
 
 const KEY = 'handcash.brc29.pendingOutbox.v1'
 const MAX_ATTEMPTS = 20
@@ -21,6 +26,9 @@ export type PendingBrc29Remit = {
   amountLabel?: string
   createdAt: number
   attempts: number
+  traceId?: string
+  requestId?: string
+  flow?: TransactionFlow
 }
 
 function load(): PendingBrc29Remit[] {
@@ -45,11 +53,15 @@ export function enqueuePendingBrc29Remit(
   const txid = row.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
   const rows = load().filter((r) => r.txid !== txid)
+  const trace = activeTransactionTrace()
   rows.push({
     ...row,
     txid,
     createdAt: row.createdAt ?? Date.now(),
     attempts: row.attempts ?? 0,
+    traceId: row.traceId ?? trace?.traceId,
+    requestId: row.requestId ?? trace?.requestId,
+    flow: row.flow ?? trace?.flow ?? 'brc29',
   })
   save(rows)
 }
@@ -93,6 +105,20 @@ export async function flushPendingBrc29Outbox(args: {
         amountLabel: row.amountLabel,
       })
       if (result.delivered === 'cloud') {
+        recordTransactionStage('peer_delivered', {
+          flow: row.flow ?? 'brc29',
+          traceId: row.traceId,
+          requestId: row.requestId,
+          retryCount: (row.attempts ?? 0) + 1,
+          queueWaitMs: Date.now() - row.createdAt,
+          txid: row.txid,
+        })
+        recordTransactionStage('completed', {
+          flow: row.flow ?? 'brc29',
+          traceId: row.traceId,
+          requestId: row.requestId,
+          txid: row.txid,
+        })
         return { delivered: true as const }
       }
     } catch (err) {

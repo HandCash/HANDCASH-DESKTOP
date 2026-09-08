@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { SkeletonAppCard, SkeletonAppRow } from './Skeleton'
-import { appDisplayName } from '../wallet/appIdentity'
+import { appDisplayName, appHomepage } from '../wallet/appIdentity'
 import type { ConnectedApp } from '../wallet/permissions'
 import {
   formatPrimaryFromSats,
@@ -30,6 +30,7 @@ import { openAppDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { AppsIcon } from './icons'
+import { AppLaunchMenu } from './AppLaunchMenu'
 
 type Props = {
   apps: ConnectedApp[]
@@ -47,6 +48,7 @@ function AppListItem({
   const [ready, setReady] = useState(false)
   const name = app.name || appDisplayName(app.origin)
   const money = getAppMoneySummary(app.origin)
+  const home = appHomepage(app.origin)
   const spent24 = money.spent24h
   const primary = formatPrimaryFromSats(spent24, currency, usdPerBsv)
   const secondary = formatSecondaryFromSats(spent24, currency, usdPerBsv)
@@ -56,37 +58,40 @@ function AppListItem({
       {!ready ? <SkeletonAppRow /> : null}
       {/* Keep in DOM (not display:none) so favicon can load under the skeleton. */}
       <div className={ready ? 'connected-app-row-live' : 'media-preload'}>
-        <button
-          type="button"
-          className="connected-app-main"
-          tabIndex={ready ? 0 : -1}
-          onClick={() => {
-            playWalletSound('soft')
-            openAppDetails(app)
-          }}
-        >
-          <AppAvatar origin={app.origin} name={name} size="sm" onReady={() => setReady(true)} />
-          <div className="connected-app-body">
-            <strong className="connected-app-name">{name}</strong>
-            <span className="connected-app-host mono">{app.origin}</span>
+        <div className="connected-app-card-top">
+          <button
+            type="button"
+            className="connected-app-main"
+            tabIndex={ready ? 0 : -1}
+            onClick={() => {
+              playWalletSound('soft')
+              openAppDetails(app)
+            }}
+          >
+            <AppAvatar origin={app.origin} name={name} size="sm" onReady={() => setReady(true)} />
+            <div className="connected-app-body">
+              <strong className="connected-app-name">{name}</strong>
+              <span className="connected-app-host mono">{app.origin}</span>
+            </div>
+          </button>
+          <div className="connected-app-usd" data-currency={currency}>
+            <span className="connected-app-usd-amounts">
+              <span className="connected-app-usd-primary">{primary}</span>
+              <span className="connected-app-usd-secondary">{secondary}</span>
+            </span>
+            <span className="connected-app-usd-label">spent 24h</span>
           </div>
-        </button>
-        <button
-          type="button"
-          className="connected-app-usd"
-          data-currency={currency}
-          tabIndex={ready ? 0 : -1}
-          onClick={() => {
-            playWalletSound('soft')
-            openAppDetails(app)
-          }}
-        >
-          <span className="connected-app-usd-amounts">
-            <span className="connected-app-usd-primary">{primary}</span>
-            <span className="connected-app-usd-secondary">{secondary}</span>
-          </span>
-          <span className="connected-app-usd-label">spent 24h</span>
-        </button>
+        </div>
+        <div className="connected-app-card-actions">
+          <button
+            type="button"
+            className="btn btn-ghost"
+            onClick={() => openAppDetails(app)}
+          >
+            Manage
+          </button>
+          {home ? <AppLaunchMenu url={home} compact /> : null}
+        </div>
       </div>
     </li>
   )
@@ -104,6 +109,7 @@ function AppGridItem({
   const [ready, setReady] = useState(false)
   const name = app.name || appDisplayName(app.origin)
   const money = getAppMoneySummary(app.origin)
+  const home = appHomepage(app.origin)
   const spent24 = money.spent24h
   const primary = formatPrimaryFromSats(spent24, currency, usdPerBsv)
   const secondary = formatSecondaryFromSats(spent24, currency, usdPerBsv)
@@ -112,26 +118,38 @@ function AppGridItem({
     <li className="collection-grid-card" data-ready={ready ? true : undefined}>
       {!ready ? <SkeletonAppCard /> : null}
       <div className={ready ? 'collection-grid-live' : 'media-preload'}>
-        <button
-          type="button"
-          className="collection-grid-main"
-          tabIndex={ready ? 0 : -1}
-          onClick={() => {
-            playWalletSound('soft')
-            openAppDetails(app)
-          }}
-        >
-          <AppAvatar origin={app.origin} name={name} size="md" onReady={() => setReady(true)} />
-          <strong className="collection-grid-name">{name}</strong>
-          <span className="collection-grid-host mono">{app.origin}</span>
-          <span className="connected-app-usd" data-currency={currency}>
+        <div className="collection-grid-main">
+          <div className="connected-app-card-top">
+            <button
+              type="button"
+              className="connected-app-main"
+              tabIndex={ready ? 0 : -1}
+              onClick={() => {
+                playWalletSound('soft')
+                openAppDetails(app)
+              }}
+            >
+              <AppAvatar origin={app.origin} name={name} size="md" onReady={() => setReady(true)} />
+              <span className="connected-app-body">
+                <strong className="collection-grid-name">{name}</strong>
+                <span className="collection-grid-host mono">{app.origin}</span>
+              </span>
+            </button>
+            <span className="connected-app-usd" data-currency={currency}>
             <span className="connected-app-usd-amounts">
               <span className="connected-app-usd-primary">{primary}</span>
               <span className="connected-app-usd-secondary">{secondary}</span>
             </span>
             <span className="connected-app-usd-label">spent 24h</span>
-          </span>
-        </button>
+            </span>
+          </div>
+          <div className="connected-app-card-actions">
+            <button type="button" className="btn btn-ghost" onClick={() => openAppDetails(app)}>
+              Manage
+            </button>
+            {home ? <AppLaunchMenu url={home} compact /> : null}
+          </div>
+        </div>
       </div>
     </li>
   )

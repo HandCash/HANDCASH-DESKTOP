@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
-import { LaunchIcon } from './icons'
 import { SkeletonLine } from './Skeleton'
+import { AppLaunchMenu } from './AppLaunchMenu'
 import {
   getItemAccess,
   subscribeConnectedApps,
@@ -177,24 +177,8 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
 
           <AppCatalogPacksPanel origin={app.origin} />
 
-          <div className="actions app-details-actions">
-            {home ? (
-              <button
-                className="btn btn-primary btn-icon"
-                type="button"
-                onClick={() => {
-                  playWalletSound('soft')
-                  if (window.handcash?.openExternal) {
-                    void window.handcash.openExternal(home)
-                  } else {
-                    window.open(home, '_blank', 'noopener,noreferrer')
-                  }
-                }}
-              >
-                <LaunchIcon size={16} />
-                Launch
-              </button>
-            ) : null}
+          <div className="actions app-details-actions wallet-action-bar">
+            {home ? <AppLaunchMenu url={home} /> : null}
             {autoPay?.enabled ? (
               <button
                 className="btn btn-ghost"

@@ -51,6 +51,20 @@ function compactHexFromSig(sig: Signature): string {
   return Utils.toHex([...r, ...s])
 }
 
+/** Sign a bounded, domain-separated server challenge with this wallet identity key. */
+export function signIdentityText(
+  rootKeyHex: string,
+  text: string,
+): { identityKey: string; signature: string } {
+  const value = text.trim()
+  if (!value || value.length > 2048) throw new Error('Invalid identity challenge')
+  const root = PrivateKey.fromHex(rootKeyHex.trim())
+  return {
+    identityKey: root.toPublicKey().toString().toLowerCase(),
+    signature: compactHexFromSig(root.sign(Utils.toArray(value, 'utf8'))),
+  }
+}
+
 export function signMessageboxAuth(args: {
   rootKeyHex: string
   method: MessageboxMethod

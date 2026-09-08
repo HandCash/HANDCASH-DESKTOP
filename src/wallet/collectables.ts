@@ -3014,7 +3014,13 @@ export async function sendCollectable(args: {
       : {}),
   }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
-  setPaymentProgress('preparing', 'Waiting to send the collectable', outpoint)
+  setPaymentProgress(
+    'preparing',
+    'Waiting to send the collectable',
+    outpoint,
+    null,
+    'item_transfer',
+  )
   setCollectableVerifyWalkDeferred(true)
   const spendPriority = leaseSpendPriority('send-collectable')
   const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
@@ -3710,6 +3716,9 @@ export async function sendCollectable(args: {
                 const { enqueuePendingItemRemit } = await import(
                   './pendingItemOutbox'
                 )
+                const { recordTransactionStage } = await import(
+                  './transactionTelemetry'
+                )
                 const friend = listFriends().find(
                   (f) =>
                     f.identityKey.toLowerCase() ===
@@ -3731,12 +3740,26 @@ export async function sendCollectable(args: {
                     `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
                   )
                   if (delivered.delivered !== 'cloud') {
+                    recordTransactionStage('peer_delivery_queued', {
+                      flow: 'item_transfer',
+                      txid,
+                      blockerCode: 'peer_box_unreachable',
+                    })
                     enqueuePendingItemRemit({
                       payeeIdentityKey: settlePath.recipientIdentityKey,
                       senderIdentityKey: wallet.identityKey,
                       txid,
                       itemName: name,
                       messagebox: friend?.messagebox,
+                    })
+                  } else {
+                    recordTransactionStage('peer_delivered', {
+                      flow: 'item_transfer',
+                      txid,
+                    })
+                    recordTransactionStage('completed', {
+                      flow: 'item_transfer',
+                      txid,
                     })
                   }
                 } catch (err) {
@@ -3750,6 +3773,11 @@ export async function sendCollectable(args: {
                     txid,
                     itemName: name,
                     messagebox: friend?.messagebox,
+                  })
+                  recordTransactionStage('peer_delivery_queued', {
+                    flow: 'item_transfer',
+                    txid,
+                    blockerCode: 'peer_delivery_error',
                   })
                 }
               })()

@@ -3,7 +3,7 @@ import { stateToAttr } from '@aeon-ui/core'
 import { AppAvatar } from './AppAvatar'
 import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
-import { LaunchIcon } from './icons'
+import { AppLaunchMenu } from './AppLaunchMenu'
 import type { ConnectedApp } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import {
@@ -127,23 +127,8 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
 
           <AppCatalogPacksPanel origin={app.origin} />
 
-          <div className="actions qr-actions app-details-actions">
-            {home ? (
-              <button
-                className="btn btn-primary btn-icon"
-                type="button"
-                onClick={() => {
-                  if (window.handcash?.openExternal) {
-                    void window.handcash.openExternal(home)
-                  } else {
-                    window.open(home, '_blank', 'noopener,noreferrer')
-                  }
-                }}
-              >
-                <LaunchIcon size={16} />
-                Launch
-              </button>
-            ) : null}
+          <div className="actions qr-actions app-details-actions wallet-action-bar">
+            {home ? <AppLaunchMenu url={home} /> : null}
             {autoPay?.enabled ? (
               <button
                 className="btn btn-ghost"

@@ -88,6 +88,7 @@ import {
 } from './marketListing'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
+import { signIdentityText } from './messageboxAuth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
   isChangeChainingRequiredError,
@@ -311,6 +312,59 @@ async function dispatchWalletMethod(
   const w = wallet as WalletInterface & Record<string, (a?: unknown, o?: string) => Promise<unknown>>
 
   switch (method) {
+    case 'createAdminIdentityProof': {
+      const origin = normalizeOrigin(originator)
+      if (
+        origin !== 'handcash.io' &&
+        origin !== 'brc-cloud.bcryderman.workers.dev' &&
+        origin !== 'localhost' &&
+        origin !== '127.0.0.1'
+      ) {
+        throw new Error('Operations identity proofs are restricted to HandCash')
+      }
+      const request =
+        args && typeof args === 'object' && !Array.isArray(args)
+          ? (args as { challengeId?: unknown; challenge?: unknown })
+          : {}
+      const challengeId =
+        typeof request.challengeId === 'string' ? request.challengeId.trim() : ''
+      const challenge =
+        typeof request.challenge === 'string' ? request.challenge.trim() : ''
+      if (!/^[0-9a-f]{32}$/i.test(challengeId) || !challenge || challenge.length > 2048) {
+        throw new Error('Invalid operations login challenge')
+      }
+      let parsed: {
+        domain?: unknown
+        version?: unknown
+        origin?: unknown
+        issuedAt?: unknown
+        expiresAt?: unknown
+        purpose?: unknown
+      }
+      try {
+        parsed = JSON.parse(challenge) as typeof parsed
+      } catch {
+        throw new Error('Invalid operations login challenge')
+      }
+      const now = Date.now()
+      const challengeOrigin =
+        typeof parsed.origin === 'string' ? normalizeOrigin(parsed.origin) : ''
+      if (
+        parsed.domain !== 'handcash-ops-login' ||
+        parsed.version !== 1 ||
+        challengeOrigin !== origin ||
+        !Number.isSafeInteger(parsed.issuedAt) ||
+        !Number.isSafeInteger(parsed.expiresAt) ||
+        Number(parsed.expiresAt) <= now ||
+        Number(parsed.expiresAt) - Number(parsed.issuedAt) > 5 * 60_000 ||
+        parsed.purpose !== 'Sign in to HandCash transaction operations'
+      ) {
+        throw new Error('Invalid or expired operations login challenge')
+      }
+      const active = getActiveWallet()
+      if (!active?.rootKeyHex) throw new Error('Wallet locked')
+      return signIdentityText(active.rootKeyHex, challenge)
+    }
     case 'getLegacyAddress':
       return getLegacyAddressPayload()
     case 'refreshLegacyAddress':

@@ -4,6 +4,12 @@
  */
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { mapPool } from './asyncPool'
+import {
+  activeTransactionTrace,
+  recordTransactionStage,
+  type TransactionFlow,
+} from './transactionTelemetry'
+import type { ItemTransferAsset } from './messageStore'
 
 const KEY = 'handcash.item.pendingOutbox.v1'
 const MAX_ATTEMPTS = 20
@@ -14,9 +20,15 @@ export type PendingItemRemit = {
   senderIdentityKey: string
   txid: string
   itemName: string
+  itemOrigin?: string
+  itemCollectionId?: string
+  asset?: ItemTransferAsset
   messagebox?: string | null
   createdAt: number
   attempts: number
+  traceId?: string
+  requestId?: string
+  flow?: TransactionFlow
 }
 
 function load(): PendingItemRemit[] {
@@ -41,11 +53,15 @@ export function enqueuePendingItemRemit(
   const txid = row.txid.trim().toLowerCase()
   if (!/^[0-9a-f]{64}$/.test(txid)) return
   const rows = load().filter((r) => r.txid !== txid)
+  const trace = activeTransactionTrace()
   rows.push({
     ...row,
     txid,
     createdAt: row.createdAt ?? Date.now(),
     attempts: row.attempts ?? 0,
+    traceId: row.traceId ?? trace?.traceId,
+    requestId: row.requestId ?? trace?.requestId,
+    flow: row.flow ?? trace?.flow ?? 'item_transfer',
   })
   save(rows)
 }
@@ -84,9 +100,26 @@ export async function flushPendingItemOutbox(args: {
         messagebox: row.messagebox,
         txid: row.txid,
         itemName: row.itemName,
+        itemOrigin: row.itemOrigin,
+        itemCollectionId: row.itemCollectionId,
+        asset: row.asset,
         atomicBeef,
       })
       if (result.delivered === 'cloud') {
+        recordTransactionStage('peer_delivered', {
+          flow: row.flow ?? 'item_transfer',
+          traceId: row.traceId,
+          requestId: row.requestId,
+          retryCount: (row.attempts ?? 0) + 1,
+          queueWaitMs: Date.now() - row.createdAt,
+          txid: row.txid,
+        })
+        recordTransactionStage('completed', {
+          flow: row.flow ?? 'item_transfer',
+          traceId: row.traceId,
+          requestId: row.requestId,
+          txid: row.txid,
+        })
         return { delivered: true as const }
       }
     } catch (err) {

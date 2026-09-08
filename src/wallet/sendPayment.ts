@@ -37,6 +37,7 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
+import { recordTransactionStage } from './transactionTelemetry'
 import { bsvSendMachine } from './bsvSendMachine'
 import {
   beginDualLayerSend,
@@ -66,7 +67,7 @@ export async function sendSatsToAddress(opts: {
   const satoshis = opts.satoshis
   if (!Number.isFinite(satoshis) || satoshis <= 0) throw new Error('Invalid amount')
 
-  setPaymentProgress('preparing', 'Waiting to send')
+  setPaymentProgress('preparing', 'Waiting to send', null, null, 'p2pkh')
   // Pin Activity "Sending…" before heal / createAction so Back still shows it.
   const pending = beginPendingSend({
     to: opts.to,
@@ -356,6 +357,12 @@ export async function sendSatsToAddress(opts: {
       () => setPaymentProgress('preparing', 'Preparing payment'),
     )
   } catch (err) {
+    recordTransactionStage('hard_rejected', {
+      flow: 'p2pkh',
+      blockerCode: isInsufficientFundsError(err)
+        ? 'insufficient_funds'
+        : 'local_send_failed',
+    })
     clearPendingSend(pending.id)
     failOutboundSendPending({
       pendingId: pending.id,

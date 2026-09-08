@@ -100,7 +100,7 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
                 </p>
 
-                <Prompt.Actions className="actions connect-actions">
+                <Prompt.Actions className="actions connect-actions wallet-action-bar">
                   <Prompt.Secondary className="btn btn-ghost" onClick={onDeny}>
                     Deny
                   </Prompt.Secondary>
