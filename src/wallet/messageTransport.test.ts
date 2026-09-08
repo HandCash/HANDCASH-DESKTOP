@@ -11,6 +11,7 @@ import {
   normalizeMessageboxBase,
   notifyPeerBrc29Payment,
   notifyPeerItemIncoming,
+  publicMessageboxBase,
   uploadMessageboxBytes,
   withOptionalBeefB64,
 } from './messageTransport'
@@ -206,6 +207,15 @@ describe('messagebox base URL', () => {
 
   it('preserves a resolved peer messagebox URL', () => {
     expect(normalizeMessageboxBase('https://mb.peer.example/v1/messagebox/')).toBe(
+      'https://mb.peer.example/v1/messagebox',
+    )
+  })
+
+  it('expands the development proxy route for durable market records', () => {
+    expect(publicMessageboxBase('/v1/messagebox')).toBe(
+      'https://brc-cloud.bcryderman.workers.dev/v1/messagebox',
+    )
+    expect(publicMessageboxBase('https://mb.peer.example/v1/messagebox')).toBe(
       'https://mb.peer.example/v1/messagebox',
     )
   })

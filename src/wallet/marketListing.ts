@@ -64,7 +64,7 @@ import {
   chooseMarketCancelPath,
   chooseMarketListingPath,
 } from './marketListingPath'
-import { defaultMessageboxBase } from './messageTransport'
+import { publicMessageboxBase } from './messageTransport'
 
 export const MARKET_PURCHASE_INTENT_PROTOCOL =
   'HandCash-Market-Purchase-Intent-v1'
@@ -1376,7 +1376,7 @@ export async function createMarketListingAdvert(
     provenanceVersion: MARKET_PROVENANCE_VERSION,
     expiresAt,
     nonce,
-    messagebox: args.messagebox?.trim() || defaultMessageboxBase(),
+    messagebox: publicMessageboxBase(args.messagebox),
   })
   const offerKey = PrivateKey.fromHex(active.rootKeyHex)
   const offerLockingScript = encodeMarketOffer(fields, offerKey)

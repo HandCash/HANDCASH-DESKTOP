@@ -14,6 +14,7 @@
 import {
   DEFAULT_BRC_CLOUD_BASE_URL,
   DEFAULT_METANET_HANDLES_BASE_URL,
+  PUBLIC_BRC_CLOUD_ORIGIN,
 } from './walletConfig'
 import {
   freshMessageboxAuthHeaders,
@@ -144,6 +145,20 @@ function normalizeBase(url: string): string {
 /** HandCash convenience box — fallback when a peer has no resolved URL. */
 export function defaultMessageboxBase(): string {
   return `${normalizeBase(DEFAULT_METANET_HANDLES_BASE_URL)}/v1/messagebox`
+}
+
+/**
+ * Externally reachable messagebox URL for durable protocol records.
+ * Development fetches use a same-origin `/v1/messagebox` proxy, but embedding
+ * that relative route in a signed market offer makes `new URL()` fail.
+ */
+export function publicMessageboxBase(raw?: string | null): string {
+  const normalized = normalizeMessageboxBase(raw)
+  if (!normalized.startsWith('/')) return normalized
+  return new URL(normalized, `${PUBLIC_BRC_CLOUD_ORIGIN}/`).href.replace(
+    /\/+$/,
+    '',
+  )
 }
 
 /**

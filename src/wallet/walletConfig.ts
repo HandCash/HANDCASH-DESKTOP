@@ -16,6 +16,10 @@ function purgeDeprecatedCloudKeyState(): void {
   }
 }
 
+/** Canonical externally reachable BRC-CLOUD origin. */
+export const PUBLIC_BRC_CLOUD_ORIGIN =
+  'https://brc-cloud.bcryderman.workers.dev'
+
 /** Public BRC-CLOUD origin (handles, history). Vite dev uses same-origin proxy. */
 export const DEFAULT_BRC_CLOUD_BASE_URL = (() => {
   const fromEnv =
@@ -24,7 +28,7 @@ export const DEFAULT_BRC_CLOUD_BASE_URL = (() => {
     import.meta.env.VITE_BRC_CLOUD_BASE_URL.trim()
   if (fromEnv) return fromEnv
   if (typeof import.meta !== 'undefined' && import.meta.env?.DEV) return ''
-  return 'https://brc-cloud.bcryderman.workers.dev'
+  return PUBLIC_BRC_CLOUD_ORIGIN
 })()
 
 export const DEFAULT_METANET_HANDLES_BASE_URL =
