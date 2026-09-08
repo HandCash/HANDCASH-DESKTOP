@@ -121,33 +121,52 @@ function armStuckWatchdog(): void {
       progress.detail,
     )
     const detail = progress.detail?.trim()
-    void import('./toast')
-      .then(({ toastError }) => {
-        toastError(
-          'Send timed out',
-          detail
-            ? `${detail} — nothing was broadcast. Wait a moment, then try again.`
-            : 'Signing took too long — nothing was broadcast. Wait a moment, then try again.',
-        )
-      })
-      .catch(() => {})
-    clearPaymentProgress()
-    // Activity "Sending…" is durable and was not cleared by the pill alone.
-    void import('./appActivity')
-      .then(({ expireStaleOutboundPending }) => {
-        const n = expireStaleOutboundPending(STUCK_PAYMENT_MS)
-        if (n > 0) {
-          console.warn(`[payment-progress] expired ${n} stuck Sending… Activity row(s)`)
+    void import('./spendGuard')
+      .then(({ abortLiveExclusiveSpend }) => {
+        const aborted = abortLiveExclusiveSpend('Send timed out')
+        if (aborted) {
+          console.warn('[payment-progress] aborted in-flight spend')
+          recordTransactionStage('retry_exhausted', {
+            flow: telemetryFlow,
+            blockerCode: `stuck_${stuckPhase}`,
+          })
+          clearPaymentProgress()
+          return
         }
+        void import('./toast')
+          .then(({ toastError }) => {
+            toastError(
+              'Send timed out',
+              detail
+                ? `${detail} — nothing was broadcast. Wait a moment, then try again.`
+                : 'Signing took too long — nothing was broadcast. Wait a moment, then try again.',
+            )
+          })
+          .catch(() => {})
+        clearPaymentProgress()
+        void import('./appActivity')
+          .then(({ expireStaleOutboundPending }) => {
+            const n = expireStaleOutboundPending(STUCK_PAYMENT_MS)
+            if (n > 0) {
+              console.warn(
+                `[payment-progress] expired ${n} stuck Sending… Activity row(s)`,
+              )
+            }
+          })
+          .catch(() => {})
+        void import('./chainedChangeHeal')
+          .then(({ scheduleHealAfterSendCleanup }) =>
+            scheduleHealAfterSendCleanup(),
+          )
+          .catch(() => {})
+        recordTransactionStage('retry_exhausted', {
+          flow: telemetryFlow,
+          blockerCode: `stuck_${stuckPhase}`,
+        })
       })
-      .catch(() => {})
-    void import('./chainedChangeHeal')
-      .then(({ scheduleHealAfterSendCleanup }) => scheduleHealAfterSendCleanup())
-      .catch(() => {})
-    recordTransactionStage('retry_exhausted', {
-      flow: telemetryFlow,
-      blockerCode: `stuck_${stuckPhase}`,
-    })
+      .catch(() => {
+        clearPaymentProgress()
+      })
   }, STUCK_PAYMENT_MS)
 }
 

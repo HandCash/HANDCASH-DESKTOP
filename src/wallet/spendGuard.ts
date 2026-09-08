@@ -21,6 +21,18 @@ let spendChainPromoted = false
 /** True when the active spend must use local state without recovery/status calls. */
 let spendRecoveryDisabled = false
 
+let liveSpendAbort: AbortController | null = null
+
+/** Light promote must not sit on explorer tours in front of an item send. */
+const LIGHT_PROMOTE_MS = 12_000
+
+/** Abort the in-flight exclusive spend (lease / promote / createAction wait). */
+export function abortLiveExclusiveSpend(reason = 'Send timed out'): boolean {
+  if (!liveSpendAbort || liveSpendAbort.signal.aborted) return false
+  liveSpendAbort.abort(reason)
+  return true
+}
+
 export type SpendPromoteMode = 'full' | 'light'
 
 /**
@@ -71,7 +83,37 @@ export function isChangeChainingRequiredError(
  */
 async function promoteSpendableChange(
   mode: SpendPromoteMode = 'full',
+  signal?: AbortSignal,
 ): Promise<number> {
+  const run = () => promoteSpendableChangeBody(mode, signal)
+  if (mode !== 'light') return run()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      run(),
+      new Promise<never>((_, reject) => {
+        const fail = () =>
+          reject(new Error(signal?.aborted ? 'Send timed out' : 'Spend prepare timed out'))
+        timer = setTimeout(fail, LIGHT_PROMOTE_MS)
+        signal?.addEventListener('abort', fail, { once: true })
+      }),
+    ])
+  } catch (err) {
+    logDiag('spend-guard', 'warn', 'promote-skipped', {
+      error: err instanceof Error ? err.message : String(err),
+      mode,
+    })
+    return 0
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
+async function promoteSpendableChangeBody(
+  mode: SpendPromoteMode,
+  signal?: AbortSignal,
+): Promise<number> {
+  if (signal?.aborted) throw new Error('Send timed out')
   let restored = 0
   let localHealed = 0
   try {
@@ -119,17 +161,36 @@ export function runExclusiveSpend<T>(
   opts?: { promote?: SpendPromoteMode | false },
 ): Promise<T> {
   const promote = opts?.promote ?? 'full'
-  return runExclusiveSpendCoordinated(async () => {
-    if (promote !== false) await promoteSpendableChange(promote)
-    spendChainPromoted = true
-    spendRecoveryDisabled = promote === false
-    try {
-      return await fn()
-    } finally {
-      spendChainPromoted = false
-      spendRecoveryDisabled = false
-    }
-  }, acquireSpendLease, onSpendRegion)
+  const abort = new AbortController()
+  liveSpendAbort = abort
+  const throwIfAborted = () => {
+    if (!abort.signal.aborted) return
+    const reason = abort.signal.reason
+    throw new Error(
+      typeof reason === 'string' && reason.trim()
+        ? reason
+        : 'Send timed out',
+    )
+  }
+  return runExclusiveSpendCoordinated(
+    async () => {
+      throwIfAborted()
+      if (promote !== false) await promoteSpendableChange(promote, abort.signal)
+      throwIfAborted()
+      spendChainPromoted = true
+      spendRecoveryDisabled = promote === false
+      try {
+        return await fn()
+      } finally {
+        spendChainPromoted = false
+        spendRecoveryDisabled = false
+      }
+    },
+    () => acquireSpendLease(abort.signal),
+    onSpendRegion,
+  ).finally(() => {
+    if (liveSpendAbort === abort) liveSpendAbort = null
+  })
 }
 
 /**

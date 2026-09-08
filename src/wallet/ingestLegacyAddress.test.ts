@@ -237,18 +237,11 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
     expect(result.scan.utxos).toEqual([])
   })
 
-  it('still scans when fundingOnly even if a send is waiting', async () => {
+  it('skips the address scan when a send is waiting, even in fundingOnly', async () => {
     mockShouldYield.mockReturnValue(true)
-    mockScanLegacyAddress.mockResolvedValue({
-      address: 'addr',
-      chain: 'main' as const,
-      sats: 0,
-      utxos: [],
-      source: 'whatsonchain' as const,
-    })
     const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
     await ingestLegacyAddressUtxos({ active, fundingOnly: true })
-    expect(mockScanLegacyAddress).toHaveBeenCalledTimes(1)
+    expect(mockScanLegacyAddress).not.toHaveBeenCalled()
   })
 
   it('leaves the mark alone when the sweep tx does exist', async () => {

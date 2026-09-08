@@ -24,6 +24,10 @@ import {
 } from '../wallet/verificationProgress'
 import { getGenesisFailure, getProvenVerdict } from '../wallet/provenCache'
 import {
+  collectableSendReadyMessage,
+  inspectCollectableSendReady,
+} from '../wallet/collectableSendReady'
+import {
   isOutpointSending, inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
@@ -241,6 +245,15 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const isModel = isCollectableModel({ mimeType: item.mimeType, url: item.imageUrl })
   const inFlight = inFlightVerb(item.outpoint)
   const burning = sending && /^burn/i.test(inFlight ?? '')
+  const sendReady = inspectCollectableSendReady({
+    outpoint: item.outpoint,
+    proven: item.proven,
+    verifying: isOutpointVerifying(item.outpoint, verification),
+  })
+  const sendBlocked = !sendReady.ready
+  const sendTitle = sendBlocked
+    ? collectableSendReadyMessage(sendReady.reason)
+    : 'Send item'
   const detailRows: CollectableTrait[] = [
     ...(item.app ? [{ name: 'App', value: item.app }] : []),
     ...(item.type ? [{ name: 'Type', value: item.type }] : []),
@@ -250,7 +263,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   ]
 
   const startSend = () => {
-    if (sending || item.covenantLocked) return
+    if (sending || item.covenantLocked || sendBlocked) return
     playWalletSound('soft')
     openSendCollectable(item.outpoint)
   }
@@ -383,7 +396,8 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 type="button"
                 className="btn btn-primary btn-icon"
                 onClick={startSend}
-                disabled={sending}
+                disabled={sending || sendBlocked}
+                title={sendTitle}
                 aria-busy={sending && !burning ? true : undefined}
               >
                 <SendIcon size={14} />

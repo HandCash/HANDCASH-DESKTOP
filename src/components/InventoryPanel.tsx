@@ -57,6 +57,10 @@ import {
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
 import { getMarketListingAuthorization } from '../wallet/marketListing'
+import {
+  collectableSendReadyMessage,
+  inspectCollectableSendReady,
+} from '../wallet/collectableSendReady'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
@@ -73,6 +77,29 @@ function listedMarkLabel(priceSats: number): string {
   return `Listed · ${formatPrimaryFromSats(priceSats, displayCurrency, usdPerBsv)}`
 }
 
+function collectableSendUi(
+  item: Collectable,
+  verifying: boolean,
+  sending: boolean,
+): { disabled: boolean; title: string } {
+  const ready = inspectCollectableSendReady({
+    outpoint: item.outpoint,
+    proven: item.proven,
+    verifying,
+  })
+  if (!ready.ready) {
+    return {
+      disabled: true,
+      title: collectableSendReadyMessage(ready.reason),
+    }
+  }
+  const verb = inFlightVerb(item.outpoint) ?? 'Sending'
+  return {
+    disabled: sending,
+    title: sending ? `${verb} ${item.name}` : `Send ${item.name}`,
+  }
+}
+
 function CollectableGridItem({
   item,
   verifying,
@@ -84,6 +111,7 @@ function CollectableGridItem({
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   const listPrice = liveMarketListingPrice(item.outpoint)
+  const sendUi = collectableSendUi(item, verifying, sending)
   return (
     <li
       className="collection-grid-card collectable-card"
@@ -132,11 +160,12 @@ function CollectableGridItem({
       <button
         type="button"
         className="collectable-send-btn"
-        title={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
-        aria-label={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
-        disabled={sending}
+        title={sendUi.title}
+        aria-label={sendUi.title}
+        disabled={sendUi.disabled}
         onClick={(e) => {
           e.stopPropagation()
+          if (sendUi.disabled) return
           playWalletSound('soft')
           openSendCollectable(item.outpoint)
         }}
@@ -159,6 +188,7 @@ function CollectableListItem({
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   const listPrice = liveMarketListingPrice(item.outpoint)
+  const sendUi = collectableSendUi(item, verifying, sending)
   return (
     <li
       className="connected-app-row collectable-row"
@@ -205,10 +235,11 @@ function CollectableListItem({
       <button
         type="button"
         className="collectable-send-btn collectable-send-btn--row"
-        title={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
-        aria-label={sending ? `${verb} ${item.name}` : `Send ${item.name}`}
-        disabled={sending}
+        title={sendUi.title}
+        aria-label={sendUi.title}
+        disabled={sendUi.disabled}
         onClick={() => {
+          if (sendUi.disabled) return
           playWalletSound('soft')
           openSendCollectable(item.outpoint)
         }}

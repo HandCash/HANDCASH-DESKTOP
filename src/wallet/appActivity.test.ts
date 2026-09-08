@@ -537,6 +537,26 @@ describe('inbound receive activity', () => {
     expect(activityEntryTitle(row)).toBe('Send failed')
   })
 
+  it('keeps Sending… while a spend is still in flight', async () => {
+    const { leaseSpendPriority, resetWalletCoordinatorForTests } = await import(
+      './walletCoordinator'
+    )
+    resetWalletCoordinatorForTests()
+    const hold = leaseSpendPriority('send-collectable')
+    noteOutboundSendPending({
+      pendingId: 'still-running',
+      sats: 1,
+      to: '1abc',
+      item: { name: 'Fox', origin: `${TX}_0`, outpoint: `${TX}.0` },
+    })
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(0)
+    expect(isPendingActivity(listRecentActivity(10)[0]!)).toBe(true)
+    hold.release()
+    expect(expireStaleOutboundPending(90_000, Date.now() + 91_000)).toBe(1)
+    expect(isFailedActivity(listRecentActivity(10)[0]!)).toBe(true)
+    resetWalletCoordinatorForTests()
+  })
+
   it('labels failed market listings separately from sends', () => {
     recordWalletEvent({
       method: 'market-list',

@@ -349,9 +349,10 @@ const COLLECTABLE_SEND_PATH = `stateDiagram-v2
   tipKind --> p2pkh : P2PKH
   tipKind --> unknown : empty / other
   covenantLocked --> refuse : abandon only
-  p2pkh --> p2pkhSend
-  unknown --> p2pkhSend : BRC-150 proven
-  unknown --> refuse : unproven
+  p2pkh --> p2pkhSend : BRC-150 verified, not known-unconfirmed
+  p2pkh --> refuse : verifying / unproven / unconfirmed
+  unknown --> p2pkhSend : BRC-150 verified, not known-unconfirmed
+  unknown --> refuse : else
 `
 
 const AUTHENTICITY = `stateDiagram-v2
@@ -1083,7 +1084,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
     id: 'sendPath',
     label: 'Send path',
     caption:
-      'chooseSendPath — TipKind → p2pkhSend | refuse (150-proven unknown ok)',
+      'chooseSendPath — stored BRC-150 + confirmed → p2pkhSend | refuse',
     source: COLLECTABLE_SEND_PATH,
   },
   {

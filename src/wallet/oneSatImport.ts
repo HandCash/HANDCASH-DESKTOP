@@ -64,6 +64,7 @@ import {
   collectableKeySet,
   collectableLatchHolds,
 } from './oneSatCollectableGuard'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 export type MigrationItem = {
   /** Transfer outpoint on the Desktop destination tx: `txid.vout` */
@@ -1211,7 +1212,7 @@ export async function classifyLegacyUtxos(
     if (sweepPath.path === 'hold' && sweepPath.reason === 'oneSat') {
       // A send never spends a tip, so it does not need one identified. Hold it
       // and move on rather than paying for an indexer walk mid-payment.
-      if (opts.fundingOnly) {
+      if (opts.fundingOnly || shouldYieldChainIngestToSpend()) {
         heldOneSats.push(u)
         continue
       }

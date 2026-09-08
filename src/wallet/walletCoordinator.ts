@@ -197,15 +197,22 @@ export function isRecomposeCoordinatorActive(): boolean {
   return context().recomposeDepth > 0
 }
 
-function waitFor(predicate: () => boolean): Promise<void> {
+function waitFor(predicate: () => boolean, maxWaitMs?: number): Promise<void> {
   if (predicate()) return Promise.resolve()
   return new Promise((resolve) => {
+    let settled = false
+    const finish = (): void => {
+      if (settled) return
+      settled = true
+      sub.unsubscribe()
+      if (timer != null) clearTimeout(timer)
+      resolve()
+    }
     const sub = actor.subscribe(() => {
-      if (predicate()) {
-        sub.unsubscribe()
-        resolve()
-      }
+      if (predicate()) finish()
     })
+    const timer =
+      maxWaitMs != null ? setTimeout(finish, Math.max(0, maxWaitMs)) : null
   })
 }
 
@@ -240,10 +247,11 @@ async function acquire(
   const started = Date.now()
   let loggedWait = false
   while (true) {
-    if (options?.maxWaitMs != null && Date.now() - started > options.maxWaitMs) {
+    const waited = Date.now() - started
+    if (options?.maxWaitMs != null && waited > options.maxWaitMs) {
       throw new WalletCoordinatorAcquireTimeoutError(
         event.type,
-        Date.now() - started,
+        waited,
         describeWalletCoordinator().summary,
       )
     }
@@ -251,13 +259,24 @@ async function acquire(
     actor.send(event)
     const after = JSON.stringify(context())
     if (before !== after) break
-    if (!loggedWait && Date.now() - started > 5_000) {
+    if (!loggedWait && waited > 5_000) {
       loggedWait = true
       console.info(
         `[coordinator] waiting to acquire ${event.type} — ${describeWalletCoordinator().summary}`,
       )
     }
-    await waitFor(canBegin)
+    const remaining =
+      options?.maxWaitMs != null
+        ? options.maxWaitMs - (Date.now() - started)
+        : undefined
+    if (remaining != null && remaining <= 0) {
+      throw new WalletCoordinatorAcquireTimeoutError(
+        event.type,
+        Date.now() - started,
+        describeWalletCoordinator().summary,
+      )
+    }
+    await waitFor(canBegin, remaining)
   }
   return () => {
     actor.send(endEvent)

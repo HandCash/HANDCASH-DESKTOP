@@ -49,9 +49,15 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
     () => !compact && getSideScanOpen(),
   )
 
-  const sideBusy =
-    !compact && (pendingPrompt != null || paymentProgress.phase !== 'idle')
   const sideApproval = !compact && pendingPrompt != null
+  // Native item/BSV sends keep Your activity visible so Sending… stays in the
+  // feed. The Working overlay is only for BRC-100 permission processing.
+  const permissionWorking =
+    !compact &&
+    pendingPrompt == null &&
+    lastApproved != null &&
+    paymentProgress.phase !== 'idle'
+  const sideBusy = sideApproval || permissionWorking
 
   useEffect(() => {
     if (compact) return
@@ -64,6 +70,9 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
   useEffect(() => {
     if (pendingPrompt) setLastApproved(null)
   }, [pendingPrompt?.id])
+  useEffect(() => {
+    if (paymentProgress.phase === 'idle') setLastApproved(null)
+  }, [paymentProgress.phase])
   useEffect(() => {
     if (!sideBusy || !sideRef.current) return
     sideRef.current.scrollIntoView({ block: 'nearest', behavior: 'smooth' })
