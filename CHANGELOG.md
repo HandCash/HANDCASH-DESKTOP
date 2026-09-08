@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.3.114] - 2026-09-08
+
+### Fixed
+
+- **Item send 404 / payee never ingested** — `noSend` collectable rows stay `unsent` after Arcade accepts the BEEF. Heal treated that as a ghost, unsealed the inputs, and explorers 404'd the txid so the recipient's SPV fetch had nothing to internalize. Arcade-pinned sends stay sealed and are promoted to `unproven`.
+- Bound market seller settlement wait; connected-app rows stay inline with reserved progress space and a consistent spend color.
+
+### Changed
+
+- Arcade is the sole postBeef broadcaster.
+- Standard box for the apps icon.
+
 ## [1.3.113] - 2026-09-08
 
 ### Fixed
