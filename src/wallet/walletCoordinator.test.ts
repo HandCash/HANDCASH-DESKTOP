@@ -314,4 +314,32 @@ describe('walletCoordinator runtime', () => {
     expect(order.filter((x) => x === 'history')).toHaveLength(0)
     expect(order.filter((x) => x === 'spend')).toHaveLength(1)
   })
+
+  it('times out spend acquire while chain ingest is held', async () => {
+    vi.useFakeTimers()
+    try {
+      let releaseChain!: () => void
+      const chainHold = new Promise<void>((resolve) => {
+        releaseChain = resolve
+      })
+      const chain = runChainIngest(async () => {
+        await chainHold
+      })
+      await Promise.resolve()
+
+      const spend = runExclusiveSpend(
+        async () => 'tx',
+        async () => async () => undefined,
+      )
+      const timedOut = expect(spend).rejects.toMatchObject({
+        name: 'WalletCoordinatorAcquireTimeoutError',
+      })
+      await vi.advanceTimersByTimeAsync(46_000)
+      await timedOut
+      releaseChain()
+      await chain
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

@@ -172,6 +172,10 @@ function write(txid: string, beef: Beef): void {
   cache.set(keyOf(txid), { at: Date.now(), binary: beef.toBinary() })
 }
 
+export function peekSessionBeef(txid: string): Beef | null {
+  return read(txid) ?? readDurableBeef(txid)
+}
+
 /** Remember a BEEF that was already fetched or built elsewhere in this send. */
 export function rememberBeef(txid: string, beef: Beef): void {
   if (!txid || !beef.findTxid(keyOf(txid))?.tx) return

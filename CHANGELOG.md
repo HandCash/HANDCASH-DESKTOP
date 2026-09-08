@@ -1,5 +1,53 @@
 # Changelog
 
+## [1.3.116] - 2026-09-08
+
+### Fixed
+
+- **Item send stays Not found after Arcade ACK** — 1.3.114 posted BEEF only to Arcade. Explorers 404, and the payee SPV-fetches because large fox proofs do not fit in the inbox. Arcade stays first; Bitails / WhatsOnChain / GorillaPool postBeef again so the tx is findable.
+
+## [1.3.115] - 2026-09-08
+
+### Fixed
+
+- **Item send sat 30s in Preparing** — light prepare no longer walks explorers or restores the 800-item UTXO set before `createAction`. Pending change is promoted locally; leftover action-batch abort is capped at 1.5s.
+
+### Changed
+
+- Invert desktop approval dock; normalize app amount container.
+
+## [1.3.114] - 2026-09-08
+
+### Fixed
+
+- **Item send 404 / payee never ingested** — `noSend` collectable rows stay `unsent` after Arcade accepts the BEEF. Heal treated that as a ghost, unsealed the inputs, and explorers 404'd the txid so the recipient's SPV fetch had nothing to internalize. Arcade-pinned sends stay sealed and are promoted to `unproven`.
+- Bound market seller settlement wait; connected-app rows stay inline with reserved progress space and a consistent spend color.
+
+### Changed
+
+- Arcade is the sole postBeef broadcaster.
+- Standard box for the apps icon.
+
+## [1.3.113] - 2026-09-08
+
+### Fixed
+
+- **Verified collectables can send** — BRC-150 Verified is enough to enable Send. Missing remittance BEEF (omitted when over budget) is not treated as unconfirmed, so 700+ foxes no longer all have gray Sends.
+- **Sending vanished from Activity** — the 90s watchdog marked Send timed out while the spend was still hung on a backup-host lease / change heal. Sending stays in the feed while spend priority is held; hung exclusive spends abort instead of becoming a zombie.
+- **Incoming funds approval** — persist and settle app wallet requests deterministically; broadcast accepted ingests through Arcade.
+- **Transaction status latency** — durable observability for in-flight payments; remove false wait-on-status stalls.
+
+### Changed
+
+- Wallet decisions live in the action dock; app and asset cards share one layout; AutoPay utilization shows on app cards.
+- Official OS application icon.
+
+## [1.3.112] - 2026-09-08
+
+### Changed
+
+- Patch release (every push must ship a new version).
+
 ## [1.3.111] - 2026-09-07
 
 ### Fixed

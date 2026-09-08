@@ -10,6 +10,10 @@
  * tip->origin proof); there is no on-chain latch companion.
  */
 import { Beef } from '@bsv/sdk'
+import {
+  collectableSendReadyMessage,
+  type CollectableSendReady,
+} from './collectableSendReady'
 
 export type TipKind =
   | { kind: 'covenantLocked'; lockingScript: string }
@@ -141,6 +145,11 @@ export type ChooseSendPathArgs = {
    * scriptOffset bug.
    */
   provenTier?: ProvenTier | null
+  /**
+   * Local send readiness (BRC-150 verdict + not known-unconfirmed). When omitted,
+   * script classification still decides; send UI always passes this.
+   */
+  sendReady?: CollectableSendReady
   /** @deprecated Ignored — hardened genesis/resend removed. */
   recipientIdentityKey?: string | null
   /** @deprecated Ignored — hardened genesis/resend removed. */
@@ -153,8 +162,8 @@ function isAuthenticityProven(tier: ProvenTier | null | undefined): boolean {
 
 /**
  * Exhaustive send-path choice. Covenant tips never send.
- * Spendable P2PKH → p2pkhSend. Unknown + BRC-150 proven → p2pkhSend (missing
- * script). Unknown without proof refuses.
+ * BRC-150 verified (not known-unconfirmed) → p2pkhSend. Unknown without proof
+ * refuses. Send does not re-walk hops. Missing remittance BEEF is not unconfirmed.
  */
 export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
   if (args.tipKind.kind === 'covenantLocked') {
@@ -162,6 +171,13 @@ export function chooseSendPath(args: ChooseSendPathArgs): SendPath {
       path: 'refuse',
       reason:
         'This collectable is covenant-locked and can no longer be sent. Abandon it to remove it from inventory.',
+    }
+  }
+
+  if (args.sendReady && args.sendReady.ready === false) {
+    return {
+      path: 'refuse',
+      reason: collectableSendReadyMessage(args.sendReady.reason),
     }
   }
 

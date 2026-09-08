@@ -5,10 +5,6 @@ const mocks = vi.hoisted(() => {
   return {
   collectActivityTxids: vi.fn(),
   recordWalletEvent: vi.fn(),
-  getAppLogs: vi.fn(() => [] as { at: number; level: string; message: string }[]),
-  getPreviousSessionLogs: vi.fn(
-    () => [] as { at: number; level: string; message: string }[],
-  ),
   runChangeHeal: vi.fn(),
   snapshotWalletBalance: vi.fn(),
   txExistsOnChain: vi.fn(),
@@ -22,7 +18,8 @@ const mocks = vi.hoisted(() => {
   }),
   failUnsentLocalTx: vi.fn(async () => false),
   restoreOnChainLocalTx: vi.fn(async () => false),
-  listFailedLocalTxids: vi.fn(async () => []),
+  listFailedLocalTxids: vi.fn(async () => [] as string[]),
+  listPendingLocalChangeTxids: vi.fn(async () => [] as string[]),
   clearDurableStore: () => {
     for (const key of Object.keys(durableStore)) delete durableStore[key]
   },
@@ -33,11 +30,6 @@ vi.mock('./appActivity', () => ({
   recordWalletEvent: mocks.recordWalletEvent,
   UTXO_HEAL_METHOD: 'utxo-heal',
   WALLET_ACTIVITY_ORIGIN: 'wallet',
-}))
-
-vi.mock('./appLog', () => ({
-  getAppLogs: mocks.getAppLogs,
-  getPreviousSessionLogs: mocks.getPreviousSessionLogs,
 }))
 
 vi.mock('./chainedChangeHeal', () => ({
@@ -64,7 +56,8 @@ vi.mock('./spendAttempt', () => ({
 
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
-  listPendingLocalChangeTxids: vi.fn(async () => []),
+  listPendingLocalChangeTxids: (...args: unknown[]) =>
+    mocks.listPendingLocalChangeTxids(...args),
   listFailedLocalTxids: (...args: unknown[]) =>
     mocks.listFailedLocalTxids(...args),
   failUnsentLocalTx: (...args: unknown[]) => mocks.failUnsentLocalTx(...args),
@@ -183,6 +176,24 @@ describe('healUtxoFromActivityHistory', () => {
     const saved = mocks.durableSetItem.mock.calls.at(-1)?.[1] as string
     expect(saved).toContain(other)
     expect(saved).toContain(TX)
+    expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalledWith(other)
+  })
+
+  it('does not restack change-heal scans when pending change is already 0', async () => {
+    mocks.snapshotWalletBalance.mockReset()
+    mocks.snapshotWalletBalance.mockResolvedValue({
+      spendable: 100,
+      pendingChange: 0,
+      displayed: 100,
+    })
+
+    await runUtxoHealPass({ source: 'auto' })
+
+    const paths = mocks.runChangeHeal.mock.calls.map(
+      (call) => (call[0] as { path?: string })?.path,
+    )
+    expect(paths).toEqual(['spendGate'])
   })
 
   it('keeps local change when explorers have not seen a just-submitted tx', async () => {
@@ -209,6 +220,7 @@ describe('healUtxoFromActivityHistory', () => {
 
   it('restores a ghost-failed local tx once explorers see it on chain', async () => {
     mocks.txExistsOnChain.mockResolvedValue(true)
+    mocks.listFailedLocalTxids.mockResolvedValue([TX])
     mocks.getActiveWallet.mockReturnValue({
       chain: 'main',
       wallet: {

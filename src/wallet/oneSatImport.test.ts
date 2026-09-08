@@ -135,6 +135,28 @@ describe('classifyLegacyUtxos', () => {
     vi.unstubAllGlobals()
   })
 
+  it('holds unnamed 1-sats without probing when a send is waiting', async () => {
+    const fetchMock = vi.fn(async () => new Response('null', { status: 404 }))
+    vi.stubGlobal('fetch', fetchMock)
+    const coord = await import('./walletCoordinator')
+    const spy = vi
+      .spyOn(coord, 'shouldYieldChainIngestToSpend')
+      .mockReturnValue(true)
+    try {
+      const result = await classifyLegacyUtxos(
+        [utxo(`${TXID_A}.0`, 1), utxo(`${TXID_A}.1`, 50_000)],
+        'main',
+      )
+      expect(fetchMock).not.toHaveBeenCalled()
+      expect(result.heldOneSats.map((u) => u.outpoint)).toEqual([`${TXID_A}.0`])
+      expect(result.funding.map((u) => u.outpoint)).toEqual([`${TXID_A}.1`])
+      expect(result.pendingTips).toEqual([])
+    } finally {
+      spy.mockRestore()
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('holds a 2-sat companion as uneconomical — never funding', async () => {
     const TXID_E = 'e'.repeat(64)
     const result = await classifyLegacyUtxos([utxo(`${TXID_E}.1`, 2)], 'main')

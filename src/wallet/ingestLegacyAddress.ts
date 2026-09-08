@@ -82,6 +82,8 @@ export type LegacyAddressIngestOptions = {
   /**
    * Sweep funding only — no ordinal identification, no item internalization.
    * Used when Refresh yields to an in-flight spend (fundingOnly / yield path).
+   * A waiting send still skips the address scan itself — that scan holds
+   * chainIngest and is what blocked NFT send on a dead explorer tour.
    */
   fundingOnly?: boolean
 }
@@ -348,8 +350,10 @@ export async function ingestLegacyAddressUtxos(
   if (!active) throw new Error('Wallet locked')
 
   const fundingOnly = opts.fundingOnly === true
-  // A send is queued — don't start a 7s address scan the FIFO is waiting on.
-  if (!fundingOnly && shouldYieldChainIngestToSpend()) {
+  // A send is queued — don't start a 7s address scan the spend region is
+  // waiting on. fundingOnly used to keep scanning "for coins" and that is
+  // exactly how NFT send sat on Preparing until the 90s watchdog (hc-ad7afbfaae0d01fffcb3).
+  if (shouldYieldChainIngestToSpend()) {
     return emptyIngest({
       address: active.address,
       chain: active.chain,

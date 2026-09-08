@@ -162,12 +162,26 @@ describe('chooseSendPath', () => {
     ).toEqual({ path: 'p2pkhSend' })
   })
 
-  it('still refuses covenant even when BRC-150 is proven', () => {
+  it('refuses when stored proof is missing or the tip is unconfirmed', () => {
     expect(
       chooseSendPath({
-        tipKind: classifyTipKind(COVENANT),
+        tipKind: classifyTipKind(P2PKH_HEX),
         provenTier: 'brc150',
-      }).path,
-    ).toBe('refuse')
+        sendReady: { ready: false, reason: 'unconfirmed' },
+      }),
+    ).toMatchObject({
+      path: 'refuse',
+      reason: expect.stringMatching(/not confirmed/i),
+    })
+    expect(
+      chooseSendPath({
+        tipKind: classifyTipKind(P2PKH_HEX),
+        provenTier: 'unproven',
+        sendReady: { ready: false, reason: 'unproven' },
+      }),
+    ).toMatchObject({
+      path: 'refuse',
+      reason: expect.stringMatching(/verified/i),
+    })
   })
 })

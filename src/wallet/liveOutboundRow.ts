@@ -74,7 +74,7 @@ export function liveOutboundActivityEntry(
     sats: 0,
     at: now,
     method: outpoint ? 'send-collectable' : 'send',
-    note: progress.detail || 'Sending…',
+    note: 'Sending…',
     status: 'pending',
     pendingId: LIVE_OUTBOUND_ID,
     ...(item ? { item } : {}),

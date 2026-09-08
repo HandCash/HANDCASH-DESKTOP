@@ -58,6 +58,7 @@ import {
   setVerificationProgress,
   settleStaleAwaitingVerification,
   takePreferredCollectableVerification,
+  isOutpointVerifying,
 } from './verificationProgress'
 import { announceItemVerified, announceItemsReceived } from './itemArrivalToast'
 import { playWalletSound } from './soundService'
@@ -78,8 +79,8 @@ import {
   rememberProvenanceRemittance,
   rememberProvenLineage,
   REMITTANCE_MAX_BEEF_BYTES,
-  resolveProvenanceForCollectableSend,
   verifyProvenanceForHeldTip,
+  type ProvenanceRemittance,
 } from './oneSatProvenance'
 import {
   authenticityResultToVerdict,
@@ -103,6 +104,11 @@ import {
   normalizeLockingScriptHex,
   resolveTipLockingScriptHex,
 } from './collectableTipKind'
+import {
+  collectableSendReadyMessage,
+  inspectCollectableSendReady,
+  storedCollectableInputBeef,
+} from './collectableSendReady'
 import { collectableSendMachine } from './collectableSendMachine'
 import {
   maySenderBroadcast,
@@ -933,19 +939,32 @@ function refreshLiveOneSatKeys(wallet: ActiveWallet): void {
 }
 
 /** Await a fresh address UTXO set (send path — missing-inputs is worse than waiting). */
+function cachedLiveOutpoints(
+  allowStale: boolean,
+): { oneSats: Set<string>; all: Set<string> } | null {
+  if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
+  if (
+    !allowStale &&
+    Date.now() - cachedLiveOneSats.at >= LIVE_ONE_SAT_TTL_MS
+  ) {
+    return null
+  }
+  return {
+    oneSats: cachedLiveOneSats.keys,
+    all: cachedLiveAllOutpoints.keys,
+  }
+}
+
 async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
   oneSats: Set<string>
   all: Set<string>
 } | null> {
-  if (
-    cachedLiveOneSats != null &&
-    cachedLiveAllOutpoints != null &&
-    Date.now() - cachedLiveOneSats.at < LIVE_ONE_SAT_TTL_MS
-  ) {
-    return {
-      oneSats: cachedLiveOneSats.keys,
-      all: cachedLiveAllOutpoints.keys,
-    }
+  const fresh = cachedLiveOutpoints(false)
+  if (fresh) return fresh
+  // NFT send already holds spend priority. A dead explorer tour (No services /
+  // Failed to fetch) used to sit here until the 90s payment watchdog.
+  if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) {
+    return cachedLiveOutpoints(true)
   }
   try {
     const scan = await scanLegacyAddress(wallet)
@@ -957,11 +976,7 @@ async function awaitLiveOutpoints(wallet: ActiveWallet): Promise<{
     }
   } catch (err) {
     console.warn('[collectables] live UTXO await failed', err)
-    if (!cachedLiveOneSats || !cachedLiveAllOutpoints) return null
-    return {
-      oneSats: cachedLiveOneSats.keys,
-      all: cachedLiveAllOutpoints.keys,
-    }
+    return cachedLiveOutpoints(true)
   }
 }
 
@@ -3013,6 +3028,16 @@ export async function sendCollectable(args: {
       ? { app: args.app ?? cachedEarly?.app }
       : {}),
   }
+  const sendReady = inspectCollectableSendReady({
+    outpoint,
+    proven:
+      cachedEarly?.proven === true ||
+      getProvenVerdict(outpoint)?.tier === 'brc150',
+    verifying: isOutpointVerifying(outpoint),
+  })
+  if (!sendReady.ready) {
+    throw new Error(collectableSendReadyMessage(sendReady.reason))
+  }
   // Before the spend FIFO — pill + inventory badge while waiting on sync.
   setPaymentProgress(
     'preparing',
@@ -3050,7 +3075,7 @@ export async function sendCollectable(args: {
             const { abortReservedActionBatches } = await import(
               './actionReview'
             )
-            await abortReservedActionBatches(wallet)
+            await abortReservedActionBatches(wallet, { budgetMs: 1500 })
           }
           // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
           // createAction fails closed if they aren't. Do not await balance() here
@@ -3225,7 +3250,11 @@ export async function sendCollectable(args: {
               : []),
           ])
 
-          const tipBeefPromise = buildInputBeefForSpends(wallet, [outpoint])
+          const tipBeefPromise = (async () => {
+            const stored = storedCollectableInputBeef(outpoint)
+            if (stored?.length) return stored
+            return buildInputBeefForSpends(wallet, [outpoint])
+          })()
           const liveFromCache =
             cachedItem &&
             cachedLiveOneSats != null &&
@@ -3306,6 +3335,7 @@ export async function sendCollectable(args: {
           const sendPath = chooseSendPath({
             tipKind,
             provenTier,
+            sendReady,
           })
 
           const activityItem = {
@@ -3473,32 +3503,13 @@ export async function sendCollectable(args: {
           itemChart.send({ type: 'START', outpoint, settlePath })
 
           const rememberedRemittance = getRememberedProvenanceRemittance(outpoint)
-          let provenance: Awaited<
-            ReturnType<typeof resolveProvenanceForCollectableSend>
-          > | null = null
+          let provenance: ProvenanceRemittance | null = null
           if (
             provenTier === 'brc150' &&
             rememberedRemittance &&
             rememberedRemittance.beefB64
           ) {
             provenance = rememberedRemittance
-          } else {
-            setPaymentProgress(
-              'building',
-              provenTier === 'brc150'
-                ? 'Attaching cached authenticity proof'
-                : 'Preparing authenticity proof',
-              outpoint
-            )
-            provenance = await resolveProvenanceForCollectableSend({
-              tipOutpoint: outpoint,
-              origin,
-              wallet,
-              contentType: item?.mimeType,
-              inputBeef: inputBEEF,
-              priorProvenance: tipCustom.provenance,
-              provenTier,
-            })
           }
           itemChart.send({ type: 'BUILT' })
 
@@ -3739,6 +3750,11 @@ export async function sendCollectable(args: {
                   console.info(
                     `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
                   )
+                  if (!delivered.beefInBox) {
+                    console.info(
+                      `[collectables] peerDeliver omitted AtomicBEEF (box cap) — payee SPV-fetches ${txid.slice(0, 12)}`,
+                    )
+                  }
                   if (delivered.delivered !== 'cloud') {
                     recordTransactionStage('peer_delivery_queued', {
                       flow: 'item_transfer',

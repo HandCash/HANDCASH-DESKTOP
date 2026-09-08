@@ -24,6 +24,15 @@ import {
   openCollectableDetails,
 } from '../wallet/navStore'
 import { parseHandleInput, createHandleResolveDebouncer } from '../wallet/handleResolve'
+import {
+  getVerificationProgress,
+  isOutpointVerifying,
+  subscribeVerificationProgress,
+} from '../wallet/verificationProgress'
+import {
+  collectableSendReadyMessage,
+  inspectCollectableSendReady,
+} from '../wallet/collectableSendReady'
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playPaymentSuccessSound } from '../wallet/paymentSuccessSound'
 import { playWalletSound } from '../wallet/soundService'
@@ -86,9 +95,11 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   const sendingRef = useRef(false)
   const [error, setError] = useState<string | null>(null)
   const [scanningTo, setScanningTo] = useState(false)
+  const [verification, setVerification] = useState(() => getVerificationProgress())
   const handleResolveRef = useRef(createHandleResolveDebouncer())
 
   useEffect(() => subscribeFriends(setFriends), [])
+  useEffect(() => subscribeVerificationProgress(setVerification), [])
   useEffect(() => () => handleResolveRef.current.cancel(), [])
 
   useEffect(() => {
@@ -125,7 +136,18 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const canReview = to.trim().length > 0
+  const sendReady = item
+    ? inspectCollectableSendReady({
+        outpoint: item.outpoint,
+        proven: item.proven,
+        verifying: isOutpointVerifying(item.outpoint, verification),
+      })
+    : { ready: false as const, reason: 'unproven' as const }
+  const sendBlocked = !sendReady.ready
+  const sendBlockMessage = sendBlocked
+    ? collectableSendReadyMessage(sendReady.reason)
+    : null
+  const canReview = to.trim().length > 0 && !sendBlocked
 
   /** Same recipient grammar as BSV send: friend, address, identity key, peerpay URI, $handle. */
   const applyRecipientInput = (value: string) => {
@@ -205,7 +227,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
    * surfaces that outlive this panel.
    */
   const confirmSend = () => {
-    if (!item || sendingRef.current) return
+    if (!item || sendingRef.current || sendBlocked) return
     sendingRef.current = true
     setError(null)
     const send = {
@@ -284,6 +306,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
             primary: {
               label: 'Confirm',
               onClick: confirmSend,
+              disabled: sendBlocked,
               icon: <CheckIcon size={18} />,
               tone: 'primary',
             },
@@ -402,6 +425,11 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
                 {error && stage === 'edit' ? (
                   <p className="error" role="status">
                     {error}
+                  </p>
+                ) : null}
+                {sendBlockMessage ? (
+                  <p className="error" role="status">
+                    {sendBlockMessage}
                   </p>
                 ) : null}
                 {showMatches && matches.length > 0 ? (

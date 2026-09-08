@@ -11,6 +11,25 @@ import { getHistoryBackupPrefs, resolveHistoryBackupBaseUrl } from './historyBac
 import { getActiveWallet } from './session'
 
 const LEASE_TTL_MS = 45_000
+/** Backup host fetch cannot sit in front of createAction with no deadline. */
+const LEASE_FETCH_MS = 8_000
+
+function mergeAbortSignals(
+  outer: AbortSignal | undefined,
+  timeoutMs: number,
+): { signal: AbortSignal; cancel: () => void } {
+  const ctrl = new AbortController()
+  const timer = setTimeout(() => ctrl.abort(), timeoutMs)
+  const onOuter = () => ctrl.abort()
+  outer?.addEventListener('abort', onOuter)
+  return {
+    signal: ctrl.signal,
+    cancel: () => {
+      clearTimeout(timer)
+      outer?.removeEventListener('abort', onOuter)
+    },
+  }
+}
 
 export type SpendLease = {
   v: 1
@@ -34,12 +53,22 @@ function localLabel(): string {
   return listDeviceWallets().find((w) => w.isLocal)?.label ?? 'This device'
 }
 
-async function readLease(url: string): Promise<SpendLease | null> {
-  const res = await fetch(url, {
-    method: 'GET',
-    headers: { Accept: 'application/json, */*' },
-    cache: 'no-store',
-  })
+async function readLease(
+  url: string,
+  signal?: AbortSignal,
+): Promise<SpendLease | null> {
+  const wait = mergeAbortSignals(signal, LEASE_FETCH_MS)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'GET',
+      headers: { Accept: 'application/json, */*' },
+      cache: 'no-store',
+      signal: wait.signal,
+    })
+  } finally {
+    wait.cancel()
+  }
   if (res.status === 404) return null
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 120)
@@ -58,18 +87,29 @@ async function readLease(url: string): Promise<SpendLease | null> {
   }
 }
 
-async function writeLease(url: string, lease: SpendLease | null): Promise<void> {
+async function writeLease(
+  url: string,
+  lease: SpendLease | null,
+  signal?: AbortSignal,
+): Promise<void> {
   const body = lease
     ? JSON.stringify(lease)
     : JSON.stringify({ v: 1, deviceId: '', until: 0, released: true })
-  const res = await fetch(url, {
-    method: 'PUT',
-    headers: {
-      'Content-Type': 'application/json',
-      Accept: 'application/json, */*',
-    },
-    body,
-  })
+  const wait = mergeAbortSignals(signal, LEASE_FETCH_MS)
+  let res: Response
+  try {
+    res = await fetch(url, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json, */*',
+      },
+      body,
+      signal: wait.signal,
+    })
+  } finally {
+    wait.cancel()
+  }
   if (!res.ok) {
     const detail = (await res.text().catch(() => '')).slice(0, 120)
     throw new Error(`Spend lease write failed (${res.status})${detail ? `: ${detail}` : ''}`)
@@ -88,7 +128,9 @@ function isActiveForeign(lease: SpendLease | null, localId: string, identityKey:
  * local-only serialization (still safer than nothing).
  * Returns a release fn (always call in finally).
  */
-export async function acquireSpendLease(): Promise<() => Promise<void>> {
+export async function acquireSpendLease(
+  signal?: AbortSignal,
+): Promise<() => Promise<void>> {
   const noop = async () => undefined
   if (!hasDeviceLinkBackupUrl()) return noop
 
@@ -96,10 +138,11 @@ export async function acquireSpendLease(): Promise<() => Promise<void>> {
   if (!active) throw new Error('Wallet locked')
 
   try {
+    if (signal?.aborted) throw new Error('Aborted')
     assertDeviceLinkBackupUrl()
     const deviceId = getOrCreateDeviceId()
     const url = spendLeaseObjectUrl(active.identityKey)
-    const existing = await readLease(url)
+    const existing = await readLease(url, signal)
     if (isActiveForeign(existing, deviceId, active.identityKey)) {
       const secs = Math.max(1, Math.ceil((existing!.until - Date.now()) / 1000))
       throw new Error(
@@ -114,9 +157,9 @@ export async function acquireSpendLease(): Promise<() => Promise<void>> {
       label: localLabel(),
       until: Date.now() + LEASE_TTL_MS,
     }
-    await writeLease(url, lease)
+    await writeLease(url, lease, signal)
 
-    const confirmed = await readLease(url)
+    const confirmed = await readLease(url, signal)
     if (isActiveForeign(confirmed, deviceId, active.identityKey)) {
       throw new Error(
         `${confirmed!.label} took the spend lock. Wait a moment, then try again.`,
@@ -142,6 +185,7 @@ export async function acquireSpendLease(): Promise<() => Promise<void>> {
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
+    if (signal?.aborted || /abort/i.test(msg)) throw err
     if (/is sending right now|took the spend lock/i.test(msg)) throw err
     console.warn('[spend-lease] coordinator unavailable; local-only lock', err)
     return noop

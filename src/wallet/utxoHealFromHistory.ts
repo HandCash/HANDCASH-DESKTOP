@@ -1,7 +1,9 @@
 /**
- * Reconcile local toolbox UTXOs from Activity + logs + checkpoint txids.
- * Auto/checkpoint passes are silent (like consolidateChange); manual writes
- * Activity only when sats move or the pass fails.
+ * Reconcile local toolbox UTXOs from Activity + live/failed toolbox rows.
+ * Do not scrape the app-log ring — that is 800+ lines of support noise, not a
+ * UTXO index. Checkpoint remembers already-healed txids so we do not re-probe
+ * them. Auto/checkpoint passes are silent; manual writes Activity only when
+ * sats move or the pass fails.
  */
 import {
   collectActivityTxids,
@@ -9,7 +11,6 @@ import {
   UTXO_HEAL_METHOD,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
-import { getAppLogs, getPreviousSessionLogs } from './appLog'
 import { runChangeHeal, type ChangeHealStats } from './chainedChangeHeal'
 import { logDiag, snapshotWalletBalance } from './diagnosticLog'
 import { txExistsOnChain } from './legacyScan'
@@ -29,14 +30,11 @@ import {
   healCheckpointFresh,
   HEAL_TXID_BATCH_SIZE,
   markAutoHealAttempt,
-  mergeTxidsWithCheckpoint,
   readHealCheckpoint,
   txidsMissingFromCheckpoint,
   writeHealCheckpoint,
   type UtxoHealCheckpointSource,
 } from './utxoHealCheckpoint'
-
-const TXID_RE = /\b([0-9a-f]{64})\b/gi
 
 let utxoHealDepth = 0
 
@@ -68,21 +66,6 @@ export type UtxoHealFromHistoryResult = {
   recoveredSats: number
   balanceBefore: UtxoHealBalanceSnapshot | null
   balanceAfter: UtxoHealBalanceSnapshot | null
-}
-
-function extractTxidsFromLogs(): Set<string> {
-  const out = new Set<string>()
-  const interesting =
-    /\btxid=|\btxid\b|createAction|postBeef|stale-output|spend-attempt|keep change/i
-  const scan = (message: string) => {
-    if (!interesting.test(message)) return
-    for (const match of message.matchAll(TXID_RE)) {
-      out.add(match[1]!.toLowerCase())
-    }
-  }
-  for (const entry of getPreviousSessionLogs()) scan(entry.message)
-  for (const entry of getAppLogs()) scan(entry.message)
-  return out
 }
 
 function toBalanceSnapshot(
@@ -123,21 +106,18 @@ export function formatUtxoHealResult(result: UtxoHealFromHistoryResult): string 
 function collectCandidateTxids(): {
   txids: Set<string>
   activity: ReturnType<typeof collectActivityTxids>
-  fromLogs: number
 } {
   const activity = collectActivityTxids()
-  const fromLogs = extractTxidsFromLogs()
-  const txids = mergeTxidsWithCheckpoint(
-    new Set([...activity.txids, ...fromLogs]),
-  )
-  return { txids, activity, fromLogs: fromLogs.size }
+  return { txids: activity.txids, activity }
 }
 
-function orderTxidsForHeal(
-  all: Set<string>,
-  missing: string[],
-  pendingLive: string[],
-): string[] {
+function orderTxidsForHeal(args: {
+  missing: string[]
+  pendingLive: string[]
+  failed: string[]
+  activity: Iterable<string>
+  includeActivity: boolean
+}): string[] {
   const seen = new Set<string>()
   const out: string[] = []
   const push = (txid: string) => {
@@ -146,9 +126,12 @@ function orderTxidsForHeal(
     seen.add(id)
     out.push(id)
   }
-  for (const txid of pendingLive) push(txid)
-  for (const txid of missing) push(txid)
-  for (const txid of all) push(txid)
+  for (const txid of args.pendingLive) push(txid)
+  for (const txid of args.failed) push(txid)
+  for (const txid of args.missing) push(txid)
+  if (args.includeActivity) {
+    for (const txid of args.activity) push(txid)
+  }
   return out
 }
 
@@ -181,7 +164,6 @@ async function healShouldYieldToSpend(_opts: UtxoHealPassOpts): Promise<boolean>
 
 async function runPendingChangeHeal(
   balanceBefore: UtxoHealBalanceSnapshot | null,
-  deepHeal: boolean,
   opts: UtxoHealPassOpts,
 ): Promise<ChangeHealStats> {
   const empty: ChangeHealStats = {
@@ -197,29 +179,22 @@ async function runPendingChangeHeal(
   if (await healShouldYieldToSpend(opts)) return heal
 
   const pending = balanceBefore?.pendingChange ?? 0
-  if (pending > 0 || deepHeal) {
+  if (pending <= 0) return heal
+  // spendGate already paged unspendable change. Extra restore / script-sweep
+  // passes are only for leftover pending credit — not a second copy of the
+  // same 200-row scan (hc-a580a: 21s + 20s restoreLiveSpendableOutputs).
+  if (heal.pendingPromoted === 0 && heal.restored === 0) {
     heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
     if (await healShouldYieldToSpend(opts)) return heal
   }
-  if (pending > 0) {
-    heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
-    if (await healShouldYieldToSpend(opts)) return heal
-    heal = mergeHealStats(heal, await runChangeHeal({ path: 'spendGatePartialRetry' }))
-  } else if (
-    deepHeal &&
-    heal.pendingPromoted === 0 &&
-    heal.restored === 0 &&
-    heal.reclaimed === 0
-  ) {
-    if (await healShouldYieldToSpend(opts)) return heal
-    heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
-  }
+  heal = mergeHealStats(heal, await runChangeHeal({ path: 'chainingScriptHeal' }))
   return heal
 }
 
 async function processTxidBatch(
   batch: string[],
   chain: Chain | undefined,
+  failed: Set<string>,
 ): Promise<{ changeKept: number; txidsOnChain: number; processed: string[] }> {
   let changeKept = 0
   let txidsOnChain = 0
@@ -233,16 +208,17 @@ async function processTxidBatch(
         // Explorer "not on chain" is not a ghost after a successful submit.
         // failUnsent refuses live unmined/sending rows; keep their change.
         if (local) {
-          const failed = await failUnsentLocalTx(txid)
-          if (!failed) changeKept += await keepChangeOfSignedTx(txid)
+          const markedFailed = await failUnsentLocalTx(txid)
+          if (!markedFailed) changeKept += await keepChangeOfSignedTx(txid)
         }
         continue
       }
       if (onChain === true) {
         txidsOnChain += 1
-        await restoreOnChainLocalTx(txid)
+        if (failed.has(txid)) await restoreOnChainLocalTx(txid)
+      } else if (!local) {
+        continue
       }
-      else if (!local) continue
     } else if (!local) {
       continue
     }
@@ -254,7 +230,7 @@ async function processTxidBatch(
 async function runHealCore(
   orderedTxids: string[],
   balanceBefore: UtxoHealBalanceSnapshot | null,
-  deepHeal: boolean,
+  failed: Set<string>,
   opts: UtxoHealPassOpts,
 ): Promise<{
   changeKept: number
@@ -286,7 +262,7 @@ async function runHealCore(
     }
   }
 
-  let heal = await runPendingChangeHeal(balanceBefore, deepHeal, opts)
+  let heal = await runPendingChangeHeal(balanceBefore, opts)
 
   const chain = getActiveWallet()?.chain
   let changeKept = 0
@@ -307,7 +283,7 @@ async function runHealCore(
     if (batch.length === 0) break
     offset += batch.length
 
-    const batchResult = await processTxidBatch(batch, chain)
+    const batchResult = await processTxidBatch(batch, chain, failed)
     changeKept += batchResult.changeKept
     txidsOnChain += batchResult.txidsOnChain
     txidsChecked += batchResult.processed.length
@@ -357,7 +333,8 @@ async function runHealCore(
 }
 
 /**
- * One heal pass. Checkpoint txids are always merged so prior work is never lost.
+ * One heal pass. Activity + toolbox rows are the candidate set; the checkpoint
+ * is only a skip list (already healed), never a work list of old hashes.
  */
 export async function runUtxoHealPass(
   opts: UtxoHealPassOpts,
@@ -366,11 +343,17 @@ export async function runUtxoHealPass(
   const balanceBefore = toBalanceSnapshot(await snapshotWalletBalance())
   const missing = txidsMissingFromCheckpoint(txids)
   const pendingChange = balanceBefore?.pendingChange ?? 0
-  const failedTxids = await listFailedLocalTxids()
+  const checkpointed = new Set(
+    (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase()),
+  )
+  const allFailed = await listFailedLocalTxids()
+  const includeActivity = opts.force === true || opts.source === 'manual'
+  const failedTxids = includeActivity
+    ? allFailed
+    : allFailed.filter((id) => !checkpointed.has(id))
 
   const shouldSkip =
-    !opts.force &&
-    opts.source !== 'manual' &&
+    !includeActivity &&
     healCheckpointFresh() &&
     missing.length === 0 &&
     pendingChange <= 0 &&
@@ -398,15 +381,13 @@ export async function runUtxoHealPass(
     }
   }
 
-  const txidList = orderTxidsForHeal(
-    txids,
+  const txidList = orderTxidsForHeal({
     missing,
-    [
-      ...(pendingChange > 0 ? await listPendingLocalChangeTxids() : []),
-      ...failedTxids,
-    ],
-  )
-  const deepHeal = opts.force || opts.source === 'manual' || pendingChange > 0
+    pendingLive: pendingChange > 0 ? await listPendingLocalChangeTxids() : [],
+    failed: failedTxids,
+    activity: txids,
+    includeActivity,
+  })
 
   logDiag('utxo-heal', 'info', 'start', {
     source: opts.source,
@@ -414,6 +395,7 @@ export async function runUtxoHealPass(
     txids: txidList.length,
     missing: missing.length,
     pendingChange,
+    failed: failedTxids.length,
     batchSize: HEAL_TXID_BATCH_SIZE,
   })
 
@@ -421,7 +403,12 @@ export async function runUtxoHealPass(
   return runChainIngest(async () => {
     utxoHealDepth += 1
     try {
-      const core = await runHealCore(txidList, balanceBefore, deepHeal, opts)
+      const core = await runHealCore(
+        txidList,
+        balanceBefore,
+        new Set(failedTxids),
+        opts,
+      )
       const pendingChangeAfter = core.balanceAfter?.pendingChange ?? 0
 
       const result: UtxoHealFromHistoryResult = {
@@ -508,10 +495,17 @@ export function scheduleHealCheckpointIfDue(reason: UtxoHealCheckpointSource): v
       const before = toBalanceSnapshot(await snapshotWalletBalance())
       const pending = before?.pendingChange ?? 0
       const { txids } = collectCandidateTxids()
+      const checkpointed = new Set(
+        (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase()),
+      )
+      const failedNew = (await listFailedLocalTxids()).filter(
+        (id) => !checkpointed.has(id),
+      )
       if (
         healCheckpointFresh() &&
         pending <= 0 &&
-        txidsMissingFromCheckpoint(txids).length === 0
+        txidsMissingFromCheckpoint(txids).length === 0 &&
+        failedNew.length === 0
       ) {
         return
       }

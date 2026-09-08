@@ -49,6 +49,10 @@ const {
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
   './utxoLockManager'
 )
+const {
+  rememberArcadeSubmitContact,
+  __resetArcadeSubmitGuardForTests,
+} = await import('./arcadeSubmitGuard')
 
 describe('isAlreadySpentInputError', () => {
   it('accepts the rejections that prove an input is spent or gone', () => {
@@ -575,6 +579,30 @@ describe('promotePendingLocalChangeOutputs', () => {
       expect.objectContaining({ spendable: true }),
     )
   })
+
+  it('localOnly promote skips explorer exists-checks', async () => {
+    const txid = 'ab'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 3, txid, status: 'unproven' },
+    ])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 2,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 1000,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(
+      promotePendingLocalChangeOutputs({ forSpendChain: true, localOnly: true }),
+    ).resolves.toBe(1)
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+  })
 })
 
 describe('hideSpentOutpoints', () => {
@@ -865,6 +893,23 @@ describe('failUnsentLocalTx', () => {
     expect(updateTransactionStatus).not.toHaveBeenCalled()
     expect(updateOutput).not.toHaveBeenCalled()
   })
+
+  it('refuses to fail an Arcade-pinned noSend row that is still unsent', async () => {
+    overlayStore.clear()
+    __resetArcadeSubmitGuardForTests()
+    const txid = 'cd'.repeat(32)
+    rememberArcadeSubmitContact(txid)
+    findTransactions.mockResolvedValue([
+      { transactionId: 8, txid, status: 'unsent' },
+    ])
+    findOutputs.mockResolvedValue([
+      { outputId: 1, txid, vout: 0, satoshis: 1, spendable: false, change: false },
+    ])
+
+    await expect(failUnsentLocalTx(txid)).resolves.toBe(false)
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+    expect(updateOutput).not.toHaveBeenCalled()
+  })
 })
 
 describe('restoreOnChainLocalTx', () => {
@@ -963,6 +1008,18 @@ describe('restoreOnChainLocalTx', () => {
     expect(txExistsOnChain).not.toHaveBeenCalled()
     expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 4)
   })
+
+  it('coerces noSend unsent rows to unproven after miner submit', async () => {
+    const txid = 'ef'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 5, txid, status: 'unsent' },
+    ])
+    findOutputs.mockResolvedValue([])
+
+    await expect(restoreOnChainLocalTx(txid)).resolves.toBe(true)
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateTransactionStatus).toHaveBeenCalledWith('unproven', 5)
+  })
 })
 
 describe('reclaimSealedInputsNeverSpent', () => {
@@ -976,6 +1033,7 @@ describe('reclaimSealedInputsNeverSpent', () => {
     isUtxo.mockReset()
     overlayStore.clear()
     __resetUtxoLocksForTests()
+    __resetArcadeSubmitGuardForTests()
     txExistsOnChain.mockReset()
     spentStatusOfOutpoint.mockReset()
     txExistsOnChain.mockResolvedValue(false)
@@ -1002,6 +1060,24 @@ describe('reclaimSealedInputsNeverSpent', () => {
     const sealer = 'bb'.repeat(32)
     hideUtxo(`${prevTxid}_0`, { spentBy: sealer, satoshis: 1299000 })
     findTransactions.mockResolvedValue([{ txid: sealer, status: 'callback' }])
+
+    await expect(
+      reclaimSealedInputsNeverSpent({ forSpendChain: true }),
+    ).resolves.toBe(0)
+    expect(updateOutput).not.toHaveBeenCalled()
+    expect(getUtxoLock(`${prevTxid}_0`)?.spendable).toBe(false)
+    expect(getUtxoLock(`${prevTxid}_0`)?.spentBy).toBe(sealer)
+  })
+
+  it('does not reclaim Arcade-pinned item noSend inputs when explorers lag', async () => {
+    const prevTxid = '11'.repeat(32)
+    const sealer = '33'.repeat(32)
+    hideUtxo(`${prevTxid}_0`, { spentBy: sealer, satoshis: 1 })
+    rememberArcadeSubmitContact(sealer)
+    findTransactions.mockResolvedValue([{ txid: sealer, status: 'unsent' }])
+    txExistsOnChain.mockResolvedValue(false)
+    spentStatusOfOutpoint.mockResolvedValue('unspent')
+    isUtxo.mockResolvedValue(true)
 
     await expect(
       reclaimSealedInputsNeverSpent({ forSpendChain: true }),

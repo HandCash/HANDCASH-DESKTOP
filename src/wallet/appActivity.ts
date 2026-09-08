@@ -3,6 +3,7 @@ import { appDisplayName, normalizeAppHost } from './appIdentity'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
+import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
 const STORAGE_KEY = 'handcash.brc100.appActivity'
 
@@ -1094,6 +1095,10 @@ export function expireStaleOutboundPending(
   maxAgeMs = 90_000,
   now = Date.now(),
 ): number {
+  // A hung send still holds spend priority after the pill watchdog fires.
+  // Failing the Activity row while that work is alive made Sending… vanish
+  // and look like a timeout even though nothing had returned yet.
+  if (shouldYieldChainIngestToSpend()) return 0
   const prev = readAll()
   let expired = 0
   const entries = prev.map((e) => {

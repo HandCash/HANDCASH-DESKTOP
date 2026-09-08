@@ -15,6 +15,7 @@ import {
 import {
   onAlreadySpentSend,
   releaseSealedInputsOfUnsentTx,
+  restoreOnChainLocalTx,
 } from './staleOutputRelease'
 import {
   postBeefResultsHitArcade,
@@ -94,6 +95,9 @@ export async function submitAtomicBeefToMiners(
     if (postBeefResultsHitArcade(rawResults)) {
       rememberArcadeSubmitContact(id)
       console.info('[minerSubmit] Arcade contacted — tx pinned', id.slice(0, 12))
+      // Item/BRC-29 `noSend` rows stay `unsent` until processAction. Promote so
+      // heal cannot reclaim sealed inputs while explorers lag.
+      await restoreOnChainLocalTx(id)
     }
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err)
@@ -126,6 +130,7 @@ export async function submitAtomicBeefToMiners(
     ) {
       recordTransactionStage('completed', telemetry)
     }
+    if (!txHadArcadeSubmitContact(id)) await restoreOnChainLocalTx(id)
     return { confirmed: true, submitted: true, summary }
   }
   // Pure transport / endpoint failures are not proof of a spent input.
@@ -158,6 +163,14 @@ export async function submitAtomicBeefToMiners(
       })
     })()
     if (!conflictReal) {
+      if (txHadArcadeSubmitContact(id)) {
+        console.info(
+          `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — Arcade pin holds seal`,
+          id.slice(0, 12),
+          summary.detail,
+        )
+        return { confirmed: false, submitted: true, summary }
+      }
       console.info(
         `[minerSubmit] ghost ${summary.missingInputs ? 'missing-inputs' : 'doubleSpend'} — releasing seal`,
         id.slice(0, 12),
