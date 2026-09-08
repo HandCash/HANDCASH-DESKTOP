@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.113] - 2026-09-08
+
+### Fixed
+
+- **Verified collectables can send** — BRC-150 Verified is enough to enable Send. Missing remittance BEEF (omitted when over budget) is not treated as unconfirmed, so 700+ foxes no longer all have gray Sends.
+- **Sending vanished from Activity** — the 90s watchdog marked Send timed out while the spend was still hung on a backup-host lease / change heal. Sending stays in the feed while spend priority is held; hung exclusive spends abort instead of becoming a zombie.
+- **Incoming funds approval** — persist and settle app wallet requests deterministically; broadcast accepted ingests through Arcade.
+- **Transaction status latency** — durable observability for in-flight payments; remove false wait-on-status stalls.
+
+### Changed
+
+- Wallet decisions live in the action dock; app and asset cards share one layout; AutoPay utilization shows on app cards.
+- Official OS application icon.
+
 ## [1.3.112] - 2026-09-08
 
 ### Changed
