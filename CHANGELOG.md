@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.119] - 2026-09-08
+
+### Fixed
+
+- **BSV-21 send of a freshly minted token** — do not hunt merkle proofs for an unmined 162 genesis, or run a full UTXO promote, before `createAction`. Sign against local BEEF (`trustSelf`) the same way mint does. Recover the locking script from that BEEF when `listOutputs` has no 162 lock.
+
 ## [1.3.118] - 2026-09-08
 
 ### Fixed
