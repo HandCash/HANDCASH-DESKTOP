@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.118] - 2026-09-08
+
+### Fixed
+
+- **Market inventory via BRC-165** — catalog `listOutputs` is `p 1sat all` / `p bsv21 all` (item-view permission), not storage basket `1sat`. Live and cached rows skip remittance BEEF so a ~700-item wallet does not stall on “Loading wallet items…”.
+- Allow verified unconfirmed collectable sends.
+
 ## [1.3.117] - 2026-09-08
 
 ### Fixed
