@@ -5261,6 +5261,15 @@ a.app-details-host:hover {
   border-left: 1px solid hsl(var(--border));
 }
 
+.connected-app-row .connected-app-stats .connected-app-usd {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+}
+
+.connected-app-row .connected-app-stats .connected-app-usd-label {
+  justify-self: start;
+}
+
 .connected-app-row .connected-app-card-actions {
   width: auto;
   min-width: 88px;
