@@ -16,7 +16,12 @@ import {
 } from './bsv21'
 import { rememberBeefTree } from './beefCache'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { listFungibles } from './fungibles'
+import {
+  fungibleFromImport,
+  hydrateCachedTokenIcons,
+  listFungibles,
+  rememberFungibleToken,
+} from './fungibles'
 import {
   beginOneSatImport,
   markOneSatImported,
@@ -33,6 +38,7 @@ import {
   noteInboundReceivePending,
 } from './appActivity'
 import type { ItemTransferAsset } from './messageStore'
+import { cacheTokenIconFromBeef } from './tokenIconResolve'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
@@ -45,6 +51,24 @@ export type IngestFungibleSettleResult = {
   accepted: boolean
   outpoints: string[]
   reason?: string
+}
+
+function deployMetadataFromBeef(beef: Beef, tokenId: string) {
+  const [txid, rawVout] = tokenId.split('_')
+  const vout = Number(rawVout)
+  if (!txid || !Number.isInteger(vout) || vout < 0) return null
+  const tx = beef.findTxid(txid)?.tx
+  const scriptHex = tx?.outputs[vout]?.lockingScript?.toHex()
+  if (!scriptHex) return null
+  const envelope = parseOrdEnvelope(scriptHex)
+  if (!envelope?.body?.length) return null
+  try {
+    return parseBsv21Json(
+      JSON.parse(new TextDecoder().decode(envelope.body)),
+    )
+  } catch {
+    return null
+  }
 }
 
 export async function internalizePeerFungibleSettle(opts: {
@@ -97,8 +121,17 @@ export async function internalizePeerFungibleSettle(opts: {
   }
 
   let tipVout = -1
+  let parsedBeef: Beef | null = null
+  let resolvedSym = opts.token.sym
+  let resolvedIcon = opts.token.icon
+  let resolvedIssuer = opts.token.issuer
   try {
     const beef = Beef.fromBinary(atomic)
+    parsedBeef = beef
+    const deploy = deployMetadataFromBeef(beef, tokenId)
+    resolvedSym = resolvedSym || deploy?.sym || 'Token'
+    resolvedIcon = resolvedIcon || deploy?.icon
+    resolvedIssuer = resolvedIssuer || deploy?.issuer
     const tx = beef.findTxid(id)?.tx ?? beef.findAtomicTransaction(id)
     if (!tx) {
       clearInboundReceivePending(id)
@@ -137,6 +170,9 @@ export async function internalizePeerFungibleSettle(opts: {
         payload = parseBsv21Json(
           JSON.parse(new TextDecoder().decode(envelope.body)),
         )
+        resolvedSym = resolvedSym || payload?.sym || 'Token'
+        resolvedIcon = resolvedIcon || payload?.icon
+        resolvedIssuer = resolvedIssuer || payload?.issuer
       } catch {
         // Not a BSV-21 inscription.
       }
@@ -170,14 +206,39 @@ export async function internalizePeerFungibleSettle(opts: {
   }
 
   const tipOp = `${id}.${tipVout}`
+  const paintReceivedToken = (): void => {
+    if (resolvedIcon && parsedBeef) {
+      cacheTokenIconFromBeef(resolvedIcon, parsedBeef)
+    }
+    const painted = fungibleFromImport({
+      outpoint: tipOp,
+      txid: id,
+      vout: tipVout,
+      tokenId,
+      amt: amount,
+      op: 'transfer',
+      sym: resolvedSym,
+      icon: resolvedIcon,
+      dec: opts.token.dec,
+      issuer: resolvedIssuer,
+    })
+    rememberFungibleToken(painted)
+    void hydrateCachedTokenIcons(active, [painted]).catch(() => {})
+  }
   const claimed = beginOneSatImport([tipOp])
   if (claimed.length === 0) {
+    paintReceivedToken()
     noteInboundReceiveComplete({
       txid: id,
       item: true,
-      itemName: opts.token.sym,
+      itemName: resolvedSym,
       outpoint: tipOp,
-      token: opts.token,
+      token: {
+        ...opts.token,
+        sym: resolvedSym,
+        ...(resolvedIcon ? { icon: resolvedIcon } : {}),
+        ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
+      },
     })
     return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }
   }
@@ -189,7 +250,7 @@ export async function internalizePeerFungibleSettle(opts: {
     await withRestoredInternalizeStatus(id, () =>
       active.wallet.internalizeAction({
         tx: atomic,
-        description: `Receive ${opts.token.sym}`.slice(0, 50),
+        description: `Receive ${resolvedSym}`.slice(0, 50),
         labels: [BSV21_BASKET, 'handcash-token-p2p'],
         outputs: [
           {
@@ -201,8 +262,9 @@ export async function internalizePeerFungibleSettle(opts: {
                 bsv21Tags({
                   tokenId,
                   amt: amount,
-                  sym: opts.token.sym,
-                  issuer: opts.token.issuer,
+                  sym: resolvedSym,
+                  icon: resolvedIcon,
+                  issuer: resolvedIssuer,
                   op: 'transfer',
                 }),
               ),
@@ -210,10 +272,10 @@ export async function internalizePeerFungibleSettle(opts: {
                 tokenId,
                 amt: amount,
                 op: 'transfer',
-                sym: opts.token.sym,
-                icon: opts.token.icon,
+                sym: resolvedSym,
+                icon: resolvedIcon,
                 dec: opts.token.dec,
-                issuer: opts.token.issuer,
+                issuer: resolvedIssuer,
               }),
             },
           },
@@ -223,12 +285,18 @@ export async function internalizePeerFungibleSettle(opts: {
     )
     markOneSatImported([tipOp])
     rememberBeefTree(atomic, id)
+    paintReceivedToken()
     noteInboundReceiveComplete({
       txid: id,
       item: true,
-      itemName: opts.token.sym,
+      itemName: resolvedSym,
       outpoint: tipOp,
-      token: opts.token,
+      token: {
+        ...opts.token,
+        sym: resolvedSym,
+        ...(resolvedIcon ? { icon: resolvedIcon } : {}),
+        ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
+      },
     })
     scheduleHistoryBackupPush('internalizeFungibleAction')
     void listFungibles(active).catch(() => {})
@@ -236,12 +304,18 @@ export async function internalizePeerFungibleSettle(opts: {
   } catch (err) {
     if (alreadyInternalizedError(err)) {
       markOneSatImported([tipOp])
+      paintReceivedToken()
       noteInboundReceiveComplete({
         txid: id,
         item: true,
-        itemName: opts.token.sym,
+        itemName: resolvedSym,
         outpoint: tipOp,
-        token: opts.token,
+        token: {
+          ...opts.token,
+          sym: resolvedSym,
+          ...(resolvedIcon ? { icon: resolvedIcon } : {}),
+          ...(resolvedIssuer ? { issuer: resolvedIssuer } : {}),
+        },
       })
       void listFungibles(active).catch(() => {})
       return { accepted: true, outpoints: [tipOp], reason: 'already-imported' }

@@ -339,7 +339,7 @@ export async function sendColourCoins(args: {
     }
     return []
   })
-  const fromBasket = listed162
+  const fromBasket: Bsv21SendTip[] = listed162
     .filter(
       (t) =>
         t.tokenId === origin &&

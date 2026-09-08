@@ -8,7 +8,23 @@
 import { Beef } from '@bsv/sdk'
 import type { ActiveWallet } from './session'
 import { extractTxid } from './txExplorer'
-import { isItemBasket, isItemReceiveArgs } from './itemAccess'
+import {
+  isBsv21Basket,
+  isItemBasket,
+  isItemReceiveArgs,
+} from './itemAccess'
+import {
+  normalizeTokenId,
+  parseBsv21CustomInstructions,
+  shortTokenLabel,
+  tokenIdFromBsv21Tags,
+} from './bsv21'
+import {
+  fungibleFromImport,
+  hydrateCachedTokenIcons,
+  rememberFungibleToken,
+} from './fungibles'
+import { cacheTokenIconFromBeef } from './tokenIconResolve'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
   hasSettledActivityItemOutpoint,
@@ -156,6 +172,78 @@ export function parseInternalizedItemTips(
       : null
   if (atomic?.length) return tipsFromAtomicBeef(active, txid, atomic)
   return []
+}
+
+/** Seed Tokens immediately after an app inserts a BSV-21 basket output. */
+export function paintAfterInternalizeBsv21(
+  active: ActiveWallet,
+  args: unknown,
+  result: unknown,
+): number {
+  const txid = extractTxid(result) ?? extractTxid(args)
+  const body = asRecord(args)
+  const outputs = Array.isArray(body?.outputs) ? body.outputs : []
+  if (!txid || outputs.length === 0) return 0
+
+  const atomic = Array.isArray(body?.tx) ? (body.tx as number[]) : null
+  let beef: Beef | null = null
+  if (atomic?.length) {
+    try {
+      beef = Beef.fromBinary(atomic)
+    } catch {
+      // The wallet already validated the transaction; metadata remains usable.
+    }
+  }
+
+  let painted = 0
+  for (const raw of outputs) {
+    const out = asRecord(raw)
+    if (!out || out.protocol !== 'basket insertion') continue
+    const rem = asRecord(out.insertionRemittance)
+    if (!rem || !isBsv21Basket(rem.basket)) continue
+    const outputIndex = Number(out.outputIndex)
+    if (!Number.isInteger(outputIndex) || outputIndex < 0) continue
+    const tags = Array.isArray(rem.tags)
+      ? rem.tags.filter((tag): tag is string => typeof tag === 'string')
+      : []
+    const ci = parseBsv21CustomInstructions(
+      typeof rem.customInstructions === 'string'
+        ? rem.customInstructions
+        : undefined,
+    )
+    const tokenId =
+      normalizeTokenId(ci?.id ?? '') ?? tokenIdFromBsv21Tags(tags)
+    const amount = ci?.amt ?? tagValue(tags, 'amt:')
+    if (!tokenId || !amount || !/^\d+$/.test(amount) || BigInt(amount) <= 0n) {
+      continue
+    }
+    const sym = ci?.sym ?? tagValue(tags, 'sym:') ?? shortTokenLabel(tokenId)
+    const icon =
+      normalizeTokenId(ci?.icon ?? '') ??
+      normalizeTokenId(tagValue(tags, 'icon:') ?? '') ??
+      undefined
+    const issuer = ci?.issuer ?? tagValue(tags, 'issuer:') ?? undefined
+    if (icon && beef) cacheTokenIconFromBeef(icon, beef)
+    const token = fungibleFromImport({
+      outpoint: `${txid}.${outputIndex}`,
+      txid,
+      vout: outputIndex,
+      tokenId,
+      amt: amount,
+      op: 'transfer',
+      sym,
+      icon,
+      dec: ci?.dec ?? 0,
+      issuer,
+    })
+    rememberFungibleToken(token)
+    void hydrateCachedTokenIcons(active, [token]).catch(() => {})
+    painted += 1
+  }
+  if (painted > 0) {
+    console.info(`[brc100] painted ${painted} BSV-21 tip(s) after internalizeAction`)
+  }
+  return painted
 }
 
 /** Seed Collect + Activity after a successful app `internalizeAction` for items. */

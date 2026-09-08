@@ -22,6 +22,7 @@ import {
 } from './permissions'
 import {
   emptyListOutputsResult,
+  isBsv21ReceiveArgs,
   isColourBasket,
   isItemBasket,
   isItemReceiveArgs,
@@ -120,7 +121,10 @@ import {
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
 import { appendAppLog } from './appLog'
 import { logBrc100Response, shouldLogBrc100Method } from './diagnosticLog'
-import { paintAfterInternalizeItem } from './internalizeItemPaint'
+import {
+  paintAfterInternalizeBsv21,
+  paintAfterInternalizeItem,
+} from './internalizeItemPaint'
 import { flattenJsonError } from './errorText'
 import { toDottedOutpoint } from './outpointFormat'
 import {
@@ -1155,7 +1159,10 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       // BSV the app just credited must be selectable for the next createAction.
       const receivedTxid = extractTxid(result) ?? extractTxid(args)
       if (receivedTxid) await keepChangeOfSignedTx(receivedTxid)
-      if (isItemReceiveArgs(method, args)) {
+      if (isBsv21ReceiveArgs(method, args)) {
+        paintAfterInternalizeBsv21(active, args, result)
+        playWalletSound('receive')
+      } else if (isItemReceiveArgs(method, args)) {
         paintAfterInternalizeItem(
           active,
           originator ?? WALLET_ACTIVITY_ORIGIN,

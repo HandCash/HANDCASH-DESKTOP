@@ -264,16 +264,16 @@ export async function hydrateCachedTokenIcons(
     if (token.iconUrl) continue
     if (!cacheExtraLooksLikeFungible(token)) continue
     const url = token.colourSupply
-      ? token.icon
-        ? await resolveTokenIconDataUrl(token.icon, wallet)
-        : undefined
-      : (await resolveOnesatFtIconDataUrl({
+      ? (await resolveOnesatFtIconDataUrl({
           origin: token.tokenId,
           icon: token.icon,
           tipOutpoint: token.outpoint,
           wallet,
         })) ??
         (token.icon ? await resolveTokenIconDataUrl(token.icon, wallet) : undefined)
+      : token.icon
+        ? await resolveTokenIconDataUrl(token.icon, wallet)
+        : undefined
     if (!url) continue
     const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
     if (idx < 0) continue
