@@ -56,7 +56,7 @@ import {
   describeInsufficientFunds,
   isInsufficientFundsError,
 } from './insufficientFunds'
-import { runExclusiveSpend, prepareSpendHeal } from './spendGuard'
+import { runExclusiveSpend } from './spendGuard'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
 import { addressFromIdentityKey } from './friends'
@@ -64,7 +64,8 @@ import { sweepVisibleP2pkhOutpoints } from './importP2pkhFunding'
 
 const PENDING_KEY = 'handcash.market.pending.v2'
 const RESPONSE_KEY = 'handcash.market.responses.v2'
-const SETTLEMENT_TIMEOUT_MS = 90_000
+/** Keep the peer-signature wait inside the 120s bridge budget, even on mobile. */
+const SETTLEMENT_TIMEOUT_MS = 30_000
 
 /**
  * Overlay already stored the listing tx at admit time. Prefer that BEEF over
@@ -431,7 +432,7 @@ async function waitForSellerResponse<T extends StoredResponse['type']>(
   }
   throw new MarketListingError(
     'MARKET_SELLER_TIMEOUT',
-    'Seller did not return an item signature before timeout.'
+    'The seller wallet is offline or did not sign this purchase within 30 seconds. Nothing was charged.'
   )
 }
 
@@ -492,27 +493,10 @@ export async function executeMarketPurchase(
     } = await import('./actionReview')
     await releaseStuckNosends(active)
     await abortReservedActionBatches(active)
-    // Buyer funds seller + fee outputs from spendable BSV; credit unconfirmed change
-    // so createAction can chain when almost all balance is still confirming.
+    // Buyer funds seller + fee outputs from local spendable BSV. Do not run
+    // explorer/status recovery here: createAction is authoritative and returns a
+    // deterministic insufficient-funds error without blocking the seller round trip.
     const fundingSats = amounts.sellerSats + amounts.feeSats + 100
-    try {
-      await prepareSpendHeal(fundingSats)
-    } catch (err) {
-      if (isInsufficientFundsError(err)) {
-        void import('./diagnosticLog').then(({ logSpendFailure }) =>
-          logSpendFailure('market-purchase', {
-            listing: listing.outpoint,
-            fundingSats,
-            reason: err instanceof Error ? err.message : String(err),
-          }),
-        )
-        throw new MarketListingError(
-          'INSUFFICIENT_FUNDS',
-          await describeInsufficientFunds(active.wallet, fundingSats),
-        )
-      }
-      throw err
-    }
     const listingMeta = listing as MarketListingAdvert & {
       name?: string | null
       sym?: string | null
@@ -806,7 +790,7 @@ export async function executeMarketPurchase(
     } finally {
       chart.stop()
     }
-  })
+  }, undefined, { promote: false })
 }
 
 export async function recoverPendingMarketPurchases(): Promise<void> {
