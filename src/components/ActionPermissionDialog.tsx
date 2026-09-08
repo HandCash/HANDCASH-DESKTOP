@@ -18,6 +18,7 @@ import {
   type AutoPaySettings,
 } from '../wallet/autoPay'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
+import { WalletActionBar } from './WalletActionBar'
 
 export type AutoPayChoice = {
   enabled: boolean
@@ -270,23 +271,24 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   </div>
                 ) : null}
 
-                <Prompt.Actions className="actions connect-actions wallet-action-bar">
-                  <Prompt.Secondary
-                    className="btn btn-ghost"
-                    disabled={committing}
-                    onClick={deny}
-                  >
-                    Cancel
-                  </Prompt.Secondary>
-                  <Prompt.Primary
-                    className="btn btn-primary"
-                    autoFocus
-                    disabled={committing || (autoEnabled && (!maxUsdValid || !hoursValid))}
-                    onClick={allow}
-                  >
-                    {committing ? 'Approving…' : 'Approve'}
-                  </Prompt.Primary>
-                </Prompt.Actions>
+                <WalletActionBar
+                  ariaLabel="Wallet action decision"
+                  className="connect-actions"
+                  secondary={{
+                    label: 'Cancel',
+                    onClick: deny,
+                    disabled: committing,
+                  }}
+                  primary={{
+                    label: committing ? 'Approving…' : 'Approve',
+                    onClick: allow,
+                    disabled:
+                      committing ||
+                      (autoEnabled && (!maxUsdValid || !hoursValid)),
+                    autoFocus: true,
+                    tone: 'primary',
+                  }}
+                />
               </Prompt.Content>
             ) : null}
           </Prompt.Positioner>

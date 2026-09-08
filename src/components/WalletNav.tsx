@@ -86,6 +86,7 @@ import {
 } from './icons'
 import { playWalletSound } from '../wallet/soundService'
 import { toastSuccess } from '../wallet/toast'
+import { WalletActionBar } from './WalletActionBar'
 
 type IconProps = SVGProps<SVGSVGElement> & { size?: number }
 
@@ -599,40 +600,23 @@ export const WalletNav = memo(function WalletNav({
         >
           <div className="wallet-nav-bar-track">
             {mobileInlinePermission ? (
-              <>
-                <button
-                  type="button"
-                  className="wallet-nav-tab wallet-nav-tab-deny"
-                  aria-label={decisionApi?.denyLabel ?? 'Decline'}
-                  title={decisionApi?.denyLabel ?? 'Decline'}
-                  onClick={() => (decisionApi ? decisionApi.deny() : onPermissionDeny())}
-                >
-                  <CloseIcon size={18} />
-                  <span className="wallet-nav-tab-label">
-                    {decisionApi?.denyLabel ?? 'Decline'}
-                  </span>
-                  <span className="wallet-nav-tab-label-short">
-                    {decisionApi?.denyLabel ?? 'Decline'}
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  className="wallet-nav-tab wallet-nav-tab-accept"
-                  aria-label={decisionApi?.allowLabel ?? 'Accept'}
-                  title={decisionApi?.allowLabel ?? 'Accept'}
-                  data-selected=""
-                  disabled={!decisionApi || decisionApi.allowDisabled}
-                  onClick={() => decisionApi?.allow()}
-                >
-                  <CheckIcon size={18} />
-                  <span className="wallet-nav-tab-label">
-                    {decisionApi?.allowLabel ?? 'Accept'}
-                  </span>
-                  <span className="wallet-nav-tab-label-short">
-                    {decisionApi?.allowLabel ?? 'Accept'}
-                  </span>
-                </button>
-              </>
+              <WalletActionBar
+                ariaLabel="Permission decision"
+                placement="nav"
+                secondary={{
+                  label: decisionApi?.denyLabel ?? 'Decline',
+                  onClick: () =>
+                    decisionApi ? decisionApi.deny() : onPermissionDeny(),
+                  icon: <CloseIcon size={18} />,
+                }}
+                primary={{
+                  label: decisionApi?.allowLabel ?? 'Accept',
+                  onClick: () => decisionApi?.allow(),
+                  disabled: !decisionApi || decisionApi.allowDisabled,
+                  icon: <CheckIcon size={18} />,
+                  tone: 'primary',
+                }}
+              />
             ) : (
               SECTIONS.map(({ value, label, shortLabel, Icon }) => {
                 const selected = activeSection === value

@@ -17,6 +17,7 @@ import { listPendingConfirmation,
 import { listUtxoLocks, rollbackLocks, thawUtxo } from './utxoLockManager'
 import { isUnspendable } from './utxoLifecycle'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
+import { signedTxSpendConflictIsProven } from './arcadeSubmitGuard'
 
 export type TxReconcileResult = {
   checked: number
@@ -25,6 +26,20 @@ export type TxReconcileResult = {
   orphaned: number
   thawed: number
   rolledBack: number
+}
+
+const MISSING_TX_CONFLICT_GRACE_MS = 30 * 60_000
+
+/** Explorer absence is lag, not rejection; only a proven conflicting spend may fail. */
+export function missingTxMayReject(
+  updatedAt: number,
+  conflictProven: boolean,
+  now = Date.now(),
+): boolean {
+  return (
+    conflictProven &&
+    now - updatedAt > MISSING_TX_CONFLICT_GRACE_MS
+  )
 }
 
 /**
@@ -62,9 +77,22 @@ export async function reconcileDualLayerState(): Promise<TxReconcileResult> {
     try {
       const onChain = await txExistsOnChain(rec.txid, chain)
       if (onChain === false && rec.status === 'SEEN_IN_MEMPOOL') {
-        // Evicted / never landed — fail closed after grace.
-        if (Date.now() - rec.updatedAt > 30 * 60_000) {
-          markTxFailed(rec.id, 'ARC_REJECTED', 'Transaction missing from chain after grace')
+        // Explorers can lag long after a miner accepts a signed transaction.
+        // Fail only when the transaction is still absent and one of its inputs
+        // is conclusively spent by another transaction.
+        const conflictProven =
+          Date.now() - rec.updatedAt > MISSING_TX_CONFLICT_GRACE_MS
+            ? await signedTxSpendConflictIsProven({
+                txid: rec.txid,
+                chain,
+              })
+            : false
+        if (missingTxMayReject(rec.updatedAt, conflictProven)) {
+          markTxFailed(
+            rec.id,
+            'ARC_REJECTED',
+            'A transaction input was spent by a conflicting transaction',
+          )
           result.rolledBack += rollbackLocks(rec.id)
           result.failed += 1
         }

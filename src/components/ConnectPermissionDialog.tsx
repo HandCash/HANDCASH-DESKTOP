@@ -5,6 +5,7 @@ import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdenti
 import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorization'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
+import { WalletActionBar } from './WalletActionBar'
 
 type Props = {
   pending: PendingPermission | null
@@ -100,14 +101,17 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                     : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
                 </p>
 
-                <Prompt.Actions className="actions connect-actions wallet-action-bar">
-                  <Prompt.Secondary className="btn btn-ghost" onClick={onDeny}>
-                    Deny
-                  </Prompt.Secondary>
-                  <Prompt.Primary className="btn btn-primary" autoFocus onClick={allow}>
-                    Authorize
-                  </Prompt.Primary>
-                </Prompt.Actions>
+                <WalletActionBar
+                  ariaLabel="Connection decision"
+                  className="connect-actions"
+                  secondary={{ label: 'Deny', onClick: onDeny }}
+                  primary={{
+                    label: 'Authorize',
+                    onClick: allow,
+                    autoFocus: true,
+                    tone: 'primary',
+                  }}
+                />
               </Prompt.Content>
             ) : null}
           </Prompt.Positioner>

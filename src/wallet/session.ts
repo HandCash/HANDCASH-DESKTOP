@@ -371,6 +371,7 @@ function startDurablePropagationRecovery(): void {
     })
   }
   window.addEventListener('online', retry)
+  document.addEventListener('handcash:app-active', retry)
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible') retry()
   })
