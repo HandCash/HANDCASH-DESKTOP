@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.3.115] - 2026-09-08
+
+### Fixed
+
+- **Item send sat 30s in Preparing** — light prepare no longer walks explorers or restores the 800-item UTXO set before `createAction`. Pending change is promoted locally; leftover action-batch abort is capped at 1.5s.
+
+### Changed
+
+- Invert desktop approval dock; normalize app amount container.
+
 ## [1.3.114] - 2026-09-08
 
 ### Fixed
