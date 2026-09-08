@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.117] - 2026-09-08
+
+### Fixed
+
+- **Large collectable proofs** — when Atomic BEEF does not fit in `sendMessage`, attach it on the messagebox file store so the payee can ingest without waiting on an explorer 404.
+- Restore inventory swipe and collectable media layout.
+
 ## [1.3.116] - 2026-09-08
 
 ### Fixed
