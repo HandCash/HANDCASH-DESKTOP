@@ -81,6 +81,60 @@ describe('market inventory listOutputs fast path', () => {
     expect(result.outputs).toHaveLength(1)
   })
 
+  it('serves cached BRC-165 p 1sat all rows without remittance blobs', async () => {
+    getWalletCoordinatorSnapshot.mockReturnValue({
+      chainIngest: 'active',
+      spend: 'idle',
+    })
+    getCachedCollectables.mockReturnValue([
+      {
+        outpoint: `${'a'.repeat(64)}.1`,
+        origin: `${'b'.repeat(64)}_0`,
+        name: 'Fox',
+        satoshis: 1,
+        imageUrl: '',
+        traits: [],
+        extras: [],
+        proven: true,
+        authenticity: 'brc150',
+        collectionId: 'foxes',
+      },
+    ])
+
+    const wallet = { listOutputs: vi.fn() }
+    const result = await listMarketBasketOutputs(wallet as never, { basket: 'p 1sat all' })
+    const row = result.outputs[0] as { tags?: string[]; customInstructions?: unknown }
+    expect(row.customInstructions).toBeUndefined()
+    expect(row.tags).toEqual(
+      expect.arrayContaining([
+        `origin:${'b'.repeat(64)}_0`,
+        'name:Fox',
+        'collection:foxes',
+      ]),
+    )
+    expect(listOutputsWithTimeout).not.toHaveBeenCalled()
+  })
+
+  it('never forwards remittance BEEF on a live inventory read', async () => {
+    getCachedCollectables.mockReturnValue([])
+    listOutputsWithTimeout.mockResolvedValue({ outputs: [], totalOutputs: 0 })
+    const wallet = { listOutputs: vi.fn() }
+    await listMarketBasketOutputs(wallet as never, {
+      basket: '1sat',
+      includeCustomInstructions: true,
+      include: 'locking scripts',
+    })
+    expect(listOutputsWithTimeout).toHaveBeenCalledWith(
+      wallet,
+      expect.objectContaining({
+        basket: '1sat',
+        includeTags: true,
+        includeCustomInstructions: false,
+      }),
+      expect.any(Number),
+    )
+  })
+
   it('falls back to cached bsv21 rows after a live read times out', async () => {
     listOutputsWithTimeout.mockRejectedValue(new Error('listOutputs timed out'))
     getCachedFungibles.mockReturnValue([

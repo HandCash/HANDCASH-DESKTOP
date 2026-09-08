@@ -11,12 +11,13 @@ Storage and permissions are separate:
 
 ## View requests
 
-Full inventory:
+Full inventory (BRC-165 view — tags + wallet `originVerified`. Do **not**
+set `includeCustomInstructions`; remittance BEEF is not a view payload):
 
 ```ts
 await wallet.listOutputs({
   basket: 'p 1sat all',
-  include: 'locking scripts',
+  includeTags: true,
 })
 ```
 

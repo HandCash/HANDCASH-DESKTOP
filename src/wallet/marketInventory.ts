@@ -1,5 +1,5 @@
 import type { WalletInterface } from '@bsv/sdk'
-import { buildBsv21CustomInstructions, bsv21Tags } from './bsv21'
+import { bsv21Tags } from './bsv21'
 import { getCachedCollectables, listOutputsWithTimeout } from './collectables'
 import type { ActiveWallet } from './session'
 import type { Collectable } from './collectables'
@@ -35,14 +35,6 @@ function collectableToListOutput(item: Collectable): Record<string, unknown> {
     outpoint: item.outpoint,
     satoshis: item.satoshis,
     tags,
-    ...(item.lockingScript ? { lockingScript: item.lockingScript } : {}),
-    customInstructions: JSON.stringify({
-      origin,
-      name: item.name,
-      ...(item.app ? { app: item.app } : {}),
-      ...(item.collectionId ? { collectionId: item.collectionId } : {}),
-      ...(item.content ? { content: item.content } : {}),
-    }),
   }
 }
 
@@ -64,21 +56,16 @@ function cachedTokenBasketOutputs(): { outputs: unknown[]; totalOutputs: number 
         ...(token.icon ? { icon: token.icon } : {}),
         op: 'transfer',
       }),
-      customInstructions: buildBsv21CustomInstructions({
-        tokenId,
-        amt: token.amt,
-        op: 'transfer',
-        sym: token.sym,
-        ...(token.icon ? { icon: token.icon } : {}),
-      }),
     }
   })
   return { outputs, totalOutputs: outputs.length }
 }
 
 function cachedMarketListOutputs(basket: unknown): { outputs: unknown[]; totalOutputs: number } | null {
-  if (basket === '1sat') return cachedItemBasketOutputs()
-  if (basket === 'bsv21') return cachedTokenBasketOutputs()
+  if (typeof basket !== 'string') return null
+  const t = basket.trim()
+  if (t === '1sat' || t === 'p 1sat all') return cachedItemBasketOutputs()
+  if (t === 'bsv21' || t === 'p bsv21 all') return cachedTokenBasketOutputs()
   return null
 }
 
@@ -93,6 +80,18 @@ function walletBusyForMarketRead(): boolean {
 
 type ListOutputsArgs = Parameters<WalletInterface['listOutputs']>[0]
 type ListOutputsResult = Awaited<ReturnType<WalletInterface['listOutputs']>>
+
+/**
+ * BRC-165 view lists by tags + originVerified. Never pull remittance BEEF for
+ * a 700-row inventory — that is what wedged market.handcash.io on fox wallets.
+ */
+function inventoryReadArgs(args: ListOutputsArgs): ListOutputsArgs {
+  return {
+    ...args,
+    includeTags: true,
+    includeCustomInstructions: false,
+  }
+}
 
 /**
  * Market inventory reads must not wedge behind a multi-minute toolbox basket
@@ -114,7 +113,7 @@ export async function listMarketBasketOutputs(
       `[market-inventory] serving cached ${String(basket ?? 'basket')} (${cached.outputs.length} row(s))`,
     )
     if (!walletBusyForMarketRead()) {
-      void refreshMarketBasketInBackground(wallet, args, basket)
+      void refreshMarketBasketInBackground(wallet, inventoryReadArgs(args), basket)
     }
     return cached as ListOutputsResult
   }
@@ -128,7 +127,7 @@ export async function listMarketBasketOutputs(
   try {
     return await listOutputsWithTimeout(
       wallet as ActiveWallet['wallet'],
-      args,
+      inventoryReadArgs(args),
       MARKET_LIST_TIMEOUT_MS,
     )
   } catch (err) {
@@ -152,7 +151,7 @@ async function refreshMarketBasketInBackground(
   try {
     await listOutputsWithTimeout(
       wallet as ActiveWallet['wallet'],
-      args,
+      inventoryReadArgs(args),
       MARKET_LIST_TIMEOUT_MS,
     )
     console.info(
