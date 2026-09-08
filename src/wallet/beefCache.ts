@@ -758,11 +758,16 @@ export function asTrustSelfInputBeef(beef: Beef): number[] | undefined {
 /**
  * Merge BEEFs for every unique spend txid, fetching in parallel and sharing the
  * session cache with provenance / hardened settle / origin script lookups.
+ *
+ * Token sends of a freshly minted (still-unmined) 162 genesis must not demand
+ * merkle proofs — those do not exist yet. `trustSelf: 'known'` + local bodies
+ * are enough to sign.
  */
 export async function buildMergedInputBeef(
   wallet: ActiveWallet,
   outpoints: string[],
   normalizeOutpoint: (op: string) => string,
+  opts?: GetBeefOpts & { hydrate?: boolean },
 ): Promise<number[]> {
   const txids = [
     ...new Set(
@@ -772,10 +777,15 @@ export async function buildMergedInputBeef(
     ),
   ]
 
+  const fetchOpts: GetBeefOpts = {
+    needProof: opts?.needProof ?? true,
+    ...(opts?.allowUnprovenRawTx ? { allowUnprovenRawTx: true } : {}),
+  }
+
   const fetched = await Promise.all(
     txids.map(async (txid) => {
       try {
-        return await getBeefForTxidCached(wallet, txid, { needProof: true })
+        return await getBeefForTxidCached(wallet, txid, fetchOpts)
       } catch (err) {
         console.warn('[beef] inputBEEF fetch failed', txid, err)
         return null
@@ -795,6 +805,7 @@ export async function buildMergedInputBeef(
     )
   }
 
+  if (opts?.hydrate === false) return merged.toBinary()
   const hydrated = await hydrateInputBeef(wallet, merged)
   if (hydrated) return hydrated
   return merged.toBinary()

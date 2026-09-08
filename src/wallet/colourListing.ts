@@ -206,8 +206,11 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
 
 export async function listBsv21BinaryTips(
   wallet: ActiveWallet,
+  opts: { includeCustomInstructions?: boolean } = {},
 ): Promise<Bsv21Utxo[]> {
-  const rows = await listBasketTips(wallet, BSV21_BASKET)
+  const rows = await listBasketTips(wallet, BSV21_BASKET, {
+    includeCustomInstructions: opts.includeCustomInstructions,
+  })
   const tips: Bsv21Utxo[] = []
   const seen = new Set<string>()
   for (const row of rows) {
@@ -238,14 +241,14 @@ export async function listBsv21BinaryTokens(
 async function listBasketTips(
   wallet: ActiveWallet,
   basket: string,
-  opts: { scripts?: boolean } = {},
+  opts: { scripts?: boolean; includeCustomInstructions?: boolean } = {},
 ): Promise<ListedOutput[]> {
   try {
     const listed = (await wallet.wallet.listOutputs({
       basket,
       limit: 1000,
       ...(opts.scripts === false ? {} : { include: 'locking scripts' }),
-      includeCustomInstructions: true,
+      includeCustomInstructions: opts.includeCustomInstructions !== false,
       includeTags: true,
       seekPermission: false,
     })) as { outputs?: ListedOutput[] }

@@ -382,6 +382,39 @@ describe('beefCache', () => {
     expect(getBeefForTxid).not.toHaveBeenCalled()
   })
 
+  it('keeps an unmined token body without hunting merkle proofs', async () => {
+    const { buildMergedInputBeef, rememberBeefBinary, resetBeefCacheForTests } =
+      await import('./beefCache')
+    resetBeefCacheForTests()
+
+    const tx = new Transaction()
+    tx.addOutput({
+      satoshis: 1,
+      lockingScript: new P2PKH().lock(PrivateKey.fromRandom().toPublicKey().toHash()),
+    })
+    const txid = tx.id('hex')
+    const beef = new Beef()
+    beef.mergeRawTx(tx.toBinary())
+    rememberBeefBinary(txid, beef.toBinary())
+
+    const getBeefForTxid = vi.fn(async () => {
+      throw new Error('indexer should not be called')
+    })
+    const wallet = {
+      wallet: { storage: { isActiveStorageProvider: () => false } },
+      services: { getBeefForTxid },
+    } as unknown as ActiveWallet
+
+    const merged = await buildMergedInputBeef(
+      wallet,
+      [`${txid}.0`],
+      (op) => op,
+      { needProof: false, allowUnprovenRawTx: true, hydrate: false },
+    )
+    expect(Beef.fromBinary(merged).findTxid(txid)?.tx).toBeTruthy()
+    expect(getBeefForTxid).not.toHaveBeenCalled()
+  })
+
   it('reloads a persisted settle BEEF after the session cache is cleared', async () => {
     const {
       getBeefForTxidCached,

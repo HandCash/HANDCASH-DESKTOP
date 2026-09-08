@@ -40,12 +40,15 @@ import {
   getBeefForTxidCached,
   rememberBeefTree,
 } from './beefCache'
-import { normalizeOutpoint } from './collectables'
+import {
+  normalizeOutpoint,
+  setCollectableVerifyWalkDeferred,
+  resumeCollectableVerifyWalk,
+} from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import { stampBrc164Id } from './itemAccess'
 import { isCovenantLockedScript } from './collectableTipKind'
-import { tryBuildProvenanceForSend } from './oneSatProvenance'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
@@ -61,7 +64,7 @@ import {
 import { getActiveWallet, type ActiveWallet } from './session'
 import { markItemsSent } from './sentItemGuard'
 import { runExclusiveSpend } from './spendGuard'
-import { requestSpendPriority } from './walletCoordinator'
+import { leaseSpendPriority } from './walletCoordinator'
 
 function wireOutpoint(op: string): string {
   return op.includes('_') ? op.replace(/_(\d+)$/, '.$1') : op
@@ -75,6 +78,58 @@ function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
   }
   if (raw instanceof Uint8Array) return Array.from(raw)
   return undefined
+}
+
+/**
+ * A mint that never got a locking script on listOutputs still has the 162
+ * body in local BEEF. Spend that — do not wait for an indexer to rewrite it.
+ */
+async function recoverBsv21TipsFromLocalBeef(
+  wallet: ActiveWallet,
+  tokenId: string,
+): Promise<Bsv21SendTip[]> {
+  const { getLocalBeefForTxid } = await import('./beefCache')
+  const { getCachedFungibles } = await import('./fungibles')
+  const want = normalizeColourOrigin(tokenId)
+  const candidates = new Set<string>()
+  for (const token of getCachedFungibles()) {
+    const id = normalizeColourOrigin(token.tokenId)
+    const aliases = (token.tokenIds ?? []).map(normalizeColourOrigin)
+    if (id === want || aliases.includes(want)) {
+      if (token.outpoint) candidates.add(token.outpoint)
+    }
+  }
+  const tips: Bsv21SendTip[] = []
+  for (const op of candidates) {
+    const wire = wireOutpoint(op)
+    const [txid, voutRaw] = wire.split('.')
+    if (!txid) continue
+    const beef = await getLocalBeefForTxid(wallet, txid)
+    const hex = beef
+      ?.findTxid(txid.toLowerCase())
+      ?.tx?.outputs?.[Number(voutRaw)]
+      ?.lockingScript?.toHex()
+    if (!hex) continue
+    const decoded = tipFromBsv21Script({
+      outpoint: op,
+      lockingScript: hex,
+      satoshis: 1,
+    })
+    if (!decoded || !decodeBsv21Binary(hex)) continue
+    if (normalizeColourOrigin(decoded.tokenId) !== want) continue
+    tips.push({
+      outpoint: decoded.outpoint,
+      tokenId: decoded.tokenId,
+      amt: decoded.amt,
+      lockingScript: hex,
+    })
+  }
+  if (tips.length > 0) {
+    console.info(
+      `[bsv21] recovered ${tips.length} tip(s) from local BEEF (listOutputs had no 162 lock)`,
+    )
+  }
+  return tips
 }
 
 /**
@@ -249,7 +304,9 @@ export async function sendColourCoins(args: {
   const active = getActiveWallet()
   if (!active) throw new Error('Unlock the wallet first')
 
-  const listed162 = await listBsv21BinaryTips(active)
+  const listed162 = await listBsv21BinaryTips(active, {
+    includeCustomInstructions: false,
+  })
   const fromArgs: Bsv21SendTip[] = (args.tips ?? []).flatMap((t) => {
     const decoded = tipFromBsv21Script({
       outpoint: t.outpoint,
@@ -276,6 +333,9 @@ export async function sendColourCoins(args: {
       amt: BigInt(t.amt.replace(/\D/g, '') || '0'),
       lockingScript: t.lockingScript,
     }))
+  if (fromArgs.length === 0 && fromBasket.length === 0) {
+    fromBasket.push(...(await recoverBsv21TipsFromLocalBeef(active, origin)))
+  }
   const plan = planBsv21Send({
     tokenId: origin,
     amount: BigInt(args.amount),
@@ -284,6 +344,9 @@ export async function sendColourCoins(args: {
   const selected = plan.selected
   const change = Number(plan.changeAmt)
   const amount = Number(plan.payeeAmt)
+  console.info(
+    `[bsv21] send plan tips=${selected.length} amount=${amount} change=${change} origin=${origin.slice(0, 16)}`,
+  )
   const selectedColour: ColourTip[] = selected.map((t) => ({
     outpoint: t.outpoint,
     origin,
@@ -304,7 +367,9 @@ export async function sendColourCoins(args: {
     null,
     'token_transfer',
   )
-  const releaseSpendHint = requestSpendPriority('send-fungible')
+  setCollectableVerifyWalkDeferred(true)
+  const spendPriority = leaseSpendPriority('send-fungible')
+  const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
   const outboundPending = beginPendingSend({
     to: args.toAddress,
     sats: selected.length,
@@ -334,14 +399,8 @@ export async function sendColourCoins(args: {
       const wallet = getActiveWallet()
       if (!wallet) throw new Error('Wallet locked')
       {
-        // Stuck noSend from a prior hang leaves TaskSendWaiting + reserved
-        // funding — the next createAction then sits forever. Clear both first.
-        const {
-          abortReservedActionBatches,
-          releaseStuckNosends,
-        } = await import('./actionReview')
-        await releaseStuckNosends(wallet)
-        await abortReservedActionBatches(wallet)
+        const { abortReservedActionBatches } = await import('./actionReview')
+        await abortReservedActionBatches(wallet, { budgetMs: 1500 })
       }
 
       setPaymentProgress(
@@ -391,7 +450,6 @@ export async function sendColourCoins(args: {
         args.skipPeerNotify
           ? null
           : args.recipientIdentityKey?.trim().toLowerCase() || null
-      const parentRef = primary.outpoint
       const spendOutpoints = selected.map((tip) => wireOutpoint(tip.outpoint))
       const knownTxids = [
         ...new Set(
@@ -401,11 +459,11 @@ export async function sendColourCoins(args: {
         ),
       ]
 
-      // Same as collectables: feed tip BEEF + trustSelf so createAction does not
-      // block on chainTracker for a freshly minted (still-unconfirmed) tip.
+      // Fresh mint BEEF has no merkle bumps yet. Do not discard it to hunt
+      // proofs — that is what wedged KING send for 90s after mint-studio.
       setPaymentProgress(
         'building',
-        'Loading tip proofs…',
+        'Loading tip…',
         primary.outpoint,
       )
       let inputBEEF: number[]
@@ -414,6 +472,7 @@ export async function sendColourCoins(args: {
           wallet,
           spendOutpoints,
           wireOutpoint,
+          { needProof: false, allowUnprovenRawTx: true, hydrate: false },
         )
         if (icon) {
           const beef = Beef.fromBinary(inputBEEF)
@@ -428,13 +487,6 @@ export async function sendColourCoins(args: {
         )
       }
 
-      const provenance = await tryBuildProvenanceForSend({
-        tipOutpoint: wireOutpoint(primary.outpoint),
-        origin,
-        wallet,
-        priorProvenance: primary.provenance,
-        inputBeef: inputBEEF,
-      })
       const outputs = plannedOutputs.map((o) => ({
         lockingScript: o.lockingScript,
         satoshis: 1 as const,
@@ -447,8 +499,6 @@ export async function sendColourCoins(args: {
         ]),
         customInstructions: o.customInstructions,
       }))
-      void provenance
-      void parentRef
 
       setPaymentProgress(
         'signing',
@@ -725,11 +775,12 @@ export async function sendColourCoins(args: {
     },
       () => {
         setPaymentProgress(
-          'building',
-          args.skipPeerNotify ? 'Combining tips…' : 'Preparing token…',
+          'preparing',
+          args.skipPeerNotify ? 'Waiting to combine tips' : 'Waiting to send token',
           primary.outpoint,
         )
       },
+      { promote: 'light' },
     )
   } catch (err) {
     clearPendingSend(outboundPending.id)
@@ -754,7 +805,10 @@ export async function sendColourCoins(args: {
     }
     throw err
   } finally {
-    releaseSpendHint()
+    clearInterval(touchSpendPriority)
+    spendPriority.release()
+    setCollectableVerifyWalkDeferred(false)
+    resumeCollectableVerifyWalk()
   }
 }
 export async function combineColourTips(args: {
