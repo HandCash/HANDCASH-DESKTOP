@@ -550,7 +550,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-bar {
   /* Dark: clearer gray pills against the select plate. */
   --wallet-nav-unselected: color-mix(in srgb, var(--hc-text) 22%, transparent);
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
-  padding: 2px;
+  padding: 2px 2px 1px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--wallet-nav-pill-radius);
   background: var(--wallet-nav-select);
@@ -672,6 +672,7 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active svg,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'] svg,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] svg {
   color: inherit;
+  transform: scale(1.11);
 }
 
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active::after,
@@ -830,6 +831,6 @@ html:is(.platform-mobile, .layout-compact) .asset-burn-trigger.is-burning {
   background: color-mix(in srgb, #c9852a 14%, transparent);
 }
 
-html:is(.platform-mobile, .layout-compact) .collect-token-card[data-sending='true'] .collectable-burn-btn.is-burning {
+html:is(.platform-mobile, .layout-compact) .fungible-card[data-sending='true'] .collectable-burn-btn.is-burning {
   opacity: 1;
 }
