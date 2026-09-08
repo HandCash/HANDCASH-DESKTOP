@@ -4,6 +4,7 @@ import {
   decodeMessageBody,
   decodeMarketSettlementWire,
   defaultMessageboxBase,
+  deliverMarketSettlementWire,
   deliverOutbound,
   encodeMessageBody,
   encodeMarketSettlementWire,
@@ -37,6 +38,62 @@ describe('message transport envelopes', () => {
         atomicBeefB64: 'x'.repeat(16_000),
       }),
     ).toThrow(/body limit/i)
+  })
+
+  it('uploads oversized settlement payloads and sends a bounded file reference', async () => {
+    const { PrivateKey } = await import('@bsv/sdk')
+    const root = PrivateKey.fromRandom()
+    let sentBody = ''
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url = String(input)
+        if (url.endsWith('/files')) {
+          const size = (init?.body as Blob).size
+          return new Response(
+            JSON.stringify({
+              status: 'success',
+              file: {
+                id: 'deadbeef',
+                name: 'sale-large.market-settlement.json',
+                contentType: 'application/json',
+                size,
+                url: 'https://mb.peer.example/v1/messagebox/files/02ab/deadbeef',
+                expiresAt: Date.now() + 60_000,
+              },
+            }),
+            { status: 200 },
+          )
+        }
+        sentBody = String(init?.body ?? '')
+        return new Response(JSON.stringify({ status: 'success' }), {
+          status: 200,
+        })
+      }),
+    )
+
+    await expect(
+      deliverMarketSettlementWire({
+        wire: {
+          type: 'receipt',
+          saleId: 'sale-large',
+          txid: 'ab'.repeat(32),
+          atomicBeefB64: 'x'.repeat(20_000),
+        },
+        recipientIdentityKey: `02${'ab'.repeat(32)}`,
+        rootKeyHex: root.toHex(),
+        senderIdentityKey: root.toPublicKey().toString(),
+        messagebox: 'https://mb.peer.example/v1/messagebox',
+      }),
+    ).resolves.toBe(true)
+
+    const outer = JSON.parse(sentBody)
+    expect(decodeMarketSettlementWire(outer.message.body)).toMatchObject({
+      type: 'file',
+      saleId: 'sale-large',
+      url: 'https://mb.peer.example/v1/messagebox/files/02ab/deadbeef',
+    })
+    expect(outer.message.body.length).toBeLessThan(16_000)
   })
 
   it('leaves plain text readable by older clients', () => {

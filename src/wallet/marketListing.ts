@@ -1624,6 +1624,34 @@ export async function createMarketListingAdvert(
       sym: lockTip?.sym,
       icon: lockTip?.icon,
     })
+    // Listing replaces the held tip with txid.0. Paint that replacement now;
+    // a market attempt or an unavailable indexer must never make owned assets
+    // disappear while listOutputs catches up.
+    if (listedAsset === 'bsv21' && amt != null) {
+      void import('./fungibles').then(({ rememberFungibleToken }) => {
+        rememberFungibleToken({
+          tokenId: origin,
+          sym: lockTip?.sym || identity.name,
+          amt: String(amt),
+          dec: lockTip?.dec ?? 0,
+          utxoCount: 1,
+          outpoint: listedOutpoint.replace('_', '.'),
+          spendKind: 'plain',
+          ...(lockTip?.icon ? { icon: lockTip.icon } : {}),
+          ...(lockTip?.issuer ? { issuer: lockTip.issuer } : {}),
+        })
+      })
+    } else {
+      void import('./collectables').then(({ noteIngestedItem }) => {
+        noteIngestedItem({
+          outpoint: listedOutpoint.replace('_', '.'),
+          chain: active.chain,
+          origin,
+          name: identity.name,
+          app: identity.app,
+        })
+      })
+    }
     const listedNote =
       listedAsset === 'bsv21' && amt != null
         ? `Listed ${amt.toLocaleString()} ${identity.name} for ${priceSats.toLocaleString()} sats`

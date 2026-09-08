@@ -11,6 +11,7 @@
  * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
  * encrypted envelopes deferred). `/files` is a HandCash extension.
  */
+import { Hash, Utils } from '@bsv/sdk'
 import {
   DEFAULT_BRC_CLOUD_BASE_URL,
   DEFAULT_METANET_HANDLES_BASE_URL,
@@ -86,7 +87,19 @@ export type MarketSettlementWire =
       reason?: string
     }
 
-export function encodeMarketSettlementWire(wire: MarketSettlementWire): string {
+type MarketSettlementEnvelope =
+  | MarketSettlementWire
+  | {
+      type: 'file'
+      saleId: string
+      url: string
+      size: number
+      sha256: string
+    }
+
+export function encodeMarketSettlementWire(
+  wire: MarketSettlementEnvelope
+): string {
   const body = `${MARKET_WIRE_PREFIX}${JSON.stringify(wire)}`
   if (body.length > MESSAGEBOX_BODY_MAX) {
     throw new Error('Market settlement message exceeds the BRC-33 body limit')
@@ -96,16 +109,17 @@ export function encodeMarketSettlementWire(wire: MarketSettlementWire): string {
 
 export function decodeMarketSettlementWire(
   body: string,
-): MarketSettlementWire | null {
+): MarketSettlementEnvelope | null {
   if (!body.startsWith(MARKET_WIRE_PREFIX)) return null
   try {
     const wire = JSON.parse(body.slice(MARKET_WIRE_PREFIX.length)) as
-      | Partial<MarketSettlementWire>
+      | Partial<MarketSettlementEnvelope>
       | null
     if (
       !wire ||
       typeof wire !== 'object' ||
-      (wire.type !== 'sign-request' &&
+      (wire.type !== 'file' &&
+        wire.type !== 'sign-request' &&
         wire.type !== 'sign-response' &&
         wire.type !== 'receipt' &&
         wire.type !== 'receipt-response') ||
@@ -114,10 +128,41 @@ export function decodeMarketSettlementWire(
     ) {
       return null
     }
-    return wire as MarketSettlementWire
+    return wire as MarketSettlementEnvelope
   } catch {
     return null
   }
+}
+
+async function resolveMarketSettlementWire(
+  wire: MarketSettlementEnvelope
+): Promise<MarketSettlementWire> {
+  if (wire.type !== 'file') return wire
+  if (
+    !isMessageboxFileUrl(wire.url) ||
+    !Number.isSafeInteger(wire.size) ||
+    wire.size <= 0 ||
+    wire.size > MAX_CHAT_FILE_BYTES ||
+    !/^[0-9a-f]{64}$/i.test(wire.sha256)
+  ) {
+    throw new Error('Invalid market settlement file reference')
+  }
+  const response = await fetch(wire.url)
+  if (!response.ok) {
+    throw new Error(`Market settlement file download failed (${response.status})`)
+  }
+  const bytes = new Uint8Array(await response.arrayBuffer())
+  if (bytes.byteLength !== wire.size || bytes.byteLength > MAX_CHAT_FILE_BYTES) {
+    throw new Error('Market settlement file size mismatch')
+  }
+  if (Utils.toHex(Hash.sha256([...bytes])) !== wire.sha256.toLowerCase()) {
+    throw new Error('Market settlement file hash mismatch')
+  }
+  const resolved = decodeMarketSettlementWire(new TextDecoder().decode(bytes))
+  if (!resolved || resolved.type === 'file' || resolved.saleId !== wire.saleId) {
+    throw new Error('Invalid market settlement file')
+  }
+  return resolved
 }
 
 export async function deliverMarketSettlementWire(args: {
@@ -127,12 +172,42 @@ export async function deliverMarketSettlementWire(args: {
   senderIdentityKey: string
   messagebox?: string | null
 }): Promise<boolean> {
+  let body: string
+  try {
+    body = encodeMarketSettlementWire(args.wire)
+  } catch (error) {
+    if (
+      !(error instanceof Error) ||
+      !/BRC-33 body limit/i.test(error.message)
+    ) {
+      throw error
+    }
+    const bytes = new TextEncoder().encode(
+      `${MARKET_WIRE_PREFIX}${JSON.stringify(args.wire)}`
+    )
+    const file = await uploadMessageboxBytes({
+      bytes,
+      filename: `${args.wire.saleId}.market-settlement.json`,
+      contentType: 'application/json',
+      recipientIdentityKey: args.recipientIdentityKey,
+      senderIdentityKey: args.senderIdentityKey,
+      rootKeyHex: args.rootKeyHex,
+      messagebox: args.messagebox,
+    })
+    body = encodeMarketSettlementWire({
+      type: 'file',
+      saleId: args.wire.saleId,
+      url: file.url,
+      size: file.size,
+      sha256: Utils.toHex(Hash.sha256([...bytes])),
+    })
+  }
   const sent = await deliverOutbound({
     recipientIdentityKey: args.recipientIdentityKey,
     rootKeyHex: args.rootKeyHex,
     senderIdentityKey: args.senderIdentityKey,
     messagebox: args.messagebox,
-    body: encodeMarketSettlementWire(args.wire),
+    body,
     peerId: args.recipientIdentityKey,
   })
   return sent.delivered === 'cloud'
@@ -680,9 +755,10 @@ export async function pollInboundTipHints(args: {
     const paymentHints: InboundPaymentHint[] = []
     for (const m of list) {
       const senderKey = listedSender(m)
-      const marketWire = decodeMarketSettlementWire(m.body)
-      if (marketWire) {
+      const encodedMarketWire = decodeMarketSettlementWire(m.body)
+      if (encodedMarketWire) {
         try {
+          const marketWire = await resolveMarketSettlementWire(encodedMarketWire)
           const { handleInboundMarketSettlementWire } = await import(
             './marketSettlement'
           )
