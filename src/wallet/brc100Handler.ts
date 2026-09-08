@@ -91,6 +91,8 @@ import { requestUnlockForBridge } from './walletHealth'
 import { signIdentityText } from './messageboxAuth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
+  assertSendableBalanceForReview,
+  BRC_ACTION_FEE_BUFFER_SATS,
   isChangeChainingRequiredError,
   prepareBrcActionSpend,
   runExclusiveSpend,
@@ -124,6 +126,31 @@ import {
 
 /** One market mutation per method/item, even if a browser repeats its request. */
 const inFlightMarketActions = new Set<string>()
+const BRC_ACTION_PREFLIGHT_TIMEOUT_MS = 10_000
+
+async function assertBrcActionFundsAvailable(amountSats: number): Promise<void> {
+  if (!(amountSats > 0)) return
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      assertSendableBalanceForReview(
+        amountSats + BRC_ACTION_FEE_BUFFER_SATS,
+      ),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => {
+          const error = new Error(
+            'Wallet balance check timed out. No transaction was created.',
+          )
+          ;(error as Error & { code: string }).code =
+            'WALLET_BALANCE_TIMEOUT'
+          reject(error)
+        }, BRC_ACTION_PREFLIGHT_TIMEOUT_MS)
+      }),
+    ])
+  } finally {
+    if (timer != null) clearTimeout(timer)
+  }
+}
 
 /** Map spend / broadcast failures to stable BRC-100 codes for app clients. */
 function brcSpendErrorCode(err: unknown): {
@@ -132,6 +159,13 @@ function brcSpendErrorCode(err: unknown): {
   description: string
 } {
   const description = err instanceof Error ? err.message : String(err)
+  if (
+    err &&
+    typeof err === 'object' &&
+    (err as { code?: unknown }).code === 'WALLET_BALANCE_TIMEOUT'
+  ) {
+    return { status: 503, code: 'WALLET_BALANCE_TIMEOUT', description }
+  }
   if (/offline/i.test(description)) {
     return { status: 503, code: 'OFFLINE_PAYMENTS_DISABLED', description }
   }
@@ -821,6 +855,10 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         // Local toolbox / history backup is authoritative — no chain heal before
         // pay. Still refuse auto-pay when local balance cannot cover the ask.
         const amountSats = extractSatsFromArgs(method, args)
+        // Refuse impossible spends before consent so the app receives a
+        // structured response instead of waiting through an approval flow for
+        // a transaction the wallet cannot fund.
+        await assertBrcActionFundsAvailable(amountSats)
         const silentAutoPay =
           !isItemSpendArgs(method, args) &&
           !isBsv21IdentityMintArgs(method, args) &&

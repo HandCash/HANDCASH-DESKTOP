@@ -4,7 +4,7 @@ import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { AppAvatar } from './AppAvatar'
 import { AppsIcon, CloseIcon, LaunchIcon } from './icons'
-import { useWalletActionDock } from './WalletActionDock'
+import { WalletRequestTemplate } from './WalletRequestTemplate'
 
 type Props = {
   origin: string
@@ -44,7 +44,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     }
   }
 
-  useWalletActionDock({
+  const actions = {
     ariaLabel: `Launch ${name}`,
     tertiary: {
       label: 'Cancel',
@@ -67,53 +67,52 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       icon: <LaunchIcon size={18} />,
       tone: 'primary',
     },
-  })
+  } as const
 
   return (
-    <div
-      className="nav-child-panel permission-request-panel app-launch-panel"
-      data-aeon-scope="app-launch"
+    <WalletRequestTemplate
+      scope="app-launch"
+      className="nav-child-panel app-launch-panel"
+      actions={actions}
     >
-      <div className="permission-request-scroll">
-        <div className="connect-app-hero">
-          <AppAvatar origin={origin} name={name} size="md" />
-          <div>
-            <p className="permission-eyebrow">Launch connected app</p>
-            <h2 className="permission-request-title">{name}</h2>
-            <p className="mono permission-origin">{origin}</p>
-          </div>
-        </div>
-
-        <p className="permission-note">
-          Choose where to open this app. Both options use the same connected wallet
-          permissions.
-        </p>
-
-        <div className="connect-scope-list" aria-label="Launch options">
-          <div className="connect-scope-row">
-            <span className="scope-icon">
-              <AppsIcon size={16} />
-            </span>
-            <span>
-              <strong>Open in HandCash</strong>
-              <small>
-                {inAppAvailable
-                  ? 'Keep the app inside a HandCash-controlled browser window.'
-                  : 'The in-app browser is unavailable on this device.'}
-              </small>
-            </span>
-          </div>
-          <div className="connect-scope-row">
-            <span className="scope-icon">
-              <LaunchIcon size={16} />
-            </span>
-            <span>
-              <strong>Open in browser</strong>
-              <small>Launch the app in your default system browser.</small>
-            </span>
-          </div>
+      <div className="connect-app-hero">
+        <AppAvatar origin={origin} name={name} size="md" />
+        <div>
+          <p className="permission-eyebrow">Launch connected app</p>
+          <h2 className="permission-request-title">{name}</h2>
+          <p className="mono permission-origin">{origin}</p>
         </div>
       </div>
-    </div>
+
+      <p className="permission-note">
+        Choose where to open this app. Both options use the same connected wallet
+        permissions.
+      </p>
+
+      <div className="connect-scope-list" aria-label="Launch options">
+        <div className="connect-scope-row">
+          <span className="scope-icon">
+            <AppsIcon size={16} />
+          </span>
+          <span>
+            <strong>Open in HandCash</strong>
+            <small>
+              {inAppAvailable
+                ? 'Keep the app inside a HandCash-controlled browser window.'
+                : 'The in-app browser is unavailable on this device.'}
+            </small>
+          </span>
+        </div>
+        <div className="connect-scope-row">
+          <span className="scope-icon">
+            <LaunchIcon size={16} />
+          </span>
+          <span>
+            <strong>Open in browser</strong>
+            <small>Launch the app in your default system browser.</small>
+          </span>
+        </div>
+      </div>
+    </WalletRequestTemplate>
   )
 }

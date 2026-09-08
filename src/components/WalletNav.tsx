@@ -49,10 +49,7 @@ import { SendCollectablePanel } from './SendCollectablePanel'
 import { SendFungiblePanel } from './SendFungiblePanel'
 import { BurnAssetPanel } from './BurnAssetPanel'
 import { TransactionsPanel } from './RecentActivity'
-import {
-  PermissionRequestPanel,
-  type PermissionDecisionApi,
-} from './PermissionRequestPanel'
+import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { AppLaunchPanel } from './AppLaunchPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
@@ -78,8 +75,6 @@ import { getFungible, getCachedFungibles } from '../wallet/fungibles'
 import {
   ActivityIcon,
   AppsIcon,
-  CheckIcon,
-  CloseIcon,
   CollectablesIcon,
   FriendsIcon,
   IdentityIcon,
@@ -169,7 +164,6 @@ export const WalletNav = memo(function WalletNav({
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
   const [fungibleLabel, setFungibleLabel] = useState('Token')
   const [pendingPrompt, setPendingPrompt] = useState<PendingPrompt | null>(null)
-  const [decisionApi, setDecisionApi] = useState<PermissionDecisionApi | null>(null)
   const [registeredDock, setRegisteredDock] = useState<{
     owner: symbol
     actions: WalletDockActions
@@ -255,10 +249,6 @@ export const WalletNav = memo(function WalletNav({
     playWalletSound('deny')
     return true
   }, [pendingPrompt])
-
-  const onDecisionApi = useCallback((api: PermissionDecisionApi | null) => {
-    setDecisionApi(api)
-  }, [])
 
   useEffect(() => {
     if (nav.section === 'collectables') return
@@ -587,7 +577,6 @@ export const WalletNav = memo(function WalletNav({
                     pending={pendingPrompt}
                     onAllow={onPermissionAllow}
                     onDeny={onPermissionDeny}
-                    onDecisionApi={onDecisionApi}
                   />
                 ) : (
                   <TransactionsPanel chain={profile.chain} />
@@ -638,25 +627,7 @@ export const WalletNav = memo(function WalletNav({
           data-permission={contextualDock ? '' : undefined}
         >
           <div className="wallet-nav-bar-track">
-            {mobileInlinePermission ? (
-              <WalletActionBar
-                ariaLabel="Permission decision"
-                placement="nav"
-                secondary={{
-                  label: decisionApi?.denyLabel ?? 'Decline',
-                  onClick: () =>
-                    decisionApi ? decisionApi.deny() : onPermissionDeny(),
-                  icon: <CloseIcon size={18} />,
-                }}
-                primary={{
-                  label: decisionApi?.allowLabel ?? 'Accept',
-                  onClick: () => decisionApi?.allow(),
-                  disabled: !decisionApi || decisionApi.allowDisabled,
-                  icon: <CheckIcon size={18} />,
-                  tone: 'primary',
-                }}
-              />
-            ) : registeredDock ? (
+            {registeredDock ? (
               <WalletActionBar
                 {...registeredDock.actions}
                 placement="nav"

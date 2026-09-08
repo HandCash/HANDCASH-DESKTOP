@@ -20,15 +20,9 @@ import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorizatio
 import type { AutoPayChoice } from './ActionPermissionDialog'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
-import { WalletActionBar } from './WalletActionBar'
-
-export type PermissionDecisionApi = {
-  allow: () => void
-  deny: () => void
-  allowDisabled: boolean
-  allowLabel: string
-  denyLabel: string
-}
+import { CheckIcon, CloseIcon } from './icons'
+import { WalletRequestTemplate } from './WalletRequestTemplate'
+import type { WalletDockActions } from './WalletActionDock'
 
 type Props = {
   pending: PendingPrompt
@@ -36,11 +30,6 @@ type Props = {
   onAllow: (autoPay?: AutoPayChoice) => boolean
   /** True only when this exact prompt was still current and cancelled. */
   onDeny: () => boolean
-  /**
-   * Mobile Activity tab: parent renders Accept/Decline in the bottom nav bar.
-   * Omit (or pass null handlers via `actions="inline"`) for desktop side-column.
-   */
-  onDecisionApi?: (api: PermissionDecisionApi | null) => void
   /** When `inline`, render Deny/Approve in the panel (desktop right column). */
   actions?: 'nav' | 'inline'
 }
@@ -71,7 +60,6 @@ export function PermissionRequestPanel({
   pending,
   onAllow,
   onDeny,
-  onDecisionApi,
   actions = 'nav',
 }: Props) {
   const [decision, sendDecision] = useMachine(permissionDecisionMachine)
@@ -144,69 +132,39 @@ export function PermissionRequestPanel({
     sendDecision({ type: 'RESET' })
   }
 
-  useEffect(() => {
-    if (inlineActions || !onDecisionApi) return
-    onDecisionApi({
-      allow: runAllow,
-      deny: runDeny,
-      allowDisabled,
-      allowLabel: committing ? 'Approving…' : 'Accept',
-      denyLabel: 'Cancel',
-    })
-    return () => onDecisionApi(null)
-    // runAllow closes over current allow inputs; deps below keep the nav API fresh.
-  }, [
-    pending,
-    showAutoPay,
-    autoEnabled,
-    maxUsdValid,
-    hoursValid,
-    parsedMaxUsd,
-    parsedHours,
-    allowDisabled,
-    committing,
-    onAllow,
-    onDeny,
-    onDecisionApi,
-    inlineActions,
-  ])
-
-  const actionButtons = inlineActions ? (
-    <WalletActionBar
-      ariaLabel="Permission decision"
-      className="connect-actions permission-request-actions"
-      secondary={{
-        label: 'Cancel',
-        onClick: runDeny,
-        disabled: committing,
-      }}
-      primary={{
-        label: committing
-          ? 'Approving…'
-          : pending.kind === 'connect'
+  const requestActions: WalletDockActions = {
+    ariaLabel: 'Permission decision',
+    secondary: {
+      label: 'Cancel',
+      onClick: runDeny,
+      disabled: committing,
+      icon: <CloseIcon size={18} />,
+    },
+    primary: {
+      label: committing
+        ? 'Approving…'
+        : inlineActions
+          ? pending.kind === 'connect'
             ? 'Authorize'
-            : 'Approve',
-        onClick: runAllow,
-        disabled: allowDisabled,
-        autoFocus: true,
-        tone: 'primary',
-      }}
-    />
-  ) : null
+            : 'Approve'
+          : 'Accept',
+      onClick: runAllow,
+      disabled: allowDisabled,
+      autoFocus: true,
+      icon: <CheckIcon size={18} />,
+      tone: 'primary',
+    },
+  }
 
   const wrap = (scope: string, body: ReactNode) => (
-    <div
-      className={
-        inlineActions
-          ? 'permission-request-panel permission-request-panel--column'
-          : 'permission-request-panel'
-      }
-      data-aeon-scope={scope}
-      data-aeon-state={iconReady ? 'pending' : 'loading'}
+    <WalletRequestTemplate
+      scope={scope}
+      state={iconReady ? 'pending' : 'loading'}
+      actions={requestActions}
+      placement={actions}
     >
-      {inlineActions ? <div className="permission-request-scroll">{body}</div> : body}
-      {actionButtons}
-    </div>
+      {body}
+    </WalletRequestTemplate>
   )
 
   if (pending.kind === 'connect') {
