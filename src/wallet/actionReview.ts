@@ -82,6 +82,7 @@ export async function releaseStuckNosends(
  */
 export async function abortReservedActionBatches(
   active?: ActiveWallet | null,
+  opts?: { budgetMs?: number },
 ): Promise<number> {
   const wallet = (active ?? getActiveWallet())?.wallet
   if (!wallet) return 0
@@ -93,26 +94,40 @@ export async function abortReservedActionBatches(
     console.warn('[action-review] actionBatch.abort skipped', err)
   }
 
-  try {
-    const storage = wallet.storage
-    const listed = await storage.runAsStorageProvider(async (sp) => {
-      const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
-      return sp.findExpiredActionBatches(future)
-    })
-    for (const batch of listed ?? []) {
-      const batchId = String(
-        (batch as { batchId?: string }).batchId ?? '',
-      ).trim()
-      if (!batchId) continue
-      try {
-        const result = await storage.abortActionBatch(batchId)
-        if (result?.aborted !== false) aborted += 1
-      } catch (err) {
-        console.warn('[action-review] abortActionBatch skipped', batchId, err)
+  const persist = async (): Promise<void> => {
+    try {
+      const storage = wallet.storage
+      const listed = await storage.runAsStorageProvider(async (sp) => {
+        const future = new Date(Date.now() + 2 * 60 * 60 * 1000)
+        return sp.findExpiredActionBatches(future)
+      })
+      for (const batch of listed ?? []) {
+        const batchId = String(
+          (batch as { batchId?: string }).batchId ?? '',
+        ).trim()
+        if (!batchId) continue
+        try {
+          const result = await storage.abortActionBatch(batchId)
+          if (result?.aborted !== false) aborted += 1
+        } catch (err) {
+          console.warn('[action-review] abortActionBatch skipped', batchId, err)
+        }
       }
+    } catch (err) {
+      console.warn('[action-review] persisted action-batch abort skipped', err)
     }
-  } catch (err) {
-    console.warn('[action-review] persisted action-batch abort skipped', err)
+  }
+
+  const budgetMs = opts?.budgetMs
+  if (typeof budgetMs === 'number' && budgetMs >= 0) {
+    await Promise.race([
+      persist(),
+      new Promise<void>((resolve) => {
+        setTimeout(resolve, budgetMs)
+      }),
+    ])
+  } else {
+    await persist()
   }
 
   if (aborted > 0) {

@@ -3075,7 +3075,7 @@ export async function sendCollectable(args: {
             const { abortReservedActionBatches } = await import(
               './actionReview'
             )
-            await abortReservedActionBatches(wallet)
+            await abortReservedActionBatches(wallet, { budgetMs: 1500 })
           }
           // Tip is already in the 1sat basket. Fee UTXOs live in managed change —
           // createAction fails closed if they aren't. Do not await balance() here

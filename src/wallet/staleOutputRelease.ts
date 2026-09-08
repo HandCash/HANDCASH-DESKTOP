@@ -1000,8 +1000,11 @@ export async function listPendingLocalChangeTxids(): Promise<string[]> {
  */
 export async function promotePendingLocalChangeOutputs(opts?: {
   forSpendChain?: boolean
+  /** Skip explorer exists-checks — item send prepare cannot wait on 404 lag. */
+  localOnly?: boolean
 }): Promise<number> {
   const forSpendChain = opts?.forSpendChain === true
+  const localOnly = opts?.localOnly === true
   if (!forSpendChain && shouldYieldChainIngestToSpend()) return 0
   const active = getActiveWallet()
   const storage = active?.wallet?.storage
@@ -1010,7 +1013,7 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   const txids = new Set(await listPendingLocalChangeTxids())
   if (txids.size === 0) return 0
 
-  const chain = active?.chain
+  const chain = localOnly ? undefined : active?.chain
   let promoted = 0
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break

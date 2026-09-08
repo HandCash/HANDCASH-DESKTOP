@@ -23,8 +23,8 @@ let spendRecoveryDisabled = false
 
 let liveSpendAbort: AbortController | null = null
 
-/** Light promote must not sit on explorer tours in front of an item send. */
-const LIGHT_PROMOTE_MS = 12_000
+/** Light promote is local-only; this is a stuck-IDB backstop, not an explorer budget. */
+const LIGHT_PROMOTE_MS = 3_000
 
 /** Abort the in-flight exclusive spend (lease / promote / createAction wait). */
 export function abortLiveExclusiveSpend(reason = 'Send timed out'): boolean {
@@ -122,22 +122,28 @@ async function promoteSpendableChangeBody(
       reclaimSealedInputsNeverSpent,
       promotePendingLocalChangeOutputs,
     } = await import('./staleOutputRelease')
-    await reclaimSealedInputsNeverSpent({ forSpendChain: true })
-    await promotePendingLocalChangeOutputs({ forSpendChain: true })
-    if (mode === 'full') {
+    // Item/token sends only need a fee UTXO. Explorer reclaim + restore on this
+    // desktop (800+ items) sat in "Waiting to send" for ~30s then timed out.
+    if (mode === 'light') {
+      restored = await promotePendingLocalChangeOutputs({
+        forSpendChain: true,
+        localOnly: true,
+      })
+    } else {
+      await reclaimSealedInputsNeverSpent({ forSpendChain: true })
+      await promotePendingLocalChangeOutputs({ forSpendChain: true })
       const localSweep = await sweepChangeScripts({ fromChain: false })
       localHealed = localSweep.healed
-    }
-    const restorePasses = mode === 'full' ? 5 : 1
-    for (let pass = 0; pass < restorePasses && restored === 0; pass += 1) {
-      restored += (
-        await restoreLiveSpendableOutputs({ forSpendChain: true })
-      ).restored
-    }
-    if (mode === 'full' && restored === 0 && localHealed > 0) {
-      restored += (
-        await restoreLiveSpendableOutputs({ forSpendChain: true })
-      ).restored
+      for (let pass = 0; pass < 5 && restored === 0; pass += 1) {
+        restored += (
+          await restoreLiveSpendableOutputs({ forSpendChain: true })
+        ).restored
+      }
+      if (restored === 0 && localHealed > 0) {
+        restored += (
+          await restoreLiveSpendableOutputs({ forSpendChain: true })
+        ).restored
+      }
     }
   } catch (err) {
     logDiag('spend-guard', 'warn', 'promote-skipped', {

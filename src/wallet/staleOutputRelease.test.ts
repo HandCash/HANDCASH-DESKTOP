@@ -579,6 +579,30 @@ describe('promotePendingLocalChangeOutputs', () => {
       expect.objectContaining({ spendable: true }),
     )
   })
+
+  it('localOnly promote skips explorer exists-checks', async () => {
+    const txid = 'ab'.repeat(32)
+    findTransactions.mockResolvedValue([
+      { transactionId: 3, txid, status: 'unproven' },
+    ])
+    findOutputs.mockResolvedValue([
+      {
+        outputId: 2,
+        txid,
+        vout: 0,
+        change: true,
+        satoshis: 1000,
+        lockingScript: [0x76, 0xa9],
+        spendable: false,
+      },
+    ])
+
+    await expect(
+      promotePendingLocalChangeOutputs({ forSpendChain: true, localOnly: true }),
+    ).resolves.toBe(1)
+    expect(txExistsOnChain).not.toHaveBeenCalled()
+    expect(updateTransactionStatus).not.toHaveBeenCalled()
+  })
 })
 
 describe('hideSpentOutpoints', () => {

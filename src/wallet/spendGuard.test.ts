@@ -257,13 +257,18 @@ describe('refreshSpendableBalance', () => {
     expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
   })
 
-  it('runExclusiveSpend light promote skips the unscripted script sweep', async () => {
+  it('runExclusiveSpend light promote skips explorer reclaim and restore', async () => {
     const { runExclusiveSpend } = await import('./spendGuard')
     await expect(
       runExclusiveSpend(async () => 'ok', undefined, { promote: 'light' }),
     ).resolves.toBe('ok')
     expect(sweepChangeScripts).not.toHaveBeenCalled()
-    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({ forSpendChain: true })
+    expect(reclaimSealedInputsNeverSpent).not.toHaveBeenCalled()
+    expect(restoreLiveSpendableOutputs).not.toHaveBeenCalled()
+    expect(promotePendingLocalChangeOutputs).toHaveBeenCalledWith({
+      forSpendChain: true,
+      localOnly: true,
+    })
   })
 
   it('assertSendableBalance refuses chaining credit without running chain heal', async () => {
