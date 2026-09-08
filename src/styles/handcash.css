@@ -5092,6 +5092,26 @@ a.connected-app-host:hover {
   margin-bottom: 10px;
 }
 
+.app-details-overview-head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(190px, auto);
+  gap: 16px;
+  align-items: center;
+}
+
+.app-details-identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+@container (max-width: 520px) {
+  .app-details-overview-head {
+    grid-template-columns: 1fr;
+  }
+}
+
 .app-details-head h2 {
   margin: 0 0 2px;
   font-size: 0.95rem;
@@ -5132,6 +5152,20 @@ a.app-details-host:hover {
   margin-top: 4px;
   margin-bottom: 0;
   flex-wrap: wrap;
+}
+
+.app-details-inline {
+  display: flex;
+  flex-direction: column;
+  overflow-x: hidden;
+  overflow-y: auto;
+  container-type: inline-size;
+}
+
+.app-details-inline > .wallet-action-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: auto;
 }
 
 /* Connected-app identity stays unboxed; the parent card owns the surface. */
@@ -5193,6 +5227,17 @@ a.app-details-host:hover {
   padding: 8px;
   border-top: 1px solid hsl(var(--border));
   background: color-mix(in srgb, var(--hc-surface) 92%, transparent);
+}
+
+.wallet-action-bar--nav {
+  display: flex;
+  flex: 1 1 auto;
+  align-self: stretch;
+  width: 100%;
+  padding: 0;
+  gap: 0;
+  border: 0;
+  background: transparent;
 }
 
 .connected-app-card-actions > .btn,

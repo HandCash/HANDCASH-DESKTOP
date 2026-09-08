@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
-import { SkeletonLine } from './Skeleton'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import {
   getItemAccess,
@@ -49,10 +48,8 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
     getAutoPaySettings(app.origin),
   )
   const [itemAccess, setItemAccess] = useState<ItemAccess>(() => getItemAccess(app.origin))
-  const [iconReady, setIconReady] = useState(false)
 
   useEffect(() => {
-    setIconReady(false)
     setItemAccess(getItemAccess(app.origin))
   }, [app.origin])
 
@@ -87,124 +84,102 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
     <div
       className="nav-child-panel app-details-inline"
       data-aeon-scope="app-details"
-      data-aeon-state={iconReady ? undefined : 'loading'}
     >
-      <div className="app-details-head">
-        <AppAvatar origin={app.origin} name={name} size="md" onReady={() => setIconReady(true)} />
-        {iconReady ? (
+      <div className="app-details-head app-details-overview-head">
+        <div className="app-details-identity">
+          <AppAvatar origin={app.origin} name={name} size="md" />
           <div className="app-details-head-text">
             <h3 id="app-details-title">{name}</h3>
             <span className="mono app-details-host">{app.origin}</span>
           </div>
-        ) : (
-          <div className="app-details-head-text">
-            <SkeletonLine width="40%" height={16} />
-            <SkeletonLine width="70%" height={10} />
+        </div>
+        <dl className="app-activity-stats" aria-label="Activity">
+          <div>
+            <dt>Spent 24h</dt>
+            <dd>{formatPrimaryFromSats(money.spent24h, currency, usdPerBsv)}</dd>
           </div>
-        )}
+          <div>
+            <dt>Earned 24h</dt>
+            <dd>{formatPrimaryFromSats(money.earned24h, currency, usdPerBsv)}</dd>
+          </div>
+        </dl>
       </div>
 
-      {!iconReady ? (
-        <div className="app-details-section">
-          <SkeletonLine width="30%" height={10} />
-          <div className="permission-chips" style={{ marginTop: 10 }}>
-            <SkeletonLine width={88} height={28} />
-            <SkeletonLine width={72} height={28} />
-            <SkeletonLine width={96} height={28} />
-          </div>
-        </div>
-      ) : (
-        <>
-          <div className="app-details-section">
-            <p className="scope-list-label">Permissions</p>
-            <div className="permission-chips" aria-label="Permissions">
-              {CONNECT_SCOPES.map((scope) => {
-                const itemGranted =
-                  scope.id === 'items-view'
-                    ? itemAccess.view !== 'none'
-                    : scope.id === 'items-send'
-                      ? true
-                      : scope.id === 'items-receive'
-                        ? itemAccess.canReceive
-                        : true
-                return (
-                  <button
-                    key={scope.id}
-                    type="button"
-                    className={
-                      itemGranted
-                        ? 'permission-chip'
-                        : 'permission-chip permission-chip-muted'
-                    }
-                    title={
-                      itemGranted
-                        ? scope.description
-                        : `${scope.description} (not granted yet)`
-                    }
-                    onClick={() => openPermissionDetails(app.origin, scope.id)}
-                  >
-                    <ScopeIcon scopeId={scope.id} size={13} />
-                    {scope.label}
-                  </button>
-                )
-              })}
-              {autoPay?.enabled ? (
-                <button
-                  type="button"
-                  className="permission-chip permission-chip-accent"
-                  title={`Up to $${autoPay.maxUsd} every ${autoPay.windowHours} hours`}
-                  onClick={() => openPermissionDetails(app.origin, 'auto-pay')}
-                >
-                  <ScopeIcon scopeId="auto-pay" size={13} />
-                  Auto-pay · ${autoPay.maxUsd}/{autoPay.windowHours}h
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          <div className="app-details-section app-details-activity" aria-label="Activity">
-            <dl className="app-activity-stats">
-              <div>
-                <dt>Spent 24h</dt>
-                <dd>{formatPrimaryFromSats(money.spent24h, currency, usdPerBsv)}</dd>
-              </div>
-              <div>
-                <dt>Earned 24h</dt>
-                <dd>{formatPrimaryFromSats(money.earned24h, currency, usdPerBsv)}</dd>
-              </div>
-            </dl>
-          </div>
-
-          <AppCatalogPacksPanel origin={app.origin} />
-
-          <div className="actions app-details-actions wallet-action-bar">
-            {home ? <AppLaunchMenu url={home} /> : null}
-            {autoPay?.enabled ? (
+      <div className="app-details-section">
+        <p className="scope-list-label">Permissions</p>
+        <div className="permission-chips" aria-label="Permissions">
+          {CONNECT_SCOPES.map((scope) => {
+            const itemGranted =
+              scope.id === 'items-view'
+                ? itemAccess.view !== 'none'
+                : scope.id === 'items-send'
+                  ? true
+                  : scope.id === 'items-receive'
+                    ? itemAccess.canReceive
+                    : true
+            return (
               <button
-                className="btn btn-ghost"
+                key={scope.id}
                 type="button"
-                onClick={() => {
-                  playWalletSound('soft')
-                  clearAutoPaySettings(app.origin)
-                }}
+                className={
+                  itemGranted
+                    ? 'permission-chip'
+                    : 'permission-chip permission-chip-muted'
+                }
+                title={
+                  itemGranted
+                    ? scope.description
+                    : `${scope.description} (not granted yet)`
+                }
+                onClick={() => openPermissionDetails(app.origin, scope.id)}
               >
-                Turn off auto-pay
+                <ScopeIcon scopeId={scope.id} size={13} />
+                {scope.label}
               </button>
-            ) : null}
+            )
+          })}
+          {autoPay?.enabled ? (
             <button
-              className="btn btn-ghost"
               type="button"
-              onClick={() => {
-                playWalletSound('deny')
-                onRevoke(app.origin)
-                onDone()
-              }}
+              className="permission-chip permission-chip-accent"
+              title={`Up to $${autoPay.maxUsd} every ${autoPay.windowHours} hours`}
+              onClick={() => openPermissionDetails(app.origin, 'auto-pay')}
             >
-              Disconnect
+              <ScopeIcon scopeId="auto-pay" size={13} />
+              Auto-pay · ${autoPay.maxUsd}/{autoPay.windowHours}h
             </button>
-          </div>
-        </>
-      )}
+          ) : null}
+        </div>
+      </div>
+
+      <AppCatalogPacksPanel origin={app.origin} />
+
+      <div className="actions app-details-actions wallet-action-bar">
+        {home ? <AppLaunchMenu url={home} /> : null}
+        {autoPay?.enabled ? (
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              playWalletSound('soft')
+              clearAutoPaySettings(app.origin)
+            }}
+          >
+            Turn off auto-pay
+          </button>
+        ) : null}
+        <button
+          className="btn btn-ghost"
+          type="button"
+          onClick={() => {
+            playWalletSound('deny')
+            onRevoke(app.origin)
+            onDone()
+          }}
+        >
+          Disconnect
+        </button>
+      </div>
     </div>
   )
 }

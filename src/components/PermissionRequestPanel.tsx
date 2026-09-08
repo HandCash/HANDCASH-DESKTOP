@@ -20,6 +20,7 @@ import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorizatio
 import type { AutoPayChoice } from './ActionPermissionDialog'
 import { PermissionItemPreview } from './PermissionItemPreview'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
+import { WalletActionBar } from './WalletActionBar'
 
 export type PermissionDecisionApi = {
   allow: () => void
@@ -171,29 +172,26 @@ export function PermissionRequestPanel({
   ])
 
   const actionButtons = inlineActions ? (
-    <div className="actions connect-actions permission-request-actions wallet-action-bar">
-      <button
-        type="button"
-        className="btn btn-ghost"
-        disabled={committing}
-        onClick={runDeny}
-      >
-        Cancel
-      </button>
-      <button
-        type="button"
-        className="btn btn-primary"
-        autoFocus
-        disabled={allowDisabled}
-        onClick={runAllow}
-      >
-        {committing
+    <WalletActionBar
+      ariaLabel="Permission decision"
+      className="connect-actions permission-request-actions"
+      secondary={{
+        label: 'Cancel',
+        onClick: runDeny,
+        disabled: committing,
+      }}
+      primary={{
+        label: committing
           ? 'Approving…'
           : pending.kind === 'connect'
             ? 'Authorize'
-            : 'Approve'}
-      </button>
-    </div>
+            : 'Approve',
+        onClick: runAllow,
+        disabled: allowDisabled,
+        autoFocus: true,
+        tone: 'primary',
+      }}
+    />
   ) : null
 
   const wrap = (scope: string, body: ReactNode) => (
