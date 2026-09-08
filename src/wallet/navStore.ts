@@ -27,6 +27,7 @@ export type SettingId =
 
 export type NavChild =
   | { type: 'app'; origin: string }
+  | { type: 'app-launch'; origin: string; url: string }
   | { type: 'permission'; origin: string; scopeId: string }
   | { type: 'send'; prefill?: string }
   | { type: 'scan' }
@@ -107,6 +108,10 @@ export function clearNavChild() {
 
 export function openAppDetails(app: ConnectedApp) {
   openNavChild('apps', { type: 'app', origin: app.origin })
+}
+
+export function openAppLaunch(origin: string, url: string) {
+  openNavChild('apps', { type: 'app-launch', origin, url })
 }
 
 export function openPermissionDetails(origin: string, scopeId: string) {

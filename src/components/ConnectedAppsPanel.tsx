@@ -29,7 +29,7 @@ import {
 import { openAppDetails } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
-import { AppsIcon } from './icons'
+import { AppsIcon, SettingsIcon } from './icons'
 import { AppLaunchMenu } from './AppLaunchMenu'
 
 type Props = {
@@ -74,6 +74,8 @@ function AppListItem({
               <span className="connected-app-host mono">{app.origin}</span>
             </div>
           </button>
+        </div>
+        <div className="connected-app-stats">
           <div className="connected-app-usd" data-currency={currency}>
             <span className="connected-app-usd-amounts">
               <span className="connected-app-usd-primary">{primary}</span>
@@ -85,12 +87,14 @@ function AppListItem({
         <div className="connected-app-card-actions">
           <button
             type="button"
-            className="btn btn-ghost"
+            className="btn btn-ghost btn-icon connected-app-icon-action"
+            aria-label={`Manage ${name}`}
+            title={`Manage ${name}`}
             onClick={() => openAppDetails(app)}
           >
-            Manage
+            <SettingsIcon size={17} />
           </button>
-          {home ? <AppLaunchMenu url={home} compact /> : null}
+          {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
         </div>
       </div>
     </li>
@@ -135,6 +139,8 @@ function AppGridItem({
                 <span className="collection-grid-host mono">{app.origin}</span>
               </span>
             </button>
+          </div>
+          <div className="connected-app-stats">
             <span className="connected-app-usd" data-currency={currency}>
             <span className="connected-app-usd-amounts">
               <span className="connected-app-usd-primary">{primary}</span>
@@ -144,10 +150,16 @@ function AppGridItem({
             </span>
           </div>
           <div className="connected-app-card-actions">
-            <button type="button" className="btn btn-ghost" onClick={() => openAppDetails(app)}>
-              Manage
+            <button
+              type="button"
+              className="btn btn-ghost btn-icon connected-app-icon-action"
+              aria-label={`Manage ${name}`}
+              title={`Manage ${name}`}
+              onClick={() => openAppDetails(app)}
+            >
+              <SettingsIcon size={17} />
             </button>
-            {home ? <AppLaunchMenu url={home} compact /> : null}
+            {home ? <AppLaunchMenu url={home} origin={app.origin} name={name} /> : null}
           </div>
         </div>
       </div>

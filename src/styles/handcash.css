@@ -5094,9 +5094,9 @@ a.connected-app-host:hover {
 
 .app-details-overview-head {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(190px, auto);
-  gap: 16px;
-  align-items: center;
+  grid-template-columns: 1fr;
+  gap: 10px;
+  align-items: stretch;
 }
 
 .app-details-identity {
@@ -5104,6 +5104,14 @@ a.connected-app-host:hover {
   align-items: center;
   gap: 10px;
   min-width: 0;
+}
+
+.app-details-overview-head .app-activity-stats {
+  width: 100%;
+  padding: 9px 10px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+  background: color-mix(in srgb, var(--hc-surface) 96%, var(--hc-text));
 }
 
 @container (max-width: 520px) {
@@ -5186,10 +5194,8 @@ a.app-details-host:hover {
 }
 
 .connected-app-card-top {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  display: block;
   align-items: center;
-  gap: 12px;
   width: 100%;
   padding: 6px;
 }
@@ -5209,12 +5215,34 @@ a.app-details-host:hover {
 }
 
 .collection-grid-card .connected-app-usd {
-  justify-items: end;
-  justify-self: end;
+  justify-items: start;
+  justify-self: stretch;
 }
 
 .collection-grid-card .connected-app-usd-amounts {
-  justify-content: flex-end;
+  justify-content: flex-start;
+}
+
+.connected-app-stats {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border-top: 1px solid hsl(var(--border));
+  background: color-mix(in srgb, var(--hc-surface) 96%, var(--hc-text));
+}
+
+.connected-app-stats .connected-app-usd {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  justify-items: start;
+  justify-self: stretch;
+  width: 100%;
+  padding: 0;
+}
+
+.connected-app-stats .connected-app-usd-label {
+  justify-self: end;
 }
 
 .connected-app-card-actions,
@@ -5240,56 +5268,15 @@ a.app-details-host:hover {
   background: transparent;
 }
 
-.connected-app-card-actions > .btn,
-.connected-app-card-actions > .app-launch-menu {
-  flex: 1 1 0;
+.connected-app-card-actions > .connected-app-icon-action {
+  flex: 0 0 40px;
+  width: 40px;
+  min-width: 40px;
+  padding-inline: 0;
 }
 
-.connected-app-card-actions .btn,
-.connected-app-card-actions .app-launch-menu > summary {
-  width: 100%;
+.connected-app-card-actions .connected-app-icon-action {
   justify-content: center;
-}
-
-.app-launch-menu {
-  position: relative;
-}
-
-.app-launch-menu > summary {
-  list-style: none;
-  user-select: none;
-  cursor: pointer;
-}
-
-.app-launch-menu > summary::-webkit-details-marker {
-  display: none;
-}
-
-.app-launch-options {
-  position: absolute;
-  z-index: 20;
-  right: 0;
-  bottom: calc(100% + 6px);
-  display: grid;
-  min-width: 210px;
-  padding: 5px;
-  border: 1px solid hsl(var(--border));
-  border-radius: var(--hc-radius);
-  background: var(--hc-surface);
-}
-
-.app-launch-options button {
-  border: 0;
-  border-radius: calc(var(--hc-radius) - 2px);
-  padding: 9px 10px;
-  background: transparent;
-  color: var(--hc-text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.app-launch-options button:hover {
-  background: var(--hc-hover);
 }
 
 .permission-modal .wallet-action-bar {

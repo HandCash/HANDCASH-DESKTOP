@@ -11,15 +11,16 @@ export type WalletAction = {
   title?: string
 }
 
-type Props = {
+export type WalletActionBarProps = {
   primary: WalletAction
   secondary?: WalletAction
+  tertiary?: WalletAction
   ariaLabel: string
   placement?: 'inline' | 'nav'
   className?: string
 }
 
-function buttonClass(action: WalletAction, placement: Props['placement']): string {
+function buttonClass(action: WalletAction, placement: WalletActionBarProps['placement']): string {
   if (placement === 'nav') {
     return `wallet-nav-tab ${
       action.tone === 'primary' ? 'wallet-nav-tab-accept' : 'wallet-nav-tab-deny'
@@ -33,11 +34,16 @@ function buttonClass(action: WalletAction, placement: Props['placement']): strin
 export function WalletActionBar({
   primary,
   secondary,
+  tertiary,
   ariaLabel,
   placement = 'inline',
   className = '',
-}: Props) {
-  const actions = secondary ? [secondary, primary] : [primary]
+}: WalletActionBarProps) {
+  const actions = [
+    ...(tertiary ? [tertiary] : []),
+    ...(secondary ? [secondary] : []),
+    primary,
+  ]
   return (
     <footer
       className={`wallet-action-bar wallet-action-bar--${placement} ${className}`.trim()}
