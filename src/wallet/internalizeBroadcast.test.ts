@@ -23,6 +23,11 @@ vi.mock('./legacyBeef', () => ({
   },
 }))
 
+vi.mock('./peerIngestHelpers', () => ({
+  alreadyInternalizedError: (error: unknown) =>
+    error instanceof Error && /already internalized/i.test(error.message),
+}))
+
 function atomicFixture(): { txid: string; atomic: number[] } {
   const transaction = new Transaction()
   transaction.addInput({
@@ -86,5 +91,34 @@ describe('internalizeActionWithBroadcast', () => {
     ).rejects.toThrow(/valid AtomicBEEF/)
     expect(internalizeAction).not.toHaveBeenCalled()
     expect(broadcastAtomicBeef).not.toHaveBeenCalled()
+  })
+
+  it('returns the credited value when an idempotent ingest was already stored', async () => {
+    const { internalizeActionWithBroadcast } = await import(
+      './internalizeBroadcast'
+    )
+    const fixture = atomicFixture()
+    const wallet = {
+      internalizeAction: vi.fn(async () => {
+        throw new Error('transaction already internalized')
+      }),
+    } as unknown as WalletInterface
+
+    await expect(
+      internalizeActionWithBroadcast(
+        wallet,
+        { tx: fixture.atomic, outputs: [{ outputIndex: 0 }] },
+        'example.com',
+      ),
+    ).resolves.toEqual({
+      accepted: true,
+      isMerge: true,
+      txid: fixture.txid,
+      satoshis: 1_000,
+    })
+    expect(broadcastAtomicBeef).toHaveBeenCalledWith(
+      fixture.txid,
+      fixture.atomic,
+    )
   })
 })

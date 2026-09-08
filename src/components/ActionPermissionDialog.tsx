@@ -1,7 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import { useMachine } from '@xstate/react'
 import { Prompt } from '@aeon-ui/react'
-import type { PendingAction } from '../wallet/permissions'
+import {
+  acceptsIncomingFunds,
+  setAcceptIncomingFunds,
+  type PendingAction,
+} from '../wallet/permissions'
 import { appDisplayName, humanActionCopy } from '../wallet/appIdentity'
 import { AppAvatar } from './AppAvatar'
 import { PermissionItemPreview } from './PermissionItemPreview'
@@ -59,6 +63,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const decisionCommittedRef = useRef(false)
   const [iconReady, setIconReady] = useState(false)
   const [autoEnabled, setAutoEnabled] = useState(false)
+  const [acceptIncoming, setAcceptIncoming] = useState(false)
   const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
   const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
   const skipDenyRef = useRef(false)
@@ -99,6 +104,12 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
       ? formatSecondaryFromSats(pending.amountSats, currency, usdPerBsv)
       : null
   const showAutoPay = pending ? isBsvPaymentAction(pending) : false
+  const showAcceptIncoming = pending?.title === 'Accept incoming funds'
+
+  useEffect(() => {
+    if (!pending) return
+    setAcceptIncoming(acceptsIncomingFunds(pending.origin))
+  }, [pending])
 
   const parsedMaxUsd = Number.parseFloat(maxUsd)
   const parsedHours = Number.parseFloat(windowHours)
@@ -122,6 +133,9 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
           windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
         })
     if (accepted) {
+      if (showAcceptIncoming) {
+        setAcceptIncomingFunds(pending.origin, acceptIncoming)
+      }
       sendDecision({ type: 'APPROVE' })
       return
     }
@@ -268,6 +282,24 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                         </span>
                       </div>
                     ) : null}
+                  </div>
+                ) : null}
+
+                {showAcceptIncoming ? (
+                  <div className="auto-pay" data-aeon-part="accept-incoming">
+                    <label className="auto-pay-toggle">
+                      <input
+                        type="checkbox"
+                        checked={acceptIncoming}
+                        onChange={(event) =>
+                          setAcceptIncoming(event.target.checked)
+                        }
+                      />
+                      <span>
+                        Accept funds automatically from{' '}
+                        <strong>{name}</strong>
+                      </span>
+                    </label>
                   </div>
                 ) : null}
 

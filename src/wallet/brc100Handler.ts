@@ -46,7 +46,12 @@ import {
   syncIndexExpansion,
 } from './indexExpansion'
 import { IndexManifestError } from './indexExpansionManifest'
-import { extractSatsFromArgs, recordAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
+import {
+  extractInternalizedSats,
+  extractSatsFromArgs,
+  recordAppActivity,
+  WALLET_ACTIVITY_ORIGIN,
+} from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
 import { resolveBsv21IconDataUrl } from './tokenIconResolve'
@@ -1156,7 +1161,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         )
         playWalletSound('receive')
       } else {
-        const sats = extractSatsFromArgs(method, args)
+        // Remittance requests identify the output but normally omit its value.
+        // The validated wallet result is authoritative for the credited amount.
+        const sats = extractInternalizedSats(result, args)
         if (sats > 0) {
           recordAppActivity({
             origin: originator,
@@ -1164,6 +1171,11 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
             sats,
             method,
             txid: receivedTxid,
+            note:
+              typeof (args as { description?: unknown })?.description ===
+              'string'
+                ? (args as { description: string }).description
+                : undefined,
           })
           playWalletSound('receive')
         } else {
