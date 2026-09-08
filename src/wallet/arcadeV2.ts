@@ -17,7 +17,7 @@ import {
   type Services,
 } from '@bsv/wallet-toolbox-client'
 import type { Chain } from './vault'
-import { POST_BEEF_PREFER, preferServiceOrder } from './serviceOrder'
+import { configurePostBeefServices } from './serviceOrder'
 
 const ARCADE_V2_MAIN = 'https://arcade-v2-us-1.bsvblockchain.tech'
 const ARCADE_V2_TEST = 'https://arcade-v2-testnet-us-1.bsvblockchain.tech'
@@ -151,10 +151,13 @@ export function installArcadeV2Services(services: Services, chain: Chain): void 
       s.initializePostBeefServices?.(hasBitails, hasWhatsOnChain)
     }
 
-    preferServiceOrder(
-      (s as unknown as { postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void } })
-        .postBeefServices,
-      POST_BEEF_PREFER,
+    configurePostBeefServices(
+      (s as unknown as {
+        postBeefServices?: {
+          services?: Array<{ name: string }>
+          reset?: () => void
+        }
+      }).postBeefServices,
     )
 
     console.info(

@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { POST_BEEF_PREFER, preferServiceOrder } from './serviceOrder'
+import {
+  POST_BEEF_PREFER,
+  configurePostBeefServices,
+  preferServiceOrder,
+} from './serviceOrder'
 
 describe('preferServiceOrder', () => {
   it('moves preferred providers to the front without dropping others', () => {
@@ -19,7 +23,7 @@ describe('preferServiceOrder', () => {
     expect(services.map((s) => s.name)).toEqual(['Bitails', 'WhatsOnChain'])
   })
 
-  it('puts ArcadeBeef first so the first success completes the send', () => {
+  it('keeps Arcade V2 as the only transaction broadcaster', () => {
     const services = [
       { name: 'GorillaPoolArcBeef' },
       { name: 'Bitails' },
@@ -27,7 +31,7 @@ describe('preferServiceOrder', () => {
       { name: 'TaalArcBeef' },
       { name: 'ArcadeBeef' },
     ]
-    preferServiceOrder({ services }, POST_BEEF_PREFER)
+    configurePostBeefServices({ services })
     expect(services[0]?.name).toBe('ArcadeBeef')
     expect(services.map((s) => s.name)).toEqual([...POST_BEEF_PREFER])
   })
