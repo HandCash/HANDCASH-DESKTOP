@@ -650,26 +650,27 @@ async function recoverCachedLegacyTips(
       const beef = await getLocalBeefForTxid(active, txid)
       const output = beef?.findTxid(txid)?.tx?.outputs[vout]
       const lockingScript = output?.lockingScript?.toHex()
+      if (!lockingScript || (output?.satoshis ?? 1) !== 1) continue
       const envelope = parseOrdEnvelope(lockingScript)
-      if (!lockingScript || !envelope?.body?.length) continue
-      const payload = parseBsv21Json(
-        JSON.parse(new TextDecoder().decode(envelope.body)),
-      )
-      if (!payload?.amt) continue
-      const payloadTokenId =
-        payload.op === 'deploy+mint' || payload.op === 'deploy+auth'
+      const payload = envelope?.body?.length
+        ? parseBsv21Json(JSON.parse(new TextDecoder().decode(envelope.body)))
+        : null
+      const amount = payload?.amt ?? token.amt
+      const payloadTokenId = payload
+        ? payload.op === 'deploy+mint' || payload.op === 'deploy+auth'
           ? normalizeTokenId(point)
           : normalizeTokenId(payload.id ?? '')
-      if (payloadTokenId !== tokenId || BigInt(payload.amt) <= 0n) continue
+        : tokenId
+      if (payloadTokenId !== tokenId || BigInt(amount) <= 0n) continue
       recovered.push({
         outpoint: point,
         tokenId,
-        amt: payload.amt,
-        op: payload.op,
-        dec: payload.dec ?? token.dec,
-        satoshis: output?.satoshis ?? 1,
-        ...(payload.sym || token.sym ? { sym: payload.sym || token.sym } : {}),
-        ...(payload.icon || token.icon ? { icon: payload.icon || token.icon } : {}),
+        amt: amount,
+        op: payload?.op ?? 'transfer',
+        dec: payload?.dec ?? token.dec,
+        satoshis: 1,
+        ...(payload?.sym || token.sym ? { sym: payload?.sym || token.sym } : {}),
+        ...(payload?.icon || token.icon ? { icon: payload?.icon || token.icon } : {}),
         lockingScript,
       })
       console.info(`[bsv21] recovered cached legacy tip ${point} for spend`)
