@@ -16,6 +16,7 @@ import {
 import { decodeBsv21Binary, iconOutpointFromPayload } from './bsv21Binary'
 import { tipFromBsv21Script } from './bsv21Send'
 import { durableGetItem, durableSetItem } from './durableStorage'
+import { isItemSent } from './sentItemGuard'
 import {
   looksLikeOnesatFtTip,
   type ColourTip,
@@ -216,6 +217,7 @@ export async function listBsv21BinaryTips(
   for (const row of rows) {
     const tip = decodeListedBsv21Tip(row, wallet.identityKey)
     if (!tip) continue
+    if (isItemSent(tip.outpoint)) continue
     if (seen.has(tip.outpoint)) continue
     seen.add(tip.outpoint)
     tips.push(tip)

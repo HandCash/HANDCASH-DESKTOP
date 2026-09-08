@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.120] - 2026-09-08
+
+### Fixed
+
+- **Missing token parent body** — fill raw 162 parent transactions into the send BEEF (still no merkle-proof hunt) so BRC-176 prove can walk back to deploy after an unmined mint.
+- **Partial token send subtracted too much** — classify payee vs change from the signed tx instead of assuming vout 1. Leave the payee out of the sender's `bsv21` basket so leftover change stays on the balance.
+
 ## [1.3.119] - 2026-09-08
 
 ### Fixed

@@ -21,9 +21,12 @@ import {
   BSV21_BASKET,
 } from './bsv21'
 import { decodeBsv21Binary } from './bsv21Binary'
+import { fillTokenParentBodies } from './bsv21Prove'
 import {
+  assertBsv21SendConservation,
   buildBsv21SendOutputs,
   buildBsv21SubjectBeef,
+  classifyBsv21SendOutputs,
   planBsv21Send,
   tipFromBsv21Script,
   type Bsv21SendTip,
@@ -49,6 +52,7 @@ import { scheduleHistoryBackupPush } from './deviceSync'
 import { listFriends, resolvePaymentRecipient } from './friends'
 import { stampBrc164Id } from './itemAccess'
 import { isCovenantLockedScript } from './collectableTipKind'
+import { p2pkhScriptHex } from './ordinalOwnership'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
 import {
@@ -68,6 +72,21 @@ import { leaseSpendPriority } from './walletCoordinator'
 
 function wireOutpoint(op: string): string {
   return op.includes('_') ? op.replace(/_(\d+)$/, '.$1') : op
+}
+
+async function fetchRawTokenBody(
+  wallet: ActiveWallet,
+  txid: string,
+): Promise<Beef | null> {
+  try {
+    return await getBeefForTxidCached(wallet, txid, {
+      needProof: false,
+      allowUnprovenRawTx: true,
+    })
+  } catch (err) {
+    console.warn('[bsv21] token parent body fetch failed', txid, err)
+    return null
+  }
 }
 
 function atomicBeefFromWalletResult(result: unknown): number[] | undefined {
@@ -474,9 +493,13 @@ export async function sendColourCoins(args: {
           wireOutpoint,
           { needProof: false, allowUnprovenRawTx: true, hydrate: false },
         )
-        if (icon) {
-          const beef = Beef.fromBinary(inputBEEF)
-          await mergeIconTxIntoBeef(wallet, beef, icon)
+        {
+          const beef = await fillTokenParentBodies(
+            Beef.fromBinary(inputBEEF),
+            (txid) => fetchRawTokenBody(wallet, txid),
+            knownTxids,
+          )
+          if (icon) await mergeIconTxIntoBeef(wallet, beef, icon)
           inputBEEF = beef.toBinary()
         }
       } catch (err) {
@@ -491,7 +514,7 @@ export async function sendColourCoins(args: {
         lockingScript: o.lockingScript,
         satoshis: 1 as const,
         outputDescription: o.outputDescription,
-        basket: o.basket,
+        ...(o.basket ? { basket: o.basket } : {}),
         tags: stampBrc164Id([
           ...o.tags,
           ...(args.icon ? [`icon:${args.icon}`] : []),
@@ -602,12 +625,22 @@ export async function sendColourCoins(args: {
 
       if (!atomic?.length) {
         try {
-          const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
+          const beef = await getBeefForTxidCached(wallet, txid, {
+            needProof: false,
+            allowUnprovenRawTx: true,
+          })
           atomic = Array.from(beef.toBinaryAtomic(txid))
         } catch {
           try {
             const wrap = Beef.fromBinary(
-              Array.from((await getBeefForTxidCached(wallet, txid, { needProof: true })).toBinary()),
+              Array.from(
+                (
+                  await getBeefForTxidCached(wallet, txid, {
+                    needProof: false,
+                    allowUnprovenRawTx: true,
+                  })
+                ).toBinary(),
+              ),
             )
             atomic = wrap.toBinaryAtomic(txid)
           } catch {
@@ -618,16 +651,57 @@ export async function sendColourCoins(args: {
       if (!atomic?.length) {
         throw new Error('Token transfer missing AtomicBEEF for broadcast')
       }
-      rememberBeefTree(atomic, txid)
+      let remainingAmt = change
+      let remainingOp: string | undefined
+      let payeeOutpoints: string[] = []
       try {
         const signedBeef = Beef.fromBinary(atomic)
+        signedBeef.atomicTxid = undefined
+        try {
+          signedBeef.mergeBeef(inputBEEF)
+        } catch (err) {
+          console.warn('[bsv21] merge inputBEEF into signed BEEF failed', err)
+        }
+        const withParents = await fillTokenParentBodies(
+          signedBeef,
+          (parentTxid) => fetchRawTokenBody(wallet, parentTxid),
+          [txid, ...knownTxids],
+        )
         const signedTx =
-          signedBeef.findTxid(txid)?.tx ?? signedBeef.findAtomicTransaction(txid)
+          withParents.findTxid(txid)?.tx ?? withParents.findAtomicTransaction(txid)
         if (signedTx) {
-          buildBsv21SubjectBeef({
-            parentBeef: signedBeef,
+          const classified = classifyBsv21SendOutputs({
+            tx: signedTx,
+            tokenId: origin,
+            payeeRestHex: p2pkhScriptHex(to),
+            changeRestHex: p2pkhScriptHex(wallet.address),
+            payeeAmt: plan.payeeAmt,
+            changeAmt: plan.changeAmt,
+          })
+          assertBsv21SendConservation({
+            payeeAmt: plan.payeeAmt,
+            changeAmt: plan.changeAmt,
+            classified,
+          })
+          remainingAmt = Number(
+            classified.change.reduce((sum, out) => sum + out.amt, 0n),
+          )
+          remainingOp = classified.change[0]
+            ? `${txid}_${classified.change[0].vout}`
+            : undefined
+          payeeOutpoints = classified.payee.map((out) => `${txid}_${out.vout}`)
+          console.info(
+            `[bsv21] signed outputs payee=${classified.payee.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'} change=${classified.change.map((o) => `${o.vout}:${o.amt}`).join(',') || 'none'}`,
+          )
+          const { beef: proved } = buildBsv21SubjectBeef({
+            parentBeef: withParents,
             subjectTx: signedTx,
           })
+          try {
+            atomic = Array.from(proved.toBinaryAtomic(txid))
+          } catch {
+            atomic = proved.toBinary()
+          }
         }
       } catch (err) {
         throw new Error(
@@ -636,6 +710,10 @@ export async function sendColourCoins(args: {
             : 'BRC-176 prove failed for the token send',
         )
       }
+      if (plan.changeAmt > 0n && !remainingOp) {
+        throw new Error('Token change missing from the signed transaction')
+      }
+      rememberBeefTree(atomic, txid)
 
       try {
         await wallet.wallet.actionBatch.abort()
@@ -731,7 +809,24 @@ export async function sendColourCoins(args: {
         throw new Error('Token transfer was not accepted by the network')
       }
       const spent = selected.map((t) => normalizeOutpoint(t.outpoint))
-      markItemsSent(spent.map((outpoint) => ({ outpoint, txid })))
+      markItemsSent([
+        ...spent.map((outpoint) => ({ outpoint, txid })),
+        ...payeeOutpoints.map((outpoint) => ({
+          outpoint,
+          txid,
+          settle: 'peerDeliver' as const,
+        })),
+      ])
+      for (const op of payeeOutpoints) {
+        try {
+          await wallet.wallet.relinquishOutput({
+            basket: BSV21_BASKET,
+            output: wireOutpoint(op),
+          } as never)
+        } catch {
+          /* createAction may already have dropped it */
+        }
+      }
       noteOutboundSendComplete({
         pendingId: outboundPending.id,
         txid,
@@ -744,20 +839,16 @@ export async function sendColourCoins(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendColourCoins')
-      const selectedSum = selected.reduce((s, tip) => s + Number(tip.amt), 0)
-      const kept =
-        change > 0 ? change : args.skipPeerNotify ? amount : Math.max(0, selectedSum - amount)
-      const keptOp =
-        change > 0 ? `${txid}_1` : args.skipPeerNotify ? `${txid}_0` : undefined
-      const { paintFungibleAfterSpend } = await import('./fungibles')
+      const { paintFungibleAfterSpend, getFungible } = await import('./fungibles')
       paintFungibleAfterSpend({
         tokenId: origin,
-        remainingAmt: kept,
-        outpoint: keptOp,
+        remainingAmt,
+        outpoint: remainingOp,
         sym,
         icon: args.icon,
+        dec: getFungible(origin)?.dec ?? 0,
       })
-      return { txid, tipsSpent: selected.length, change }
+      return { txid, tipsSpent: selected.length, change: remainingAmt }
       } finally {
         if (actionReference) {
           try {

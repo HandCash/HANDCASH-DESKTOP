@@ -55,6 +55,74 @@ function txBody(beef: Beef, txid: string): Transaction | undefined {
   return beef.findTxid(txid)?.tx ?? undefined
 }
 
+function isBsv21Output(tx: Transaction, vout: number): boolean {
+  const out = tx.outputs[vout]
+  if (!out) return false
+  return decodeBsv21Binary(out.lockingScript) != null
+}
+
+const PARENT_FILL_DEADLINE_MS = 20_000
+
+/**
+ * Pull raw token-parent bodies into a BEEF without waiting for merkle proofs.
+ *
+ * A first send of an unmined 162 genesis often returns AtomicBEEF that only
+ * has the new transfer (txid-only parents). Prove needs the deploy body.
+ * Funding inputs are fetched once so we can tell them from 162 parents, then
+ * left out of the walk.
+ */
+export async function fillTokenParentBodies(
+  beef: Beef,
+  fetchBody: (txid: string) => Promise<Beef | null | undefined>,
+  startTxids: string[],
+): Promise<Beef> {
+  const work = beef.clone()
+  work.atomicTxid = undefined
+  const queue = [
+    ...new Set(
+      startTxids
+        .map((txid) => txid.trim().toLowerCase())
+        .filter((txid) => /^[0-9a-f]{64}$/.test(txid)),
+    ),
+  ]
+  const seen = new Set<string>()
+  const deadline = Date.now() + PARENT_FILL_DEADLINE_MS
+
+  const ensureBody = async (txid: string): Promise<Transaction | undefined> => {
+    const existing = work.findTxid(txid)?.tx
+    if (existing) return existing
+    if (Date.now() >= deadline) return undefined
+    try {
+      const extra = await fetchBody(txid)
+      if (!extra) return undefined
+      work.mergeBeef(extra.toBinary())
+      work.atomicTxid = undefined
+    } catch {
+      return undefined
+    }
+    return work.findTxid(txid)?.tx
+  }
+
+  while (queue.length && seen.size < MAX_HOPS) {
+    const txid = queue.shift()
+    if (!txid || seen.has(txid)) continue
+    seen.add(txid)
+    const tx = await ensureBody(txid)
+    if (!tx) continue
+    for (const vin of tx.inputs) {
+      const prev = sourceTxid(vin)
+      const prevVout = vin.sourceOutputIndex
+      if (!/^[0-9a-f]{64}$/.test(prev)) continue
+      if (seen.has(prev)) continue
+      const parentTx = await ensureBody(prev)
+      if (!parentTx) continue
+      if (isBsv21Output(parentTx, prevVout)) queue.push(prev)
+    }
+  }
+
+  return work
+}
+
 function decodeOutput(
   tx: Transaction,
   vout: number,

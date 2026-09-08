@@ -63,11 +63,111 @@ export type Bsv21SendOutput = {
   role: 'payee' | 'change'
   lockingScript: string
   satoshis: 1
-  basket: typeof BSV21_BASKET
+  /** Sender inventory only. Payee must not land in this wallet's `bsv21` basket. */
+  basket?: typeof BSV21_BASKET
   tags: string[]
   customInstructions: string
   outputDescription: string
   amt: string
+}
+
+export type ClassifiedBsv21SendOutput = {
+  vout: number
+  amt: bigint
+  role: 'payee' | 'change'
+}
+
+/**
+ * Read 162 value outputs off the signed subject. Toolbox may insert BSV
+ * change between payee and token change — do not assume vout 1.
+ */
+export function classifyBsv21SendOutputs(args: {
+  tx: Transaction
+  tokenId: string
+  payeeRestHex: string
+  changeRestHex: string
+  payeeAmt: bigint
+  changeAmt: bigint
+}): {
+  payee: ClassifiedBsv21SendOutput[]
+  change: ClassifiedBsv21SendOutput[]
+} {
+  const tokenId = normalizeTokenId(args.tokenId)
+  if (!tokenId) throw new Error(`Invalid BSV-21 token id: ${args.tokenId}`)
+  const payeeRest = args.payeeRestHex.trim().toLowerCase()
+  const changeRest = args.changeRestHex.trim().toLowerCase()
+  const rows: { vout: number; amt: bigint; rest: string }[] = []
+  for (let vout = 0; vout < args.tx.outputs.length; vout++) {
+    const decoded = decodeBsv21Binary(args.tx.outputs[vout]?.lockingScript)
+    if (!decoded || decoded.role !== 'value' || decoded.amount <= 0n) continue
+    if (decoded.tokenId !== tokenId) continue
+    rows.push({
+      vout,
+      amt: decoded.amount,
+      rest: (decoded.restScriptHex ?? '').trim().toLowerCase(),
+    })
+  }
+
+  if (payeeRest !== changeRest) {
+    return {
+      payee: rows
+        .filter((row) => row.rest === payeeRest)
+        .map((row) => ({ vout: row.vout, amt: row.amt, role: 'payee' as const })),
+      change: rows
+        .filter((row) => row.rest === changeRest)
+        .map((row) => ({ vout: row.vout, amt: row.amt, role: 'change' as const })),
+    }
+  }
+
+  if (args.changeAmt === 0n) {
+    return {
+      payee: rows.map((row) => ({
+        vout: row.vout,
+        amt: row.amt,
+        role: 'payee' as const,
+      })),
+      change: [],
+    }
+  }
+  if (args.payeeAmt === args.changeAmt) {
+    return {
+      payee: rows[0]
+        ? [{ vout: rows[0].vout, amt: rows[0].amt, role: 'payee' }]
+        : [],
+      change: rows[1]
+        ? [{ vout: rows[1].vout, amt: rows[1].amt, role: 'change' }]
+        : [],
+    }
+  }
+  return {
+    payee: rows
+      .filter((row) => row.amt === args.payeeAmt)
+      .map((row) => ({ vout: row.vout, amt: row.amt, role: 'payee' as const })),
+    change: rows
+      .filter((row) => row.amt === args.changeAmt)
+      .map((row) => ({ vout: row.vout, amt: row.amt, role: 'change' as const })),
+  }
+}
+
+export function assertBsv21SendConservation(args: {
+  payeeAmt: bigint
+  changeAmt: bigint
+  classified: ReturnType<typeof classifyBsv21SendOutputs>
+}): void {
+  const payeeSum = args.classified.payee.reduce((sum, out) => sum + out.amt, 0n)
+  const changeSum = args.classified.change.reduce((sum, out) => sum + out.amt, 0n)
+  if (payeeSum !== args.payeeAmt) {
+    throw new Error(
+      `Token send payee amount mismatch (tx ${payeeSum}, planned ${args.payeeAmt})`,
+    )
+  }
+  if (changeSum !== args.changeAmt) {
+    throw new Error(
+      args.changeAmt > 0n
+        ? `Token change missing from the signed transaction (tx ${changeSum}, planned ${args.changeAmt})`
+        : `Token send created unexpected change ${changeSum}`,
+    )
+  }
 }
 
 export function assertBsv21AmtConservation(
@@ -218,6 +318,7 @@ export function buildBsv21SendOutputs(args: {
     issuer: args.issuer,
     icon: args.icon,
   })
+  const { basket: _payeeBasket, ...payeeRemitFields } = payeeRemit
   const outputs: Bsv21SendOutput[] = [
     {
       role: 'payee',
@@ -227,7 +328,7 @@ export function buildBsv21SendOutputs(args: {
         address: args.payeeAddress,
       }),
       satoshis: 1,
-      ...payeeRemit,
+      ...payeeRemitFields,
       outputDescription: 'BSV-21 value',
       amt: args.payeeAmt.toString(),
     },
@@ -250,6 +351,7 @@ export function buildBsv21SendOutputs(args: {
       }),
       satoshis: 1,
       ...changeRemit,
+      basket: BSV21_BASKET,
       outputDescription: 'BSV-21 change',
       amt: args.changeAmt.toString(),
     })

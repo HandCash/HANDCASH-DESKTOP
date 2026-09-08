@@ -150,9 +150,7 @@ export async function sendFungible(args: {
     )
   if (!token) throw new Error('Token not found in this wallet')
 
-  const units = /^\d+$/.test(args.amount.trim())
-    ? BigInt(args.amount.trim())
-    : BigInt(parseFungibleSendAmount(args.amount, token).unitsStr)
+  const { units } = parseFungibleSendAmount(args.amount, token)
   if (units <= 0n) throw new Error('Amount must be greater than zero')
   if (!Number.isSafeInteger(Number(units))) {
     throw new Error('Amount too large')

@@ -199,6 +199,7 @@ export function paintFungibleAfterSpend(args: {
   remainingAmt: number
   outpoint?: string
   sym?: string
+  dec?: number
   colourSupply?: FungibleToken['colourSupply']
   colourMaxSupply?: number | null
   icon?: string
@@ -212,7 +213,7 @@ export function paintFungibleAfterSpend(args: {
     tokenId: args.tokenId,
     sym: args.sym || prior?.sym || 'Token',
     amt: String(args.remainingAmt),
-    dec: 0,
+    dec: args.dec ?? prior?.dec ?? 0,
     utxoCount: 1,
     outpoint: args.outpoint || prior?.outpoint || args.tokenId,
     spendKind: 'plain',

@@ -1,7 +1,7 @@
 import { Beef, LockingScript, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { encodeBsv21Binary } from './bsv21Binary'
-import { prove } from './bsv21Prove'
+import { fillTokenParentBodies, prove } from './bsv21Prove'
 
 const P2PKH_REST = `76a914${'11'.repeat(20)}88ac`
 
@@ -201,5 +201,33 @@ describe('bsv21Prove', () => {
     const result = prove(`${other.id('hex')}_0`, beefOf(other))
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.reason).toMatch(/not BSV-21/)
+  })
+
+  it('fills a missing deploy body from fetch without needing merkle proofs', async () => {
+    const deploy = deployTx(100n)
+    const id = tokenIdOf(deploy)
+    const split = new Transaction()
+    split.addInput({
+      sourceTXID: deploy.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    split.addOutput({ satoshis: 1, lockingScript: valueScript(id, 100n) })
+
+    const tipOnly = new Beef()
+    tipOnly.mergeTransaction(split)
+    expect(prove(`${split.id('hex')}_0`, tipOnly).ok).toBe(false)
+
+    const filled = await fillTokenParentBodies(
+      tipOnly,
+      async (txid) => (txid === deploy.id('hex') ? beefOf(deploy) : null),
+      [split.id('hex')],
+    )
+    expect(prove(`${split.id('hex')}_0`, filled)).toMatchObject({
+      ok: true,
+      tokenId: id,
+      amount: 100n,
+      deployOutpoint: id,
+    })
   })
 })

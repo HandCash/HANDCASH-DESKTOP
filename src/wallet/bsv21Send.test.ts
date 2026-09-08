@@ -1,13 +1,15 @@
-import { Beef, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
+import { Beef, LockingScript, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
 import { decodeBsv21Binary, encodeBsv21Binary } from './bsv21Binary'
-import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
+import { hasOrdEnvelope, parseOrdEnvelope, p2pkhScriptHex } from './ordinalOwnership'
 import {
   assertBsv21AmtConservation,
+  assertBsv21SendConservation,
   buildBsv21SendOutputs,
   buildBsv21SendRemittance,
   buildBsv21SubjectBeef,
   buildBsv21ValueLock,
+  classifyBsv21SendOutputs,
   planBsv21Send,
   tipFromBsv21Script,
 } from './bsv21Send'
@@ -61,7 +63,8 @@ describe('bsv21Send conservation', () => {
     expect(outputs).toHaveLength(2)
     expect(outputs.map((o) => o.role)).toEqual(['payee', 'change'])
     expect(outputs.every((o) => o.satoshis === 1)).toBe(true)
-    expect(outputs.every((o) => o.basket === 'bsv21')).toBe(true)
+    expect(outputs[0]!.basket).toBeUndefined()
+    expect(outputs[1]!.basket).toBe('bsv21')
 
     for (const out of outputs) {
       expect(hasOrdEnvelope(out.lockingScript)).toBe(false)
@@ -109,6 +112,7 @@ describe('bsv21Send conservation', () => {
     })
     expect(outputs).toHaveLength(1)
     expect(outputs[0]!.role).toBe('payee')
+    expect(outputs[0]!.basket).toBeUndefined()
     expect(decodeBsv21Binary(outputs[0]!.lockingScript)?.role).toBe('value')
   })
 
@@ -171,6 +175,102 @@ describe('bsv21Send conservation', () => {
       amount: 40n,
       deployOutpoint: id,
     })
+  })
+
+  it('proves a send whose AtomicBEEF omitted the deploy body once parents are merged', () => {
+    const deploy = deployTx(100n)
+    const id = tokenIdOf(deploy)
+    const spend = new Transaction()
+    spend.addInput({
+      sourceTXID: deploy.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    spend.addOutput({
+      satoshis: 1,
+      lockingScript: encodeBsv21Binary({
+        tokenId: id,
+        amount: 100n,
+        rest: decodeBsv21Binary(buildBsv21ValueLock({
+          tokenId: id,
+          amount: 100n,
+          address: PAYEE,
+        }))!.restScriptHex,
+      }),
+    })
+
+    expect(() =>
+      buildBsv21SubjectBeef({ parentBeef: new Beef(), subjectTx: spend }),
+    ).toThrow(/missing token-parent/)
+
+    const parentBeef = new Beef()
+    parentBeef.mergeTransaction(deploy)
+    const { proofs } = buildBsv21SubjectBeef({
+      parentBeef,
+      subjectTx: spend,
+    })
+    expect(proofs[0]).toMatchObject({
+      ok: true,
+      tokenId: id,
+      amount: 100n,
+      deployOutpoint: id,
+    })
+  })
+
+  it('finds token change after a BSV change output', () => {
+    const deploy = deployTx(68760n)
+    const id = tokenIdOf(deploy)
+    const spend = new Transaction()
+    spend.addInput({
+      sourceTXID: deploy.id('hex'),
+      sourceOutputIndex: 0,
+      unlockingScript: new UnlockingScript(),
+    })
+    spend.addOutput({
+      satoshis: 5000,
+      lockingScript: LockingScript.fromHex(P2PKH_REST),
+    })
+    spend.addOutput({
+      satoshis: 1,
+      lockingScript: buildBsv21ValueLock({
+        tokenId: id,
+        amount: 240n,
+        address: PAYEE,
+      }),
+    })
+    spend.addOutput({
+      satoshis: 1,
+      lockingScript: buildBsv21ValueLock({
+        tokenId: id,
+        amount: 68520n,
+        address: CHANGE,
+      }),
+    })
+
+    const classified = classifyBsv21SendOutputs({
+      tx: spend,
+      tokenId: id,
+      payeeRestHex: p2pkhScriptHex(PAYEE),
+      changeRestHex: p2pkhScriptHex(CHANGE),
+      payeeAmt: 240n,
+      changeAmt: 68520n,
+    })
+    expect(classified.payee).toEqual([{ vout: 1, amt: 240n, role: 'payee' }])
+    expect(classified.change).toEqual([{ vout: 2, amt: 68520n, role: 'change' }])
+    expect(() =>
+      assertBsv21SendConservation({
+        payeeAmt: 240n,
+        changeAmt: 68520n,
+        classified,
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertBsv21SendConservation({
+        payeeAmt: 240n,
+        changeAmt: 68520n,
+        classified: { payee: classified.payee, change: [] },
+      }),
+    ).toThrow(/change missing/)
   })
 })
 
