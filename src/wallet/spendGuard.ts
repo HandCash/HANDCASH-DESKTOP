@@ -18,6 +18,8 @@ import { runExclusiveSpend as runExclusiveSpendCoordinated } from './walletCoord
 
 /** True while {@link runExclusiveSpend} already promoted chained change. */
 let spendChainPromoted = false
+/** True when the active spend must use local state without recovery/status calls. */
+let spendRecoveryDisabled = false
 
 export type SpendPromoteMode = 'full' | 'light'
 
@@ -114,16 +116,18 @@ async function promoteSpendableChange(
 export function runExclusiveSpend<T>(
   fn: () => Promise<T>,
   onSpendRegion?: () => void,
-  opts?: { promote?: SpendPromoteMode },
+  opts?: { promote?: SpendPromoteMode | false },
 ): Promise<T> {
   const promote = opts?.promote ?? 'full'
   return runExclusiveSpendCoordinated(async () => {
-    await promoteSpendableChange(promote)
+    if (promote !== false) await promoteSpendableChange(promote)
     spendChainPromoted = true
+    spendRecoveryDisabled = promote === false
     try {
       return await fn()
     } finally {
       spendChainPromoted = false
+      spendRecoveryDisabled = false
     }
   }, acquireSpendLease, onSpendRegion)
 }
@@ -250,9 +254,11 @@ export async function assertSendableBalance(satoshis: number): Promise<number> {
   if (confirming > 0 && confirmed + confirming >= satoshis) {
     // One more light promote even inside an exclusive spend — prior createAction
     // / internalize may have written outs after the region-entry promote ran.
-    await promoteSpendableChange('light')
-    confirmed = await readConfirmedSpendable(active)
-    if (satoshis <= confirmed) return confirmed
+    if (!spendRecoveryDisabled) {
+      await promoteSpendableChange('light')
+      confirmed = await readConfirmedSpendable(active)
+      if (satoshis <= confirmed) return confirmed
+    }
 
     const { insufficientFundsMessage } = await import('./insufficientFunds')
     await logSpendFailure('chaining-required', {

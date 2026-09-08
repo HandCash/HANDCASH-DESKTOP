@@ -1005,9 +1005,9 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
           () => {
             setPaymentProgress('preparing', 'Preparing payment')
           },
-          // Light: skip the unscripted change-script sweep. Full promote blocked
-          // Plinko createAction in "Preparing payment" for ~2 minutes per bet.
-          { promote: 'light' },
+          // Apps must never wait for explorer/UTXO recovery. Local spendable
+          // state decides now; reconciliation and healing remain asynchronous.
+          { promote: false },
         )
         setPaymentProgress('finishing', 'Updating your balance')
       } catch (err) {
@@ -1065,9 +1065,12 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
       }
     } else if (method === 'internalizeAction') {
       // Serialize with spends — ingest validates locally, then submits the exact
-      // Atomic BEEF to Arcade without waiting for explorer visibility.
-      result = await runExclusiveSpend(() =>
-        internalizeActionWithBroadcast(active.wallet, args, originator),
+      // Atomic BEEF to Arcade without waiting for explorer visibility. Receiving
+      // does not select inputs, so never run spend-change recovery here.
+      result = await runExclusiveSpend(
+        () => internalizeActionWithBroadcast(active.wallet, args, originator),
+        undefined,
+        { promote: false },
       )
     } else {
       // Reads share the wallet with background ingest but must not raise spend

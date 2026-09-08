@@ -105,6 +105,8 @@ import {
 } from '../wallet/phraseSweep'
 import { getActiveWallet } from '../wallet/session'
 import { EmptyState } from './EmptyState'
+import { AppAvatar } from './AppAvatar'
+import { appDisplayName } from '../wallet/appIdentity'
 import {
   getWalletProgress,
   subscribeWalletProgress,
@@ -490,6 +492,7 @@ function HistoryRow({
               <LoadingSpinner size="sm" />
             </span>
           ) : null}
+          <HistoryAppBadge entry={entry} />
           <HistoryActionBadge entry={entry} />
         </div>
         <div className="history-body history-progress-body">
@@ -521,6 +524,27 @@ function HistoryRow({
         </div>
       </button>
     </li>
+  )
+}
+
+/** Related app mark, opposite the transaction action badge. */
+export function HistoryAppBadge({ entry }: { entry: ActivityEntry }) {
+  if (
+    isEventActivity(entry) ||
+    !entry.origin ||
+    entry.origin === WALLET_ACTIVITY_ORIGIN
+  ) {
+    return null
+  }
+  const name = appDisplayName(entry.origin)
+  return (
+    <span
+      className="history-app-badge"
+      aria-label={`App: ${name}`}
+      title={name}
+    >
+      <AppAvatar origin={entry.origin} name={name} size="sm" />
+    </span>
   )
 }
 
