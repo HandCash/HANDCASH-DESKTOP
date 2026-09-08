@@ -24,10 +24,6 @@ import {
 } from '../wallet/appActivity'
 import { getAutoPaySettings, subscribeAutoPay } from '../wallet/autoPay'
 import {
-  getSpendingAuthorizationGrant,
-  startOfUtcMonth,
-} from '../wallet/spendingAuthorization'
-import {
   getCollectionView,
   subscribeCollectionView,
   type CollectionView,
@@ -49,29 +45,18 @@ function AppSpendLimit({
   origin: string
   usdPerBsv: number | null
 }) {
-  const grant = getSpendingAuthorizationGrant(origin)
   const autoPay = getAutoPaySettings(origin)
-  let progress: number | null = null
-  let title = ''
-
-  if (grant) {
-    const spent = getSpentSatsSince(origin, startOfUtcMonth())
-    progress = spent / grant.amountSats
-    title = `${spent.toLocaleString()} of ${grant.amountSats.toLocaleString()} sats used this month`
-  } else if (autoPay?.enabled && usdPerBsv) {
-    const since = Date.now() - autoPay.windowHours * 60 * 60_000
-    const spentUsd = satsToUsd(getSpentSatsSince(origin, since), usdPerBsv)
-    progress = spentUsd / autoPay.maxUsd
-    title = `$${spentUsd.toFixed(2)} of $${autoPay.maxUsd.toFixed(2)} used over ${autoPay.windowHours}h`
-  }
-
-  if (progress == null || !Number.isFinite(progress)) return null
+  if (!autoPay?.enabled || !usdPerBsv) return null
+  const since = Date.now() - autoPay.windowHours * 60 * 60_000
+  const spentUsd = satsToUsd(getSpentSatsSince(origin, since), usdPerBsv)
+  const progress = spentUsd / autoPay.maxUsd
+  const title = `$${spentUsd.toFixed(2)} of $${autoPay.maxUsd.toFixed(2)} AutoPay used over ${autoPay.windowHours}h`
   const percent = Math.min(100, Math.max(0, progress * 100))
   return (
     <div
       className="connected-app-limit"
       role="progressbar"
-      aria-label="Spend limit used"
+      aria-label="AutoPay limit used"
       aria-valuemin={0}
       aria-valuemax={100}
       aria-valuenow={Math.round(percent)}
