@@ -3716,7 +3716,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   width: 18px;
   height: 18px;
   flex-shrink: 0;
-  transition: transform 160ms ease;
+  transition: none;
 }
 
 .wallet-nav-tab:hover {
@@ -12337,4 +12337,110 @@ html[data-aeon-platform='linux'] [data-aeon-scroll='hover']::-webkit-scrollbar-t
 
 [data-aeon-scope='onboard-protect'] .wallet-setup-option input {
   margin-top: 3px;
+}
+
+/* Wide desktop uses the same inverted segmented selector as compact layouts,
+ * while retaining its full icon labels. Contextual request actions are exempt. */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission]) {
+  box-sizing: border-box;
+  width: auto;
+  margin: 0 var(--hc-space-3) var(--hc-space-3);
+  --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
+  --wallet-nav-unselected: color-mix(
+    in srgb,
+    var(--hc-text) 22%,
+    transparent
+  );
+  --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
+  padding: 2px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--wallet-nav-pill-radius);
+  background: var(--wallet-nav-select);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.22);
+  overflow: visible;
+  scroll-snap-type: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-bar-track {
+  width: 100%;
+  min-width: 0;
+  gap: 0;
+  overflow: visible;
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab {
+  flex: 1 1 0;
+  min-width: 0;
+  border-radius: 0;
+  color: hsl(var(--muted-foreground));
+  background: var(--wallet-nav-unselected);
+  box-shadow: none;
+  scroll-snap-align: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]),
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]):hover {
+  color: #fafafa;
+  background: transparent;
+  box-shadow: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not(
+    [data-selected]
+  ):first-child,
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected])
+  + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not(
+    [data-selected]
+  ) {
+  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not(
+    [data-selected]
+  ):last-child,
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not(
+    [data-selected]
+  ):has(+ :is(.is-active, [aria-selected='true'], [data-selected])) {
+  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+}
+
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission]) {
+  --wallet-nav-select: #fff;
+  --wallet-nav-unselected: color-mix(
+    in srgb,
+    var(--hc-text) 5%,
+    #f4f5f4
+  );
+}
+
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]),
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar:not([data-permission])
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]):hover {
+  color: hsl(var(--primary));
+  background: transparent;
+  box-shadow: none;
 }
