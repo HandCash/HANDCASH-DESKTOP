@@ -163,6 +163,31 @@ describe('mergeLiveFungibles', () => {
     expect(merged[0]!.iconUrl).toBe('data:image/png;base64,xx')
   })
 
+  it('preserves a recovered ticker when live remittance only has a fallback label', async () => {
+    const { mergeLiveFungibles } = await import('./fungibles')
+    const prior = [
+      row({
+        tokenId: KING_ORIGIN,
+        amt: '240',
+        outpoint: LIVE_CHANGE,
+      }),
+    ]
+    const live = [
+      {
+        ...row({
+          tokenId: KING_ORIGIN,
+          amt: '240',
+          outpoint: RECEIVE_A,
+        }),
+        sym: `${KING_ORIGIN.slice(0, 6)}…${KING_ORIGIN.slice(-4)}`,
+      },
+    ]
+
+    const merged = mergeLiveFungibles(live, prior)
+    expect(merged[0]!.sym).toBe('KING')
+    expect(merged[0]!.amt).toBe('240')
+  })
+
   it('does not keep inflated prior 275586 over live 69000', async () => {
     const { mergeLiveFungibles } = await import('./fungibles')
     const prior = [

@@ -116,6 +116,13 @@ function persistDurableList(items: FungibleToken[]): void {
   }
 }
 
+function fungibleProjectionChanged(
+  left: FungibleToken[],
+  right: FungibleToken[],
+): boolean {
+  return JSON.stringify(left) !== JSON.stringify(right)
+}
+
 function leftoverCollectableSym(sym: string | undefined): boolean {
   const s = (sym ?? '').trim()
   return s === 'Collectable' || s.startsWith('Pixel Foxes')
@@ -139,7 +146,10 @@ async function recoverReceivedTokensFromActivity(
   items: FungibleToken[],
 ): Promise<FungibleToken[]> {
   const { exportAllActivity } = await import('./appActivity')
-  const known = new Set(items.map(tokenKey))
+  const enriched = [...items]
+  const knownIndex = new Map(
+    enriched.map((token, index) => [tokenKey(token), index]),
+  )
   const recovered = new Map<string, FungibleToken>()
   for (const row of exportAllActivity()) {
     const item = row.item
@@ -156,9 +166,26 @@ async function recoverReceivedTokensFromActivity(
       continue
     }
     const tokenId = normalizeTokenId(item.tokenId)
-    if (!tokenId || known.has(tokenId) || !/^\d+$/.test(item.amt)) continue
+    if (!tokenId || !/^\d+$/.test(item.amt)) continue
     const amount = BigInt(item.amt)
     if (amount <= 0n) continue
+    const existingIndex = knownIndex.get(tokenId)
+    if (existingIndex != null) {
+      const existing = enriched[existingIndex]!
+      const currentIsFallback =
+        !existing.sym.trim() || existing.sym === shortTokenLabel(existing.tokenId)
+      const activityName = item.name?.trim()
+      enriched[existingIndex] = {
+        ...existing,
+        ...(currentIsFallback &&
+        activityName &&
+        activityName !== shortTokenLabel(tokenId)
+          ? { sym: activityName, dec: item.dec ?? existing.dec }
+          : {}),
+        ...(!existing.icon && item.icon ? { icon: item.icon } : {}),
+      }
+      continue
+    }
     const prior = recovered.get(tokenId)
     recovered.set(tokenId, {
       tokenId,
@@ -171,7 +198,9 @@ async function recoverReceivedTokensFromActivity(
       ...(item.icon || prior?.icon ? { icon: item.icon || prior?.icon } : {}),
     })
   }
-  return recovered.size > 0 ? mergeLiveFungibles([...recovered.values()], items) : items
+  return recovered.size > 0
+    ? mergeLiveFungibles([...recovered.values()], enriched)
+    : enriched
 }
 
 function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
@@ -200,12 +229,22 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
+    const liveSymIsFallback =
+      !t.sym.trim() || t.sym === shortTokenLabel(t.tokenId)
+    const priorSymIsUseful =
+      priorRow?.sym &&
+      priorRow.sym !== shortTokenLabel(priorRow.tokenId)
     // Live listing already overlays leftovers and aggregates by origin.
     // amt comes from live. Never leftover+live across refreshes.
     byId.set(k, {
       ...t,
+      ...(liveSymIsFallback && priorSymIsUseful
+        ? { sym: priorRow.sym, dec: priorRow.dec }
+        : {}),
       ...(priorRow && !t.icon && priorRow.icon ? { icon: priorRow.icon } : {}),
       ...(priorRow && !t.iconUrl && priorRow.iconUrl ? { iconUrl: priorRow.iconUrl } : {}),
+      ...(priorRow && !t.issuer && priorRow.issuer ? { issuer: priorRow.issuer } : {}),
+      ...(priorRow?.issuerAttested && !t.issuerAttested ? { issuerAttested: true } : {}),
       ...(priorRow && t.colourMaxSupply == null && priorRow.colourMaxSupply != null
         ? { colourMaxSupply: priorRow.colourMaxSupply }
         : {}),
@@ -289,8 +328,15 @@ export function leftoverFloorWouldClobber(
     cached = durable
     hydrated = true
   }
-  void recoverReceivedTokensFromActivity(cached)
+  const activityRepairBase = cached
+  void recoverReceivedTokensFromActivity(activityRepairBase)
     .then((repaired) => {
+      if (cached === activityRepairBase) {
+        if (fungibleProjectionChanged(repaired, cached)) {
+          setFungiblesCache(repaired)
+        }
+        return
+      }
       const currentIds = new Set(cached.map(tokenKey))
       const additions = repaired.filter((token) => !currentIds.has(tokenKey(token)))
       if (additions.length > 0) {
@@ -308,7 +354,13 @@ function notify() {
 async function recoverBsv21DeployMetadata(
   wallet: ActiveWallet,
   tokenId: string,
-): Promise<{ sym?: string; dec?: number; icon?: string; iconUrl?: string } | null> {
+): Promise<{
+  sym?: string
+  dec?: number
+  icon?: string
+  iconUrl?: string
+  issuer?: string
+} | null> {
   const normalized = normalizeTokenId(tokenId)
   if (!normalized) return null
   const [txid, rawVout] = normalized.split('_')
@@ -337,6 +389,7 @@ async function recoverBsv21DeployMetadata(
       ...(payload?.dec != null ? { dec: payload.dec } : {}),
       ...(icon ? { icon } : {}),
       ...(iconUrl ? { iconUrl } : {}),
+      ...(payload?.issuer ? { issuer: payload.issuer } : {}),
     }
   } catch {
     return null
@@ -351,7 +404,12 @@ export async function hydrateCachedTokenIcons(
   for (let token of tokens) {
     if (token.iconUrl) continue
     if (!cacheExtraLooksLikeFungible(token)) continue
-    if (!token.colourSupply && !token.icon) {
+    const symIsFallback =
+      !token.sym.trim() || token.sym === shortTokenLabel(token.tokenId)
+    if (
+      !token.colourSupply &&
+      (!token.icon || symIsFallback || !token.issuer)
+    ) {
       const metadata = await recoverBsv21DeployMetadata(wallet, token.tokenId)
       if (metadata) {
         const idx = cached.findIndex((t) => t.tokenId === token.tokenId)
@@ -501,8 +559,9 @@ async function listFungiblesNow(
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
-  const repaired = await recoverReceivedTokensFromActivity(getCachedFungibles())
-  if (repaired.length !== getCachedFungibles().length) {
+  const beforeRepair = getCachedFungibles()
+  const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
+  if (fungibleProjectionChanged(repaired, beforeRepair)) {
     setFungiblesCache(repaired)
   }
 
