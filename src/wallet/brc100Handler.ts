@@ -88,6 +88,7 @@ import {
 } from './marketListing'
 import { playWalletSound } from './soundService'
 import { requestUnlockForBridge } from './walletHealth'
+import { internalizeActionWithBroadcast } from './internalizeBroadcast'
 import { signIdentityText } from './messageboxAuth'
 import { assertOnlineForPayment } from './paymentPolicy'
 import {
@@ -1058,9 +1059,10 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
         clearPaymentProgress()
       }
     } else if (method === 'internalizeAction') {
-      // Serialize with spends — concurrent internalize mid-broadcast can thrash outs.
+      // Serialize with spends — ingest validates locally, then submits the exact
+      // Atomic BEEF to Arcade without waiting for explorer visibility.
       result = await runExclusiveSpend(() =>
-        dispatchWalletMethod(active.wallet, method, args, originator),
+        internalizeActionWithBroadcast(active.wallet, args, originator),
       )
     } else {
       // Reads share the wallet with background ingest but must not raise spend
