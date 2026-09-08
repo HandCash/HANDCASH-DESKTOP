@@ -4,6 +4,7 @@ import { Beef } from '@bsv/sdk'
 const postBeef = vi.fn()
 const releaseSealedInputsOfUnsentTx = vi.fn(async () => {})
 const onAlreadySpentSend = vi.fn(async () => {})
+const restoreOnChainLocalTx = vi.fn(async () => true)
 
 vi.mock('./session', () => ({
   getActiveWallet: () => ({
@@ -15,6 +16,7 @@ vi.mock('./session', () => ({
 vi.mock('./staleOutputRelease', () => ({
   releaseSealedInputsOfUnsentTx: (...a: unknown[]) => releaseSealedInputsOfUnsentTx(...a),
   onAlreadySpentSend: (...a: unknown[]) => onAlreadySpentSend(...a),
+  restoreOnChainLocalTx: (...a: unknown[]) => restoreOnChainLocalTx(...a),
 }))
 
 vi.mock('./arcadeSubmitGuard', async (importOriginal) => {
@@ -38,6 +40,9 @@ describe('submitAtomicBeefToMiners', () => {
     postBeef.mockReset()
     releaseSealedInputsOfUnsentTx.mockClear()
     onAlreadySpentSend.mockClear()
+    restoreOnChainLocalTx.mockClear()
+    const { __resetArcadeSubmitGuardForTests } = await import('./arcadeSubmitGuard')
+    __resetArcadeSubmitGuardForTests()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
     const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
     vi.mocked(txExistsOnChain).mockReset()
@@ -54,6 +59,7 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.confirmed).toBe(true)
     expect(result.submitted).toBe(true)
+    expect(restoreOnChainLocalTx).toHaveBeenCalledWith(TXID)
   })
 
   it('treats transport failure as submitted without releasing the seal', async () => {
@@ -184,6 +190,7 @@ describe('submitAtomicBeefToMiners', () => {
     const result = await submitAtomicBeefToMiners(TXID, ATOMIC)
     expect(result.submitted).toBe(true)
     expect(onAlreadySpentSend).not.toHaveBeenCalled()
-    expect(releaseSealedInputsOfUnsentTx).toHaveBeenCalled()
+    expect(releaseSealedInputsOfUnsentTx).not.toHaveBeenCalled()
+    expect(restoreOnChainLocalTx).toHaveBeenCalledWith(TXID)
   })
 })

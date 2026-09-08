@@ -3750,6 +3750,11 @@ export async function sendCollectable(args: {
                   console.info(
                     `[collectables] peerDeliver box=${delivered.delivered} beefInBox=${delivered.beefInBox}`
                   )
+                  if (!delivered.beefInBox) {
+                    console.info(
+                      `[collectables] peerDeliver omitted AtomicBEEF (box cap) — payee SPV-fetches ${txid.slice(0, 12)}`,
+                    )
+                  }
                   if (delivered.delivered !== 'cloud') {
                     recordTransactionStage('peer_delivery_queued', {
                       flow: 'item_transfer',

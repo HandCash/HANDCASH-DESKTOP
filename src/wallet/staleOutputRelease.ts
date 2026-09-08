@@ -37,6 +37,10 @@ import {
   type ChangeRow,
 } from './changeScriptFate'
 import { txLivenessFromStatus } from './balanceView'
+import {
+  signedTxMayBeRemoved,
+  txHadArcadeSubmitContact,
+} from './arcadeSubmitGuard'
 
 /** Toolbox statuses that mean this wallet already committed the tx locally. */
 const LIVE_LOCAL_TX = new Set([
@@ -345,9 +349,16 @@ export async function failUnsentLocalTx(
       // Submit ACK is success. Explorers lag for minutes after Arcade accepts
       // the BEEF (hc-a580a: unmined + post.status success, then send-cleanup
       // heal marked the tx failed and un-deducted change).
-      if (!opts?.force && isLiveLocalTxStatus(status)) {
+      // Item `noSend` rows stay `unsent` until processAction — Arcade pin is
+      // the commit signal (hc-ad7afb: 3aba0b7a fox send reclaimed 20s later).
+      if (
+        !opts?.force &&
+        (isLiveLocalTxStatus(status) || txHadArcadeSubmitContact(id))
+      ) {
         console.info(
-          `[stale-output] skip fail-unsent — ${id.slice(0, 12)} still ${status} after submit`,
+          `[stale-output] skip fail-unsent — ${id.slice(0, 12)} still ${
+            txHadArcadeSubmitContact(id) ? 'Arcade-pinned' : status
+          } after submit`,
         )
         return false
       }
@@ -687,6 +698,13 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
             paged: { limit: 1, offset: 0 },
           })
           const status = String(rows?.[0]?.status ?? '').toLowerCase()
+          // `noSend` item/BRC-29 rows stay `unsent` after createAction. Arcade
+          // contact means the signed tx was handed to miners — not a ghost.
+          if (txHadArcadeSubmitContact(txid)) {
+            liveSealers.add(txid)
+            deadSealers.delete(txid)
+            continue
+          }
           // Failed / unsent / missing local row — ghost seal, revive without explorers.
           if (
             !rows?.length ||
@@ -719,8 +737,17 @@ export async function reclaimSealedInputsNeverSpent(opts?: {
     for (const txid of sealerIds) {
       // Local `callback` / unmined / sending spends are already ours. Explorers
       // often answer "not on chain" for minutes after Arcade accepts the BEEF;
-      // treating that as unsent un-deducts change (Plinko bets on a580).
+      // treating that as unsent un-deducts change (Plinko bets on a580) and
+      // un-spends item `noSend` rows (hc-ad7afb fox 3aba0b7a).
       if (liveSealers.has(txid)) continue
+      if (!(await signedTxMayBeRemoved({ txid, chain }))) {
+        liveSealers.add(txid)
+        deadSealers.delete(txid)
+        console.info(
+          `[stale-output] skip reclaim — ${txid.slice(0, 12)} Arcade-pinned`,
+        )
+        continue
+      }
       const onChain = await txExistsOnChain(txid, chain).catch(() => null)
       if (onChain === true) {
         liveSealers.add(txid)
