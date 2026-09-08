@@ -212,12 +212,25 @@ function marketActionKey(method: string, args: unknown): string {
  * as "Approving…" even though approval already succeeded.
  */
 function yieldForPermissionProjection(): Promise<void> {
+  // A hidden wallet has nothing to repaint. More importantly, Chromium may
+  // suspend requestAnimationFrame while the app is obscured; transaction
+  // processing must never wait for the window to become visible again.
+  if (typeof document !== 'undefined' && document.hidden) {
+    return Promise.resolve()
+  }
   return new Promise((resolve) => {
     if (typeof requestAnimationFrame !== 'function') {
       setTimeout(resolve, 0)
       return
     }
-    requestAnimationFrame(() => setTimeout(resolve, 0))
+    let settled = false
+    const finish = () => {
+      if (settled) return
+      settled = true
+      resolve()
+    }
+    requestAnimationFrame(finish)
+    setTimeout(finish, 50)
   })
 }
 

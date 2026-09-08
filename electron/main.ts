@@ -421,6 +421,10 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      // The wallet remains an active transaction service while obscured or
+      // minimized. Chromium's default background throttling can suspend the
+      // renderer timers that complete BRC-100 requests.
+      backgroundThrottling: false,
     },
   })
 
