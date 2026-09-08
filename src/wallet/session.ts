@@ -10,7 +10,10 @@ import { clearSessionBackupPassword } from './sessionBackupAuth'
 import { isPhoneShell } from './runtimePlatform'
 import { appendAppLog } from './appLog'
 import { readTrustedBalance, writeTrustedBalance } from './balanceSnapshot'
-import { POST_BEEF_PREFER, preferServiceOrder } from './serviceOrder'
+import {
+  configurePostBeefServices,
+  preferServiceOrder,
+} from './serviceOrder'
 
 const { specOpWalletBalance } = sdk
 
@@ -189,10 +192,7 @@ function installMerklePreferBitails(services: Services): void {
   }
 }
 
-/**
- * Broadcast: Arcade first. Its first success is enough to treat the send as
- * complete — do not wait for GP/WoC ACK or a seen-on-chain callback.
- */
+/** Broadcast only through Arcade V2; other providers are read/proof sources. */
 function installPostBeefPreferFast(services: Services): void {
   try {
     const collection = (
@@ -200,7 +200,7 @@ function installPostBeefPreferFast(services: Services): void {
         postBeefServices?: { services?: Array<{ name: string }>; reset?: () => void }
       }
     ).postBeefServices
-    preferServiceOrder(collection, POST_BEEF_PREFER)
+    configurePostBeefServices(collection)
     const s = services as Services & {
       postBeefUntilSuccessSoftTimeoutMs?: number
       postBeefUntilSuccessSoftTimeoutMaxMs?: number
@@ -212,7 +212,7 @@ function installPostBeefPreferFast(services: Services): void {
       s.postBeefUntilSuccessSoftTimeoutMaxMs = isPhoneShell() ? 8_000 : 6_000
     }
   } catch (err) {
-    console.warn('[postBeef] could not prefer ARC broadcasters', err)
+    console.warn('[postBeef] could not configure Arcade broadcasters', err)
   }
 }
 
