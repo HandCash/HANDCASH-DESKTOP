@@ -160,7 +160,7 @@ export async function internalizePeerItemSettle(opts: {
       outpoint: tipOp,
     })
     void import('./collectables')
-      .then(({ noteIngestedItem, listCollectables }) => {
+      .then(({ noteIngestedItem, listCollectables, requestCollectableVerification }) => {
         noteIngestedItem({
           outpoint: tipOp,
           chain: active.chain,
@@ -170,6 +170,7 @@ export async function internalizePeerItemSettle(opts: {
           collectionId,
           content: priorByOrigin?.content,
         })
+        requestCollectableVerification(tipOp)
         announceItemsReceived([tipOp])
         return listCollectables(active)
       })

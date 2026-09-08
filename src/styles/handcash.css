@@ -2239,6 +2239,13 @@ button.wallet-detail-value.is-copied {
   margin-bottom: 10px;
 }
 
+.connect-app-hero > div:last-child,
+.app-details-head-text {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
 .connect-app-hero h2 {
   margin-bottom: 2px;
 }
@@ -5055,8 +5062,9 @@ button.payment-details-item-thumb-btn:hover {
 .connected-app-body {
   min-width: 0;
   display: flex;
-  align-items: baseline;
-  gap: 8px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
   flex-wrap: nowrap;
 }
 

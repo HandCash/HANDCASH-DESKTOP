@@ -1957,7 +1957,13 @@ export async function verifyItemAuthenticity(
     const match = (listed.outputs ?? []).find(
       (o) => normalizeOutpoint(o.outpoint) === target
     )
-    if (!match) {
+    // P2P internalize validates custody and paints the card before listOutputs
+    // necessarily projects its insertion remittance. The supplied Atomic BEEF
+    // is already cached, so lineage verification must not wait on that row.
+    const painted = getCachedCollectables().find(
+      (item) => normalizeOutpoint(item.outpoint) === target
+    )
+    if (!match && !painted) {
       return {
         tier: 'unproven',
         proven: false,
@@ -1967,7 +1973,7 @@ export async function verifyItemAuthenticity(
 
     await yieldToUi()
 
-    const custom = parseCustom(match.customInstructions)
+    const custom = parseCustom(match?.customInstructions)
     const provenance = custom.provenance
     let authenticity: AuthenticityResult = {
       tier: 'unproven',
@@ -3766,6 +3772,8 @@ export async function sendCollectable(args: {
                       senderIdentityKey: wallet.identityKey,
                       txid,
                       itemName: name,
+                      itemOrigin: origin,
+                      itemCollectionId: collectionId,
                       messagebox: friend?.messagebox,
                     })
                   } else {
@@ -3788,6 +3796,8 @@ export async function sendCollectable(args: {
                     senderIdentityKey: wallet.identityKey,
                     txid,
                     itemName: name,
+                    itemOrigin: origin,
+                    itemCollectionId: collectionId,
                     messagebox: friend?.messagebox,
                   })
                   recordTransactionStage('peer_delivery_queued', {

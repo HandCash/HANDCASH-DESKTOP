@@ -361,9 +361,9 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const typed = snapshot.context.amount
 
   // Coalesce keystrokes: the preview selects real outputs, so it must not run
-  // once per typed digit. 1sat-ft only — never preview a leftover BSV-21 plan.
+  // once per typed digit.
   useEffect(() => {
-    if (!token || token.colourSupply == null || !typed.trim()) return
+    if (!token || !typed.trim()) return
     let units: string
     try {
       units = parseFungibleSendAmount(typed, token).unitsStr
@@ -415,15 +415,13 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   }
   const multiDeploy = (token.tokenIds?.length ?? 1) > 1
   const refusal =
-    token.colourSupply == null
-      ? 'This tip is not a BSV-21 value lock.'
-      : token.spendKind === 'cosigned'
-        ? 'This token requires a cosigner, so it cannot be burned here.'
-        : token.spendKind === 'mixed'
-          ? 'This balance mixes plain and cosigned outputs — separate them first.'
-          : multiDeploy
-            ? 'This balance combines several deploy IDs. Burn each deploy separately.'
-            : null
+    token.spendKind === 'cosigned'
+      ? 'This token requires a cosigner, so it cannot be burned here.'
+      : token.spendKind === 'mixed'
+        ? 'This balance mixes plain and cosigned outputs — separate them first.'
+        : multiDeploy
+          ? 'This balance combines several deploy IDs. Burn each deploy separately.'
+          : null
   const tokenChange = typedUnits != null && typedUnits < heldUnits
   const preview = snapshot.context.preview
   // A real plan selects real outputs, so it replaces the estimate outright.
@@ -473,9 +471,6 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
   const confirm = () => {
     let units: string
     try {
-      if (token.colourSupply == null) {
-        throw new Error('This tip is not a BSV-21 value lock.')
-      }
       units = parseFungibleSendAmount(typed, token).unitsStr
     } catch (err) {
       event({
