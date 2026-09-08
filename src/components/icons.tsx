@@ -173,11 +173,19 @@ export function ScanQrIcon(props: IconProps) {
   )
 }
 
-/** Material Icons — `apps` */
+/** Standard package/box icon for connected apps. */
 export function AppsIcon(props: IconProps) {
   return (
-    <Icon {...props}>
-      <path d="M4 8h4V4H4v4zm6 12h4v-4h-4v4zm-6 0h4v-4H4v4zm0-6h4v-4H4v4zm6 0h4v-4h-4v4zm6-10v4h4V4h-4zm-6 4h4V4h-4v4zm6 6h4v-4h-4v4zm0 6h4v-4h-4v4z" />
+    <Icon
+      {...props}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={2}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+    >
+      <path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z" />
+      <path d="m3.27 6.96 8.73 5.05 8.73-5.05M12 22.08V12" />
     </Icon>
   )
 }
