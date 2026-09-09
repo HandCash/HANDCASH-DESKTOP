@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.121] - 2026-09-09
+
+### Fixed
+
+- Paint received BSV-21 tokens immediately and recover them from activity with metadata intact.
+- Keep wallet transactions active in the background.
+- Legacy BSV-21 burn: restore inputs, recover P2PKH / leftover tips without blocking verification, and avoid a recursive spend lock.
+- Verify inbound peer NFTs; ship large market settlements without truncating BEEF.
+- Keep approvals and burns responsive, including destructive-approval contrast.
+- Desktop item selection, embedded app browsing, action progress, and navigation polish.
+
 ## [1.3.120] - 2026-09-08
 
 ### Fixed
