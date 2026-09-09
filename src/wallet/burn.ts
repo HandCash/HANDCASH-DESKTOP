@@ -761,6 +761,10 @@ export async function burnBsv21(args: {
         dec: token.dec,
         issuer: token.issuer,
       })
+      hideCollectablesAfterSpend(
+        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
+        result.txid,
+      )
       upsertAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',

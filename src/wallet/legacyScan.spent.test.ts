@@ -88,6 +88,23 @@ describe('spentStatusOfOutpoint', () => {
     await expect(spentStatusOfOutpoint(`${PREV}.0`, 'main')).resolves.toBe('unspent')
   })
 
+  it('does not call a BananaBlocks unknown-transaction 404 unspent', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (url: string) => {
+        if (String(url).includes('bitails')) {
+          return jsonResponse(200, { status: 'unknown' })
+        }
+        if (String(url).includes('bananablocks')) {
+          return jsonResponse(404, { error: 'Transaction not found' })
+        }
+        return new Response('', { status: 503 })
+      }),
+    )
+
+    await expect(spentStatusOfOutpoint(`${PREV}.0`, 'main')).resolves.toBe('unknown')
+  })
+
   it('does not treat Bitails unknown plus a WhatsOnChain 404 as spent', async () => {
     const fetchMock = vi.fn(async (url: string) => {
       if (String(url).includes('bananablocks')) {

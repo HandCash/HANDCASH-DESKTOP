@@ -8691,35 +8691,40 @@ html[data-aeon-mode='light'] .skeleton {
   box-sizing: border-box;
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  max-width: calc(100% - 6px);
+  justify-content: center;
+  width: 25px;
+  height: 25px;
   margin: 0;
-  padding: 2px 6px 2px 4px;
-  border-radius: 999px;
+  padding: 0;
+  border-radius: 50%;
   border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
   background: color-mix(in srgb, hsl(var(--background)) 88%, #000);
   color: var(--hc-accent, #57ff97);
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
-  font-size: var(--hc-text-2xs);
-  font-weight: 700;
-  letter-spacing: var(--hc-tracking-label);
-  text-transform: uppercase;
-  line-height: 1;
+  animation: action-mark-pulse 1.2s ease-in-out infinite alternate;
 }
 
 .collectable-media-sm .collectable-sending-mark {
   left: 2px;
   top: 2px;
-  padding: 2px 5px 2px 3px;
-  font-size: var(--hc-text-2xs);
-  gap: 3px;
+  width: 21px;
+  height: 21px;
 }
 
-.collectable-sending-mark-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.collectable-sending-mark[data-action='burn'] {
+  border-color: color-mix(in srgb, var(--hc-danger) 68%, hsl(var(--border)));
+  background: color-mix(in srgb, var(--hc-danger) 22%, hsl(var(--background)));
+  color: color-mix(in srgb, var(--hc-danger) 80%, white);
+}
+
+@keyframes action-mark-pulse {
+  from {
+    transform: scale(0.94);
+  }
+  to {
+    transform: scale(1);
+  }
 }
 
 .collectable-listed-mark {
@@ -9789,9 +9794,9 @@ html[data-aeon-mode='light'] .skeleton {
 
 .collectable-burn-btn.is-burning,
 .asset-burn-trigger.is-burning {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, transparent);
-  background: color-mix(in srgb, #c9852a 14%, transparent);
+  color: color-mix(in srgb, var(--hc-danger) 82%, white);
+  border-color: color-mix(in srgb, var(--hc-danger) 62%, transparent);
+  background: color-mix(in srgb, var(--hc-danger) 16%, transparent);
   opacity: 1;
   cursor: wait;
 }
@@ -12763,6 +12768,13 @@ html[data-aeon-mode='light'] .asset-burn-trigger:hover:not(:disabled) {
   border-color: color-mix(in srgb, #991b1b 58%, var(--hc-border));
   background: color-mix(in srgb, #991b1b 12%, transparent);
   color: #7f1d1d;
+}
+
+html[data-aeon-mode='light'] .asset-burn-trigger.is-burning,
+html[data-aeon-mode='light'] .collectable-burn-btn.is-burning {
+  border-color: #991b1b;
+  background: color-mix(in srgb, #991b1b 12%, white);
+  color: #991b1b;
 }
 
 /* Burn is the last thing in any asset action row and sits away from the

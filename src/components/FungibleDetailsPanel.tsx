@@ -45,7 +45,6 @@ import {
   RefreshIcon,
   SendIcon,
   FireIcon,
-  WarningIcon,
 } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
@@ -419,7 +418,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
             openBurnFungible(token.tokenId)
           }}
         >
-          <WarningIcon size={14} />
+          <FireIcon size={14} />
           {burning ? 'Burning…' : 'Burn token'}
         </button>
       </div>

@@ -41,7 +41,7 @@ import {
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { isItemSent } from '../wallet/sentItemGuard'
-import { CollectablesIcon, CopyIcon, DownloadIcon, SendIcon, WarningIcon } from './icons'
+import { CollectablesIcon, CopyIcon, DownloadIcon, FireIcon, SendIcon } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { CollectableSendingMark } from './CollectableSendingMark'
 import { LoadingSpinner } from './LoadingSpinner'
@@ -452,7 +452,7 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
                 disabled={sending}
                 aria-busy={burning || undefined}
               >
-                <WarningIcon size={14} />
+                <FireIcon size={14} />
                 {burning ? 'Burning…' : 'Burn item'}
               </button>
             )}

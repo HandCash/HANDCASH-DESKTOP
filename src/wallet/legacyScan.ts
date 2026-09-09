@@ -318,7 +318,13 @@ export async function spentStatusOfOutpoint(
   if (banana) {
     try {
       const res = await fetchWithDeadline(`${banana}/tx/${parsed.txid}/${parsed.vout}/spent`)
-      if (res.status === 404) return 'unspent'
+      if (res.status === 404) {
+        // BananaBlocks also returns 404 when the source transaction itself is
+        // unknown/pruned. Only an empty 404 is its definitive "not spent" form.
+        const body = await res.text().catch(() => '')
+        if (!body.trim()) return 'unspent'
+        return 'unknown'
+      }
       if (!res.ok) return 'unknown'
       const body = (await res.json()) as { txid?: unknown }
       const spendTxid = String(body.txid ?? '').toLowerCase()

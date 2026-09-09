@@ -47,6 +47,15 @@ export function MintIcon(props: IconProps) {
   )
 }
 
+/** Material Icons — `local_offer` (market listing) */
+export function ListingIcon(props: IconProps) {
+  return (
+    <Icon {...props}>
+      <path d="M21.41 11.58 12.41 2.58A2 2 0 0 0 11 2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 .59 1.41l9 9a2 2 0 0 0 2.82 0l7-7a2 2 0 0 0 0-2.83zM6.5 8A1.5 1.5 0 1 1 6.5 5a1.5 1.5 0 0 1 0 3z" />
+    </Icon>
+  )
+}
+
 /** Material Icons — `download` */
 export function ReceiveIcon(props: IconProps) {
   return (

@@ -823,12 +823,12 @@ html:is(.platform-mobile, .layout-compact) .settings-scroll-body {
   -webkit-overflow-scrolling: touch;
 }
 
-/* Burn CTA chrome — spinner marks stay accent (LoadingSpinner). */
+/* Burn CTA chrome stays destructive while its action is in flight. */
 html:is(.platform-mobile, .layout-compact) .collectable-burn-btn.is-burning,
 html:is(.platform-mobile, .layout-compact) .asset-burn-trigger.is-burning {
-  color: #e8b060;
-  border-color: color-mix(in srgb, #c9852a 55%, transparent);
-  background: color-mix(in srgb, #c9852a 14%, transparent);
+  color: color-mix(in srgb, var(--hc-danger) 82%, white);
+  border-color: color-mix(in srgb, var(--hc-danger) 62%, transparent);
+  background: color-mix(in srgb, var(--hc-danger) 16%, transparent);
 }
 
 html:is(.platform-mobile, .layout-compact) .fungible-card[data-sending='true'] .collectable-burn-btn.is-burning {
