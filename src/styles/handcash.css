@@ -8692,11 +8692,12 @@ html[data-aeon-mode='light'] .skeleton {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 25px;
+  gap: 4px;
+  width: 38px;
   height: 25px;
   margin: 0;
-  padding: 0;
-  border-radius: 50%;
+  padding: 0 5px;
+  border-radius: 999px;
   border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
   background: color-mix(in srgb, hsl(var(--background)) 88%, #000);
   color: var(--hc-accent, #57ff97);
@@ -8708,8 +8709,14 @@ html[data-aeon-mode='light'] .skeleton {
 .collectable-media-sm .collectable-sending-mark {
   left: 2px;
   top: 2px;
-  width: 21px;
+  gap: 3px;
+  width: 33px;
   height: 21px;
+  padding: 0 4px;
+}
+
+.collectable-sending-mark .loading-spinner {
+  color: inherit;
 }
 
 .collectable-sending-mark[data-action='burn'] {

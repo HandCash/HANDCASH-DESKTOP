@@ -5,6 +5,7 @@ import {
   PayIcon,
   SendIcon,
 } from './icons'
+import { LoadingSpinner } from './LoadingSpinner'
 
 type InFlightAction = 'send' | 'burn' | 'list' | 'cancel' | 'buy'
 
@@ -47,6 +48,7 @@ export function CollectableSendingMark({
       aria-label={verb}
       title={verb}
     >
+      <LoadingSpinner size="sm" />
       <ActionIcon action={action} />
     </span>
   )
