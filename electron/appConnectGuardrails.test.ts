@@ -4,10 +4,10 @@ import {
   bridgeConnectUnavailableCode,
   bridgeConnectUnavailableMessage,
   bridgeCorsHeaders,
-  decideUiLoadRecovery,
   decideWalletUiNavigation,
   DISABLE_HTTPS_FIRST_FEATURES,
 } from './appConnectGuardrails.js'
+import { isTrustedAppUrl } from './appUrlPolicy.js'
 import { createBridgeWindowSource, type BridgeWindowLike } from './bridgeWindow.js'
 
 const distRoot = path.resolve('/tmp/handcash/dist')
@@ -29,9 +29,15 @@ function fakeWindow(id = 1): BridgeWindowLike {
 }
 
 describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
-  it('blocks forced https:// wallet-UI URLs without loadURL (HTTP-only UI)', () => {
-    // Wallet UI is http://localhost:5173 only. Chromium HTTPS-First must not
-    // trigger loadURL — that cleared bridge readiness and broke /getVersion.
+  it('never trusts https:// wallet-UI URLs as the live renderer origin', () => {
+    // Allowing https://localhost:5173 navigation blanks Vite (HTTP-only) and
+    // leaves every /getVersion as renderer-not-ready.
+    expect(isTrustedAppUrl('https://localhost:5173/', policy)).toBe(false)
+    expect(isTrustedAppUrl('https://127.0.0.1:5173/collectables/1', policy)).toBe(false)
+    expect(isTrustedAppUrl('http://localhost:5173/', policy)).toBe(true)
+  })
+
+  it('blocks forced https:// wallet-UI URLs without loadURL', () => {
     expect(decideWalletUiNavigation('https://localhost:5173/', policy)).toEqual({
       action: 'block-https-upgrade',
       url: 'http://localhost:5173/',
@@ -54,6 +60,21 @@ describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
     })
   })
 
+  it('never returns a loadURL/reload decision for any wallet-UI URL', () => {
+    const urls = [
+      'https://localhost:5173/',
+      'https://127.0.0.1:5173/',
+      'http://localhost:5173/',
+      'https://localhost:2121/getVersion',
+      'https://www.lilb.it/market',
+    ]
+    for (const url of urls) {
+      const decision = decideWalletUiNavigation(url, policy)
+      expect(decision.action).not.toBe('reload-http')
+      expect(decision).not.toHaveProperty('action', 'reload-http')
+    }
+  })
+
   it('allows the real HTTP wallet origin and opens real apps externally', () => {
     expect(decideWalletUiNavigation('http://localhost:5173/', policy)).toEqual({
       action: 'allow',
@@ -73,55 +94,6 @@ describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
       action: 'open-external',
       url: 'https://127.0.0.1:2121/health',
     })
-  })
-
-  it('recovers did-fail-load ERR_SSL_PROTOCOL_ERROR on the UI origin', () => {
-    expect(
-      decideUiLoadRecovery({
-        errorCode: -107,
-        validatedURL: 'https://localhost:5173/',
-        isMainFrame: true,
-        policy,
-        walletUiLoadUrl: 'http://localhost:5173/',
-        attempts: 0,
-      }),
-    ).toBe('http://localhost:5173/')
-  })
-
-  it('does not loop forever on failed UI recovery', () => {
-    expect(
-      decideUiLoadRecovery({
-        errorCode: -107,
-        validatedURL: 'https://localhost:5173/',
-        isMainFrame: true,
-        policy,
-        walletUiLoadUrl: 'http://localhost:5173/',
-        attempts: 2,
-      }),
-    ).toBeNull()
-  })
-
-  it('ignores subframe / aborted failures', () => {
-    expect(
-      decideUiLoadRecovery({
-        errorCode: -107,
-        validatedURL: 'https://localhost:5173/',
-        isMainFrame: false,
-        policy,
-        walletUiLoadUrl: 'http://localhost:5173/',
-        attempts: 0,
-      }),
-    ).toBeNull()
-    expect(
-      decideUiLoadRecovery({
-        errorCode: -3,
-        validatedURL: 'https://localhost:5173/',
-        isMainFrame: true,
-        policy,
-        walletUiLoadUrl: 'http://localhost:5173/',
-        attempts: 0,
-      }),
-    ).toBeNull()
   })
 
   it('keeps HTTPS-First disabled in the shipped feature list', () => {
@@ -152,7 +124,7 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     source.markRendererReady(1)
     expect((await source.acquire()).kind).toBe('ready')
 
-    // Vite HMR / HTTPS-upgrade recovery: did-start-loading clears readiness.
+    // Vite HMR / soft reload: did-start-loading clears readiness.
     source.markRendererGone(1)
     expect(source.isRendererReady()).toBe(false)
 
@@ -168,7 +140,6 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
         clock += 100
       },
     })
-    // Fresh source has no ready id — same as gone after reload before React remounts.
     expect(await waiting.acquire()).toEqual({
       kind: 'refuse',
       reason: 'renderer-not-ready',
@@ -204,21 +175,26 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     expect(headers['Access-Control-Allow-Origin']).toBe('*')
   })
 
-  it('wires shipped main/httpServer modules to these guardrails', async () => {
+  it('ships the safe connect path in main/httpServer (no loadURL / webRequest rewrite)', async () => {
     const fs = await import('node:fs/promises')
-    const mainSrc = await fs.readFile(
-      new URL('./main.ts', import.meta.url),
-      'utf8',
-    )
-    const httpSrc = await fs.readFile(
-      new URL('./httpServer.ts', import.meta.url),
-      'utf8',
-    )
+    const mainSrc = await fs.readFile(new URL('./main.ts', import.meta.url), 'utf8')
+    const httpSrc = await fs.readFile(new URL('./httpServer.ts', import.meta.url), 'utf8')
+
+    // Soft mitigation only — do not reintroduce session rewrites or recovery loadURL.
     expect(mainSrc).toContain('DISABLE_HTTPS_FIRST_FEATURES')
     expect(mainSrc).toContain('decideWalletUiNavigation')
-    expect(mainSrc).toContain('decideUiLoadRecovery')
-    expect(mainSrc).toContain('rewriteForcedHttpsUiUrl')
-    expect(mainSrc).toContain('webRequest.onBeforeRequest')
+    expect(mainSrc).toContain("did-start-loading")
+    expect(mainSrc).toContain('markRendererGone')
+    expect(mainSrc).toContain("action === 'block-https-upgrade'")
+
+    expect(mainSrc).not.toContain('webRequest.onBeforeRequest')
+    expect(mainSrc).not.toContain('rewriteForcedHttpsUiUrl')
+    expect(mainSrc).not.toContain('decideUiLoadRecovery')
+    expect(mainSrc).not.toMatch(/reload-http[\s\S]{0,120}loadURL/)
+    expect(mainSrc).not.toMatch(/recovering via[\s\S]{0,80}loadURL/)
+    expect(mainSrc).not.toMatch(/blocked HTTPS upgrade[\s\S]{0,200}void mainWindow\.loadURL/)
+    expect(mainSrc).not.toMatch(/block-https-upgrade[\s\S]{0,200}loadURL/)
+
     expect(httpSrc).toContain('bridgeConnectUnavailableMessage')
     expect(httpSrc).toContain('bridgeCorsHeaders')
   })

@@ -21,9 +21,9 @@ describe('isTrustedAppUrl', () => {
     expect(isTrustedAppUrl('http://localhost:51730/', policy)).toBe(false)
   })
 
-  it('treats Chromium HTTPS upgrades of the UI origin as trusted', () => {
-    expect(isTrustedAppUrl('https://localhost:5173/', policy)).toBe(true)
-    expect(isTrustedAppUrl('https://127.0.0.1:5173/collectables/1', policy)).toBe(true)
+  it('rejects Chromium HTTPS upgrades of the UI origin (HTTP-only Vite)', () => {
+    expect(isTrustedAppUrl('https://localhost:5173/', policy)).toBe(false)
+    expect(isTrustedAppUrl('https://127.0.0.1:5173/collectables/1', policy)).toBe(false)
   })
 
   it('accepts only files contained by dist', () => {

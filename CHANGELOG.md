@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.134] - 2026-09-09
+
+### Fixed
+
+- BRC-100 connect: revert the HTTPS UI `loadURL` / `webRequest` / recovery path that cleared bridge readiness after 1.3.131. Keep HTTPS-First disabled and the in-app browser launch; `/getVersion` uses the pre-regression navigation + readiness wiring again.
+
 ## [1.3.133] - 2026-09-09
 
 ### Fixed

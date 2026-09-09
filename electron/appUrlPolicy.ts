@@ -67,9 +67,6 @@ export function isForcedHttpsUiUrl(raw: string, policy: AppUrlPolicy): boolean {
 
 /** Only the exact renderer origin or a file below dist may keep navigation. */
 export function isTrustedAppUrl(raw: string, policy: AppUrlPolicy): boolean {
-  const rewritten = rewriteForcedHttpsUiUrl(raw, policy)
-  if (rewritten) return true
-
   let url: URL
   try {
     url = new URL(raw)
@@ -77,6 +74,9 @@ export function isTrustedAppUrl(raw: string, policy: AppUrlPolicy): boolean {
     return false
   }
 
+  // Never treat https://localhost:5173 as the wallet UI. Vite / the packaged UI
+  // speak HTTP only; allowing that navigation blanks the renderer and breaks
+  // every BRC-100 /getVersion (renderer-not-ready).
   if (
     policy.devOrigins.some((origin) => exactOrigin(url, origin)) ||
     (policy.packagedUiOrigin && exactOrigin(url, policy.packagedUiOrigin))

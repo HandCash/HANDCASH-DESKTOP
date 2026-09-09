@@ -21,7 +21,6 @@ export const DISABLE_HTTPS_FIRST_FEATURES = [
 
 export type WalletUiNavigationDecision =
   | { action: 'allow' }
-  | { action: 'reload-http'; url: string }
   /** Cancel an HTTPS-First redirect without tearing down the live renderer. */
   | { action: 'block-https-upgrade'; url: string }
   | { action: 'open-external'; url: string }
@@ -39,11 +38,10 @@ function isSafeExternalUrl(url: string): boolean {
 /**
  * Main-window navigation policy for BRC-100 connect health.
  *
- * The wallet UI is HTTP-only (`http://localhost:5173`). Chromium sometimes
- * still attempts `https://` against that origin. Never `loadURL` to "fix"
- * it from will-navigate/will-redirect — that tears down the renderer and
- * leaves every app connect as `renderer-not-ready`. Cancel the upgrade and
- * let the network-layer rewrite (or did-fail-load recovery) keep HTTP.
+ * The wallet UI is HTTP-only (`http://localhost:5173`). Never `loadURL` to
+ * "fix" an https upgrade — that tears down the renderer and leaves every
+ * app connect as `renderer-not-ready`. Cancel the upgrade; disable HTTPS-First
+ * so Chromium stops attempting it.
  */
 export function decideWalletUiNavigation(
   url: string,
@@ -57,29 +55,6 @@ export function decideWalletUiNavigation(
   if (isTrustedAppUrl(url, policy)) return { action: 'allow' }
   if (isSafeExternalUrl(url)) return { action: 'open-external', url }
   return { action: 'deny' }
-}
-
-/**
- * After `did-fail-load`, recover the wallet UI when Chromium still attempted
- * HTTPS against our HTTP-only origin.
- */
-export function decideUiLoadRecovery(args: {
-  errorCode: number
-  validatedURL: string
-  isMainFrame: boolean
-  policy: AppUrlPolicy
-  walletUiLoadUrl: string
-  attempts: number
-  maxAttempts?: number
-}): string | null {
-  if (!args.isMainFrame) return null
-  if (args.errorCode === -3 /* ERR_ABORTED */) return null
-  if (args.attempts >= (args.maxAttempts ?? 2)) return null
-
-  const rewritten = rewriteForcedHttpsUiUrl(args.validatedURL, args.policy)
-  if (rewritten) return rewritten
-  if (isTrustedAppUrl(args.validatedURL, args.policy)) return args.walletUiLoadUrl
-  return null
 }
 
 /** Bridge refusal → HTTP 503 body code clients see on connect. */
