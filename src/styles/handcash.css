@@ -13491,17 +13491,29 @@ html:not(.platform-mobile):not(.layout-compact)
   cursor: not-allowed;
 }
 
-.wallet-nav-bar[data-permission]:has(
+/*
+ * Contextual CTAs: CTA colour lives on the highlighted slot / track only.
+ * Danger (cancel) stays muted until that action is selected or hovered.
+ *
+ * Match `html:not(.platform-mobile):not(.layout-compact) .wallet-nav-bar[data-permission]`
+ * specificity — without the html prefix the desktop base border/background wins and
+ * hovering a middle secondary (e.g. Open in browser) drops the outer CTA ring.
+ */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='primary']
   ),
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='primary']
   )
   .wallet-nav-bar-track,
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   ),
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
@@ -13509,17 +13521,21 @@ html:not(.platform-mobile):not(.layout-compact)
   background: hsl(var(--primary));
 }
 
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='danger']
   ),
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='danger']
   )
   .wallet-nav-bar-track,
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   ),
-.wallet-nav-bar[data-permission]:has(
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
@@ -13527,20 +13543,20 @@ html:not(.platform-mobile):not(.layout-compact)
   background: color-mix(in srgb, var(--hc-danger) 72%, white);
 }
 
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='primary']
   ),
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='primary']
   )
   .wallet-nav-bar-track,
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   ),
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   )
@@ -13549,20 +13565,20 @@ html[data-aeon-mode='light']
   background: #0a0a0a;
 }
 
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='danger']
   ),
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-action-bar--nav[data-cta='danger']
   )
   .wallet-nav-bar-track,
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   ),
-html[data-aeon-mode='light']
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   )
