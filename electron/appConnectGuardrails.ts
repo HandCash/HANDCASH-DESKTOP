@@ -39,22 +39,20 @@ function isSafeExternalUrl(url: string): boolean {
 /**
  * Main-window navigation policy for BRC-100 connect health.
  *
- * A forced HTTPS upgrade of the wallet origin must not blank the renderer.
- * On `will-redirect`, only cancel the upgrade — calling `loadURL(http)` again
- * fires `did-start-loading`, clears bridge readiness, and leaves every app
- * connect as `WALLET_BRIDGE_UNAVAILABLE: renderer-not-ready`.
+ * The wallet UI is HTTP-only (`http://localhost:5173`). Chromium sometimes
+ * still attempts `https://` against that origin. Never `loadURL` to "fix"
+ * it from will-navigate/will-redirect — that tears down the renderer and
+ * leaves every app connect as `renderer-not-ready`. Cancel the upgrade and
+ * let the network-layer rewrite (or did-fail-load recovery) keep HTTP.
  */
 export function decideWalletUiNavigation(
   url: string,
   policy: AppUrlPolicy,
-  opts?: { eventKind?: 'navigate' | 'redirect' },
+  _opts?: { eventKind?: 'navigate' | 'redirect' },
 ): WalletUiNavigationDecision {
   const rewritten = rewriteForcedHttpsUiUrl(url, policy)
   if (rewritten) {
-    if (opts?.eventKind === 'redirect') {
-      return { action: 'block-https-upgrade', url: rewritten }
-    }
-    return { action: 'reload-http', url: rewritten }
+    return { action: 'block-https-upgrade', url: rewritten }
   }
   if (isTrustedAppUrl(url, policy)) return { action: 'allow' }
   if (isSafeExternalUrl(url)) return { action: 'open-external', url }

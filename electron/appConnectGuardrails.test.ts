@@ -29,9 +29,11 @@ function fakeWindow(id = 1): BridgeWindowLike {
 }
 
 describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
-  it('reloads HTTP on navigate instead of opening an external browser', () => {
+  it('blocks forced https:// wallet-UI URLs without loadURL (HTTP-only UI)', () => {
+    // Wallet UI is http://localhost:5173 only. Chromium HTTPS-First must not
+    // trigger loadURL — that cleared bridge readiness and broke /getVersion.
     expect(decideWalletUiNavigation('https://localhost:5173/', policy)).toEqual({
-      action: 'reload-http',
+      action: 'block-https-upgrade',
       url: 'http://localhost:5173/',
     })
     expect(
@@ -39,15 +41,9 @@ describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
         eventKind: 'navigate',
       }),
     ).toEqual({
-      action: 'reload-http',
+      action: 'block-https-upgrade',
       url: 'http://127.0.0.1:5173/collectables/1',
     })
-  })
-
-  it('blocks HTTPS-First redirects without loadURL (keeps bridge renderer alive)', () => {
-    // Regression: preventDefault + loadURL(http) on will-redirect fired
-    // did-start-loading, cleared readiness, and every /getVersion answered
-    // renderer-not-ready until restart.
     expect(
       decideWalletUiNavigation('https://localhost:5173/', policy, {
         eventKind: 'redirect',
@@ -221,6 +217,8 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     expect(mainSrc).toContain('DISABLE_HTTPS_FIRST_FEATURES')
     expect(mainSrc).toContain('decideWalletUiNavigation')
     expect(mainSrc).toContain('decideUiLoadRecovery')
+    expect(mainSrc).toContain('rewriteForcedHttpsUiUrl')
+    expect(mainSrc).toContain('webRequest.onBeforeRequest')
     expect(httpSrc).toContain('bridgeConnectUnavailableMessage')
     expect(httpSrc).toContain('bridgeCorsHeaders')
   })

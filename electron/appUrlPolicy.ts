@@ -60,6 +60,11 @@ export function rewriteForcedHttpsUiUrl(
   return null
 }
 
+/** True when this is our wallet UI origin forced onto https://. */
+export function isForcedHttpsUiUrl(raw: string, policy: AppUrlPolicy): boolean {
+  return rewriteForcedHttpsUiUrl(raw, policy) != null
+}
+
 /** Only the exact renderer origin or a file below dist may keep navigation. */
 export function isTrustedAppUrl(raw: string, policy: AppUrlPolicy): boolean {
   const rewritten = rewriteForcedHttpsUiUrl(raw, policy)

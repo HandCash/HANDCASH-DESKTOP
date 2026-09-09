@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.133] - 2026-09-09
+
+### Fixed
+
+- Wallet UI stays HTTP-only: rewrite `https://localhost:5173` at the network layer before TLS, never `loadURL` on HTTPS upgrades, and stop clearing bridge readiness on soft reloads.
+
 ## [1.3.132] - 2026-09-09
 
 ### Fixed

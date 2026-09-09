@@ -58,7 +58,7 @@ import {
   stopPackagedUiServer,
   UI_ORIGIN,
 } from './uiServer.js'
-import { isTrustedAppUrl } from './appUrlPolicy.js'
+import { isTrustedAppUrl, rewriteForcedHttpsUiUrl } from './appUrlPolicy.js'
 import {
   decideUiLoadRecovery,
   decideWalletUiNavigation,
@@ -461,21 +461,18 @@ function createWindow(): void {
     url: string,
     eventKind: 'navigate' | 'redirect',
   ) => {
-    // Chromium HTTPS-First may redirect our HTTP UI to https:// — Vite has no
-    // TLS. On redirect, only cancel the upgrade. Reloading via loadURL tears
-    // down the renderer listener and breaks every BRC-100 connect.
+    // Wallet UI is HTTP-only. Never loadURL to "fix" an https upgrade — that
+    // clears bridge readiness. Cancel and rely on webRequest rewrite / recovery.
     const decision = decideWalletUiNavigation(url, appUrlPolicy(), { eventKind })
     if (decision.action === 'allow') return
     event.preventDefault()
     if (decision.action === 'block-https-upgrade') {
-      log.warn(`[ui] blocked HTTPS upgrade redirect — keeping ${decision.url}`)
+      log.warn(`[ui] blocked HTTPS wallet-UI ${eventKind} — keeping HTTP (${decision.url})`)
       return
     }
     if (decision.action === 'reload-http') {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        log.warn(`[ui] rewriting wallet navigation to ${decision.url}`)
-        void mainWindow.loadURL(decision.url)
-      }
+      // Kept for did-fail-load recovery callers; navigation must not reload.
+      log.warn(`[ui] ignoring reload-http on ${eventKind} for ${url}`)
       return
     }
     if (decision.action === 'open-external') void shell.openExternal(decision.url)
@@ -517,11 +514,10 @@ function createWindow(): void {
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests(`renderer process gone (${details.reason})`)
   })
-  mainWindow.webContents.on('did-start-loading', () => {
-    // Soft navigations / HMR briefly flip this; only fail in-flight bridge
-    // calls. Readiness returns when the renderer re-registers onHttpRequest.
-    bridgeWindows.markRendererGone(contentsId)
-  })
+  // Do not markRendererGone on did-start-loading. Vite HMR and soft reloads
+  // briefly start loading; clearing readiness there is what left connect as
+  // renderer-not-ready after SSL noise. Readiness is only dropped when the
+  // process/window is actually gone; App re-registers onHttpRequest on mount.
   mainWindow.webContents.on('destroyed', () => {
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests('webContents destroyed')
@@ -581,6 +577,22 @@ app.whenReady().then(async () => {
   }
 
   configureSessionCameraPermissions(session.defaultSession)
+
+  // Wallet UI is HTTP-only. Rewrite any https://localhost:5173 request before
+  // TLS so Chromium HTTPS-First cannot blank the renderer / kill BRC-100.
+  session.defaultSession.webRequest.onBeforeRequest((details, callback) => {
+    const rewritten = rewriteForcedHttpsUiUrl(details.url, {
+      devOrigins: [DEV_ORIGIN, 'http://127.0.0.1:5173'],
+      packagedUiOrigin: packagedUiOrigin ?? DEV_ORIGIN,
+      distRoot: path.join(__dirname, '../dist'),
+    })
+    if (rewritten && rewritten !== details.url) {
+      log.warn(`[ui] rewriting ${details.url} → ${rewritten}`)
+      callback({ redirectURL: rewritten })
+      return
+    }
+    callback({})
+  })
 
   createWindow()
   installAppMenu()
