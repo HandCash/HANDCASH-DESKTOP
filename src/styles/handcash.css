@@ -13683,6 +13683,22 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   scrollbar-gutter: auto;
 }
 
+/* Parked session: keep the webview mounted off-flow so section changes and
+   request overlays do not destroy the in-app browser. */
+.nav-child-stage--browser-parked {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
 .app-browser-toolbar {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

@@ -52,11 +52,20 @@ export type NavState = {
   child: NavChild | null
 }
 
+/** Live in-app browser session — survives section changes and request overlays. */
+export type EmbeddedAppBrowser = {
+  origin: string
+  url: string
+}
+
 type Listener = (state: NavState) => void
+type EmbeddedBrowserListener = (session: EmbeddedAppBrowser | null) => void
 
 const listeners = new Set<Listener>()
+const embeddedBrowserListeners = new Set<EmbeddedBrowserListener>()
 
 let state: NavState = { section: 'activity', child: null }
+let embeddedAppBrowser: EmbeddedAppBrowser | null = null
 
 let navLogTimer: ReturnType<typeof setTimeout> | null = null
 let pendingNavLog: string | null = null
@@ -88,8 +97,61 @@ export function subscribeNav(cb: Listener): () => void {
   }
 }
 
+function emitEmbeddedBrowser() {
+  for (const cb of embeddedBrowserListeners) cb(embeddedAppBrowser)
+}
+
+function setEmbeddedAppBrowser(session: EmbeddedAppBrowser | null) {
+  const prev = embeddedAppBrowser
+  if (
+    prev?.origin === session?.origin &&
+    prev?.url === session?.url &&
+    Boolean(prev) === Boolean(session)
+  ) {
+    return
+  }
+  embeddedAppBrowser = session
+  emitEmbeddedBrowser()
+}
+
+export function getEmbeddedAppBrowser(): EmbeddedAppBrowser | null {
+  return embeddedAppBrowser
+}
+
+export function subscribeEmbeddedAppBrowser(cb: EmbeddedBrowserListener): () => void {
+  embeddedBrowserListeners.add(cb)
+  cb(embeddedAppBrowser)
+  return () => {
+    embeddedBrowserListeners.delete(cb)
+  }
+}
+
+/**
+ * End the in-app browser session (Close). Section changes and request overlays
+ * must not call this — they only park the session so the webview stays alive.
+ */
+export function closeEmbeddedAppBrowser() {
+  setEmbeddedAppBrowser(null)
+  if (state.child?.type === 'app-browser') {
+    settingBackStack = []
+    state = { ...state, child: null }
+    emit()
+  }
+}
+
+/** Bring a parked browser session back to the Apps foreground. */
+export function focusEmbeddedAppBrowser() {
+  if (!embeddedAppBrowser) return
+  openNavChild('apps', {
+    type: 'app-browser',
+    origin: embeddedAppBrowser.origin,
+    url: embeddedAppBrowser.url,
+  })
+}
+
 export function setNavSection(section: NavSection) {
   settingBackStack = []
+  // Park the embedded browser (keep session) — do not destroy the webview.
   state = { section, child: null }
   emit()
 }
@@ -98,6 +160,9 @@ export function openNavChild(section: NavSection, child: NavChild) {
   if (section !== 'settings' || child.type !== 'setting') {
     settingBackStack = []
   }
+  if (child.type === 'app-browser') {
+    setEmbeddedAppBrowser({ origin: child.origin, url: child.url })
+  }
   state = { section, child }
   emit()
 }
@@ -105,6 +170,11 @@ export function openNavChild(section: NavSection, child: NavChild) {
 export function clearNavChild() {
   if (!state.child) return
   settingBackStack = []
+  // Explicit dismiss of the browser child ends the session; other children only
+  // leave the foreground (session stays parked if one exists).
+  if (state.child.type === 'app-browser') {
+    setEmbeddedAppBrowser(null)
+  }
   state = { ...state, child: null }
   emit()
 }
@@ -118,6 +188,7 @@ export function openAppLaunch(origin: string, url: string) {
 }
 
 export function openEmbeddedAppBrowser(origin: string, url: string) {
+  setEmbeddedAppBrowser({ origin, url })
   openNavChild('apps', { type: 'app-browser', origin, url })
 }
 

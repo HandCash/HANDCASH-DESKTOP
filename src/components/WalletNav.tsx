@@ -23,6 +23,9 @@ import { useCompactShell } from '../wallet/isCompactShell'
 import { setAutoPaySettings } from '../wallet/autoPay'
 import {
   clearNavChild,
+  closeEmbeddedAppBrowser,
+  focusEmbeddedAppBrowser,
+  getEmbeddedAppBrowser,
   getNavState,
   getSettingBackStack,
   openAppDetails,
@@ -32,7 +35,9 @@ import {
   openNavChild,
   popSettingTo,
   setNavSection,
+  subscribeEmbeddedAppBrowser,
   subscribeNav,
+  type EmbeddedAppBrowser,
   type NavSection,
   type NavState,
   type NavChild,
@@ -166,6 +171,9 @@ export const WalletNav = memo(function WalletNav({
 }: Props) {
   const compact = useCompactShell()
   const [nav, setNav] = useState<NavState>(() => getNavState())
+  const [embeddedBrowser, setEmbeddedBrowser] = useState<EmbeddedAppBrowser | null>(() =>
+    getEmbeddedAppBrowser(),
+  )
   const [optimisticSection, setOptimisticSection] = useState<NavSection | null>(null)
   const [collectableLabel, setCollectableLabel] = useState('Collectable')
   const [fungibleLabel, setFungibleLabel] = useState('Token')
@@ -176,6 +184,10 @@ export const WalletNav = memo(function WalletNav({
   } | null>(null)
   const mobileInlinePermission = compact && pendingPrompt != null
   const contextualDock = mobileInlinePermission || registeredDock != null
+  const browserUnderPermission = mobileInlinePermission && embeddedBrowser != null
+  const browserForeground = nav.child?.type === 'app-browser'
+  const browserVisible = browserForeground || browserUnderPermission
+  const mountEmbeddedBrowser = embeddedBrowser != null
 
   const registerDock = useCallback(
     (owner: symbol, actions: WalletDockActions | null) => {
@@ -210,6 +222,7 @@ export const WalletNav = memo(function WalletNav({
       }),
     [],
   )
+  useEffect(() => subscribeEmbeddedAppBrowser(setEmbeddedBrowser), [])
   useEffect(() => {
     setOptimisticSection(null)
   }, [nav.section, nav.child?.type])
@@ -218,8 +231,19 @@ export const WalletNav = memo(function WalletNav({
     return subscribePermissionRequests(setPendingPrompt)
   }, [compact])
 
+  // Incoming requests must not tear down the in-app browser — keep the webview
+  // mounted and show the permission panel over it (layout-compact stack CSS).
   useEffect(() => {
     if (!mobileInlinePermission) return
+    if (getEmbeddedAppBrowser()) {
+      setMountedLight((prev) => {
+        if (prev.has('activity')) return prev
+        const next = new Set(prev)
+        next.add('activity')
+        return next
+      })
+      return
+    }
     startTransition(() => {
       setNavSection('activity')
       clearNavChild()
@@ -306,8 +330,13 @@ export const WalletNav = memo(function WalletNav({
   const child = nav.child
   // Desktop hosts Scan in the BSV price column — keep the activity feed visible.
   const scanInSide = child?.type === 'scan' && !compact
-  const stageChild = scanInSide ? null : child
-  const aeonState = stageChild ? `${nav.section}.${stageChild.type}` : nav.section
+  const stageChild =
+    scanInSide || child?.type === 'app-browser' ? null : child
+  const aeonState = browserForeground
+    ? 'apps.app-browser'
+    : stageChild
+      ? `${nav.section}.${stageChild.type}`
+      : nav.section
 
   const crumbs = (() => {
     const root = {
@@ -325,14 +354,6 @@ export const WalletNav = memo(function WalletNav({
         root,
         { label: app?.name || appDisplayName(stageChild.origin) },
         { label: 'Launch' },
-      ]
-    }
-    if (stageChild.type === 'app-browser') {
-      const app = apps.find((a) => a.origin === stageChild.origin)
-      return [
-        root,
-        { label: app?.name || appDisplayName(stageChild.origin) },
-        { label: 'Browser' },
       ]
     }
     if (stageChild.type === 'permission') {
@@ -449,14 +470,26 @@ export const WalletNav = memo(function WalletNav({
   const activeSection = optimisticSection ?? nav.section
 
   const selectSection = (next: NavSection) => {
-    if (next === nav.section && !nav.child) return
+    if (next === nav.section && !nav.child) {
+      // Tapping Apps while a session is parked restores the browser.
+      if (next === 'apps' && getEmbeddedAppBrowser()) {
+        setOptimisticSection(next)
+        queueMicrotask(() => playWalletSound('soft'))
+        startTransition(() => focusEmbeddedAppBrowser())
+      }
+      return
+    }
     setOptimisticSection(next)
     queueMicrotask(() => playWalletSound('soft'))
     startTransition(() => {
       if (next !== nav.section) setNavSection(next)
+      else if (nav.child?.type === 'app-browser') closeEmbeddedAppBrowser()
       else clearNavChild()
     })
   }
+
+  const hideSectionPanel =
+    (stageChild != null || browserForeground) && !mobileInlinePermission
 
   return (
     <WalletActionDockProvider register={registerDock}>
@@ -467,18 +500,33 @@ export const WalletNav = memo(function WalletNav({
     >
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
-          {stageChild ? (
+          {mountEmbeddedBrowser && embeddedBrowser ? (
             <div
-              className={`wallet-nav-panel nav-child-stage${
-                stageChild.type === 'app-browser' ? ' nav-child-stage--browser' : ''
+              className={`wallet-nav-panel nav-child-stage nav-child-stage--browser${
+                browserVisible ? '' : ' nav-child-stage--browser-parked'
               }`}
+              aria-hidden={browserVisible ? undefined : true}
+              data-parked={browserVisible ? undefined : ''}
             >
-              {stageChild.type === 'app-browser' ? null : <NavBreadcrumb crumbs={crumbs} />}
-              <div
-                className={`nav-child-body${
-                  stageChild.type === 'app-browser' ? ' nav-child-body--browser' : ''
-                }`}
-              >
+              <div className="nav-child-body nav-child-body--browser">
+                {(() => {
+                  const app = apps.find((a) => a.origin === embeddedBrowser.origin)
+                  return (
+                    <AppBrowserPanel
+                      origin={embeddedBrowser.origin}
+                      name={app?.name || appDisplayName(embeddedBrowser.origin)}
+                      url={embeddedBrowser.url}
+                    />
+                  )
+                })()}
+              </div>
+            </div>
+          ) : null}
+
+          {stageChild ? (
+            <div className="wallet-nav-panel nav-child-stage">
+              <NavBreadcrumb crumbs={crumbs} />
+              <div className="nav-child-body">
               {stageChild.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === stageChild.origin)
                 if (!app) return <p className="connected-empty-line">App not found</p>
@@ -494,16 +542,6 @@ export const WalletNav = memo(function WalletNav({
                 const app = apps.find((a) => a.origin === stageChild.origin)
                 return (
                   <AppLaunchPanel
-                    origin={stageChild.origin}
-                    name={app?.name || appDisplayName(stageChild.origin)}
-                    url={stageChild.url}
-                  />
-                )
-              })()}
-              {stageChild.type === 'app-browser' && (() => {
-                const app = apps.find((a) => a.origin === stageChild.origin)
-                return (
-                  <AppBrowserPanel
                     origin={stageChild.origin}
                     name={app?.name || appDisplayName(stageChild.origin)}
                     url={stageChild.url}
@@ -622,7 +660,7 @@ export const WalletNav = memo(function WalletNav({
             </div>
           ) : null}
 
-          <div className="wallet-nav-panel" hidden={stageChild != null && !mobileInlinePermission}>
+          <div className="wallet-nav-panel" hidden={hideSectionPanel}>
             {(mountedLight.has('activity') || mobileInlinePermission) && (
               <div
                 className="wallet-nav-slot"

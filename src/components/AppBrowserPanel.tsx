@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
-import { clearNavChild } from '../wallet/navStore'
+import { closeEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { BackIcon, CloseIcon, LaunchIcon, RefreshIcon } from './icons'
 
@@ -77,7 +77,7 @@ export function AppBrowserPanel({ name, origin, url }: Props) {
     return (
       <div className="nav-child-panel app-browser-panel app-browser-unavailable">
         <strong>App URL unavailable</strong>
-        <button type="button" className="btn btn-ghost" onClick={clearNavChild}>
+        <button type="button" className="btn btn-ghost" onClick={closeEmbeddedAppBrowser}>
           Close
         </button>
       </div>
@@ -125,7 +125,7 @@ export function AppBrowserPanel({ name, origin, url }: Props) {
           <button type="button" aria-label="Open in system browser" onClick={openExternal}>
             <LaunchIcon size={16} />
           </button>
-          <button type="button" aria-label="Close app browser" onClick={clearNavChild}>
+          <button type="button" aria-label="Close app browser" onClick={closeEmbeddedAppBrowser}>
             <CloseIcon size={16} />
           </button>
         </div>

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.135] - 2026-09-09
+
+### Fixed
+
+- In-app browser stays alive when you leave Apps or an incoming request appears: the webview session is parked (not destroyed) and shows under the permission overlay until you Close it.
+
 ## [1.3.134] - 2026-09-09
 
 ### Fixed

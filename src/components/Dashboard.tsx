@@ -37,10 +37,12 @@ import {
   type ConnectedApp,
 } from '../wallet/permissions'
 import {
+  getEmbeddedAppBrowser,
   getNavState,
   isMessagesNavChild,
   openReceiveFlow,
   openSendFlow,
+  subscribeEmbeddedAppBrowser,
   subscribeNav,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
@@ -154,11 +156,14 @@ export function Dashboard({
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [contentFullscreen, setContentFullscreen] = useState(() => {
     const child = getNavState().child
-    return isMessagesNavChild(child) || child?.type === 'app-browser'
+    return (
+      isMessagesNavChild(child) ||
+      child?.type === 'app-browser' ||
+      Boolean(getEmbeddedAppBrowser() && hasPendingPermissionPrompt())
+    )
   })
   const [browserPermissionOpen, setBrowserPermissionOpen] = useState(() => {
-    const child = getNavState().child
-    return child?.type === 'app-browser' && hasPendingPermissionPrompt()
+    return Boolean(getEmbeddedAppBrowser() && hasPendingPermissionPrompt())
   })
 
   const onRevoke = useCallback((origin: string) => {
@@ -177,14 +182,18 @@ export function Dashboard({
   useEffect(() => {
     const syncLayout = () => {
       const child = getNavState().child
+      const session = getEmbeddedAppBrowser()
       const browsing = child?.type === 'app-browser'
-      setContentFullscreen(isMessagesNavChild(child) || browsing)
-      setBrowserPermissionOpen(browsing && hasPendingPermissionPrompt())
+      const browserWithPrompt = Boolean(session && hasPendingPermissionPrompt())
+      setContentFullscreen(isMessagesNavChild(child) || browsing || browserWithPrompt)
+      setBrowserPermissionOpen(browserWithPrompt)
     }
     const unsubNav = subscribeNav(syncLayout)
+    const unsubBrowser = subscribeEmbeddedAppBrowser(() => syncLayout())
     const unsubPerm = subscribePermissionRequests(() => syncLayout())
     return () => {
       unsubNav()
+      unsubBrowser()
       unsubPerm()
     }
   }, [])

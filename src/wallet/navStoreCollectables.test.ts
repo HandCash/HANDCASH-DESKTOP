@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  closeEmbeddedAppBrowser,
   getNavState,
   openEmbeddedAppBrowser,
   openBurnCollectables,
@@ -7,7 +8,10 @@ import {
   setNavSection,
 } from './navStore'
 
-afterEach(() => setNavSection('activity'))
+afterEach(() => {
+  closeEmbeddedAppBrowser()
+  setNavSection('activity')
+})
 
 describe('collectable batch navigation', () => {
   it('keeps a stable deduplicated batch payload', () => {
