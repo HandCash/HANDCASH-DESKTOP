@@ -890,6 +890,19 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   color: #fff;
 }
 
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-deny:not(:disabled):hover {
+  background: #0a0a0a;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-deny:not(:disabled):hover svg {
+  color: inherit;
+}
+
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)

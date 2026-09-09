@@ -9094,6 +9094,22 @@ html[data-aeon-mode='light'] .skeleton {
   margin-left: 4px;
 }
 
+@media (hover: hover) and (pointer: fine) {
+  .collectable-card .collect-select--card,
+  .collectable-row .collect-select--row {
+    opacity: 0;
+    transition: opacity 120ms ease;
+  }
+
+  .collectable-card:hover .collect-select--card,
+  .collectable-card:focus-within .collect-select--card,
+  .collectable-row:hover .collect-select--row,
+  .collectable-row:focus-within .collect-select--row,
+  .collect-select:has(input:checked) {
+    opacity: 1;
+  }
+}
+
 .collectable-card:has(.collect-select input:checked),
 .collectable-row:has(.collect-select input:checked),
 .collect-collection[data-selected] {
@@ -13315,6 +13331,19 @@ html[data-aeon-mode='light']
   color: #fff;
 }
 
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-deny:not(:disabled):hover {
+  background: #0a0a0a;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-deny:not(:disabled):hover svg {
+  color: inherit;
+}
+
 .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   ),
@@ -13434,8 +13463,11 @@ html[data-aeon-mode='light']
 
 .nav-child-stage--browser,
 .nav-child-body--browser {
+  box-sizing: border-box;
+  width: 100%;
   height: 100%;
   overflow: hidden;
+  scrollbar-gutter: auto;
 }
 
 .app-browser-toolbar {
