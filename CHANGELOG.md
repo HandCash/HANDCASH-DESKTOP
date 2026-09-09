@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.125] - 2026-09-09
+
+### Fixed
+
+- Resolve leftover `fungibles` / list imports after the token-stack move so Desktop and Mobile both build.
+
 ## [1.3.124] - 2026-09-09
 
 ### Fixed
