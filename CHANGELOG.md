@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.127] - 2026-09-09
+
+### Fixed
+
+- Review / primary request-dock actions use dark ink on neon green in dark mode so the label stays readable.
+
 ## [1.3.126] - 2026-09-09
 
 ### Fixed
