@@ -93,4 +93,54 @@ describe('spendLease', () => {
         state.lease?.deviceId === '',
     ).toBe(true)
   })
+
+  it('bounds a stalled release so the spend coordinator can continue', async () => {
+    vi.useFakeTimers()
+    try {
+      let call = 0
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(async (_input: RequestInfo, init?: RequestInit) => {
+          call += 1
+          if (call === 1) {
+            return { ok: false, status: 404, json: async () => ({}) }
+          }
+          if (call === 2) {
+            return { ok: true, status: 200, json: async () => ({}) }
+          }
+          if (call === 3) {
+            return {
+              ok: true,
+              status: 200,
+              json: async () => ({
+                v: 1,
+                identityKey:
+                  '02aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                deviceId: 'local-device',
+                label: 'This device',
+                until: Date.now() + 45_000,
+              }),
+            }
+          }
+          return await new Promise<never>((_resolve, reject) => {
+            init?.signal?.addEventListener(
+              'abort',
+              () => reject(new DOMException('Aborted', 'AbortError')),
+              { once: true },
+            )
+          })
+        }),
+      )
+      vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+      const { acquireSpendLease } = await import('./spendLease')
+      const release = await acquireSpendLease()
+      const releasing = release()
+      await vi.advanceTimersByTimeAsync(2_100)
+
+      await expect(releasing).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

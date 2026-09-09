@@ -46,6 +46,7 @@ const {
   restoreOnChainLocalTx,
   restoreUnspentAssetOutpoint,
 } = await import('./staleOutputRelease')
+const sentItemGuard = await import('./sentItemGuard')
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
   './utxoLockManager'
@@ -100,6 +101,7 @@ describe('isNoLongerSpendableError', () => {
 describe('restoreUnspentAssetOutpoint', () => {
   beforeEach(() => {
     overlayStore.clear()
+    sentItemGuard.resetSentItemsForTests()
     __resetUtxoLocksForTests()
     spentStatusOfOutpoint.mockReset()
     spentStatusOfOutpoint.mockResolvedValue('unknown')
@@ -154,6 +156,34 @@ describe('restoreUnspentAssetOutpoint', () => {
       restoreUnspentAssetOutpoint(active as never, `${txid}.0`),
     ).resolves.toBe(false)
     expect(updateOutput).not.toHaveBeenCalled()
+  })
+
+  it('rechecks a recent spend after an unspent lookup already started', async () => {
+    const txid = '34'.repeat(32)
+    let finishLookup!: () => void
+    const lookup = new Promise<void>((resolve) => {
+      finishLookup = resolve
+    })
+    const runAsStorageProvider = vi.fn(async () => undefined)
+    const active = {
+      chain: 'main',
+      services: {
+        isUtxo: vi.fn(async () => {
+          await lookup
+          return { isUtxo: true }
+        }),
+      },
+      wallet: { storage: { runAsStorageProvider } },
+    }
+
+    const restoring = restoreUnspentAssetOutpoint(active as never, `${txid}.0`)
+    sentItemGuard.markItemsSent([
+      { outpoint: `${txid}.0`, txid: '56'.repeat(32) },
+    ])
+    finishLookup()
+
+    await expect(restoring).resolves.toBe(false)
+    expect(runAsStorageProvider).not.toHaveBeenCalled()
   })
 })
 

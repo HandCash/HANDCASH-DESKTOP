@@ -13,6 +13,8 @@ import { getActiveWallet } from './session'
 const LEASE_TTL_MS = 45_000
 /** Backup host fetch cannot sit in front of createAction with no deadline. */
 const LEASE_FETCH_MS = 8_000
+/** Lease cleanup must never keep the local spend coordinator active. */
+const LEASE_RELEASE_MS = 2_000
 
 function mergeAbortSignals(
   outer: AbortSignal | undefined,
@@ -22,6 +24,7 @@ function mergeAbortSignals(
   const timer = setTimeout(() => ctrl.abort(), timeoutMs)
   const onOuter = () => ctrl.abort()
   outer?.addEventListener('abort', onOuter)
+  if (outer?.aborted) ctrl.abort()
   return {
     signal: ctrl.signal,
     cancel: () => {
@@ -58,32 +61,31 @@ async function readLease(
   signal?: AbortSignal,
 ): Promise<SpendLease | null> {
   const wait = mergeAbortSignals(signal, LEASE_FETCH_MS)
-  let res: Response
   try {
-    res = await fetch(url, {
+    const res = await fetch(url, {
       method: 'GET',
       headers: { Accept: 'application/json, */*' },
       cache: 'no-store',
       signal: wait.signal,
     })
+    if (res.status === 404) return null
+    if (!res.ok) {
+      const detail = (await res.text().catch(() => '')).slice(0, 120)
+      throw new Error(`Spend lease read failed (${res.status})${detail ? `: ${detail}` : ''}`)
+    }
+    const data = (await res.json()) as Partial<SpendLease>
+    if (data?.v !== 1 || typeof data.deviceId !== 'string' || typeof data.until !== 'number') {
+      return null
+    }
+    return {
+      v: 1,
+      identityKey: typeof data.identityKey === 'string' ? data.identityKey : '',
+      deviceId: data.deviceId,
+      label: typeof data.label === 'string' ? data.label : 'Other device',
+      until: data.until,
+    }
   } finally {
     wait.cancel()
-  }
-  if (res.status === 404) return null
-  if (!res.ok) {
-    const detail = (await res.text().catch(() => '')).slice(0, 120)
-    throw new Error(`Spend lease read failed (${res.status})${detail ? `: ${detail}` : ''}`)
-  }
-  const data = (await res.json()) as Partial<SpendLease>
-  if (data?.v !== 1 || typeof data.deviceId !== 'string' || typeof data.until !== 'number') {
-    return null
-  }
-  return {
-    v: 1,
-    identityKey: typeof data.identityKey === 'string' ? data.identityKey : '',
-    deviceId: data.deviceId,
-    label: typeof data.label === 'string' ? data.label : 'Other device',
-    until: data.until,
   }
 }
 
@@ -174,13 +176,16 @@ export async function acquireSpendLease(
     return async () => {
       if (released) return
       released = true
+      const cleanup = mergeAbortSignals(undefined, LEASE_RELEASE_MS)
       try {
-        const cur = await readLease(url)
+        const cur = await readLease(url, cleanup.signal)
         if (cur?.deviceId === deviceId) {
-          await writeLease(url, null)
+          await writeLease(url, null, cleanup.signal)
         }
       } catch (err) {
         console.warn('[spend-lease] release failed', err)
+      } finally {
+        cleanup.cancel()
       }
     }
   } catch (err) {

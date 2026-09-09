@@ -15,6 +15,7 @@
 import { parseOutpoint, spentStatusOfOutpoint, txExistsOnChain } from './legacyScan'
 import { logDiag } from './diagnosticLog'
 import { getActiveWallet, type ActiveWallet } from './session'
+import { isItemSent } from './sentItemGuard'
 import {
   creditUtxo,
   getUtxoLock,
@@ -594,6 +595,7 @@ export async function restoreUnspentAssetOutpoint(
   active: ActiveWallet,
   outpoint: string,
 ): Promise<boolean> {
+  if (isItemSent(outpoint)) return false
   const parsed = parseOutpoint(outpoint)
   if (!parsed) return false
 
@@ -618,6 +620,9 @@ export async function restoreUnspentAssetOutpoint(
       )) === 'unspent'
   }
   if (!unspent) return false
+  // A spend may have completed while the provider check was in flight. Local
+  // confirmed-consumption state always outranks a lagging "unspent" response.
+  if (isItemSent(outpoint)) return false
 
   const storage = active.wallet.storage
   if (!storage?.runAsStorageProvider) return false
