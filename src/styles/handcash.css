@@ -13217,6 +13217,24 @@ html:not(.platform-mobile):not(.layout-compact)
   box-shadow: none;
 }
 
+/* Action hierarchy: the dock owns the outer silhouette and CTA-coloured
+   gutter; each option is a smaller rounded surface within it. */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-bar-track {
+  gap: 2px;
+  padding: 2px;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab,
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected] {
+  border-radius: calc(var(--wallet-nav-pill-radius) - 5px);
+}
+
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab:not([data-selected]):first-child {

@@ -835,6 +835,25 @@ html:is(.platform-mobile, .layout-compact) .fungible-card[data-sending='true'] .
   opacity: 1;
 }
 
+/* Contextual actions use nested geometry: the dock owns the large silhouette
+   and CTA-coloured gutter, while each option remains a distinct inner surface. */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-bar-track {
+  gap: 2px;
+  padding: 2px;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab,
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]) {
+  border-radius: calc(var(--wallet-nav-pill-radius) - 5px);
+}
+
 /* Contextual actions override the segmented-nav selected state on compact shells. */
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
