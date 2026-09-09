@@ -163,12 +163,13 @@ async function recoverReceivedTokensFromActivity(
   const knownIndex = new Map(
     enriched.map((token, index) => [tokenKey(token), index]),
   )
-  const recovered = new Map<string, FungibleToken>()
+  // Only enrich tokens we already hold. Inventing balances from Activity alone
+  // resurrects spent/unheld tips as "Unattested" cards that vanish on burn.
   for (const row of activity) {
     const item = row.item
     if (
       row.kind !== 'earned' ||
-      (row.method !== 'receive-token' && row.method !== 'receive-collectable') ||
+      row.method !== 'receive-token' ||
       row.status === 'pending' ||
       row.status === 'failed' ||
       !item?.tokenId ||
@@ -180,44 +181,27 @@ async function recoverReceivedTokensFromActivity(
     }
     const tokenId = normalizeTokenId(item.tokenId)
     if (!tokenId || !/^\d+$/.test(item.amt)) continue
-    const amount = BigInt(item.amt)
-    if (amount <= 0n) continue
+    const existingIndex = knownIndex.get(tokenId)
+    if (existingIndex == null) continue
+    const existing = enriched[existingIndex]!
     const activityName = item.name?.trim()
     const recoveredSym =
       activityName && activityName !== 'Collectable' && activityName !== shortTokenLabel(tokenId)
         ? activityName
         : shortTokenLabel(tokenId)
-    const existingIndex = knownIndex.get(tokenId)
-    if (existingIndex != null) {
-      const existing = enriched[existingIndex]!
-      const currentIsFallback =
-        !existing.sym.trim() ||
-        existing.sym === shortTokenLabel(existing.tokenId) ||
-        existing.sym === 'Collectable'
-      enriched[existingIndex] = {
-        ...existing,
-        ...(currentIsFallback && recoveredSym !== shortTokenLabel(tokenId)
-          ? { sym: recoveredSym, dec: item.dec ?? existing.dec }
-          : {}),
-        ...(!existing.icon && item.icon ? { icon: item.icon } : {}),
-      }
-      continue
+    const currentIsFallback =
+      !existing.sym.trim() ||
+      existing.sym === shortTokenLabel(existing.tokenId) ||
+      existing.sym === 'Collectable'
+    enriched[existingIndex] = {
+      ...existing,
+      ...(currentIsFallback && recoveredSym !== shortTokenLabel(tokenId)
+        ? { sym: recoveredSym, dec: item.dec ?? existing.dec }
+        : {}),
+      ...(!existing.icon && item.icon ? { icon: item.icon } : {}),
     }
-    const prior = recovered.get(tokenId)
-    recovered.set(tokenId, {
-      tokenId,
-      sym: recoveredSym === shortTokenLabel(tokenId) ? prior?.sym || recoveredSym : recoveredSym,
-      amt: ((prior ? BigInt(prior.amt) : 0n) + amount).toString(),
-      dec: item.dec ?? prior?.dec ?? 0,
-      utxoCount: (prior?.utxoCount ?? 0) + 1,
-      outpoint: prior?.outpoint ?? item.outpoint,
-      spendKind: 'plain',
-      ...(item.icon || prior?.icon ? { icon: item.icon || prior?.icon } : {}),
-    })
   }
-  return recovered.size > 0
-    ? mergeLiveFungibles([...recovered.values()], enriched)
-    : enriched
+  return enriched
 }
 
 function tokenKey(t: Pick<FungibleToken, 'tokenId'>): string {
@@ -269,13 +253,16 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   }
   // Live listing is source of truth. Never keep a cache extra whose tip is
   // the genesis (tokenId == outpoint) when it is spent or absent from live.
+  // Legacy BSV-21 rows absent from live are Activity ghosts — drop them.
+  // Colour tips may stay when listOutputs flakes (WOC 429).
   for (const [k, t] of [...byId.entries()]) {
     if (liveIds.has(k)) continue
     if (isGenesisRow(t)) {
       byId.delete(k)
       continue
     }
-    if (!cacheExtraLooksLikeFungible(t)) byId.delete(k)
+    if (t.colourSupply != null && cacheExtraLooksLikeFungible(t)) continue
+    byId.delete(k)
   }
   const out = [...byId.values()]
   out.sort((a, b) => Number(b.amt) - Number(a.amt) || a.sym.localeCompare(b.sym))

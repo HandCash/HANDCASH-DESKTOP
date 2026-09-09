@@ -230,6 +230,8 @@ function BurnShell({
               label: 'Back',
               onClick: onBack,
               disabled: busy,
+              icon: <CloseIcon size={18} />,
+              tone: 'danger' as const,
             },
             primary: {
               label: busy ? 'Burning…' : 'Confirm burn',
@@ -246,6 +248,7 @@ function BurnShell({
               onClick: onCancel,
               disabled: busy,
               icon: <CloseIcon size={18} />,
+              tone: 'danger' as const,
             },
             primary: {
               label: 'Review',
@@ -405,8 +408,8 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
     return (
       <EmptyState
         icon={<CollectablesIcon size={28} />}
-        title="Token not on this device"
-        body="Fungible balances live on the install that received them."
+        title="Token not available to burn"
+        body="This tip is not in the wallet’s token basket anymore. Refresh Tokens, or burn it from the install that still holds the balance."
       />
     )
   }

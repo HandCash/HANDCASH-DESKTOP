@@ -646,6 +646,13 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab:hover {
   background: color-mix(in srgb, var(--hc-text) 18%, transparent);
 }
 
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab:not([data-selected]):hover {
+  color: hsl(var(--muted-foreground));
+  background: var(--wallet-nav-unselected);
+}
+
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab.is-active,
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[aria-selected='true'],
 html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected] {
@@ -684,16 +691,22 @@ html:is(.platform-mobile, .layout-compact) .wallet-nav-tab[data-selected]::after
 /*
  * Cap each unselected run with the same radius as the dock (not 999px capsules).
  * Mid joins stay square so adjacent muted tabs read as one connected plate.
+ * Request docks (`data-permission`) use slot outer corners instead — exclude them
+ * so every slot-wrapped tab is not treated as both first and last child.
  */
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):first-child,
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab.is-active
   + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab[aria-selected='true']
   + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]),
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab[data-selected]
   + .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]) {
   border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
@@ -701,16 +714,20 @@ html:is(.platform-mobile, .layout-compact)
 }
 
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):last-child,
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
     + .is-active
   ),
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
     + [aria-selected='true']
   ),
 html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar:not([data-permission])
   .wallet-nav-tab:not(.is-active):not([aria-selected='true']):not([data-selected]):has(
     + [data-selected]
   ) {
@@ -835,13 +852,12 @@ html:is(.platform-mobile, .layout-compact) .fungible-card[data-sending='true'] .
   opacity: 1;
 }
 
-/* Contextual actions use nested geometry: the dock owns the large silhouette
-   and CTA-coloured gutter, while each option remains a distinct inner surface. */
+/* Request dock: flush square joins; outer radius lives on the bar/slots. */
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-bar-track {
-  gap: 2px;
-  padding: 2px;
+  gap: 0;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -851,7 +867,7 @@ html:is(.platform-mobile, .layout-compact)
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab:is(.is-active, [aria-selected='true'], [data-selected]) {
-  border-radius: calc(var(--wallet-nav-pill-radius) - 5px);
+  border-radius: 0;
 }
 
 /* Contextual actions override the segmented-nav selected state on compact shells. */
@@ -972,4 +988,41 @@ html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar-track {
   border-color: #991b1b;
   background: #991b1b;
+}
+
+/*
+ * In-app browser + wallet request (compact): keep the webview under the prompt
+ * using the same permission panel, layered on top of the browser stage.
+ */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(.nav-child-stage--browser):has(.permission-request-panel) {
+  display: grid;
+  grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(.nav-child-stage--browser):has(.permission-request-panel)
+  > .nav-child-stage--browser {
+  grid-area: 1 / 1;
+  min-height: 0;
+  z-index: 1;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-stage:has(.nav-child-stage--browser):has(.permission-request-panel)
+  > .wallet-nav-panel:not(.nav-child-stage) {
+  grid-area: 1 / 1;
+  z-index: 4;
+  align-self: stretch;
+  justify-self: stretch;
+  min-height: 0;
+  max-height: 100%;
+  margin: 0;
+  padding: 10px 10px calc(10px + env(safe-area-inset-bottom, 0px));
+  overflow: auto;
+  overscroll-behavior: contain;
+  background: color-mix(in srgb, var(--hc-bg-elevated, #0c1210) 92%, transparent);
+  border-top: 1px solid var(--hc-border, #2a3330);
+  box-shadow: 0 -12px 32px -16px rgba(0, 0, 0, 0.55);
 }

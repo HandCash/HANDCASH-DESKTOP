@@ -270,6 +270,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
               label: 'Cancel',
               onClick: () => openFungibleDetails(token.tokenId),
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Review',
@@ -285,6 +286,7 @@ export function SendFungiblePanel({ tokenId, chain, onSent }: Props) {
               label: 'Cancel',
               onClick: () => openFungibleDetails(token.tokenId),
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Confirm',

@@ -327,6 +327,28 @@ describe('refreshFromChain pre-scan maintenance', () => {
     expect(mockSweepChangeScripts).not.toHaveBeenCalled()
     expect(mockRestoreLiveSpendableOutputs).not.toHaveBeenCalled()
   })
+
+  it('aborts mid-maintenance for a queued send without waiting on slow siblings', async () => {
+    let dualStarted = false
+    let dualFinished = false
+    mockReconcileDualLayerState.mockImplementation(async () => {
+      dualStarted = true
+      await new Promise((r) => setTimeout(r, 400))
+      dualFinished = true
+      return { checked: 0, mined: 0, failed: 0, orphaned: 0 }
+    })
+    // Raise spend priority shortly after the parallel batch starts.
+    mockShouldYieldChainIngestToSpend.mockImplementation(() => dualStarted)
+
+    const started = Date.now()
+    const { refreshFromChain } = await import('./chainIngest')
+    await refreshFromChain({ forceReview: true, announceReceive: false })
+    const elapsed = Date.now() - started
+
+    // Yield race must free the ingest path in ~100ms polls — not the 400ms sibling.
+    expect(elapsed).toBeLessThan(350)
+    expect(dualFinished).toBe(false)
+  })
 })
 
 describe('refreshFromChain spendable review', () => {

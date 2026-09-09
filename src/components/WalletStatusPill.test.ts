@@ -127,6 +127,28 @@ describe('resolveStatus', () => {
     expect(view.tone).toBe('ok')
   })
 
+  it('does not claim Synced while chain ingest still holds the spend lock', () => {
+    const view = resolveStatus(
+      'ready',
+      health({ phase: 'ok', message: null }),
+      idleCloud,
+      true,
+      true,
+      idlePayment,
+      idleWalletProgress,
+      {
+        chainIngest: 'active',
+        spend: 'idle',
+        historyReplica: 'idle',
+        recompose: 'idle',
+        spendWaiting: 0,
+        summary: 'active: chainIngest',
+      },
+    )
+    expect(view.label).toBe('Catching up')
+    expect(view.tone).toBe('busy')
+  })
+
   it('shows Catching up while progress bus is still running after soft Syncing clear', () => {
     const view = resolveStatus(
       'ready',

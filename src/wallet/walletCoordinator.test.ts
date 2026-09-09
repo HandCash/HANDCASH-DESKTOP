@@ -25,9 +25,18 @@ describe('walletCoordinator guards', () => {
     expect(canBeginChainIngest(initialWalletCoordinatorContext, true)).toBe(false)
   })
 
-  it('rejects spend while chain ingest is active', () => {
+  it('allows spend while chain ingest is discovering funds', () => {
     const busy = { ...initialWalletCoordinatorContext, chainIngestDepth: 1 }
-    expect(canBeginSpend(busy)).toBe(false)
+    expect(canBeginSpend(busy)).toBe(true)
+  })
+
+  it('still rejects spend during history replica or recompose', () => {
+    expect(
+      canBeginSpend({ ...initialWalletCoordinatorContext, historyReplicaDepth: 1 }),
+    ).toBe(false)
+    expect(
+      canBeginSpend({ ...initialWalletCoordinatorContext, recomposeDepth: 1 }),
+    ).toBe(false)
   })
 })
 
@@ -315,31 +324,28 @@ describe('walletCoordinator runtime', () => {
     expect(order.filter((x) => x === 'spend')).toHaveLength(1)
   })
 
-  it('times out spend acquire while chain ingest is held', async () => {
-    vi.useFakeTimers()
-    try {
-      let releaseChain!: () => void
-      const chainHold = new Promise<void>((resolve) => {
-        releaseChain = resolve
-      })
-      const chain = runChainIngest(async () => {
-        await chainHold
-      })
-      await Promise.resolve()
+  it('starts a spend while chain ingest is still held', async () => {
+    let releaseChain!: () => void
+    const chainHold = new Promise<void>((resolve) => {
+      releaseChain = resolve
+    })
+    const order: string[] = []
+    const chain = runChainIngest(async () => {
+      order.push('chain-start')
+      await chainHold
+      order.push('chain-end')
+    })
+    await Promise.resolve()
 
-      const spend = runExclusiveSpend(
-        async () => 'tx',
-        async () => async () => undefined,
-      )
-      const timedOut = expect(spend).rejects.toMatchObject({
-        name: 'WalletCoordinatorAcquireTimeoutError',
-      })
-      await vi.advanceTimersByTimeAsync(46_000)
-      await timedOut
-      releaseChain()
-      await chain
-    } finally {
-      vi.useRealTimers()
-    }
+    const spend = runExclusiveSpend(async () => {
+      order.push('spend')
+      return 'tx'
+    }, async () => async () => undefined)
+
+    await expect(spend).resolves.toBe('tx')
+    expect(order).toEqual(['chain-start', 'spend'])
+    releaseChain()
+    await chain
+    expect(order).toEqual(['chain-start', 'spend', 'chain-end'])
   })
 })

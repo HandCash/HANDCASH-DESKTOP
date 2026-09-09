@@ -447,6 +447,7 @@ export function SendPanel({
             label: 'Cancel',
             onClick: onClose,
             icon: <CloseIcon size={18} />,
+            tone: 'danger',
           },
           primary: destReady
             ? {
@@ -470,6 +471,7 @@ export function SendPanel({
               label: 'Cancel',
               onClick: onClose,
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Confirm',
@@ -609,8 +611,7 @@ export function SendPanel({
                   </div>
                 )}
                 <p className="friend-recipient-hint send-recipient-hint">
-                  PeerPay links, $handles, and identity keys resolve to a payment address on this
-                  network.
+                  PeerPay, $handle, or identity key resolves on this network.
                 </p>
                 {resolvedName ? (
                   <p className="send-resolved" aria-live="polite">

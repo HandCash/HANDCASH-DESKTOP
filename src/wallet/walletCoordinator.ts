@@ -54,11 +54,21 @@ const SPEND_PRIORITY_TOUCH_MS = 30_000
 let spendPriorityHolds: SpendPriorityHold[] = []
 let nextSpendPriorityId = 1
 
+type CoordinatorListener = (snap: WalletCoordinatorLiveStatus) => void
+const coordinatorListeners = new Set<CoordinatorListener>()
+
+function emitCoordinator(): void {
+  if (coordinatorListeners.size === 0) return
+  const snap = describeWalletCoordinator()
+  for (const listener of coordinatorListeners) listener(snap)
+}
+
 /** Test-only — reset coordinator between cases. */
 export function resetWalletCoordinatorForTests(): void {
   actor.stop()
   actor = createActor(walletCoordinatorMachine).start()
   spendPriorityHolds = []
+  emitCoordinator()
 }
 
 function dropExpiredSpendPriority(now = Date.now()): void {
@@ -107,6 +117,7 @@ export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
     at: now,
   }
   spendPriorityHolds.push(hold)
+  emitCoordinator()
   let released = false
   return {
     touch: () => {
@@ -117,6 +128,7 @@ export function leaseSpendPriority(reason = 'spend'): SpendPriorityLease {
       if (released) return
       released = true
       spendPriorityHolds = spendPriorityHolds.filter((h) => h.id !== hold.id)
+      emitCoordinator()
     },
   }
 }
@@ -191,6 +203,21 @@ function context(): WalletCoordinatorContext {
 
 export function getWalletCoordinatorSnapshot(): WalletCoordinatorSnapshot {
   return snapshotFromContext(context())
+}
+
+/** Notify when region depths change — status pill must not claim Synced on a stale snapshot. */
+export function subscribeWalletCoordinator(
+  listener: (snap: WalletCoordinatorLiveStatus) => void,
+): () => void {
+  coordinatorListeners.add(listener)
+  listener(describeWalletCoordinator())
+  const sub = actor.subscribe(() => {
+    listener(describeWalletCoordinator())
+  })
+  return () => {
+    coordinatorListeners.delete(listener)
+    sub.unsubscribe()
+  }
 }
 
 export function isRecomposeCoordinatorActive(): boolean {

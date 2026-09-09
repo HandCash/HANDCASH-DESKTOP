@@ -794,6 +794,7 @@ export function InventoryPanel() {
             label: 'Cancel',
             onClick: () => setSelected(new Set()),
             icon: <CloseIcon size={18} />,
+            tone: 'danger',
           },
           secondary: {
             label: `Burn (${selectedCount})`,

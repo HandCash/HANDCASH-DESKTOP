@@ -2725,6 +2725,36 @@ async function buildInputBeefForSpends(
 }
 
 /**
+ * `trustSelf: 'known'` + tip-only `knownTxids` opts out of toolbox auto-fill
+ * and leaves large origin/provenance parents as `txidOnly` stubs. Verify then
+ * throws `unable to merge txid … into beef`. Declare every body already in the
+ * input BEEF (plus tip/origin extras) as known so those stubs are allowed.
+ */
+function knownTxidsForCollectableSend(
+  inputBEEF: number[],
+  extra: string[] = [],
+): string[] {
+  const fromBeef: string[] = []
+  try {
+    const beef = Beef.fromBinary(inputBEEF)
+    for (const btx of beef.txs) {
+      const txid = btx.txid?.trim().toLowerCase()
+      if (txid) fromBeef.push(txid)
+    }
+  } catch {
+    /* tip/origin extras still help when the binary is malformed */
+  }
+  const fromExtra = extra
+    .map((value) => {
+      const raw = value.trim().toLowerCase().replace(/_(\d+)$/, '.$1')
+      const txid = raw.split('.')[0]
+      return txid && /^[0-9a-f]{64}$/.test(txid) ? txid : ''
+    })
+    .filter(Boolean)
+  return [...new Set([...fromBeef, ...fromExtra])]
+}
+
+/**
  * BRC-100 only auto-signs the wallet's own BRC-29 change, so the ordinal tip
  * input comes back as a signable transaction for us to unlock with the root key.
  *
@@ -3373,13 +3403,10 @@ export async function sendCollectable(args: {
 
           const inputBEEF = tipBeefBin
           const spendOutpoints = [outpoint]
-          const knownTxids = [
-            ...new Set(
-              spendOutpoints
-                .map((op) => normalizeOutpoint(op).split('.')[0])
-                .filter((txid): txid is string => !!txid)
-            ),
-          ]
+          const knownTxids = knownTxidsForCollectableSend(inputBEEF, [
+            outpoint,
+            origin,
+          ])
 
           const settlePath = chooseItemSettlePath({
             paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
@@ -4221,9 +4248,10 @@ export async function sendCollectables(
             })
           }
 
-          const knownTxids = [
-            ...new Set(outpoints.map((op) => op.split('.')[0]!)),
-          ]
+          const knownTxids = knownTxidsForCollectableSend(inputBEEF, [
+            ...outpoints,
+            ...prepared.map((item) => item.origin),
+          ])
           const settlePath = chooseItemSettlePath({
             paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
             recipientIdentityKey: args.recipientIdentityKey,
@@ -4314,6 +4342,7 @@ export async function sendCollectables(
                 wallet,
                 signable: result.signableTransaction,
                 outpoints,
+                knownTxids,
               })
               txid = signed.txid
               atomicBeef = signed.atomicBeef

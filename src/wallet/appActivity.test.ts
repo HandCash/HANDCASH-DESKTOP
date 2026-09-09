@@ -323,6 +323,29 @@ describe('inbound receive activity', () => {
     ).toBe(true)
   })
 
+  it('keeps two collectables received in the same tx as separate rows', () => {
+    noteInboundReceiveComplete({
+      txid: TX,
+      item: true,
+      itemName: 'Fox A',
+      outpoint: `${TX}.0`,
+    })
+    noteInboundReceiveComplete({
+      txid: TX,
+      item: true,
+      itemName: 'Fox B',
+      outpoint: `${TX}.1`,
+    })
+    const rows = listRecentActivity(10).filter(
+      (e) => e.txid === TX && e.method === 'receive-collectable',
+    )
+    expect(rows).toHaveLength(2)
+    expect(rows.map((e) => e.item?.outpoint).sort()).toEqual([
+      `${TX}.0`,
+      `${TX}.1`,
+    ])
+  })
+
   it('promotes a fungible settle as receive-token with token metadata', () => {
     const token = {
       tokenId: `${'ab'.repeat(32)}_0`,

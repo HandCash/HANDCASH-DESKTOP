@@ -33,6 +33,7 @@ import {
   hasPendingPermissionPrompt,
   revokeOrigin,
   subscribeConnectedApps,
+  subscribePermissionRequests,
   type ConnectedApp,
 } from '../wallet/permissions'
 import {
@@ -154,8 +155,11 @@ export function Dashboard({
   const [contentFullscreen, setContentFullscreen] = useState(() => {
     const child = getNavState().child
     return isMessagesNavChild(child) || child?.type === 'app-browser'
-  }
-  )
+  })
+  const [browserPermissionOpen, setBrowserPermissionOpen] = useState(() => {
+    const child = getNavState().child
+    return child?.type === 'app-browser' && hasPendingPermissionPrompt()
+  })
 
   const onRevoke = useCallback((origin: string) => {
     revokeOrigin(origin)
@@ -170,15 +174,20 @@ export function Dashboard({
   const balanceBtnRef = useRef<HTMLButtonElement>(null)
 
   useEffect(() => subscribeConnectedApps(setConnectedApps), [])
-  useEffect(
-    () =>
-      subscribeNav((nav) => {
-        setContentFullscreen(
-          isMessagesNavChild(nav.child) || nav.child?.type === 'app-browser',
-        )
-      }),
-    [],
-  )
+  useEffect(() => {
+    const syncLayout = () => {
+      const child = getNavState().child
+      const browsing = child?.type === 'app-browser'
+      setContentFullscreen(isMessagesNavChild(child) || browsing)
+      setBrowserPermissionOpen(browsing && hasPendingPermissionPrompt())
+    }
+    const unsubNav = subscribeNav(syncLayout)
+    const unsubPerm = subscribePermissionRequests(() => syncLayout())
+    return () => {
+      unsubNav()
+      unsubPerm()
+    }
+  }, [])
 
   useEffect(() => {
     const refresh = () => setClaimedHandle(claimedHandleForIdentity(profile.identityKey))
@@ -625,7 +634,9 @@ export function Dashboard({
 
   return (
     <section
-      className={`dashboard${contentFullscreen ? ' dashboard--chat-fullscreen' : ''}`}
+      className={`dashboard${contentFullscreen ? ' dashboard--chat-fullscreen' : ''}${
+        browserPermissionOpen ? ' dashboard--browser-permission' : ''
+      }`}
       data-aeon-scope="dashboard"
       data-aeon-state="ready"
     >

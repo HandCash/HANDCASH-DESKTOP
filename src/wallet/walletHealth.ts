@@ -70,14 +70,26 @@ function armSyncingWatchdog(): void {
     } catch {
       /* ignore */
     }
-    // Not a hard failure — local keys/balance are fine; the Syncing phase just
-    // outlived the pass (history pull, soft ingest, stalled provider). Clear
-    // the pill quietly: labeling this "Network slow" made every long pass look
-    // like an outage when funds were already usable.
-    setSyncHealth({
-      phase: 'ok',
-      message: null,
-    })
+    // Never claim a clean Synced while chain ingest may still hold the spend
+    // lock — that is how sends time out with a green "Synced" pill. Keep a
+    // catching-up message so the status bubble stays honest.
+    void import('./walletCoordinator')
+      .then(({ getWalletCoordinatorSnapshot }) => {
+        const ingestBusy =
+          getWalletCoordinatorSnapshot().chainIngest === 'active'
+        setSyncHealth({
+          phase: 'ok',
+          message: ingestBusy
+            ? 'Still importing in the background…'
+            : null,
+        })
+      })
+      .catch(() => {
+        setSyncHealth({
+          phase: 'ok',
+          message: 'Still importing in the background…',
+        })
+      })
   }, SYNCING_WATCHDOG_MS)
 }
 

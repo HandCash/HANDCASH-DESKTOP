@@ -14,9 +14,14 @@ import { assign, setup } from 'xstate'
  * still forbid illegal overlaps; waiters for different regions do not share one FIFO.
  *
  * Illegal (guarded):
- * - chainIngest × spend (except spend-owned nested heal)
- * - any layer × active recompose (except recompose-internal calls)
+ * - spend × spend / historyReplica / recompose
+ * - chainIngest × historyReplica or recompose (and × spend for *new* ingest)
  * - historyReplica × chainIngest or spend
+ * - any layer × active recompose (except recompose-internal calls)
+ *
+ * Spends may begin while chainIngest is already running — sync discovers new
+ * funds; existing spendable outputs stay usable. Ingest yields via spend
+ * priority so the two do not fight over UTXO mutation for long.
  */
 export type WalletCoordinatorContext = {
   chainIngestDepth: number
@@ -63,9 +68,10 @@ export function canBeginChainIngest(
 }
 
 export function canBeginSpend(context: WalletCoordinatorContext): boolean {
+  // Chain ingest may still be discovering new funds — do not block spending
+  // what is already spendable. Ingest cooperatively yields on spend priority.
   return (
     context.recomposeDepth === 0 &&
-    context.chainIngestDepth === 0 &&
     context.spendDepth === 0 &&
     context.historyReplicaDepth === 0
   )

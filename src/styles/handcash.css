@@ -1174,8 +1174,8 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   display: flex;
   flex-direction: column;
   justify-content: flex-start;
-  gap: 8px;
-  padding: 8px 16px 12px;
+  gap: 6px;
+  padding: 6px 14px 8px;
   flex-shrink: 0;
   min-width: 0;
   container-type: inline-size;
@@ -1190,7 +1190,7 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   z-index: auto;
   width: 100%;
   margin: 0;
-  padding: 0 0 8px;
+  padding: 0 0 6px;
   border-top: 0;
   border-bottom: 1px solid hsl(var(--border));
   min-height: 0;
@@ -1236,13 +1236,13 @@ html[data-aeon-mode='light'] .wallet-actions .btn-primary {
   flex: 1 1 0;
   min-width: 0;
   justify-content: center;
-  min-height: 52px;
-  font-size: 1.05rem;
+  min-height: 44px;
+  font-size: 1rem;
 }
 
 .wallet-actions .btn-icon {
-  gap: 10px;
-  padding: 12px 18px;
+  gap: 8px;
+  padding: 10px 16px;
 }
 
 .wallet-actions .btn-icon svg {
@@ -3880,24 +3880,24 @@ li[data-aeon-state='failed'] .history-progress-range {
   display: flex;
   flex-direction: column;
   align-items: center;
-  justify-content: center;
-  padding: 18px 12px 26px;
+  justify-content: flex-start;
+  padding: 8px 10px 10px;
 }
 
 .identity-card {
   display: grid;
   justify-items: center;
-  gap: 24px;
-  width: min(100%, 720px);
-  margin: auto;
-  padding: 12px;
+  gap: 12px;
+  width: min(100%, 560px);
+  margin: 0 auto;
+  padding: 4px;
 }
 
 .identity-hero {
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 28px;
+  gap: 16px 20px;
   width: 100%;
   min-width: 0;
 }
@@ -3943,15 +3943,15 @@ button.identity-qr-copy:focus-visible {
 
 .identity-qr-frame img {
   display: block;
-  width: 140px;
-  height: 140px;
+  width: 112px;
+  height: 112px;
   border-radius: 4px;
 }
 
 .identity-qr-frame .skeleton-qr {
   display: block;
-  width: 140px !important;
-  height: 140px !important;
+  width: 112px !important;
+  height: 112px !important;
 }
 
 .identity-copy-btn {
@@ -3999,8 +3999,8 @@ button.identity-qr-copy:focus-visible {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: end;
-  gap: 10px;
-  width: min(100%, 600px);
+  gap: 8px;
+  width: min(100%, 560px);
 }
 
 .identity-field {
@@ -4121,14 +4121,14 @@ button.identity-qr-copy:focus-visible {
 
 @container identity-panel (min-width: 520px) {
   .identity-hero {
-    gap: 20px 28px;
+    gap: 14px 20px;
   }
 }
 
 @container identity-panel (max-width: 460px) {
   .identity-card {
-    gap: 18px;
-    padding-inline: 6px;
+    gap: 10px;
+    padding-inline: 4px;
   }
 
   .identity-hero {
@@ -4917,8 +4917,15 @@ button.payment-details-item-thumb-btn:hover {
   }
 }
 
-@container connected-apps (min-width: 720px) {
+@container connected-apps (min-width: 560px) {
   .collection-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* Desktop wide: force 3-up even if the panel container reports shy of cqi. */
+@media (min-width: 900px) {
+  [data-aeon-scope='connected-apps'] .collection-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
 }
@@ -5529,30 +5536,30 @@ a.app-details-host:hover {
 
 .wallet-action-bar--nav .wallet-action-slot {
   --wallet-action-slot-own: var(--wallet-nav-unselected);
-  --wallet-action-slot-next: var(--wallet-action-slot-own);
   display: flex;
   flex: 1 1 0;
   align-self: stretch;
   min-width: 0;
   min-height: 100%;
   padding: 0;
-  background: linear-gradient(
-    to right,
-    var(--wallet-action-slot-own) 0 50%,
-    var(--wallet-action-slot-next) 50% 100%
-  );
+  overflow: hidden;
+  border-radius: 0;
+  background: var(--wallet-action-slot-own);
 }
 
+/* Outer dock corners only — joins between request actions stay square. */
 .wallet-action-bar--nav .wallet-action-slot:first-child {
   border-radius: calc(var(--wallet-nav-pill-radius) - 2px) 0 0
     calc(var(--wallet-nav-pill-radius) - 2px);
-  overflow: hidden;
 }
 
 .wallet-action-bar--nav .wallet-action-slot:last-child {
   border-radius: 0 calc(var(--wallet-nav-pill-radius) - 2px)
     calc(var(--wallet-nav-pill-radius) - 2px) 0;
-  overflow: hidden;
+}
+
+.wallet-action-bar--nav .wallet-action-slot:only-child {
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px);
 }
 
 .wallet-action-bar--nav .wallet-action-slot--neutral {
@@ -5567,23 +5574,11 @@ a.app-details-host:hover {
   --wallet-action-slot-own: hsl(var(--primary));
 }
 
-.wallet-action-bar--nav .wallet-action-slot-next--neutral {
-  --wallet-action-slot-next: var(--wallet-nav-unselected);
-}
-
-.wallet-action-bar--nav .wallet-action-slot-next--danger {
-  --wallet-action-slot-next: color-mix(in srgb, var(--hc-danger) 72%, white);
-}
-
-.wallet-action-bar--nav .wallet-action-slot-next--primary {
-  --wallet-action-slot-next: hsl(var(--primary));
-}
-
 .wallet-action-bar--nav .wallet-action-slot > .wallet-nav-tab {
   width: 100%;
   height: 100%;
   align-self: stretch;
-  border-radius: calc(var(--wallet-nav-pill-radius) - 6px);
+  border-radius: 0;
 }
 
 html[data-aeon-mode='light']
@@ -5594,20 +5589,8 @@ html[data-aeon-mode='light']
 
 html[data-aeon-mode='light']
   .wallet-action-bar--nav
-  .wallet-action-slot-next--danger {
-  --wallet-action-slot-next: #991b1b;
-}
-
-html[data-aeon-mode='light']
-  .wallet-action-bar--nav
   .wallet-action-slot--primary {
   --wallet-action-slot-own: #0a0a0a;
-}
-
-html[data-aeon-mode='light']
-  .wallet-action-bar--nav
-  .wallet-action-slot-next--primary {
-  --wallet-action-slot-next: #0a0a0a;
 }
 
 .connected-app-card-actions > .connected-app-icon-action {
@@ -5817,7 +5800,7 @@ html[data-aeon-mode='light']
   height: auto;
   overflow-x: hidden;
   overflow-y: auto;
-  padding: 0 0 12px;
+  padding: 0;
   container-type: inline-size;
   container-name: receive;
 }
@@ -5831,11 +5814,11 @@ html[data-aeon-mode='light']
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   align-items: start;
-  gap: 20px 28px;
+  gap: 14px 20px;
   width: 100%;
-  max-width: 720px;
+  max-width: 640px;
   margin: 0 auto;
-  padding: 4px 8px 8px;
+  padding: 4px 8px 6px;
   box-sizing: border-box;
 }
 
@@ -5851,8 +5834,8 @@ html[data-aeon-mode='light']
 .receive-qr-frame.qr-frame {
   appearance: none;
   margin: 0;
-  padding: 12px;
-  width: min(220px, 100%);
+  padding: 10px;
+  width: min(180px, 100%);
   max-width: 100%;
   box-sizing: border-box;
   border: 0;
@@ -7450,6 +7433,27 @@ html[data-aeon-mode='light'] .shortcut-key {
   display: none;
 }
 
+/* Desktop wide chat: inbox + thread share the stage when a chat is open. */
+@media (min-width: 901px) {
+  .dashboard--chat-fullscreen .chat-shell--nested[data-aeon-state='thread'] {
+    --chat-sidebar-w: clamp(260px, 26vw, 360px);
+    grid-template-columns: var(--chat-sidebar-w) minmax(0, 1fr);
+  }
+
+  .dashboard--chat-fullscreen .chat-shell--nested[data-aeon-state='thread'] .chat-sidebar {
+    display: flex;
+    flex-direction: column;
+  }
+
+  .dashboard--chat-fullscreen .chat-shell[data-aeon-scope='messages'] .chat-msg {
+    max-width: min(88%, 720px);
+  }
+
+  .dashboard--chat-fullscreen .chat-shell[data-aeon-scope='messages'] .chat-bubble {
+    max-width: min(100%, 640px);
+  }
+}
+
 .chat-shell--nested .chat-thread {
   display: flex;
   flex-direction: column;
@@ -7626,7 +7630,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   flex: 1 1 auto;
   min-height: 0;
   height: 100%;
-  gap: 14px;
+  gap: 6px;
 }
 
 .send-layout {
@@ -7636,11 +7640,11 @@ html[data-aeon-mode='light'] .shortcut-key {
   flex-direction: column;
   align-items: stretch;
   justify-content: flex-start;
-  gap: 16px;
+  gap: 8px;
   width: 100%;
-  max-width: 440px;
+  max-width: 400px;
   margin: 0 auto;
-  padding: 10px 8px 20px;
+  padding: 2px 8px 8px;
   overflow: visible;
 }
 
@@ -7650,10 +7654,20 @@ html[data-aeon-mode='light'] .shortcut-key {
 
 .send-side {
   display: grid;
-  gap: 10px;
+  gap: 6px;
   min-width: 0;
   align-content: start;
   overflow: visible;
+}
+
+/* Send fields already sit in a tight grid — drop the global .field bottom margin. */
+.send-panel .field {
+  gap: 4px;
+  margin-bottom: 0;
+}
+
+.send-panel .field input:not([type='checkbox']):not([type='radio']) {
+  padding: 8px 10px;
 }
 
 .send-stage-body {
@@ -7661,10 +7675,10 @@ html[data-aeon-mode='light'] .shortcut-key {
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: center;
-  gap: 18px;
+  justify-content: flex-start;
+  gap: 12px;
   overflow: auto;
-  padding: 4px 4px 2px;
+  padding: 2px 4px 0;
 }
 
 .send-stage-body-center {
@@ -7678,7 +7692,7 @@ html[data-aeon-mode='light'] .shortcut-key {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 4px;
   text-align: center;
   min-width: 0;
 }
@@ -7706,16 +7720,16 @@ html[data-aeon-mode='light'] .shortcut-key {
   min-width: 0;
   width: 100%;
   margin: 0;
-  padding: 4px 0;
+  padding: 2px 0;
   border: 0;
   border-bottom: 2px solid hsl(var(--border));
   background: transparent;
   color: var(--hc-text);
   font-family: var(--hc-display);
-  font-size: clamp(2rem, 6cqi, 3.2rem);
+  font-size: clamp(1.65rem, 4.5cqi, 2.35rem);
   font-weight: 700;
   letter-spacing: 0.02em;
-  line-height: 1.1;
+  line-height: 1.05;
   text-align: center;
   outline: none;
 }
@@ -7754,16 +7768,16 @@ html[data-aeon-mode='light'] .shortcut-key {
 .send-panel-intro,
 .receive-panel-intro {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   text-align: center;
-  margin: 0 0 4px;
+  margin: 0;
 }
 
 .send-panel-title,
 .receive-panel-title {
   margin: 0;
   font-family: var(--hc-display);
-  font-size: clamp(1.15rem, 3.2cqi, 1.45rem);
+  font-size: clamp(1.05rem, 2.8cqi, 1.28rem);
   font-weight: 700;
   letter-spacing: 0.02em;
   color: var(--hc-text);
@@ -7773,8 +7787,8 @@ html[data-aeon-mode='light'] .shortcut-key {
 .receive-panel-lede {
   margin: 0;
   color: var(--hc-muted);
-  font-size: 0.86rem;
-  line-height: 1.35;
+  font-size: 0.78rem;
+  line-height: 1.3;
 }
 
 .send-currency-toggle {
@@ -7789,13 +7803,13 @@ html[data-aeon-mode='light'] .shortcut-key {
 .send-currency-opt {
   appearance: none;
   margin: 0;
-  padding: 4px 12px;
+  padding: 3px 10px;
   border: 0;
   border-radius: 999px;
   background: transparent;
   color: var(--hc-muted);
   font: inherit;
-  font-size: 0.72rem;
+  font-size: 0.68rem;
   font-weight: 700;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -7811,20 +7825,20 @@ html[data-aeon-mode='light'] .shortcut-key {
 .send-dest-field,
 .receive-via-field {
   display: grid;
-  gap: 6px;
+  gap: 4px;
 }
 
 .send-dest-select,
 .receive-via-select {
   width: 100%;
   margin: 0;
-  padding: 10px 12px;
+  padding: 7px 10px;
   border: 1px solid hsl(var(--border));
   border-radius: var(--hc-radius);
   background: hsl(var(--card));
   color: var(--hc-text);
   font: inherit;
-  font-size: 0.92rem;
+  font-size: 0.88rem;
 }
 
 .send-eta-row,
@@ -7834,9 +7848,14 @@ html[data-aeon-mode='light'] .shortcut-key {
   justify-content: space-between;
   gap: 12px;
   margin: 0;
-  padding: 8px 10px;
+  padding: 5px 8px;
   border-radius: var(--hc-radius);
   background: color-mix(in srgb, var(--hc-muted) 8%, transparent);
+}
+
+/* Destination options already include ETA — skip the duplicate Instant chip on edit. */
+.send-dest-field .send-eta-row[data-ready] {
+  display: none;
 }
 
 .send-eta-label,
@@ -7879,10 +7898,10 @@ html[data-aeon-mode='dark'] .receive-eta-row[data-native] .receive-eta-value {
 }
 
 .receive-layout-premium {
-  grid-template-columns: minmax(0, 280px) minmax(0, 1fr);
-  gap: 24px 32px;
-  max-width: 760px;
-  padding-top: 8px;
+  grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+  gap: 14px 22px;
+  max-width: 640px;
+  padding-top: 4px;
 }
 
 .receive-layout-premium .receive-panel-intro {
@@ -7890,11 +7909,11 @@ html[data-aeon-mode='dark'] .receive-eta-row[data-native] .receive-eta-value {
 }
 
 .receive-layout-premium .receive-qr-frame.qr-frame {
-  width: min(260px, 100%);
-  padding: 14px;
+  width: min(180px, 100%);
+  padding: 10px;
   background: #fff;
-  border-radius: 12px;
-  box-shadow: 0 10px 28px -16px rgba(0, 0, 0, 0.35);
+  border-radius: 10px;
+  box-shadow: 0 8px 20px -14px rgba(0, 0, 0, 0.3);
 }
 
 html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
@@ -7924,7 +7943,7 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
   display: flex;
   align-items: center;
   justify-content: center;
-  min-height: 1.2rem;
+  min-height: 1rem;
   text-align: center;
 }
 
@@ -7955,8 +7974,8 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
 .send-available {
   margin: 0;
   color: var(--hc-muted);
-  font-size: 0.82rem;
-  line-height: 1.35;
+  font-size: 0.76rem;
+  line-height: 1.3;
 }
 
 .send-to-field {
@@ -8051,12 +8070,12 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
 
 /*
  * Suggestions overlay under the recipient field so they never reserve a blank
- * column or shove Review / Cancel down the page. `.send-to-field` stacks above
- * `.send-actions`, so the list paints on top of the buttons.
+ * column or shove Review / Cancel down the page. Keep the list in-frame by
+ * opening over the actions — not forcing a page scroll to reveal it.
  */
 .send-friend-suggest.friend-suggest-list {
   z-index: 6;
-  max-height: min(180px, 32vh);
+  max-height: min(160px, 28vh);
 }
 
 .send-layout-confirm .send-confirm-to,
@@ -8092,10 +8111,10 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
 .send-confirm-amount {
   margin: 0;
   font-family: var(--hc-display);
-  font-size: clamp(2.2rem, 6vw, 3rem);
+  font-size: clamp(1.8rem, 5vw, 2.5rem);
   font-weight: 700;
   letter-spacing: 0.02em;
-  line-height: 1.1;
+  line-height: 1.05;
   color: var(--hc-text);
 }
 
@@ -8238,8 +8257,9 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
 }
 
 .friend-recipient-hint {
-  margin: 6px 0 0;
-  font-size: 0.8rem;
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  line-height: 1.3;
   color: var(--hc-accent);
 }
 
@@ -12252,6 +12272,21 @@ html:is(.platform-mobile, .layout-compact) .chat-shell[data-aeon-scope='messages
   display: none;
 }
 
+/*
+ * In-app browser + wallet request: keep the browser fullscreen stage, but bring
+ * back the same right-column permission real estate over/beside it.
+ */
+.dashboard.dashboard--chat-fullscreen.dashboard--browser-permission {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 320px);
+}
+
+.dashboard.dashboard--chat-fullscreen.dashboard--browser-permission .dashboard-side {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  z-index: 3;
+}
+
 html:is(.platform-mobile, .layout-compact) .dashboard.dashboard--chat-fullscreen .what-is-bsv {
   display: none !important;
 }
@@ -13310,10 +13345,11 @@ html:not(.platform-mobile):not(.layout-compact)
   width: auto;
   margin: 0 var(--hc-space-3) var(--hc-space-3);
   --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
+  /* Opaque — transparent mixes let the CTA track bleed under Cancel / secondary. */
   --wallet-nav-unselected: color-mix(
     in srgb,
-    var(--hc-text) 22%,
-    transparent
+    var(--hc-text) 16%,
+    var(--hc-surface-2, hsl(var(--secondary)))
   );
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px;
@@ -13338,6 +13374,8 @@ html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-tab {
   flex: 1 1 0;
   min-width: 0;
+  flex-direction: column;
+  gap: 4px;
   border-radius: 0;
   color: hsl(var(--muted-foreground));
   background: var(--wallet-nav-unselected);
@@ -13355,36 +13393,12 @@ html:not(.platform-mobile):not(.layout-compact)
   box-shadow: none;
 }
 
-/* Action hierarchy: the dock owns the outer silhouette and CTA-coloured
-   gutter; each option is a smaller rounded surface within it. */
+/* Request dock: flush segments, square joins; outer pill is on the bar/slots. */
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-bar-track {
-  gap: 2px;
-  padding: 2px;
-}
-
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab,
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab[data-selected] {
-  border-radius: calc(var(--wallet-nav-pill-radius) - 5px);
-}
-
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab:not([data-selected]):first-child {
-  border-top-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
-  border-bottom-left-radius: calc(var(--wallet-nav-pill-radius) - 2px);
-}
-
-html:not(.platform-mobile):not(.layout-compact)
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab:not([data-selected]):last-child {
-  border-top-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
-  border-bottom-right-radius: calc(var(--wallet-nav-pill-radius) - 2px);
+  gap: 0;
+  padding: 0;
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
@@ -13404,6 +13418,29 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-deny[data-selected]:hover {
   color: hsl(var(--primary));
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab
+  svg {
+  width: 16px;
+  height: 16px;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-label {
+  font-size: 0.5rem;
+  letter-spacing: 0.06em;
+}
+
+/* Hover reposition: treat pointer focus like selection for the inverted dock. */
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab:not([data-selected]):hover {
+  color: hsl(var(--muted-foreground));
+  background: var(--wallet-nav-unselected);
 }
 
 /* Desktop activity dock is deliberately denser than its touch counterpart. */
@@ -13427,91 +13464,27 @@ html:not(.platform-mobile):not(.layout-compact)
   font-size: 0.527rem;
 }
 
-/* Contextual approvals must read as actions, not another selected nav segment. */
-.wallet-nav-bar[data-permission]
-  .wallet-nav-tab-accept:not(:disabled) {
-  border-color: hsl(var(--primary));
-  background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
-  box-shadow: 0 5px 16px color-mix(in srgb, hsl(var(--primary)) 24%, transparent);
-}
-
-.wallet-nav-bar[data-permission]
-  .wallet-nav-tab-accept:not(:disabled):hover {
-  background: color-mix(in srgb, hsl(var(--primary)) 90%, white);
-  color: hsl(var(--primary-foreground));
-}
-
-.wallet-nav-bar[data-permission]
-  .wallet-nav-tab-danger:not(:disabled) {
+/*
+ * Contextual CTAs: CTA colour lives on the highlighted slot / track only.
+ * Danger (cancel) stays muted until that action is selected or hovered.
+ */
+.wallet-nav-bar[data-permission] .wallet-nav-tab-danger {
   flex: 1 1 0;
-  border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
-  background: color-mix(in srgb, var(--hc-danger) 72%, white);
-  color: #fff;
-  box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
 }
 
-.wallet-nav-bar[data-permission]
-  .wallet-nav-tab-danger:not(:disabled):hover {
-  color: #fff;
-}
-
-.wallet-nav-bar[data-permission]
-  .wallet-nav-tab-danger:disabled {
+.wallet-nav-bar[data-permission] .wallet-nav-tab-danger:disabled {
   flex: 1 1 0;
   opacity: 0.45;
   cursor: not-allowed;
 }
 
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-accept:not(:disabled) {
-  border-color: #0a0a0a;
-  background: #0a0a0a;
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-danger:not(:disabled) {
-  border-color: #991b1b;
-  background: #991b1b;
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-accept:not(:disabled):hover {
-  background: #0a0a0a;
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-danger:not(:disabled):hover {
-  background: #991b1b;
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab[data-selected]:not(:disabled):hover {
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-deny:not(:disabled):hover {
-  background: #0a0a0a;
-  color: #fff;
-}
-
-html[data-aeon-mode='light']
-  .wallet-nav-bar[data-permission]
-  .wallet-nav-tab-deny:not(:disabled):hover svg {
-  color: inherit;
-}
-
+.wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='primary']
+  ),
+.wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='primary']
+  )
+  .wallet-nav-bar-track,
 .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   ),
@@ -13523,6 +13496,13 @@ html[data-aeon-mode='light']
   background: hsl(var(--primary));
 }
 
+.wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='danger']
+  ),
+.wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='danger']
+  )
+  .wallet-nav-bar-track,
 .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   ),
@@ -13536,6 +13516,15 @@ html[data-aeon-mode='light']
 
 html[data-aeon-mode='light']
   .wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='primary']
+  ),
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='primary']
+  )
+  .wallet-nav-bar-track,
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-accept[data-selected]:not(:disabled)
   ),
 html[data-aeon-mode='light']
@@ -13547,6 +13536,15 @@ html[data-aeon-mode='light']
   background: #0a0a0a;
 }
 
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='danger']
+  ),
+html[data-aeon-mode='light']
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-action-bar--nav[data-cta='danger']
+  )
+  .wallet-nav-bar-track,
 html[data-aeon-mode='light']
   .wallet-nav-bar[data-permission]:has(
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
@@ -13561,55 +13559,20 @@ html[data-aeon-mode='light']
 }
 
 .app-launch-panel {
-  gap: 16px;
+  gap: 12px;
   align-content: start;
-  padding: 18px;
+  padding: 14px 16px;
 }
 
 .app-launch-hero {
   margin: 0;
-  padding-bottom: 14px;
+  padding-bottom: 10px;
   border-bottom: 1px solid var(--hc-border);
 }
 
-.app-launch-options {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-}
-
-.app-launch-option {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  align-items: start;
-  gap: 10px;
-  min-width: 0;
-  padding: 12px;
-  border: 1px solid var(--hc-border);
-  border-radius: var(--hc-radius);
-  background: var(--hc-surface);
-}
-
-.app-launch-option-copy {
-  display: grid;
-  min-width: 0;
-  gap: 4px;
-}
-
-.app-launch-option-copy strong,
-.app-launch-option-copy small {
-  display: block;
-  line-height: 1.35;
-}
-
-.app-launch-option-copy strong {
-  color: var(--hc-text);
-  font-size: 0.84rem;
-}
-
-.app-launch-option-copy small {
-  color: var(--hc-muted);
-  font-size: 0.74rem;
+.app-launch-panel .permission-note {
+  margin: 0;
+  max-width: 36rem;
 }
 
 .app-browser-panel {
@@ -13744,11 +13707,5 @@ html[data-aeon-mode='light']
   }
   to {
     transform: translateX(285%);
-  }
-}
-
-@media (max-width: 620px) {
-  .app-launch-options {
-    grid-template-columns: minmax(0, 1fr);
   }
 }

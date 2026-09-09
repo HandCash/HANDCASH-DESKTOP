@@ -329,6 +329,7 @@ export function SendCollectablePanel({
               onClick: () =>
                 batch ? clearNavChild() : openCollectableDetails(item.outpoint),
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Review',
@@ -345,6 +346,7 @@ export function SendCollectablePanel({
               onClick: () =>
                 batch ? clearNavChild() : openCollectableDetails(item.outpoint),
               icon: <CloseIcon size={18} />,
+              tone: 'danger',
             },
             primary: {
               label: 'Confirm',

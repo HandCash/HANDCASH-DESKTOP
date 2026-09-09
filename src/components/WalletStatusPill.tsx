@@ -23,7 +23,11 @@ import {
   walletProgressLabel,
   type WalletProgress,
 } from '../wallet/walletProgress'
-import { describeWalletCoordinator } from '../wallet/walletCoordinator'
+import {
+  describeWalletCoordinator,
+  subscribeWalletCoordinator,
+  type WalletCoordinatorLiveStatus,
+} from '../wallet/walletCoordinator'
 
 export type WalletSession =
   | 'boot'
@@ -62,6 +66,7 @@ function resolveStatus(
   bridgeOnline: boolean,
   payment: PaymentProgress,
   walletProgress: WalletProgress = getWalletProgress(),
+  coordinator: WalletCoordinatorLiveStatus = describeWalletCoordinator(),
 ): StatusView {
   if (session === 'boot') {
     return { label: 'Opening', tone: 'busy', detail: 'Starting HandCash' }
@@ -121,12 +126,22 @@ function resolveStatus(
       } This device is fine — only the off-device history copy is behind.`,
     }
   }
+  // Coordinator is ground truth for the spend lock. Soft Syncing clear / the
+  // 45s syncing watchdog can paint phase:ok while chainIngest is still active —
+  // that is the "Synced but Wallet is busy" report.
+  if (coordinator.chainIngest === 'active' || coordinator.spendWaiting > 0) {
+    return {
+      label: coordinator.spendWaiting > 0 ? 'Waiting to send' : 'Catching up',
+      tone: 'busy',
+      detail: coordinator.summary,
+    }
+  }
   if (health.phase === 'syncing') {
     return {
       label: 'Syncing',
       tone: 'busy',
       detail: `${health.message ?? 'Refreshing funds against the network'} · ${
-        describeWalletCoordinator().summary
+        coordinator.summary
       }`,
     }
   }
@@ -242,6 +257,9 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   const [walletProgress, setWalletProgress] = useState<WalletProgress>(() =>
     getWalletProgress(),
   )
+  const [coordinator, setCoordinator] = useState<WalletCoordinatorLiveStatus>(() =>
+    describeWalletCoordinator(),
+  )
   const [networkOnline, setNetworkOnline] = useState(
     () => typeof navigator === 'undefined' || navigator.onLine,
   )
@@ -251,6 +269,7 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
   useEffect(() => subscribeCloudBackupHealth(setCloud), [])
   useEffect(() => subscribePaymentProgress(setPayment), [])
   useEffect(() => subscribeWalletProgress(setWalletProgress), [])
+  useEffect(() => subscribeWalletCoordinator(setCoordinator), [])
 
   useEffect(() => {
     const sync = () => setNetworkOnline(navigator.onLine)
@@ -277,12 +296,14 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     bridgeOnline,
     payment,
     walletProgress,
+    coordinator,
   )
   const display =
     manualBusy &&
     health.phase !== 'syncing' &&
     payment.phase === 'idle' &&
-    !isWalletProgressBusy(walletProgress)
+    !isWalletProgressBusy(walletProgress) &&
+    coordinator.chainIngest !== 'active'
       ? {
           label: 'Syncing',
           tone: 'busy' as const,
@@ -297,7 +318,9 @@ export function WalletStatusPill({ session, bridgeOnline, onManualSync }: Props)
     manualBusy ||
     health.phase === 'syncing' ||
     payment.phase !== 'idle' ||
-    isWalletProgressBusy(walletProgress)
+    isWalletProgressBusy(walletProgress) ||
+    coordinator.chainIngest === 'active' ||
+    coordinator.spendWaiting > 0
 
   const handleManualSync = () => {
     if (!tapEnabled || tapBusy || !onManualSync) return

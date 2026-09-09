@@ -150,6 +150,7 @@ export function PermissionRequestPanel({
       onClick: runDeny,
       disabled: committing,
       icon: <CloseIcon size={18} />,
+      tone: 'danger',
     },
     primary: {
       label: committing

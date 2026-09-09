@@ -425,7 +425,14 @@ function findActivityMatchIndex(
   return entries.findIndex((e) => {
     if (e.kind !== args.kind) return false
     if (e.txid?.toLowerCase() !== txid) return false
-    return activityRowIsItem(e) === wantItem
+    if (activityRowIsItem(e) !== wantItem) return false
+    // Batch self-sends put multiple collectables in one tx. Never collapse a
+    // different tip onto an existing item row just because the txid matches.
+    if (wantItem && outpoint) {
+      const existingOp = e.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+      if (existingOp && existingOp !== outpoint) return false
+    }
+    return true
   })
 }
 
@@ -447,6 +454,7 @@ export function recordAppActivity(args: {
 /**
  * Insert or update a money/item row. Same txid + kind + (item vs BSV) collapses
  * so a verifying receive becomes the settled row instead of a duplicate.
+ * Distinct collectable outpoints on the same tx keep separate rows.
  */
 export function upsertAppActivity(args: {
   origin: string | undefined
@@ -1864,23 +1872,33 @@ export function exportAllActivity(): ActivityEntry[] {
   return [...readAll()]
 }
 
-/** Merge remote activity into local history (idempotent by id / txid+kind). */
+function activityMergeKey(entry: ActivityEntry): string | null {
+  if (!entry.txid || !ACTIVITY_KINDS.has(entry.kind)) return null
+  const op = entry.item?.outpoint?.trim().toLowerCase().replace('_', '.')
+  if (op) return `${entry.txid.toLowerCase()}:${entry.kind}:item:${op}`
+  if (activityRowIsItem(entry)) {
+    return `${entry.txid.toLowerCase()}:${entry.kind}:item`
+  }
+  return `${entry.txid.toLowerCase()}:${entry.kind}:bsv`
+}
+
+/** Merge remote activity into local history (idempotent by id / txid+kind[+outpoint]). */
 export function mergeActivityEntries(incoming: ActivityEntry[]): number {
   const local = readAll()
   const byId = new Map(local.map((e) => [e.id, e]))
   const byTxKind = new Map(
     local
-      .filter((e) => e.txid)
-      .map((e) => [`${e.txid!.toLowerCase()}:${e.kind}`, e]),
+      .map((e) => {
+        const key = activityMergeKey(e)
+        return key ? ([key, e] as const) : null
+      })
+      .filter((row): row is readonly [string, ActivityEntry] => row != null),
   )
   let added = 0
   for (const entry of incoming) {
     if (!entry?.id) continue
     if (byId.has(entry.id)) continue
-    const txKind =
-      entry.txid && ACTIVITY_KINDS.has(entry.kind)
-        ? `${entry.txid.toLowerCase()}:${entry.kind}`
-        : null
+    const txKind = activityMergeKey(entry)
     if (txKind && byTxKind.has(txKind)) continue
     byId.set(entry.id, entry)
     if (txKind) byTxKind.set(txKind, entry)

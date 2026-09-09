@@ -38,30 +38,51 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     openEmbeddedAppBrowser(origin, safeUrl)
   }
 
-  const actions = {
-    ariaLabel: `Launch ${name}`,
-    tertiary: {
-      label: 'Cancel',
-      shortLabel: 'Cancel',
-      onClick: clearNavChild,
-      icon: <CloseIcon size={18} />,
-    },
-    secondary: {
-      label: 'Open in-app',
-      shortLabel: 'In-app',
-      onClick: openInApp,
-      disabled: !safeUrl || !inAppAvailable,
-      icon: <AppsIcon size={18} />,
-    },
-    primary: {
-      label: 'Open in browser',
-      shortLabel: 'Browser',
-      onClick: () => void openExternal(),
-      disabled: !safeUrl,
-      icon: <LaunchIcon size={18} />,
-      tone: 'primary',
-    },
-  } as const
+  const cancelAction = {
+    label: 'Cancel',
+    shortLabel: 'Cancel',
+    onClick: clearNavChild,
+    icon: <CloseIcon size={18} />,
+    tone: 'danger' as const,
+  }
+
+  const inAppAction = {
+    label: 'Open in-app',
+    shortLabel: 'In-app',
+    onClick: openInApp,
+    disabled: !safeUrl || !inAppAvailable,
+    icon: <AppsIcon size={18} />,
+    tone: 'primary' as const,
+  }
+
+  const browserAction = {
+    label: 'Open in browser',
+    shortLabel: 'Browser',
+    onClick: () => void openExternal(),
+    disabled: !safeUrl,
+    icon: <LaunchIcon size={18} />,
+  }
+
+  // Prefer the in-app browser when available — that is the immediately actionable CTA.
+  const actions = inAppAvailable
+    ? {
+        ariaLabel: `Launch ${name}`,
+        tertiary: cancelAction,
+        secondary: browserAction,
+        primary: inAppAction,
+      }
+    : {
+        ariaLabel: `Launch ${name}`,
+        tertiary: cancelAction,
+        secondary: {
+          ...inAppAction,
+          tone: undefined,
+        },
+        primary: {
+          ...browserAction,
+          tone: 'primary' as const,
+        },
+      }
 
   return (
     <WalletRequestTemplate
@@ -79,34 +100,10 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       </div>
 
       <p className="permission-note">
-        Choose where to open this app. Both options use the same connected wallet
-        permissions.
+        {inAppAvailable
+          ? 'Open in-app keeps the session inside HandCash. Browser uses your system default. Same wallet permissions either way.'
+          : 'Open in your system browser with the same connected wallet permissions. In-app browser is unavailable on this device.'}
       </p>
-
-      <div className="app-launch-options" aria-label="Launch options">
-        <div className="app-launch-option">
-          <span className="scope-icon">
-            <AppsIcon size={16} />
-          </span>
-          <span className="app-launch-option-copy">
-            <strong>Open in HandCash</strong>
-            <small>
-              {inAppAvailable
-                ? 'Keep the app inside a HandCash-controlled browser window.'
-                : 'The in-app browser is unavailable on this device.'}
-            </small>
-          </span>
-        </div>
-        <div className="app-launch-option">
-          <span className="scope-icon">
-            <LaunchIcon size={16} />
-          </span>
-          <span className="app-launch-option-copy">
-            <strong>Open in browser</strong>
-            <small>Launch the app in your default system browser.</small>
-          </span>
-        </div>
-      </div>
     </WalletRequestTemplate>
   )
 }

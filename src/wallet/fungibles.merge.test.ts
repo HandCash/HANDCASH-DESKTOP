@@ -43,6 +43,34 @@ describe('mergeLiveFungibles', () => {
     vi.resetModules()
   })
 
+  it('drops a legacy activity ghost absent from live (keeps colour tips)', async () => {
+    const { mergeLiveFungibles } = await import('./token/list')
+    const legacyGhost = {
+      tokenId: `${'ef'.repeat(32)}_0`,
+      sym: 'GHOST',
+      amt: '12',
+      dec: 0,
+      utxoCount: 1,
+      outpoint: `${'ef'.repeat(32)}.1`,
+      spendKind: 'plain' as const,
+    }
+    const colourHeld = row({
+      tokenId: KING_ORIGIN,
+      amt: '100',
+      outpoint: LIVE_CHANGE,
+    })
+    const colourCacheOnly = row({
+      tokenId: ORIGIN,
+      amt: '5',
+      outpoint: LEFTOVER,
+    })
+    const merged = mergeLiveFungibles([colourHeld], [legacyGhost, colourCacheOnly])
+    expect(merged.map((t) => t.tokenId).sort()).toEqual(
+      [KING_ORIGIN, ORIGIN].sort(),
+    )
+    expect(merged.some((t) => t.sym === 'GHOST')).toBe(false)
+  })
+
   it('drops a genesis cache extra absent from live even if not yet marked spent', async () => {
     const { mergeLiveFungibles } = await import('./token/list')
     const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]

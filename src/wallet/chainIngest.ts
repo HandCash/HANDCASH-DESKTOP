@@ -705,82 +705,113 @@ async function runChainMaintenance(chain: Chain): Promise<void> {
     import('./oneSatImportGuard'),
   ])
 
-  const results = await Promise.allSettled([
-    (async () => {
-      const dual = await reconcileDualLayerState()
-      if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
-        console.info('[chain-ingest] dual-layer reconcile', dual)
-      }
-    })(),
-    (async () => {
-      const healed = await healGhostSentItems(chain, txExistsOnChain)
-      if (healed.length > 0) {
-        forgetOneSatImported(healed)
-        console.info(
-          `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
-          healed,
-        )
-      }
-    })(),
-    (async () => {
-      const expired = expireStaleInboundPending()
-      if (expired > 0) {
-        console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
-      }
-      const pruned = await pruneMissingOnChainActivity(chain, txExistsOnChain)
-      if (pruned > 0) {
-        console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
-      }
-    })(),
-    (async () => {
-      throwIfYieldToSpend()
+  // Parallel steps used to finish via allSettled only — a Yield from the
+  // spendable-restore arm waited on dual-layer / ghost / prune siblings, so a
+  // queued send sat in "Waiting to send" until the slowest peer ended (often
+  // past the 45s spend-acquire budget → "Wallet is busy"). Race a yield poll
+  // so the ingest lock can release as soon as the send raises priority.
+  let yieldTimer: ReturnType<typeof setInterval> | null = null
+  const yieldWatch = new Promise<never>((_, reject) => {
+    throwIfYieldToSpend()
+    yieldTimer = setInterval(() => {
       try {
-        const { releaseStuckNosends } = await import('./actionReview')
-        await releaseStuckNosends()
+        throwIfYieldToSpend()
       } catch (err) {
-        console.warn('[chain-ingest] release stuck nosends skipped', err)
+        reject(err)
       }
-      try {
-        const { sweepChangeScripts } = await import('./changeScriptFate')
-        let scriptsHealed = 0
-        for (let pass = 0; pass < 4; pass += 1) {
+    }, 100)
+  })
+
+  let results: PromiseSettledResult<unknown>[]
+  try {
+    results = await Promise.race([
+      Promise.allSettled([
+        (async () => {
+          const dual = await reconcileDualLayerState()
+          if (dual.checked > 0 || dual.mined > 0 || dual.failed > 0 || dual.orphaned > 0) {
+            console.info('[chain-ingest] dual-layer reconcile', dual)
+          }
+        })(),
+        (async () => {
+          const healed = await healGhostSentItems(chain, txExistsOnChain)
+          if (healed.length > 0) {
+            forgetOneSatImported(healed)
+            console.info(
+              `[chain-ingest] restored ${healed.length} tip(s) whose send never landed on-chain`,
+              healed,
+            )
+          }
+        })(),
+        (async () => {
+          const expired = expireStaleInboundPending()
+          if (expired > 0) {
+            console.info(`[chain-ingest] expired ${expired} stale Verifying… row(s)`)
+          }
+          const pruned = await pruneMissingOnChainActivity(chain, txExistsOnChain)
+          if (pruned > 0) {
+            console.info(`[chain-ingest] pruned ${pruned} Activity row(s) missing on-chain`)
+          }
+        })(),
+        (async () => {
           throwIfYieldToSpend()
-          const sweep = await sweepChangeScripts({ fromChain: true })
-          scriptsHealed += sweep.healed
-          if (sweep.healed === 0) break
-        }
-        if (scriptsHealed > 0) {
-          console.info(
-            `[chain-ingest] rebuilt ${scriptsHealed} change locking script(s) before spendable restore`,
-          )
-        }
-      } catch (err) {
-        if (err instanceof ChainIngestYieldToSpendError) throw err
-        console.warn('[chain-ingest] change script sweep skipped', err)
-      }
-      throwIfYieldToSpend()
-      await rehideInputsOfLiveLocalTxs()
-      throwIfYieldToSpend()
-      await promotePendingLocalChangeOutputs()
-      let restored = 0
-      for (let pass = 0; pass < 5; pass += 1) {
-        throwIfYieldToSpend()
-        const batch = await restoreLiveSpendableOutputs()
-        if (batch.restored === 0) break
-        restored += batch.restored
-      }
-      if (restored > 0) {
-        console.info(
-          `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
-        )
-      }
-      for (let pass = 0; pass < 3; pass += 1) {
-        throwIfYieldToSpend()
-        const reclaimed = await reclaimSealedInputsNeverSpent()
-        if (reclaimed === 0) break
-      }
-    })(),
-  ])
+          try {
+            const { releaseStuckNosends } = await import('./actionReview')
+            await releaseStuckNosends()
+          } catch (err) {
+            console.warn('[chain-ingest] release stuck nosends skipped', err)
+          }
+          try {
+            const { sweepChangeScripts } = await import('./changeScriptFate')
+            let scriptsHealed = 0
+            for (let pass = 0; pass < 4; pass += 1) {
+              throwIfYieldToSpend()
+              const sweep = await sweepChangeScripts({ fromChain: true })
+              scriptsHealed += sweep.healed
+              if (sweep.healed === 0) break
+            }
+            if (scriptsHealed > 0) {
+              console.info(
+                `[chain-ingest] rebuilt ${scriptsHealed} change locking script(s) before spendable restore`,
+              )
+            }
+          } catch (err) {
+            if (err instanceof ChainIngestYieldToSpendError) throw err
+            console.warn('[chain-ingest] change script sweep skipped', err)
+          }
+          throwIfYieldToSpend()
+          await rehideInputsOfLiveLocalTxs()
+          throwIfYieldToSpend()
+          await promotePendingLocalChangeOutputs()
+          let restored = 0
+          for (let pass = 0; pass < 5; pass += 1) {
+            throwIfYieldToSpend()
+            const batch = await restoreLiveSpendableOutputs()
+            if (batch.restored === 0) break
+            restored += batch.restored
+          }
+          if (restored > 0) {
+            console.info(
+              `[chain-ingest] restored ${restored} change output(s) previously marked unspendable`,
+            )
+          }
+          for (let pass = 0; pass < 3; pass += 1) {
+            throwIfYieldToSpend()
+            const reclaimed = await reclaimSealedInputsNeverSpent()
+            if (reclaimed === 0) break
+          }
+        })(),
+      ]),
+      yieldWatch,
+    ])
+  } catch (err) {
+    if (err instanceof ChainIngestYieldToSpendError) {
+      console.info('[chain-ingest] maintenance aborted — send waiting')
+      throw err
+    }
+    throw err
+  } finally {
+    if (yieldTimer != null) clearInterval(yieldTimer)
+  }
 
   const labels = [
     'dual-layer reconcile',
