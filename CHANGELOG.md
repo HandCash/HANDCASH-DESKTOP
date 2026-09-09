@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.123] - 2026-09-09
+
+### Fixed
+
+- Unstick stalled sends: abort leftover action-batch reservations, heal UTXOs from history, and keep Pay / BRC-29 moving.
+- Handle resolution no longer hangs the recipient field.
+
 ## [1.3.122] - 2026-09-09
 
 ### Fixed
