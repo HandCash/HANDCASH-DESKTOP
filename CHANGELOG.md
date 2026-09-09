@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.130] - 2026-09-09
+
+### Fixed
+
+- Item receive activity no longer invents tip `.0` when the outpoint is still unknown.
+
 ## [1.3.129] - 2026-09-09
 
 ### Fixed
