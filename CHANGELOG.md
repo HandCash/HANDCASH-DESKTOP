@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.3.124] - 2026-09-09
+
+### Fixed
+
+- Keep 1-sat BSV-21 (162) tips in Tokens, not Collect; recover misfiled token receives from activity.
+- UTXO heal is Settings-only so sends always run first.
+- Item send `signAction` BEEF merge context.
+
+### Changed
+
+- Single BRC-162/163 token stack (`src/wallet/token`) for Collect, market, and BRC-100 issuer.
+- Connected apps: Friends-style search and a 3-wide grid on widescreen desktop.
+
 ## [1.3.123] - 2026-09-09
 
 ### Fixed
