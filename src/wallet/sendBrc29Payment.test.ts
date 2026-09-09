@@ -1,4 +1,4 @@
-import { describe, expect, it, vi, beforeEach } from 'vitest'
+import { afterEach, describe, expect, it, vi, beforeEach } from 'vitest'
 import { Beef } from '@bsv/sdk'
 
 type CreateActionArgs = {
@@ -120,6 +120,7 @@ vi.mock('./staleOutputRelease', () => ({
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
   sealSpentInputsOfSignedTx: async () => 0,
+  releaseSealedInputsOfUnsentTx: async () => 0,
   keepChangeOfSignedTx: async () => 0,
   restoreOnChainLocalTx: async () => false,
 }))
@@ -146,6 +147,10 @@ vi.mock('./toast', () => ({ toastSuccess: () => {}, toastError: () => {} }))
 
 const PAYEE =
   '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
+
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('sendBrc29ToIdentityKey', () => {
   beforeEach(() => {
@@ -209,6 +214,44 @@ describe('sendBrc29ToIdentityKey', () => {
     )
     await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
     expect(result.selfReceived).toBe(false)
+    expect(result.peerDelivered).toBe(true)
+  })
+
+  it('resolves a same-origin handle and completes its BRC-29 payment', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          handle: 'alice',
+          domain: 'handcash.io',
+          identityKey: PAYEE,
+          certificate: { type: 'test' },
+          messagebox: 'https://messagebox.example/v1/messagebox',
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+    const { resolveHandle } = await import('./handleResolve')
+    const resolved = await resolveHandle('$alice', '')
+    const { sendBrc29ToIdentityKey } = await import('./sendBrc29Payment')
+
+    const result = await sendBrc29ToIdentityKey({
+      payeeIdentityKey: resolved.identityKey,
+      satoshis: 1_000,
+      friendLabel: resolved.display,
+    })
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/.well-known/metanet-handles/resolve?handle=alice',
+      expect.objectContaining({ method: 'GET' }),
+    )
+    expect(createAction).toHaveBeenCalledOnce()
+    expect(notifyPeerBrc29Payment).toHaveBeenCalledWith(
+      expect.objectContaining({
+        recipientIdentityKey: PAYEE,
+        txid: result.txid,
+      }),
+    )
     expect(result.peerDelivered).toBe(true)
   })
 

@@ -1,6 +1,7 @@
 import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { buildBsv21ValueLock } from './bsv21Send'
+import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 
 const store = new Map<string, string>()
 

@@ -106,8 +106,11 @@ describe('viewActivityItem', () => {
     expect(viewActivityItem(frozen)).toBe(frozen)
   })
 
-  it('leaves a row with no outpoint alone', () => {
+  it('adds an origin content fallback when no held outpoint is available', () => {
     const noOutpoint = { name: 'x', origin: WRONG_ORIGIN }
-    expect(viewActivityItem(noOutpoint)).toBe(noOutpoint)
+    expect(viewActivityItem(noOutpoint)).toEqual({
+      ...noOutpoint,
+      imageUrl: `https://content.test/${WRONG_ORIGIN}`,
+    })
   })
 })

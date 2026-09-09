@@ -70,6 +70,7 @@ guardStdioWrites([process.stdout, process.stderr], (err) => {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const isDev = !app.isPackaged
+const isE2E = process.env.HANDCASH_E2E === '1'
 
 /**
  * Renderer origin:
@@ -391,7 +392,7 @@ function createWindow(): void {
   // localhost IndexedDB partition — load that origin so balance is not zero.
   if (isDev) {
     void mainWindow.loadURL(DEV_ORIGIN)
-    mainWindow.webContents.openDevTools({ mode: 'detach' })
+    if (!isE2E) mainWindow.webContents.openDevTools({ mode: 'detach' })
   } else if (packagedUiOrigin) {
     void mainWindow.loadURL(packagedUiOrigin)
   } else {

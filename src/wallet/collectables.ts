@@ -175,6 +175,7 @@ import {
   isAlreadySpentInputError,
   hideSpentOutpoints,
 } from './staleOutputRelease'
+import { isOnesatFtCollectableMisfile } from './onesatFtLeftover'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -359,7 +360,10 @@ function persistDurableList(items: Collectable[]): void {
 // Paint last session's inventory immediately — do not wait on listOutputs.
 {
   const durable = loadDurableList().filter(
-    (item) => !isItemSent(item.outpoint) && !collectableIsOnesatFt(item),
+    (item) =>
+      !isItemSent(item.outpoint) &&
+      !collectableIsOnesatFt(item) &&
+      !isBareOriginCollectable(item),
   )
   if (durable.length > 0) {
     cachedCollectables = durable
@@ -579,6 +583,12 @@ export function collectableIsOnesatFt(item: {
   if (isOnesatFtMime(item.mimeType)) return true
   const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
+  if (
+    isOnesatFtCollectableMisfile(op) ||
+    (origin && isOnesatFtCollectableMisfile(origin))
+  ) {
+    return true
+  }
   try {
     for (const tok of getCachedFungibles()) {
       const id = tok.tokenId.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')

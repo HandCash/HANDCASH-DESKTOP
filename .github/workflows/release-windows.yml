@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Hermetic regression suite
+        run: npm run test:ci
+
       - name: Read version
         id: meta
         shell: bash

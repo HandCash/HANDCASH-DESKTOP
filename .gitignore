@@ -9,6 +9,8 @@ release/
 !.env.example
 *.local
 .vite/
+playwright-report/
+test-results/
 out/
 /httpServer.js
 /main.js

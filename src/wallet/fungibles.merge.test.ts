@@ -236,9 +236,13 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('lists a legacy JSON BSV-21 tip for the burn planner', async () => {
-    const { listFungibleTips } = await import('./fungibles')
+    const { listFungibleTips, rememberFungibleToken } = await import('./fungibles')
     const icon = `${'5a'.repeat(32)}_1`
     const held = `${'e0'.repeat(32)}.0`
+    rememberFungibleToken({
+      ...row({ tokenId: KING_ORIGIN, amt: '240', outpoint: held }),
+      icon,
+    })
     const active = {
       identityKey: `02${'11'.repeat(32)}`,
       wallet: {

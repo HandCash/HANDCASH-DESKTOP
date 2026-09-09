@@ -943,9 +943,10 @@ export function outputMatchesTokenAccess(
     return true
   }
   if (!tokenId) return false
-  // Filtered third-party grant means "tokens", not a frozen id snapshot.
-  // New 162 tips (KING) must show without reconnecting.
-  if (!request || request.wantsAll) return true
+  // A filtered grant remains an id allowlist even when the caller requests
+  // "all". Widening it here silently exposed newly discovered token ids without
+  // another permission decision.
+  if (!request || request.wantsAll) return access.ids.includes(tokenId)
   if (request.scope === 'id') {
     return request.ids.includes(tokenId) && access.ids.includes(tokenId)
   }

@@ -40,6 +40,7 @@ import { isItemSent, markItemsConsumed } from './sentItemGuard'
 import { attachMarketListingToToken } from './tokenMarketView'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { restoreUnspentAssetOutpoint } from './staleOutputRelease'
+import { isOnesatFtGenesisSpent } from './onesatFtLeftover'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -234,11 +235,13 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   const liveIds = new Set<string>()
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
+    if (isOnesatFtGenesisSpent(t.tokenId)) continue
     if (t.colourMaxSupply != null && Number(t.amt) > t.colourMaxSupply) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
+    if (isOnesatFtGenesisSpent(t.tokenId)) continue
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
@@ -744,6 +747,25 @@ export async function listFungibleTips(
       active.identityKey,
     )
     if (!tip) continue
+    const hasBsv162Script = Boolean(
+      tipFromBsv21Script({
+        outpoint: tip.outpoint,
+        lockingScript: tip.lockingScript,
+        satoshis: tip.satoshis,
+        customInstructions: row.customInstructions,
+        tags: row.tags,
+      }),
+    )
+    const matchesHeldLegacyCard = cached.some(
+      (token) =>
+        tokenKey(token) === tip.tokenId &&
+        token.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1') ===
+          tip.outpoint.trim().toLowerCase().replace(/_(\d+)$/, '.$1'),
+    )
+    // JSON remittance is metadata, not token proof. Permit old P2PKH tips only
+    // when the exact outpoint is already a held inventory card; arbitrary
+    // basket tags must not become spend inputs.
+    if (!hasBsv162Script && !matchesHeldLegacyCard) continue
     if (!wanted.has(tip.tokenId)) continue
     if ((tip.satoshis ?? 1) !== 1) continue
     tips.push(tip)

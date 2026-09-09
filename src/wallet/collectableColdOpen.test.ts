@@ -51,6 +51,17 @@ vi.mock('./session', () => ({
   getActiveWallet: () => active,
 }))
 
+vi.mock('./legacyScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./legacyScan')>()),
+  scanLegacyAddress: async () => ({
+    address: '1HandCashTestAddressAAAAAAAAAAAAAA',
+    chain: 'main' as const,
+    sats: 0,
+    utxos: [],
+    source: 'bitails' as const,
+  }),
+}))
+
 function itemRow(outpoint: string, name: string) {
   return {
     outpoint,

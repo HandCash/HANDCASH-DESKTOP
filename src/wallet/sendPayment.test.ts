@@ -51,6 +51,9 @@ vi.mock('./appActivity', () => ({
   noteOutboundSendComplete: () => {},
   clearOutboundSendPending: () => {},
   failOutboundSendPending: () => {},
+  noteOutboundSendBroadcastFailed: () => false,
+  compactFailureLabel: (err: unknown) =>
+    err instanceof Error ? err.message : String(err),
   WALLET_ACTIVITY_ORIGIN: 'wallet',
   extractSatsFromArgs: () => 0,
 }))
@@ -59,6 +62,8 @@ vi.mock('./pendingSend', () => ({
   completePendingSend: () => {},
   clearPendingSend: () => {},
 }))
+const restoreOnChainLocalTx = vi.fn(async () => false)
+
 vi.mock('./staleOutputRelease', () => ({
   isAlreadySpentInputError: () => false,
   releaseStaleSpendableOutputs: async () => {},
@@ -67,6 +72,8 @@ vi.mock('./staleOutputRelease', () => ({
   restoreLiveSpendableOutputs: async () => 0,
   sealLocalSpendChange: async () => {},
   sealSpentInputsOfSignedTx: async () => 0,
+  restoreOnChainLocalTx: (...args: unknown[]) => restoreOnChainLocalTx(...args),
+  releaseSealedInputsOfUnsentTx: async () => 0,
 }))
 vi.mock('./friends', () => ({
   resolvePaymentRecipient: async (to: string) => to,
@@ -95,6 +102,7 @@ describe('sendSatsToAddress', () => {
     durable.clear()
     createAction.mockClear()
     postBeef.mockClear()
+    restoreOnChainLocalTx.mockClear()
     vi.spyOn(Beef, 'fromBinary').mockReturnValue(new Beef())
   })
 
@@ -108,7 +116,9 @@ describe('sendSatsToAddress', () => {
     expect(createAction).toHaveBeenCalledTimes(1)
     const args = createAction.mock.calls[0]?.[0]
     expect(args?.options?.acceptDelayedBroadcast).toBe(true)
-    // postBeef may still be in flight when send returns
+    // Drain the detached miner path so later suites never inherit an unhandled
+    // rejection from an incomplete mock.
     await vi.waitFor(() => expect(postBeef).toHaveBeenCalled())
+    await vi.waitFor(() => expect(restoreOnChainLocalTx).toHaveBeenCalled())
   })
 })

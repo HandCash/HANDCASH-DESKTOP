@@ -74,6 +74,17 @@ vi.mock('./session', () => ({
   getActiveWallet: () => active,
 }))
 
+vi.mock('./legacyScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./legacyScan')>()),
+  scanLegacyAddress: async () => ({
+    address: '1HandCashTestAddressAAAAAAAAAAAAAA',
+    chain: 'main' as const,
+    sats: 0,
+    utxos: [],
+    source: 'bitails' as const,
+  }),
+}))
+
 describe('re-entered collectables', () => {
   beforeEach(async () => {
     vi.resetModules()
@@ -99,9 +110,11 @@ describe('re-entered collectables', () => {
     const items = await listCollectables(active)
     const reentered = items.find((item) => item.outpoint === NEW_TIP)
     expect(reentered?.collectionId).toBe('pixel-foxes')
-    const { groups, loose } = groupCollectables(items)
+    const { groups, singles, ungrouped } = groupCollectables(items)
     expect(groups.some((g) => g.collectionId === 'pixel-foxes')).toBe(true)
-    expect(loose.some((item) => item.outpoint === NEW_TIP)).toBe(false)
+    expect(
+      [...singles, ...ungrouped].some((item) => item.outpoint === NEW_TIP),
+    ).toBe(false)
   })
 
   it('seeds image from origin cache while verifying', async () => {

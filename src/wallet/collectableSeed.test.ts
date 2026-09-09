@@ -10,7 +10,13 @@ vi.mock('./sentItemGuard', () => ({
 }))
 
 vi.mock('./legacyScan', () => ({
-  scanLegacyAddress: vi.fn(async () => ({ utxos: [] })),
+  scanLegacyAddress: vi.fn(async () => ({
+    address: '1HandCashTestAddressAAAAAAAAAAAAAA',
+    chain: 'main' as const,
+    sats: 0,
+    utxos: [],
+    source: 'bitails' as const,
+  })),
 }))
 
 const durable = vi.hoisted(() => new Map<string, string>())

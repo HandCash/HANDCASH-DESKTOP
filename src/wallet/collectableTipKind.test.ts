@@ -162,16 +162,16 @@ describe('chooseSendPath', () => {
     ).toEqual({ path: 'p2pkhSend' })
   })
 
-  it('refuses when stored proof is missing or the tip is unconfirmed', () => {
+  it('refuses while verification is active or stored proof is missing', () => {
     expect(
       chooseSendPath({
         tipKind: classifyTipKind(P2PKH_HEX),
         provenTier: 'brc150',
-        sendReady: { ready: false, reason: 'unconfirmed' },
+        sendReady: { ready: false, reason: 'verifying' },
       }),
     ).toMatchObject({
       path: 'refuse',
-      reason: expect.stringMatching(/not confirmed/i),
+      reason: expect.stringMatching(/still verifying/i),
     })
     expect(
       chooseSendPath({

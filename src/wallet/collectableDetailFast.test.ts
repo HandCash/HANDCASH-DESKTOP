@@ -23,6 +23,17 @@ vi.mock('./sentItemGuard', () => ({
   getSentItemRecord: () => null,
 }))
 
+vi.mock('./legacyScan', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('./legacyScan')>()),
+  scanLegacyAddress: async () => ({
+    address: '1HandCashTestAddressAAAAAAAAAAAAAA',
+    chain: 'main' as const,
+    sats: 0,
+    utxos: [],
+    source: 'bitails' as const,
+  }),
+}))
+
 const TIP = `${'aa'.repeat(32)}.0`
 const ORIGIN = `${'bb'.repeat(32)}_0`
 const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
