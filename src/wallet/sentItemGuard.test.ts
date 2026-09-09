@@ -213,4 +213,37 @@ describe('sentItemGuard', () => {
       true,
     )
   })
+
+  it('cancels market listing auth when a listed tip is spent', async () => {
+    const TX = 'aa'.repeat(32)
+    const AUTH_KEY = 'handcash.market.listingAuthorizations.v2'
+    store.set(
+      AUTH_KEY,
+      JSON.stringify([
+        {
+          key: `${TX}_0:nonce`,
+          outpoint: `${TX}_0`,
+          nonce: 'nonce',
+          seller: '02' + '11'.repeat(32),
+          origin: `${TX}_0`,
+          provenanceHash: 'ab'.repeat(32),
+          priceSats: 10_000,
+          state: 'active',
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ]),
+    )
+
+    const guard = await import('./sentItemGuard')
+    guard.markItemsSent([{ outpoint: `${TX}.0`, txid: 'b'.repeat(64) }])
+
+    // Dynamic import is async — wait a tick for invalidate to land.
+    await vi.waitFor(async () => {
+      const { getMarketListingAuthorization } = await import('./marketListing')
+      expect(getMarketListingAuthorization({ outpoint: `${TX}.0` })?.state).toBe(
+        'cancelled',
+      )
+    })
+  })
 })

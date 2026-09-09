@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.137] - 2026-09-09
+
+### Fixed
+
+- Collect: spending a listed tip actually cancels its market listing auth (underscore outpoint filter made invalidate a no-op).
+- Collect: after a send clears the live UTXO cache, same-origin tips no longer collapse — both held foxes stay visible.
+
 ## [1.3.136] - 2026-09-09
 
 ### Fixed

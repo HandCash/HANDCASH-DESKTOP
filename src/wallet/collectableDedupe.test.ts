@@ -67,4 +67,35 @@ describe('dedupeByOrigin', () => {
       [a.outpoint, b.outpoint].sort(),
     )
   })
+
+  it('keeps both tips when live cache is unknown (null) after a send', () => {
+    // finishSend clears cachedLiveOneSats; without this fallback, same-origin
+    // siblings collapse and one fox disappears from Collect.
+    const a = tip(`${'bb'.repeat(32)}.0`)
+    const b = tip(`${'cc'.repeat(32)}.1`)
+
+    const kept = dedupeByOrigin([a, b], () => 1, null)
+
+    expect(kept.map((c) => c.outpoint).sort()).toEqual(
+      [a.outpoint, b.outpoint].sort(),
+    )
+  })
+
+  it('still collapses to the newer tip when an empty live set is known', () => {
+    const stale = tip(`${'bb'.repeat(32)}.0`, { proven: true })
+    const fresh = tip(`${'cc'.repeat(32)}.0`)
+    const seenAt = new Map([
+      [stale.outpoint, 1_000],
+      [fresh.outpoint, 2_000],
+    ])
+
+    const kept = dedupeByOrigin(
+      [stale, fresh],
+      (op) => seenAt.get(op) ?? 0,
+      new Set(),
+    )
+
+    expect(kept).toHaveLength(1)
+    expect(kept[0]!.outpoint).toBe(fresh.outpoint)
+  })
 })

@@ -859,6 +859,9 @@ function toCollectable(
  *
  * Exception: when the live UTXO set still lists both outpoints, never collapse —
  * custody says both tips exist (mis-tagged origins from a multi-tip settle).
+ * When the live cache is unknown (`null`, e.g. right after a send), treat every
+ * non-sent candidate in this rebuild as present so a self-send cannot drop a
+ * second same-origin fox still in hand.
  */
 export function dedupeByOrigin(
   items: Collectable[],
@@ -878,8 +881,17 @@ export function dedupeByOrigin(
     return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER
   }
   const seenAt = (c: Collectable): number => seenAtFor(c.outpoint)
+  // null = live cache unknown (post-send); undefined = caller wants classic collapse.
+  const present: ReadonlySet<string> | null =
+    liveOutpoints === null
+      ? new Set(
+          items
+            .filter((c) => !isItemSent(c.outpoint))
+            .map((c) => outpointKey(c.outpoint)),
+        )
+      : liveOutpoints ?? null
   const live = (c: Collectable): boolean =>
-    Boolean(liveOutpoints?.has(outpointKey(c.outpoint)))
+    Boolean(present?.has(outpointKey(c.outpoint)))
 
   const best = new Map<string, Collectable>()
   const order: string[] = []

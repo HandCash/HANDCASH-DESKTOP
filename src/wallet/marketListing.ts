@@ -1975,11 +1975,17 @@ export function invalidateMarketListingsForSpentOutpoints(
   outpoints: readonly string[],
   reason = 'tip-spent',
 ): number {
-  const keys = new Set(
-    outpoints
-      .map((op) => normalizeOutpoint(op))
-      .filter((op) => op.includes('.')),
-  )
+  const keys = new Set<string>()
+  for (const raw of outpoints) {
+    try {
+      // Authorizations are stored underscore-form (`txid_0`). normalizeOutpoint
+      // accepts dotted tips from markItemsSent — never filter on `.` or the
+      // whole batch becomes a no-op.
+      keys.add(normalizeOutpoint(raw))
+    } catch {
+      // Skip malformed tips; one bad string must not cancel the rest.
+    }
+  }
   if (keys.size === 0) return 0
   const now = Date.now()
   let changed = 0
