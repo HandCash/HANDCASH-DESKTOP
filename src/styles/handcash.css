@@ -13291,8 +13291,13 @@ html:not(.platform-mobile):not(.layout-compact)
   flex: 1 1 0;
   border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
   background: color-mix(in srgb, var(--hc-danger) 72%, white);
-  color: #240507;
+  color: #fff;
   box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
+}
+
+.wallet-nav-bar[data-permission]
+  .wallet-nav-tab-danger:not(:disabled):hover {
+  color: #fff;
 }
 
 .wallet-nav-bar[data-permission]
