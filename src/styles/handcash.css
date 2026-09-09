@@ -5484,11 +5484,95 @@ a.app-details-host:hover {
   display: flex;
   flex: 1 1 auto;
   align-self: stretch;
+  align-items: stretch;
   width: 100%;
   padding: 0;
   gap: 0;
   border: 0;
   background: transparent;
+}
+
+.wallet-action-bar--nav .wallet-action-slot {
+  --wallet-action-slot-own: var(--wallet-nav-unselected);
+  --wallet-action-slot-next: var(--wallet-action-slot-own);
+  display: flex;
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
+  min-height: 100%;
+  padding: 0;
+  background: linear-gradient(
+    to right,
+    var(--wallet-action-slot-own) 0 50%,
+    var(--wallet-action-slot-next) 50% 100%
+  );
+}
+
+.wallet-action-bar--nav .wallet-action-slot:first-child {
+  border-radius: calc(var(--wallet-nav-pill-radius) - 2px) 0 0
+    calc(var(--wallet-nav-pill-radius) - 2px);
+  overflow: hidden;
+}
+
+.wallet-action-bar--nav .wallet-action-slot:last-child {
+  border-radius: 0 calc(var(--wallet-nav-pill-radius) - 2px)
+    calc(var(--wallet-nav-pill-radius) - 2px) 0;
+  overflow: hidden;
+}
+
+.wallet-action-bar--nav .wallet-action-slot--neutral {
+  --wallet-action-slot-own: var(--wallet-nav-unselected);
+}
+
+.wallet-action-bar--nav .wallet-action-slot--danger {
+  --wallet-action-slot-own: color-mix(in srgb, var(--hc-danger) 72%, white);
+}
+
+.wallet-action-bar--nav .wallet-action-slot--primary {
+  --wallet-action-slot-own: hsl(var(--primary));
+}
+
+.wallet-action-bar--nav .wallet-action-slot-next--neutral {
+  --wallet-action-slot-next: var(--wallet-nav-unselected);
+}
+
+.wallet-action-bar--nav .wallet-action-slot-next--danger {
+  --wallet-action-slot-next: color-mix(in srgb, var(--hc-danger) 72%, white);
+}
+
+.wallet-action-bar--nav .wallet-action-slot-next--primary {
+  --wallet-action-slot-next: hsl(var(--primary));
+}
+
+.wallet-action-bar--nav .wallet-action-slot > .wallet-nav-tab {
+  width: 100%;
+  height: 100%;
+  align-self: stretch;
+  border-radius: calc(var(--wallet-nav-pill-radius) - 6px);
+}
+
+html[data-aeon-mode='light']
+  .wallet-action-bar--nav
+  .wallet-action-slot--danger {
+  --wallet-action-slot-own: #991b1b;
+}
+
+html[data-aeon-mode='light']
+  .wallet-action-bar--nav
+  .wallet-action-slot-next--danger {
+  --wallet-action-slot-next: #991b1b;
+}
+
+html[data-aeon-mode='light']
+  .wallet-action-bar--nav
+  .wallet-action-slot--primary {
+  --wallet-action-slot-own: #0a0a0a;
+}
+
+html[data-aeon-mode='light']
+  .wallet-action-bar--nav
+  .wallet-action-slot-next--primary {
+  --wallet-action-slot-next: #0a0a0a;
 }
 
 .connected-app-card-actions > .connected-app-icon-action {

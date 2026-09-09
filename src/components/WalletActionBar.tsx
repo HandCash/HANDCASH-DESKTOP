@@ -31,6 +31,21 @@ function buttonClass(action: WalletAction, placement: WalletActionBarProps['plac
   return 'btn btn-ghost'
 }
 
+function actionTone(action: WalletAction | undefined): 'primary' | 'danger' | 'neutral' {
+  if (!action || action.disabled) return 'neutral'
+  if (action?.tone === 'primary') return 'primary'
+  if (action?.tone === 'danger') return 'danger'
+  return 'neutral'
+}
+
+function slotClass(action: WalletAction, nextAction?: WalletAction): string {
+  return [
+    'wallet-action-slot',
+    `wallet-action-slot--${actionTone(action)}`,
+    `wallet-action-slot-next--${actionTone(nextAction ?? action)}`,
+  ].join(' ')
+}
+
 export function WalletActionBar({
   primary,
   secondary,
@@ -50,9 +65,10 @@ export function WalletActionBar({
       role="group"
       aria-label={ariaLabel}
     >
-      {actions.map((action, index) => (
-        <button
-          key={`${action.label}-${index}`}
+      {actions.map((action, index) => {
+        const button = (
+          <button
+          key={placement === 'nav' ? undefined : `${action.label}-${index}`}
           type="button"
           className={buttonClass(action, placement)}
           data-selected={placement === 'nav' && action === primary ? '' : undefined}
@@ -72,7 +88,16 @@ export function WalletActionBar({
             </span>
           ) : null}
         </button>
-      ))}
+        )
+        return placement === 'nav' ? (
+          <span
+            key={`${action.label}-${index}`}
+            className={slotClass(action, actions[index + 1])}
+          >
+            {button}
+          </span>
+        ) : button
+      })}
     </footer>
   )
 }
