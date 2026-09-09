@@ -132,7 +132,6 @@ export async function resolveHandle(
   const parsed = parseHandleInput(raw)
   if (!parsed) throw new Error('Not a handle')
   const base = normalizeBase(baseUrl)
-  if (!base) throw new Error('Handle resolve host not configured')
 
   const url = `${base}/.well-known/metanet-handles/resolve?handle=${encodeURIComponent(parsed.handle)}`
   const res = await fetch(url, {
@@ -187,7 +186,6 @@ export async function resolveHandleByIdentityKey(
     throw new Error('Not an identity key')
   }
   const base = normalizeBase(baseUrl)
-  if (!base) throw new Error('Handle resolve host not configured')
 
   const url = `${base}/.well-known/metanet-handles/resolve?identityKey=${encodeURIComponent(key)}`
   const res = await fetch(url, {

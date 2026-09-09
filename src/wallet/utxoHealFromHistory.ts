@@ -240,10 +240,33 @@ async function runHealCore(
   recoveredSats: number
   txidsChecked: number
 }> {
+  if (await healShouldYieldToSpend(opts)) {
+    logDiag('utxo-heal', 'info', 'yield-to-spend', { phase: 'before-release' })
+    bumpBalanceAfterHeal()
+    const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance())
+    return {
+      changeKept: 0,
+      txidsOnChain: 0,
+      heal: {
+        restored: 0,
+        scriptsLocal: 0,
+        scriptsChain: 0,
+        pendingPromoted: 0,
+        reclaimed: 0,
+      },
+      balanceAfter,
+      recoveredSats: 0,
+      txidsChecked: 0,
+    }
+  }
+
+  // This repair can hold toolbox storage while it reviews old unsigned rows.
+  // Never start it after a send has raised priority: the payment owns the next
+  // storage turn, and the checkpoint scheduler will resume this heal afterward.
   await releaseSpendAttemptFunds()
 
   if (await healShouldYieldToSpend(opts)) {
-    logDiag('utxo-heal', 'info', 'yield-to-spend', { phase: 'before-pending' })
+    logDiag('utxo-heal', 'info', 'yield-to-spend', { phase: 'after-release' })
     bumpBalanceAfterHeal()
     const balanceAfter = toBalanceSnapshot(await snapshotWalletBalance())
     return {

@@ -27,6 +27,31 @@ export function isReservedActionBatchError(err: unknown): boolean {
   )
 }
 
+const SEND_CLEANUP_BUDGET_MS = 2_500
+
+async function withSendCleanupBudget<T>(
+  label: string,
+  work: () => Promise<T>,
+): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      work(),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(
+          () => reject(new Error(`${label} timed out`)),
+          SEND_CLEANUP_BUDGET_MS,
+        )
+      }),
+    ])
+  } catch (err) {
+    console.warn(`[action-review] ${label} skipped`, err)
+    return null
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
+}
+
 /**
  * Abort leftover `noSend` actions (from older HandCash settle paths) and
  * reserved batches so the next createAction is not a double-spend.
@@ -41,8 +66,11 @@ export async function releaseStuckNosends(
 ): Promise<void> {
   const wallet = (active ?? getActiveWallet())?.wallet
   if (!wallet) return
-  try {
-    const listed = await wallet.listNoSendActions({ labels: [], limit: 100 }, false)
+  const listed = await withSendCleanupBudget(
+    'list no-send actions',
+    () => wallet.listNoSendActions({ labels: [], limit: 100 }, false),
+  )
+  if (listed) {
     let protectedRefs = new Set<string>()
     try {
       const { protectedMarketActionReferences } = await import('./marketSettlement')
@@ -51,28 +79,27 @@ export async function releaseStuckNosends(
       /* market module optional during early boot */
     }
     if (protectedRefs.size === 0) {
-      await wallet.listNoSendActions({ labels: [], limit: 100 }, true)
+      await withSendCleanupBudget(
+        'abort no-send actions',
+        () => wallet.listNoSendActions({ labels: [], limit: 100 }, true),
+      )
     } else {
       for (const action of listed.actions ?? []) {
         const reference = String(
           (action as { reference?: string }).reference ?? '',
         ).trim()
         if (!reference || protectedRefs.has(reference)) continue
-        try {
-          await wallet.abortAction({ reference })
-        } catch (err) {
-          console.warn('[action-review] abort nosend skipped', reference, err)
-        }
+        await withSendCleanupBudget(
+          `abort no-send ${reference.slice(0, 12)}`,
+          () => wallet.abortAction({ reference }),
+        )
       }
     }
-  } catch (err) {
-    console.warn('[action-review] listNoSendActions abort skipped', err)
   }
-  try {
-    await wallet.actionBatch.abort()
-  } catch {
-    /* unused funding reservations only */
-  }
+  await withSendCleanupBudget(
+    'abort action batch',
+    () => wallet.actionBatch.abort(),
+  )
 }
 
 /**

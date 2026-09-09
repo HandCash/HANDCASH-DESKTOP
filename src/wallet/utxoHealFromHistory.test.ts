@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
   snapshotWalletBalance: vi.fn(),
   txExistsOnChain: vi.fn(),
   getActiveWallet: vi.fn(),
+    shouldYieldChainIngestToSpend: vi.fn(() => false),
   releaseSpendAttemptFunds: vi.fn(),
   keepChangeOfSignedTx: vi.fn(),
   durableGetItem: vi.fn((key: string) => durableStore[key] ?? ''),
@@ -72,7 +73,7 @@ vi.mock('./durableStorage', () => ({
 
 vi.mock('./walletCoordinator', () => ({
   runChainIngest: vi.fn((fn: () => Promise<unknown>) => fn()),
-  shouldYieldChainIngestToSpend: vi.fn(() => false),
+  shouldYieldChainIngestToSpend: mocks.shouldYieldChainIngestToSpend,
   getSpendPriorityDepth: vi.fn(() => 0),
 }))
 
@@ -153,6 +154,15 @@ describe('healUtxoFromActivityHistory', () => {
 
     expect(result.skipped).toBe(true)
     expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
+  })
+
+  it('does not touch wallet storage when a spend is waiting', async () => {
+    mocks.shouldYieldChainIngestToSpend.mockReturnValueOnce(true)
+
+    await runUtxoHealPass({ source: 'auto', force: true })
+
+    expect(mocks.releaseSpendAttemptFunds).not.toHaveBeenCalled()
+    expect(mocks.runChangeHeal).not.toHaveBeenCalled()
   })
 
   it('merges checkpoint txids so prior heals are never dropped', async () => {

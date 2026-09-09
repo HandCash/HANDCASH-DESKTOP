@@ -59,6 +59,28 @@ afterEach(() => {
 })
 
 describe('resolveHandle messagebox', () => {
+  it('uses the Vite same-origin proxy when the configured base URL is empty', async () => {
+    const fetchMock = vi.fn(async () =>
+      new Response(
+        JSON.stringify({
+          handle: 'alice',
+          domain: 'handcash.io',
+          identityKey: '02' + 'ab'.repeat(32),
+          certificate: {},
+        }),
+        { status: 200, headers: { 'Content-Type': 'application/json' } },
+      ),
+    )
+    vi.stubGlobal('fetch', fetchMock)
+
+    await resolveHandle('$alice', '')
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      '/.well-known/metanet-handles/resolve?handle=alice',
+      expect.objectContaining({ method: 'GET' }),
+    )
+  })
+
   it('persists the messagebox URL from a BRC-169 resolve response', async () => {
     vi.stubGlobal(
       'fetch',

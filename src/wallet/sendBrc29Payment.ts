@@ -627,6 +627,7 @@ export async function sendBrc29ToIdentityKey(opts: {
       }
     },
     () => setPaymentProgress('preparing', 'Preparing payment'),
+    { promote: 'light' },
     )
   } catch (err) {
     recordTransactionStage('hard_rejected', {

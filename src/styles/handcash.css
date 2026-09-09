@@ -4579,12 +4579,13 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-action-badge {
   position: absolute;
-  right: -3px;
-  bottom: -3px;
+  right: 0;
+  bottom: 0;
   width: 16px;
   height: 16px;
   display: grid;
   place-items: center;
+  transform: translate(50%, 50%);
   border: 2px solid hsl(var(--background));
   border-radius: 50%;
   color: #fff;
@@ -4627,10 +4628,11 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-app-badge {
   position: absolute;
-  left: -3px;
-  bottom: -3px;
+  left: 0;
+  bottom: 0;
   width: 16px;
   height: 16px;
+  transform: translate(-50%, 50%);
   overflow: hidden;
   border: 2px solid hsl(var(--background));
   border-radius: 50%;
@@ -5957,8 +5959,8 @@ html[data-aeon-mode='light']
 .payment-details-hero .history-action-badge {
   width: 18px;
   height: 18px;
-  right: -4px;
-  bottom: -4px;
+  right: 0;
+  bottom: 0;
 }
 
 .payment-details-copy {

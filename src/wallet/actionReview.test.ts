@@ -184,6 +184,23 @@ describe('actionReview', () => {
     expect(reviewStatus).not.toHaveBeenCalled()
   })
 
+  it('does not let a stalled no-send lookup block payment preparation', async () => {
+    vi.useFakeTimers()
+    try {
+      listNoSendActions.mockImplementationOnce(
+        () => new Promise(() => {}),
+      )
+      const { releaseStuckNosends } = await import('./actionReview')
+      const releasing = releaseStuckNosends()
+
+      await vi.advanceTimersByTimeAsync(2_500)
+
+      await expect(releasing).resolves.toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('does not abort a live market nosend reference', async () => {
     abortAction.mockClear()
     listNoSendActions.mockClear()

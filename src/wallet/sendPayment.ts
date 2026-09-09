@@ -355,6 +355,7 @@ export async function sendSatsToAddress(opts: {
         }
       },
       () => setPaymentProgress('preparing', 'Preparing payment'),
+      { promote: 'light' },
     )
   } catch (err) {
     recordTransactionStage('hard_rejected', {
