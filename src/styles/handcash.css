@@ -785,6 +785,24 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   line-height: 1.55;
 }
 
+button.link-btn {
+  display: inline;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--hc-accent);
+  font: inherit;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+
+button.link-btn:hover {
+  color: color-mix(in srgb, var(--hc-accent) 82%, white);
+}
+
 .panel {
   background: hsl(var(--card));
   border: 1px solid hsl(var(--border));
@@ -5545,6 +5563,8 @@ a.app-details-host:hover {
   overflow: hidden;
   border-radius: 0;
   background: var(--wallet-action-slot-own);
+  /* Keep idle fills from compositing with the neon CTA ring underneath. */
+  isolation: isolate;
 }
 
 /* Outer dock corners only — joins between request actions stay square. */
@@ -5563,11 +5583,11 @@ a.app-details-host:hover {
 }
 
 .wallet-action-bar--nav .wallet-action-slot--neutral {
-  --wallet-action-slot-own: var(--wallet-nav-unselected);
+  --wallet-action-slot-own: var(--wallet-nav-unselected, #121816);
 }
 
 .wallet-action-bar--nav .wallet-action-slot--danger {
-  --wallet-action-slot-own: color-mix(in srgb, var(--hc-danger) 72%, white);
+  --wallet-action-slot-own: color-mix(in srgb, var(--hc-danger) 78%, #fff);
 }
 
 .wallet-action-bar--nav .wallet-action-slot--primary {
@@ -5579,6 +5599,8 @@ a.app-details-host:hover {
   height: 100%;
   align-self: stretch;
   border-radius: 0;
+  /* Slot owns the fill — tabs stay transparent so CTA ink/contrast is consistent. */
+  background: transparent !important;
 }
 
 html[data-aeon-mode='light']
@@ -5591,6 +5613,12 @@ html[data-aeon-mode='light']
   .wallet-action-bar--nav
   .wallet-action-slot--primary {
   --wallet-action-slot-own: #0a0a0a;
+}
+
+html[data-aeon-mode='light']
+  .wallet-action-bar--nav
+  .wallet-action-slot--neutral {
+  --wallet-action-slot-own: #ecefec;
 }
 
 .connected-app-card-actions > .connected-app-icon-action {
@@ -13345,12 +13373,12 @@ html:not(.platform-mobile):not(.layout-compact)
   width: auto;
   margin: 0 var(--hc-space-3) var(--hc-space-3);
   --wallet-nav-select: var(--hc-surface-2, hsl(var(--secondary)));
-  /* Opaque — transparent mixes let the CTA track bleed under Cancel / secondary. */
-  --wallet-nav-unselected: color-mix(
-    in srgb,
-    var(--hc-text) 16%,
-    var(--hc-surface-2, hsl(var(--secondary)))
-  );
+  /*
+   * Idle segments must be fully opaque. Translucent mixes let the neon CTA
+   * track bleed through Cancel / secondary and read as washed mint green.
+   */
+  --wallet-nav-unselected: #121816;
+  --wallet-dock-cta-ink: #0a0a0a;
   --wallet-nav-pill-radius: calc(var(--radius, 0.5rem) * 1.75);
   padding: 2px;
   border: 1px solid hsl(var(--border));
@@ -13378,7 +13406,7 @@ html:not(.platform-mobile):not(.layout-compact)
   gap: 4px;
   border-radius: 0;
   color: hsl(var(--muted-foreground));
-  background: var(--wallet-nav-unselected);
+  background: transparent;
   box-shadow: none;
 }
 
@@ -13388,8 +13416,8 @@ html:not(.platform-mobile):not(.layout-compact)
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab[data-selected]:hover {
-  /* Dark primary is neon green — white ink fails contrast; use primary-foreground. */
-  color: hsl(var(--primary-foreground));
+  /* Neon green / red fills live on the slot — always black ink for contrast. */
+  color: var(--wallet-dock-cta-ink, #0a0a0a);
   background: transparent;
   box-shadow: none;
 }
@@ -13401,9 +13429,36 @@ html:not(.platform-mobile):not(.layout-compact)
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]:hover,
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected],
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
   .wallet-nav-tab[data-selected]:hover {
-  /* Dark danger chrome is a light red mix — black ink matches primary CTA contrast. */
-  color: #0a0a0a;
+  color: var(--wallet-dock-cta-ink, #0a0a0a);
+}
+
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected]:hover,
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected],
+html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]:hover {
+  /* Black / deep-red fills need light ink. */
+  color: #fff;
 }
 
 /* Request dock: flush segments, square joins; outer pill is on the bar/slots. */
@@ -13417,11 +13472,8 @@ html:not(.platform-mobile):not(.layout-compact)
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission] {
   --wallet-nav-select: #fff;
-  --wallet-nav-unselected: color-mix(
-    in srgb,
-    var(--hc-text) 5%,
-    #f4f5f4
-  );
+  --wallet-nav-unselected: #ecefec;
+  --wallet-dock-cta-ink: #0a0a0a;
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
@@ -13454,7 +13506,7 @@ html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab:not([data-selected]):hover {
   color: hsl(var(--muted-foreground));
-  background: var(--wallet-nav-unselected);
+  background: transparent;
 }
 
 /* Desktop activity dock is deliberately denser than its touch counterpart. */
@@ -13540,8 +13592,8 @@ html:not(.platform-mobile):not(.layout-compact)
     .wallet-nav-tab-danger[data-selected]:not(:disabled)
   )
   .wallet-nav-bar-track {
-  border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
-  background: color-mix(in srgb, var(--hc-danger) 72%, white);
+  border-color: color-mix(in srgb, var(--hc-danger) 78%, #fff);
+  background: color-mix(in srgb, var(--hc-danger) 78%, #fff);
 }
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)

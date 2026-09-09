@@ -13,7 +13,7 @@ import {
 } from 'electron'
 import fs from 'node:fs/promises'
 import path from 'node:path'
-import { fileURLToPath } from 'node:url'
+import { fileURLToPath, pathToFileURL } from 'node:url'
 import log from 'electron-log'
 import {
   failPendingBridgeRequests,
@@ -59,6 +59,11 @@ import {
   UI_ORIGIN,
 } from './uiServer.js'
 import { isTrustedAppUrl } from './appUrlPolicy.js'
+import {
+  decideUiLoadRecovery,
+  decideWalletUiNavigation,
+  DISABLE_HTTPS_FIRST_FEATURES,
+} from './appConnectGuardrails.js'
 import { grantsAppCameraPermission } from './cameraPermissions.js'
 import { guardStdioWrites } from './brokenPipe.js'
 import { readOmarchyTheme, startOmarchyThemeWatch } from './omarchyTheme.js'
@@ -133,21 +138,36 @@ app.on('second-instance', () => {
 if (process.platform === 'linux') {
   // Wayland window chrome + PipeWire camera capture (xdg-desktop-portal on modern Linux).
   app.commandLine.appendSwitch(
-    '--enable-features',
+    'enable-features',
     'WaylandWindowDecorations,WebRtcPipeWireCapturer,WebRtcPipeWireCamera',
   )
 }
+
+// Electron 43+ Chromium HTTPS-First upgrades http://localhost:5173 → https://.
+// The Vite / packaged UI servers are HTTP-only, so that load dies with
+// ERR_SSL_PROTOCOL_ERROR, the renderer never re-registers, and every BRC-100
+// connect answers renderer-not-ready (system browser and in-app alike).
+app.commandLine.appendSwitch('disable-features', DISABLE_HTTPS_FIRST_FEATURES.join(','))
 
 function getIconPath(): string | undefined {
   return path.join(__dirname, '../build/icon.png')
 }
 
-function isAppUrl(url: string): boolean {
-  return isTrustedAppUrl(url, {
-    devOrigins: [DEV_ORIGIN, 'http://127.0.0.1:5173'],
+function appUrlPolicy() {
+  return {
+    devOrigins: [DEV_ORIGIN, 'http://127.0.0.1:5173'] as const,
     packagedUiOrigin,
     distRoot: path.join(__dirname, '../dist'),
-  })
+  }
+}
+
+function isAppUrl(url: string): boolean {
+  return isTrustedAppUrl(url, appUrlPolicy())
+}
+
+function walletUiLoadUrl(): string {
+  if (isDev) return DEV_ORIGIN
+  return packagedUiOrigin ?? pathToFileURL(path.join(__dirname, '../dist/index.html')).href
 }
 
 function cameraPermissionContext(webContentsId: number) {
@@ -404,10 +424,6 @@ function createWindow(): void {
     notifyBridgeStatus()
   })
 
-  mainWindow.webContents.on('did-finish-load', () => {
-    notifyBridgeStatus()
-  })
-
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
@@ -441,12 +457,48 @@ function createWindow(): void {
   })
 
   const handleNavigation = (event: Electron.Event, url: string) => {
-    if (isAppUrl(url)) return
+    // Chromium HTTPS-First may redirect our HTTP UI to https:// — Vite has no
+    // TLS. Rewrite back to http instead of treating it as an external link
+    // (which left the wallet blank and broke every app connect).
+    const decision = decideWalletUiNavigation(url, appUrlPolicy())
+    if (decision.action === 'allow') return
     event.preventDefault()
-    if (isSafeExternalUrl(url)) void shell.openExternal(url)
+    if (decision.action === 'reload-http') {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        log.warn(`[ui] blocked HTTPS upgrade of wallet origin — reloading ${decision.url}`)
+        void mainWindow.loadURL(decision.url)
+      }
+      return
+    }
+    if (decision.action === 'open-external') void shell.openExternal(decision.url)
   }
   mainWindow.webContents.on('will-navigate', handleNavigation)
   mainWindow.webContents.on('will-redirect', handleNavigation)
+
+  let uiRecoverAttempts = 0
+  mainWindow.webContents.on(
+    'did-fail-load',
+    (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+      const fallback = decideUiLoadRecovery({
+        errorCode,
+        validatedURL,
+        isMainFrame,
+        policy: appUrlPolicy(),
+        walletUiLoadUrl: walletUiLoadUrl(),
+        attempts: uiRecoverAttempts,
+      })
+      if (!fallback) return
+      uiRecoverAttempts += 1
+      log.warn(
+        `[ui] load failed (${errorCode} ${errorDescription}) for ${validatedURL} — recovering via ${fallback}`,
+      )
+      void mainWindow?.loadURL(fallback)
+    },
+  )
+  mainWindow.webContents.on('did-finish-load', () => {
+    uiRecoverAttempts = 0
+    notifyBridgeStatus()
+  })
 
   const contentsId = mainWindow.webContents.id
   mainWindow.webContents.on('render-process-gone', (_e, details) => {

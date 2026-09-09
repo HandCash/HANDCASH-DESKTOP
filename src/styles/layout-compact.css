@@ -876,7 +876,7 @@ html:is(.platform-mobile, .layout-compact)
   .wallet-nav-tab-accept[data-selected]:not(:disabled) {
   border-color: hsl(var(--primary));
   background: hsl(var(--primary));
-  color: hsl(var(--primary-foreground));
+  color: #0a0a0a;
   box-shadow: 0 5px 16px color-mix(in srgb, hsl(var(--primary)) 24%, transparent);
 }
 
@@ -888,14 +888,14 @@ html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--primary
   .wallet-nav-tab[data-selected]:hover {
-  color: hsl(var(--primary-foreground));
+  color: #0a0a0a;
 }
 
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-danger[data-selected]:not(:disabled) {
-  border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
-  background: color-mix(in srgb, var(--hc-danger) 72%, white);
+  border-color: color-mix(in srgb, var(--hc-danger) 78%, #fff);
+  background: color-mix(in srgb, var(--hc-danger) 78%, #fff);
   color: #0a0a0a;
   box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
 }

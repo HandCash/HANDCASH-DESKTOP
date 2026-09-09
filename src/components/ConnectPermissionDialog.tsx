@@ -3,6 +3,8 @@ import { Prompt } from '@aeon-ui/react'
 import type { PendingPermission } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorization'
+import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
+import { playWalletSound } from '../wallet/soundService'
 import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
 import { WalletActionBar } from './WalletActionBar'
@@ -77,9 +79,16 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   {home ? (
                     <>
                       {' · '}
-                      <a href={home} target="_blank" rel="noreferrer">
+                      <button
+                        type="button"
+                        className="link-btn"
+                        onClick={() => {
+                          playWalletSound('soft')
+                          launchConnectedApp(pending.origin, home)
+                        }}
+                      >
                         Visit site
-                      </a>
+                      </button>
                     </>
                   ) : null}
                 </Prompt.Description>

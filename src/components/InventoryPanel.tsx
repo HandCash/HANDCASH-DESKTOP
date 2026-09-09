@@ -20,6 +20,7 @@ import {
   collectableIsOnesatFt,
   type Collectable,
 } from '../wallet/collectables'
+import { searchCollectables } from '../wallet/collectableSearch'
 import { subscribeAppActivity } from '../wallet/appActivity'
 import {
   groupCollectables,
@@ -65,6 +66,7 @@ import {
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
 import { getMarketListingAuthorization } from '../wallet/marketListing'
+import { isItemSent } from '../wallet/sentItemGuard'
 import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
@@ -119,6 +121,9 @@ function SelectionCheckbox({
 }
 
 function liveMarketListingPrice(outpoint: string): number | null {
+  // Spent tips can still have a local listing auth until the next write;
+  // never show Listed on something we already hid as sent.
+  if (isItemSent(outpoint)) return null
   const auth = getMarketListingAuthorization({ outpoint })
   if (!auth || (auth.state !== 'active' && auth.state !== 'reserved')) return null
   return auth.priceSats > 0 ? auth.priceSats : null
@@ -622,6 +627,7 @@ export function InventoryPanel() {
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
   const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [tokens, setTokens] = useState<FungibleToken[]>(() => getCachedFungibles())
+  const [query, setQuery] = useState('')
   /** Only true after a successful listOutputs (may be empty). */
   const [ready, setReady] = useState(() => areCollectablesHydrated())
   const [tokensReady, setTokensReady] = useState(() => areFungiblesHydrated())
@@ -744,10 +750,11 @@ export function InventoryPanel() {
   }, [])
 
   const deferredItems = useDeferredValue(items)
-  const visibleItems = useMemo(
-    () => deferredItems.filter((item) => !collectableIsOnesatFt(item)),
-    [deferredItems, tokens],
-  )
+  const deferredQuery = useDeferredValue(query)
+  const visibleItems = useMemo(() => {
+    const nfts = deferredItems.filter((item) => !collectableIsOnesatFt(item))
+    return searchCollectables(deferredQuery, nfts)
+  }, [deferredItems, deferredQuery, tokens])
   const busyOutpoints = useMemo(
     () =>
       new Set(
@@ -825,7 +832,12 @@ export function InventoryPanel() {
   )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, singles, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
-  const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
+  const empty = items.filter((item) => !collectableIsOnesatFt(item)).length === 0 && tokens.length === 0 && ready && tokensReady
+  const searchEmpty =
+    !empty &&
+    !showLoading &&
+    visibleItems.length === 0 &&
+    deferredQuery.trim().length > 0
 
   return (
     <div
@@ -845,7 +857,26 @@ export function InventoryPanel() {
         />
       ) : (
         <div className="nav-section-scroll-body">
-      {tokens.length > 0 ? (
+          <div className="friends-search" role="search">
+            <label className="sr-only" htmlFor="collectables-search-input">
+              Search collectables
+            </label>
+            <input
+              id="collectables-search-input"
+              type="search"
+              placeholder="Search name, traits, id — comma for multiple"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          {searchEmpty ? (
+            <div className="friends-empty">
+              <strong>No collectables found</strong>
+              <span>Try another name, trait, origin, or id.</span>
+            </div>
+          ) : null}
+      {tokens.length > 0 && !deferredQuery.trim() ? (
         <section className="collect-tokens-section" aria-label="Tokens">
           <h3 className="collect-section-title">Tokens</h3>
           <ul

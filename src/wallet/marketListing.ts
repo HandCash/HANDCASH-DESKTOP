@@ -1966,6 +1966,43 @@ export function createMarketSettlementReceipt(args: {
   }
 }
 
+/**
+ * A tip that left the wallet can no longer honor its local listing auth.
+ * Mark active/reserved auths cancelled so Collect does not show a stale
+ * "Listed" badge on a spent (or self-sent) outpoint.
+ */
+export function invalidateMarketListingsForSpentOutpoints(
+  outpoints: readonly string[],
+  reason = 'tip-spent',
+): number {
+  const keys = new Set(
+    outpoints
+      .map((op) => normalizeOutpoint(op))
+      .filter((op) => op.includes('.')),
+  )
+  if (keys.size === 0) return 0
+  const now = Date.now()
+  let changed = 0
+  const next = readAuthorizations().map((entry) => {
+    if (!keys.has(normalizeOutpoint(entry.outpoint))) return entry
+    if (entry.state !== 'active' && entry.state !== 'reserved') return entry
+    changed += 1
+    return {
+      ...entry,
+      state: 'cancelled' as const,
+      updatedAt: now,
+      reason,
+      reservationSaleId: undefined,
+      reservationBuyer: undefined,
+      reservationUntil: undefined,
+      reservationTxCommitment: undefined,
+      reservationIntent: undefined,
+    }
+  })
+  if (changed > 0) writeAuthorizations(next)
+  return changed
+}
+
 export function getMarketListingAuthorization(args: {
   outpoint: string
   nonce?: string

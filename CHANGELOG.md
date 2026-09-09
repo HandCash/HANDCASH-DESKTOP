@@ -1,5 +1,19 @@
 # Changelog
 
+## [1.3.131] - 2026-09-09
+
+### Fixed
+
+- Request-dock Cancel no longer picks up neon green bleed: idle slots are opaque charcoal; danger/primary use black ink on bright fills.
+- Chromium HTTPS-First can no longer blank the wallet UI (`https://localhost:5173`) and leave BRC-100 connects as `renderer-not-ready`.
+- After Accept / Visit site / Connected apps launch, apps open in the embedded in-app browser.
+- Spent tips clear local market listing auth so Collect does not keep a stale Listed badge.
+
+### Added
+
+- Collect search bar (name, traits, origin, ids; comma-separated AND filters).
+- App-connect guardrail tests covering HTTPS UI upgrade, bridge readiness, and CORS.
+
 ## [1.3.130] - 2026-09-09
 
 ### Fixed

@@ -15,7 +15,8 @@ import {
   type ConnectedApp,
   type PendingPrompt,
 } from '../wallet/permissions'
-import { appDisplayName, getPermissionScope } from '../wallet/appIdentity'
+import { appDisplayName, appHomepage, getPermissionScope } from '../wallet/appIdentity'
+import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
 import { activityNavLabel, getActivityById } from '../wallet/appActivity'
 import { getFriendById } from '../wallet/friends'
 import { useCompactShell } from '../wallet/isCompactShell'
@@ -240,6 +241,7 @@ export const WalletNav = memo(function WalletNav({
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
+        launchConnectedApp(pendingPrompt.origin, appHomepage(pendingPrompt.origin))
       } else {
         toastSuccess('Approved', pendingPrompt.title || name)
       }

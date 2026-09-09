@@ -8,6 +8,10 @@ import { generateSelfSignedCert, ensureCertTrusted } from './sslCert.js'
 import { type BridgeWindowSource } from './bridgeWindow.js'
 import { ONE_SAT_APP_CAPABILITIES } from './oneSatAppCapabilities.js'
 import { bridgeDeadlineMessage, bridgeDeadlineMs } from './bridgeDeadline.js'
+import {
+  bridgeConnectUnavailableMessage,
+  bridgeCorsHeaders,
+} from './appConnectGuardrails.js'
 
 type HttpRequestEvent = {
   method: string
@@ -85,21 +89,13 @@ function truncateForLog(text: string): string {
 }
 
 function setCorsHeaders(res: Response): void {
-  res.header('Access-Control-Allow-Origin', '*')
-  res.header('Access-Control-Allow-Headers', '*')
-  res.header('Access-Control-Allow-Methods', '*')
-  res.header('Access-Control-Expose-Headers', '*')
-  res.header('Access-Control-Allow-Private-Network', 'true')
+  for (const [key, value] of Object.entries(bridgeCorsHeaders())) {
+    res.header(key, value)
+  }
 }
 
 function canWriteResponse(res: Response): boolean {
   return !res.writableEnded && !res.destroyed && res.writable
-}
-
-const REFUSAL_DESCRIPTION: Record<string, string> = {
-  'app-quitting': 'wallet is quitting',
-  'window-unavailable': 'wallet window could not be opened',
-  'renderer-not-ready': 'wallet window is still loading',
 }
 
 /**
@@ -240,9 +236,7 @@ export async function startHttpServer(windows: BridgeWindowSource): Promise<{
 
       const acquired = await windows.acquire()
       if (acquired.kind === 'refuse') {
-        throw new Error(
-          `WALLET_BRIDGE_UNAVAILABLE: ${REFUSAL_DESCRIPTION[acquired.reason] ?? acquired.reason} (${acquired.reason})`,
-        )
+        throw new Error(bridgeConnectUnavailableMessage(acquired.reason))
       }
       const target = acquired.window
 

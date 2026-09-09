@@ -204,7 +204,7 @@ export function markItemsSent(
   if (outpoints.length === 0) return
   const records = new Map(readSent())
   const at = Date.now()
-  let marked = 0
+  const spent: string[] = []
   for (const raw of outpoints) {
     const entry = typeof raw === 'string' ? { outpoint: raw } : raw
     const op = key(entry.outpoint)
@@ -216,9 +216,17 @@ export function markItemsSent(
         ? { at, txid: entry.txid.trim().toLowerCase(), settle }
         : { at, settle },
     )
-    marked += 1
+    spent.push(op)
   }
-  if (marked > 0) writeSent(records)
+  if (spent.length === 0) return
+  writeSent(records)
+  void import('./marketListing')
+    .then(({ invalidateMarketListingsForSpentOutpoints }) => {
+      invalidateMarketListingsForSpentOutpoints(spent)
+    })
+    .catch(() => {
+      /* listing module optional at boot */
+    })
 }
 
 export function isItemSent(outpoint: string, now = Date.now()): boolean {
