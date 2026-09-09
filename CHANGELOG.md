@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.122] - 2026-09-09
+
+### Fixed
+
+- Burned tokens leave inventory; stale burn recovery no longer re-locks spends.
+- Contextual action bar hierarchy and slot transitions; clearer action feedback.
+- Widen desktop connected-app cards.
+
 ## [1.3.121] - 2026-09-09
 
 ### Fixed
