@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.128] - 2026-09-09
+
+### Fixed
+
+- Hermetic CI skips overlay contract tests that need a sibling BRC-CLOUD checkout so GitHub can attach installers.
+
 ## [1.3.127] - 2026-09-09
 
 ### Fixed
