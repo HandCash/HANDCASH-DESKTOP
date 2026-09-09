@@ -24,14 +24,21 @@ import {
   verifyProvenanceV2Async,
   type ProvenanceV2,
 } from './oneSatProvenance'
-import { looksLikeOnesatFtTip, tryParseProvenanceFromCi } from './colourCoins'
-import { decodeListedBsv21Tip, listBsv21BinaryTips } from './colourListing'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { prove } from './bsv21Prove'
-import { parseBsv21CustomInstructions } from './bsv21'
-import { buildBsv21SendRemittance, buildBsv21ValueLock, planBsv21Send } from './bsv21Send'
+import {
+  buildBsv21SendRemittance,
+  buildBsv21ValueLock,
+  decodeBsv21Binary,
+  decodeListedBsv21Tip,
+  getTokenIconDataUrl,
+  listBsv21BinaryTips,
+  looksLikeOnesatFtTip,
+  mergeIconTxIntoBeef,
+  parseBsv21CustomInstructions,
+  planBsv21Send,
+  prove,
+  tryParseProvenanceFromCi,
+} from './token'
 import { getBeefForTxidCached } from './beefCache'
-import { mergeIconTxIntoBeef } from './tokenIconResolve'
 import { getProvenVerdict } from './provenCache'
 import { toUnderscoreOutpoint } from './outpointFormat'
 import {
@@ -46,7 +53,6 @@ import {
   type ActivityEntry,
 } from './appActivity'
 import { getCachedCollectables } from './collectables'
-import { getTokenIconDataUrl } from './tokenIconCache'
 import { rememberGhostTx } from './ghostTxSuppress'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import {

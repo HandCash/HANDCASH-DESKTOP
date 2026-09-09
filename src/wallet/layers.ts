@@ -85,13 +85,9 @@
  *   when a spend is waiting, and only ever selects change — assets (`1sat`,
  *   `bsv21`) live in their own baskets and are never touched.
  * - **Tokens (fungible)** → BRC-162 binary in basket `bsv21` (BRC-163 remittance).
- *   units (`amt` per tip; balance = Σ amt). Same BRC-150 provenance branding as
- *   collectables; locked origin supply is optional. Transfers spend tips and
- *   create payee (+ change) 1-sat tips — no BSV-21 re-inscription, no indexer for
- *   custody. See `colourCoins.ts` / `sendColourCoins.ts`.
- * - **Legacy tokens (BSV-21)** → basket `bsv21`; still listed under Collect as
- *   read-only. Wallet-native BSV-21 send is retired. Indexer address scan
- *   (`tokenAddressScan.ts`) is recovery-only.
+ *   Balance = Σ `amt` per tip. Transfers spend 162 inputs and create payee (+ change)
+ *   162 outputs with conserved amount; subject BEEF via BRC-176. See `token/`.
+ *   Legacy JSON BSV-21 rows may remain visible read-only; native JSON send is retired.
  * - **Asset burn** → `burnPlan` + `burnMachine` + `burn`.
  *   This is an explicit, irreversible spend — never local abandon and never a
  *   send/sweep fallback. A 1Sat burn ends tips (and BRC-150 origin when
@@ -116,15 +112,23 @@ export const WALLET_LAYER_MODULES = {
   localState: [
     'session.ts',
     'collectables.ts',
-    'fungibles.ts',
-    'colourCoins.ts',
-    'colourListing.ts',
-    'sendColourCoins.ts',
-    'bsv21.ts',
-    'bsv21TipKind.ts',
-    'bsv21Inscribe.ts',
-    'bsv21SendMachine.ts',
-    'sendFungible.ts',
+    'token/index.ts',
+    'token/types.ts',
+    'token/decode162.ts',
+    'token/list.ts',
+    'token/listTips.ts',
+    'token/send.ts',
+    'token/sendEntry.ts',
+    'token/sendPlan.ts',
+    'token/burn.ts',
+    'token/prove176.ts',
+    'token/settle.ts',
+    'token/issuer.ts',
+    'token/guards.ts',
+    'token/sendMachine.ts',
+    'token/icons/cache.ts',
+    'token/icons/resolve.ts',
+    'token/marketView.ts',
     'burnPlan.ts',
     'burnMachine.ts',
     'burn.ts',
@@ -137,8 +141,7 @@ export const WALLET_LAYER_MODULES = {
     'spendAttempt.ts',
     'itemSettlePath.ts',
     'ingestItemSettle.ts',
-    'ingestColourSettle.ts',
-    'ingestFungibleSettle.ts',
+    'token/settleLegacy.ts',
     'bsvSendMachine.ts',
     'brc29SettlePath.ts',
     'brc29SendMachine.ts',

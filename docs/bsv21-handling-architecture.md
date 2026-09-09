@@ -1,6 +1,8 @@
 # HandCash Desktop — BSV-21 / fungible token handling
 
-SSoT: `src/wallet/layers.ts` (lines 87–99). **Pay balance excludes tokens** — they live in basket `bsv21`, listed under Collect.
+**Superseded by [`token-architecture.md`](token-architecture.md).** Implementation lives in `src/wallet/token/`.
+
+SSoT: `src/wallet/layers.ts`. **Pay balance excludes tokens** — they live in basket `bsv21`, listed under Collect.
 
 ## Two generations (intentional split)
 

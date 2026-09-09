@@ -2,13 +2,13 @@
  * Token icons from local BEEFs only — no content indexers, no identicon.
  */
 import type { Beef } from '@bsv/sdk'
-import type { ActiveWallet } from './session'
-import { normalizeTokenId } from './bsv21'
-import { rememberBeef } from './beefCache'
-import { isOnesatFtMime } from './colourCoins'
-import { parseOrdEnvelope } from './ordinalOwnership'
-import { decodeBProtocol } from './bProtocol'
-import { getTokenIconDataUrl, rememberTokenIcon } from './tokenIconCache'
+import type { ActiveWallet } from '../../session'
+import { normalizeTokenId } from '../types'
+import { rememberBeef } from '../../beefCache'
+import { isOnesatFtMime } from '../guards'
+import { parseOrdEnvelope } from '../../ordinalOwnership'
+import { decodeBProtocol } from '../../bProtocol'
+import { getTokenIconDataUrl, rememberTokenIcon } from '../icons/cache'
 
 function splitOutpoint(outpoint: string): { txid: string; vout: number } | null {
   const id = normalizeTokenId(outpoint) ?? outpoint.trim().toLowerCase().replace('.', '_')
@@ -177,7 +177,7 @@ export async function resolveTokenIconDataUrl(
   if (!wallet) return undefined
   const parts = splitOutpoint(iconOutpoint)
   if (!parts) return undefined
-  const { getLocalBeefForTxid } = await import('./beefCache')
+  const { getLocalBeefForTxid } = await import('../../beefCache')
   const beef = await getLocalBeefForTxid(wallet, parts.txid)
   if (!beef) return undefined
   rememberBeef(parts.txid, beef)
@@ -204,7 +204,7 @@ export async function resolveOnesatFtIconDataUrl(args: {
     console.info(`[1sat-ft-icon] origin=${originShort} tip=${tipShort} beef=miss image=miss`)
     return undefined
   }
-  const { getLocalBeefForTxid, rememberBeefTree } = await import('./beefCache')
+  const { getLocalBeefForTxid, rememberBeefTree } = await import('../../beefCache')
   const originTxid = splitOutpoint(args.origin)?.txid
   if (!originTxid) return undefined
   const beef = await getLocalBeefForTxid(args.wallet, originTxid)
@@ -254,7 +254,7 @@ export async function resolveBsv21IconDataUrl(args: {
   if (!args.origin || !args.wallet) return undefined
   const originParts = splitOutpoint(args.origin)
   if (!originParts) return undefined
-  const { getLocalBeefForTxid, rememberBeef } = await import('./beefCache')
+  const { getLocalBeefForTxid, rememberBeef } = await import('../../beefCache')
   const beef = await getLocalBeefForTxid(args.wallet, originParts.txid)
   if (!beef) return undefined
   rememberBeef(originParts.txid, beef)
@@ -283,7 +283,7 @@ export async function mergeIconTxIntoBeef(
     cacheTokenIconFromBeef(iconOutpoint!, beef)
     return
   }
-  const { getLocalBeefForTxid, rememberBeef } = await import('./beefCache')
+  const { getLocalBeefForTxid, rememberBeef } = await import('../../beefCache')
   const extra = await getLocalBeefForTxid(wallet, parts.txid)
   if (!extra) return
   rememberBeef(parts.txid, extra)

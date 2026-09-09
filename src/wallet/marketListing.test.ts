@@ -14,9 +14,9 @@ import {
   resolveOrdinalListingOrigin,
 } from './marketListing'
 import { rememberProvenVerdict } from './provenCache'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { buildBsv21ValueLock } from './bsv21Send'
-import { buildColourCustomInstructions } from './colourCoins'
+import { decodeBsv21Binary } from './token'
+import { buildBsv21ValueLock } from './token'
+import { buildColourCustomInstructions } from './token'
 import {
   chooseMarketCancelPath,
   chooseMarketListingPath,

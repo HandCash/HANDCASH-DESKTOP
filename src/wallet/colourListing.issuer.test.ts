@@ -1,8 +1,8 @@
 import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { sigmaSignDeployLockingScript } from './bsv21Issuer'
-import { buildBsv21ValueLock } from './bsv21Send'
-import { decodeListedBsv21Tip } from './colourListing'
+import { sigmaSignDeployLockingScript } from './token'
+import { buildBsv21ValueLock } from './token'
+import { decodeListedBsv21Tip } from './token'
 
 describe('decodeListedBsv21Tip issuer', () => {
   const root = PrivateKey.fromRandom()

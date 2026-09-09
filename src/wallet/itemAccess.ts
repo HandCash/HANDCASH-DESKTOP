@@ -10,7 +10,7 @@
  */
 
 import { normalizeAppHost } from './appIdentity'
-import { decodeBsv21Binary } from './bsv21Binary'
+import { decodeBsv21Binary } from './token'
 import { INDEX_SCHEME } from './indexExpansionTypes'
 
 /** Storage basket that holds collectables — not spendable under normal pay. */

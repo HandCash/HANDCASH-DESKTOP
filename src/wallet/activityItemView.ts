@@ -1,7 +1,6 @@
 import type { ActivityItem } from './appActivity'
 import { getCachedCollectables } from './collectables'
-import { getCachedFungibles } from './fungibles'
-import { getTokenIconDataUrl } from './tokenIconCache'
+import { getCachedFungibles, getTokenIconDataUrl } from './token'
 import { getResolvedInscription, isThinResolution } from './inscriptionCache'
 import { contentUrlForOrigin } from './oneSatImport'
 import { getProvenVerdict } from './provenCache'

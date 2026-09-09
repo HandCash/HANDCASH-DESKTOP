@@ -15,8 +15,8 @@ import {
   normalizeCosignPubKey,
   parseBsv21Cosign,
   type Bsv21Cosign,
-} from './bsv21TipKind'
-import { normalizeIssuerPubKey } from './bsv21Issuer'
+} from './tipKind'
+import { normalizeIssuerPubKey } from './issuer'
 
 export type { Bsv21Cosign }
 export {
@@ -24,13 +24,15 @@ export {
   classifyBsv21TipKind,
   chooseBsv21SendPath,
   detectCosignFromLockingScript,
-} from './bsv21TipKind'
+  normalizeCosignPubKey,
+  parseBsv21Cosign,
+} from './tipKind'
 export {
   issuerFromRemittance,
   issuerFromSigmaLockingScript,
   normalizeIssuerPubKey,
   shortIssuerLabel,
-} from './bsv21Issuer'
+} from './issuer'
 
 export const BSV21_BASKET = 'bsv21' as const
 export const BSV21_MIME = 'application/bsv-20' as const

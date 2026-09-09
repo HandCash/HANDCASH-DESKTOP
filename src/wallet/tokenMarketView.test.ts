@@ -1,11 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { ActivityEntry } from './appActivity'
-import type { FungibleToken } from './bsv21'
+import type { FungibleToken } from './token'
 import {
   attachMarketListingToToken,
   listActiveBsv21MarketListings,
   tokenMarketPriceHistory,
-} from './tokenMarketView'
+} from './token'
 
 vi.mock('./marketListing', () => ({
   getMarketListingAuthorization: vi.fn(({ outpoint }: { outpoint: string }) => {

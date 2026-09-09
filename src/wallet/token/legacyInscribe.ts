@@ -4,9 +4,9 @@
  * Same shape mint-studio uses for deploy/mint/transfer — kept local so the
  * wallet can send fungibles without depending on that proprietary package.
  */
-import { BSV21_MIME, BSV21_PROTOCOL, normalizeTokenId } from './bsv21'
-import { ordEnvelopeHex } from './ordScriptPush'
-import { p2pkhScriptHex } from './ordinalOwnership'
+import { BSV21_MIME, BSV21_PROTOCOL, normalizeTokenId } from './types'
+import { ordEnvelopeHex } from '../ordScriptPush'
+import { p2pkhScriptHex } from '../ordinalOwnership'
 
 const encoder = new TextEncoder()
 

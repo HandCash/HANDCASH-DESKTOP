@@ -16,12 +16,12 @@ import {
   issuerFromColourTags,
   normalizeColourOrigin,
   type ColourTip,
-} from './colourCoins'
+} from './guards'
 import {
   BSV21_BASKET,
-} from './bsv21'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { fillTokenParentBodies } from './bsv21Prove'
+} from './types'
+import { decodeBsv21Binary } from './decode162'
+import { fillTokenParentBodies } from './prove176'
 import {
   assertBsv21SendConservation,
   buildBsv21SendOutputs,
@@ -30,45 +30,45 @@ import {
   planBsv21Send,
   tipFromBsv21Script,
   type Bsv21SendTip,
-} from './bsv21Send'
-import { listBsv21BinaryTips, listBsv21BinaryTokens } from './colourListing'
-import { mergeIconTxIntoBeef } from './tokenIconResolve'
+} from './sendPlan'
+import { listBsv21BinaryTips, listBsv21BinaryTokens } from './listTips'
+import { mergeIconTxIntoBeef } from './icons/resolve'
 import {
   failOutboundSendPending,
   noteOutboundSendComplete,
   noteOutboundSendPending,
-} from './appActivity'
+} from '../appActivity'
 import {
   buildMergedInputBeef,
   getBeefForTxidCached,
   rememberBeefTree,
-} from './beefCache'
+} from '../beefCache'
 import {
   normalizeOutpoint,
   setCollectableVerifyWalkDeferred,
   resumeCollectableVerifyWalk,
-} from './collectables'
-import { scheduleHistoryBackupPush } from './deviceSync'
-import { listFriends, resolvePaymentRecipient } from './friends'
-import { stampBrc164Id } from './itemAccess'
-import { isCovenantLockedScript } from './collectableTipKind'
-import { p2pkhScriptHex } from './ordinalOwnership'
-import { assertOnlineForPayment } from './paymentPolicy'
-import { clearPaymentProgress, setPaymentProgress } from './paymentProgress'
+} from '../collectables'
+import { scheduleHistoryBackupPush } from '../deviceSync'
+import { listFriends, resolvePaymentRecipient } from '../friends'
+import { stampBrc164Id } from '../itemAccess'
+import { isCovenantLockedScript } from '../collectableTipKind'
+import { p2pkhScriptHex } from '../ordinalOwnership'
+import { assertOnlineForPayment } from '../paymentPolicy'
+import { clearPaymentProgress, setPaymentProgress } from '../paymentProgress'
 import {
   beginPendingSend,
   clearPendingSend,
   completePendingSend,
-} from './pendingSend'
-import { broadcastAtomicBeef } from './sendBrc29Payment'
+} from '../pendingSend'
+import { broadcastAtomicBeef } from '../sendBrc29Payment'
 import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
-} from './sendFungible'
-import { getActiveWallet, type ActiveWallet } from './session'
-import { markItemsSent } from './sentItemGuard'
-import { runExclusiveSpend } from './spendGuard'
-import { leaseSpendPriority } from './walletCoordinator'
+} from './sendEntry'
+import { getActiveWallet, type ActiveWallet } from '../session'
+import { markItemsSent } from '../sentItemGuard'
+import { runExclusiveSpend } from '../spendGuard'
+import { leaseSpendPriority } from '../walletCoordinator'
 
 function wireOutpoint(op: string): string {
   return op.includes('_') ? op.replace(/_(\d+)$/, '.$1') : op
@@ -107,8 +107,8 @@ async function recoverBsv21TipsFromLocalBeef(
   wallet: ActiveWallet,
   tokenId: string,
 ): Promise<Bsv21SendTip[]> {
-  const { getLocalBeefForTxid } = await import('./beefCache')
-  const { getCachedFungibles } = await import('./fungibles')
+  const { getLocalBeefForTxid } = await import('../beefCache')
+  const { getCachedFungibles } = await import('./list')
   const want = normalizeColourOrigin(tokenId)
   const candidates = new Set<string>()
   for (const token of getCachedFungibles()) {
@@ -261,7 +261,7 @@ export async function signColourTipTransfer(args: {
       isReviewActionsError,
       formatReviewActionsError,
       recoverFromReviewActions,
-    } = await import('./actionReview')
+    } = await import('../actionReview')
     if (isReviewActionsError(err)) {
       await recoverFromReviewActions({
         err,
@@ -418,7 +418,7 @@ export async function sendColourCoins(args: {
       const wallet = getActiveWallet()
       if (!wallet) throw new Error('Wallet locked')
       {
-        const { abortReservedActionBatches } = await import('./actionReview')
+        const { abortReservedActionBatches } = await import('../actionReview')
         await abortReservedActionBatches(wallet, { budgetMs: 1500 })
       }
 
@@ -558,7 +558,7 @@ export async function sendColourCoins(args: {
         )
       } catch (err) {
         const { isReservedActionBatchError, abortReservedActionBatches } =
-          await import('./actionReview')
+          await import('../actionReview')
         if (isReservedActionBatchError(err)) {
           await abortReservedActionBatches(wallet)
           created = await withFungibleCreateActionTimeout(
@@ -722,7 +722,7 @@ export async function sendColourCoins(args: {
       }
 
       const { sealSpentInputsOfSignedTx, releaseSealedInputsOfUnsentTx } =
-        await import('./staleOutputRelease')
+        await import('../staleOutputRelease')
       await sealSpentInputsOfSignedTx(txid, atomic)
       // Signed — settle owns broadcast; do not abort this reference on peer miss.
       actionReference = undefined
@@ -733,7 +733,7 @@ export async function sendColourCoins(args: {
           'Delivering token to recipient',
           primary.outpoint,
         )
-        const { notifyPeerItemIncoming } = await import('./messageTransport')
+        const { notifyPeerItemIncoming } = await import('../messageTransport')
         const friend = listFriends().find(
           (f) => f.identityKey.toLowerCase() === peerKey,
         )
@@ -745,7 +745,7 @@ export async function sendColourCoins(args: {
           dec: 0,
           ...(args.icon ? { icon: args.icon } : {}),
         }
-        const { recordTransactionStage } = await import('./transactionTelemetry')
+        const { recordTransactionStage } = await import('../transactionTelemetry')
         try {
           const delivered = await notifyPeerItemIncoming({
             recipientIdentityKey: peerKey,
@@ -763,7 +763,7 @@ export async function sendColourCoins(args: {
               txid,
             })
           } else {
-            const { enqueuePendingItemRemit } = await import('./pendingItemOutbox')
+            const { enqueuePendingItemRemit } = await import('../pendingItemOutbox')
             enqueuePendingItemRemit({
               payeeIdentityKey: peerKey,
               senderIdentityKey: wallet.identityKey,
@@ -780,7 +780,7 @@ export async function sendColourCoins(args: {
             })
           }
         } catch (error) {
-          const { enqueuePendingItemRemit } = await import('./pendingItemOutbox')
+          const { enqueuePendingItemRemit } = await import('../pendingItemOutbox')
           enqueuePendingItemRemit({
             payeeIdentityKey: peerKey,
             senderIdentityKey: wallet.identityKey,
@@ -839,7 +839,7 @@ export async function sendColourCoins(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendColourCoins')
-      const { paintFungibleAfterSpend, getFungible } = await import('./fungibles')
+      const { paintFungibleAfterSpend, getFungible } = await import('../list')
       paintFungibleAfterSpend({
         tokenId: origin,
         remainingAmt,
@@ -886,7 +886,7 @@ export async function sendColourCoins(args: {
       const active = getActiveWallet()
       if (active) {
         const { releaseStuckNosends, abortReservedActionBatches } =
-          await import('./actionReview')
+          await import('../actionReview')
         await releaseStuckNosends(active)
         await abortReservedActionBatches(active)
         void listBsv21BinaryTokens(active).catch(() => {})

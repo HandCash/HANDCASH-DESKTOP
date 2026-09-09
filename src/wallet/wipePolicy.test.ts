@@ -16,6 +16,7 @@ describe('wipePolicy', () => {
     expect(shouldWipeHandcashKey('handcash.brc100.appActivity')).toBe(true)
     // These prefixes survived the old brc100-only wipe and caused ghost UI.
     expect(shouldWipeHandcashKey('handcash.fungibles.list.v1')).toBe(true)
+    expect(shouldWipeHandcashKey('handcash.tokens.list.v1')).toBe(true)
     expect(shouldWipeHandcashKey('handcash.brc29.pendingOutbox.v1')).toBe(true)
     expect(shouldWipeHandcashKey('handcash.brc150.remittance.v1')).toBe(true)
     expect(shouldWipeHandcashKey('handcash.cloudBackup.watchdog.v1')).toBe(true)

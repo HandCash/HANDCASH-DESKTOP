@@ -35,8 +35,7 @@ import {
   type PurchaseMarketListingArgs,
 } from './marketListing'
 import { parseProvenanceV2 } from './oneSatProvenance'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { buildBsv21ValueLock } from './bsv21Send'
+import { buildBsv21ValueLock, decodeBsv21Binary } from './token'
 import {
   MARKET_ITEM_VOUT,
   MARKET_OFFER_DEPOSIT_SATS,

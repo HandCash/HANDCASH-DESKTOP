@@ -1,7 +1,7 @@
 import { Beef, LockingScript, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { encodeBsv21Binary } from './bsv21Binary'
-import { fillTokenParentBodies, prove } from './bsv21Prove'
+import { encodeBsv21Binary } from './token'
+import { fillTokenParentBodies, prove } from './token'
 
 const P2PKH_REST = `76a914${'11'.repeat(20)}88ac`
 

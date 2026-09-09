@@ -1,6 +1,6 @@
 import { assign, setup } from 'xstate'
 import type { ActivityEntry } from '../wallet/appActivity'
-import type { FungibleToken } from '../wallet/fungibles'
+import type { FungibleToken } from '../wallet/token'
 
 export type FungibleDetailsInput = {
   token: FungibleToken | null

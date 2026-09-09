@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildBsv21BurnLockingScript } from './bsv21Inscribe'
+import { buildBsv21BurnLockingScript } from './token'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
 

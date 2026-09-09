@@ -6,7 +6,7 @@ import {
   detectCosignFromLockingScript,
   normalizeCosignPubKey,
   parseBsv21Cosign,
-} from './bsv21TipKind'
+} from './token'
 
 /** MNEE-shaped suffix: P2PKH CHECKSIGVERIFY + cosigner pubkey + CHECKSIG */
 const COSIGN_PUB =

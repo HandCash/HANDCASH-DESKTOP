@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import type { Bsv21Utxo } from './bsv21'
+import type { Bsv21Utxo } from './token'
 import {
   burnRecoveryOutputSatoshis,
   planBsv21Burn,

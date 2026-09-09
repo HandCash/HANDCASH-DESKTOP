@@ -10,11 +10,15 @@ const resolved = vi.fn(() => null as Record<string, unknown> | null)
 const verdict = vi.fn(() => null as Record<string, unknown> | null)
 
 vi.mock('./collectables', () => ({ getCachedCollectables: () => held() }))
-vi.mock('./fungibles', () => ({ getCachedFungibles: () => heldTokens() }))
-vi.mock('./tokenIconCache', () => ({
-  getTokenIconDataUrl: (op: string | undefined | null) =>
-    op ? `data:image/png;base64,${op}` : undefined,
-}))
+vi.mock('./token', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./token')>()
+  return {
+    ...actual,
+    getCachedFungibles: () => heldTokens(),
+    getTokenIconDataUrl: (op: string | undefined | null) =>
+      op ? `data:image/png;base64,${op}` : undefined,
+  }
+})
 vi.mock('./inscriptionCache', () => ({
   getResolvedInscription: () => resolved(),
   isThinResolution: (r: { mimeType?: string; traits?: unknown[] } | null) =>

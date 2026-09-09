@@ -6,7 +6,7 @@ import {
 import {
   clearFungiblesCache,
   getCachedFungibles,
-} from './fungibles'
+} from './token'
 
 const TXID = 'a'.repeat(64)
 const ADDR = '1HandCashTestAddress'

@@ -38,14 +38,15 @@ vi.mock('./collectables', () => ({
   sendCollectable: mocks.sendCollectable,
 }))
 
-vi.mock('./fungibles', () => ({
-  getFungible: mocks.getFungible,
-  getCachedFungibles: () => [],
-}))
-
-vi.mock('./sendFungible', () => ({
-  sendFungible: mocks.sendFungible,
-}))
+vi.mock('./token', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./token')>()
+  return {
+    ...actual,
+    getFungible: mocks.getFungible,
+    getCachedFungibles: () => [],
+    sendFungible: mocks.sendFungible,
+  }
+})
 
 vi.mock('./beefCache', () => ({
   getBeefForTxidCached: mocks.getBeefForTxidCached,

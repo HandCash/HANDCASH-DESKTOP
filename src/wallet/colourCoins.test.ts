@@ -15,7 +15,7 @@ import {
   selectColourTipsForAmount,
   verifyColourTipProvenance,
   type ColourTip,
-} from './colourCoins'
+} from './token'
 import { buildOnesatFtMintLockingScript } from './onesatFtInscribe'
 
 const ORIGIN = `${'ab'.repeat(32)}_0`

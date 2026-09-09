@@ -25,8 +25,8 @@ import { isCollectableOutpointSpendable, sendCollectable } from './collectables'
 import {
   getCachedFungibles,
   getFungible,
-} from './fungibles'
-import { sendFungible } from './sendFungible'
+  sendFungible,
+} from './token'
 import { counterpartyMaySettle } from './sentItemGuard'
 import { getBeefForTxidCached } from './beefCache'
 import {

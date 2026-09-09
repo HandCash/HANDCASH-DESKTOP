@@ -1,14 +1,14 @@
 import { LockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { buildOnesatFtMintLockingScript } from './onesatFtInscribe'
-import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
+import { buildOnesatFtMintLockingScript } from '../onesatFtInscribe'
+import { hasOrdEnvelope, parseOrdEnvelope } from '../ordinalOwnership'
 import {
   BSV21_TAG_HEX,
   decodeBsv21Binary,
   encodeBsv21Binary,
   tokenIdFromWire,
   tokenIdToWire,
-} from './token'
+} from './decode162'
 
 const P2PKH_REST = `76a914${'11'.repeat(20)}88ac`
 const TOKEN_ID = `${'00112233445566778899aabbccddeeff'.repeat(2)}_7`

@@ -19,16 +19,16 @@ import {
   buildBsv21CustomInstructions,
   bsv21Tags,
   normalizeTokenId,
-} from './bsv21'
+} from './types'
 import {
   decodeBsv21Binary,
   encodeBsv21Binary,
   parseDisplayOutpoint,
-} from './bsv21Binary'
-import { prove, type Bsv21ProofResult } from './bsv21Prove'
-import { stampBrc164Id } from './itemAccess'
-import { p2pkhScriptHex } from './ordinalOwnership'
-import { toUnderscoreOutpoint } from './outpointFormat'
+} from './decode162'
+import { prove, type Bsv21ProofResult } from './prove176'
+import { stampBrc164Id } from '../itemAccess'
+import { p2pkhScriptHex } from '../ordinalOwnership'
+import { toUnderscoreOutpoint } from '../outpointFormat'
 
 const ONESAT_FT_MIME = 'application/1sat-ft+json'
 const ONESAT_FT_MIME_HEX = [...new TextEncoder().encode(ONESAT_FT_MIME)]

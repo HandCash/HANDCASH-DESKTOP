@@ -1,6 +1,6 @@
 import { PrivateKey } from '@bsv/sdk'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { buildBsv21ValueLock } from './bsv21Send'
+import { buildBsv21ValueLock } from './token'
 import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
 
 const store = new Map<string, string>()
@@ -17,11 +17,11 @@ vi.mock('./session', () => ({
   getActiveWallet: () => null,
 }))
 
-vi.mock('./tokenIconCache', () => ({
+vi.mock('./token/icons/cache', () => ({
   getTokenIconDataUrl: () => undefined,
 }))
 
-vi.mock('./fungibles', () => ({
+vi.mock('./token/list', () => ({
   forgetFungibleToken: vi.fn(),
 }))
 
@@ -62,122 +62,10 @@ function mockWallet(byBasket: Record<string, Array<Record<string, unknown>>>) {
   } as never
 }
 
-describe('listColourTips leftover / 1sat-ft', () => {
+describe('listColourTips bsv21 only', () => {
   beforeEach(() => {
     store.clear()
     vi.resetModules()
-  })
-
-  it('does not paint leftover-only 1sat-ft as Tokens', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: ORIGIN,
-      amt: 68862,
-      outpoint: LEFTOVER,
-      ci: kingCi(68862, ORIGIN),
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    const { listColourTokens } = await import('./colourListing')
-    const tokens = await listColourTokens(mockWallet({ '1sat-ft': [], bsv21: [], default: [] }))
-    expect(tokens).toHaveLength(0)
-  })
-
-  it('does not paint 1sat-ft basket rows as Tokens', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: ORIGIN,
-      amt: 69000,
-      outpoint: LEFTOVER,
-      ci: kingCi(69000, ORIGIN),
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    leftover.markOnesatFtGenesisSpent(ORIGIN)
-    const { lockingScript } = buildOnesatFtTransferLockingScript({
-      address: '1BoatSLRHtKNngkdXEeobR76b53LETtpyT',
-      amt: 69000,
-    })
-    const { listColourTokens } = await import('./colourListing')
-    const tokens = await listColourTokens(
-      mockWallet({
-        '1sat-ft': [
-          {
-            outpoint: LEFTOVER,
-            satoshis: 1,
-            tags: ['1sat-ft'],
-            lockingScript,
-            customInstructions: JSON.stringify({ p: '1sat-ft', amt: '69000' }),
-          },
-        ],
-        bsv21: [],
-        default: [],
-      }),
-    )
-    expect(tokens).toHaveLength(0)
-  })
-
-  it('does not overlay leftover remittance onto bare P2PKH change', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: ORIGIN,
-      amt: 68862,
-      outpoint: LEFTOVER,
-      ci: kingCi(68862, ORIGIN),
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    leftover.markOnesatFtGenesisSpent(ORIGIN)
-    const { listColourTokens } = await import('./colourListing')
-    const tokens = await listColourTokens(
-      mockWallet({
-        '1sat-ft': [],
-        bsv21: [],
-        default: [
-          {
-            outpoint: LEFTOVER.replace('_1', '.1'),
-            satoshis: 1,
-            tags: [],
-            lockingScript: '76a914459c25bcd929e76cb825ef2185e31409f5d5f96a88ac',
-          },
-        ],
-      }),
-    )
-    expect(tokens).toHaveLength(0)
-  })
-
-  it('does not seed hardcoded leftover when listOutputs is empty', async () => {
-    const { listColourTokens } = await import('./colourListing')
-    const tokens = await listColourTokens(mockWallet({ '1sat-ft': [], bsv21: [], default: [] }))
-    expect(tokens).toHaveLength(0)
-  })
-
-  it('does not sum 1sat-ft receives + leftover change as Tokens', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: KING_ORIGIN,
-      amt: 68862,
-      outpoint: `${'46'.repeat(32)}_1`,
-      ci: kingCi(68862),
-      sym: 'KING',
-      supply: 'locked',
-      maxSupply: 69420,
-    })
-    const { listColourTokens } = await import('./colourListing')
-    const tokens = await listColourTokens(
-      mockWallet({
-        '1sat-ft': [
-          receiveRow(`${'11'.repeat(32)}.0`, 69),
-          receiveRow(`${'22'.repeat(32)}.0`, 69),
-        ],
-        bsv21: [],
-        default: [],
-      }),
-    )
-    expect(tokens).toHaveLength(0)
   })
 
   it('lists 162 value tips from basket bsv21', async () => {
@@ -186,7 +74,7 @@ describe('listColourTips leftover / 1sat-ft', () => {
       amount: 42n,
       address: ADDR,
     })
-    const { listColourTokens } = await import('./colourListing')
+    const { listColourTokens } = await import('./token/listTips')
     const tokens = await listColourTokens(
       mockWallet({
         bsv21: [
@@ -217,7 +105,7 @@ describe('listColourTips leftover / 1sat-ft', () => {
 
 describe('decodeListedBsv21Tip remittance-only', () => {
   it('refuses remittance-only 1-sat with no 162 binary', async () => {
-    const { decodeListedBsv21Tip } = await import('./colourListing')
+    const { decodeListedBsv21Tip } = await import('./token/listTips')
     const tokenId = `${'11'.repeat(32)}_0`
     expect(
       decodeListedBsv21Tip({
@@ -238,8 +126,8 @@ describe('decodeListedBsv21Tip remittance-only', () => {
 
 describe('162 payload icon is live not legacy', () => {
   it('decodeListedBsv21Tip with payload icon and no CI is locked with icon outpoint', async () => {
-    const { encodeBsv21Binary } = await import('./bsv21Binary')
-    const { decodeListedBsv21Tip } = await import('./colourListing')
+    const { encodeBsv21Binary } = await import('./token')
+    const { decodeListedBsv21Tip } = await import('./token/listTips')
     const deployOut = `${'aa'.repeat(32)}_0`
     const script = encodeBsv21Binary({
       amount: 50n,

@@ -6,7 +6,7 @@ import { unlockVault, unlockVaultWithDevice } from './vault'
 import { clearActiveWallet } from './session'
 import { cancelPendingPermissions, clearPermissionSession } from './permissions'
 import { clearCollectablesCache } from './collectables'
-import { clearFungiblesCache } from './fungibles'
+import { clearFungiblesCache } from './token'
 import { durableForgetCached, durableRemoveItem } from './durableStorage'
 import { listLocalHandcashKeysToWipe } from './wipePolicy'
 

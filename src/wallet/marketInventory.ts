@@ -1,9 +1,9 @@
 import type { WalletInterface } from '@bsv/sdk'
-import { bsv21Tags } from './bsv21'
+import { bsv21Tags } from './token'
 import { getCachedCollectables, listOutputsWithTimeout } from './collectables'
 import type { ActiveWallet } from './session'
 import type { Collectable } from './collectables'
-import { getCachedFungibles } from './fungibles'
+import { getCachedFungibles } from './token'
 import { authenticityFromProvenCache, getProvenVerdict } from './provenCache'
 import { toDottedOutpoint, toUnderscoreOutpoint } from './outpointFormat'
 import {

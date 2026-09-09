@@ -4,10 +4,13 @@
  *
  * Real BSV-21 (application/bsv-20 + valid JSON) and 1sat-ft stay put.
  */
-import { isBsv21Mime, parseBsv21Json } from './bsv21'
+import {
+  BSV21_BASKET,
+  isBsv21Mime,
+  isOnesatFtMime,
+  parseBsv21Json,
+} from './token'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
-import { BSV21_BASKET } from './bsv21'
-import { isOnesatFtMime } from './colourCoins'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { stampBrc164Id } from './itemAccess'
 import { markOneSatImported } from './oneSatImportGuard'

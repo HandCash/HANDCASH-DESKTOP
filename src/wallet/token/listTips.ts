@@ -2,7 +2,7 @@
  * List fungible tips. Tokens are BRC-162 value tips in basket `bsv21` (BRC-163).
  * 1sat-ft leftover overlay and basket `1sat-ft` are not Tokens.
  */
-import { getActiveWallet, type ActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from '../session'
 import {
   aggregateFungibles,
   BSV21_BASKET,
@@ -12,16 +12,16 @@ import {
   parseBsv21CustomInstructions,
   type Bsv21Op,
   type Bsv21Utxo,
-} from './bsv21'
-import { decodeBsv21Binary, iconOutpointFromPayload } from './bsv21Binary'
-import { tipFromBsv21Script } from './bsv21Send'
-import { durableGetItem, durableSetItem } from './durableStorage'
-import { isItemSent } from './sentItemGuard'
+} from './types'
+import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
+import { tipFromBsv21Script } from './sendPlan'
+import { durableGetItem, durableSetItem } from '../durableStorage'
+import { isItemSent } from '../sentItemGuard'
 import {
   looksLikeOnesatFtTip,
   type ColourTip,
   type ColourToken,
-} from './colourCoins'
+} from './guards'
 
 export type { ColourToken, ColourTip }
 
@@ -80,7 +80,7 @@ async function capFromLocalDeploy(
   if (!m) return undefined
   const txid = m[1]!.toLowerCase()
   const vout = Number(m[2])
-  const { getLocalBeefForTxid } = await import('./beefCache')
+  const { getLocalBeefForTxid } = await import('../beefCache')
   const beef = await getLocalBeefForTxid(wallet, txid)
   const tx = beef?.findTxid(txid)?.tx
   const script = tx?.outputs?.[vout]?.lockingScript

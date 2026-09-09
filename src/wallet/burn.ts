@@ -20,16 +20,14 @@ import {
 import { burnMachine } from './burnMachine'
 import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
 import {
-  buildBsv21BurnLockingScript,
-  buildBsv21TransferLockingScript,
-} from './bsv21Inscribe'
-import {
   BSV21_BASKET,
   bsv21Tags,
+  buildBsv21BurnLockingScript,
   buildBsv21CustomInstructions,
+  buildBsv21TransferLockingScript,
   normalizeTokenId,
   type Bsv21Utxo,
-} from './bsv21'
+} from './token'
 import { refreshFromChainDuringSpend } from './chainIngest'
 import {
   getCachedCollectables,
@@ -42,7 +40,7 @@ import {
   getFungible,
   listFungibleTips,
   paintFungibleAfterSpend,
-} from './fungibles'
+} from './token'
 import { stampBrc164Id } from './itemAccess'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { scriptPaysAddress } from './ordinalOwnership'

@@ -3,7 +3,7 @@
  * items-market ItemWidget), not the side-by-side fungible hero grid.
  */
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { formatFungibleAmount } from '../wallet/fungibles'
+import { formatFungibleAmount } from '../wallet/token'
 import {
   formatPrimaryFromSats,
   formatSecondaryFromSats,

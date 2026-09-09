@@ -4,7 +4,7 @@
  * Cosigner-gated tips (e.g. MNEE) MUST NOT fall through to plain createAction.
  * Cosign is optional — plain owner-only tips use path `plain`.
  */
-import { hasSpendableP2pkhBranch, normalizeLockingScriptHex } from './collectableTipKind'
+import { hasSpendableP2pkhBranch, normalizeLockingScriptHex } from '../collectableTipKind'
 
 /** Compressed secp256k1 pubkey hex (33 bytes). */
 const COSIGN_PUBKEY_RE = /^[0-9a-f]{66}$/i

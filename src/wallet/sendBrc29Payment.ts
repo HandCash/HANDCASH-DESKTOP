@@ -1067,7 +1067,7 @@ export async function ingestPaymentsFromTipHints(
         const asset = hint.asset
         const result =
           asset?.kind === 'fungible'
-            ? await import('./ingestFungibleSettle').then(
+            ? await import('./token/settle').then(
                 ({ internalizePeerFungibleSettle }) =>
                   internalizePeerFungibleSettle({
                     txid: hint.txid,
@@ -1078,7 +1078,7 @@ export async function ingestPaymentsFromTipHints(
                   }),
               )
             : asset?.kind === '1sat-ft'
-              ? await import('./ingestColourSettle').then(
+              ? await import('./token/settleLegacy').then(
                   ({ internalizePeerColourSettle }) =>
                     internalizePeerColourSettle({
                       txid: hint.txid,

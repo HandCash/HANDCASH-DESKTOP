@@ -1,6 +1,6 @@
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
-import { bsv21SendMachine } from './bsv21SendMachine'
+import { bsv21SendMachine } from './token'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
 

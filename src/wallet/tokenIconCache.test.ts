@@ -3,7 +3,7 @@ import {
   getTokenIconDataUrl,
   rememberTokenIcon,
   tokenIconBytes,
-} from './tokenIconCache'
+} from './token'
 
 describe('tokenIconCache', () => {
   it('round-trips icon bytes as a data URL', () => {

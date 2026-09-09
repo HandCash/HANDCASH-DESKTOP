@@ -4,37 +4,37 @@
  * never basket `1sat-ft`. 1sat NFT settle stays on ingestItemSettle.
  */
 import { Beef } from '@bsv/sdk'
-import type { AtomicBeefPurpose } from './beefCache'
-import { rememberBeefTree } from './beefCache'
-import { normalizeColourOrigin } from './colourCoins'
-import { listBsv21BinaryTokens } from './colourListing'
+import type { AtomicBeefPurpose } from '../beefCache'
+import { rememberBeefTree } from '../beefCache'
+import { normalizeColourOrigin } from './guards'
+import { listBsv21BinaryTokens } from './listTips'
 import {
   BSV21_BASKET,
   buildBsv21CustomInstructions,
   bsv21Tags,
-} from './bsv21'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { scheduleHistoryBackupPush } from './deviceSync'
-import { stampBrc164Id } from './itemAccess'
+} from './types'
+import { decodeBsv21Binary } from './decode162'
+import { scheduleHistoryBackupPush } from '../deviceSync'
+import { stampBrc164Id } from '../itemAccess'
 import {
   beginOneSatImport,
   markOneSatImported,
   markOneSatImportFailed,
-} from './oneSatImportGuard'
-import { scriptPaysAddress } from './ordinalOwnership'
-import { broadcastAtomicBeef } from './sendBrc29Payment'
-import { getActiveWallet } from './session'
+} from '../oneSatImportGuard'
+import { scriptPaysAddress } from '../ordinalOwnership'
+import { broadcastAtomicBeef } from '../sendBrc29Payment'
+import { getActiveWallet } from '../session'
 import {
   clearInboundReceivePending,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
-} from './appActivity'
-import type { ItemTransferAsset } from './messageStore'
+} from '../appActivity'
+import type { ItemTransferAsset } from '../messageStore'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
   withRestoredInternalizeStatus,
-} from './peerIngestHelpers'
+} from '../peerIngestHelpers'
 
 type ColourAsset = Extract<ItemTransferAsset, { kind: '1sat-ft' }>
 
@@ -107,7 +107,7 @@ export async function internalizePeerColourSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
       atomic = await getAtomicBeefBinaryForTxid(active, id, {
         purpose: opts.beefPurpose,
       })

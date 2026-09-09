@@ -77,7 +77,7 @@ describe('BSV-21 mint inputBEEF', () => {
   })
 
   it('signs against the caller BEEF when the tip ancestry cannot be proven yet', async () => {
-    const { enrichCreateActionForBsv21Issuer } = await import('./bsv21Issuer')
+    const { enrichCreateActionForBsv21Issuer } = await import('./token/issuer')
     const { binary, outpoint } = unminedTipBeef()
     // An indexer with no proof to give: hydration would never come back.
     hydrateInputBeef.mockImplementation(() => new Promise(() => {}))
@@ -105,7 +105,7 @@ describe('BSV-21 mint inputBEEF', () => {
   })
 
   it('prefers hydrated BEEF when proofs are actually available', async () => {
-    const { enrichCreateActionForBsv21Issuer } = await import('./bsv21Issuer')
+    const { enrichCreateActionForBsv21Issuer } = await import('./token/issuer')
     const { binary, outpoint } = unminedTipBeef()
     const hydrated = [...binary, 0]
     hydrateInputBeef.mockResolvedValue(hydrated)
@@ -123,7 +123,7 @@ describe('BSV-21 mint inputBEEF', () => {
   })
 
   it('never waits on the indexer once the caller BEEF covers every spend', async () => {
-    const { enrichCreateActionForBsv21Issuer } = await import('./bsv21Issuer')
+    const { enrichCreateActionForBsv21Issuer } = await import('./token/issuer')
     const { binary, outpoint } = unminedTipBeef()
     hydrateInputBeef.mockResolvedValue(undefined)
 

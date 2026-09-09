@@ -72,7 +72,7 @@ import { AboutHandCashPanel } from './AboutHandCashPanel'
 import { WipeWalletPanel } from './WipeWalletPanel'
 import { NavBreadcrumb } from './NavBreadcrumb'
 import { getCachedCollectable, getCollectable } from '../wallet/collectables'
-import { getFungible, getCachedFungibles } from '../wallet/fungibles'
+import { getFungible, getCachedFungibles } from '../wallet/token'
 import {
   ActivityIcon,
   AppsIcon,

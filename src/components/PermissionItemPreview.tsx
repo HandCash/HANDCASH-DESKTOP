@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react'
 import { getCachedCollectables } from '../wallet/collectables'
-import { getCachedFungibles } from '../wallet/fungibles'
-import { getTokenIconDataUrl } from '../wallet/tokenIconCache'
+import { getCachedFungibles, getTokenIconDataUrl } from '../wallet/token'
 import { DeferredImage } from './DeferredImage'
 import { CollectablesIcon, InventoryIcon } from './icons'
 

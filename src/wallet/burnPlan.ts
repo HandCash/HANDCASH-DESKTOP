@@ -1,4 +1,4 @@
-import { classifyBsv21TipKind, type Bsv21Utxo } from './bsv21'
+import { classifyBsv21TipKind, type Bsv21Utxo } from './token'
 import { classifyTipKind } from './collectableTipKind'
 
 export type BurnRefusalReason =

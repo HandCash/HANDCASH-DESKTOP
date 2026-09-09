@@ -4,8 +4,8 @@
  * Never included in fetchBalanceSats / Pay.
  */
 
-import { getActiveWallet, type ActiveWallet } from './session'
-import type { Chain } from './vault'
+import { getActiveWallet, type ActiveWallet } from '../session'
+import type { Chain } from '../vault'
 import {
   buildBsv21CustomInstructions,
   BSV21_BASKET,
@@ -23,31 +23,30 @@ import {
   type Bsv21Op,
   type Bsv21Utxo,
   type FungibleToken,
-} from './bsv21'
-import { tipFromBsv21Script } from './bsv21Send'
-import { durableGetItem, durableRemoveItem, durableSetItem } from './durableStorage'
+} from './types'
+import { tipFromBsv21Script } from './sendPlan'
+import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
 import {
   beginOneSatImport,
   markOneSatImportFailed,
   markOneSatImported,
   releaseOneSatImport,
-} from './oneSatImportGuard'
-import { getTokenIconDataUrl } from './tokenIconCache'
-import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDataUrl } from './tokenIconResolve'
-import { yieldToUi } from './yieldToUi'
-import { stampBrc164Id } from './itemAccess'
-import { isItemSent, markItemsConsumed } from './sentItemGuard'
-import { attachMarketListingToToken } from './tokenMarketView'
-import { parseOrdEnvelope } from './ordinalOwnership'
-import { restoreUnspentAssetOutpoint } from './staleOutputRelease'
-import { isOnesatFtGenesisSpent } from './onesatFtLeftover'
+} from '../oneSatImportGuard'
+import { getTokenIconDataUrl } from './icons/cache'
+import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDataUrl } from './icons/resolve'
+import { yieldToUi } from '../yieldToUi'
+import { stampBrc164Id } from '../itemAccess'
+import { isItemSent, markItemsConsumed } from '../sentItemGuard'
+import { attachMarketListingToToken } from './marketView'
+import { parseOrdEnvelope } from '../ordinalOwnership'
+import { restoreUnspentAssetOutpoint } from '../staleOutputRelease'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
 
 type Listener = (tokens: FungibleToken[]) => void
 
-const LIST_CACHE_KEY = 'handcash.fungibles.list.v1'
+const LIST_CACHE_KEY = 'handcash.tokens.list.v1'
 
 let cached: FungibleToken[] = []
 let hydrated = false
@@ -147,7 +146,7 @@ function setFungiblesCache(items: FungibleToken[]): void {
 async function recoverReceivedTokensFromActivity(
   items: FungibleToken[],
 ): Promise<FungibleToken[]> {
-  const { exportAllActivity } = await import('./appActivity')
+  const { exportAllActivity } = await import('../appActivity')
   const activity = exportAllActivity()
   markItemsConsumed(
     activity
@@ -235,13 +234,11 @@ export function mergeLiveFungibles(live: FungibleToken[], prior: FungibleToken[]
   const liveIds = new Set<string>()
   for (const t of prior) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (isOnesatFtGenesisSpent(t.tokenId)) continue
     if (t.colourMaxSupply != null && Number(t.amt) > t.colourMaxSupply) continue
     byId.set(tokenKey(t), t)
   }
   for (const t of live) {
     if (t.outpoint && isItemSent(t.outpoint)) continue
-    if (isOnesatFtGenesisSpent(t.tokenId)) continue
     const k = tokenKey(t)
     liveIds.add(k)
     const priorRow = byId.get(k)
@@ -391,7 +388,7 @@ async function recoverBsv21DeployMetadata(
   const [txid, rawVout] = normalized.split('_')
   const vout = Number(rawVout)
   if (!txid || !Number.isInteger(vout) || vout < 0) return null
-  const { getLocalBeefForTxid, rememberBeefTree } = await import('./beefCache')
+  const { getLocalBeefForTxid, rememberBeefTree } = await import('../beefCache')
   const beef = await getLocalBeefForTxid(wallet, txid)
   if (!beef) return null
   rememberBeefTree(beef.toBinary(), txid)
@@ -605,7 +602,7 @@ async function listFungiblesNow(
     getSpendPriorityDepth,
     getWalletCoordinatorSnapshot,
     shouldYieldChainIngestToSpend,
-  } = await import('./walletCoordinator')
+  } = await import('../walletCoordinator')
   const coord = getWalletCoordinatorSnapshot()
   const cachedRows = getCachedFungibles()
   if (
@@ -625,7 +622,7 @@ async function listFungiblesNow(
     await yieldToUi()
     let liveRows: FungibleToken[] = []
     try {
-      const { listBsv21BinaryTokens } = await import('./colourListing')
+      const { listBsv21BinaryTokens } = await import('./listTips')
       liveRows = await listBsv21BinaryTokens(wallet)
     } catch (err) {
       console.warn('[bsv21] list failed', err)
@@ -662,7 +659,7 @@ async function recoverCachedLegacyTips(
   wanted: Set<string>,
 ): Promise<Bsv21Utxo[]> {
   const recovered: Bsv21Utxo[] = []
-  const { getLocalBeefForTxid } = await import('./beefCache')
+  const { getLocalBeefForTxid } = await import('../beefCache')
   for (const token of cached) {
     const tokenId = normalizeTokenId(token.tokenId)
     if (!tokenId || !wanted.has(tokenId) || isItemSent(token.outpoint)) continue
@@ -842,7 +839,7 @@ export async function importBsv21Tokens(
     }
     try {
       // A token send must not wait behind legacy BSV-21 beef / chaintracks.
-      const { shouldYieldChainIngestToSpend } = await import('./walletCoordinator')
+      const { shouldYieldChainIngestToSpend } = await import('../walletCoordinator')
       if (shouldYieldChainIngestToSpend()) {
         console.info(
           `[bsv21] deferring tip imports — send is waiting (${groupOps.length}+)`,
@@ -854,7 +851,7 @@ export async function importBsv21Tokens(
       await yieldToUi()
       // Prefer the session BEEF cache (8s cap). Raw chaintracks getBeefForTxid
       // has no deadline and was wedging Refresh behind Babbage timeouts.
-      const { getBeefForTxidCached } = await import('./beefCache')
+      const { getBeefForTxidCached } = await import('../beefCache')
       const beef = await getBeefForTxidCached(wallet, txid, { needProof: true })
       await yieldToUi()
       const atomic = beef.toBinaryAtomic(txid)

@@ -43,34 +43,15 @@ describe('mergeLiveFungibles', () => {
     vi.resetModules()
   })
 
-  it('does not paint a 1sat-ft leftover as a token', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(ORIGIN)
-    const { mergeLiveFungibles } = await import('./fungibles')
-    const prior = [row({ tokenId: ORIGIN, amt: '68862', outpoint: LEFTOVER })]
-    const live = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
-    const merged = mergeLiveFungibles(live, prior)
-    expect(merged).toHaveLength(0)
-  })
-
-  it('drops a cache-only spent genesis when live has no leftover', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(ORIGIN)
-    const { mergeLiveFungibles } = await import('./fungibles')
-    const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
-    const merged = mergeLiveFungibles([], prior)
-    expect(merged).toHaveLength(0)
-  })
-
   it('drops a genesis cache extra absent from live even if not yet marked spent', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [row({ tokenId: ORIGIN, amt: '69420', outpoint: ORIGIN })]
     const merged = mergeLiveFungibles([], prior)
     expect(merged).toHaveLength(0)
   })
 
   it('uses live aggregated amt — leftover 68862 + live 69000 is 69000 not 137862', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       row({
         tokenId: KING_ORIGIN,
@@ -93,7 +74,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('second merge of leftover 68862 + live 69000 stays 69000', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       row({
         tokenId: KING_ORIGIN,
@@ -117,7 +98,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('live listing aggregate wins over a smaller same-outpoint prior leftover', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       row({
         tokenId: KING_ORIGIN,
@@ -139,7 +120,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('preserves prior icon when live listing lacks it', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       {
         ...row({
@@ -165,7 +146,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('preserves a recovered ticker when live remittance only has a fallback label', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       row({
         tokenId: KING_ORIGIN,
@@ -194,7 +175,7 @@ describe('mergeLiveFungibles', () => {
       getCachedFungibles,
       paintFungibleAfterSpend,
       rememberFungibleToken,
-    } = await import('./fungibles')
+    } = await import('./token/list')
     rememberFungibleToken(row({
       tokenId: KING_ORIGIN,
       amt: '240',
@@ -214,7 +195,7 @@ describe('mergeLiveFungibles', () => {
       getCachedFungibles,
       paintFungibleAfterSpend,
       rememberFungibleToken,
-    } = await import('./fungibles')
+    } = await import('./token/list')
     rememberFungibleToken(row({
       tokenId: KING_ORIGIN,
       amt: '900719925474099300',
@@ -236,7 +217,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('lists a legacy JSON BSV-21 tip for the burn planner', async () => {
-    const { listFungibleTips, rememberFungibleToken } = await import('./fungibles')
+    const { listFungibleTips, rememberFungibleToken } = await import('./token/list')
     const icon = `${'5a'.repeat(32)}_1`
     const held = `${'e0'.repeat(32)}.0`
     rememberFungibleToken({
@@ -281,7 +262,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('does not keep inflated prior 275586 over live 69000', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const prior = [
       row({
         tokenId: KING_ORIGIN,
@@ -302,24 +283,8 @@ describe('mergeLiveFungibles', () => {
     expect(merged[0]!.amt).not.toBe('275586')
   })
 
-  it('drops inflated cache-only KING when live is empty', async () => {
-    const leftover = await import('./onesatFtLeftover')
-    leftover.markOnesatFtGenesisSpent(KING_ORIGIN)
-    const { mergeLiveFungibles } = await import('./fungibles')
-    const prior = [
-      row({
-        tokenId: KING_ORIGIN,
-        amt: '206724',
-        outpoint: LIVE_CHANGE,
-      }),
-    ]
-    const merged = mergeLiveFungibles([], prior)
-    expect(merged).toHaveLength(0)
-  })
-})
-
   it('leftover floor 68862 does not clobber a 69000 cache with more tips', async () => {
-    const { leftoverFloorWouldClobber } = await import('./fungibles')
+    const { leftoverFloorWouldClobber } = await import('./token/list')
     expect(
       leftoverFloorWouldClobber(
         { amt: '69000', utxoCount: 3 },
@@ -332,7 +297,7 @@ describe('mergeLiveFungibles', () => {
   })
 
   it('live 162 colourSupply wins over stale colourSupply-null legacy same tokenId', async () => {
-    const { mergeLiveFungibles } = await import('./fungibles')
+    const { mergeLiveFungibles } = await import('./token/list')
     const tokenId = `${'5a'.repeat(32)}_0`
     const prior = [
       {
@@ -364,3 +329,4 @@ describe('mergeLiveFungibles', () => {
     expect(merged[0]!.amt).toBe('69240')
     expect(merged[0]!.icon).toBe(`${'5a'.repeat(32)}_1`)
   })
+})

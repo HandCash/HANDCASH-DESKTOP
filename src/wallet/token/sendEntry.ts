@@ -10,10 +10,10 @@ import {
   normalizeTokenId,
   type Bsv21Utxo,
   type FungibleToken,
-} from './bsv21'
-import { getBeefForTxidCached } from './beefCache'
-import { getCachedFungibles, getFungible } from './fungibles'
-import type { ActiveWallet } from './session'
+} from './types'
+import { getBeefForTxidCached } from '../beefCache'
+import { getCachedFungibles, getFungible } from './list'
+import type { ActiveWallet } from '../session'
 
 /** A wallet action must never hold the spend coordinator indefinitely. */
 export const FUNGIBLE_CREATE_ACTION_TIMEOUT_MS = 45_000
@@ -161,7 +161,7 @@ export async function sendFungible(args: {
       `Insufficient balance (have ${formatFungibleAmount(token.amt, token.dec)})`,
     )
   }
-  const { sendColourCoins } = await import('./sendColourCoins')
+  const { sendColourCoins } = await import('./send')
   const result = await sendColourCoins({
     origin: token.tokenId,
     amount: Number(units),

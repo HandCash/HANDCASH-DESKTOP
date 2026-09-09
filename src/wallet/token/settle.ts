@@ -6,44 +6,44 @@
  * the exact BSV-21 tip into basket `bsv21`. No indexer decides custody.
  */
 import { Beef } from '@bsv/sdk'
-import type { AtomicBeefPurpose } from './beefCache'
+import type { AtomicBeefPurpose } from '../beefCache'
 import {
   BSV21_BASKET,
   buildBsv21CustomInstructions,
   bsv21Tags,
   normalizeTokenId,
   parseBsv21Json,
-} from './bsv21'
-import { rememberBeefTree } from './beefCache'
-import { scheduleHistoryBackupPush } from './deviceSync'
+} from './types'
+import { rememberBeefTree } from '../beefCache'
+import { scheduleHistoryBackupPush } from '../deviceSync'
 import {
   fungibleFromImport,
   hydrateCachedTokenIcons,
   listFungibles,
   rememberFungibleToken,
-} from './fungibles'
+} from './list'
 import {
   beginOneSatImport,
   markOneSatImported,
   markOneSatImportFailed,
-} from './oneSatImportGuard'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { parseOrdEnvelope, scriptPaysAddress } from './ordinalOwnership'
-import { broadcastAtomicBeef } from './sendBrc29Payment'
-import { getActiveWallet } from './session'
-import { stampBrc164Id } from './itemAccess'
+} from '../oneSatImportGuard'
+import { decodeBsv21Binary } from './decode162'
+import { parseOrdEnvelope, scriptPaysAddress } from '../ordinalOwnership'
+import { broadcastAtomicBeef } from '../sendBrc29Payment'
+import { getActiveWallet } from '../session'
+import { stampBrc164Id } from '../itemAccess'
 import {
   clearInboundReceivePending,
   noteInboundReceiveComplete,
   noteInboundReceivePending,
-} from './appActivity'
-import type { ItemTransferAsset } from './messageStore'
-import { cacheTokenIconFromBeef } from './tokenIconResolve'
+} from '../appActivity'
+import type { ItemTransferAsset } from '../messageStore'
+import { cacheTokenIconFromBeef } from './icons/resolve'
 import {
   alreadyInternalizedError,
   fetchAtomicBeefFromUrl,
   withRestoredInternalizeStatus,
-} from './peerIngestHelpers'
+} from '../peerIngestHelpers'
 
 type FungibleAsset = Extract<ItemTransferAsset, { kind: 'fungible' }>
 
@@ -104,7 +104,7 @@ export async function internalizePeerFungibleSettle(opts: {
   }
   if (!atomic?.length) {
     try {
-      const { getAtomicBeefBinaryForTxid } = await import('./beefCache')
+      const { getAtomicBeefBinaryForTxid } = await import('../beefCache')
       atomic = await getAtomicBeefBinaryForTxid(active, id, {
         purpose: opts.beefPurpose,
       })

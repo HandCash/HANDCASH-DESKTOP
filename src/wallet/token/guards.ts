@@ -13,8 +13,8 @@
  * Spec: BRCs/tokens/0175.md · docs/bsva/brcs/tokens/onesat-fungibles-proposal.md
  */
 
-import { verifyProvenanceV2, type ProvenanceV2 } from './oneSatProvenance'
-import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
+import { verifyProvenanceV2, type ProvenanceV2 } from '../oneSatProvenance'
+import { hasOrdEnvelope, parseOrdEnvelope } from '../ordinalOwnership'
 
 /** Normative BRC-175 storage basket. */
 export const ONESAT_FT_BASKET = '1sat-ft' as const

@@ -40,7 +40,7 @@ import { formatBsvSignificant, getActiveWallet } from './session'
 import {
   bsv21IdentityMintHints,
   isBsv21IdentityMintArgs,
-} from './bsv21Issuer'
+} from './token'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'

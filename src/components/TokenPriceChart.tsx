@@ -1,5 +1,5 @@
 import { useMemo } from 'react'
-import type { TokenMarketPricePoint } from '../wallet/tokenMarketView'
+import type { TokenMarketPricePoint } from '../wallet/token'
 import {
   formatPrimaryFromSats,
   getCachedUsdPerBsv,

@@ -14,17 +14,15 @@ import {
   isItemReceiveArgs,
 } from './itemAccess'
 import {
-  normalizeTokenId,
-  parseBsv21CustomInstructions,
-  shortTokenLabel,
-  tokenIdFromBsv21Tags,
-} from './bsv21'
-import {
+  cacheTokenIconFromBeef,
   fungibleFromImport,
   hydrateCachedTokenIcons,
+  normalizeTokenId,
+  parseBsv21CustomInstructions,
   rememberFungibleToken,
-} from './fungibles'
-import { cacheTokenIconFromBeef } from './tokenIconResolve'
+  shortTokenLabel,
+  tokenIdFromBsv21Tags,
+} from './token'
 import { scriptPaysAddress } from './ordinalOwnership'
 import {
   hasSettledActivityItemOutpoint,

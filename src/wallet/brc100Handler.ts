@@ -55,15 +55,15 @@ import {
 } from './appActivity'
 import { scheduleHistoryBackupPush } from './deviceSync'
 import { extractTxid } from './txExplorer'
-import { resolveBsv21IconDataUrl } from './tokenIconResolve'
-import { stampBsv21IconOnListedOutputs } from './colourListing'
-import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
-import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   enrichCreateActionForBsv21Issuer,
   finishBsv21IdentityMintCreateAction,
   isBsv21IdentityMintArgs,
-} from './bsv21Issuer'
+  resolveBsv21IconDataUrl,
+  stampBsv21IconOnListedOutputs,
+} from './token'
+import { rememberBeefBinary, hydrateInputBeef } from './beefCache'
+import { addMarketOriginVerdictsAsync } from './marketInventory'
 import {
   claimCloudHandlePayload,
   clearClaimedCloudHandlePayload,

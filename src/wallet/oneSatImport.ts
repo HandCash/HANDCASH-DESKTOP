@@ -41,22 +41,20 @@ import {
 } from './inscriptionCache'
 import { getAtomicBeefBinaryForTxid } from './beefCache'
 import {
+  decodeBsv21Binary,
   isBsv21Mime,
+  isOnesatFtAmtHop,
+  isOnesatFtMime,
+  looksLikeOnesatFtTip,
   normalizeTokenId,
+  originFromOnesatFtLock,
   parseBsv21Json,
   tokenIdForPayload,
   type Bsv21ImportItem,
   type Bsv21Op,
   type Bsv21Payload,
-} from './bsv21'
+} from './token'
 import { decodeBProtocol } from './bProtocol'
-import { decodeBsv21Binary } from './bsv21Binary'
-import {
-  isOnesatFtMime,
-  isOnesatFtAmtHop,
-  looksLikeOnesatFtTip,
-  originFromOnesatFtLock,
-} from './colourCoins'
 import { parseContentReference } from './derivativeContent'
 import { hasOrdEnvelope, parseOrdEnvelope } from './ordinalOwnership'
 import {

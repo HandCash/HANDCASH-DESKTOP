@@ -4,30 +4,30 @@
  * New burns never emit application/1sat-ft+json or basket `1sat-ft`.
  */
 import { createNonce, P2PKH, PublicKey } from '@bsv/sdk'
-import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from './appActivity'
-import { buildMergedInputBeef, rememberBeefTree } from './beefCache'
-import { normalizeColourOrigin } from './colourCoins'
-import { BSV21_BASKET } from './bsv21'
+import { upsertAppActivity, WALLET_ACTIVITY_ORIGIN } from '../appActivity'
+import { buildMergedInputBeef, rememberBeefTree } from '../beefCache'
+import { normalizeColourOrigin } from './guards'
+import { BSV21_BASKET } from './types'
 import {
   buildBsv21SendRemittance,
   buildBsv21ValueLock,
   planBsv21Send,
-} from './bsv21Send'
-import { listBsv21BinaryTips } from './colourListing'
-import { scheduleHistoryBackupPush } from './deviceSync'
-import { markItemsSent } from './sentItemGuard'
-import { stampBrc164Id } from './itemAccess'
-import { withVisibleOnChainBeef } from './legacyBeef'
-import { assertOnlineForPayment } from './paymentPolicy'
-import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
+} from './sendPlan'
+import { listBsv21BinaryTips } from './listTips'
+import { scheduleHistoryBackupPush } from '../deviceSync'
+import { markItemsSent } from '../sentItemGuard'
+import { stampBrc164Id } from '../itemAccess'
+import { withVisibleOnChainBeef } from '../legacyBeef'
+import { assertOnlineForPayment } from '../paymentPolicy'
+import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from '../sendBrc29Payment'
 import {
   FUNGIBLE_CREATE_ACTION_TIMEOUT_MS,
   withFungibleCreateActionTimeout,
-} from './sendFungible'
-import { getActiveWallet, type ActiveWallet } from './session'
-import { runExclusiveBurn } from './spendGuard'
-import { sealSpentInputsOfSignedTx } from './staleOutputRelease'
-import { estimateBurnEconomics, type BurnEconomics } from './burnEconomics'
+} from './sendEntry'
+import { getActiveWallet, type ActiveWallet } from '../session'
+import { runExclusiveBurn } from '../spendGuard'
+import { sealSpentInputsOfSignedTx } from '../staleOutputRelease'
+import { estimateBurnEconomics, type BurnEconomics } from '../burnEconomics'
 
 function parseBurnUnits(amount: string): number {
   const amountRaw = amount.trim().replace(/,/g, '')
@@ -145,7 +145,7 @@ export async function burnColourCoins(args: {
     if (!active) throw new Error('Wallet locked')
     {
       const { abortReservedActionBatches, releaseStuckNosends } =
-        await import('./actionReview')
+        await import('../actionReview')
       await releaseStuckNosends(active)
       await abortReservedActionBatches(active)
     }
@@ -261,7 +261,7 @@ export async function burnColourCoins(args: {
       const signable = created.signableTransaction
       if (!signable) throw new Error('Token burn produced no txid')
       console.info('[bsv21-burn] createAction returned signable — unlocking tip(s)')
-      const { signColourTipTransfer } = await import('./sendColourCoins')
+      const { signColourTipTransfer } = await import('./send')
       try {
         const signed = await signColourTipTransfer({
           wallet: active,
@@ -355,7 +355,7 @@ export async function burnColourCoins(args: {
     markItemsSent(
       selected.map((tip) => ({ outpoint: wireOutpoint(tip.outpoint), txid })),
     )
-    void import('./fungibles')
+    void import('./list')
       .then(({ paintFungibleAfterSpend }) => {
         const keptOp = change > 0 ? `${txid}_0` : undefined
         paintFungibleAfterSpend({

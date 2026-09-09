@@ -12,8 +12,8 @@ import {
   decodeBsv21Binary,
   parseDisplayOutpoint,
   type Bsv21Binary,
-} from './bsv21Binary'
-import { toUnderscoreOutpoint } from './outpointFormat'
+} from './decode162'
+import { toUnderscoreOutpoint } from '../outpointFormat'
 
 const MAX_HOPS = 64
 

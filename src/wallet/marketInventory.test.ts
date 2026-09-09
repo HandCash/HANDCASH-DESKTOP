@@ -13,9 +13,13 @@ vi.mock('./collectables', () => ({
   getCachedCollectables: () => getCachedCollectables(),
 }))
 
-vi.mock('./fungibles', () => ({
-  getCachedFungibles: () => getCachedFungibles(),
-}))
+vi.mock('./token', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('./token')>()
+  return {
+    ...actual,
+    getCachedFungibles: () => getCachedFungibles(),
+  }
+})
 
 vi.mock('./walletCoordinator', () => ({
   getWalletCoordinatorSnapshot: () => getWalletCoordinatorSnapshot(),

@@ -14,7 +14,7 @@ vi.mock('./durableStorage', () => ({
 import {
   colourSettleActivityToken,
   internalizePeerColourSettle,
-} from './ingestColourSettle'
+} from './token/settleLegacy'
 import {
   clearAppActivity,
   isTokenActivity,

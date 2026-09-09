@@ -12,7 +12,7 @@ import type { AtomicBeefPurpose } from './beefCache'
 import { getActiveWallet } from './session'
 import { rememberBeefTree } from './beefCache'
 import { decodeBProtocol } from './bProtocol'
-import { decodeBsv21Binary } from './bsv21Binary'
+import { decodeBsv21Binary } from './token'
 import { scriptPaysAddress } from './ordinalOwnership'
 import { buildInternalizeCustomInstructions } from './oneSatProvenance'
 import {

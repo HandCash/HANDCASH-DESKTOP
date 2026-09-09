@@ -1,7 +1,7 @@
 import { createActor } from 'xstate'
 import { describe, expect, it } from 'vitest'
 import type { ActivityEntry } from '../wallet/appActivity'
-import type { FungibleToken } from '../wallet/fungibles'
+import type { FungibleToken } from '../wallet/token'
 import {
   activityForFungible,
   fungibleDetailsMachine,

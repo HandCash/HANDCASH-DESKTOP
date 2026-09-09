@@ -7,7 +7,7 @@ import {
   listFungibles,
   subscribeFungibles,
   type FungibleToken,
-} from '../wallet/fungibles'
+} from '../wallet/token'
 import {
   addressFromIdentityKey,
   identityKeyFromRecipient,
@@ -31,13 +31,13 @@ import { CopyableError } from './CopyableError'
 import {
   parseFungibleSendAmount,
   sendFungible,
-} from '../wallet/sendFungible'
+} from '../wallet/token'
 import type { Chain } from '../wallet/vault'
 import { releaseWarmedQrCamera } from '../wallet/qrCameraWarm'
 import { CheckIcon, CloseIcon, FriendsIcon, ScanQrIcon } from './icons'
 import { RecipientQrScan } from './QrScanner'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { shortOriginLabel } from '../wallet/colourCoins'
+import { shortOriginLabel } from '../wallet/token'
 import { useWalletActionDock } from './WalletActionDock'
 
 type Props = {

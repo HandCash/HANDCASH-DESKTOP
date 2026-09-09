@@ -57,8 +57,8 @@ import {
   listFungibles,
   subscribeFungibles,
   type FungibleToken,
-} from '../wallet/fungibles'
-import { shortIssuerLabel } from '../wallet/bsv21'
+  shortIssuerLabel,
+} from '../wallet/token'
 import {
   formatPrimaryFromSats,
   getCachedUsdPerBsv,

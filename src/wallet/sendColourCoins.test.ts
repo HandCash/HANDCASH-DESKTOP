@@ -17,7 +17,7 @@ vi.mock('./session', () => ({
 
 describe('sendColourCoins remittance-only refuse', () => {
   it('refuses to spend a remittance-only 1-sat as a 162 token', async () => {
-    const { sendColourCoins } = await import('./sendColourCoins')
+    const { sendColourCoins } = await import('./token/send')
     await expect(
       sendColourCoins({
         origin: TOKEN,

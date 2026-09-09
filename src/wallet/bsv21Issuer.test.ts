@@ -8,7 +8,7 @@ import {
   issuerFromSigmaLockingScript,
   isBsv21IdentityMintArgs,
   bsv21IdentityMintHints,
-} from './bsv21Issuer'
+} from './token'
 
 describe('bsv21Issuer', () => {
   const root = PrivateKey.fromRandom()

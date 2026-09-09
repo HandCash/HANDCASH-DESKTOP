@@ -1,11 +1,11 @@
 import { PrivateKey } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { aggregateFungibles } from './bsv21'
-import { encodeBsv21Binary, tokenIdToWire } from './bsv21Binary'
-import { decodeListedBsv21Tip } from './colourListing'
+import { aggregateFungibles } from './token'
+import { encodeBsv21Binary, tokenIdToWire } from './token'
+import { decodeListedBsv21Tip } from './token'
 import { buildOnesatFtTransferLockingScript } from './onesatFtInscribe'
-import { buildBsv21ValueLock } from './bsv21Send'
-import { listFungibleTips } from './fungibles'
+import { buildBsv21ValueLock } from './token'
+import { listFungibleTips } from './token'
 
 const ADDR = PrivateKey.fromRandom().toAddress()
 const TOKEN_A = `${'ab'.repeat(32)}_0`

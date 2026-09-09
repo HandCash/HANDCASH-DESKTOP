@@ -25,8 +25,8 @@ import {
   MARKET_FEE_IDENTITY_KEY,
   MARKET_FEE_PAY_TO_ADDRESS,
 } from './walletConfig'
-import { decodeBsv21Binary } from './bsv21Binary'
-import { buildBsv21ValueLock } from './bsv21Send'
+import { decodeBsv21Binary } from './token'
+import { buildBsv21ValueLock } from './token'
 
 function fixture() {
   const sellerKey = PrivateKey.fromHex('1'.padStart(64, '0'))

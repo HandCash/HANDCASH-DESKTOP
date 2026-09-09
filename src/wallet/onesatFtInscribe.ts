@@ -6,7 +6,7 @@ import {
   buildOnesatFtOriginInscriptionJson,
   ONESAT_FT_PROTOCOL,
   type ColourSupply,
-} from './colourCoins'
+} from './token/guards'
 import { ordEnvelopeHex } from './ordScriptPush'
 import { p2pkhScriptHex } from './ordinalOwnership'
 

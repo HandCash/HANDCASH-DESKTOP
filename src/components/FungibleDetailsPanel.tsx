@@ -4,11 +4,14 @@ import { ListRow, Prompt, StatusBanner } from '@aeon-ui/react'
 import { MetricStrip } from '@aeon-ui/ui'
 import { copyText } from '../wallet/clipboard'
 import {
+  combineToken as combineColourTips,
   formatFungibleAmount,
   getFungible,
   listFungibles,
+  shortIssuerLabel,
   subscribeFungibles,
-} from '../wallet/fungibles'
+  tokenMarketPriceHistory,
+} from '../wallet/token'
 import {
   activityEntryTitle,
   activityFailureLabel,
@@ -25,17 +28,12 @@ import {
   fungibleDetailsMachine,
   activityForFungible,
 } from '../machines/fungibleDetailsMachine'
-import { shortIssuerLabel } from '../wallet/bsv21'
 import {
   openBurnFungible,
   openPaymentDetails,
   openSendFungible,
 } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
-import { combineColourTips } from '../wallet/sendColourCoins'
-import {
-  tokenMarketPriceHistory,
-} from '../wallet/tokenMarketView'
 import { toastError, toastSuccess } from '../wallet/toast'
 import {
   CollectablesIcon,

@@ -30,7 +30,7 @@ import {
   listFungibles,
   subscribeFungibles,
   type FungibleToken,
-} from '../wallet/fungibles'
+} from '../wallet/token'
 import {
   formatSecondaryFromSats,
   getCachedUsdPerBsv,
@@ -46,7 +46,7 @@ import {
   inFlightVerb,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { parseFungibleSendAmount } from '../wallet/sendFungible'
+import { parseFungibleSendAmount } from '../wallet/token'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'

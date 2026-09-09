@@ -56,7 +56,7 @@ import {
   getCachedCollectables,
   subscribeCollectables,
 } from '../wallet/collectables'
-import { subscribeFungibles } from '../wallet/fungibles'
+import { subscribeFungibles } from '../wallet/token'
 import {
   getVerificationProgress,
   isOutpointVerifying,

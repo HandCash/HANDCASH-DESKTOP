@@ -2,15 +2,15 @@
  * BSV-21 token market display helpers — listing price in inventory and local
  * price history for charts (activity + active listing authorizations).
  */
-import type { ActivityEntry } from './appActivity'
-import { normalizeTokenId } from './bsv21'
-import type { FungibleToken } from './bsv21'
+import type { ActivityEntry } from '../appActivity'
+import { normalizeTokenId } from './types'
+import type { FungibleToken } from './types'
 import {
   getMarketListingAuthorization,
   listMarketListingAuthorizations,
   type MarketListingAuthorization,
   type MarketListingState,
-} from './marketListing'
+} from '../marketListing'
 
 export type FungibleMarketListingView = {
   priceSats: number

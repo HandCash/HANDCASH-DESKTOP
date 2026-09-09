@@ -9,10 +9,13 @@ import {
   recordAppActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
-import { normalizeTokenId } from './bsv21'
-import { bsv21IdentityMintHints } from './bsv21Issuer'
+import {
+  bsv21IdentityMintHints,
+  getTokenIconDataUrl,
+  normalizeTokenId,
+  rememberTokenIcon,
+} from './token'
 import { parseOrdEnvelope } from './ordinalOwnership'
-import { getTokenIconDataUrl, rememberTokenIcon } from './tokenIconCache'
 
 /**
  * Cache image-inscription outputs we just authored (BSV-21 ticker icons).

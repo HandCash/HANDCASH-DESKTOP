@@ -5,10 +5,10 @@ import {
   parseFungibleSendAmount,
   selectFungibleTips,
   withFungibleCreateActionTimeout,
-} from './sendFungible'
-import type { Bsv21Utxo } from './bsv21'
-import { buildBsv21TransferLockingScript } from './bsv21Inscribe'
-import { chooseBsv21SendPath, classifyBsv21TipKind } from './bsv21TipKind'
+} from './token'
+import type { Bsv21Utxo } from './token'
+import { buildBsv21TransferLockingScript } from './token'
+import { chooseBsv21SendPath, classifyBsv21TipKind } from './token'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
 const COSIGN_PUB = '02' + 'ab'.repeat(32)

@@ -6,7 +6,7 @@
  * fallthrough — they refuse until a cosigner client is configured.
  */
 import { assign, setup, type SnapshotFrom } from 'xstate'
-import type { Bsv21SendPath } from './bsv21TipKind'
+import type { Bsv21SendPath } from './tipKind'
 
 export type Bsv21SendPhase =
   | 'idle'

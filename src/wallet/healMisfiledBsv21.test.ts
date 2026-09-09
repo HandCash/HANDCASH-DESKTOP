@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { encodeBsv21Binary } from './bsv21Binary'
+import { encodeBsv21Binary } from './token'
 import { classifyOneSatAsBsv21 } from './healMisfiledBsv21'
 
 const P2PKH = '76a914' + '11'.repeat(20) + '88ac'

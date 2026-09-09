@@ -240,35 +240,6 @@ describe('collectables across a cold open', () => {
     expect(getCachedCollectables()[0]?.name).toBe('Test Item')
   })
 
-  it('does not paint leftover 1sat-ft origins as collectables', async () => {
-    const ftOrigin = `${'ee'.repeat(32)}_0`
-    const ftTip = `${'ff'.repeat(32)}.1`
-    const leftover = await import('./onesatFtLeftover')
-    leftover.rememberOnesatFtLeftover({
-      origin: ftOrigin,
-      amt: 69,
-      outpoint: ftTip.replace('.', '_'),
-      ci: JSON.stringify({ p: '1sat-ft', origin: ftOrigin, amt: '69' }),
-      sym: 'OLD',
-      supply: 'locked',
-      maxSupply: 100,
-    })
-    active.wallet.listOutputs.mockResolvedValueOnce({
-      outputs: [
-        { outpoint: TIP, satoshis: 1, tags: ['ordinal', `origin:${TIP}`, 'name:Test Item'] },
-        {
-          outpoint: ftTip,
-          satoshis: 1,
-          tags: ['ordinal', `origin:${ftOrigin.replace('_0', '.0')}`],
-        },
-      ],
-      totalOutputs: 2,
-    })
-    const { listCollectables, getCachedCollectables } = await import('./collectables')
-    await listCollectables(active as never)
-    expect(getCachedCollectables().map((c) => c.outpoint)).toEqual([TIP])
-  })
-
   it('drops hashed origin-only cards from the durable list', async () => {
     store.set(
       LIST_CACHE_KEY,

@@ -1,6 +1,6 @@
 import { Beef, LockingScript, PrivateKey, Transaction, UnlockingScript } from '@bsv/sdk'
 import { describe, expect, it } from 'vitest'
-import { decodeBsv21Binary, encodeBsv21Binary } from './bsv21Binary'
+import { decodeBsv21Binary, encodeBsv21Binary } from './token'
 import { hasOrdEnvelope, parseOrdEnvelope, p2pkhScriptHex } from './ordinalOwnership'
 import {
   assertBsv21AmtConservation,
@@ -12,7 +12,7 @@ import {
   classifyBsv21SendOutputs,
   planBsv21Send,
   tipFromBsv21Script,
-} from './bsv21Send'
+} from './token'
 
 const PAYEE = PrivateKey.fromRandom().toAddress()
 const CHANGE = PrivateKey.fromRandom().toAddress()

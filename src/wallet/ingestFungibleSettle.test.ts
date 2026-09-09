@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { internalizePeerFungibleSettle } from './ingestFungibleSettle'
+import { internalizePeerFungibleSettle } from './token/settle'
 
 const TOKEN_ID = `${'ab'.repeat(32)}_0`
 

@@ -7,11 +7,11 @@
 
 import { Beef, P2PKH, PrivateKey, PublicKey, Script, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
-import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from './beefCache'
-import { normalizeTokenId } from './bsv21'
-import { fetchRawTxHex } from './oneSatImport'
-import { parseOrdEnvelope } from './ordinalOwnership'
-import type { ActiveWallet } from './session'
+import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../beefCache'
+import { normalizeTokenId } from './types'
+import { fetchRawTxHex } from '../oneSatImport'
+import { parseOrdEnvelope } from '../ordinalOwnership'
+import type { ActiveWallet } from '../session'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
 

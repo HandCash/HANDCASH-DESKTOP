@@ -37,11 +37,15 @@ import {
   type CollectableTrait,
   type ResolvedInscription,
 } from './oneSatImport'
-import { isBsv21Mime } from './bsv21'
+import {
+  getCachedFungibles,
+  isBsv21BinaryScript,
+  isBsv21Mime,
+  isOnesatFtMime,
+  looksLikeOnesatFtTip,
+  ONESAT_FT_TAG,
+} from './token'
 import { decodeBProtocol } from './bProtocol'
-import { isBsv21BinaryScript } from './bsv21Binary'
-import { isOnesatFtMime, ONESAT_FT_TAG, looksLikeOnesatFtTip } from './colourCoins'
-import { getCachedFungibles } from './fungibles'
 import { resolvePaymentRecipient } from './friends'
 import { assertOnlineForPayment } from './paymentPolicy'
 import { runExclusiveSpend } from './spendGuard'
@@ -175,7 +179,6 @@ import {
   isAlreadySpentInputError,
   hideSpentOutpoints,
 } from './staleOutputRelease'
-import { isOnesatFtCollectableMisfile } from './onesatFtLeftover'
 import type { Chain } from './vault'
 
 export type { CollectableTrait }
@@ -583,12 +586,6 @@ export function collectableIsOnesatFt(item: {
   if (isOnesatFtMime(item.mimeType)) return true
   const op = (item.outpoint ?? '').trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
   const origin = item.origin ? item.origin.trim().toLowerCase().replace(/\.(\d+)$/, '_$1') : ''
-  if (
-    isOnesatFtCollectableMisfile(op) ||
-    (origin && isOnesatFtCollectableMisfile(origin))
-  ) {
-    return true
-  }
   try {
     for (const tok of getCachedFungibles()) {
       const id = tok.tokenId.trim().toLowerCase().replace(/\.(\d+)$/, '_$1')
