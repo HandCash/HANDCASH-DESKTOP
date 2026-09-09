@@ -4,7 +4,14 @@
 
 ### Fixed
 
+<<<<<<< HEAD
 - Hermetic CI skips overlay contract tests that need a sibling BRC-CLOUD checkout so GitHub can attach installers.
+=======
+- Dark-mode Cancel/danger request-dock CTAs use black ink on red for readable contrast.
+- Keep the request-dock CTA colour ring when hovering secondary actions.
+- Peer item settle internalizes every 1-sat tip in a batch BEEF (second NFT no longer dropped).
+- Origin dedupe keeps both inventory cards when both tips are still live UTXOs.
+>>>>>>> db7440d (Release v1.3.128: danger CTA ink and multi-tip NFT settle.)
 
 ## [1.3.127] - 2026-09-09
 
