@@ -896,7 +896,7 @@ html:is(.platform-mobile, .layout-compact)
   .wallet-nav-tab-danger[data-selected]:not(:disabled) {
   border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
   background: color-mix(in srgb, var(--hc-danger) 72%, white);
-  color: #fff;
+  color: #0a0a0a;
   box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
 }
 

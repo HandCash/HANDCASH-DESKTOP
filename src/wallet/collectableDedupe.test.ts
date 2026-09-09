@@ -55,4 +55,16 @@ describe('dedupeByOrigin', () => {
       b.outpoint,
     ])
   })
+
+  it('keeps both tips when the live UTXO set still lists both outpoints', () => {
+    const a = tip(`${'bb'.repeat(32)}.0`)
+    const b = tip(`${'cc'.repeat(32)}.1`)
+    const live = new Set([a.outpoint, b.outpoint])
+
+    const kept = dedupeByOrigin([a, b], () => 1, live)
+
+    expect(kept.map((c) => c.outpoint).sort()).toEqual(
+      [a.outpoint, b.outpoint].sort(),
+    )
+  })
 })

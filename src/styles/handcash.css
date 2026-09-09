@@ -13402,7 +13402,8 @@ html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-action-slot--danger
   .wallet-nav-tab[data-selected]:hover {
-  color: #fafafa;
+  /* Dark danger chrome is a light red mix — black ink matches primary CTA contrast. */
+  color: #0a0a0a;
 }
 
 /* Request dock: flush segments, square joins; outer pill is on the bar/slots. */

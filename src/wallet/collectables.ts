@@ -848,12 +848,6 @@ function toCollectable(
 }
 
 /**
- * An origin has exactly one live tip. Stray 1-sat outputs from the same
- * transfer resolve to the tip's origin through the indexer walk and would
- * otherwise list as duplicates. Keep the best candidate: proven remittance
- * first, then sender-supplied metadata, then lowest vout.
- */
-/**
  * One ordinal, one card — keeping the tip the wallet holds now.
  *
  * A satoshi cannot sit in two outputs, so two listed tips sharing an origin means
@@ -862,10 +856,14 @@ function toCollectable(
  * is the transfer that just landed. Ranking by metadata first is how a freshly
  * received item disappeared behind a richer-looking stale sibling as soon as
  * lineage proofs started giving both of them the same, correct origin.
+ *
+ * Exception: when the live UTXO set still lists both outpoints, never collapse —
+ * custody says both tips exist (mis-tagged origins from a multi-tip settle).
  */
 export function dedupeByOrigin(
   items: Collectable[],
-  seenAtFor: (outpoint: string) => number = () => 0
+  seenAtFor: (outpoint: string) => number = () => 0,
+  liveOutpoints?: ReadonlySet<string> | null,
 ): Collectable[] {
   const rank = (c: Collectable): number => {
     let score = 0
@@ -880,15 +878,29 @@ export function dedupeByOrigin(
     return Number.isInteger(n) ? n : Number.MAX_SAFE_INTEGER
   }
   const seenAt = (c: Collectable): number => seenAtFor(c.outpoint)
+  const live = (c: Collectable): boolean =>
+    Boolean(liveOutpoints?.has(outpointKey(c.outpoint)))
 
   const best = new Map<string, Collectable>()
   const order: string[] = []
   for (const item of items) {
-    const key = item.origin.toLowerCase()
-    const prior = best.get(key)
+    const originKeyLower = item.origin.toLowerCase()
+    const prior = best.get(originKeyLower)
     if (!prior) {
-      best.set(key, item)
-      order.push(key)
+      best.set(originKeyLower, item)
+      order.push(originKeyLower)
+      continue
+    }
+    if (
+      live(item) &&
+      live(prior) &&
+      outpointKey(item.outpoint) !== outpointKey(prior.outpoint)
+    ) {
+      const unique = `${originKeyLower}::${outpointKey(item.outpoint)}`
+      if (!best.has(unique)) {
+        best.set(unique, item)
+        order.push(unique)
+      }
       continue
     }
     const better =
@@ -896,7 +908,7 @@ export function dedupeByOrigin(
         ? seenAt(item) > seenAt(prior)
         : rank(item) > rank(prior) ||
           (rank(item) === rank(prior) && vout(item) < vout(prior))
-    if (better) best.set(key, item)
+    if (better) best.set(originKeyLower, item)
   }
   return order.map((key) => best.get(key)!)
 }
@@ -1250,7 +1262,8 @@ export function noteIngestedItem(args: {
   setCollectablesCache(
     dedupeByOrigin(
       [seeded, ...cachedCollectables],
-      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0
+      (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+      cachedLiveOneSats?.keys ?? null,
     )
   )
 }
@@ -1357,7 +1370,8 @@ function buildItems(outputs: ItemOutput[], chain: Chain): Collectable[] {
   }
   return dedupeByOrigin(
     items,
-    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0
+    (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+    cachedLiveOneSats?.keys ?? null,
   )
 }
 
@@ -2247,6 +2261,7 @@ function mergeShortBasketPage(page: ItemOutput[], chain: Chain): Collectable[] {
   return dedupeByOrigin(
     [...byOp.values()],
     (outpoint) => firstSeenAt.get(outpointKey(outpoint)) ?? 0,
+    cachedLiveOneSats?.keys ?? null,
   )
 }
 
