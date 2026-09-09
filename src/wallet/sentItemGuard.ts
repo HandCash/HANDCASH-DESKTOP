@@ -22,6 +22,8 @@ import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 
 const STORAGE_KEY = 'handcash.collectables.sentOutpoints.v1'
 const MAX_ENTRIES = 500
+const CONSUMED_KEY = 'handcash.collectables.consumedOutpoints.v1'
+const MAX_CONSUMED = 2000
 
 /** A send that never landed has to give the item back rather than hide it forever. */
 export const SENT_HIDE_MS = 24 * 60 * 60_000
@@ -144,6 +146,55 @@ function key(outpoint: string): string {
   return outpoint.trim().toLowerCase().replace('_', '.')
 }
 
+let cachedConsumedRaw: string | null = null
+let cachedConsumed = new Set<string>()
+
+function readConsumed(): Set<string> {
+  try {
+    const raw = durableGetItem(CONSUMED_KEY)
+    if (!raw) return new Set()
+    if (raw === cachedConsumedRaw) return cachedConsumed
+    const parsed = JSON.parse(raw) as unknown
+    const consumed = new Set(
+      Array.isArray(parsed)
+        ? parsed
+            .filter((value): value is string => typeof value === 'string')
+            .map(key)
+            .filter(Boolean)
+        : [],
+    )
+    cachedConsumedRaw = raw
+    cachedConsumed = consumed
+    return consumed
+  } catch {
+    return new Set()
+  }
+}
+
+/** Permanently suppress tips destroyed by a confirmed wallet burn. */
+export function markItemsConsumed(outpoints: string[]): void {
+  if (outpoints.length === 0) return
+  const consumed = new Set(readConsumed())
+  let changed = false
+  for (const outpoint of outpoints) {
+    const op = key(outpoint)
+    if (op && !consumed.has(op)) {
+      consumed.add(op)
+      changed = true
+    }
+  }
+  if (!changed) return
+  durableSetItem(
+    CONSUMED_KEY,
+    JSON.stringify([...consumed].slice(-MAX_CONSUMED)),
+  )
+}
+
+export function isItemConsumed(outpoint: string): boolean {
+  const op = key(outpoint)
+  return Boolean(op) && readConsumed().has(op)
+}
+
 /** Hide outpoints a send just spent. Call only once the send has a txid. */
 export function markItemsSent(
   outpoints: Array<
@@ -171,6 +222,7 @@ export function markItemsSent(
 }
 
 export function isItemSent(outpoint: string, now = Date.now()): boolean {
+  if (isItemConsumed(outpoint)) return true
   const op = key(outpoint)
   if (!op) return false
   const record = readSent().get(op)
@@ -344,4 +396,5 @@ export async function healGhostSentItems(
 /** Test-only */
 export function resetSentItemsForTests(): void {
   durableSetItem(STORAGE_KEY, '{}')
+  durableSetItem(CONSUMED_KEY, '[]')
 }

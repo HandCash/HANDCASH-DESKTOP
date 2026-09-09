@@ -59,6 +59,14 @@ export function WalletActionBar({
     ...(secondary ? [secondary] : []),
     primary,
   ]
+  const selectedAction =
+    !primary.disabled
+      ? primary
+      : secondary && !secondary.disabled
+        ? secondary
+        : tertiary && !tertiary.disabled
+          ? tertiary
+          : primary
   return (
     <footer
       className={`wallet-action-bar wallet-action-bar--${placement} ${className}`.trim()}
@@ -71,7 +79,9 @@ export function WalletActionBar({
           key={placement === 'nav' ? undefined : `${action.label}-${index}`}
           type="button"
           className={buttonClass(action, placement)}
-          data-selected={placement === 'nav' && action === primary ? '' : undefined}
+          data-selected={
+            placement === 'nav' && action === selectedAction ? '' : undefined
+          }
           disabled={action.disabled}
           autoFocus={action.autoFocus}
           title={action.title ?? action.label}

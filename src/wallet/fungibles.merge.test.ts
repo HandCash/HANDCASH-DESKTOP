@@ -12,6 +12,7 @@ vi.mock('./durableStorage', () => ({
 
 vi.mock('./sentItemGuard', () => ({
   isItemSent: () => false,
+  markItemsConsumed: vi.fn(),
 }))
 
 const ORIGIN = `${'ab'.repeat(32)}_0`
@@ -186,6 +187,52 @@ describe('mergeLiveFungibles', () => {
     const merged = mergeLiveFungibles(live, prior)
     expect(merged[0]!.sym).toBe('KING')
     expect(merged[0]!.amt).toBe('240')
+  })
+
+  it('removes a fully spent token from the immediate cache', async () => {
+    const {
+      getCachedFungibles,
+      paintFungibleAfterSpend,
+      rememberFungibleToken,
+    } = await import('./fungibles')
+    rememberFungibleToken(row({
+      tokenId: KING_ORIGIN,
+      amt: '240',
+      outpoint: LIVE_CHANGE,
+    }))
+
+    paintFungibleAfterSpend({
+      tokenId: KING_ORIGIN,
+      remainingAmt: 0n,
+    })
+
+    expect(getCachedFungibles()).toHaveLength(0)
+  })
+
+  it('paints exact BSV-21 change without converting large amounts to number', async () => {
+    const {
+      getCachedFungibles,
+      paintFungibleAfterSpend,
+      rememberFungibleToken,
+    } = await import('./fungibles')
+    rememberFungibleToken(row({
+      tokenId: KING_ORIGIN,
+      amt: '900719925474099300',
+      outpoint: LIVE_CHANGE,
+    }))
+
+    paintFungibleAfterSpend({
+      tokenId: KING_ORIGIN,
+      remainingAmt: 900719925474099299n,
+      outpoint: RECEIVE_A,
+      utxoCount: 2,
+    })
+
+    expect(getCachedFungibles()[0]).toMatchObject({
+      amt: '900719925474099299',
+      outpoint: RECEIVE_A,
+      utxoCount: 2,
+    })
   })
 
   it('lists a legacy JSON BSV-21 tip for the burn planner', async () => {

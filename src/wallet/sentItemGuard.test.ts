@@ -31,6 +31,16 @@ describe('sentItemGuard', () => {
     expect(guard.isItemSent('aa_0')).toBe(true)
   })
 
+  it('never restores a tip consumed by a completed burn', async () => {
+    const guard = await import('./sentItemGuard')
+    guard.markItemsSent([{ outpoint: 'aa.0', txid: 'b'.repeat(64) }])
+    guard.markItemsConsumed(['aa.0'])
+    guard.forgetItemsSent(['aa.0'])
+
+    expect(guard.isItemConsumed('aa_0')).toBe(true)
+    expect(guard.isItemSent('aa.0', Date.now() + guard.SENT_HIDE_MS + 1)).toBe(true)
+  })
+
   it('lets the payee settle a peerDeliver transfer long after a sender-broadcast one is a ghost', async () => {
     const guard = await import('./sentItemGuard')
     guard.markItemsSent([

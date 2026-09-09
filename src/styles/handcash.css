@@ -4588,7 +4588,18 @@ a.history-row-link:hover .history-tx-hint {
   border: 2px solid hsl(var(--background));
   border-radius: 50%;
   color: #fff;
+  line-height: 0;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.45);
+}
+
+.history-action-badge > svg,
+.history-pending-mark > svg,
+.history-pending-mark > .loading-spinner,
+.collectable-verify-mark > svg,
+.collectable-verify-mark > .loading-spinner {
+  display: block;
+  place-self: center;
+  margin: auto;
 }
 
 .history-action-badge.is-send {
@@ -4668,8 +4679,9 @@ a.history-row-link:hover .history-tx-hint {
 
 .history-icon-wrap .loading-spinner--sm,
 .history-icon-wrap .collectable-verify-spinner {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
+  border-width: 1px;
 }
 
 .history-item-thumb-icon {
@@ -8745,6 +8757,7 @@ html[data-aeon-mode='light'] .skeleton {
   border: 1px solid hsl(var(--border));
   background: hsl(var(--background));
   color: var(--hc-muted);
+  line-height: 0;
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
 }
@@ -8786,9 +8799,9 @@ html[data-aeon-mode='light'] .skeleton {
   margin: 0;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--hc-accent, #57ff97) 45%, hsl(var(--border)));
-  background: color-mix(in srgb, hsl(var(--background)) 88%, #000);
-  color: var(--hc-accent, #57ff97);
+  border: 1px solid color-mix(in srgb, #4d88d8 72%, hsl(var(--border)));
+  background: #4d88d8;
+  color: #fff;
   box-shadow: 0 1px 3px color-mix(in srgb, #000 28%, transparent);
   pointer-events: none;
   animation: action-mark-pulse 1.2s ease-in-out infinite alternate;
@@ -8808,9 +8821,27 @@ html[data-aeon-mode='light'] .skeleton {
 }
 
 .collectable-sending-mark[data-action='burn'] {
-  border-color: color-mix(in srgb, var(--hc-danger) 68%, hsl(var(--border)));
-  background: color-mix(in srgb, var(--hc-danger) 22%, hsl(var(--background)));
-  color: color-mix(in srgb, var(--hc-danger) 80%, white);
+  border-color: color-mix(in srgb, #c9852a 72%, hsl(var(--border)));
+  background: #c9852a;
+  color: #fff;
+}
+
+.collectable-sending-mark[data-action='list'] {
+  border-color: color-mix(in srgb, #c9852a 72%, hsl(var(--border)));
+  background: #c9852a;
+  color: #fff;
+}
+
+.collectable-sending-mark[data-action='cancel'] {
+  border-color: color-mix(in srgb, #c44747 72%, hsl(var(--border)));
+  background: #c44747;
+  color: #fff;
+}
+
+.collectable-sending-mark[data-action='buy'] {
+  border-color: color-mix(in srgb, #2da76f 72%, hsl(var(--border)));
+  background: #2da76f;
+  color: #fff;
 }
 
 @keyframes action-mark-pulse {
@@ -13349,10 +13380,10 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
-  .wallet-nav-tab[data-selected],
+  .wallet-nav-tab-deny[data-selected],
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
-  .wallet-nav-tab[data-selected]:hover {
+  .wallet-nav-tab-deny[data-selected]:hover {
   color: hsl(var(--primary));
 }
 

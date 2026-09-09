@@ -45,6 +45,7 @@ import {
   RefreshIcon,
   SendIcon,
   FireIcon,
+  WarningIcon,
 } from './icons'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
@@ -148,7 +149,9 @@ function TokenActivityRow({ entry }: { entry: ActivityEntry }) {
         className={`fungible-activity-icon${burned ? ' is-burn' : ''}`}
         aria-hidden
       >
-        {failed ? '!' : burned ? (
+        {failed ? (
+          <WarningIcon size={15} />
+        ) : burned ? (
           <FireIcon size={14} />
         ) : minted ? (
           <MintIcon size={15} />

@@ -228,41 +228,7 @@ async function copyAppScreenshotToClipboard(): Promise<
     return { ok: false, error: 'No window to capture' }
   }
   const version = app.getVersion()
-  const badge = `HandCash ${version} BETA`
-  let badgeInjected = false
   try {
-    // Stamp version onto the capture so shares advertise the build.
-    await mainWindow.webContents.executeJavaScript(
-      `(() => {
-        const existing = document.getElementById('hc-screenshot-badge');
-        if (existing) existing.remove();
-        const el = document.createElement('div');
-        el.id = 'hc-screenshot-badge';
-        el.setAttribute('aria-hidden', 'true');
-        el.textContent = ${JSON.stringify(badge)};
-        el.style.cssText = [
-          'position:fixed',
-          'right:14px',
-          'bottom:14px',
-          'z-index:2147483647',
-          'padding:6px 10px',
-          'border-radius:8px',
-          'border:1px solid rgba(56,211,133,0.55)',
-          'background:rgba(6,12,10,0.88)',
-          'color:#38d385',
-          'font:700 12px/1.2 "IBM Plex Sans",system-ui,sans-serif',
-          'letter-spacing:0.06em',
-          'text-transform:uppercase',
-          'pointer-events:none',
-          'box-shadow:0 8px 24px rgba(0,0,0,0.45)',
-        ].join(';');
-        document.body.appendChild(el);
-      })()`,
-    )
-    badgeInjected = true
-    // Let layout paint the badge before capture.
-    await new Promise((r) => setTimeout(r, 40))
-
     const image = await mainWindow.capturePage()
     if (image.isEmpty()) {
       return { ok: false, error: 'Capture was empty' }
@@ -277,14 +243,6 @@ async function copyAppScreenshotToClipboard(): Promise<
     const error = err instanceof Error ? err.message : String(err)
     log.error('Screenshot to clipboard failed', error)
     return { ok: false, error }
-  } finally {
-    if (badgeInjected && mainWindow && !mainWindow.isDestroyed()) {
-      void mainWindow.webContents
-        .executeJavaScript(
-          `document.getElementById('hc-screenshot-badge')?.remove()`,
-        )
-        .catch(() => {})
-    }
   }
 }
 

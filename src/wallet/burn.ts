@@ -37,7 +37,12 @@ import {
   listCollectables,
 } from './collectables'
 import { scheduleHistoryBackupPush } from './deviceSync'
-import { getFungible, listFungibleTips, listFungibles } from './fungibles'
+import {
+  forgetFungibleToken,
+  getFungible,
+  listFungibleTips,
+  paintFungibleAfterSpend,
+} from './fungibles'
 import { stampBrc164Id } from './itemAccess'
 import { withVisibleOnChainBeef } from './legacyBeef'
 import { scriptPaysAddress } from './ordinalOwnership'
@@ -50,6 +55,7 @@ import {
   clearPaymentProgress,
   setPaymentProgress,
 } from './paymentProgress'
+import { markItemsConsumed } from './sentItemGuard'
 import { BRC29_PROTOCOL_ID, ensurePaymentBroadcasted } from './sendBrc29Payment'
 import { refreshSpendableBalance, runExclusiveBurn } from './spendGuard'
 import { getActiveWallet, type ActiveWallet } from './session'
@@ -617,6 +623,10 @@ export async function previewBsv21Burn(args: {
       tokenIds: token.tokenIds ?? [token.tokenId],
     })
   )
+  if (tips.length === 0) {
+    forgetFungibleToken(token.tokenId)
+    throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
+  }
   const plan = planBsv21Burn({
     tokenId,
     amount: args.amount,
@@ -745,6 +755,10 @@ export async function burnBsv21(args: {
           })
         ).filter((tip) => normalizeTokenId(tip.tokenId) === tokenId)
       )
+      if (tips.length === 0) {
+        forgetFungibleToken(token.tokenId)
+        throw new Error('Token is no longer spendable in this wallet. Inventory was refreshed.')
+      }
       const plan = planBsv21Burn({
         tokenId,
         amount: args.amount,
@@ -761,10 +775,34 @@ export async function burnBsv21(args: {
         dec: token.dec,
         issuer: token.issuer,
       })
+      markItemsConsumed(
+        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
+      )
       hideCollectablesAfterSpend(
         plan.inputs.map((input) => wireOutpoint(input.outpoint)),
         result.txid,
       )
+      const spent = new Set(
+        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
+      )
+      const untouched = tips.filter(
+        (tip) => !spent.has(wireOutpoint(tip.outpoint)),
+      )
+      const remainingAmount =
+        tips.reduce((sum, tip) => sum + BigInt(tip.amt), 0n) -
+        plan.burnAmount
+      paintFungibleAfterSpend({
+        tokenId,
+        remainingAmt: remainingAmount,
+        outpoint:
+          plan.changeAmount > 0n
+            ? `${result.txid}_1`
+            : untouched[0]?.outpoint,
+        sym: token.sym,
+        dec: token.dec,
+        icon: token.icon,
+        utxoCount: untouched.length + (plan.changeAmount > 0n ? 1 : 0),
+      })
       upsertAppActivity({
         origin: WALLET_ACTIVITY_ORIGIN,
         kind: 'spent',
@@ -787,7 +825,6 @@ export async function burnBsv21(args: {
       console.info(
         `[burn] complete token=${tokenId.slice(0, 16)}… txid=${result.txid}`
       )
-      void listFungibles(active)
       return result
     })
   } catch (error) {
@@ -929,6 +966,9 @@ export async function burnOneSat(
         plan,
         progressOutpoint: wanted[0],
       })
+      markItemsConsumed(
+        plan.inputs.map((input) => wireOutpoint(input.outpoint)),
+      )
       hideCollectablesAfterSpend(
         plan.inputs.map((input) => wireOutpoint(input.outpoint)),
         result.txid,

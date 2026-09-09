@@ -36,7 +36,7 @@ import { getTokenIconDataUrl } from './tokenIconCache'
 import { cacheTokenIconFromBeef, resolveOnesatFtIconDataUrl, resolveTokenIconDataUrl } from './tokenIconResolve'
 import { yieldToUi } from './yieldToUi'
 import { stampBrc164Id } from './itemAccess'
-import { isItemSent } from './sentItemGuard'
+import { isItemSent, markItemsConsumed } from './sentItemGuard'
 import { attachMarketListingToToken } from './tokenMarketView'
 import { parseOrdEnvelope } from './ordinalOwnership'
 import { restoreUnspentAssetOutpoint } from './staleOutputRelease'
@@ -147,12 +147,24 @@ async function recoverReceivedTokensFromActivity(
   items: FungibleToken[],
 ): Promise<FungibleToken[]> {
   const { exportAllActivity } = await import('./appActivity')
+  const activity = exportAllActivity()
+  markItemsConsumed(
+    activity
+      .filter(
+        (row) =>
+          row.method === 'burn-token' &&
+          row.status === 'complete' &&
+          Boolean(row.txid) &&
+          Boolean(row.item?.outpoint),
+      )
+      .map((row) => row.item!.outpoint!),
+  )
   const enriched = [...items]
   const knownIndex = new Map(
     enriched.map((token, index) => [tokenKey(token), index]),
   )
   const recovered = new Map<string, FungibleToken>()
-  for (const row of exportAllActivity()) {
+  for (const row of activity) {
     const item = row.item
     if (
       row.kind !== 'earned' ||
@@ -277,15 +289,24 @@ export function forgetFungibleToken(tokenId: string): void {
 
 export function paintFungibleAfterSpend(args: {
   tokenId: string
-  remainingAmt: number
+  remainingAmt: number | string | bigint
   outpoint?: string
   sym?: string
   dec?: number
+  utxoCount?: number
   colourSupply?: FungibleToken['colourSupply']
   colourMaxSupply?: number | null
   icon?: string
 }): void {
-  if (!Number.isFinite(args.remainingAmt) || args.remainingAmt <= 0) {
+  let remainingAmt: string
+  try {
+    const units = BigInt(args.remainingAmt)
+    if (units <= 0n) {
+      forgetFungibleToken(args.tokenId)
+      return
+    }
+    remainingAmt = units.toString()
+  } catch {
     forgetFungibleToken(args.tokenId)
     return
   }
@@ -293,9 +314,9 @@ export function paintFungibleAfterSpend(args: {
   rememberFungibleToken({
     tokenId: args.tokenId,
     sym: args.sym || prior?.sym || 'Token',
-    amt: String(args.remainingAmt),
+    amt: remainingAmt,
     dec: args.dec ?? prior?.dec ?? 0,
-    utxoCount: 1,
+    utxoCount: Math.max(1, Math.trunc(args.utxoCount ?? 1)),
     outpoint: args.outpoint || prior?.outpoint || args.tokenId,
     spendKind: 'plain',
     colourSupply: args.colourSupply ?? prior?.colourSupply,

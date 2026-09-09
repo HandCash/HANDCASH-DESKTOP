@@ -11,6 +11,7 @@ import {
   SendIcon,
   FireIcon,
   RefreshIcon,
+  WarningIcon,
 } from './icons'
 import { DeferredImage } from './DeferredImage'
 import { useChunkedCount } from './useChunkedCount'
@@ -264,7 +265,7 @@ export function HistoryActionBadge({ entry }: { entry: ActivityEntry }) {
       title={badgeLabel}
     >
       {failed ? (
-        <span aria-hidden>!</span>
+        <WarningIcon size={9} />
       ) : burned ? (
         <FireIcon size={8} />
       ) : minted ? (
