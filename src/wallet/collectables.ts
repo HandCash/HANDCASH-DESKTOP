@@ -2716,6 +2716,8 @@ async function signOrdinalTransfer(args: {
   signable: SignableTransaction
   /** Tip outpoint(s) we must unlock. */
   outpoints: string[]
+  /** Related transaction ids the wallet may need while verifying signed BEEF. */
+  knownTxids?: string[]
 }): Promise<{ txid: string; atomicBeef: number[] }> {
   const targets = new Map<string, number>()
   for (const op of args.outpoints) {
@@ -2814,6 +2816,10 @@ async function signOrdinalTransfer(args: {
       spends,
       options: {
         noSend: true,
+        acceptDelayedBroadcast: true,
+        ...(args.knownTxids && args.knownTxids.length > 0
+          ? { knownTxids: args.knownTxids }
+          : {}),
       },
     })
   } catch (err) {
@@ -3663,6 +3669,7 @@ export async function sendCollectable(args: {
                 wallet,
                 signable: result.signableTransaction,
                 outpoints: spendOutpoints,
+                knownTxids,
               })
               txid = signed.txid
               atomicBeef = signed.atomicBeef
