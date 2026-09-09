@@ -882,6 +882,17 @@ html:is(.platform-mobile, .layout-compact)
 
 html:is(.platform-mobile, .layout-compact)
   .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected],
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--primary
+  .wallet-nav-tab[data-selected]:hover {
+  color: hsl(var(--primary-foreground));
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
   .wallet-nav-tab-danger[data-selected]:not(:disabled) {
   border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
   background: color-mix(in srgb, var(--hc-danger) 72%, white);

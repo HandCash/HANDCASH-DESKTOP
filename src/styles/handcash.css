@@ -13388,9 +13388,21 @@ html:not(.platform-mobile):not(.layout-compact)
 html:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab[data-selected]:hover {
-  color: #fafafa;
+  /* Dark primary is neon green — white ink fails contrast; use primary-foreground. */
+  color: hsl(var(--primary-foreground));
   background: transparent;
   box-shadow: none;
+}
+
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected],
+html:not(.platform-mobile):not(.layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-action-slot--danger
+  .wallet-nav-tab[data-selected]:hover {
+  color: #fafafa;
 }
 
 /* Request dock: flush segments, square joins; outer pill is on the bar/slots. */
@@ -13417,7 +13429,8 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   .wallet-nav-bar[data-permission]
   .wallet-nav-tab-deny[data-selected]:hover {
-  color: hsl(var(--primary));
+  /* Deny on the primary CTA slot still needs primary-foreground (white on black). */
+  color: hsl(var(--primary-foreground));
 }
 
 html:not(.platform-mobile):not(.layout-compact)
