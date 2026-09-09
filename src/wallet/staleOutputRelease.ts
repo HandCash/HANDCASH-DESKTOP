@@ -12,9 +12,9 @@
  * is affirmative evidence our set is stale, and it is the only trigger for the
  * release here.
  */
-import { parseOutpoint, txExistsOnChain } from './legacyScan'
+import { parseOutpoint, spentStatusOfOutpoint, txExistsOnChain } from './legacyScan'
 import { logDiag } from './diagnosticLog'
-import { getActiveWallet } from './session'
+import { getActiveWallet, type ActiveWallet } from './session'
 import {
   creditUtxo,
   getUtxoLock,
@@ -583,6 +583,69 @@ export async function hideSpentOutpoints(
     console.warn('[stale-output] hide toolbox rows skipped', err)
   }
   return unique.length
+}
+
+/**
+ * Re-enable one asset basket row only after a live UTXO service proves the
+ * outpoint is unspent. Failed/aborted asset spends can leave `spentBy` on the
+ * toolbox row, while the inscription remains on chain and in the display cache.
+ */
+export async function restoreUnspentAssetOutpoint(
+  active: ActiveWallet,
+  outpoint: string,
+): Promise<boolean> {
+  const parsed = parseOutpoint(outpoint)
+  if (!parsed) return false
+
+  let unspent = false
+  const isUtxo = active.services?.isUtxo
+  if (typeof isUtxo === 'function') {
+    try {
+      const result = await isUtxo({ txid: parsed.txid, vout: parsed.vout } as never)
+      unspent =
+        result === true ||
+        (!!result &&
+          typeof result === 'object' &&
+          (result as { isUtxo?: unknown }).isUtxo === true)
+    } catch {
+      unspent = false
+    }
+  }
+  if (!unspent) {
+    unspent =
+      (await spentStatusOfOutpoint(outpoint, active.chain).catch(
+        () => 'unknown' as const,
+      )) === 'unspent'
+  }
+  if (!unspent) return false
+
+  const storage = active.wallet.storage
+  if (!storage?.runAsStorageProvider) return false
+  let restored = false
+  await storage.runAsStorageProvider(async (activeSp) => {
+    const sp = activeSp as unknown as LocalStorage
+    const rows = await findOutputsForTxid(sp, parsed.txid)
+    const row = rows.find(
+      (candidate) =>
+        Number(candidate.vout ?? candidate.outputIndex) === parsed.vout,
+    )
+    const outputId = positiveId(row?.outputId)
+    if (outputId == null) return
+    await sp.updateOutput(outputId, {
+      spendable: true,
+      spentBy: undefined,
+    })
+    restored = true
+  })
+  if (!restored) return false
+
+  const released = releaseConsumedUtxo(
+    outpoint,
+    'restore:asset-proven-unspent',
+  )
+  if (!released) creditUtxo(outpoint, { satoshis: 1 })
+  console.info(`[stale-output] restored proven-unspent asset ${outpoint}`)
+  return true
 }
 
 /** Sealed coins to re-check per pass, so a long-lived wallet cannot stall. */

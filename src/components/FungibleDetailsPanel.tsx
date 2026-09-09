@@ -409,11 +409,7 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
         {/* Destructive action is always last, on tokens and on items. */}
         <button
           type="button"
-          className={
-            isColour
-              ? `btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`
-              : `btn btn-primary btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`
-          }
+          className={`btn btn-ghost btn-icon asset-burn-trigger asset-burn-last${burning ? ' is-burning' : ''}`}
           disabled={burnBlocked || combining || burning}
           aria-busy={burning || undefined}
           title={burning ? `${inFlight ?? 'Burning'} ${token.sym}` : burnTitle}

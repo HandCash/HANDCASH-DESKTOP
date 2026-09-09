@@ -39,6 +39,7 @@ import { stampBrc164Id } from './itemAccess'
 import { isItemSent } from './sentItemGuard'
 import { attachMarketListingToToken } from './tokenMarketView'
 import { parseOrdEnvelope } from './ordinalOwnership'
+import { restoreUnspentAssetOutpoint } from './staleOutputRelease'
 
 export type { FungibleToken, Bsv21Utxo, Bsv21ImportItem }
 export { formatFungibleAmount, BSV21_BASKET }
@@ -647,6 +648,10 @@ async function recoverCachedLegacyTips(
     const txid = match[1]!
     const vout = Number(match[2])
     try {
+      // A failed/aborted spend can leave this asset row locally retired. Never
+      // feed a display-cache outpoint back into createAction unless a live UTXO
+      // source proves it still exists and the toolbox row is restored first.
+      if (!(await restoreUnspentAssetOutpoint(active, point))) continue
       const beef = await getLocalBeefForTxid(active, txid)
       const output = beef?.findTxid(txid)?.tx?.outputs[vout]
       const lockingScript = output?.lockingScript?.toHex()

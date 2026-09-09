@@ -96,7 +96,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           </span>
           <div>
             <h3 id="friend-overview-name">{displayHandle}</h3>
-            <p>{handleFixed ? 'Handle contact' : 'Saved contact'}</p>
+            {handleFixed ? <p>Handle contact</p> : null}
           </div>
         </section>
 

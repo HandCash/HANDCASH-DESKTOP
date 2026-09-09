@@ -41,12 +41,7 @@ function FriendListItem({ friend }: { friend: Friend }) {
           {friendInitial(friend.label)}
         </span>
         <div className="friend-row-body">
-          <span className="friend-row-title">
-            <strong className="friend-label">{friend.label}</strong>
-            <span className="friend-status">
-              {friend.handle ? 'Handle' : 'Saved contact'}
-            </span>
-          </span>
+          <strong className="friend-label">{friend.label}</strong>
           <span className="friend-key mono" title={friend.identityKey}>
             {friend.identityKey}
           </span>
@@ -71,9 +66,6 @@ function FriendGridItem({ friend }: { friend: Friend }) {
           {friendInitial(friend.label)}
         </span>
         <strong className="collection-grid-name">{friend.label}</strong>
-        <span className="friend-status">
-          {friend.handle ? 'Handle' : 'Saved contact'}
-        </span>
         <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
           {friend.identityKey}
         </span>
@@ -174,7 +166,7 @@ export function FriendsPanel({ chain: _chain }: Props) {
               <span>Try another name or identity key.</span>
             </div>
           ) : view === 'grid' ? (
-            <ul className="collection-grid">
+            <ul className="collection-grid friends-grid">
               {filtered.map((friend) => (
                 <FriendGridItem key={friend.id} friend={friend} />
               ))}

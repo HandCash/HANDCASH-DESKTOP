@@ -11,7 +11,7 @@ import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
-import { CopyIcon, InfoIcon } from './icons'
+import { CopyIcon } from './icons'
 
 type Props = {
   profile: WalletProfile
@@ -85,10 +85,7 @@ export function IdentityPanel({ profile }: Props) {
       </div>
       <div className="identity-scroll nav-section-scroll-body">
         <div className="identity-body">
-          <section className="identity-card" aria-labelledby="identity-card-title">
-            <div className="identity-card-name" id="identity-card-title">
-              Share your identity
-            </div>
+          <section className="identity-card" aria-label="Wallet identity">
             <div className="identity-hero">
               <div className="identity-qr">
                 <div className="identity-qr-frame">
@@ -164,10 +161,6 @@ export function IdentityPanel({ profile }: Props) {
             </ul>
           </section>
 
-          <p className="identity-key-note">
-            <InfoIcon size={17} />
-            <span>Your identity key is not a payment address. Use Receive for BSV.</span>
-          </p>
         </div>
       </div>
     </div>

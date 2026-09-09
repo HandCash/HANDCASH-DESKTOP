@@ -834,3 +834,110 @@ html:is(.platform-mobile, .layout-compact) .asset-burn-trigger.is-burning {
 html:is(.platform-mobile, .layout-compact) .fungible-card[data-sending='true'] .collectable-burn-btn.is-burning {
   opacity: 1;
 }
+
+/* Contextual actions override the segmented-nav selected state on compact shells. */
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-accept[data-selected]:not(:disabled) {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+  box-shadow: 0 5px 16px color-mix(in srgb, hsl(var(--primary)) 24%, transparent);
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-danger[data-selected]:not(:disabled) {
+  border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
+  background: color-mix(in srgb, var(--hc-danger) 72%, white);
+  color: #240507;
+  box-shadow: 0 5px 16px color-mix(in srgb, var(--hc-danger) 24%, transparent);
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-accept[data-selected]:not(:disabled) {
+  border-color: #0a0a0a;
+  background: #0a0a0a;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-danger[data-selected]:not(:disabled) {
+  border-color: #991b1b;
+  background: #991b1b;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-accept[data-selected]:not(:disabled):hover {
+  background: #0a0a0a;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab-danger[data-selected]:not(:disabled):hover {
+  background: #991b1b;
+  color: #fff;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]
+  .wallet-nav-tab[data-selected]:not(:disabled):hover {
+  color: #fff;
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-accept[data-selected]:not(:disabled)
+  ),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-accept[data-selected]:not(:disabled)
+  )
+  .wallet-nav-bar-track {
+  border-color: hsl(var(--primary));
+  background: hsl(var(--primary));
+}
+
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-danger[data-selected]:not(:disabled)
+  ),
+html:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-danger[data-selected]:not(:disabled)
+  )
+  .wallet-nav-bar-track {
+  border-color: color-mix(in srgb, var(--hc-danger) 72%, white);
+  background: color-mix(in srgb, var(--hc-danger) 72%, white);
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-accept[data-selected]:not(:disabled)
+  ),
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-accept[data-selected]:not(:disabled)
+  )
+  .wallet-nav-bar-track {
+  border-color: #0a0a0a;
+  background: #0a0a0a;
+}
+
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-danger[data-selected]:not(:disabled)
+  ),
+html[data-aeon-mode='light']:is(.platform-mobile, .layout-compact)
+  .wallet-nav-bar[data-permission]:has(
+    .wallet-nav-tab-danger[data-selected]:not(:disabled)
+  )
+  .wallet-nav-bar-track {
+  border-color: #991b1b;
+  background: #991b1b;
+}

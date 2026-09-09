@@ -462,9 +462,17 @@ export const WalletNav = memo(function WalletNav({
       <div className="wallet-nav">
         <div className="wallet-nav-stage">
           {stageChild ? (
-            <div className="wallet-nav-panel nav-child-stage">
-              <NavBreadcrumb crumbs={crumbs} />
-              <div className="nav-child-body">
+            <div
+              className={`wallet-nav-panel nav-child-stage${
+                stageChild.type === 'app-browser' ? ' nav-child-stage--browser' : ''
+              }`}
+            >
+              {stageChild.type === 'app-browser' ? null : <NavBreadcrumb crumbs={crumbs} />}
+              <div
+                className={`nav-child-body${
+                  stageChild.type === 'app-browser' ? ' nav-child-body--browser' : ''
+                }`}
+              >
               {stageChild.type === 'app' && (() => {
                 const app = apps.find((a) => a.origin === stageChild.origin)
                 if (!app) return <p className="connected-empty-line">App not found</p>

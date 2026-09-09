@@ -151,8 +151,10 @@ export function Dashboard({
   onFail,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
-  const [chatFullscreen, setChatFullscreen] = useState(() =>
-    isMessagesNavChild(getNavState().child),
+  const [contentFullscreen, setContentFullscreen] = useState(() => {
+    const child = getNavState().child
+    return isMessagesNavChild(child) || child?.type === 'app-browser'
+  }
   )
 
   const onRevoke = useCallback((origin: string) => {
@@ -171,7 +173,9 @@ export function Dashboard({
   useEffect(
     () =>
       subscribeNav((nav) => {
-        setChatFullscreen(isMessagesNavChild(nav.child))
+        setContentFullscreen(
+          isMessagesNavChild(nav.child) || nav.child?.type === 'app-browser',
+        )
       }),
     [],
   )
@@ -621,7 +625,7 @@ export function Dashboard({
 
   return (
     <section
-      className={`dashboard${chatFullscreen ? ' dashboard--chat-fullscreen' : ''}`}
+      className={`dashboard${contentFullscreen ? ' dashboard--chat-fullscreen' : ''}`}
       data-aeon-scope="dashboard"
       data-aeon-state="ready"
     >

@@ -44,6 +44,7 @@ const {
   failUnsentLocalTx,
   reclaimSealedInputsNeverSpent,
   restoreOnChainLocalTx,
+  restoreUnspentAssetOutpoint,
 } = await import('./staleOutputRelease')
 
 const { hideUtxo, getUtxoLock, __resetUtxoLocksForTests } = await import(
@@ -93,6 +94,66 @@ describe('isNoLongerSpendableError', () => {
     ).toBe(true)
     expect(isNoLongerSpendableError(new Error('input already spent'))).toBe(false)
     expect(isNoLongerSpendableError(new Error('Insufficient funds'))).toBe(false)
+  })
+})
+
+describe('restoreUnspentAssetOutpoint', () => {
+  beforeEach(() => {
+    overlayStore.clear()
+    __resetUtxoLocksForTests()
+    spentStatusOfOutpoint.mockReset()
+    spentStatusOfOutpoint.mockResolvedValue('unknown')
+  })
+
+  it('restores an asset row only after the wallet service proves it is unspent', async () => {
+    const txid = 'ab'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    hideUtxo(`${txid}.1`, { spentBy: 'cd'.repeat(32), satoshis: 1 })
+    const active = {
+      chain: 'main',
+      services: {
+        isUtxo: vi.fn(async () => ({ isUtxo: true })),
+      },
+      wallet: {
+        storage: {
+          runAsStorageProvider: async (fn: (sp: unknown) => Promise<void>) =>
+            fn({
+              findOutputs: async () => [
+                { outputId: 7, txid, vout: 1, basket: 'bsv21' },
+              ],
+              updateOutput,
+            }),
+        },
+      },
+    }
+
+    await expect(
+      restoreUnspentAssetOutpoint(active as never, `${txid}.1`),
+    ).resolves.toBe(true)
+    expect(updateOutput).toHaveBeenCalledWith(7, {
+      spendable: true,
+      spentBy: undefined,
+    })
+    expect(getUtxoLock(`${txid}.1`)?.spendable).toBe(true)
+  })
+
+  it('does not restore an asset when live providers cannot prove it unspent', async () => {
+    const txid = 'ef'.repeat(32)
+    const updateOutput = vi.fn(async () => undefined)
+    const active = {
+      chain: 'main',
+      services: { isUtxo: vi.fn(async () => false) },
+      wallet: {
+        storage: {
+          runAsStorageProvider: async () => undefined,
+        },
+      },
+    }
+
+    await expect(
+      restoreUnspentAssetOutpoint(active as never, `${txid}.0`),
+    ).resolves.toBe(false)
+    expect(updateOutput).not.toHaveBeenCalled()
   })
 })
 
