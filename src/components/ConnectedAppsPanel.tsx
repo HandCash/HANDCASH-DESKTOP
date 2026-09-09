@@ -204,6 +204,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
   const [currency, setCurrency] = useState<DisplayCurrency>(() => getDisplayCurrency())
   const [view, setView] = useState<CollectionView>(() => getCollectionView('apps'))
   const [tick, setTick] = useState(0)
+  const [query, setQuery] = useState('')
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
   useEffect(() => subscribeDisplayCurrency(setCurrency), [])
@@ -222,6 +223,17 @@ export function ConnectedAppsPanel({ apps }: Props) {
     })
   }, [apps, tick])
 
+  const filteredApps = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    if (!q) return orderedApps
+    return orderedApps.filter((app) => {
+      const name = (app.name || appDisplayName(app.origin)).toLowerCase()
+      const origin = app.origin.toLowerCase()
+      const home = (appHomepage(app.origin) ?? '').toLowerCase()
+      return name.includes(q) || origin.includes(q) || home.includes(q)
+    })
+  }, [orderedApps, query])
+
   return (
     <div
       className="nav-section-body nav-section-with-scroll"
@@ -232,7 +244,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
         <h2>Connected apps</h2>
         <CollectionViewToggle label="Connected apps view" scope="apps" />
       </div>
-      {orderedApps.length === 0 ? (
+      {apps.length === 0 ? (
         <EmptyState
           icon={<AppsIcon size={28} />}
           title="No apps connected"
@@ -240,9 +252,27 @@ export function ConnectedAppsPanel({ apps }: Props) {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          {view === 'grid' ? (
+          <div className="friends-search" role="search">
+            <label className="sr-only" htmlFor="apps-search-input">
+              Search connected apps
+            </label>
+            <input
+              id="apps-search-input"
+              type="search"
+              placeholder="Search by name or origin"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              autoComplete="off"
+            />
+          </div>
+          {filteredApps.length === 0 ? (
+            <div className="friends-empty">
+              <strong>No apps found</strong>
+              <span>Try another name or origin.</span>
+            </div>
+          ) : view === 'grid' ? (
             <ul className="collection-grid">
-              {orderedApps.map((app) => (
+              {filteredApps.map((app) => (
                 <AppGridItem
                   key={app.origin}
                   app={app}
@@ -253,7 +283,7 @@ export function ConnectedAppsPanel({ apps }: Props) {
             </ul>
           ) : (
             <ul className="connected-app-list">
-              {orderedApps.map((app) => (
+              {filteredApps.map((app) => (
                 <AppListItem
                   key={app.origin}
                   app={app}

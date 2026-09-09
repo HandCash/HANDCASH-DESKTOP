@@ -503,7 +503,7 @@ export function bumpBalanceAfterHeal(): void {
   }
 }
 
-/** Background heal when display credits pending change toolbox cannot spend yet. */
+/** Promote pending local change so the next spend can use it. Does not run UTXO heal. */
 let chainedBalanceHealAt = 0
 let chainedBalanceHealFlight: Promise<void> | null = null
 const CHAINED_BALANCE_HEAL_COOLDOWN_MS = 12_000
@@ -521,8 +521,6 @@ function scheduleChainedBalanceHeal(pendingChange: number): void {
       } = await import('./staleOutputRelease')
       await promotePendingLocalChangeOutputs({ forSpendChain: true })
       await reclaimSealedInputsNeverSpent({ forSpendChain: true })
-      const { scheduleHealCheckpointIfDue } = await import('./utxoHealFromHistory')
-      scheduleHealCheckpointIfDue('auto')
       lastBalanceBreakdown = ''
       bumpBalanceAfterHeal()
     } catch (err) {

@@ -836,6 +836,46 @@ describe('healMisfiledOnesatFtReceives', () => {
     })
   })
 
+  it('does not let a collectable announce overwrite a token receive', () => {
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-token',
+      note: 'Received 11,111,111,111 DEMO',
+      txid: TX,
+      item: {
+        name: 'DEMO',
+        origin: ORIGIN,
+        outpoint: `${TX}.0`,
+        tokenId: ORIGIN,
+        amt: '11111111111',
+      },
+    })
+    upsertAppActivity({
+      origin: WALLET_ACTIVITY_ORIGIN,
+      kind: 'earned',
+      sats: 1,
+      method: 'receive-collectable',
+      note: 'Received Collectable',
+      txid: TX,
+      item: {
+        name: 'Collectable',
+        origin: `${TX}_0`,
+        outpoint: `${TX}.0`,
+      },
+    })
+    const row = listRecentActivity(10).find((e) => e.txid === TX)
+    expect(row).toMatchObject({
+      method: 'receive-token',
+      item: {
+        name: 'DEMO',
+        tokenId: ORIGIN,
+        amt: '11111111111',
+      },
+    })
+  })
+
   it('does not invent a row for a leftover-only tip', () => {
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,

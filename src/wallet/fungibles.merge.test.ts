@@ -190,6 +190,22 @@ describe('mergeLiveFungibles', () => {
     expect(getCachedFungibles()).toHaveLength(0)
   })
 
+  it('keeps a real token whose ticker is Collectable', async () => {
+    const { getCachedFungibles, rememberFungibleToken } = await import('./token/list')
+    rememberFungibleToken({
+      tokenId: KING_ORIGIN,
+      sym: 'Collectable',
+      amt: '11111111111',
+      dec: 0,
+      utxoCount: 1,
+      outpoint: `${KING_ORIGIN.replace('_', '.')}`,
+      spendKind: 'plain',
+    })
+    expect(getCachedFungibles()).toMatchObject([
+      { tokenId: KING_ORIGIN, amt: '11111111111', sym: 'Collectable' },
+    ])
+  })
+
   it('paints exact BSV-21 change without converting large amounts to number', async () => {
     const {
       getCachedFungibles,

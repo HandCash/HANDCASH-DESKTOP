@@ -81,6 +81,7 @@ import {
   formatUtxoHealResult,
   healUtxoFromActivityHistory,
   runUtxoHealPass,
+  scheduleHealCheckpointIfDue,
 } from './utxoHealFromHistory'
 import { __resetHealCheckpointForTests, writeHealCheckpoint } from './utxoHealCheckpoint'
 
@@ -248,5 +249,13 @@ describe('healUtxoFromActivityHistory', () => {
 
     expect(mocks.restoreOnChainLocalTx).toHaveBeenCalledWith(TX)
     expect(mocks.keepChangeOfSignedTx).toHaveBeenCalledWith(TX)
+  })
+
+  it('does not start a background ingest heal from auto checkpoint', async () => {
+    scheduleHealCheckpointIfDue('auto')
+    scheduleHealCheckpointIfDue('send-cleanup')
+    await new Promise((r) => setTimeout(r, 20))
+    expect(mocks.keepChangeOfSignedTx).not.toHaveBeenCalled()
+    expect(mocks.runChangeHeal).not.toHaveBeenCalled()
   })
 })

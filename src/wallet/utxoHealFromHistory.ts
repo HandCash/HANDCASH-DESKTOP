@@ -26,10 +26,8 @@ import {
 } from './staleOutputRelease'
 import {
   appendHealCheckpointBatch,
-  canRunAutoHealCheckpoint,
   healCheckpointFresh,
   HEAL_TXID_BATCH_SIZE,
-  markAutoHealAttempt,
   readHealCheckpoint,
   txidsMissingFromCheckpoint,
   writeHealCheckpoint,
@@ -501,40 +499,11 @@ export async function healUtxoFromActivityHistory(): Promise<UtxoHealFromHistory
   return manualHealFlight
 }
 
-/** Silent checkpoint pass — send cleanup, pending-change background, unlock tail. */
-export function scheduleHealCheckpointIfDue(reason: UtxoHealCheckpointSource): void {
-  void (async () => {
-    if (!canRunAutoHealCheckpoint()) return
-    try {
-      const { getSpendPriorityDepth, shouldYieldChainIngestToSpend } = await import(
-        './walletCoordinator'
-      )
-      if (getSpendPriorityDepth() > 0 || shouldYieldChainIngestToSpend()) return
-    } catch {
-      /* coordinator optional at boot */
-    }
-    markAutoHealAttempt()
-    try {
-      const before = toBalanceSnapshot(await snapshotWalletBalance())
-      const pending = before?.pendingChange ?? 0
-      const { txids } = collectCandidateTxids()
-      const checkpointed = new Set(
-        (readHealCheckpoint()?.txids ?? []).map((t) => t.toLowerCase()),
-      )
-      const failedNew = (await listFailedLocalTxids()).filter(
-        (id) => !checkpointed.has(id),
-      )
-      if (
-        healCheckpointFresh() &&
-        pending <= 0 &&
-        txidsMissingFromCheckpoint(txids).length === 0 &&
-        failedNew.length === 0
-      ) {
-        return
-      }
-      await runUtxoHealPass({ source: reason })
-    } catch (err) {
-      console.warn('[utxo-heal] checkpoint pass skipped', reason, err)
-    }
-  })()
+/**
+ * Auto UTXO heal is Settings-only. Background checkpoint used to take
+ * `runChainIngest` (merkle proofs, 13+ activity txids) and block sends /
+ * Collect listOutputs. Callers may still invoke this; it does nothing.
+ */
+export function scheduleHealCheckpointIfDue(_reason: UtxoHealCheckpointSource): void {
+  return
 }

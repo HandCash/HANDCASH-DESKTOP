@@ -98,14 +98,45 @@ export async function internalizePeerItemSettle(opts: {
       return { accepted: false, outpoints: [], reason: 'beef-missing-tx' }
     }
     const outputs = tx.outputs ?? []
+    let tokenVout = -1
+    let tokenAmount = 0n
+    let tokenId = ''
+    let tokenSym = 'Token'
+    let tokenDec = 0
     for (let i = 0; i < outputs.length; i++) {
       const out = outputs[i]
       const sats = out?.satoshis
       const hex = out?.lockingScript?.toHex()
       if (!hex || !scriptPaysAddress(hex, active.address)) continue
-      if (decodeBsv21Binary(hex)) continue
+      const binary = decodeBsv21Binary(hex)
+      if (binary && binary.amount > 0n && binary.role !== 'authority') {
+        if (tokenVout < 0) {
+          tokenVout = i
+          tokenAmount = binary.amount
+          tokenId = binary.tokenId ?? `${id}_${i}`
+          tokenSym = binary.payload?.sym?.trim() || tokenSym
+          tokenDec = binary.payload?.dec ?? 0
+        }
+        continue
+      }
       if (decodeBProtocol(hex)) continue
       if (sats === 1 && tipVout < 0) tipVout = i
+    }
+    if (tipVout < 0 && tokenVout >= 0 && tokenAmount > 0n) {
+      clearInboundReceivePending(id)
+      const { internalizePeerFungibleSettle } = await import('./token')
+      return internalizePeerFungibleSettle({
+        txid: id,
+        tx: atomic,
+        token: {
+          kind: 'fungible',
+          tokenId: tokenId || `${id}_${tokenVout}`,
+          amount: tokenAmount.toString(),
+          sym: tokenSym,
+          dec: tokenDec,
+        },
+        beefPurpose: opts.beefPurpose,
+      })
     }
     if (tipVout < 0) {
       clearInboundReceivePending(id)

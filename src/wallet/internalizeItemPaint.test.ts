@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest'
+import { PrivateKey } from '@bsv/sdk'
 import {
+  paintAfterCreateActionIssuance,
   paintAfterInternalizeBsv21,
   parseInternalizedItemTips,
 } from './internalizeItemPaint'
 import {
   clearFungiblesCache,
+  encodeBsv21Binary,
   getCachedFungibles,
 } from './token'
+import { p2pkhScriptHex } from './ordinalOwnership'
 
 const TXID = 'a'.repeat(64)
 const ADDR = '1HandCashTestAddress'
@@ -80,6 +84,43 @@ describe('parseInternalizedItemTips', () => {
         outpoint: `${TXID}.2`,
       },
     ])
+    clearFungiblesCache()
+  })
+})
+
+describe('paintAfterCreateActionIssuance', () => {
+  it('paints a 162 mint in basket 1sat onto Tokens, not Collect', () => {
+    clearFungiblesCache()
+    const address = PrivateKey.fromRandom().toAddress()
+    const hex = encodeBsv21Binary({
+      amount: 11111111111n,
+      payload: {},
+      rest: p2pkhScriptHex(address),
+    }).toHex()
+    const painted = paintAfterCreateActionIssuance(
+      { address, chain: 'main' } as never,
+      'https://mint.example',
+      {
+        labels: ['1sat', 'handcash-mint-studio', 'item'],
+        outputs: [
+          {
+            satoshis: 1,
+            basket: '1sat',
+            lockingScript: hex,
+          },
+        ],
+      },
+      { txid: TXID },
+    )
+    expect(painted).toBe(1)
+    expect(getCachedFungibles()).toMatchObject([
+      {
+        tokenId: `${TXID}_0`,
+        amt: '11111111111',
+        outpoint: `${TXID}.0`,
+      },
+    ])
+    expect(getCachedFungibles()[0]?.sym).not.toBe('Collectable')
     clearFungiblesCache()
   })
 })

@@ -12,6 +12,7 @@ import {
   decodeBsv21Binary,
   isBsv21Mime,
   isOnesatFtMime,
+  looksLikeOnesatFtTip,
   parseBsv21Json,
   tokenIdForPayload,
   tokenIdFromBsv21Tags,
@@ -163,6 +164,13 @@ export function classifyOneSatAsBsv21(
     }
   }
   return { kind: 'skip' }
+}
+
+/** 1-sat lock that belongs in Tokens (BSV-21 binary or 1sat-ft), not Collect. */
+export function isFungibleOneSatLock(lockingScriptHex?: string): boolean {
+  if (!lockingScriptHex?.trim()) return false
+  if (decodeBsv21Binary(lockingScriptHex)) return true
+  return looksLikeOnesatFtTip({ lockingScriptHex })
 }
 
 export type HealMisfiledBsv21Result = {

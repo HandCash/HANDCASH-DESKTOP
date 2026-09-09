@@ -44,9 +44,13 @@ function formatAgeShort(ageMs: number): string {
 
 function healRowDescription(): string {
   const cp = readHealCheckpoint()
-  if (!cp) return 'Promotes stuck change from Activity and session logs.'
+  if (!cp) {
+    return 'Manual only — sends always run first. Promotes stuck change from Activity.'
+  }
   const age = healCheckpointAgeMs()
-  if (age == null) return 'Promotes stuck change from Activity and session logs.'
+  if (age == null) {
+    return 'Manual only — sends always run first. Promotes stuck change from Activity.'
+  }
   const ago = formatAgeShort(age)
   if (healCheckpointFresh()) {
     const rec =

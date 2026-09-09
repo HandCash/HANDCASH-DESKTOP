@@ -126,7 +126,7 @@ function fungibleProjectionChanged(
 
 function leftoverCollectableSym(sym: string | undefined): boolean {
   const s = (sym ?? '').trim()
-  return s === 'Collectable' || s.startsWith('Pixel Foxes')
+  return s.startsWith('Pixel Foxes')
 }
 
 function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
@@ -168,7 +168,7 @@ async function recoverReceivedTokensFromActivity(
     const item = row.item
     if (
       row.kind !== 'earned' ||
-      row.method !== 'receive-token' ||
+      (row.method !== 'receive-token' && row.method !== 'receive-collectable') ||
       row.status === 'pending' ||
       row.status === 'failed' ||
       !item?.tokenId ||
@@ -182,18 +182,22 @@ async function recoverReceivedTokensFromActivity(
     if (!tokenId || !/^\d+$/.test(item.amt)) continue
     const amount = BigInt(item.amt)
     if (amount <= 0n) continue
+    const activityName = item.name?.trim()
+    const recoveredSym =
+      activityName && activityName !== 'Collectable' && activityName !== shortTokenLabel(tokenId)
+        ? activityName
+        : shortTokenLabel(tokenId)
     const existingIndex = knownIndex.get(tokenId)
     if (existingIndex != null) {
       const existing = enriched[existingIndex]!
       const currentIsFallback =
-        !existing.sym.trim() || existing.sym === shortTokenLabel(existing.tokenId)
-      const activityName = item.name?.trim()
+        !existing.sym.trim() ||
+        existing.sym === shortTokenLabel(existing.tokenId) ||
+        existing.sym === 'Collectable'
       enriched[existingIndex] = {
         ...existing,
-        ...(currentIsFallback &&
-        activityName &&
-        activityName !== shortTokenLabel(tokenId)
-          ? { sym: activityName, dec: item.dec ?? existing.dec }
+        ...(currentIsFallback && recoveredSym !== shortTokenLabel(tokenId)
+          ? { sym: recoveredSym, dec: item.dec ?? existing.dec }
           : {}),
         ...(!existing.icon && item.icon ? { icon: item.icon } : {}),
       }
@@ -202,7 +206,7 @@ async function recoverReceivedTokensFromActivity(
     const prior = recovered.get(tokenId)
     recovered.set(tokenId, {
       tokenId,
-      sym: item.name?.trim() || prior?.sym || shortTokenLabel(tokenId),
+      sym: recoveredSym === shortTokenLabel(tokenId) ? prior?.sym || recoveredSym : recoveredSym,
       amt: ((prior ? BigInt(prior.amt) : 0n) + amount).toString(),
       dec: item.dec ?? prior?.dec ?? 0,
       utxoCount: (prior?.utxoCount ?? 0) + 1,
@@ -596,6 +600,11 @@ async function listFungiblesNow(
   const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
   if (fungibleProjectionChanged(repaired, beforeRepair)) {
     setFungiblesCache(repaired)
+    if (repaired.length > beforeRepair.length) {
+      void import('../healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
+        healMisfiledBsv21(wallet),
+      )
+    }
   }
 
   const {

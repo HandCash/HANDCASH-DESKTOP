@@ -23,6 +23,7 @@ import {
   failOutboundSendPending,
   reconcilePendingActivityWithHeldItems,
   upsertAppActivity,
+  isTokenActivity,
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 import {
@@ -74,6 +75,7 @@ import {
   getLocalBeefForTxid,
   rememberBeefBinary,
   rememberBeefTree,
+  peekSessionBeef,
 } from './beefCache'
 import {
   buildCollectableCustomInstructions,
@@ -1253,6 +1255,33 @@ export function noteIngestedItem(args: {
   )
 }
 
+function lockingScriptIsFungible(hex?: string): boolean {
+  if (!hex) return false
+  if (isBsv21BinaryScript(hex)) return true
+  return looksLikeOnesatFtTip({ lockingScriptHex: hex })
+}
+
+function outpointLooksLikeFungible(outpoint: string): boolean {
+  const op = normalizeOutpoint(outpoint)
+  const listed = lastItemOutputs.find(
+    (o) => normalizeOutpoint(o.outpoint) === op,
+  )
+  if (listed?.lockingScript && lockingScriptIsFungible(listed.lockingScript)) {
+    return true
+  }
+  const [txid, rawVout] = op.split('.')
+  const vout = Number(rawVout)
+  if (!txid || !Number.isInteger(vout) || vout < 0) return false
+  try {
+    const beef = peekSessionBeef(txid)
+    const hex = beef?.findTxid(txid)?.tx?.outputs?.[vout]?.lockingScript?.toHex()
+    if (hex && lockingScriptIsFungible(hex)) return true
+  } catch {
+    /* cache miss */
+  }
+  return false
+}
+
 function isListableItem(o: ItemOutput): boolean {
   // Tips are exactly 1 satoshi. Misfiled funds must not list.
   if ((o.satoshis ?? 1) !== 1) return false
@@ -1507,9 +1536,11 @@ async function proveHeldGenesis(
   const inActivity = [
     ...new Set(
       listRecentActivity(ACTIVITY_REPAIR_DEPTH)
+        .filter((entry) => !isTokenActivity(entry))
         .map((entry) => entry.item?.outpoint)
         .filter((outpoint): outpoint is string => !!outpoint)
         .map(normalizeOutpoint)
+        .filter((outpoint) => !outpointLooksLikeFungible(outpoint)),
     ),
   ].filter((outpoint) => !held.includes(outpoint))
   const preferred = takePreferredCollectableVerification()
@@ -1536,6 +1567,7 @@ async function proveHeldGenesis(
   const queued = new Set(candidates)
   try {
     for (const outpoint of candidates) {
+      if (outpointLooksLikeFungible(outpoint)) continue
       if (genesisWalkBudgetSpent()) break
       if (getWalletCoordinatorSnapshot().spend === 'active') break
       if (shouldYieldChainIngestToSpend()) break

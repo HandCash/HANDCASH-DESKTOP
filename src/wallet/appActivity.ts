@@ -494,11 +494,23 @@ export function upsertAppActivity(args: {
         : args.status === 'complete'
         ? undefined
         : args.status ?? prev.status
-    const nextItem = item
-      ? prev.item
-        ? { ...prev.item, ...item }
+    const prevIsToken =
+      Boolean(prev.item?.tokenId?.trim()) ||
+      prev.method === 'receive-token' ||
+      prev.method === 'send-token' ||
+      prev.method === 'mint-token'
+    const nextItem =
+      prevIsToken && args.method === 'receive-collectable'
+        ? prev.item
         : item
-      : prev.item
+          ? prev.item
+            ? { ...prev.item, ...item }
+            : item
+          : prev.item
+    const nextMethod =
+      prevIsToken && args.method === 'receive-collectable'
+        ? prev.method
+        : args.method || prev.method
     const nextPendingId =
       nextStatus === 'pending' || nextStatus === 'failed'
         ? pendingId || prev.pendingId
@@ -513,7 +525,7 @@ export function upsertAppActivity(args: {
       ...prev,
       origin: origin || prev.origin,
       sats: isEvent ? 0 : sats > 0 ? sats : prev.sats,
-      method: args.method || prev.method,
+      method: nextMethod,
       note: args.note ?? prev.note,
       txid: txid || prev.txid,
       ...(nextItem ? { item: nextItem } : {}),
