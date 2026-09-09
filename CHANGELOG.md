@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.3.126] - 2026-09-09
+
+### Fixed
+
+- Allow spends while chain ingest is running; stop painting Synced while the spend lock is still held.
+- Item send `signAction` knownTxids come from the full input BEEF (no more false “unable to merge txid”).
+- Activity matches same-txid item rows by outpoint so a multi-NFT receive shows every item.
+- Drop ghost Unattested token cards invented from activity when the live list has none.
+- Request dock: Cancel/Back stay muted until hovered; opaque unselected slots so CTA green does not bleed under Cancel.
+
+### Changed
+
+- Compact Send BSV and app-launch panels; launch choices live only on the action dock.
+- Prefer Open in-app as the launch CTA when the embedded browser is available.
+- Tighter Identity / Receive / chat / apps layout on desktop.
+
 ## [1.3.125] - 2026-09-09
 
 ### Fixed
