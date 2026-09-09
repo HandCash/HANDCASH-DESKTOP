@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.132] - 2026-09-09
+
+### Fixed
+
+- BRC-100 connect: blocking Chromium HTTPS-First redirects no longer calls `loadURL` (that cleared bridge readiness and left every `/getVersion` as `renderer-not-ready`).
+- Soft UI reloads no longer fail in-flight bridge requests; readiness returns when the renderer re-registers.
+
 ## [1.3.131] - 2026-09-09
 
 ### Fixed

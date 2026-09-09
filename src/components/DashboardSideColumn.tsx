@@ -118,7 +118,9 @@ export const DashboardSideColumn = memo(function DashboardSideColumn({ profile }
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
-        launchConnectedApp(pendingPrompt.origin, appHomepage(pendingPrompt.origin))
+        const origin = pendingPrompt.origin
+        const home = appHomepage(origin)
+        window.setTimeout(() => launchConnectedApp(origin, home), 0)
       } else {
         toastSuccess('Approved', pendingPrompt.title || name)
       }

@@ -241,7 +241,11 @@ export const WalletNav = memo(function WalletNav({
       playWalletSound('connect')
       if (pendingPrompt.kind === 'connect') {
         toastSuccess('Connected', `${name} can use your wallet`)
-        launchConnectedApp(pendingPrompt.origin, appHomepage(pendingPrompt.origin))
+        // Defer so the bridge can finish waitForAuthentication before we switch
+        // the nav into the embedded browser.
+        const origin = pendingPrompt.origin
+        const home = appHomepage(origin)
+        window.setTimeout(() => launchConnectedApp(origin, home), 0)
       } else {
         toastSuccess('Approved', pendingPrompt.title || name)
       }

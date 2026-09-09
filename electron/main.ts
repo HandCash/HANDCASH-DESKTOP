@@ -456,24 +456,36 @@ function createWindow(): void {
     })
   })
 
-  const handleNavigation = (event: Electron.Event, url: string) => {
+  const handleNavigation = (
+    event: Electron.Event,
+    url: string,
+    eventKind: 'navigate' | 'redirect',
+  ) => {
     // Chromium HTTPS-First may redirect our HTTP UI to https:// — Vite has no
-    // TLS. Rewrite back to http instead of treating it as an external link
-    // (which left the wallet blank and broke every app connect).
-    const decision = decideWalletUiNavigation(url, appUrlPolicy())
+    // TLS. On redirect, only cancel the upgrade. Reloading via loadURL tears
+    // down the renderer listener and breaks every BRC-100 connect.
+    const decision = decideWalletUiNavigation(url, appUrlPolicy(), { eventKind })
     if (decision.action === 'allow') return
     event.preventDefault()
+    if (decision.action === 'block-https-upgrade') {
+      log.warn(`[ui] blocked HTTPS upgrade redirect — keeping ${decision.url}`)
+      return
+    }
     if (decision.action === 'reload-http') {
       if (mainWindow && !mainWindow.isDestroyed()) {
-        log.warn(`[ui] blocked HTTPS upgrade of wallet origin — reloading ${decision.url}`)
+        log.warn(`[ui] rewriting wallet navigation to ${decision.url}`)
         void mainWindow.loadURL(decision.url)
       }
       return
     }
     if (decision.action === 'open-external') void shell.openExternal(decision.url)
   }
-  mainWindow.webContents.on('will-navigate', handleNavigation)
-  mainWindow.webContents.on('will-redirect', handleNavigation)
+  mainWindow.webContents.on('will-navigate', (event, url) =>
+    handleNavigation(event, url, 'navigate'),
+  )
+  mainWindow.webContents.on('will-redirect', (event, url) =>
+    handleNavigation(event, url, 'redirect'),
+  )
 
   let uiRecoverAttempts = 0
   mainWindow.webContents.on(
@@ -506,8 +518,9 @@ function createWindow(): void {
     failPendingBridgeRequests(`renderer process gone (${details.reason})`)
   })
   mainWindow.webContents.on('did-start-loading', () => {
+    // Soft navigations / HMR briefly flip this; only fail in-flight bridge
+    // calls. Readiness returns when the renderer re-registers onHttpRequest.
     bridgeWindows.markRendererGone(contentsId)
-    failPendingBridgeRequests('renderer reloading')
   })
   mainWindow.webContents.on('destroyed', () => {
     bridgeWindows.markRendererGone(contentsId)

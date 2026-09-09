@@ -29,18 +29,32 @@ function fakeWindow(id = 1): BridgeWindowLike {
 }
 
 describe('app connect guardrails — HTTPS UI upgrade (connect killer)', () => {
-  it('reloads HTTP instead of opening an external browser for https://localhost:5173', () => {
-    // Regression: treating the upgrade as external blanked the wallet and left
-    // every /getVersion as renderer-not-ready (system browser + in-app alike).
+  it('reloads HTTP on navigate instead of opening an external browser', () => {
     expect(decideWalletUiNavigation('https://localhost:5173/', policy)).toEqual({
       action: 'reload-http',
       url: 'http://localhost:5173/',
     })
     expect(
-      decideWalletUiNavigation('https://127.0.0.1:5173/collectables/1', policy),
+      decideWalletUiNavigation('https://127.0.0.1:5173/collectables/1', policy, {
+        eventKind: 'navigate',
+      }),
     ).toEqual({
       action: 'reload-http',
       url: 'http://127.0.0.1:5173/collectables/1',
+    })
+  })
+
+  it('blocks HTTPS-First redirects without loadURL (keeps bridge renderer alive)', () => {
+    // Regression: preventDefault + loadURL(http) on will-redirect fired
+    // did-start-loading, cleared readiness, and every /getVersion answered
+    // renderer-not-ready until restart.
+    expect(
+      decideWalletUiNavigation('https://localhost:5173/', policy, {
+        eventKind: 'redirect',
+      }),
+    ).toEqual({
+      action: 'block-https-upgrade',
+      url: 'http://localhost:5173/',
     })
   })
 
