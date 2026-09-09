@@ -353,6 +353,10 @@ function paintReceivedTips(args: {
   const preferred = pickTipVoutForOriginHint(id, tipVouts, originHint)
   const hint = normalizeOriginHint(originHint, id)
 
+  // Drop the early txid-only Verifying… row so per-tip completes don't leave an
+  // orphan pending beside the real outpoint rows.
+  clearInboundReceivePending(id)
+
   const paintedOps: string[] = []
   for (const vout of tipVouts) {
     const tipOp = `${id}.${vout}`

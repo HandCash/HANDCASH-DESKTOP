@@ -346,6 +346,17 @@ describe('inbound receive activity', () => {
     ])
   })
 
+  it('does not invent tip .0 when an item receive has no outpoint yet', () => {
+    noteInboundReceivePending({
+      txid: TX,
+      item: true,
+      itemName: 'Fox',
+    })
+    const row = listRecentActivity(10).find((e) => e.txid === TX)
+    expect(row?.item?.outpoint).toBeUndefined()
+    expect(row?.item?.origin).toBe(`${TX}_pending`)
+  })
+
   it('promotes a fungible settle as receive-token with token metadata', () => {
     const token = {
       tokenId: `${'ab'.repeat(32)}_0`,

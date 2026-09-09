@@ -599,11 +599,14 @@ export function noteInboundReceivePending(args: {
   if (isGhostTxSuppressed(txid)) return
   if (args.item) {
     const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
+    const outpoint = args.outpoint?.trim() || undefined
+    // Never invent `${txid}.0` — batch receives tip at other vouts, and a fake
+    // .0 orphans Verifying… or collapses two foxes onto one activity row.
     const origin =
       args.token?.tokenId?.trim() ||
       args.itemOrigin?.trim() ||
-      `${txid}_0`
-    const outpoint = args.outpoint?.trim() || `${txid}.0`
+      (outpoint ? outpoint.replace(/\.(\d+)$/, '_$1') : undefined) ||
+      `${txid}_pending`
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
@@ -617,7 +620,7 @@ export function noteInboundReceivePending(args: {
       item: {
         name,
         origin,
-        outpoint,
+        ...(outpoint ? { outpoint } : {}),
         ...(args.token
           ? {
               tokenId: args.token.tokenId,
@@ -661,11 +664,12 @@ export function noteInboundReceiveComplete(args: {
   if (!/^[0-9a-f]{64}$/.test(txid)) return
   if (args.item) {
     const name = args.token?.sym?.trim() || args.itemName?.trim() || 'Collectable'
+    const outpoint = args.outpoint?.trim() || undefined
     const origin =
       args.token?.tokenId?.trim() ||
       args.itemOrigin?.trim() ||
-      `${txid}_0`
-    const outpoint = args.outpoint?.trim() || `${txid}.0`
+      (outpoint ? outpoint.replace(/\.(\d+)$/, '_$1') : undefined) ||
+      `${txid}_pending`
     upsertAppActivity({
       origin: WALLET_ACTIVITY_ORIGIN,
       kind: 'earned',
@@ -679,7 +683,7 @@ export function noteInboundReceiveComplete(args: {
       item: {
         name,
         origin,
-        outpoint,
+        ...(outpoint ? { outpoint } : {}),
         ...(args.token
           ? {
               tokenId: args.token.tokenId,
