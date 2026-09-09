@@ -44,7 +44,7 @@ vi.mock('./tokenAddressScan', () => ({
   scanAddressTokenTxos: vi.fn(async () => []),
 }))
 
-vi.mock('./fungibles', () => ({
+vi.mock('./token/list', () => ({
   importBsv21Tokens: vi.fn(async (items: Array<{ outpoint: string }>) => ({
     imported: items.length,
     failed: 0,
@@ -304,7 +304,7 @@ describe('ingestLegacyAddressUtxos receive activity', () => {
       importedReceipts: [],
     })
 
-    const { importBsv21Tokens } = await import('./fungibles')
+    const { importBsv21Tokens } = await import('./token/list')
     const { ingestLegacyAddressUtxos } = await import('./ingestLegacyAddress')
     await ingestLegacyAddressUtxos({ active })
 

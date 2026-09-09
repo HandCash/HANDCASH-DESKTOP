@@ -1634,7 +1634,7 @@ export async function createMarketListingAdvert(
     // a market attempt or an unavailable indexer must never make owned assets
     // disappear while listOutputs catches up.
     if (listedAsset === 'bsv21' && amt != null) {
-      void import('./fungibles').then(({ rememberFungibleToken }) => {
+      void import('./token/list').then(({ rememberFungibleToken }) => {
         rememberFungibleToken({
           tokenId: origin,
           sym: lockTip?.sym || identity.name,

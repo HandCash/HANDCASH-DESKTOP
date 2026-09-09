@@ -839,7 +839,7 @@ export async function sendColourCoins(args: {
       completePendingSend(outboundPending.id, txid)
       clearPaymentProgress()
       scheduleHistoryBackupPush('sendColourCoins')
-      const { paintFungibleAfterSpend, getFungible } = await import('../list')
+      const { paintFungibleAfterSpend, getFungible } = await import('./list')
       paintFungibleAfterSpend({
         tokenId: origin,
         remainingAmt,

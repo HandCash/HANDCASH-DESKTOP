@@ -443,7 +443,7 @@ async function executeBurnPlan(args: {
       }
       await assertBurnFeeAvailable()
       const { withFungibleCreateActionTimeout, FUNGIBLE_CREATE_ACTION_TIMEOUT_MS } =
-        await import('./sendFungible')
+        await import('./token')
       console.info(
         `[burn] createAction start asset=${args.plan.asset} inputs=${args.plan.inputs.length}`,
       )
@@ -651,7 +651,7 @@ export async function previewFungibleBurn(args: {
   const token = getFungible(tokenId)
   if (!token) throw new Error('Token not found')
   if (token.colourSupply != null) {
-    const { previewColourBurn } = await import('./burnColourCoins')
+    const { previewColourBurn } = await import('./token')
     return previewColourBurn({ origin: token.tokenId, amount: args.amount })
   }
   return previewBsv21Burn(args)
@@ -701,7 +701,7 @@ export async function burnBsv21(args: {
   // 1Sat FT burns destroy face-value tips (no BSV-21 burn inscription).
   if (token.colourSupply != null) {
     try {
-      const { burnColourCoins } = await import('./burnColourCoins')
+      const { burnColourCoins } = await import('./token')
       const result = await burnColourCoins({
         origin: token.tokenId,
         amount: args.amount,

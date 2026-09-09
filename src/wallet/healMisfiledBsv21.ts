@@ -321,7 +321,7 @@ export async function healMisfiledBsv21(
   if (result.droppedDuplicates > 0 || result.moved > 0) {
     scheduleHistoryBackupPush('healMisfiledBsv21')
     try {
-      const { listFungibles } = await import('./fungibles')
+      const { listFungibles } = await import('./token/list')
       void listFungibles(wallet).catch(() => {})
     } catch {
       /* optional */

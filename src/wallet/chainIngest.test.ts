@@ -114,7 +114,7 @@ vi.mock('./collectables', () => ({
   resumeCollectableVerifyWalk: vi.fn(),
 }))
 
-vi.mock('./fungibles', () => ({
+vi.mock('./token/list', () => ({
   listFungibles: vi.fn(async () => []),
 }))
 

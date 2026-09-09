@@ -487,7 +487,7 @@ export async function refreshFromChainExclusive(
             setCollectableVerifyWalkDeferred(true)
           })
           .then(() =>
-            import('./fungibles').then(({ listFungibles }) => listFungibles(active)),
+            import('./token/list').then(({ listFungibles }) => listFungibles(active)),
           )
           .then(() =>
             import('./healMisfiledCollectables').then(({ healMisfiledCollectables }) =>

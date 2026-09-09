@@ -60,12 +60,14 @@ export {
 
 // List + cache
 export {
+  areFungiblesHydrated,
   clearFungiblesCache,
   forgetFungibleToken,
   fungibleFromImport,
   getCachedFungibles,
   getFungible,
   hydrateCachedTokenIcons,
+  importBsv21Tokens,
   listFungibles,
   listFungibleTips,
   paintFungibleAfterSpend,
@@ -107,7 +109,7 @@ export {
 export { bsv21SendMachine } from './sendMachine'
 
 // Burn
-export { burnColourCoins } from './burn'
+export { burnColourCoins, previewColourBurn } from './burn'
 
 // BRC-176 prove
 export { fillTokenParentBodies, prove, type Bsv21ProofResult } from './prove176'

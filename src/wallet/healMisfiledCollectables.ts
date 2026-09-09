@@ -341,7 +341,7 @@ export async function healMisfiledCollectables(
   if (result.droppedDuplicates > 0 || result.moved > 0) {
     scheduleHistoryBackupPush('healMisfiledCollectables')
     try {
-      const { listFungibles } = await import('./fungibles')
+      const { listFungibles } = await import('./token/list')
       void listFungibles(wallet).catch(() => {})
     } catch {
       /* optional */
