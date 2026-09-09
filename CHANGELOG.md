@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.136] - 2026-09-09
+
+### Fixed
+
+- BRC-100 connect: stop clearing bridge readiness on `did-start-loading` (Vite/soft loads left `/getVersion` as `renderer-not-ready` until restart). Renderer re-announces readiness on a heartbeat while listening.
+
 ## [1.3.135] - 2026-09-09
 
 ### Fixed

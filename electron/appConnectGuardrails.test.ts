@@ -124,7 +124,7 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     source.markRendererReady(1)
     expect((await source.acquire()).kind).toBe('ready')
 
-    // Vite HMR / soft reload: did-start-loading clears readiness.
+    // Real teardown (process gone) clears readiness — soft did-start-loading must not.
     source.markRendererGone(1)
     expect(source.isRendererReady()).toBe(false)
 
@@ -175,17 +175,22 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
     expect(headers['Access-Control-Allow-Origin']).toBe('*')
   })
 
-  it('ships the safe connect path in main/httpServer (no loadURL / webRequest rewrite)', async () => {
+  it('ships the safe connect path in main/httpServer (no loadURL / webRequest / soft-load clear)', async () => {
     const fs = await import('node:fs/promises')
     const mainSrc = await fs.readFile(new URL('./main.ts', import.meta.url), 'utf8')
     const httpSrc = await fs.readFile(new URL('./httpServer.ts', import.meta.url), 'utf8')
+    const appSrc = await fs.readFile(new URL('../src/App.tsx', import.meta.url), 'utf8')
+    const preloadSrc = await fs.readFile(new URL('./preload.ts', import.meta.url), 'utf8')
 
     // Soft mitigation only — do not reintroduce session rewrites or recovery loadURL.
     expect(mainSrc).toContain('DISABLE_HTTPS_FIRST_FEATURES')
     expect(mainSrc).toContain('decideWalletUiNavigation')
-    expect(mainSrc).toContain("did-start-loading")
-    expect(mainSrc).toContain('markRendererGone')
     expect(mainSrc).toContain("action === 'block-https-upgrade'")
+    expect(mainSrc).toContain('Never clear readiness on did-start-loading')
+    // Soft loads must not clear bridge readiness (the 16:54 connect killer).
+    expect(mainSrc).not.toMatch(
+      /did-start-loading[\s\S]{0,180}markRendererGone/,
+    )
 
     expect(mainSrc).not.toContain('webRequest.onBeforeRequest')
     expect(mainSrc).not.toContain('rewriteForcedHttpsUiUrl')
@@ -197,5 +202,8 @@ describe('app connect guardrails — bridge readiness for /getVersion', () => {
 
     expect(httpSrc).toContain('bridgeConnectUnavailableMessage')
     expect(httpSrc).toContain('bridgeCorsHeaders')
+    expect(preloadSrc).toContain('announceBridgeReady')
+    expect(appSrc).toContain('announceBridgeReady')
+    expect(appSrc).toContain('setInterval(announce')
   })
 })

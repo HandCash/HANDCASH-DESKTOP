@@ -75,6 +75,10 @@ const handcash = {
       // requests until it knows someone is listening.
       ipcRenderer.send('bridge:renderer-ready')
     }),
+  /** Re-announce that http-request is listened for (heals false "gone" clears). */
+  announceBridgeReady: () => {
+    ipcRenderer.send('bridge:renderer-ready')
+  },
   onDevicePeerHttpRequest: (handler: (event: HttpRequestEvent) => void) =>
     subscribe('device-peer-http-request', handler),
   onHttpRequestCancelled: (handler: (payload: { request_id: number; reason: string }) => void) =>

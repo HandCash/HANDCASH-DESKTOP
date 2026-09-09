@@ -475,10 +475,11 @@ function createWindow(): void {
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests(`renderer process gone (${details.reason})`)
   })
-  mainWindow.webContents.on('did-start-loading', () => {
-    bridgeWindows.markRendererGone(contentsId)
-    failPendingBridgeRequests('renderer reloading')
-  })
+  // Never clear readiness on did-start-loading. Vite HMR / soft navigations /
+  // HTTPS-First noise fire that event without remounting App, which left every
+  // /getVersion as renderer-not-ready until a full restart (see logs 16:54).
+  // Ready is only cleared when the process/window is actually gone; the
+  // renderer re-announces on mount and on a short heartbeat.
   mainWindow.webContents.on('destroyed', () => {
     bridgeWindows.markRendererGone(contentsId)
     failPendingBridgeRequests('webContents destroyed')

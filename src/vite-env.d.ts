@@ -90,6 +90,8 @@ interface HandCashBridge {
   restartBridge: () => Promise<BridgeStatus>
   onBridgeStatus: (handler: (status: BridgeStatus) => void) => () => void
   onHttpRequest: (handler: (event: HttpRequestEvent) => void) => () => void
+  /** Keep BRC-100 acquire aware the wallet UI is listening. */
+  announceBridgeReady?: () => void
   onDevicePeerHttpRequest?: (handler: (event: HttpRequestEvent) => void) => () => void
   onHttpRequestCancelled: (
     handler: (payload: { request_id: number; reason: string }) => void,

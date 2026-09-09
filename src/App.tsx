@@ -198,7 +198,16 @@ export function App() {
         }
       })()
     })
-    return off
+    // Soft loads can clear main-process readiness without remounting React.
+    // Re-announce while this listener is live so /getVersion cannot stick as
+    // renderer-not-ready until restart.
+    const announce = () => window.handcash?.announceBridgeReady?.()
+    announce()
+    const heartbeat = window.setInterval(announce, 4000)
+    return () => {
+      window.clearInterval(heartbeat)
+      off()
+    }
   }, [])
 
   useEffect(() => {
