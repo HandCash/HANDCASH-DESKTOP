@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, useDeferredValue } from 'react'
+import { useEffect, useMemo, useRef, useState, useDeferredValue } from 'react'
 import { Accordion } from '@aeon-ui/react'
 import { CollectionViewToggle } from './CollectionViewToggle'
 import { DeferredImage } from './DeferredImage'
@@ -37,11 +37,19 @@ import {
   isOutpointSending,
   subscribePaymentProgress,
 } from '../wallet/paymentProgress'
-import { openCollectableDetails, openSendCollectable, openFungibleDetails, openSendFungible, openBurnFungible } from '../wallet/navStore'
+import {
+  openBurnCollectables,
+  openBurnFungible,
+  openCollectableDetails,
+  openFungibleDetails,
+  openSendCollectable,
+  openSendCollectables,
+  openSendFungible,
+} from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { CollectablesIcon, FireIcon, SendIcon } from './icons'
+import { CloseIcon, CollectablesIcon, FireIcon, SendIcon } from './icons'
 import {
   areFungiblesHydrated,
   formatFungibleAmount,
@@ -61,9 +69,54 @@ import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
 } from '../wallet/collectableSendReady'
+import {
+  reconcileCollectableSelection,
+  selectableCollectables,
+  selectionState,
+  toggleCollectableSelection,
+} from '../wallet/collectableSelection'
+import { useWalletActionDock } from './WalletActionDock'
 
 /** Paint a few cards per frame so opening Collect does not block the UI. */
 const RENDER_CHUNK = 6
+
+function SelectionCheckbox({
+  checked,
+  mixed = false,
+  disabled = false,
+  label,
+  onChange,
+  className = '',
+}: {
+  checked: boolean
+  mixed?: boolean
+  disabled?: boolean
+  label: string
+  onChange: (checked: boolean) => void
+  className?: string
+}) {
+  const ref = useRef<HTMLInputElement>(null)
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = mixed
+  }, [mixed])
+  return (
+    <label
+      className={`collect-select ${className}`.trim()}
+      title={label}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <input
+        ref={ref}
+        type="checkbox"
+        checked={checked}
+        disabled={disabled}
+        aria-label={label}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span aria-hidden />
+    </label>
+  )
+}
 
 function liveMarketListingPrice(outpoint: string): number | null {
   const auth = getMarketListingAuthorization({ outpoint })
@@ -104,10 +157,14 @@ function CollectableGridItem({
   item,
   verifying,
   sending,
+  selected,
+  onSelectedChange,
 }: {
   item: Collectable
   verifying: boolean
   sending: boolean
+  selected: boolean
+  onSelectedChange: (checked: boolean) => void
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   const listPrice = liveMarketListingPrice(item.outpoint)
@@ -117,6 +174,13 @@ function CollectableGridItem({
       className="collection-grid-card collectable-card"
       data-sending={sending ? 'true' : undefined}
     >
+      <SelectionCheckbox
+        className="collect-select--card"
+        checked={selected}
+        disabled={sending}
+        label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
+        onChange={onSelectedChange}
+      />
       <button
         type="button"
         className="collection-grid-main collectable-main"
@@ -151,11 +215,13 @@ function CollectableGridItem({
         <strong className="collection-grid-name" title={item.name}>
           {item.name}
         </strong>
-        {item.app ? (
-          <span className="collection-grid-host" title={item.app}>
-            {item.app}
-          </span>
-        ) : null}
+        <span
+          className="collection-grid-host"
+          title={item.app}
+          aria-hidden={item.app ? undefined : true}
+        >
+          {item.app || '\u00a0'}
+        </span>
       </button>
       <button
         type="button"
@@ -181,10 +247,14 @@ function CollectableListItem({
   item,
   verifying,
   sending,
+  selected,
+  onSelectedChange,
 }: {
   item: Collectable
   verifying: boolean
   sending: boolean
+  selected: boolean
+  onSelectedChange: (checked: boolean) => void
 }) {
   const verb = inFlightVerb(item.outpoint) ?? 'Sending'
   const listPrice = liveMarketListingPrice(item.outpoint)
@@ -194,6 +264,13 @@ function CollectableListItem({
       className="connected-app-row collectable-row"
       data-sending={sending ? 'true' : undefined}
     >
+      <SelectionCheckbox
+        className="collect-select--row"
+        checked={selected}
+        disabled={sending}
+        label={`${selected ? 'Deselect' : 'Select'} ${item.name}`}
+        onChange={onSelectedChange}
+      />
       <button
         type="button"
         className="connected-app-main collectable-row-main"
@@ -227,9 +304,12 @@ function CollectableListItem({
         </div>
         <div className="connected-app-body">
           <strong className="connected-app-name">{item.name}</strong>
-          {item.app ? (
-            <span className="connected-app-host">{item.app}</span>
-          ) : null}
+          <span
+            className="connected-app-host"
+            aria-hidden={item.app ? undefined : true}
+          >
+            {item.app || '\u00a0'}
+          </span>
         </div>
       </button>
       <button
@@ -257,10 +337,14 @@ function CollectableItems({
   items,
   view,
   verification,
+  selected,
+  onSelectionChange,
 }: {
   items: Collectable[]
   view: CollectionView
   verification: VerificationProgress
+  selected: ReadonlySet<string>
+  onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
 }) {
   const shownCount = useChunkedCount(items.length, RENDER_CHUNK)
   const visible = items.slice(0, shownCount)
@@ -274,6 +358,8 @@ function CollectableItems({
           item={item}
           verifying={isOutpointVerifying(item.outpoint, verification)}
           sending={isOutpointSending(item.outpoint)}
+          selected={selected.has(item.outpoint)}
+          onSelectedChange={(checked) => onSelectionChange([item], checked)}
         />
       ))}
     </ul>
@@ -315,36 +401,59 @@ function CollectionGroupItem({
   group,
   view,
   verification,
+  selected,
+  onSelectionChange,
 }: {
   group: CollectableGroup
   view: CollectionView
   verification: VerificationProgress
+  selected: ReadonlySet<string>
+  onSelectionChange: (items: readonly Collectable[], checked: boolean) => void
 }) {
   const sendingHere = group.items.some((item) => isOutpointSending(item.outpoint))
+  const available = group.items.filter((item) => !isOutpointSending(item.outpoint))
+  const state = selectionState(selected, available)
+  const selectedCount = group.items.filter((item) => selected.has(item.outpoint)).length
 
   return (
     <Accordion.Item
       value={group.key}
       className="collect-collection"
       data-sending={sendingHere ? 'true' : undefined}
+      data-selected={state === 'none' ? undefined : state}
     >
-      <Accordion.ItemTrigger value={group.key} className="collect-collection-trigger">
-        <CollectableFacepile group={group} />
-        <span className="collect-collection-body">
-          <strong className="collect-collection-name" title={group.label}>
-            {group.label}
-          </strong>
-          <span className="collect-collection-meta">{groupQuantityLabel(group)}</span>
-        </span>
-        <Accordion.ItemIndicator className="collect-collection-indicator" aria-hidden>
-          ▾
-        </Accordion.ItemIndicator>
-      </Accordion.ItemTrigger>
+      <div className="collect-collection-head">
+        <SelectionCheckbox
+          className="collect-select--group"
+          checked={state === 'all'}
+          mixed={state === 'some'}
+          disabled={available.length === 0}
+          label={`${state === 'all' ? 'Deselect' : 'Select'} ${group.label}`}
+          onChange={(checked) => onSelectionChange(available, checked)}
+        />
+        <Accordion.ItemTrigger value={group.key} className="collect-collection-trigger">
+          <CollectableFacepile group={group} />
+          <span className="collect-collection-body">
+            <strong className="collect-collection-name" title={group.label}>
+              {group.label}
+            </strong>
+            <span className="collect-collection-meta">
+              {groupQuantityLabel(group)}
+              {selectedCount > 0 ? ` · ${selectedCount} selected` : ''}
+            </span>
+          </span>
+          <Accordion.ItemIndicator className="collect-collection-indicator" aria-hidden>
+            ▾
+          </Accordion.ItemIndicator>
+        </Accordion.ItemTrigger>
+      </div>
       <Accordion.ItemContent value={group.key} className="collect-collection-body-content">
         <CollectableItems
           items={group.items}
           view={view}
           verification={verification}
+          selected={selected}
+          onSelectionChange={onSelectionChange}
         />
       </Accordion.ItemContent>
     </Accordion.Item>
@@ -511,6 +620,7 @@ function FungibleItem({
 export function InventoryPanel() {
   const [view, setView] = useState<CollectionView>(() => getCollectionView('collectables'))
   const [items, setItems] = useState<Collectable[]>(() => getCachedCollectables())
+  const [selected, setSelected] = useState<Set<string>>(() => new Set())
   const [tokens, setTokens] = useState<FungibleToken[]>(() => getCachedFungibles())
   /** Only true after a successful listOutputs (may be empty). */
   const [ready, setReady] = useState(() => areCollectablesHydrated())
@@ -638,6 +748,80 @@ export function InventoryPanel() {
     () => deferredItems.filter((item) => !collectableIsOnesatFt(item)),
     [deferredItems, tokens],
   )
+  const busyOutpoints = useMemo(
+    () =>
+      new Set(
+        visibleItems
+          .filter((item) => isOutpointSending(item.outpoint))
+          .map((item) => item.outpoint),
+      ),
+    [visibleItems],
+  )
+  const availableItems = useMemo(
+    () => selectableCollectables(visibleItems, busyOutpoints),
+    [visibleItems, busyOutpoints],
+  )
+  const selectedItems = useMemo(
+    () => availableItems.filter((item) => selected.has(item.outpoint)),
+    [availableItems, selected],
+  )
+  const selectedCount = selectedItems.length
+  const selectionChange = (target: readonly Collectable[], checked: boolean) => {
+    setSelected((current) => toggleCollectableSelection(current, target, checked))
+  }
+
+  useEffect(() => {
+    setSelected((current) => reconcileCollectableSelection(current, availableItems))
+  }, [availableItems])
+
+  const selectedCanSend =
+    selectedCount > 0 &&
+    selectedItems.every((item) =>
+      inspectCollectableSendReady({
+        outpoint: item.outpoint,
+        proven: item.proven,
+        verifying: isOutpointVerifying(item.outpoint, verification),
+      }).ready,
+    )
+  const selectedCanBurn =
+    selectedCount > 0 && selectedItems.every((item) => !item.covenantLocked)
+
+  useWalletActionDock(
+    selectedCount > 0
+      ? {
+          ariaLabel: `${selectedCount} selected collectables`,
+          tertiary: {
+            label: 'Cancel',
+            onClick: () => setSelected(new Set()),
+            icon: <CloseIcon size={18} />,
+          },
+          secondary: {
+            label: `Burn (${selectedCount})`,
+            shortLabel: `Burn (${selectedCount})`,
+            onClick: () =>
+              openBurnCollectables(selectedItems.map((item) => item.outpoint)),
+            disabled: !selectedCanBurn,
+            tone: 'danger',
+            icon: <FireIcon size={18} />,
+            title: selectedCanBurn
+              ? `Burn ${selectedCount} collectables`
+              : 'A selected item cannot be burned',
+          },
+          primary: {
+            label: `Send (${selectedCount})`,
+            shortLabel: `Send (${selectedCount})`,
+            onClick: () =>
+              openSendCollectables(selectedItems.map((item) => item.outpoint)),
+            disabled: !selectedCanSend,
+            tone: 'primary',
+            icon: <SendIcon size={18} />,
+            title: selectedCanSend
+              ? `Send ${selectedCount} collectables`
+              : 'Wait for selected items to finish verification',
+          },
+        }
+      : null,
+  )
   const showLoading = (awaitingFirst || !ready) && visibleItems.length === 0 && tokens.length === 0
   const { groups, singles, ungrouped } = useMemo(() => groupCollectables(visibleItems), [visibleItems])
   const empty = visibleItems.length === 0 && tokens.length === 0 && ready && tokensReady
@@ -692,6 +876,8 @@ export function InventoryPanel() {
                   group={group}
                   view={view}
                   verification={verification}
+                  selected={selected}
+                  onSelectionChange={selectionChange}
                 />
               ))}
             </Accordion.Root>
@@ -706,6 +892,8 @@ export function InventoryPanel() {
                 items={singles}
                 view={view}
                 verification={verification}
+                selected={selected}
+                onSelectionChange={selectionChange}
               />
             </>
           ) : null}
@@ -719,6 +907,8 @@ export function InventoryPanel() {
                 items={ungrouped}
                 view={view}
                 verification={verification}
+                selected={selected}
+                onSelectionChange={selectionChange}
               />
             </>
           ) : null}

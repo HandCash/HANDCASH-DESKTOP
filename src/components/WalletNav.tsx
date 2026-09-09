@@ -52,6 +52,7 @@ import { TransactionsPanel } from './RecentActivity'
 import { PermissionRequestPanel } from './PermissionRequestPanel'
 import { AppDetailsPanel } from './AppDetailsPanel'
 import { AppLaunchPanel } from './AppLaunchPanel'
+import { AppBrowserPanel } from './AppBrowserPanel'
 import { PermissionDetailsPanel } from './PermissionDetailsPanel'
 import { SendPanel } from './SendPanel'
 import { ScanPanel } from './ScanPanel'
@@ -106,13 +107,14 @@ const SECTIONS: {
 }[] = [
   { value: 'activity', label: 'Activity', shortLabel: 'Activity', Icon: ActivityIcon },
   { value: 'apps', label: 'Connect', shortLabel: 'Connect', Icon: AppsIcon },
-  { value: 'collectables', label: 'Collectables', shortLabel: 'Collect', Icon: CollectablesIcon },
+  { value: 'collectables', label: 'Collect', shortLabel: 'Collect', Icon: CollectablesIcon },
   { value: 'friends', label: 'Friends', shortLabel: 'Friends', Icon: FriendsIcon },
   { value: 'identity', label: 'Identity', shortLabel: 'ID', Icon: IdentityIcon },
   { value: 'settings', label: 'Settings', shortLabel: 'Set', Icon: SettingsIcon },
 ]
 
 function sectionLabel(section: NavSection): string {
+  if (section === 'collectables') return 'Collectables'
   return SECTIONS.find((s) => s.value === section)?.label ?? section
 }
 
@@ -131,6 +133,9 @@ function collectableChildOutpoint(child: NavChild | null): string | null {
 function childPanelKey(state: NavState): string {
   const child = state.child
   if (!child) return `${state.section}:`
+  if ('outpoints' in child && Array.isArray(child.outpoints)) {
+    return `${state.section}:${child.type}:${child.outpoints.join(',')}`
+  }
   if ('outpoint' in child && typeof child.outpoint === 'string') {
     return `${state.section}:${child.type}:${child.outpoint}`
   }
@@ -316,6 +321,14 @@ export const WalletNav = memo(function WalletNav({
         { label: 'Launch' },
       ]
     }
+    if (stageChild.type === 'app-browser') {
+      const app = apps.find((a) => a.origin === stageChild.origin)
+      return [
+        root,
+        { label: app?.name || appDisplayName(stageChild.origin) },
+        { label: 'Browser' },
+      ]
+    }
     if (stageChild.type === 'permission') {
       const app = apps.find((a) => a.origin === stageChild.origin)
       const scope = getPermissionScope(stageChild.scopeId)
@@ -384,6 +397,9 @@ export const WalletNav = memo(function WalletNav({
         { label: 'Send' },
       ]
     }
+    if (stageChild.type === 'send-collectables') {
+      return [root, { label: `${stageChild.outpoints.length} items` }, { label: 'Send' }]
+    }
     if (stageChild.type === 'send-fungible') {
       return [
         root,
@@ -403,6 +419,9 @@ export const WalletNav = memo(function WalletNav({
         },
         { label: 'Burn' },
       ]
+    }
+    if (stageChild.type === 'burn-collectables') {
+      return [root, { label: `${stageChild.outpoints.length} items` }, { label: 'Burn' }]
     }
     if (stageChild.type === 'burn-fungible') {
       return [
@@ -467,6 +486,16 @@ export const WalletNav = memo(function WalletNav({
                   />
                 )
               })()}
+              {stageChild.type === 'app-browser' && (() => {
+                const app = apps.find((a) => a.origin === stageChild.origin)
+                return (
+                  <AppBrowserPanel
+                    origin={stageChild.origin}
+                    name={app?.name || appDisplayName(stageChild.origin)}
+                    url={stageChild.url}
+                  />
+                )
+              })()}
               {stageChild.type === 'permission' && (
                 <PermissionDetailsPanel origin={stageChild.origin} scopeId={stageChild.scopeId} />
               )}
@@ -514,6 +543,14 @@ export const WalletNav = memo(function WalletNav({
                   onFail={onFail}
                 />
               )}
+              {stageChild.type === 'send-collectables' && (
+                <SendCollectablePanel
+                  outpoints={stageChild.outpoints}
+                  chain={profile.chain}
+                  onSent={onSent}
+                  onFail={onFail}
+                />
+              )}
               {stageChild.type === 'send-fungible' && (
                 <SendFungiblePanel
                   tokenId={stageChild.tokenId}
@@ -524,6 +561,11 @@ export const WalletNav = memo(function WalletNav({
               )}
               {stageChild.type === 'burn-collectable' && (
                 <BurnAssetPanel target={{ kind: 'collectable', outpoint: stageChild.outpoint }} />
+              )}
+              {stageChild.type === 'burn-collectables' && (
+                <BurnAssetPanel
+                  target={{ kind: 'collectables', outpoints: stageChild.outpoints }}
+                />
               )}
               {stageChild.type === 'burn-fungible' && (
                 <BurnAssetPanel target={{ kind: 'fungible', tokenId: stageChild.tokenId }} />

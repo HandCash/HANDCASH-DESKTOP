@@ -28,6 +28,7 @@ export type SettingId =
 export type NavChild =
   | { type: 'app'; origin: string }
   | { type: 'app-launch'; origin: string; url: string }
+  | { type: 'app-browser'; origin: string; url: string }
   | { type: 'permission'; origin: string; scopeId: string }
   | { type: 'send'; prefill?: string }
   | { type: 'scan' }
@@ -38,7 +39,9 @@ export type NavChild =
   | { type: 'messages'; friendId?: string }
   | { type: 'collectable'; outpoint: string }
   | { type: 'send-collectable'; outpoint: string }
+  | { type: 'send-collectables'; outpoints: string[] }
   | { type: 'burn-collectable'; outpoint: string }
+  | { type: 'burn-collectables'; outpoints: string[] }
   | { type: 'fungible'; tokenId: string }
   | { type: 'send-fungible'; tokenId: string }
   | { type: 'burn-fungible'; tokenId: string }
@@ -112,6 +115,10 @@ export function openAppDetails(app: ConnectedApp) {
 
 export function openAppLaunch(origin: string, url: string) {
   openNavChild('apps', { type: 'app-launch', origin, url })
+}
+
+export function openEmbeddedAppBrowser(origin: string, url: string) {
+  openNavChild('apps', { type: 'app-browser', origin, url })
 }
 
 export function openPermissionDetails(origin: string, scopeId: string) {
@@ -208,8 +215,24 @@ export function openSendCollectable(outpoint: string) {
   openNavChild('collectables', { type: 'send-collectable', outpoint })
 }
 
+export function openSendCollectables(outpoints: readonly string[]) {
+  const stable = [...new Set(outpoints.map((value) => value.trim()).filter(Boolean))]
+  if (stable.length === 1) return openSendCollectable(stable[0])
+  if (stable.length > 1) {
+    openNavChild('collectables', { type: 'send-collectables', outpoints: stable })
+  }
+}
+
 export function openBurnCollectable(outpoint: string) {
   openNavChild('collectables', { type: 'burn-collectable', outpoint })
+}
+
+export function openBurnCollectables(outpoints: readonly string[]) {
+  const stable = [...new Set(outpoints.map((value) => value.trim()).filter(Boolean))]
+  if (stable.length === 1) return openBurnCollectable(stable[0])
+  if (stable.length > 1) {
+    openNavChild('collectables', { type: 'burn-collectables', outpoints: stable })
+  }
 }
 
 export function openFungibleDetails(tokenId: string) {

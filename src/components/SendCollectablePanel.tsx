@@ -6,6 +6,7 @@ import {
   getCollectable,
   listCollectables,
   sendCollectable,
+  sendCollectables,
   subscribeCollectables,
   type Collectable,
 } from '../wallet/collectables'
@@ -53,7 +54,8 @@ import { RecipientQrScan } from './QrScanner'
 import { useWalletActionDock } from './WalletActionDock'
 
 type Props = {
-  outpoint: string
+  outpoint?: string
+  outpoints?: string[]
   chain: Chain
   onSent?: (balanceSats: number) => void
   onFail?: (error: string) => void
@@ -80,11 +82,25 @@ function resolvedRecipientName(
   return null
 }
 
-export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
-  const [item, setItem] = useState<Collectable | null>(
-    () => getCachedCollectable(outpoint),
+export function SendCollectablePanel({
+  outpoint,
+  outpoints,
+  chain,
+  onSent,
+}: Props) {
+  const requestedOutpoints = useMemo(
+    () => [...new Set((outpoints ?? (outpoint ? [outpoint] : [])).filter(Boolean))],
+    [outpoint, outpoints],
   )
-  const [loading, setLoading] = useState(() => getCachedCollectable(outpoint) == null)
+  const outpointKey = requestedOutpoints.join('|')
+  const [items, setItems] = useState<Collectable[]>(() =>
+    requestedOutpoints
+      .map((value) => getCachedCollectable(value))
+      .filter((value): value is Collectable => value != null),
+  )
+  const [loading, setLoading] = useState(
+    () => items.length !== requestedOutpoints.length,
+  )
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [recipientQuery, setRecipientQuery] = useState('')
   const [to, setTo] = useState('')
@@ -104,30 +120,36 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   useEffect(() => {
     let cancelled = false
-    const cached = getCachedCollectable(outpoint)
-    if (cached) {
-      setItem(cached)
-      setLoading(false)
-    } else {
-      setItem(null)
-      setLoading(true)
-    }
+    const cached = requestedOutpoints
+      .map((value) => getCachedCollectable(value))
+      .filter((value): value is Collectable => value != null)
+    setItems(cached)
+    setLoading(cached.length !== requestedOutpoints.length)
     setStage('edit')
     setError(null)
-    void getCollectable(outpoint).then((next) => {
-      if (!cancelled) setItem(next)
+    void Promise.all(
+      requestedOutpoints.map((value) => getCollectable(value)),
+    ).then((loaded) => {
+      if (!cancelled) {
+        setItems(loaded.filter((value): value is Collectable => value != null))
+      }
     }).finally(() => {
       if (!cancelled) setLoading(false)
     })
     const unsubscribe = subscribeCollectables((list) => {
-      const found = list.find((i) => i.outpoint === outpoint)
-      if (found) setItem(found)
+      const selected = list.filter((item) =>
+        requestedOutpoints.includes(item.outpoint),
+      )
+      if (selected.length > 0) setItems(selected)
     })
     return () => {
       cancelled = true
       unsubscribe()
     }
-  }, [outpoint])
+  }, [outpointKey])
+
+  const item = items[0] ?? null
+  const batch = requestedOutpoints.length > 1
 
   const matches = useMemo(
     () => searchFriends(recipientQuery, friends).slice(0, 8),
@@ -136,12 +158,16 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
 
   const recipientLabel = friendLabel || (to ? shortenAddress(to) : '')
   const resolvedName = resolvedRecipientName(friendLabel, to, recipientIdentityKey)
-  const sendReady = item
-    ? inspectCollectableSendReady({
-        outpoint: item.outpoint,
-        proven: item.proven,
-        verifying: isOutpointVerifying(item.outpoint, verification),
-      })
+  const sendReady = items.length === requestedOutpoints.length && items.length > 0
+    ? items
+        .map((selected) =>
+          inspectCollectableSendReady({
+            outpoint: selected.outpoint,
+            proven: selected.proven,
+            verifying: isOutpointVerifying(selected.outpoint, verification),
+          }),
+        )
+        .find((ready) => !ready.ready) ?? { ready: true as const }
     : { ready: false as const, reason: 'unproven' as const }
   const sendBlocked = !sendReady.ready
   const sendBlockMessage = sendBlocked
@@ -227,14 +253,17 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
    * surfaces that outlive this panel.
    */
   const confirmSend = () => {
-    if (!item || sendingRef.current || sendBlocked) return
+    if (!item || items.length !== requestedOutpoints.length || sendingRef.current || sendBlocked) return
     sendingRef.current = true
     setError(null)
-    const send = {
-      outpoint: item.outpoint,
+    const common = {
       toAddress: to,
       recipientIdentityKey,
       friendLabel,
+    }
+    const send = {
+      ...common,
+      outpoint: item.outpoint,
       name: item.name,
       origin: item.origin,
       app: item.app,
@@ -246,9 +275,21 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
     void (async () => {
       try {
         // Activity is recorded inside finishSend as soon as the txid exists.
-        await sendCollectable(send)
+        if (batch) {
+          await sendCollectables({
+            ...common,
+            outpoints: requestedOutpoints,
+          })
+        } else {
+          await sendCollectable(send)
+        }
         playPaymentSuccessSound()
-        toastSuccess('Sent', `${send.name} on the way to ${label}.`)
+        toastSuccess(
+          'Sent',
+          batch
+            ? `${items.length} collectables on the way to ${label}.`
+            : `${send.name} on the way to ${label}.`,
+        )
         void listCollectables().catch(() => {})
         // Local state is authoritative for the spend; Dashboard poll reconciles after.
         try {
@@ -285,7 +326,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
             ariaLabel: 'Collectable send actions',
             secondary: {
               label: 'Cancel',
-              onClick: () => openCollectableDetails(item.outpoint),
+              onClick: () =>
+                batch ? clearNavChild() : openCollectableDetails(item.outpoint),
               icon: <CloseIcon size={18} />,
             },
             primary: {
@@ -300,7 +342,8 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
             ariaLabel: 'Confirm collectable transfer',
             secondary: {
               label: 'Cancel',
-              onClick: () => openCollectableDetails(item.outpoint),
+              onClick: () =>
+                batch ? clearNavChild() : openCollectableDetails(item.outpoint),
               icon: <CloseIcon size={18} />,
             },
             primary: {
@@ -315,7 +358,7 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
   )
 
   if (!item) {
-    const spent = isItemSent(outpoint)
+    const spent = requestedOutpoints.some((value) => isItemSent(value))
     return loading ? (
       <div
         className="nav-child-panel send-panel send-collectable-panel"
@@ -348,23 +391,34 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
           <div className="send-layout">
             <div className="send-amount-hero send-collectable-hero">
               <div className="send-collectable-preview">
-                <div className="collectable-media collectable-media-sm">
-                  <DeferredImage
-                    src={item.imageUrl}
-                    alt={item.name}
-                    width={48}
-                    height={48}
-                    skeletonWidth={48}
-                    skeletonHeight={48}
-                    skeletonRadius={6}
-                    skeletonClassName="skeleton-qr"
-                    retainDecoded
-                  />
-                </div>
+                {items.slice(0, 3).map((selected) => (
+                  <div
+                    className="collectable-media collectable-media-sm"
+                    key={selected.outpoint}
+                  >
+                    <DeferredImage
+                      src={selected.imageUrl}
+                      alt={selected.name}
+                      width={48}
+                      height={48}
+                      skeletonWidth={48}
+                      skeletonHeight={48}
+                      skeletonRadius={6}
+                      skeletonClassName="skeleton-qr"
+                      retainDecoded
+                    />
+                  </div>
+                ))}
                 <div>
-                  <p className="send-eyebrow">Send collectable</p>
-                  <strong className="collectable-details-name">{item.name}</strong>
-                  {item.app ? <p className="collectable-details-app">{item.app}</p> : null}
+                  <p className="send-eyebrow">
+                    {batch ? `Send ${items.length} collectables` : 'Send collectable'}
+                  </p>
+                  <strong className="collectable-details-name">
+                    {batch ? `${items.length} selected` : item.name}
+                  </strong>
+                  {!batch && item.app ? (
+                    <p className="collectable-details-app">{item.app}</p>
+                  ) : null}
                 </div>
               </div>
             </div>
@@ -469,22 +523,29 @@ export function SendCollectablePanel({ outpoint, chain, onSent }: Props) {
           <div className="send-layout send-layout-confirm">
             <div className="send-amount-hero send-collectable-hero">
               <div className="send-collectable-preview">
-                <div className="collectable-media collectable-media-sm">
-                  <DeferredImage
-                    src={item.imageUrl}
-                    alt={item.name}
-                    width={48}
-                    height={48}
-                    skeletonWidth={48}
-                    skeletonHeight={48}
-                    skeletonRadius={6}
-                    skeletonClassName="skeleton-qr"
-                    retainDecoded
-                  />
-                </div>
+                {items.slice(0, 3).map((selected) => (
+                  <div
+                    className="collectable-media collectable-media-sm"
+                    key={selected.outpoint}
+                  >
+                    <DeferredImage
+                      src={selected.imageUrl}
+                      alt={selected.name}
+                      width={48}
+                      height={48}
+                      skeletonWidth={48}
+                      skeletonHeight={48}
+                      skeletonRadius={6}
+                      skeletonClassName="skeleton-qr"
+                      retainDecoded
+                    />
+                  </div>
+                ))}
                 <div>
                   <p className="send-eyebrow">You’re sending</p>
-                  <strong className="collectable-details-name">{item.name}</strong>
+                  <strong className="collectable-details-name">
+                    {batch ? `${items.length} collectables` : item.name}
+                  </strong>
                 </div>
               </div>
             </div>

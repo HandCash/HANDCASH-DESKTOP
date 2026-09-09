@@ -22,9 +22,9 @@ export type WalletActionBarProps = {
 
 function buttonClass(action: WalletAction, placement: WalletActionBarProps['placement']): string {
   if (placement === 'nav') {
-    return `wallet-nav-tab ${
-      action.tone === 'primary' ? 'wallet-nav-tab-accept' : 'wallet-nav-tab-deny'
-    }`
+    if (action.tone === 'primary') return 'wallet-nav-tab wallet-nav-tab-accept'
+    if (action.tone === 'danger') return 'wallet-nav-tab wallet-nav-tab-danger'
+    return 'wallet-nav-tab wallet-nav-tab-deny'
   }
   if (action.tone === 'primary') return 'btn btn-primary'
   if (action.tone === 'danger') return 'btn btn-danger'

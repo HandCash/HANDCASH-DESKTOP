@@ -118,6 +118,10 @@ import {
 import { chooseItemSettlePath, isPeerDeliverSettle } from './itemSettlePath'
 import { createActor } from 'xstate'
 import { broadcastAtomicBeef } from './sendBrc29Payment'
+import {
+  collectableBatchOutputOutpoint,
+  normalizeCollectableBatchOutpoints,
+} from './collectableBatch'
 import { scanLegacyAddress } from './legacyScan'
 import {
   isItemAbandoned,
@@ -3884,6 +3888,637 @@ export async function sendCollectable(args: {
       pendingId: outboundPending.id,
       reason: err instanceof Error ? err.message : String(err),
     })
+    throw err
+  } finally {
+    clearInterval(touchSpendPriority)
+    spendPriority.release()
+    setCollectableVerifyWalkDeferred(false)
+    resumeCollectableVerifyWalk()
+  }
+}
+
+export type SendCollectablesArgs = {
+  outpoints: string[]
+  toAddress: string
+  recipientIdentityKey?: string | null
+  friendLabel?: string | null
+}
+
+/**
+ * Transfer several held 1-sat collectables to one recipient atomically.
+ *
+ * Input and output order are paired and output randomization is disabled, so
+ * output N carries the metadata and BRC-150 remittance for input N. Either the
+ * complete transaction is signed or none of the selected tips are transferred.
+ */
+export async function sendCollectables(
+  args: SendCollectablesArgs
+): Promise<{ txid: string }> {
+  const outpoints = normalizeCollectableBatchOutpoints(args.outpoints)
+  if (outpoints.length === 0) throw new Error('Select at least one collectable')
+  if (outpoints.length === 1) {
+    return sendCollectable({
+      outpoint: outpoints[0]!,
+      toAddress: args.toAddress,
+      recipientIdentityKey: args.recipientIdentityKey,
+      friendLabel: args.friendLabel,
+    })
+  }
+
+  const earlyItems = outpoints.map((outpoint) => {
+    const cached = cachedCollectables.find((item) => item.outpoint === outpoint)
+    const ready = inspectCollectableSendReady({
+      outpoint,
+      proven:
+        cached?.proven === true ||
+        getProvenVerdict(outpoint)?.tier === 'brc150',
+      verifying: isOutpointVerifying(outpoint),
+    })
+    if (!ready.ready) {
+      throw new Error(collectableSendReadyMessage(ready.reason))
+    }
+    return {
+      name: (cached?.name ?? 'Collectable').trim().slice(0, 40) || 'Collectable',
+      origin: parseOrigin(cached?.origin, outpoint),
+      outpoint,
+      ...(cached?.imageUrl ? { imageUrl: cached.imageUrl } : {}),
+      ...(cached?.app ? { app: cached.app } : {}),
+    }
+  })
+
+  setPaymentProgress(
+    'preparing',
+    `Waiting to send ${outpoints.length} collectables`,
+    outpoints[0],
+    null,
+    'item_transfer',
+  )
+  setCollectableVerifyWalkDeferred(true)
+  const spendPriority = leaseSpendPriority('send-collectables')
+  const touchSpendPriority = setInterval(() => spendPriority.touch(), 30_000)
+  const pending = earlyItems.map((item) => {
+    const send = beginPendingSend({
+      to: args.toAddress,
+      sats: 1,
+      friendLabel: args.friendLabel ?? null,
+    })
+    noteOutboundSendPending({
+      pendingId: send.id,
+      sats: 1,
+      to: args.toAddress,
+      friendLabel: args.friendLabel ?? null,
+      recipientIdentityKey: args.recipientIdentityKey ?? null,
+      item,
+    })
+    return send
+  })
+
+  const failPending = (reason: unknown) => {
+    const message = reason instanceof Error ? reason.message : String(reason)
+    for (const send of pending) {
+      clearPendingSend(send.id)
+      failOutboundSendPending({ pendingId: send.id, reason: message })
+    }
+  }
+
+  try {
+    return await runExclusiveSpend(
+      async () => {
+        pauseCollectableArrivalToasts++
+        let sealedTxid = ''
+        let sealedBeef: number[] | undefined
+        let broadcastStarted = false
+        try {
+          assertOnlineForPayment()
+          const wallet = getActiveWallet()
+          if (!wallet) throw new Error('Wallet locked')
+          const { abortReservedActionBatches } = await import('./actionReview')
+          await abortReservedActionBatches(wallet, { budgetMs: 1500 })
+
+          setPaymentProgress(
+            'building',
+            `Preparing ${outpoints.length} collectables for transfer`,
+            outpoints[0],
+          )
+          const to = await resolvePaymentRecipient(args.toAddress, wallet.chain)
+          let lockingScript: string
+          try {
+            lockingScript = new P2PKH().lock(to).toHex()
+          } catch {
+            throw new Error('Invalid recipient address or identity key')
+          }
+
+          type HeldOutput = NonNullable<
+            Awaited<
+              ReturnType<ActiveWallet['wallet']['listOutputs']>
+            >['outputs']
+          >[number]
+          const held = await listOutputsWithTimeout(wallet.wallet, {
+            basket: '1sat',
+            limit: 1000,
+            includeTags: true,
+            includeCustomInstructions: true,
+            include: 'locking scripts',
+            seekPermission: false,
+          })
+          const heldByOutpoint = new Map(
+            (held.outputs ?? []).map((output) => [
+              normalizeOutpoint(output.outpoint),
+              output,
+            ]),
+          )
+          const inputBEEF = await buildInputBeefForSpends(wallet, outpoints)
+          const live = await awaitLiveOutpoints(wallet)
+
+          const prepared = []
+          for (const outpoint of outpoints) {
+            const cached =
+              cachedCollectables.find((item) => item.outpoint === outpoint) ?? null
+            const match =
+              heldByOutpoint.get(outpoint) ??
+              (cached
+                ? ({
+                    outpoint,
+                    satoshis: 1,
+                    spendable: true,
+                    tags: [],
+                    ...(cached.lockingScript
+                      ? { lockingScript: cached.lockingScript }
+                      : {}),
+                  } as HeldOutput)
+                : undefined)
+            if (!match) throw new Error('Collectable is no longer in this wallet')
+            if ((match.satoshis ?? 1) !== 1) {
+              throw new Error('Collectable UTXO is not a 1-sat ordinal')
+            }
+
+            const liveKey = outpointKey(outpoint)
+            const liveScanAt = cachedLiveOneSats?.at ?? 0
+            if (
+              live &&
+              liveScanAt > 0 &&
+              shouldRejectSendForMissingLiveTip({
+                outpoint,
+                inLiveSet: live.oneSats.has(liveKey),
+                firstSeenAt: firstSeenAt.get(liveKey) ?? Date.now(),
+                liveScanAt,
+                lockingScriptHex: normalizeLockingScriptHex(match.lockingScript),
+                walletAddress: wallet.address,
+              })
+            ) {
+              markItemsSent([
+                { outpoint, txid: `spent-on-chain:${outpoint}` },
+              ])
+              void listCollectables(wallet).catch(() => {})
+              throw new Error(
+                'A selected collectable is no longer unspent on your address. Inventory refreshed.',
+              )
+            }
+
+            const tipLockingScript = resolveTipLockingScriptHex({
+              listed: match.lockingScript,
+              beefBin: inputBEEF,
+              outpoint,
+            })
+            assertOrdinalIsDeviceLocked(tipLockingScript, wallet)
+            const provenTier = getProvenVerdict(outpoint)?.tier ?? null
+            const ready = inspectCollectableSendReady({
+              outpoint,
+              proven: cached?.proven === true || provenTier === 'brc150',
+              verifying: isOutpointVerifying(outpoint),
+            })
+            const sendPath = chooseSendPath({
+              tipKind: classifyTipKind(tipLockingScript),
+              provenTier,
+              sendReady: ready,
+            })
+            if (sendPath.path === 'refuse') throw new Error(sendPath.reason)
+
+            const item = cached ?? (await getCollectable(outpoint, wallet))
+            const resolvedMeta = getResolvedInscription(outpoint)
+            const tipCustom = parseCustom(match.customInstructions)
+            const origin = parseOrigin(
+              resolvedMeta?.origin ?? tipCustom.origin ?? item?.origin,
+              outpoint,
+            )
+            const name =
+              (
+                resolvedMeta?.name ??
+                tipCustom.name ??
+                item?.name ??
+                'Collectable'
+              )
+                .trim()
+                .slice(0, 40) || 'Collectable'
+            const app = resolvedMeta?.app ?? tipCustom.app ?? item?.app
+            const collectionId =
+              resolvedMeta?.collectionId ??
+              tipCustom.collectionId ??
+              item?.collectionId
+            let content =
+              item?.content ??
+              resolveDerivativeContent({
+                claimed: tipCustom.content ?? tagValue(match.tags, 'content:'),
+              })
+            if (!content && provenTier !== 'brc150') {
+              try {
+                const [originTxid, voutRaw] = origin
+                  .replace(/\.(\d+)$/, '_$1')
+                  .split('_')
+                const originVout = Number(voutRaw)
+                if (originTxid?.length === 64 && Number.isInteger(originVout)) {
+                  const originBeef = await getBeefForTxidCached(
+                    wallet,
+                    originTxid.toLowerCase(),
+                    { needProof: true },
+                  )
+                  content = resolveDerivativeContent({
+                    originScriptHex: originBeef
+                      .findTxid(originTxid.toLowerCase())
+                      ?.tx?.outputs?.[originVout]?.lockingScript?.toHex(),
+                  })
+                }
+              } catch (err) {
+                console.warn(
+                  '[collectables] batch derivative content resolve skipped',
+                  err,
+                )
+              }
+            }
+            const remembered = getRememberedProvenanceRemittance(outpoint)
+            const provenance =
+              provenTier === 'brc150' && remembered?.beefB64
+                ? remembered
+                : null
+            const tags = stampBrc164Id([
+              'ordinal',
+              `origin:${origin.replace(/_(\d+)$/, '.$1')}`,
+              `name:${name.slice(0, 80)}`,
+              ...(app ? [`app:${app.slice(0, 40)}`] : []),
+              ...(collectionId
+                ? [`collection:${collectionId.slice(0, 80)}`]
+                : []),
+              ...(content
+                ? [`content:${content.replace(/_(\d+)$/, '.$1')}`]
+                : []),
+            ])
+            prepared.push({
+              outpoint,
+              name,
+              origin,
+              app,
+              collectionId,
+              content,
+              provenance,
+              tags,
+              imageUrl: item?.imageUrl,
+            })
+          }
+
+          const knownTxids = [
+            ...new Set(outpoints.map((op) => op.split('.')[0]!)),
+          ]
+          const settlePath = chooseItemSettlePath({
+            paysOurAddress: scriptPaysAddress(lockingScript, wallet.address),
+            recipientIdentityKey: args.recipientIdentityKey,
+          })
+          let result:
+            | Awaited<ReturnType<ActiveWallet['wallet']['createAction']>>
+            | undefined
+          let attemptedBatchAbort = false
+          for (;;) {
+            try {
+              setPaymentProgress(
+                'signing',
+                `Signing ${prepared.length} collectables for the recipient`,
+                outpoints[0],
+              )
+              result = await wallet.wallet.createAction({
+                description: `Send ${prepared.length} collectables`.slice(0, 50),
+                labels: ['1sat', 'handcash-send-collectable'],
+                inputBEEF,
+                inputs: outpoints.map((outpoint) => ({
+                  outpoint,
+                  inputDescription: '1sat collectable',
+                  unlockingScriptLength: 108,
+                })),
+                outputs: prepared.map((item) => ({
+                  lockingScript,
+                  satoshis: 1,
+                  outputDescription: 'Collectable transfer',
+                  basket: '1sat',
+                  tags: item.tags,
+                  customInstructions: buildCollectableCustomInstructions({
+                    origin: item.origin,
+                    name: item.name,
+                    app: item.app,
+                    ...(item.collectionId
+                      ? { collectionId: item.collectionId }
+                      : {}),
+                    ...(item.content ? { content: item.content } : {}),
+                    provenance: item.provenance,
+                  }),
+                })),
+                options: {
+                  trustSelf: 'known',
+                  knownTxids,
+                  randomizeOutputs: false,
+                  signAndProcess: true,
+                  noSend: true,
+                },
+              })
+              break
+            } catch (err) {
+              const {
+                isReservedActionBatchError,
+                abortReservedActionBatches,
+                isReviewActionsError,
+                formatReviewActionsError,
+                recoverFromReviewActions,
+              } = await import('./actionReview')
+              if (!attemptedBatchAbort && isReservedActionBatchError(err)) {
+                attemptedBatchAbort = true
+                await abortReservedActionBatches(wallet)
+                continue
+              }
+              if (isAlreadySpentInputError(err)) {
+                await hideSpentOutpoints(outpoints)
+              }
+              await recoverFromReviewActions({
+                err,
+                reference: null,
+                tipOutpoints: outpoints,
+                active: wallet,
+              })
+              throw isReviewActionsError(err)
+                ? new Error(formatReviewActionsError(err))
+                : err
+            }
+          }
+
+          if (!result) throw new Error('Send completed without createAction result')
+          let txid = result.txid ?? ''
+          let atomicBeef = atomicBeefFromWalletResult(result)
+          if (!txid) {
+            if (!result.signableTransaction) {
+              throw new Error('Send completed without txid')
+            }
+            try {
+              const signed = await signOrdinalTransfer({
+                wallet,
+                signable: result.signableTransaction,
+                outpoints,
+              })
+              txid = signed.txid
+              atomicBeef = signed.atomicBeef
+            } catch (err) {
+              const { recoverFromReviewActions } = await import('./actionReview')
+              await recoverFromReviewActions({
+                err,
+                reference: result.signableTransaction.reference,
+                tipOutpoints: outpoints,
+                active: wallet,
+              })
+              throw err
+            }
+          }
+          if (!atomicBeef?.length) {
+            throw new Error('Send completed without signed BEEF')
+          }
+          rememberBeefTree(atomicBeef, txid)
+          try {
+            await wallet.wallet.actionBatch.abort()
+          } catch {
+            /* unused funding reservations only */
+          }
+          const { sealSpentInputsOfSignedTx } = await import(
+            './staleOutputRelease'
+          )
+          await sealSpentInputsOfSignedTx(txid, atomicBeef)
+          sealedTxid = txid
+          sealedBeef = atomicBeef
+
+          const selfReceive = scriptPaysAddress(lockingScript, wallet.address)
+          const settle: SentItemSettle = isPeerDeliverSettle(settlePath)
+            ? 'peerDeliver'
+            : 'senderBroadcast'
+          const newTips = prepared.map((_, index) =>
+            collectableBatchOutputOutpoint(txid, index),
+          )
+          markItemsSent([
+            ...outpoints.map((outpoint) => ({ outpoint, txid, settle })),
+            ...(!selfReceive
+              ? newTips.map((outpoint) => ({ outpoint, txid, settle }))
+              : []),
+          ])
+          invalidateLiveOneSatOutpoints()
+          await relinquishSpentOutputs(
+            wallet,
+            outpoints.map((outpoint) => ({ outpoint, basket: '1sat' })),
+          )
+          if (!selfReceive) {
+            await relinquishSpentOutputs(
+              wallet,
+              newTips.map((outpoint) => ({ outpoint, basket: '1sat' })),
+            )
+          }
+
+          for (let index = 0; index < prepared.length; index++) {
+            const item = prepared[index]!
+            const send = pending[index]!
+            completePendingSend(send.id, txid)
+            noteOutboundSendComplete({
+              pendingId: send.id,
+              txid,
+              sats: 1,
+              to,
+              friendLabel: args.friendLabel ?? null,
+              recipientIdentityKey: args.recipientIdentityKey ?? null,
+              item: {
+                name: item.name,
+                origin: item.origin,
+                outpoint: item.outpoint,
+                ...(item.imageUrl ? { imageUrl: item.imageUrl } : {}),
+                ...(item.app ? { app: item.app } : {}),
+              },
+            })
+            clearPendingSend(send.id)
+          }
+
+          setCollectablesCache(
+            cachedCollectables.filter(
+              (item) => !outpoints.includes(item.outpoint),
+            ),
+          )
+          if (selfReceive) {
+            for (let index = 0; index < prepared.length; index++) {
+              const item = prepared[index]!
+              const newTip = newTips[index]!
+              skipArrivalToast.add(normalizeOutpoint(newTip))
+              noteIngestedItem({
+                outpoint: newTip,
+                chain: wallet.chain,
+                origin: item.origin,
+                name: item.name,
+              })
+              if (item.provenance) {
+                rememberProvenVerdict(newTip, {
+                  tier: 'brc150',
+                  origin: item.origin.replace(/\.(\d+)$/, '_$1').toLowerCase(),
+                  verifiedAt: Date.now(),
+                })
+              }
+            }
+            announceItemsReceived(newTips)
+          }
+
+          const reportBroadcastFailure = (reason: unknown) => {
+            void import('./minerSubmit').then(
+              ({ reportLateMinerSubmitFailure }) =>
+                Promise.all(
+                  pending.map((send) =>
+                    reportLateMinerSubmitFailure({
+                      pendingId: send.id,
+                      txid,
+                      reason,
+                    }),
+                  ),
+                ),
+            )
+          }
+          const startBackgroundMiner = () => {
+            broadcastStarted = true
+            void broadcastAtomicBeef(txid, atomicBeef)
+              .then((ok) => {
+                if (!ok) reportBroadcastFailure('Not sent')
+              })
+              .catch(reportBroadcastFailure)
+          }
+          if (isPeerDeliverSettle(settlePath)) {
+            startBackgroundMiner()
+            void (async () => {
+              const { notifyPeerItemIncoming } = await import(
+                './messageTransport'
+              )
+              const { listFriends } = await import('./friends')
+              const { enqueuePendingItemRemit } = await import(
+                './pendingItemOutbox'
+              )
+              const friend = listFriends().find(
+                (candidate) =>
+                  candidate.identityKey.toLowerCase() ===
+                  settlePath.recipientIdentityKey.toLowerCase(),
+              )
+              for (const item of prepared) {
+                try {
+                  const delivered = await notifyPeerItemIncoming({
+                    recipientIdentityKey: settlePath.recipientIdentityKey,
+                    rootKeyHex: wallet.rootKeyHex,
+                    senderIdentityKey: wallet.identityKey,
+                    messagebox: friend?.messagebox,
+                    txid,
+                    itemName: item.name,
+                    itemOrigin: item.origin,
+                    itemCollectionId: item.collectionId,
+                    atomicBeef,
+                  })
+                  if (delivered.delivered === 'cloud') continue
+                } catch (err) {
+                  console.warn('[collectables] batch peer notify failed', err)
+                }
+                enqueuePendingItemRemit({
+                  payeeIdentityKey: settlePath.recipientIdentityKey,
+                  senderIdentityKey: wallet.identityKey,
+                  txid,
+                  itemName: item.name,
+                  itemOrigin: item.origin,
+                  itemCollectionId: item.collectionId,
+                  messagebox: friend?.messagebox,
+                })
+              }
+            })()
+          } else {
+            startBackgroundMiner()
+          }
+
+          for (let index = 0; index < prepared.length; index++) {
+            const item = prepared[index]!
+            if (!item.provenance || !parseProvenanceV2(item.provenance)) continue
+            void (async () => {
+              try {
+                const tipBeef = await getBeefForTxidCached(wallet, txid, {
+                  allowUnprovenRawTx: true,
+                })
+                const extended = await extendProvenanceV2({
+                  prior: item.provenance!,
+                  heldOutpoint: newTips[index]!.replace(/\.(\d+)$/, '_$1'),
+                  tipBeef,
+                  getBeef: (hop) =>
+                    getBeefForTxidCached(wallet, hop, {
+                      allowUnprovenRawTx: true,
+                    }),
+                })
+                if (extended) {
+                  rememberProvenanceRemittance(extended)
+                  rememberProvenVerdict(extended.tip, {
+                    tier: 'brc150',
+                    origin: extended.origin,
+                    path: extended.path,
+                    verifiedAt: Date.now(),
+                  })
+                }
+              } catch (err) {
+                console.warn(
+                  '[brc-150] post-batch remittance extend failed',
+                  err,
+                )
+              }
+            })()
+          }
+
+          setPaymentProgress('finishing', 'Updating your collectables')
+          scheduleHistoryBackupPush('sendCollectable')
+          void listCollectables(wallet).catch((err) => {
+            console.warn('[collectables] post-batch-send refresh failed', err)
+          })
+          return { txid }
+        } catch (err) {
+          if (
+            sealedTxid &&
+            sealedBeef?.length &&
+            !broadcastStarted
+          ) {
+            void import('./staleOutputRelease').then(
+              ({ releaseSealedInputsOfUnsentTx }) =>
+                releaseSealedInputsOfUnsentTx(
+                  sealedTxid,
+                  sealedBeef!,
+                ).catch(() => undefined),
+            )
+          }
+          protectTipsFromGhostDrop(outpoints)
+          forgetItemsSent(outpoints)
+          failPending(err)
+          throw formatSendError(err)
+        } finally {
+          pauseCollectableArrivalToasts = Math.max(
+            0,
+            pauseCollectableArrivalToasts - 1,
+          )
+          clearPaymentProgress()
+        }
+      },
+      () =>
+        setPaymentProgress(
+          'preparing',
+          `Waiting to send ${outpoints.length} collectables`,
+          outpoints[0],
+        ),
+      { promote: 'light' },
+    )
+  } catch (err) {
+    forgetItemsSent(outpoints)
+    failPending(err)
     throw err
   } finally {
     clearInterval(touchSpendPriority)

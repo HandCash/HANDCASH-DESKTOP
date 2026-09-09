@@ -334,7 +334,11 @@ export function DeferredImage({
 
   if (!src) {
     return (
-      <>
+      <span
+        className="deferred-image deferred-image--fallback"
+        style={{ width: skW, height: skH }}
+        data-aeon-state="error"
+      >
         {fallback ?? (
           <Skeleton
             className={skeletonClassName}
@@ -343,7 +347,7 @@ export function DeferredImage({
             radius={skeletonRadius}
           />
         )}
-      </>
+      </span>
     )
   }
 

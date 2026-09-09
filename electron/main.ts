@@ -421,6 +421,7 @@ function createWindow(): void {
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
+      webviewTag: true,
       // The wallet remains an active transaction service while obscured or
       // minimized. Chromium's default background throttling can suspend the
       // renderer timers that complete BRC-100 requests.
@@ -451,6 +452,33 @@ function createWindow(): void {
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (isSafeExternalUrl(url)) void shell.openExternal(url)
     return { action: 'deny' }
+  })
+
+  mainWindow.webContents.on(
+    'will-attach-webview',
+    (event, webPreferences, params) => {
+      if (
+        !isSafeExternalUrl(params.src) ||
+        params.src.startsWith('mailto:')
+      ) {
+        event.preventDefault()
+        return
+      }
+      delete webPreferences.preload
+      webPreferences.nodeIntegration = false
+      webPreferences.contextIsolation = true
+      webPreferences.sandbox = true
+      webPreferences.partition = 'persist:handcash-app-browser'
+    },
+  )
+  mainWindow.webContents.on('did-attach-webview', (_event, guest) => {
+    guest.setWindowOpenHandler(({ url }) => {
+      if (isSafeExternalUrl(url)) void shell.openExternal(url)
+      return { action: 'deny' }
+    })
+    guest.on('will-navigate', (event, url) => {
+      if (!isSafeExternalUrl(url) || url.startsWith('mailto:')) event.preventDefault()
+    })
   })
 
   const handleNavigation = (event: Electron.Event, url: string) => {

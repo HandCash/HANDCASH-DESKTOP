@@ -52,23 +52,25 @@ import { toastError, toastSuccess } from '../wallet/toast'
 import { DeferredImage } from './DeferredImage'
 import { EmptyState } from './EmptyState'
 import { FungibleTokenFace } from './FungibleTokenFace'
-import { CollectablesIcon, FireIcon } from './icons'
+import { CheckIcon, CloseIcon, CollectablesIcon, FireIcon } from './icons'
+import { WalletRequestTemplate } from './WalletRequestTemplate'
 
 /** Explicit target — a burn never guesses which protocol it is destroying. */
 export type BurnTarget =
   | { kind: 'fungible'; tokenId: string }
   | { kind: 'collectable'; outpoint: string }
+  | { kind: 'collectables'; outpoints: string[] }
 
 type Props = {
   target: BurnTarget
 }
 
 export function BurnAssetPanel({ target }: Props) {
-  return target.kind === 'fungible' ? (
-    <BurnFungiblePanel tokenId={target.tokenId} />
-  ) : (
-    <BurnCollectablePanel outpoint={target.outpoint} />
-  )
+  if (target.kind === 'fungible') return <BurnFungiblePanel tokenId={target.tokenId} />
+  if (target.kind === 'collectables') {
+    return <BurnCollectablesPanel outpoints={target.outpoints} />
+  }
+  return <BurnCollectablePanel outpoint={target.outpoint} />
 }
 
 type Stage = 'editing' | 'confirming' | 'burning' | 'failure'
@@ -205,11 +207,61 @@ function BurnShell({
     </dl>
   )
 
+  const actions =
+    stage === 'failure'
+      ? {
+          ariaLabel: 'Burn failure actions',
+          secondary: {
+            label: 'Close',
+            onClick: onCancel,
+            icon: <CloseIcon size={18} />,
+          },
+          primary: {
+            label: 'Edit',
+            onClick: onBack,
+            icon: <CheckIcon size={18} />,
+            tone: 'primary' as const,
+          },
+        }
+      : showConfirm
+        ? {
+            ariaLabel: 'Confirm permanent burn',
+            secondary: {
+              label: 'Back',
+              onClick: onBack,
+              disabled: busy,
+            },
+            primary: {
+              label: busy ? 'Burning…' : 'Confirm burn',
+              onClick: onConfirm,
+              disabled: busy,
+              icon: <FireIcon size={18} />,
+              tone: 'danger' as const,
+            },
+          }
+        : {
+            ariaLabel: 'Review burn',
+            secondary: {
+              label: 'Cancel',
+              onClick: onCancel,
+              disabled: busy,
+              icon: <CloseIcon size={18} />,
+            },
+            primary: {
+              label: 'Review',
+              onClick: onReview,
+              disabled: !canReview || busy,
+              icon: <CheckIcon size={18} />,
+              tone: 'danger' as const,
+            },
+          }
+
   return (
-    <div
+    <WalletRequestTemplate
+      scope="asset-burn"
+      state={stateToAttr(stage)}
+      actions={actions}
       className="nav-child-panel send-panel burn-panel"
-      data-aeon-scope="asset-burn"
-      data-aeon-state={stateToAttr(stage)}
     >
       {stage === 'failure' ? (
         <div className="send-stage send-stage-failure">
@@ -226,14 +278,6 @@ function BurnShell({
               </CopyableError>
             </p>
           </div>
-          <div className="actions send-actions">
-            <button type="button" className="btn btn-primary" onClick={onBack}>
-              Edit
-            </button>
-            <button type="button" className="btn btn-ghost" onClick={onCancel}>
-              Close
-            </button>
-          </div>
         </div>
       ) : showConfirm ? (
         <div className="send-stage send-stage-confirm">
@@ -249,25 +293,6 @@ function BurnShell({
               {alternativeNote ? (
                 <p className="burn-note">{alternativeNote}</p>
               ) : null}
-              <div className="actions send-actions">
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  disabled={busy}
-                  aria-busy={busy || undefined}
-                  onClick={onConfirm}
-                >
-                  {busy ? 'Burning…' : 'Confirm'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={busy}
-                  onClick={onBack}
-                >
-                  Back
-                </button>
-              </div>
               {alternativeActionLabel && onAlternativeAction ? (
                 <button
                   type="button"
@@ -305,30 +330,11 @@ function BurnShell({
                 Only eligible physical sats come back as wallet change. The
                 asset itself ends here.
               </p>
-              <div className="actions send-actions">
-                <button
-                  type="button"
-                  className="btn btn-danger"
-                  disabled={!canReview || busy}
-                  aria-busy={busy || undefined}
-                  onClick={onReview}
-                >
-                  {busy ? 'Burning…' : 'Review'}
-                </button>
-                <button
-                  type="button"
-                  className="btn btn-ghost"
-                  disabled={busy}
-                  onClick={onCancel}
-                >
-                  Cancel
-                </button>
-              </div>
             </div>
           </div>
         </div>
       )}
-    </div>
+    </WalletRequestTemplate>
   )
 }
 
@@ -569,6 +575,143 @@ function BurnFungiblePanel({ tokenId }: { tokenId: string }) {
       onConfirm={confirm}
       onBack={() => event({ type: 'BACK' })}
       onCancel={() => openFungibleDetails(token.tokenId)}
+    />
+  )
+}
+
+function BurnCollectablesPanel({ outpoints }: { outpoints: string[] }) {
+  const stableOutpoints = [...new Set(outpoints)]
+  const [items, setItems] = useState<Collectable[]>(() => {
+    const wanted = new Set(stableOutpoints)
+    return getCachedCollectables().filter((item) => wanted.has(item.outpoint))
+  })
+  const [loading, setLoading] = useState(items.length !== stableOutpoints.length)
+  const [snapshot, event] = useMachine(assetBurnUiMachine)
+
+  useEffect(() => {
+    event({ type: 'OPEN' })
+  }, [event])
+
+  useEffect(() => {
+    const wanted = new Set(stableOutpoints)
+    const pick = (list: Collectable[]) =>
+      stableOutpoints
+        .map((outpoint) => list.find((item) => item.outpoint === outpoint))
+        .filter((item): item is Collectable => item != null)
+    const unsubscribe = subscribeCollectables((list) => setItems(pick(list)))
+    let cancelled = false
+    void Promise.all(stableOutpoints.map((outpoint) => getCollectable(outpoint)))
+      .then((found) => {
+        if (!cancelled) {
+          setItems(found.filter((item): item is Collectable => item != null))
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setLoading(false)
+      })
+    return () => {
+      cancelled = true
+      unsubscribe()
+      wanted.clear()
+    }
+    // The navigation payload is immutable for this panel.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stableOutpoints.join('|')])
+
+  if (loading && items.length !== stableOutpoints.length) {
+    return (
+      <div
+        className="nav-child-panel send-panel burn-panel"
+        data-aeon-scope="asset-burn"
+        data-aeon-state="loading"
+        aria-busy="true"
+        aria-label="Loading selected items"
+      />
+    )
+  }
+
+  if (items.length !== stableOutpoints.length) {
+    return (
+      <EmptyState
+        icon={<CollectablesIcon size={28} />}
+        title="Some items are no longer available"
+        body="Return to Collect and choose items still held by this wallet."
+      />
+    )
+  }
+
+  const busyItem = items.find((item) => isOutpointSending(item.outpoint))
+  const lockedItem = items.find((item) => item.covenantLocked)
+  const refusal = lockedItem
+    ? `${lockedItem.name} is covenant locked and cannot be burned.`
+    : busyItem
+      ? `${busyItem.name} is already being processed.`
+      : null
+  const economics = estimateBurnEconomics({
+    inputCount: items.length,
+    protocolOutputCount: 0,
+    recoveryOutput: true,
+    grossAssetSats: items.reduce((sum, item) => sum + (item.satoshis || 1), 0),
+  })
+
+  const confirm = () => {
+    if (refusal) return
+    event({ type: 'CONFIRM' })
+    clearNavChild()
+    void burnOneSat(stableOutpoints)
+      .then((result) => {
+        playWalletSound('success')
+        toastSuccess(
+          `${items.length} collectables burned`,
+          `${result.recoveredSatoshis.toLocaleString()} physical sats recovered into Pay${
+            result.feeSatoshis != null
+              ? `; ${result.feeSatoshis.toLocaleString()} sats network fee.`
+              : ' before fees.'
+          }`,
+        )
+      })
+      .catch((err) => {
+        playWalletSound('error')
+        toastError('Batch burn failed', err instanceof Error ? err.message : String(err))
+      })
+  }
+
+  return (
+    <BurnShell
+      stage={stageOf(snapshot)}
+      media={
+        <span className="burn-batch-preview" aria-hidden>
+          {items.slice(0, 3).map((item) => (
+            <DeferredImage
+              key={item.outpoint}
+              src={item.imageUrl}
+              alt=""
+              width={40}
+              height={40}
+              skeletonRadius={6}
+              fallback={<CollectablesIcon size={20} />}
+              retainDecoded
+            />
+          ))}
+        </span>
+      }
+      eyebrow="Burn collectables"
+      title={`${items.length} selected items`}
+      subtitle="One permanent on-chain action"
+      amountLabel={`${items.length} collectables`}
+      confirmSubtitle="Every selected item and its BRC-150 lineage"
+      economics={economics}
+      grossLabel="Asset sats selected"
+      refusal={refusal}
+      error={snapshot.context.error}
+      canReview={refusal == null}
+      onReview={() => {
+        playWalletSound('soft')
+        event({ type: 'REVIEW' })
+      }}
+      onConfirm={confirm}
+      onBack={() => event({ type: 'BACK' })}
+      onCancel={clearNavChild}
     />
   )
 }

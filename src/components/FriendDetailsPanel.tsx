@@ -13,6 +13,7 @@ import { clearNavChild, openMessagesWithFriend } from '../wallet/navStore'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { CopyIcon, MessagesIcon } from './icons'
 
 type Props = {
   friendId: string
@@ -23,6 +24,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
   const [friend, setFriend] = useState<Friend | null>(() => getFriendById(friendId))
   const [label, setLabel] = useState(friend?.label ?? '')
   const [error, setError] = useState<string | null>(null)
+  const [confirmingRemove, setConfirmingRemove] = useState(false)
 
   useEffect(() => {
     return subscribeFriends(() => {
@@ -37,6 +39,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     setFriend(next)
     setLabel(next?.label ?? '')
     setError(null)
+    setConfirmingRemove(false)
   }, [friendId])
 
   if (!friend) {
@@ -78,17 +81,30 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
     await copyText(address, { label: 'address' })
   }
 
+  const onRemove = () => {
+    playWalletSound('deny')
+    removeFriend(friend.id)
+    clearNavChild()
+  }
+
   return (
     <div className="nav-child-panel friend-details" data-aeon-scope="friend-details">
       <form className="friends-add-form" onSubmit={onSave}>
-        {handleFixed ? (
-          <div className="field">
-            <span className="field-static-label">Handle</span>
-            <span className="wallet-detail-value">{displayHandle}</span>
+        <section className="friend-details-overview" aria-labelledby="friend-overview-name">
+          <span className="friend-avatar friend-avatar-lg" aria-hidden>
+            {displayHandle.slice(0, 1).toUpperCase()}
+          </span>
+          <div>
+            <h3 id="friend-overview-name">{displayHandle}</h3>
+            <p>{handleFixed ? 'Handle contact' : 'Saved contact'}</p>
           </div>
+        </section>
+
+        {handleFixed ? (
+          <p className="friend-fixed-note">Handle names are managed by their owner.</p>
         ) : (
           <div className="field">
-            <label htmlFor="friend-edit-label">Label</label>
+            <label htmlFor="friend-edit-label">Contact name</label>
             <input
               id="friend-edit-label"
               value={label}
@@ -100,27 +116,40 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
           </div>
         )}
 
-        <div className="field">
-          <span className="field-static-label">Identity key</span>
+        <div className="friend-copy-row">
+          <div>
+            <span className="field-static-label">Identity key</span>
+            <span className="mono wallet-detail-value" title={friend.identityKey}>
+              {friend.identityKey}
+            </span>
+          </div>
           <button
             type="button"
-            className="mono wallet-detail-value friend-copy-value"
-            title="Click to copy identity key"
+            className="friend-copy-action"
+            aria-label="Copy identity key"
             onClick={() => void copyKey()}
           >
-            {friend.identityKey}
+            <CopyIcon size={16} />
+            Copy
           </button>
         </div>
 
-        <div className="field">
-          <span className="field-static-label">Receive address</span>
+        <div className="friend-copy-row">
+          <div>
+            <span className="field-static-label">Receive address</span>
+            <span className="mono wallet-detail-value" title={address}>
+              {address}
+            </span>
+          </div>
           <button
             type="button"
-            className="mono wallet-detail-value friend-copy-value"
-            title="Click to copy address"
+            className="friend-copy-action"
+            aria-label="Copy receive address"
             onClick={() => void copyAddress()}
+            disabled={address === 'Invalid key'}
           >
-            {address}
+            <CopyIcon size={16} />
+            Copy
           </button>
         </div>
 
@@ -139,6 +168,7 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
               openMessagesWithFriend(friend.id)
             }}
           >
+            <MessagesIcon size={16} />
             Message
           </button>
           {handleFixed ? null : (
@@ -150,17 +180,29 @@ export function FriendDetailsPanel({ friendId, chain }: Props) {
               Save
             </button>
           )}
-          <button
-            type="button"
-            className="btn btn-ghost"
-            onClick={() => {
-              playWalletSound('deny')
-              removeFriend(friend.id)
-              clearNavChild()
-            }}
-          >
-            Remove
-          </button>
+          {confirmingRemove ? (
+            <span className="friend-remove-confirm" role="group" aria-label="Confirm removal">
+              <span>Remove contact?</span>
+              <button
+                type="button"
+                className="btn btn-ghost"
+                onClick={() => setConfirmingRemove(false)}
+              >
+                Keep
+              </button>
+              <button type="button" className="btn btn-danger" onClick={onRemove}>
+                Remove
+              </button>
+            </span>
+          ) : (
+            <button
+              type="button"
+              className="btn btn-danger friend-remove-btn"
+              onClick={() => setConfirmingRemove(true)}
+            >
+              Remove
+            </button>
+          )}
         </div>
       </form>
     </div>

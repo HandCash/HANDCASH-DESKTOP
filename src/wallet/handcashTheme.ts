@@ -17,7 +17,7 @@ import {
 const FONTS = {
   font: "'Archivo', ui-sans-serif, system-ui, sans-serif",
   fontDisplay: "'Syncopate', 'Archivo', ui-sans-serif, sans-serif",
-  radius: '0.5rem',
+  radius: '0.4375rem',
 } as const
 
 /**

@@ -10,6 +10,7 @@ import {
 import { tryParsePeerPayUri } from '../wallet/peerPayUri'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
+import { CheckCircleIcon, PersonAddIcon } from './icons'
 
 function initialFromNav(): { label: string; recipient: string } {
   const child = getNavState().child
@@ -91,54 +92,74 @@ export function AddFriendPanel() {
   return (
     <div className="nav-child-panel add-friend-panel" data-aeon-scope="add-friend">
       <form className="friends-add-form" onSubmit={(e) => void onAdd(e)}>
-        <div className="field">
-          <label htmlFor="friend-key">Handle or identity key</label>
-          <input
-            id="friend-key"
-            className="mono"
-            value={recipient}
-            onChange={(e) => setRecipient(e.target.value)}
-            placeholder="$alice, peerpay:…, or 02… / 03…"
-            autoComplete="off"
-            autoFocus
-            spellCheck={false}
-            disabled={busy}
-          />
-          {resolvedHandle ? (
-            <p className="add-friend-resolved" aria-live="polite">
-              {verifiedHandle ? (
-                <span className="handle-verified-badge" title="Verified handle certificate">
-                  Verified
-                </span>
-              ) : null}
-              <strong>{resolvedHandle.display}</strong>
-            </p>
-          ) : null}
-          {resolveError ? (
-            <p className="error" role="status">
-              {resolveError}
-            </p>
-          ) : null}
-        </div>
-        {canSetCustomLabel ? (
+        <div className="add-friend-content">
+          <header className="add-friend-intro">
+            <span className="add-friend-intro-icon" aria-hidden>
+              <PersonAddIcon size={20} />
+            </span>
+            <div>
+              <h3>Add someone you trust</h3>
+              <p>Use their $handle, peer payment link, or public identity key.</p>
+            </div>
+          </header>
+
           <div className="field">
-            <label htmlFor="friend-label">Label{needsLabel ? '' : ' (optional)'}</label>
+            <label htmlFor="friend-key">Handle or identity key</label>
             <input
-              id="friend-label"
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="How you’ll recognize this peer"
+              id="friend-key"
+              className="mono"
+              value={recipient}
+              onChange={(e) => setRecipient(e.target.value)}
+              placeholder="$alice, peerpay:…, or 02… / 03…"
               autoComplete="off"
+              autoFocus
+              spellCheck={false}
               disabled={busy}
             />
+            {isHandleInput && !resolvedHandle && !resolveError ? (
+              <p className="add-friend-resolving" aria-live="polite">
+                Looking up handle…
+              </p>
+            ) : null}
+            {resolvedHandle ? (
+              <div className="add-friend-preview" aria-live="polite">
+                <span className="add-friend-preview-icon" aria-hidden>
+                  <CheckCircleIcon size={20} />
+                </span>
+                <div>
+                  <span className="add-friend-preview-label">
+                    {verifiedHandle ? 'Verified handle' : 'Handle found'}
+                  </span>
+                  <strong>{resolvedHandle.display}</strong>
+                </div>
+              </div>
+            ) : null}
+            {resolveError ? (
+              <p className="error" role="status">
+                {resolveError}
+              </p>
+            ) : null}
           </div>
-        ) : null}
-        {error && (
-          <p className="error" role="status">
-            {error}
-          </p>
-        )}
-        <div className="actions">
+          {canSetCustomLabel ? (
+            <div className="field">
+              <label htmlFor="friend-label">Label{needsLabel ? '' : ' (optional)'}</label>
+              <input
+                id="friend-label"
+                value={label}
+                onChange={(e) => setLabel(e.target.value)}
+                placeholder="How you’ll recognize this peer"
+                autoComplete="off"
+                disabled={busy}
+              />
+            </div>
+          ) : null}
+          {error && (
+            <p className="error" role="status">
+              {error}
+            </p>
+          )}
+        </div>
+        <div className="actions add-friend-actions">
           <button type="submit" className="btn btn-primary" disabled={!canSubmit}>
             {busy ? 'Adding…' : 'Add friend'}
           </button>

@@ -1,5 +1,5 @@
 import { decideAppBrowserTarget } from '../wallet/appBrowserUrl'
-import { clearNavChild } from '../wallet/navStore'
+import { clearNavChild, openEmbeddedAppBrowser } from '../wallet/navStore'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError } from '../wallet/toast'
 import { AppAvatar } from './AppAvatar'
@@ -32,16 +32,10 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     }
   }
 
-  const openInApp = async () => {
-    if (!safeUrl || !window.handcash?.openAppBrowser) return
+  const openInApp = () => {
+    if (!safeUrl || !inAppAvailable) return
     playWalletSound('soft')
-    clearNavChild()
-    try {
-      const result = await window.handcash.openAppBrowser(safeUrl)
-      if (!result.ok) toastError('Could not open app', result.error)
-    } catch (err) {
-      toastError('Could not open app', err instanceof Error ? err.message : String(err))
-    }
+    openEmbeddedAppBrowser(origin, safeUrl)
   }
 
   const actions = {
@@ -55,7 +49,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
     secondary: {
       label: 'Open in-app',
       shortLabel: 'In-app',
-      onClick: () => void openInApp(),
+      onClick: openInApp,
       disabled: !safeUrl || !inAppAvailable,
       icon: <AppsIcon size={18} />,
     },
@@ -75,7 +69,7 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
       className="nav-child-panel app-launch-panel"
       actions={actions}
     >
-      <div className="connect-app-hero">
+      <div className="connect-app-hero app-launch-hero">
         <AppAvatar origin={origin} name={name} size="md" />
         <div>
           <p className="permission-eyebrow">Launch connected app</p>
@@ -89,12 +83,12 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
         permissions.
       </p>
 
-      <div className="connect-scope-list" aria-label="Launch options">
-        <div className="connect-scope-row">
+      <div className="app-launch-options" aria-label="Launch options">
+        <div className="app-launch-option">
           <span className="scope-icon">
             <AppsIcon size={16} />
           </span>
-          <span>
+          <span className="app-launch-option-copy">
             <strong>Open in HandCash</strong>
             <small>
               {inAppAvailable
@@ -103,11 +97,11 @@ export function AppLaunchPanel({ origin, name, url }: Props) {
             </small>
           </span>
         </div>
-        <div className="connect-scope-row">
+        <div className="app-launch-option">
           <span className="scope-icon">
             <LaunchIcon size={16} />
           </span>
-          <span>
+          <span className="app-launch-option-copy">
             <strong>Open in browser</strong>
             <small>Launch the app in your default system browser.</small>
           </span>

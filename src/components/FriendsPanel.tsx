@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { Chain } from '../wallet/vault'
 import {
-  addressFromIdentityKey,
   listFriends,
+  searchFriends,
   subscribeFriends,
   type Friend,
 } from '../wallet/friends'
@@ -26,14 +26,7 @@ function friendInitial(label: string): string {
   return t ? t.slice(0, 1).toUpperCase() : '?'
 }
 
-function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  let address = ''
-  try {
-    address = addressFromIdentityKey(friend.identityKey, chain)
-  } catch {
-    address = 'Invalid key'
-  }
-
+function FriendListItem({ friend }: { friend: Friend }) {
   return (
     <li className="friend-row">
       <button
@@ -48,12 +41,14 @@ function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
           {friendInitial(friend.label)}
         </span>
         <div className="friend-row-body">
-          <strong className="friend-label">{friend.label}</strong>
+          <span className="friend-row-title">
+            <strong className="friend-label">{friend.label}</strong>
+            <span className="friend-status">
+              {friend.handle ? 'Handle' : 'Saved contact'}
+            </span>
+          </span>
           <span className="friend-key mono" title={friend.identityKey}>
             {friend.identityKey}
-          </span>
-          <span className="friend-address mono" title={address}>
-            {address}
           </span>
         </div>
       </button>
@@ -61,14 +56,7 @@ function FriendListItem({ friend, chain }: { friend: Friend; chain: Chain }) {
   )
 }
 
-function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
-  let address = ''
-  try {
-    address = addressFromIdentityKey(friend.identityKey, chain)
-  } catch {
-    address = 'Invalid key'
-  }
-
+function FriendGridItem({ friend }: { friend: Friend }) {
   return (
     <li className="collection-grid-card friend-grid-card">
       <button
@@ -83,18 +71,18 @@ function FriendGridItem({ friend, chain }: { friend: Friend; chain: Chain }) {
           {friendInitial(friend.label)}
         </span>
         <strong className="collection-grid-name">{friend.label}</strong>
+        <span className="friend-status">
+          {friend.handle ? 'Handle' : 'Saved contact'}
+        </span>
         <span className="collection-grid-host friend-key mono" title={friend.identityKey}>
           {friend.identityKey}
-        </span>
-        <span className="friend-grid-address mono" title={address}>
-          {address}
         </span>
       </button>
     </li>
   )
 }
 
-export function FriendsPanel({ chain }: Props) {
+export function FriendsPanel({ chain: _chain }: Props) {
   const [friends, setFriends] = useState<Friend[]>(() => listFriends())
   const [view, setView] = useState<CollectionView>(() => getCollectionView('friends'))
   const [query, setQuery] = useState('')
@@ -103,13 +91,7 @@ export function FriendsPanel({ chain }: Props) {
   useEffect(() => subscribeCollectionView(setView, 'friends'), [])
 
   const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase()
-    if (!q) return friends
-    return friends.filter(
-      (f) =>
-        f.label.toLowerCase().includes(q) ||
-        f.identityKey.toLowerCase().includes(q),
-    )
+    return searchFriends(query, friends)
   }, [friends, query])
 
   return (
@@ -119,7 +101,12 @@ export function FriendsPanel({ chain }: Props) {
       data-aeon-state={view}
     >
       <div className="connected-panel-head friends-panel-head">
-        <h2>Friends</h2>
+        <h2>
+          Friends
+          <span className="friends-count" aria-label={`${friends.length} friends`}>
+            {friends.length}
+          </span>
+        </h2>
         <div className="friends-panel-head-actions panel-icon-toolbar">
           <button
             type="button"
@@ -168,27 +155,34 @@ export function FriendsPanel({ chain }: Props) {
         />
       ) : (
         <div className="nav-section-scroll-body">
-          <div className="friends-search">
+          <div className="friends-search" role="search">
+            <label className="sr-only" htmlFor="friends-search-input">
+              Search friends
+            </label>
             <input
+              id="friends-search-input"
               type="search"
-              placeholder="Search friends"
+              placeholder="Search by name or identity key"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               autoComplete="off"
             />
           </div>
           {filtered.length === 0 ? (
-            <p className="friends-empty">No matches</p>
+            <div className="friends-empty">
+              <strong>No friends found</strong>
+              <span>Try another name or identity key.</span>
+            </div>
           ) : view === 'grid' ? (
             <ul className="collection-grid">
               {filtered.map((friend) => (
-                <FriendGridItem key={friend.id} friend={friend} chain={chain} />
+                <FriendGridItem key={friend.id} friend={friend} />
               ))}
             </ul>
           ) : (
             <ul className="friends-list">
               {filtered.map((friend) => (
-                <FriendListItem key={friend.id} friend={friend} chain={chain} />
+                <FriendListItem key={friend.id} friend={friend} />
               ))}
             </ul>
           )}

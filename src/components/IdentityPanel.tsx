@@ -11,6 +11,7 @@ import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
 import { toastError } from '../wallet/toast'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
+import { CopyIcon, InfoIcon } from './icons'
 
 type Props = {
   profile: WalletProfile
@@ -84,74 +85,88 @@ export function IdentityPanel({ profile }: Props) {
       </div>
       <div className="identity-scroll nav-section-scroll-body">
         <div className="identity-body">
-          <div className="identity-hero">
-            <button
-              type="button"
-              className="identity-qr-frame identity-qr-copy"
-              title="Click to copy identity key"
-              onClick={() => void copyIdentity()}
-            >
-              {dataUrl ? (
-                <img
-                  src={dataUrl}
-                  alt="Identity key QR code"
-                  width={140}
-                  height={140}
-                  decoding="async"
-                />
-              ) : (
-                <SkeletonQr size={140} />
-              )}
-            </button>
-
-            <div className="identity-hero-meta">
-              <div className="identity-field">
-                <span className="identity-field-label">Handle</span>
-                {handleLabel ? (
-                  <button
-                    type="button"
-                    className="identity-handle"
-                    title={`Click to copy ${handleLabel}`}
-                    onClick={() => void copyHandle()}
-                  >
-                    {handleLabel}
-                  </button>
-                ) : (
-                  <div className="identity-handle-empty">
-                    <p className="identity-handle-missing">No handle claimed yet</p>
-                    <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
-                      Claim your $handle
-                    </button>
-                  </div>
-                )}
-              </div>
-              <p className="identity-qr-hint">Tap QR to copy identity key</p>
+          <section className="identity-card" aria-labelledby="identity-card-title">
+            <div className="identity-card-name" id="identity-card-title">
+              Share your identity
             </div>
-          </div>
+            <div className="identity-hero">
+              <div className="identity-qr">
+                <div className="identity-qr-frame">
+                  {dataUrl ? (
+                    <img
+                      src={dataUrl}
+                      alt="Identity key QR code"
+                      width={140}
+                      height={140}
+                      decoding="async"
+                    />
+                  ) : (
+                    <SkeletonQr size={140} />
+                  )}
+                </div>
+                <button
+                  type="button"
+                  className="btn btn-ghost identity-copy-btn"
+                  onClick={() => void copyIdentity()}
+                >
+                  <CopyIcon size={16} />
+                  Copy identity key
+                </button>
+              </div>
 
-          <ul className="identity-list">
-            <li className="identity-field">
-              <span className="identity-field-label">Identity key</span>
-              <button
-                type="button"
-                className="mono identity-key"
-                title={`Click to copy identity key\n${profile.identityKey}`}
-                onClick={() => void copyIdentity()}
-              >
-                {shortIdentityKey(profile.identityKey)}
-              </button>
-            </li>
+              <div className="identity-hero-meta">
+                <div className="identity-field">
+                  <span className="identity-field-label">Handle</span>
+                  {handleLabel ? (
+                    <button
+                      type="button"
+                      className="identity-handle"
+                      title={`Click to copy ${handleLabel}`}
+                      onClick={() => void copyHandle()}
+                    >
+                      {handleLabel}
+                    </button>
+                  ) : (
+                    <div className="identity-handle-empty">
+                      <p className="identity-handle-missing">No handle claimed yet</p>
+                      <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
+                        Claim your $handle
+                      </button>
+                    </div>
+                  )}
+                </div>
+                <p className="identity-qr-hint">
+                  Let friends scan this QR to identify you securely.
+                </p>
+              </div>
+            </div>
 
-            <li className="identity-field">
-              <span className="identity-field-label">Network</span>
-              <strong className="identity-network">
-                {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
-              </strong>
-            </li>
-          </ul>
+            <ul className="identity-list">
+              <li className="identity-field identity-key-row">
+                <span className="identity-field-label">Identity key</span>
+                <button
+                  type="button"
+                  className="mono identity-key"
+                  title={`Click to copy identity key\n${profile.identityKey}`}
+                  onClick={() => void copyIdentity()}
+                >
+                  <span>{shortIdentityKey(profile.identityKey)}</span>
+                  <CopyIcon size={15} />
+                </button>
+              </li>
+
+              <li className="identity-field">
+                <span className="identity-field-label">Network</span>
+                <strong className="identity-network" data-network={profile.chain}>
+                  {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
+                </strong>
+              </li>
+            </ul>
+          </section>
 
           <p className="identity-key-note">
-            Your identity key is not a payment address — use Receive for BSV.
+            <InfoIcon size={17} />
+            <span>Your identity key is not a payment address. Use Receive for BSV.</span>
           </p>
         </div>
       </div>
