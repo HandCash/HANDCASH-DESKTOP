@@ -1,0 +1,48 @@
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
+index 84ba818..4bbb833 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
++++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.cjs
+@@ -10078,7 +10078,7 @@ var ActionBatchWorkspace = class {
+ 	missingExplicitOutpoints(args) {
+ 		return [...args.inputs.map((input) => input.outpoint), ...args.options.noSendChange].filter((outpoint) => {
+ 			const key = `${outpoint.txid}.${outpoint.vout}`;
+-			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key) && (this.state.discardedStagedTxids.has(outpoint.txid) || this.state.sharedBeef.findTxid(outpoint.txid)?.tx == null);
++			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key);
+ 		});
+ 	}
+ 	async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
+@@ -18245,6 +18245,10 @@ var StorageIdb = class extends StorageProvider {
+ 					spentBy: transactionId
+ 				}, dbTrx);
+ 				await this.validateOutputScript(output, dbTrx);
++				if (output.lockingScript == null) {
++					const stored = await this.findOutputById(output.outputId, dbTrx);
++					if (stored?.lockingScript != null) output.lockingScript = stored.lockingScript;
++				}
+ 			}
+ 			return output;
+ 		} finally {
+diff --git a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
+index fbc1835..67b159f 100644
+--- a/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
++++ b/node_modules/@bsv/wallet-toolbox-client/out/index.client.mjs
+@@ -10043,7 +10043,7 @@ var ActionBatchWorkspace = class {
+ 	missingExplicitOutpoints(args) {
+ 		return [...args.inputs.map((input) => input.outpoint), ...args.options.noSendChange].filter((outpoint) => {
+ 			const key = `${outpoint.txid}.${outpoint.vout}`;
+-			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key) && (this.state.discardedStagedTxids.has(outpoint.txid) || this.state.sharedBeef.findTxid(outpoint.txid)?.tx == null);
++			return !this.state.staged.has(key) && !this.state.explicit.has(key) && !this.state.reserved.has(key);
+ 		});
+ 	}
+ 	async extend(targetSatoshis, requestedOutputs, explicitOutpoints, includeSourceTransactions) {
+@@ -18210,6 +18210,10 @@ var StorageIdb = class extends StorageProvider {
+ 					spentBy: transactionId
+ 				}, dbTrx);
+ 				await this.validateOutputScript(output, dbTrx);
++				if (output.lockingScript == null) {
++					const stored = await this.findOutputById(output.outputId, dbTrx);
++					if (stored?.lockingScript != null) output.lockingScript = stored.lockingScript;
++				}
+ 			}
+ 			return output;
+ 		} finally {

@@ -5,19 +5,14 @@
  * (mempool or mined). Fetch the deposit body and stop. Do not walk parent
  * ancestry and do not wait for a merkle path — ARC / mempool accept is enough.
  *
- * The toolbox still calls `Beef.verify` (SPV) inside `createAction`. That is
- * the wrong gate for this path. {@link withVisibleOnChainBeef} lets the sweep
- * proceed when the subject tx body is present.
+ * The toolbox still calls `Beef.verify` (SPV) inside `createAction`. That
+ * verification must remain authoritative: seeing a transaction body is not
+ * proof that its outputs are valid or spendable.
  */
 import { Beef, Transaction, type BEEF } from '@bsv/sdk'
 import type { Services } from '@bsv/wallet-toolbox-client'
 
 import { appendAppLog } from './appLog'
-
-declare global {
-  // Toolbox patches read this from a different @bsv/sdk copy than this module.
-  var __HANDCASH_INTERNAL_BEEF_SCOPE: string | undefined
-}
 
 /** Total provider requests one build may spend, however many outpoints it covers. */
 const MAX_FETCHES_PER_BUILD = 250
@@ -91,35 +86,13 @@ async function loadTx(ctx: BuildContext, txid: string): Promise<Transaction> {
   return tx
 }
 
-function beefHasTxBody(beef: Beef): boolean {
-  return beef.txs.some((t) => t.tx != null && t.isTxidOnly !== true)
-}
-
 /**
- * Toolbox `createAction` / `processAction` refuse an unconfirmed P2PKH deposit
- * because `Beef.verify` wants a merkle chain. Visible-on-chain is the product
- * gate. The toolbox loads its own `@bsv/sdk` copy, so we also set a process
- * flag those patched methods honor.
+ * Compatibility wrapper retained for existing call sites. Validation is
+ * intentionally delegated to Wallet Toolbox without mutating global state or
+ * overriding `Beef.verify`.
  */
 export async function withVisibleOnChainBeef<T>(work: () => Promise<T>): Promise<T> {
-  const priorScope = globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE
-  globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE = 'wallet-visible-p2pkh'
-  const proto = Beef.prototype
-  const orig = proto.verify
-  proto.verify = async function (this: Beef, chainTracker, allowTxidOnly) {
-    try {
-      if (await orig.call(this, chainTracker, allowTxidOnly)) return true
-    } catch {
-      // A chaintracker miss is not a confirmation wait.
-    }
-    return beefHasTxBody(this)
-  }
-  try {
-    return await work()
-  } finally {
-    proto.verify = orig
-    globalThis.__HANDCASH_INTERNAL_BEEF_SCOPE = priorScope
-  }
+  return work()
 }
 
 export type LegacyBeefBuild = {
