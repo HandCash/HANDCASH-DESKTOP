@@ -80,18 +80,12 @@ export const AUTO_PAY_SCOPE: AppPermissionScope = {
   allows: ['BSV payments under your max', 'Within your time window', 'Never spends NFTs / items'],
 }
 
-/** Granted with Connect Authorize — silent plain-BSV internalizeAction. */
-export const ACCEPT_INCOMING_SCOPE: AppPermissionScope = {
-  id: 'accept-incoming',
-  label: 'Auto-accept funds',
-  description:
-    'Included with Connect. Plain BSV from this app is accepted automatically. Never covers collectables. Turn off anytime.',
-  allows: ['Plain BSV receives from this app', 'No per-payment prompt', 'Never receives NFTs / items'],
-}
-
 export function getPermissionScope(scopeId: string): AppPermissionScope | null {
   if (scopeId === AUTO_PAY_SCOPE.id) return AUTO_PAY_SCOPE
-  if (scopeId === ACCEPT_INCOMING_SCOPE.id) return ACCEPT_INCOMING_SCOPE
+  // Legacy alias — auto-accept funds is the Connect "receive" scope.
+  if (scopeId === 'accept-incoming') {
+    return CONNECT_SCOPES.find((s) => s.id === 'receive') ?? null
+  }
   return CONNECT_SCOPES.find((s) => s.id === scopeId) ?? null
 }
 

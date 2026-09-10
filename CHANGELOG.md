@@ -4,7 +4,7 @@
 
 ### Added
 
-- Connect **Authorize** includes **auto-accept incoming plain BSV** by default (listed under Receive — no extra checkbox). **Auto-pay** can be enabled on the same Connect prompt so the first payment need not redirect. Auto-pay stores a **sat snapshot** of the dollar limit so silent pay can continue if FX is temporarily missing. Chip + turn-off remain in Connected apps. Collectables still need separate receive grants.
+- Connect **Authorize** includes **auto-accept incoming plain BSV** by default (listed under Receive — no extra checkbox). **Auto-pay** can be enabled on the same Connect prompt so the first payment need not redirect. Auto-pay stores a **sat snapshot** of the dollar limit so silent pay can continue if FX is temporarily missing. Shared Auto-pay / Connect scope UI. Chip + turn-off remain in Connected apps. Collectables still need separate receive grants.
 
 ### Fixed
 

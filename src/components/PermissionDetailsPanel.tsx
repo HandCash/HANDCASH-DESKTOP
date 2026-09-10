@@ -33,10 +33,10 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
       ? 'Granted — this app may receive collectables you approve.'
       : 'Not granted yet — approved when the app asks to receive an item.'
   }
-  if (scopeId === 'receive') {
+  if (scopeId === 'receive' || scopeId === 'accept-incoming') {
     return acceptsIncomingFunds(origin)
       ? 'Granted with Connect — plain BSV from this app is internalized without a prompt.'
-      : 'Turned off — each plain BSV receive needs approval until you reconnect or re-enable.'
+      : 'Turned off — each plain BSV receive needs approval. Reconnect or turn receive back on.'
   }
   return null
 }
@@ -45,8 +45,9 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
   const scope = getPermissionScope(scopeId)
   const appName = appDisplayName(origin)
   const autoPay = scopeId === 'auto-pay' ? getAutoPaySettings(origin) : null
-  const acceptIncoming =
-    scopeId === 'accept-incoming' ? acceptsIncomingFunds(origin) : false
+  const showReceiveToggle =
+    (scopeId === 'receive' || scopeId === 'accept-incoming') &&
+    acceptsIncomingFunds(origin)
   const itemGrant = itemGrantCopy(scopeId, origin)
 
   if (!scope) {
@@ -97,7 +98,7 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
         </div>
       ) : null}
 
-      {acceptIncoming ? (
+      {showReceiveToggle ? (
         <div className="permission-details-limits">
           <span>Auto-accepting plain BSV receives</span>
           <button
@@ -108,7 +109,7 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
               setAcceptIncomingFunds(origin, false)
             }}
           >
-            Turn off
+            Require approval
           </button>
         </div>
       ) : null}

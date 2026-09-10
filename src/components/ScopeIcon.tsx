@@ -19,7 +19,6 @@ const SCOPE_ICONS: Record<string, ComponentType<IconProps>> = {
   wallet: WalletScopeIcon,
   encrypt: EncryptIcon,
   'auto-pay': AutoPayIcon,
-  'accept-incoming': ReceiveIcon,
   'items-view': CollectablesIcon,
   'items-send': SendIcon,
   'items-receive': ReceiveIcon,

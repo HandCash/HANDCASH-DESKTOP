@@ -3,6 +3,7 @@ import { AppAvatar } from './AppAvatar'
 import { ScopeIcon } from './ScopeIcon'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import {
+  acceptsIncomingFunds,
   getItemAccess,
   setAcceptIncomingFunds,
   subscribeConnectedApps,
@@ -49,11 +50,13 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
     getAutoPaySettings(app.origin),
   )
   const [itemAccess, setItemAccess] = useState<ItemAccess>(() => getItemAccess(app.origin))
-  const [acceptIncoming, setAcceptIncoming] = useState(() => Boolean(app.acceptIncomingFunds))
+  const [acceptIncoming, setAcceptIncoming] = useState(() =>
+    acceptsIncomingFunds(app.origin),
+  )
 
   useEffect(() => {
     setItemAccess(getItemAccess(app.origin))
-    setAcceptIncoming(Boolean(app.acceptIncomingFunds))
+    setAcceptIncoming(acceptsIncomingFunds(app.origin))
   }, [app.origin, app.acceptIncomingFunds])
 
   useEffect(
@@ -62,7 +65,7 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
         const hit = apps.find((a) => a.origin === app.origin)
         if (hit) {
           setItemAccess(getItemAccess(hit.origin))
-          setAcceptIncoming(Boolean(hit.acceptIncomingFunds))
+          setAcceptIncoming(acceptsIncomingFunds(hit.origin))
         }
       }),
     [app.origin],

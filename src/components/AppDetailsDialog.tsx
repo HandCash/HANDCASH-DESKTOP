@@ -5,7 +5,11 @@ import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import type { ConnectedApp } from '../wallet/permissions'
-import { setAcceptIncomingFunds, subscribeConnectedApps } from '../wallet/permissions'
+import {
+  acceptsIncomingFunds,
+  setAcceptIncomingFunds,
+  subscribeConnectedApps,
+} from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import {
   getAppMoneySummary,
@@ -40,7 +44,7 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
     app ? getAutoPaySettings(app.origin) : null,
   )
   const [acceptIncoming, setAcceptIncoming] = useState(() =>
-    Boolean(app?.acceptIncomingFunds),
+    app ? acceptsIncomingFunds(app.origin) : false,
   )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
@@ -61,10 +65,10 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
 
   useEffect(() => {
     if (!app) return
-    setAcceptIncoming(Boolean(app.acceptIncomingFunds))
+    setAcceptIncoming(acceptsIncomingFunds(app.origin))
     return subscribeConnectedApps((apps) => {
       const hit = apps.find((a) => a.origin === app.origin)
-      if (hit) setAcceptIncoming(Boolean(hit.acceptIncomingFunds))
+      if (hit) setAcceptIncoming(acceptsIncomingFunds(hit.origin))
     })
   }, [app])
 

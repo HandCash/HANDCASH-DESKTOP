@@ -196,7 +196,12 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
           itemAccess: a.itemAccess ? normalizeItemAccess(a.itemAccess) : undefined,
           tokenAccess: a.tokenAccess ? normalizeTokenAccess(a.tokenAccess) : undefined,
           indexAccess: a.indexAccess ? normalizeIndexAccess(a.indexAccess) : undefined,
-          acceptIncomingFunds: a.acceptIncomingFunds === true || undefined,
+          acceptIncomingFunds:
+            a.acceptIncomingFunds === true
+              ? true
+              : a.acceptIncomingFunds === false
+                ? false
+                : undefined,
         }))
     }
     if (parsed && typeof parsed === 'object' && Array.isArray((parsed as { apps?: unknown }).apps)) {
@@ -453,8 +458,9 @@ export function allowOrigin(origin: string | undefined): void {
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
       indexAccess: prior?.indexAccess,
-      // Plain BSV receives are part of Connect — no second prompt / checkbox.
-      acceptIncomingFunds: true,
+      // Plain BSV receive is part of Connect. Preserve an explicit user opt-out
+      // ("Require receive approval"); otherwise grant / restore the default.
+      acceptIncomingFunds: prior?.acceptIncomingFunds === false ? false : true,
     },
     ...existing,
   ])
@@ -478,7 +484,10 @@ export function getIndexAccess(origin: string | undefined): IndexAccess {
 
 export function acceptsIncomingFunds(origin: string | undefined): boolean {
   const { idx, apps } = findConnectedApp(origin)
-  return idx >= 0 && apps[idx]?.acceptIncomingFunds === true
+  if (idx < 0) return false
+  // Connected apps default to auto-accept (including legacy rows with no flag).
+  // Explicit false = user chose "Require receive approval".
+  return apps[idx]?.acceptIncomingFunds !== false
 }
 
 export function setAcceptIncomingFunds(
@@ -487,7 +496,8 @@ export function setAcceptIncomingFunds(
 ): void {
   const { idx, apps } = ensureConnectedApp(origin)
   const copy = [...apps]
-  copy[idx] = { ...copy[idx]!, acceptIncomingFunds: enabled || undefined }
+  // Persist explicit false so legacy undefined (default on) stays distinct from opt-out.
+  copy[idx] = { ...copy[idx]!, acceptIncomingFunds: enabled }
   writeConnected(copy)
 }
 

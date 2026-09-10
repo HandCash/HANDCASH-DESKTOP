@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState } from 'react'
 import { Prompt } from '@aeon-ui/react'
 import type { PendingPermission } from '../wallet/permissions'
-import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
-import {
-  DEFAULT_AUTO_PAY_MAX_USD,
-  DEFAULT_AUTO_PAY_WINDOW_HOURS,
-  getAutoPaySettings,
-} from '../wallet/autoPay'
-import { formatSpendingAuthorizationLabel } from '../wallet/spendingAuthorization'
+import { appDisplayName, appHomepage } from '../wallet/appIdentity'
 import { launchConnectedApp } from '../wallet/openAppInWalletBrowser'
 import { playWalletSound } from '../wallet/soundService'
-import type { AutoPayChoice } from './ActionPermissionDialog'
+import type { AutoPayChoice } from '../wallet/autoPay'
+import {
+  AutoPayControls,
+  connectPermissionNote,
+  useAutoPayForm,
+  useLoadAutoPayOnOrigin,
+} from './AutoPayControls'
 import { AppAvatar } from './AppAvatar'
-import { ScopeIcon } from './ScopeIcon'
+import { ConnectScopesList } from './ConnectScopesList'
 import { WalletActionBar } from './WalletActionBar'
 
 type Props = {
@@ -31,44 +31,25 @@ type Props = {
  */
 export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const [iconReady, setIconReady] = useState(false)
-  const [autoEnabled, setAutoEnabled] = useState(false)
-  const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
-  const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
+  const autoPay = useAutoPayForm()
   const skipDenyRef = useRef(false)
   const open = Boolean(pending)
   const name = pending ? appDisplayName(pending.origin) : ''
   const home = pending ? appHomepage(pending.origin) : null
-  const monthlyCap = Boolean(pending?.spendingAuthorization)
+  const monthlyCap = pending?.spendingAuthorization ?? null
 
   useEffect(() => {
     setIconReady(false)
-    if (!pending) return
-    const existing = getAutoPaySettings(pending.origin)
-    if (existing?.enabled) {
-      setAutoEnabled(true)
-      setMaxUsd(String(existing.maxUsd))
-      setWindowHours(String(existing.windowHours))
-    } else {
-      setAutoEnabled(false)
-      setMaxUsd(String(DEFAULT_AUTO_PAY_MAX_USD))
-      setWindowHours(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
-    }
   }, [pending?.origin, pending?.id])
 
-  const parsedMaxUsd = Number.parseFloat(maxUsd)
-  const parsedHours = Number.parseFloat(windowHours)
-  const maxUsdValid = Number.isFinite(parsedMaxUsd) && parsedMaxUsd > 0
-  const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
-  const allowDisabled = autoEnabled && !monthlyCap && (!maxUsdValid || !hoursValid)
+  useLoadAutoPayOnOrigin(pending?.origin, pending?.id, autoPay.loadFromOrigin)
+
+  const allowDisabled = Boolean(autoPay.enabled && !monthlyCap && autoPay.limitsInvalid)
 
   const allow = () => {
     if (allowDisabled) return
     skipDenyRef.current = true
-    const ok = onAllow({
-      enabled: autoEnabled,
-      maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-      windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-    })
+    const ok = onAllow(autoPay.toChoice())
     if (ok === false) {
       skipDenyRef.current = false
     }
@@ -132,78 +113,21 @@ export function ConnectPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   ) : null}
                 </Prompt.Description>
 
-                <div className="scope-list scope-list-compact" aria-label="Permissions requested">
-                  {CONNECT_SCOPES.map((scope) => (
-                    <div key={scope.id} className="scope-row scope-row-compact">
-                      <span className="scope-icon" aria-hidden>
-                        <ScopeIcon scopeId={scope.id} size={14} />
-                      </span>
-                      <strong>{scope.label}</strong>
-                    </div>
-                  ))}
-                </div>
+                <ConnectScopesList />
 
-                <div className="auto-pay" data-aeon-part="auto-pay">
-                  <label className="auto-pay-toggle">
-                    <input
-                      type="checkbox"
-                      checked={autoEnabled}
-                      onChange={(e) => setAutoEnabled(e.target.checked)}
-                    />
-                    <span>
-                      Auto-pay from <strong>{name}</strong>
-                    </span>
-                  </label>
-
-                  {autoEnabled && !monthlyCap ? (
-                    <div className="auto-pay-params" role="group" aria-label="Auto-pay limits">
-                      <label className="auto-pay-field">
-                        <span className="auto-pay-prefix">$</span>
-                        <input
-                          type="number"
-                          min="0.01"
-                          step="0.01"
-                          inputMode="decimal"
-                          value={maxUsd}
-                          onChange={(e) => setMaxUsd(e.target.value)}
-                          aria-label="Maximum dollars"
-                        />
-                      </label>
-                      <span className="auto-pay-sep">every</span>
-                      <span className="auto-pay-unit">
-                        <label className="auto-pay-field auto-pay-field-hours">
-                          <input
-                            type="number"
-                            min="1"
-                            step="1"
-                            inputMode="numeric"
-                            value={windowHours}
-                            onChange={(e) => setWindowHours(e.target.value)}
-                            aria-label="Hours"
-                          />
-                        </label>
-                        <span className="auto-pay-sep">hours</span>
-                      </span>
-                    </div>
-                  ) : null}
-
-                  {autoEnabled && monthlyCap && pending.spendingAuthorization ? (
-                    <p className="permission-note" style={{ margin: 0 }}>
-                      Within {formatSpendingAuthorizationLabel(pending.spendingAuthorization)}.
-                    </p>
-                  ) : null}
-                </div>
+                <AutoPayControls
+                  appName={name}
+                  enabled={autoPay.enabled}
+                  maxUsd={autoPay.maxUsd}
+                  windowHours={autoPay.windowHours}
+                  onEnabledChange={autoPay.setEnabled}
+                  onMaxUsdChange={autoPay.setMaxUsd}
+                  onWindowHoursChange={autoPay.setWindowHours}
+                  monthlyCap={monthlyCap}
+                />
 
                 <p className="permission-note">
-                  {pending.spendingAuthorization
-                    ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. ${
-                        autoEnabled
-                          ? 'Matching outgoing payments stay silent within that monthly cap.'
-                          : 'Outgoing payments still need approval unless you enable Auto-pay.'
-                      } Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.`
-                    : autoEnabled
-                      ? 'Matching outgoing payments stay silent within your Auto-pay limits. Items still need separate approval. Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.'
-                      : 'Outgoing payments and items still need separate approval. Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.'}
+                  {connectPermissionNote(pending.spendingAuthorization, autoPay.enabled)}
                 </p>
 
                 <WalletActionBar

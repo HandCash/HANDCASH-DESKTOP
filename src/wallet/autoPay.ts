@@ -29,6 +29,13 @@ export type AutoPaySettings = {
   updatedAt: number
 }
 
+/** Choice passed from permission UI into setAutoPaySettings. */
+export type AutoPayChoice = {
+  enabled: boolean
+  maxUsd: number
+  windowHours: number
+}
+
 type Store = Record<string, AutoPaySettings>
 
 type Listener = () => void

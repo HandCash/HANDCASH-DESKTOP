@@ -15,43 +15,22 @@ import {
   getCachedUsdPerBsv,
 } from '../wallet/fx'
 import { getDisplayCurrency } from '../wallet/displayCurrency'
+import type { AutoPayChoice } from '../wallet/autoPay'
 import {
-  DEFAULT_AUTO_PAY_MAX_USD,
-  DEFAULT_AUTO_PAY_WINDOW_HOURS,
-  getAutoPaySettings,
-  type AutoPaySettings,
-} from '../wallet/autoPay'
+  AutoPayControls,
+  isBsvPaymentAction,
+  useAutoPayForm,
+  useLoadAutoPayOnOrigin,
+} from './AutoPayControls'
 import { permissionDecisionMachine } from '../machines/permissionDecisionMachine'
 import { WalletActionBar } from './WalletActionBar'
 
-export type AutoPayChoice = {
-  enabled: boolean
-  maxUsd: number
-  windowHours: number
-}
+export type { AutoPayChoice }
 
 type Props = {
   pending: PendingAction | null
   onAllow: (autoPay?: AutoPayChoice) => boolean
   onDeny: () => boolean
-}
-
-function isBsvPaymentAction(pending: PendingAction): boolean {
-  if (pending.method !== 'createAction' && pending.method !== 'signAction') return false
-  // Item send / identity mint are separate permissions — never offer Auto-pay.
-  if (
-    pending.title === 'Send item' ||
-    pending.title === 'Confirm item send' ||
-    pending.title === 'Release item' ||
-    pending.title === 'Send token' ||
-    pending.title === 'Confirm token send' ||
-    pending.title === 'Release token' ||
-    pending.title === 'Mint token' ||
-    pending.title === 'Mint item'
-  ) {
-    return false
-  }
-  return true
 }
 
 /**
@@ -62,10 +41,8 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
   const [decision, sendDecision] = useMachine(permissionDecisionMachine)
   const decisionCommittedRef = useRef(false)
   const [iconReady, setIconReady] = useState(false)
-  const [autoEnabled, setAutoEnabled] = useState(false)
   const [acceptIncoming, setAcceptIncoming] = useState(false)
-  const [maxUsd, setMaxUsd] = useState(String(DEFAULT_AUTO_PAY_MAX_USD))
-  const [windowHours, setWindowHours] = useState(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
+  const autoPay = useAutoPayForm()
   const skipDenyRef = useRef(false)
   const open = Boolean(pending)
 
@@ -75,19 +52,12 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
     setIconReady(false)
   }, [pending?.id, pending?.origin, sendDecision])
 
+  useLoadAutoPayOnOrigin(pending?.origin, pending?.id, autoPay.loadFromOrigin)
+
   useEffect(() => {
     if (!pending) return
-    const existing: AutoPaySettings | null = getAutoPaySettings(pending.origin)
-    if (existing?.enabled) {
-      setAutoEnabled(true)
-      setMaxUsd(String(existing.maxUsd))
-      setWindowHours(String(existing.windowHours))
-    } else {
-      setAutoEnabled(false)
-      setMaxUsd(String(DEFAULT_AUTO_PAY_MAX_USD))
-      setWindowHours(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
-    }
-  }, [pending?.id, pending?.origin])
+    setAcceptIncoming(acceptsIncomingFunds(pending.origin))
+  }, [pending])
 
   const name = pending ? appDisplayName(pending.origin) : ''
   const copy = pending
@@ -105,16 +75,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
       : null
   const showAutoPay = pending ? isBsvPaymentAction(pending) : false
   const showAcceptIncoming = pending?.title === 'Accept incoming funds'
-
-  useEffect(() => {
-    if (!pending) return
-    setAcceptIncoming(acceptsIncomingFunds(pending.origin))
-  }, [pending])
-
-  const parsedMaxUsd = Number.parseFloat(maxUsd)
-  const parsedHours = Number.parseFloat(windowHours)
-  const maxUsdValid = Number.isFinite(parsedMaxUsd) && parsedMaxUsd > 0
-  const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
+  const committing = decision.matches('committing')
 
   const allow = () => {
     if (decisionCommittedRef.current || !decision.matches('pending')) return
@@ -125,13 +86,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
       skipDenyRef.current = false
       return
     }
-    const accepted = !showAutoPay
-      ? onAllow()
-      : onAllow({
-          enabled: autoEnabled,
-          maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-          windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-        })
+    const accepted = !showAutoPay ? onAllow() : onAllow(autoPay.toChoice())
     if (accepted) {
       if (showAcceptIncoming) {
         setAcceptIncomingFunds(pending.origin, acceptIncoming)
@@ -154,8 +109,6 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
     decisionCommittedRef.current = false
     sendDecision({ type: 'RESET' })
   }
-
-  const committing = decision.matches('committing')
 
   return (
     <div
@@ -215,7 +168,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   </Prompt.Amount>
                 )}
 
-                {(pending.itemOutpoint || pending.tokenId || pending.itemName) ? (
+                {pending.itemOutpoint || pending.tokenId || pending.itemName ? (
                   <PermissionItemPreview
                     outpoint={pending.itemOutpoint}
                     tokenId={pending.tokenId}
@@ -239,50 +192,15 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                 </Prompt.Meta>
 
                 {showAutoPay ? (
-                  <div className="auto-pay" data-aeon-part="auto-pay">
-                    <label className="auto-pay-toggle">
-                      <input
-                        type="checkbox"
-                        checked={autoEnabled}
-                        onChange={(e) => setAutoEnabled(e.target.checked)}
-                      />
-                      <span>
-                        Auto-pay from <strong>{name}</strong>
-                      </span>
-                    </label>
-
-                    {autoEnabled ? (
-                      <div className="auto-pay-params" role="group" aria-label="Auto-pay limits">
-                        <label className="auto-pay-field">
-                          <span className="auto-pay-prefix">$</span>
-                          <input
-                            type="number"
-                            min="0.01"
-                            step="0.01"
-                            inputMode="decimal"
-                            value={maxUsd}
-                            onChange={(e) => setMaxUsd(e.target.value)}
-                            aria-label="Maximum dollars"
-                          />
-                        </label>
-                        <span className="auto-pay-sep">every</span>
-                        <span className="auto-pay-unit">
-                          <label className="auto-pay-field auto-pay-field-hours">
-                            <input
-                              type="number"
-                              min="1"
-                              step="1"
-                              inputMode="numeric"
-                              value={windowHours}
-                              onChange={(e) => setWindowHours(e.target.value)}
-                              aria-label="Hours"
-                            />
-                          </label>
-                          <span className="auto-pay-sep">hours</span>
-                        </span>
-                      </div>
-                    ) : null}
-                  </div>
+                  <AutoPayControls
+                    appName={name}
+                    enabled={autoPay.enabled}
+                    maxUsd={autoPay.maxUsd}
+                    windowHours={autoPay.windowHours}
+                    onEnabledChange={autoPay.setEnabled}
+                    onMaxUsdChange={autoPay.setMaxUsd}
+                    onWindowHoursChange={autoPay.setWindowHours}
+                  />
                 ) : null}
 
                 {showAcceptIncoming ? (
@@ -291,13 +209,10 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                       <input
                         type="checkbox"
                         checked={acceptIncoming}
-                        onChange={(event) =>
-                          setAcceptIncoming(event.target.checked)
-                        }
+                        onChange={(event) => setAcceptIncoming(event.target.checked)}
                       />
                       <span>
-                        Accept funds automatically from{' '}
-                        <strong>{name}</strong>
+                        Accept funds automatically from <strong>{name}</strong>
                       </span>
                     </label>
                   </div>
@@ -314,9 +229,7 @@ export function ActionPermissionDialog({ pending, onAllow, onDeny }: Props) {
                   primary={{
                     label: committing ? 'Approving…' : 'Approve',
                     onClick: allow,
-                    disabled:
-                      committing ||
-                      (autoEnabled && (!maxUsdValid || !hoursValid)),
+                    disabled: committing || (showAutoPay && autoPay.limitsInvalid),
                     autoFocus: true,
                     tone: 'primary',
                   }}
