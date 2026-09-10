@@ -4,7 +4,7 @@
  * Apps declare `{ amount, description }` in their web manifest under
  * `metanet.groupPermissions.spendingAuthorization` (legacy:
  * `babbage.groupPermissions`). On Connect Allow we persist the grant.
- * Auto-pay is still enabled on a payment approve prompt; once on, silent
+ * Auto-pay can be enabled on Connect (or a later pay prompt); once on, silent
  * createAction uses this monthly cap instead of the default USD / hours window.
  */
 import { normalizeAppHost } from './appIdentity'

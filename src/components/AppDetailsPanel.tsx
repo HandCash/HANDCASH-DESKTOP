@@ -4,6 +4,7 @@ import { ScopeIcon } from './ScopeIcon'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import {
   getItemAccess,
+  setAcceptIncomingFunds,
   subscribeConnectedApps,
   type ConnectedApp,
 } from '../wallet/permissions'
@@ -48,16 +49,21 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
     getAutoPaySettings(app.origin),
   )
   const [itemAccess, setItemAccess] = useState<ItemAccess>(() => getItemAccess(app.origin))
+  const [acceptIncoming, setAcceptIncoming] = useState(() => Boolean(app.acceptIncomingFunds))
 
   useEffect(() => {
     setItemAccess(getItemAccess(app.origin))
-  }, [app.origin])
+    setAcceptIncoming(Boolean(app.acceptIncomingFunds))
+  }, [app.origin, app.acceptIncomingFunds])
 
   useEffect(
     () =>
       subscribeConnectedApps((apps) => {
         const hit = apps.find((a) => a.origin === app.origin)
-        if (hit) setItemAccess(getItemAccess(hit.origin))
+        if (hit) {
+          setItemAccess(getItemAccess(hit.origin))
+          setAcceptIncoming(Boolean(hit.acceptIncomingFunds))
+        }
       }),
     [app.origin],
   )
@@ -116,7 +122,9 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
                   ? true
                   : scope.id === 'items-receive'
                     ? itemAccess.canReceive
-                    : true
+                    : scope.id === 'receive'
+                      ? acceptIncoming
+                      : true
             return (
               <button
                 key={scope.id}
@@ -166,6 +174,18 @@ export function AppDetailsPanel({ app, onRevoke, onDone }: Props) {
             }}
           >
             Turn off auto-pay
+          </button>
+        ) : null}
+        {acceptIncoming ? (
+          <button
+            className="btn btn-ghost"
+            type="button"
+            onClick={() => {
+              playWalletSound('soft')
+              setAcceptIncomingFunds(app.origin, false)
+            }}
+          >
+            Require receive approval
           </button>
         ) : null}
         <button

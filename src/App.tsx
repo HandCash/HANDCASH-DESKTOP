@@ -450,15 +450,18 @@ export function App() {
           <>
             <ConnectPermissionDialog
               pending={pendingConnect}
-              onAllow={() => {
-                if (pendingConnect) {
-                  if (!resolvePermission(pendingConnect.id, 'allow')) return
-                  playWalletSound('connect')
-                  toastSuccess(
-                    'Connected',
-                    `${appDisplayName(pendingConnect.origin)} can use your wallet`,
-                  )
+              onAllow={(autoPay) => {
+                if (!pendingConnect) return false
+                if (!resolvePermission(pendingConnect.id, 'allow')) return false
+                if (autoPay) {
+                  setAutoPaySettings(pendingConnect.origin, autoPay)
                 }
+                playWalletSound('connect')
+                toastSuccess(
+                  'Connected',
+                  `${appDisplayName(pendingConnect.origin)} can use your wallet`,
+                )
+                return true
               }}
               onDeny={() => {
                 if (pendingConnect) {

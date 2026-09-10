@@ -69,7 +69,7 @@ export type ConnectedApp = {
   tokenAccess?: TokenAccess
   /** BRC-230 index expansion packs — grade-C catalogs, not custody. */
   indexAccess?: IndexAccess
-  /** User-approved automatic ingestion of plain incoming BSV from this app. */
+  /** Granted with Connect Authorize — automatic plain-BSV internalizeAction. */
   acceptIncomingFunds?: boolean
 }
 
@@ -453,7 +453,8 @@ export function allowOrigin(origin: string | undefined): void {
       itemAccess: prior?.itemAccess,
       tokenAccess: prior?.tokenAccess,
       indexAccess: prior?.indexAccess,
-      acceptIncomingFunds: prior?.acceptIncomingFunds,
+      // Plain BSV receives are part of Connect — no second prompt / checkbox.
+      acceptIncomingFunds: true,
     },
     ...existing,
   ])
@@ -671,8 +672,8 @@ export function resolvePermission(id: number, decision: PermissionDecision): boo
       void import('./spendingAuthorization').then(({ grantSpendingAuthorization }) => {
         grantSpendingAuthorization(prompt.origin, prompt.spendingAuthorization!)
       })
-      // Auto-pay stays a pay-request choice — Connect only stores the monthly
-      // sat grant so later Auto-pay uses BRC monthly semantics.
+      // Auto-pay may also be enabled on this Connect prompt — UI stores settings
+      // via setAutoPaySettings after Authorize.
     }
     dispatchWalletUiEvent('handcash:wallet-connected', {
       origin: prompt.origin,

@@ -5,6 +5,7 @@ import { ModalPortal } from './ModalPortal'
 import { ScopeIcon } from './ScopeIcon'
 import { AppLaunchMenu } from './AppLaunchMenu'
 import type { ConnectedApp } from '../wallet/permissions'
+import { setAcceptIncomingFunds, subscribeConnectedApps } from '../wallet/permissions'
 import { CONNECT_SCOPES, appDisplayName, appHomepage } from '../wallet/appIdentity'
 import {
   getAppMoneySummary,
@@ -38,6 +39,9 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
   const [autoPay, setAutoPay] = useState<AutoPaySettings | null>(() =>
     app ? getAutoPaySettings(app.origin) : null,
   )
+  const [acceptIncoming, setAcceptIncoming] = useState(() =>
+    Boolean(app?.acceptIncomingFunds),
+  )
 
   useEffect(() => subscribeUsdRate(setUsdPerBsv), [])
 
@@ -53,6 +57,15 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
     const refresh = () => setAutoPay(getAutoPaySettings(app.origin))
     refresh()
     return subscribeAutoPay(refresh)
+  }, [app])
+
+  useEffect(() => {
+    if (!app) return
+    setAcceptIncoming(Boolean(app.acceptIncomingFunds))
+    return subscribeConnectedApps((apps) => {
+      const hit = apps.find((a) => a.origin === app.origin)
+      if (hit) setAcceptIncoming(Boolean(hit.acceptIncomingFunds))
+    })
   }, [app])
 
   if (!app) return null
@@ -136,6 +149,15 @@ export function AppDetailsDialog({ app, onClose, onRevoke }: Props) {
                 onClick={() => clearAutoPaySettings(app.origin)}
               >
                 Turn off auto-pay
+              </button>
+            ) : null}
+            {acceptIncoming ? (
+              <button
+                className="btn btn-ghost"
+                type="button"
+                onClick={() => setAcceptIncomingFunds(app.origin, false)}
+              >
+                Require receive approval
               </button>
             ) : null}
             <button

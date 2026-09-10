@@ -84,6 +84,19 @@ export function PermissionRequestPanel({
   }, [pending.id, pending.origin, sendDecision])
 
   useEffect(() => {
+    if (pending.kind === 'connect') {
+      const existing = getAutoPaySettings(pending.origin)
+      if (existing?.enabled) {
+        setAutoEnabled(true)
+        setMaxUsd(String(existing.maxUsd))
+        setWindowHours(String(existing.windowHours))
+      } else {
+        setAutoEnabled(false)
+        setMaxUsd(String(DEFAULT_AUTO_PAY_MAX_USD))
+        setWindowHours(String(DEFAULT_AUTO_PAY_WINDOW_HOURS))
+      }
+      return
+    }
     if (pending.kind !== 'action') return
     setAcceptIncoming(acceptsIncomingFunds(pending.origin))
     const existing: AutoPaySettings | null = getAutoPaySettings(pending.origin)
@@ -99,28 +112,30 @@ export function PermissionRequestPanel({
   }, [pending])
 
   const name = appDisplayName(pending.origin)
-  const showAutoPay = isBsvPaymentAction(pending)
+  const showAutoPay = pending.kind === 'connect' || isBsvPaymentAction(pending)
   const showAcceptIncoming =
     pending.kind === 'action' && pending.title === 'Accept incoming funds'
+  const monthlyCap =
+    pending.kind === 'connect' && Boolean(pending.spendingAuthorization)
   const parsedMaxUsd = Number.parseFloat(maxUsd)
   const parsedHours = Number.parseFloat(windowHours)
   const maxUsdValid = Number.isFinite(parsedMaxUsd) && parsedMaxUsd > 0
   const hoursValid = Number.isFinite(parsedHours) && parsedHours > 0
   const committing = decision.matches('committing')
   const allowDisabled =
-    committing || (showAutoPay && autoEnabled && (!maxUsdValid || !hoursValid))
+    committing ||
+    (showAutoPay && autoEnabled && !monthlyCap && (!maxUsdValid || !hoursValid))
 
   const runAllow = () => {
     if (decisionCommittedRef.current || !decision.matches('pending')) return
     decisionCommittedRef.current = true
-    const accepted =
-      pending.kind === 'connect' || !showAutoPay
-        ? onAllow()
-        : onAllow({
-            enabled: autoEnabled,
-            maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
-            windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
-          })
+    const accepted = !showAutoPay
+      ? onAllow()
+      : onAllow({
+          enabled: autoEnabled,
+          maxUsd: maxUsdValid ? parsedMaxUsd : DEFAULT_AUTO_PAY_MAX_USD,
+          windowHours: hoursValid ? Math.round(parsedHours) : DEFAULT_AUTO_PAY_WINDOW_HOURS,
+        })
     if (accepted) {
       if (showAcceptIncoming) {
         setAcceptIncomingFunds(pending.origin, acceptIncoming)
@@ -230,10 +245,67 @@ export function PermissionRequestPanel({
           ))}
         </div>
 
+        <div className="auto-pay" data-aeon-part="auto-pay">
+          <label className="auto-pay-toggle">
+            <input
+              type="checkbox"
+              checked={autoEnabled}
+              onChange={(e) => setAutoEnabled(e.target.checked)}
+            />
+            <span>
+              Auto-pay from <strong>{name}</strong>
+            </span>
+          </label>
+
+          {autoEnabled && !monthlyCap ? (
+            <div className="auto-pay-params" role="group" aria-label="Auto-pay limits">
+              <label className="auto-pay-field">
+                <span className="auto-pay-prefix">$</span>
+                <input
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  inputMode="decimal"
+                  value={maxUsd}
+                  onChange={(e) => setMaxUsd(e.target.value)}
+                  aria-label="Maximum dollars"
+                />
+              </label>
+              <span className="auto-pay-sep">every</span>
+              <span className="auto-pay-unit">
+                <label className="auto-pay-field auto-pay-field-hours">
+                  <input
+                    type="number"
+                    min="1"
+                    step="1"
+                    inputMode="numeric"
+                    value={windowHours}
+                    onChange={(e) => setWindowHours(e.target.value)}
+                    aria-label="Hours"
+                  />
+                </label>
+                <span className="auto-pay-sep">hours</span>
+              </span>
+            </div>
+          ) : null}
+
+          {autoEnabled && monthlyCap && pending.spendingAuthorization ? (
+            <p className="permission-note" style={{ margin: 0 }}>
+              Within {formatSpendingAuthorizationLabel(pending.spendingAuthorization)}.
+            </p>
+          ) : null}
+        </div>
+
         <p className="permission-note">
           {pending.spendingAuthorization
-            ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. Payments still need approval (or Auto-pay on a pay request) within that monthly cap. Disconnect anytime in Connected apps.`
-            : 'Payments and items still need separate approval. Disconnect anytime in Connected apps.'}
+            ? `${formatSpendingAuthorizationLabel(pending.spendingAuthorization)}. ${
+                autoEnabled
+                  ? 'Matching outgoing payments stay silent within that monthly cap.'
+                  : 'Outgoing payments still need approval unless you enable Auto-pay.'
+              } Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.`
+            : autoEnabled
+              ? 'Matching outgoing payments stay silent within your Auto-pay limits. Items still need separate approval. Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.'
+              : 'Outgoing payments and items still need separate approval. Incoming plain BSV is accepted automatically. Disconnect anytime in Connected apps.'}
         </p>
       </>,
     )

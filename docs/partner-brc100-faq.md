@@ -46,7 +46,11 @@ Yes (BRC-73 / BRC-116). Declare in your web `manifest.json`:
 }
 ```
 
-On Connect **Authorize**, HandCash stores that **monthly satoshis** cap (manifest is fetched in the background and never blocks the Connect prompt). **Auto-pay is still chosen on a payment approve prompt** (the Auto-pay checkbox). Once Auto-pay is on, silent `createAction` stays within the UTC calendar-month total from `spendingAuthorization` (instead of the default `$` / hours window). Disconnect clears the grant.
+On Connect **Authorize**, HandCash stores that **monthly satoshis** cap (manifest is fetched in the background and never blocks the Connect prompt). **Auto-pay can be enabled on Connect** (same checkbox + limits as a pay prompt) so the first `createAction` stays silent — no redirect to approve. If the app declared `spendingAuthorization`, Auto-pay uses that UTC calendar-month sat total instead of `$` / hours. Disconnect clears the grant.
+
+**Authorize also grants auto-accept of incoming plain BSV** (`internalizeAction` with `wallet payment`) for that origin — no extra checkbox. That is HandCash wallet policy bundled with Connect (not a BRC-73 manifest field). Collectables / tokens still need their own receive grants. Users can turn auto-accept off per app in Connected apps.
+
+Auto-pay’s user-facing limit stays in **dollars**; HandCash also caches the **sat equivalent** from the last FX rate. Silent pay prefers live FX; if the rate is missing it falls back to that sat snapshot so Auto-pay does not hard-fail.
 
 Settings still expose Auto-pay (`$` / rolling hours) when no spendingAuthorization grant is present.
 

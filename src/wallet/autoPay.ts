@@ -1,3 +1,11 @@
+/**
+ * Auto-pay — user opt-in silent createAction within limits.
+ *
+ * Source of truth for the user limit is `maxUsd` (UX). We also cache
+ * `maxSats` from the last known FX rate so enforcement can continue when
+ * the rate is temporarily missing. BRC spendingAuthorization (monthly sats)
+ * still takes precedence when granted.
+ */
 import { normalizeAppHost } from './appIdentity'
 import { getSpentSatsSince } from './appActivity'
 import { getCachedUsdPerBsv, satsToUsd } from './fx'
@@ -16,6 +24,8 @@ export type AutoPaySettings = {
   enabled: boolean
   maxUsd: number
   windowHours: number
+  /** Last FX snapshot of maxUsd — used when the live rate is unavailable. */
+  maxSats?: number
   updatedAt: number
 }
 
@@ -24,6 +34,11 @@ type Store = Record<string, AutoPaySettings>
 type Listener = () => void
 
 const listeners = new Set<Listener>()
+
+function usdToSats(usd: number, usdPerBsv: number): number {
+  if (!(usd > 0) || !(usdPerBsv > 0)) return 0
+  return Math.round((usd / usdPerBsv) * 1e8)
+}
 
 function readStore(): Store {
   try {
@@ -42,10 +57,17 @@ function readStore(): Store {
         typeof value.windowHours === 'number' && value.windowHours > 0
           ? value.windowHours
           : DEFAULT_AUTO_PAY_WINDOW_HOURS
+      const maxSats =
+        typeof value.maxSats === 'number' &&
+        Number.isFinite(value.maxSats) &&
+        value.maxSats > 0
+          ? Math.trunc(value.maxSats)
+          : undefined
       out[normalizeAppHost(origin)] = {
         enabled: !!value.enabled,
         maxUsd,
         windowHours,
+        maxSats,
         updatedAt: typeof value.updatedAt === 'number' ? value.updatedAt : Date.now(),
       }
     }
@@ -58,6 +80,17 @@ function readStore(): Store {
 function writeStore(store: Store): void {
   durableSetItem(STORAGE_KEY, JSON.stringify(store))
   for (const cb of listeners) cb()
+}
+
+/** Persist a refreshed maxSats without bumping updatedAt / notifying if unchanged. */
+function persistMaxSatsSnapshot(originKey: string, maxSats: number): void {
+  if (!(maxSats > 0)) return
+  const store = readStore()
+  const row = store[originKey]
+  if (!row?.enabled) return
+  if (row.maxSats === maxSats) return
+  store[originKey] = { ...row, maxSats }
+  writeStore(store)
 }
 
 export function subscribeAutoPay(cb: Listener): () => void {
@@ -93,10 +126,19 @@ export function setAutoPaySettings(
     settings.windowHours > 0
       ? Math.round(settings.windowHours)
       : DEFAULT_AUTO_PAY_WINDOW_HOURS
+  const rate = getCachedUsdPerBsv()
+  const prior = store[key]
+  const maxSats =
+    rate && rate > 0
+      ? usdToSats(maxUsd, rate)
+      : prior?.maxUsd === maxUsd && prior.maxSats && prior.maxSats > 0
+        ? prior.maxSats
+        : undefined
   store[key] = {
     enabled: true,
     maxUsd,
     windowHours,
+    maxSats: maxSats && maxSats > 0 ? maxSats : undefined,
     updatedAt: Date.now(),
   }
   writeStore(store)
@@ -133,14 +175,23 @@ export function canAutoProcessPayment(
     return spendingAuthorizationAllowsPayment(origin, sats)
   }
 
-  const rate = getCachedUsdPerBsv()
-  if (!rate) return false
-
-  const paymentUsd = satsToUsd(sats, rate)
-  if (paymentUsd > settings.maxUsd) return false
-
   const windowMs = settings.windowHours * 60 * 60_000
   const spentSats = getSpentSatsSince(origin, Date.now() - windowMs)
-  const spentUsd = satsToUsd(spentSats, rate)
-  return spentUsd + paymentUsd <= settings.maxUsd
+  const rate = getCachedUsdPerBsv()
+
+  if (rate && rate > 0) {
+    const maxSats = usdToSats(settings.maxUsd, rate)
+    persistMaxSatsSnapshot(normalizeAppHost(origin), maxSats)
+
+    const paymentUsd = satsToUsd(sats, rate)
+    if (paymentUsd > settings.maxUsd) return false
+    const spentUsd = satsToUsd(spentSats, rate)
+    return spentUsd + paymentUsd <= settings.maxUsd
+  }
+
+  // No live FX — fall back to the last cached sat budget for this dollar intent.
+  const maxSats = settings.maxSats
+  if (!maxSats || !(maxSats > 0)) return false
+  if (sats > maxSats) return false
+  return spentSats + sats <= maxSats
 }

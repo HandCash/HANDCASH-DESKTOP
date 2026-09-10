@@ -2,6 +2,10 @@
 
 ## [1.3.137] - 2026-09-09
 
+### Added
+
+- Connect **Authorize** includes **auto-accept incoming plain BSV** by default (listed under Receive — no extra checkbox). **Auto-pay** can be enabled on the same Connect prompt so the first payment need not redirect. Auto-pay stores a **sat snapshot** of the dollar limit so silent pay can continue if FX is temporarily missing. Chip + turn-off remain in Connected apps. Collectables still need separate receive grants.
+
 ### Fixed
 
 - Collect: spending a listed tip actually cancels its market listing auth (underscore outpoint filter made invalidate a no-op).

@@ -1,7 +1,11 @@
 import { ScopeIcon } from './ScopeIcon'
 import { getPermissionScope, appDisplayName } from '../wallet/appIdentity'
 import { clearAutoPaySettings, getAutoPaySettings } from '../wallet/autoPay'
-import { getItemAccess } from '../wallet/permissions'
+import {
+  acceptsIncomingFunds,
+  getItemAccess,
+  setAcceptIncomingFunds,
+} from '../wallet/permissions'
 import { playWalletSound } from '../wallet/soundService'
 
 type Props = {
@@ -29,6 +33,11 @@ function itemGrantCopy(scopeId: string, origin: string): string | null {
       ? 'Granted — this app may receive collectables you approve.'
       : 'Not granted yet — approved when the app asks to receive an item.'
   }
+  if (scopeId === 'receive') {
+    return acceptsIncomingFunds(origin)
+      ? 'Granted with Connect — plain BSV from this app is internalized without a prompt.'
+      : 'Turned off — each plain BSV receive needs approval until you reconnect or re-enable.'
+  }
   return null
 }
 
@@ -36,6 +45,8 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
   const scope = getPermissionScope(scopeId)
   const appName = appDisplayName(origin)
   const autoPay = scopeId === 'auto-pay' ? getAutoPaySettings(origin) : null
+  const acceptIncoming =
+    scopeId === 'accept-incoming' ? acceptsIncomingFunds(origin) : false
   const itemGrant = itemGrantCopy(scopeId, origin)
 
   if (!scope) {
@@ -79,6 +90,22 @@ export function PermissionDetailsPanel({ origin, scopeId }: Props) {
             onClick={() => {
               playWalletSound('soft')
               clearAutoPaySettings(origin)
+            }}
+          >
+            Turn off
+          </button>
+        </div>
+      ) : null}
+
+      {acceptIncoming ? (
+        <div className="permission-details-limits">
+          <span>Auto-accepting plain BSV receives</span>
+          <button
+            type="button"
+            className="btn btn-ghost btn-compact"
+            onClick={() => {
+              playWalletSound('soft')
+              setAcceptIncomingFunds(origin, false)
             }}
           >
             Turn off
