@@ -38,6 +38,8 @@ function health(patch: Partial<SyncHealth> = {}): SyncHealth {
     heldOneSats: 0,
     pendingTips: 0,
     updatedAt: 0,
+    identityKey: null,
+    accountIndex: null,
     ...patch,
   }
 }

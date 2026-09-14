@@ -15,17 +15,26 @@ export function useDisplayBalanceSats(profile: {
   useEffect(() => {
     const trusted = readTrustedBalance(profile.identityKey, profile.chain)
     if (trusted != null) setSats(trusted)
+    else setSats(0)
   }, [profile.identityKey, profile.chain])
 
   useEffect(() => {
     const onRefresh = (event: Event) => {
-      const detail = (event as CustomEvent<{ balanceSats?: number }>).detail
+      const detail = (
+        event as CustomEvent<{ balanceSats?: number; identityKey?: string | null }>
+      ).detail
       if (typeof detail?.balanceSats !== 'number') return
+      if (
+        detail.identityKey &&
+        detail.identityKey !== profile.identityKey
+      ) {
+        return
+      }
       setSats(detail.balanceSats)
     }
     document.addEventListener(DISPLAY_BALANCE_REFRESH_EVENT, onRefresh)
     return () => document.removeEventListener(DISPLAY_BALANCE_REFRESH_EVENT, onRefresh)
-  }, [])
+  }, [profile.identityKey])
 
   return sats
 }

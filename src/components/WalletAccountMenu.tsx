@@ -4,7 +4,13 @@ import type { WalletProfile } from '../machines/appMachine'
 import { copyText } from '../wallet/clipboard'
 import { playWalletSound } from '../wallet/soundService'
 import { toastError, toastSuccess } from '../wallet/toast'
-import { getActiveWallet, switchVaultAccount, fetchBalanceSats } from '../wallet/session'
+import {
+  fetchBalanceSats,
+  getActiveWallet,
+  switchVaultAccount,
+} from '../wallet/session'
+import { readTrustedBalance, writeTrustedBalance } from '../wallet/balanceSnapshot'
+import { refreshFromChain } from '../wallet/chainIngest'
 import {
   createVaultAccount,
   ensureVaultAccounts,
@@ -97,14 +103,18 @@ export function WalletAccountMenu({
         mnemonic: active.mnemonic,
         accountIndex: index,
       })
-      let balanceSats = 0
+      // Local-first: spendable UTXOs live in this account's toolbox IDB.
+      // Never race a timeout to 0 — await the local read (trusted only if IDB fails).
+      let balanceSats =
+        readTrustedBalance(next.identityKey, next.chain) ?? 0
       try {
-        balanceSats = await Promise.race([
-          fetchBalanceSats(next.wallet, { creditUnconfirmed: false }),
-          new Promise<number>((r) => setTimeout(() => r(0), 800)),
-        ])
-      } catch {
-        balanceSats = 0
+        balanceSats = await fetchBalanceSats(next.wallet)
+        writeTrustedBalance(next.identityKey, next.chain, balanceSats)
+      } catch (err) {
+        console.warn(
+          '[vault-account] local balance read failed — keeping trusted',
+          err instanceof Error ? err.message : String(err),
+        )
       }
       playWalletSound('soft')
       onAccountSwitched(
@@ -117,6 +127,13 @@ export function WalletAccountMenu({
         balanceSats,
       )
       setOpen(false)
+      // Background chain ingest for the active account only — must not blank the hero.
+      void refreshFromChain({ announceReceive: true }).catch((err) => {
+        console.warn(
+          '[vault-account] post-switch chain ingest failed',
+          err instanceof Error ? err.message : String(err),
+        )
+      })
     } catch (err) {
       toastError('Switch wallet', err instanceof Error ? err.message : String(err))
     } finally {

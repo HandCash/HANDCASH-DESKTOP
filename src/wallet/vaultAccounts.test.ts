@@ -1,8 +1,10 @@
-import { describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   accountKeyId,
   identityKeyForAccount,
   rootKeyHexForAccount,
+  findVaultAccountByIdentityKey,
+  writeVaultAccounts,
   toolboxDatabaseName,
   VAULT_ACCOUNT_PROTOCOL,
 } from './vaultAccounts'
@@ -38,5 +40,38 @@ describe('vaultAccounts (BRC-146)', () => {
     expect(
       toolboxDatabaseName({ chain: 'main', handle: 'alice', accountIndex: 2 }),
     ).toBe('handcash-brc100-main-alice-a2')
+  })
+})
+
+describe('findVaultAccountByIdentityKey', () => {
+  const masterIk = '0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
+  const childIk = '02c6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5'
+  const mem = new Map<string, string>()
+
+  beforeEach(() => {
+    mem.clear()
+    vi.stubGlobal('localStorage', {
+      getItem: (k: string) => mem.get(k) ?? null,
+      setItem: (k: string, v: string) => {
+        mem.set(k, v)
+      },
+      removeItem: (k: string) => {
+        mem.delete(k)
+      },
+    })
+  })
+
+  it('returns the matching vault account', () => {
+    writeVaultAccounts({
+      version: 1,
+      masterIdentityKey: masterIk,
+      activeIndex: 0,
+      accounts: [
+        { index: 0, name: 'Primary', identityKey: masterIk },
+        { index: 1, name: 'Child', identityKey: childIk },
+      ],
+    })
+    expect(findVaultAccountByIdentityKey(masterIk, childIk.toUpperCase())?.index).toBe(1)
+    expect(findVaultAccountByIdentityKey(masterIk, '02dead')).toBeNull()
   })
 })

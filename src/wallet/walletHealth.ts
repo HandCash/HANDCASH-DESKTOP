@@ -4,6 +4,9 @@
  *
  * Soft in-flight sync does not invent a long pill label — the status bubble stays
  * on a short "Syncing…" while details live in `message` (tooltip).
+ *
+ * Status is stamped with the active vault account identity. Switching accounts
+ * rebinds + resets so root's "Synced" cannot paint onto an unsynced child.
  */
 
 export type SyncHealth = {
@@ -14,6 +17,10 @@ export type SyncHealth = {
   /** Held tips known to be items, still awaiting an origin. */
   pendingTips: number
   updatedAt: number
+  /** Vault account this status belongs to (null before unlock / after lock). */
+  identityKey: string | null
+  /** BRC-146 account index for the stamped identity. */
+  accountIndex: number | null
 }
 
 type SyncListener = (health: SyncHealth) => void
@@ -22,12 +29,17 @@ type UnlockListener = (needed: boolean) => void
 const syncListeners = new Set<SyncListener>()
 const unlockListeners = new Set<UnlockListener>()
 
+let boundIdentityKey: string | null = null
+let boundAccountIndex: number | null = null
+
 let syncHealth: SyncHealth = {
   phase: 'idle',
   message: null,
   heldOneSats: 0,
   pendingTips: 0,
   updatedAt: 0,
+  identityKey: null,
+  accountIndex: null,
 }
 
 let unlockNeeded = false
@@ -93,14 +105,74 @@ function armSyncingWatchdog(): void {
   }, SYNCING_WATCHDOG_MS)
 }
 
+/**
+ * Bind sync status to the active vault account. Resets the pill so a prior
+ * account's Synced/Syncing state cannot leak onto the next identity.
+ */
+export function bindSyncHealthAccount(
+  args: { identityKey: string; accountIndex: number } | null,
+): void {
+  clearSyncingWatchdog()
+  if (!args) {
+    boundIdentityKey = null
+    boundAccountIndex = null
+    syncHealth = {
+      phase: 'idle',
+      message: null,
+      heldOneSats: 0,
+      pendingTips: 0,
+      updatedAt: Date.now(),
+      identityKey: null,
+      accountIndex: null,
+    }
+    emitSync()
+    return
+  }
+  boundIdentityKey = args.identityKey
+  boundAccountIndex = args.accountIndex
+  syncHealth = {
+    phase: 'idle',
+    message: null,
+    heldOneSats: 0,
+    pendingTips: 0,
+    updatedAt: Date.now(),
+    identityKey: args.identityKey,
+    accountIndex: args.accountIndex,
+  }
+  emitSync()
+}
+
+export function getBoundSyncHealthIdentity(): {
+  identityKey: string | null
+  accountIndex: number | null
+} {
+  return { identityKey: boundIdentityKey, accountIndex: boundAccountIndex }
+}
+
 export function getSyncHealth(): SyncHealth {
   return syncHealth
 }
 
+/**
+ * Apply a sync-health patch for the active account.
+ * Patches stamped with a different identityKey (abandoned ingest after switch)
+ * are dropped so root cannot paint Synced onto a child.
+ */
 export function setSyncHealth(patch: Partial<SyncHealth>): void {
+  const patchIk = patch.identityKey
+  if (
+    patchIk != null &&
+    boundIdentityKey != null &&
+    patchIk !== boundIdentityKey
+  ) {
+    return
+  }
   syncHealth = {
     ...syncHealth,
     ...patch,
+    identityKey: boundIdentityKey ?? patch.identityKey ?? syncHealth.identityKey,
+    accountIndex:
+      boundAccountIndex ?? patch.accountIndex ?? syncHealth.accountIndex,
     updatedAt: Date.now(),
   }
   if (syncHealth.phase === 'syncing') armSyncingWatchdog()

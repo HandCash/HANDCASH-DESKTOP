@@ -180,3 +180,18 @@ export function resolveActiveRootKeyHex(
     account,
   }
 }
+
+/** Match a payee identity to a named vault account under this master (case-insensitive). */
+export function findVaultAccountByIdentityKey(
+  masterIdentityKey: string,
+  payeeIdentityKey: string,
+): VaultAccount | null {
+  const needle = payeeIdentityKey.trim().toLowerCase()
+  if (!needle) return null
+  const store = readVaultAccounts(masterIdentityKey)
+  return (
+    store.accounts.find((a) => a.identityKey.trim().toLowerCase() === needle) ??
+    null
+  )
+}
+

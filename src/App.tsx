@@ -260,8 +260,9 @@ export function App() {
 
   useEffect(() => {
     if (!walletUnlocked) return
-    publishDisplayBalanceRefresh(snapshot.context.balanceSats)
-  }, [walletUnlocked, snapshot.context.balanceSats])
+    const ik = snapshot.context.profile?.identityKey
+    publishDisplayBalanceRefresh(snapshot.context.balanceSats, ik)
+  }, [walletUnlocked, snapshot.context.balanceSats, snapshot.context.profile?.identityKey])
 
   const onSent = useCallback(
     (balanceSats: number) => send({ type: 'SENT', balanceSats }),
@@ -306,8 +307,19 @@ export function App() {
 
   useEffect(() => {
     const onBalanceRefreshed = (event: Event) => {
-      const detail = (event as CustomEvent<{ balanceSats?: number }>).detail
+      const detail = (
+        event as CustomEvent<{ balanceSats?: number; identityKey?: string | null }>
+      ).detail
       if (typeof detail?.balanceSats !== 'number') return
+      const activeIk = snapshot.context.profile?.identityKey
+      if (
+        detail.identityKey &&
+        activeIk &&
+        detail.identityKey !== activeIk
+      ) {
+        // Abandoned ingest for another vault account — ignore.
+        return
+      }
       handleBalanceRefresh(detail.balanceSats)
     }
     document.addEventListener(DISPLAY_BALANCE_REFRESH_EVENT, onBalanceRefreshed)
@@ -316,7 +328,7 @@ export function App() {
         DISPLAY_BALANCE_REFRESH_EVENT,
         onBalanceRefreshed,
       )
-  }, [handleBalanceRefresh])
+  }, [handleBalanceRefresh, snapshot.context.profile?.identityKey])
 
   const handleManualSync = useCallback(async () => {
     if (!walletUnlocked) return

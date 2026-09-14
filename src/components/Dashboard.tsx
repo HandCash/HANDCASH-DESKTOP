@@ -249,7 +249,7 @@ export function Dashboard({
     window.addEventListener('online', onOnline)
     return () => window.removeEventListener('online', onOnline)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.address])
+  }, [profile.address, profile.identityKey])
 
   useEffect(() => {
     let cancelled = false
@@ -641,7 +641,7 @@ export function Dashboard({
       if (deferTimer != null) window.clearTimeout(deferTimer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [profile.address])
+  }, [profile.address, profile.identityKey])
 
   return (
     <section

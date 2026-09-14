@@ -64,9 +64,13 @@ export async function ingestPaymentByTxid(
 
   markInboundPaymentStatus(id, 'Receiving (SPV)')
   noteInboundReceivePending({ txid: id })
+  const startedIk = active.identityKey
+  const startedIdx = active.accountIndex
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing payment (SPV)',
+    identityKey: startedIk,
+    accountIndex: startedIdx,
   })
 
   try {
@@ -115,7 +119,7 @@ export async function ingestPaymentByTxid(
     }
 
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
-    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
+    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
     const gained =
       balanceBefore != null && balanceSats != null
         ? balanceSats - balanceBefore
@@ -133,14 +137,24 @@ export async function ingestPaymentByTxid(
           `[payment-spv] swept ${id.slice(0, 12)}… without a balance rise — no receive toast`,
         )
       }
-      setSyncHealth({ phase: 'ok', message: null })
+      setSyncHealth({
+        phase: 'ok',
+        message: null,
+        identityKey: startedIk,
+        accountIndex: startedIdx,
+      })
       return { imported: result.imported, satoshis, balanceSats }
     }
 
     // Already swept earlier — still a success for the card.
     if (result.skippedKnown > 0 && result.failed === 0) {
       markInboundPaymentStatus(id, 'Received')
-      setSyncHealth({ phase: 'ok', message: null })
+      setSyncHealth({
+        phase: 'ok',
+        message: null,
+        identityKey: startedIk,
+        accountIndex: startedIdx,
+      })
       return {
         imported: 0,
         satoshis: 0,
@@ -160,7 +174,12 @@ export async function ingestPaymentByTxid(
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[payment-spv] ingest failed', id, msg)
     markInboundPaymentStatus(id, 'Verifying on chain…')
-    setSyncHealth({ phase: 'ok', message: null })
+    setSyncHealth({
+        phase: 'ok',
+        message: null,
+        identityKey: startedIk,
+        accountIndex: startedIdx,
+      })
     return { imported: 0, satoshis: 0, balanceSats: null, reason: msg }
   }
 }

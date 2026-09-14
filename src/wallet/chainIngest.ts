@@ -256,6 +256,25 @@ export async function refreshFromChainExclusive(
   const forceReview = opts?.forceReview === true
   const active = getActiveWallet()
   if (!active) return emptyRun()
+  // Stamp every sync/balance UI update with this identity so an abandoned pass
+  // after vault-account switch cannot paint root state onto a child (or vice versa).
+  const startedIdentityKey = active.identityKey
+  const startedAccountIndex = active.accountIndex
+  const stillActiveAccount = (): boolean => {
+    const cur = getActiveWallet()
+    return Boolean(cur && cur.identityKey === startedIdentityKey)
+  }
+  const stampSync = (patch: Parameters<typeof setSyncHealth>[0]) => {
+    setSyncHealth({
+      ...patch,
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
+    } as Parameters<typeof setSyncHealth>[0])
+  }
+  const publishBalance = (sats: number) => {
+    if (!stillActiveAccount()) return
+    publishDisplayBalanceRefresh(sats, startedIdentityKey)
+  }
 
   // A send is waiting on the coordinator — skip ordinal naming / inventory work
   // so the FIFO frees and the spend can begin.
@@ -270,7 +289,7 @@ export async function refreshFromChainExclusive(
   const syncMessage = fundingOnly
     ? 'Looking for new payments on your address'
     : 'Refreshing funds against the network'
-  setSyncHealth({
+  stampSync({
     phase: 'syncing',
     message: syncMessage,
   })
@@ -323,6 +342,9 @@ export async function refreshFromChainExclusive(
       importedFunding: 0,
       importedItems: 0,
       scannedTxids: [],
+    }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
     })
   }
 
@@ -347,7 +369,10 @@ export async function refreshFromChainExclusive(
           importedFunding: 0,
           importedItems: 0,
           scannedTxids: [],
-        })
+        }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
+    })
       }
       throw err
     }
@@ -360,6 +385,9 @@ export async function refreshFromChainExclusive(
       importedFunding: 0,
       importedItems: 0,
       scannedTxids: [],
+    }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
     })
   }
 
@@ -408,7 +436,7 @@ export async function refreshFromChainExclusive(
         phase: 'catching-up',
         message: 'Still importing collectables…',
       })
-      setSyncHealth({
+      stampSync({
         phase: 'ok',
         message: 'Still importing collectables in the background…',
         heldOneSats: heldCount,
@@ -428,7 +456,10 @@ export async function refreshFromChainExclusive(
           importedFunding,
           importedItems,
           scannedTxids,
-        })
+        }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
+    })
       }
       throw err
     } finally {
@@ -460,7 +491,10 @@ export async function refreshFromChainExclusive(
         importedFunding,
         importedItems,
         scannedTxids,
-      })
+      }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
+    })
     }
     // Inventory is address UTXOs ∩ basket tips — feed the scan and refresh so a
     // spent tip cannot linger and a just-imported tip does not wait on the panel.
@@ -518,7 +552,7 @@ export async function refreshFromChainExclusive(
   } catch (err) {
     console.warn('[chain-ingest] legacy address ingest skipped', err)
     progressTerminal = 'failed'
-    setSyncHealth({
+    stampSync({
       phase: 'error',
       message: 'Couldn’t refresh funds — check your network connection.',
       heldOneSats: heldCount,
@@ -534,6 +568,9 @@ export async function refreshFromChainExclusive(
       importedFunding,
       importedItems,
       scannedTxids,
+    }, {
+      identityKey: startedIdentityKey,
+      accountIndex: startedAccountIndex,
     })
   }
 
@@ -548,7 +585,7 @@ export async function refreshFromChainExclusive(
       ? { suspect: 0, skipped: true }
       : await auditSpendableOutputs(forceReview && importedFunding === 0)
   if (review.error && forceReview) {
-    setSyncHealth({
+    stampSync({
       phase: 'error',
       message: 'Couldn’t verify spent outputs — check your network connection.',
       heldOneSats: heldCount,
@@ -558,7 +595,7 @@ export async function refreshFromChainExclusive(
 
   try {
     const balanceAfter = await fetchBalanceSats(active.wallet)
-    publishDisplayBalanceRefresh(balanceAfter)
+    publishBalance(balanceAfter)
     if (addressUnspentAfterIngest > 0 && fundingSkippedKnownAfterIngest > 0) {
       console.warn(
         `[chain-ingest] ${addressUnspentAfterIngest.toLocaleString()} sats still on legacy address ` +
@@ -566,7 +603,7 @@ export async function refreshFromChainExclusive(
           'sweep may be stuck; Refresh will retry',
       )
     }
-    if (announceReceive) {
+    if (announceReceive && stillActiveAccount()) {
       const balanceRose = balanceBeforeOk && balanceAfter > balanceBefore
       const gained = Math.max(0, balanceAfter - balanceBefore)
       // Only toast when this Refresh pass actually swept new funding from the
@@ -602,7 +639,7 @@ export async function refreshFromChainExclusive(
         ? `${review.suspect} output${review.suspect === 1 ? '' : 's'} still awaiting the indexer.`
         : null
 
-    setSyncHealth({
+    stampSync({
       phase: review.error && !partialWarn ? 'error' : 'ok',
       message:
         partialWarn ??
@@ -621,7 +658,7 @@ export async function refreshFromChainExclusive(
   } catch (err) {
     console.warn('[chain-ingest] balance refresh failed', err)
     progressTerminal = 'failed'
-    setSyncHealth({
+    stampSync({
       phase: 'error',
       message: 'Balance refresh failed — check your network connection.',
       heldOneSats: heldCount,
@@ -655,12 +692,20 @@ async function finishEarlyForSpend(
     importedItems: number
     scannedTxids: string[]
   },
+  account: { identityKey: string; accountIndex: number },
 ): Promise<ChainIngestRunResult> {
   console.info('[chain-ingest] yielding to send')
   let balanceSats: number | null = null
   try {
     balanceSats = await fetchBalanceSats(active.wallet)
-    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
+    const cur = getActiveWallet()
+    if (
+      balanceSats != null &&
+      cur &&
+      cur.identityKey === account.identityKey
+    ) {
+      publishDisplayBalanceRefresh(balanceSats, account.identityKey)
+    }
   } catch {
     balanceSats = null
   }
@@ -669,6 +714,8 @@ async function finishEarlyForSpend(
     message: null,
     heldOneSats: partial.heldCount,
     pendingTips: partial.pendingTips,
+    identityKey: account.identityKey,
+    accountIndex: account.accountIndex,
   })
   return {
     balanceSats,

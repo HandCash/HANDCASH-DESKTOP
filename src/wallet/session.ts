@@ -331,6 +331,9 @@ export function setActiveWallet(next: ActiveWallet | null): void {
 export function clearActiveWallet(): void {
   active = null
   clearSessionBackupPassword()
+  void import('./walletHealth').then(({ bindSyncHealthAccount }) => {
+    bindSyncHealthAccount(null)
+  })
 }
 
 let propagationRecoveryStarted = false
@@ -482,6 +485,13 @@ export async function bootWallet(args: {
   // Isolate friends / activity / apps / inventory to this vault account.
   const { rebindAccountLocalStores } = await import('./accountLocalStores')
   rebindAccountLocalStores(active)
+  // Sync pill + chain-ingest status are per vault account — never leave root's
+  // Synced painted on a cold child toolbox.
+  const { bindSyncHealthAccount } = await import('./walletHealth')
+  bindSyncHealthAccount({
+    identityKey: active.identityKey,
+    accountIndex: active.accountIndex,
+  })
   return active
 }
 
@@ -811,8 +821,8 @@ export function formatSats(sats: number): string {
 /**
  * Stop the current toolbox session and boot another vault account root.
  * Same unlock / mnemonic; different on-chain identity and balance.
- * bootWallet rebinds account-local stores so Activity / Inventory / Apps /
- * Friends do not spill across subwallets.
+ * bootWallet rebinds account-local stores and sync health so Activity /
+ * Inventory / Apps / Friends / Sync status do not spill across subwallets.
  */
 export async function switchVaultAccount(args: {
   masterRootKeyHex: string

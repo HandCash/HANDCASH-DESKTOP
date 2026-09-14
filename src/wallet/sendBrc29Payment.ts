@@ -488,6 +488,68 @@ export async function sendBrc29ToIdentityKey(opts: {
               chart.send({ type: 'FAIL', error: 'peerNotify expected' })
               throw new Error('brc29SendMachine peerNotify without settle path')
             }
+            // Same-device vault sibling (BRC-146): credit their toolbox IDB now so
+            // switching accounts paints local UTXOs — do not wait on chain ingest.
+            let vaultSiblingCredited = false
+            try {
+              const { PrivateKey } = await import('@bsv/sdk')
+              const {
+                ensureVaultAccounts,
+                findVaultAccountByIdentityKey,
+              } = await import('./vaultAccounts')
+              const masterIk = PrivateKey.fromHex(active.masterRootKeyHex)
+                .toPublicKey()
+                .toString()
+              ensureVaultAccounts(active.masterRootKeyHex, masterIk)
+              const sibling = findVaultAccountByIdentityKey(
+                masterIk,
+                settlePath.recipientIdentityKey,
+              )
+              if (
+                sibling &&
+                sibling.index !== active.accountIndex &&
+                atomicBeef?.length
+              ) {
+                setPaymentProgress(
+                  'finishing',
+                  'Crediting payment to vault wallet',
+                )
+                const { creditVaultSiblingBrc29Payment } = await import(
+                  './vaultSiblingCredit'
+                )
+                const credited = await creditVaultSiblingBrc29Payment({
+                  active,
+                  account: sibling,
+                  txid,
+                  remittance,
+                  senderIdentityKey: active.identityKey,
+                  atomicBeef,
+                  satoshis,
+                })
+                if (credited.accepted) {
+                  vaultSiblingCredited = true
+                  selfReceived = true
+                  peerDelivered = true
+                  chart.send({ type: 'REMIT_IN_BOX' })
+                  recordTransactionStage('peer_delivered', {
+                    flow: 'brc29',
+                    txid,
+                  })
+                  recordTransactionStage('completed', { flow: 'brc29', txid })
+                  console.info(
+                    `[brc29] vault sibling account ${sibling.index} credited locally`,
+                  )
+                }
+              }
+            } catch (err) {
+              console.warn(
+                '[brc29] vault sibling local credit skipped',
+                err instanceof Error ? err.message : String(err),
+              )
+            }
+            if (vaultSiblingCredited) {
+              // Local IDB already has the UTXO — skip messagebox / outbox for this device.
+            } else {
             setPaymentProgress('finishing', 'Notifying recipient')
             const { listFriends } = await import('./friends')
             const friend =
@@ -551,6 +613,8 @@ export async function sendBrc29ToIdentityKey(opts: {
                 blockerCode: 'peer_delivery_error',
               })
             }
+            } // end !vaultSiblingCredited
+
           }
 
           return {
@@ -733,9 +797,13 @@ async function internalizeBrc29PaymentOnce(opts: {
     txid: id,
     sats: typeof opts.satoshis === 'number' ? opts.satoshis : undefined,
   })
+  const startedIk = active.identityKey
+  const startedIdx = active.accountIndex
   setSyncHealth({
     phase: 'syncing',
     message: 'Importing BRC-29 payment',
+    identityKey: startedIk,
+    accountIndex: startedIdx,
   })
 
   const balanceBefore = await fetchBalanceSats(active.wallet).catch(() => null)
@@ -830,7 +898,7 @@ async function internalizeBrc29PaymentOnce(opts: {
     const balanceStarted = Date.now()
     const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
     markIngest(`balance ${Date.now() - balanceStarted}ms`)
-    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
+    if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
 
     markInboundPaymentStatus(id, 'Received')
     const gained =
@@ -847,7 +915,12 @@ async function internalizeBrc29PaymentOnce(opts: {
         `[brc29] internalized ${id.slice(0, 12)}… without a balance rise — no receive toast`,
       )
     }
-    setSyncHealth({ phase: 'ok', message: null })
+    setSyncHealth({
+      phase: 'ok',
+      message: null,
+      identityKey: startedIk,
+      accountIndex: startedIdx,
+    })
     markIngest('done')
     return { accepted: true, satoshis, balanceSats }
   } catch (err) {
@@ -860,9 +933,14 @@ async function internalizeBrc29PaymentOnce(opts: {
         noteInboundReceiveComplete({ txid: id, sats: satoshis })
       }
       const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
-      if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats)
+      if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
       markInboundPaymentStatus(id, 'Received')
-      setSyncHealth({ phase: 'ok', message: null })
+      setSyncHealth({
+      phase: 'ok',
+      message: null,
+      identityKey: startedIk,
+      accountIndex: startedIdx,
+    })
       return {
         accepted: true,
         satoshis: 0,
@@ -873,7 +951,12 @@ async function internalizeBrc29PaymentOnce(opts: {
     const msg = err instanceof Error ? err.message : String(err)
     console.warn('[brc29] internalize failed', id, msg)
     markInboundPaymentStatus(id, 'Verifying on chain…')
-    setSyncHealth({ phase: 'ok', message: null })
+    setSyncHealth({
+      phase: 'ok',
+      message: null,
+      identityKey: startedIk,
+      accountIndex: startedIdx,
+    })
     return { accepted: false, satoshis: 0, balanceSats: null, reason: msg }
   }
 }

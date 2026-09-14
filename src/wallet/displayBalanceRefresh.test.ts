@@ -17,10 +17,14 @@ describe('displayBalanceRefresh', () => {
         return true
       },
     })
-    publishDisplayBalanceRefresh(12345)
+    publishDisplayBalanceRefresh(12345, 'ik-child')
     expect(handler).toHaveBeenCalledTimes(1)
-    const event = handler.mock.calls[0]![0] as CustomEvent<{ balanceSats: number }>
+    const event = handler.mock.calls[0]![0] as CustomEvent<{
+      balanceSats: number
+      identityKey: string | null
+    }>
     expect(event.detail.balanceSats).toBe(12345)
+    expect(event.detail.identityKey).toBe('ik-child')
     expect(event.type).toBe(DISPLAY_BALANCE_REFRESH_EVENT)
   })
 
