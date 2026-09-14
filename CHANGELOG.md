@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.140] - 2026-09-14
+
+### Fixed
+
+- Sigma identity inscription signing: hash the ordinal prefix and append the OP_RETURN / `|` / SIGMA tail as hex so release tests and VIN verify pass.
+
 ## [1.3.139] - 2026-09-14
 
 ### Fixed
