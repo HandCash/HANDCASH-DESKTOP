@@ -196,6 +196,31 @@ interface HandCashBridge {
   setUpdateMode?: (mode: UpdateMode) => Promise<UpdateStatus>
   installUpdate?: () => Promise<void>
   onUpdateStatus?: (handler: (status: UpdateStatus) => void) => () => void
+  directSessionListen?: () => Promise<{ host: string; port: number } | null>
+  directSessionConnect?: (args: {
+    host: string
+    port: number
+    timeoutMs: number
+    hello: string
+  }) => Promise<
+    | { ok: true; remoteHello: string; socketId: string }
+    | { ok: false; immediate: boolean }
+  >
+  directSessionSend?: (args: {
+    socketId: string
+    body: string
+    timeoutMs: number
+  }) => Promise<boolean>
+  directSessionClose?: (socketId: string) => Promise<void>
+  directSessionAccept?: (args: { socketId: string; welcome: string }) => Promise<void>
+  directSessionReject?: (socketId: string) => Promise<void>
+  onDirectSessionHello?: (
+    handler: (event: { socketId: string; hello: string }) => void,
+  ) => () => void
+  onDirectSessionMessage?: (
+    handler: (event: { socketId: string; sender: string; body: string }) => void,
+  ) => () => void
+  onDirectSessionClosed?: (handler: (event: { socketId: string }) => void) => () => void
   getOmarchyTheme?: () => Promise<
     | {
         ok: true

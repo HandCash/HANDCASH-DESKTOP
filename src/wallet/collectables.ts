@@ -4524,7 +4524,7 @@ export async function sendCollectables(
                     itemCollectionId: item.collectionId,
                     atomicBeef,
                   })
-                  if (delivered.delivered === 'cloud') continue
+                  if (delivered.delivered === 'cloud' || delivered.delivered === 'direct') continue
                 } catch (err) {
                   console.warn('[collectables] batch peer notify failed', err)
                 }

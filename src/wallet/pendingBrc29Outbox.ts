@@ -104,7 +104,7 @@ export async function flushPendingBrc29Outbox(args: {
         atomicBeef,
         amountLabel: row.amountLabel,
       })
-      if (result.delivered === 'cloud') {
+      if (result.delivered === 'cloud' || result.delivered === 'direct') {
         recordTransactionStage('peer_delivered', {
           flow: row.flow ?? 'brc29',
           traceId: row.traceId,

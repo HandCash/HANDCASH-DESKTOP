@@ -428,7 +428,7 @@ const BRC29_SEND = `stateDiagram-v2
   broadcasting --> chooseSettle : BROADCASTED createAction
   chooseSettle --> peerNotify : peerDeliver
   chooseSettle --> selfReceive : selfReceive
-  peerNotify --> done : BEEF_IN_BOX / REMIT_IN_BOX / BOX_UNREACHABLE
+  peerNotify --> done : BEEF_IN_BOX / REMIT_IN_BOX / DIRECT / BOX_UNREACHABLE
   selfReceive --> done : SETTLED
   note right of broadcasting
     Toolbox createAction broadcasts now.

@@ -498,7 +498,8 @@ export async function sendBrc29ToIdentityKey(opts: {
               ) ?? null
             try {
               const delivered = await notifyPayee(settlePath.recipientIdentityKey)
-              peerDelivered = delivered.delivered === 'cloud'
+              peerDelivered =
+                delivered.delivered === 'cloud' || delivered.delivered === 'direct'
               recordTransactionStage(
                 peerDelivered ? 'peer_delivered' : 'peer_delivery_queued',
                 {
@@ -510,7 +511,9 @@ export async function sendBrc29ToIdentityKey(opts: {
               if (peerDelivered) {
                 recordTransactionStage('completed', { flow: 'brc29', txid })
               }
-              if (delivered.delivered === 'cloud' && delivered.beefInBox) {
+              if (delivered.delivered === 'direct') {
+                chart.send({ type: 'DIRECT' })
+              } else if (delivered.delivered === 'cloud' && delivered.beefInBox) {
                 chart.send({ type: 'BEEF_IN_BOX' })
               } else if (delivered.delivered === 'cloud') {
                 chart.send({ type: 'REMIT_IN_BOX' })
