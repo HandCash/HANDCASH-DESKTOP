@@ -3700,7 +3700,8 @@ li[data-aeon-state='failed'] .history-progress-range {
   max-width: none;
   flex: 0 0 auto;
   margin: 0;
-  padding: 0 0 0 8px;
+  /* Right padding keeps the caret clear of the copy control next door. */
+  padding: 0 4px 0 8px;
   border: 0;
   background: transparent;
   color: var(--hc-text);
@@ -13974,10 +13975,24 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
+  gap: 8px;
   flex: 0 0 auto;
   width: max-content;
   max-width: none;
+}
+
+/* Phones: more air between caret and copy — 8px still felt cramped. */
+html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-row {
+  gap: 12px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-hero-identity {
+  padding-right: 6px;
+  gap: 6px;
+}
+
+html:is(.platform-mobile, .layout-compact) .wallet-hero-identity-copy {
+  padding: 6px;
 }
 
 .wallet-hero-identity-copy {
