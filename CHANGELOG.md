@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.150] - 2026-09-14
+
+### Fixed
+
+- Hero balance can drop after heal/refresh (keep-high only mid-send).
+- Heal republishes toolbox display balance and rewrites trusted snapshot.
+
 ## [1.3.149] - 2026-09-14
 
 ### Fixed
