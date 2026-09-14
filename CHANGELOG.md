@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.144] - 2026-09-14
+
+### Fixed
+
+- Mobile titlebar: scan/lock stay on-screen; wordmark hidden; sync pill shrinks.
+
 ## [1.3.143] - 2026-09-14
 
 ### Fixed
