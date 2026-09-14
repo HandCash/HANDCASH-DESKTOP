@@ -984,6 +984,9 @@ export async function keepChangeOfSignedTx(txid: string): Promise<number> {
         // Change after createAction *and* plain BSV received via internalize —
         // apps must chain either without waiting for confirmation.
         if (sats < 1) continue
+        // Already spendable — do not re-write / re-log every ingest tick
+        // (Arcade-pinned sends with explorer 404 were promoting forever).
+        if (row.spendable === true) continue
 
         const healed = await healLockingScript(sp, row, txCache)
         const scripted = healed != null || hasLockingScript(row)
@@ -1085,7 +1088,10 @@ export async function promotePendingLocalChangeOutputs(opts?: {
   let promoted = 0
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
-    if (chain) {
+    // Arcade already accepted this spend — Bitails/WoC 404 is lag, not a
+    // fail signal. Skip the explorer probe so we do not re-hit 404 every poll.
+    const { txHadArcadeSubmitContact } = await import('./arcadeSubmitGuard')
+    if (chain && !txHadArcadeSubmitContact(txid)) {
       try {
         const { txExistsOnChain } = await import('./legacyScan')
         const onChain = await txExistsOnChain(txid, chain)
@@ -1108,6 +1114,14 @@ export async function promotePendingLocalChangeOutputs(opts?: {
     console.info(
       `[stale-output] promoted ${promoted} pending local change output(s) from ${txids.size} live tx(s)`,
     )
+    // Foundation: hero = spendable UTXOs. We just flipped change to spendable —
+    // force a fresh Wallet.balance() publish, do not reuse a coalesced read.
+    try {
+      const { bumpBalanceAfterHeal } = await import('./session')
+      bumpBalanceAfterHeal()
+    } catch (err) {
+      console.warn('[stale-output] post-promote balance refresh skipped', err)
+    }
   }
   return promoted
 }

@@ -55,7 +55,6 @@ import { shouldYieldChainIngestToSpend } from '../wallet/walletCoordinator'
 import { getSessionBackupPassword } from '../wallet/sessionBackupAuth'
 import { getActiveWallet } from '../wallet/session'
 import { identityQrDataUrl } from '../wallet/identityQr'
-import { getSyncHealth, subscribeSyncHealth } from '../wallet/walletHealth'
 import { whenRecomposeIdle } from '../wallet/recompose'
 
 /**
@@ -85,11 +84,6 @@ const CHAIN_POLL_DESKTOP_MS = 2 * 60_000
 /** Device parity has its own history cadence; it does not need faster chain scans. */
 const CHAIN_POLL_PARITY_MS = 2 * 60_000
 /**
- * Pending hints may be waiting on BEEF/indexer propagation. Retry promptly but
- * never turn a complete address scan into a hot loop.
- */
-const CHAIN_POLL_PENDING_MS = 30_000
-/**
  * Stale inbox / chat tip cards must not re-run funding-only Refresh every 5s.
  * pollInboundTipHints also dispatches `handcash:payment-hint`, so the same
  * txids used to be chased twice per tick. New txids still ingest immediately.
@@ -101,8 +95,10 @@ function paymentHintTxid(raw: string | { txid?: string } | null | undefined): st
   return /^[0-9a-f]{64}$/.test(id) ? id : ''
 }
 
-function nextChainPollMs(pendingTips: number): number {
-  if (pendingTips > 0) return CHAIN_POLL_PENDING_MS
+function nextChainPollMs(): number {
+  // syncHealth.pendingTips is collectables-awaiting-origin (pill only). Never
+  // accelerate full legacy UTXO rescans off that — it looped Syncing while
+  // the hero stayed flat. Payment tips use handcash:payment-hint.
   if (typeof document !== 'undefined' && document.visibilityState === 'hidden') {
     return CHAIN_POLL_HIDDEN_MS
   }
@@ -290,7 +286,7 @@ export function Dashboard({
     const scheduleNext = (delayMs?: number) => {
       if (cancelled) return
       if (pollTimer != null) window.clearTimeout(pollTimer)
-      const delay = delayMs ?? nextChainPollMs(getSyncHealth().pendingTips)
+      const delay = delayMs ?? nextChainPollMs()
       scheduledDelayMs = delay
       pollTimer = window.setTimeout(() => {
         void sync().finally(() => scheduleNext())
@@ -538,14 +534,6 @@ export function Dashboard({
       deferTimer = window.setTimeout(startFirst, 0)
     }
 
-    // If a tip becomes pending mid-wait, collapse a quiet interval immediately.
-    const unsubHealth = subscribeSyncHealth((health) => {
-      if (cancelled || tickInFlight || health.pendingTips <= 0) return
-      if (pollTimer == null) return
-      if (scheduledDelayMs <= CHAIN_POLL_PENDING_MS) return
-      scheduleNext(CHAIN_POLL_PENDING_MS)
-    })
-
     // Web timers can be suspended while Android backgrounds the WebView. The
     // native shell emits this on resume so we catch up immediately instead of
     // waiting for the old timeout to become runnable again.
@@ -629,7 +617,6 @@ export function Dashboard({
 
     return () => {
       cancelled = true
-      unsubHealth()
       document.removeEventListener('handcash:app-active', onAppActive)
       document.removeEventListener('handcash:payment-hint', onPaymentHint)
       document.removeEventListener('visibilitychange', onVisibility)
