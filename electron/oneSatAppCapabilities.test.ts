@@ -15,6 +15,10 @@ describe('ONE_SAT_APP_CAPABILITIES', () => {
     expect(wire).not.toContain('latch')
     expect(wire).not.toContain('156')
     expect(wire).not.toContain('v3')
-    expect(wire).not.toContain('sigma')
+    expect(ONE_SAT_APP_CAPABILITIES.sigmaIdentity?.protocolID).toEqual([
+      0,
+      'sigma identity',
+    ])
+    expect(ONE_SAT_APP_CAPABILITIES.baskets).not.toContain('sigma')
   })
 })

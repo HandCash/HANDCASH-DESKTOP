@@ -27,6 +27,7 @@ Legacy JSON BSV-21 (`application/bsv-20`) and basket `1sat-ft` are **not** produ
 | `token/prove176.ts` | BRC-176 prove / parent fill |
 | `token/settle.ts` | P2P receive → `internalizeAction` |
 | `token/issuer.ts` | BRC-100 deploy/mint enrich |
+| `sigmaIdentity/` | Sigma personas (not the root key, not BRC-169). See `docs/sigma-identity.md` |
 | `token/icons/*` | Local icon cache + BEEF resolve |
 | `token/marketView.ts` | Attach market listing overlay to token rows |
 | `token/guards.ts` | Deprecated 1sat-ft detection (NFT grid safety only) |

@@ -3915,6 +3915,95 @@ li[data-aeon-state='failed'] .history-progress-range {
   padding: 4px;
 }
 
+.identity-kind {
+  display: grid;
+  gap: 4px;
+  width: 100%;
+  text-align: left;
+}
+
+.identity-kind-label {
+  font-size: 0.68rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--hc-muted);
+}
+
+.identity-kind-note {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+  line-height: 1.4;
+}
+
+[data-aeon-scope='identity'] [data-aeon-part='brc169'],
+[data-aeon-scope='identity'] [data-aeon-part='sigma'] {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid hsl(var(--border));
+  justify-items: stretch;
+}
+
+[data-aeon-scope='identity'] [data-aeon-part='sigma'][data-aeon-state='publishing'],
+[data-aeon-scope='identity'] [data-aeon-part='sigma'][data-aeon-state='revoking'] {
+  opacity: 0.85;
+}
+
+.identity-sigma-form {
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.identity-persona-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+  width: 100%;
+}
+
+.identity-persona {
+  display: grid;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid hsl(var(--border));
+  border-radius: var(--hc-radius);
+}
+
+.identity-persona-main {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 8px;
+}
+
+.identity-persona-id,
+.identity-persona-key,
+.identity-persona-about {
+  margin: 0;
+  color: var(--hc-muted);
+  font-size: 0.74rem;
+}
+
+.identity-persona-badge,
+.identity-persona-status {
+  font-size: 0.68rem;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.identity-persona-status[data-status='revoked'] {
+  color: var(--hc-muted);
+}
+
+.identity-persona-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .identity-hero {
   display: flex;
   align-items: center;

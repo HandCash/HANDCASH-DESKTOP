@@ -6,6 +6,10 @@
 
 - Connect **Authorize** includes **auto-accept incoming plain BSV** by default (listed under Receive — no extra checkbox). **Auto-pay** can be enabled on the same Connect prompt so the first payment need not redirect. Auto-pay stores a **sat snapshot** of the dollar limit so silent pay can continue if FX is temporarily missing. Shared Auto-pay / Connect scope UI. Chip + turn-off remain in Connected apps. Collectables still need separate receive grants.
 
+### Changed
+
+- App identity proofs are [BRC-138](https://bsv.brc.dev/peer-to-peer/0138.md) (`[2, "bsv auth proof"]` via `createSignature`). The HandCash challenge recipe is refused. A proof does not authorize spend. Multi-identity and BRC-174 name tokens stay deferred.
+
 ### Fixed
 
 - Collect: spending a listed tip actually cancels its market listing auth (underscore outpoint filter made invalidate a no-op).

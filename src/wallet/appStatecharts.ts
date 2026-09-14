@@ -548,15 +548,37 @@ const ACTIVITY = `stateDiagram-v2
 `
 
 const IDENTITY = `stateDiagram-v2
-  direction LR
-  [*] --> ready
-  ready --> copied : COPY_KEY / ADDRESS
-  copied --> ready : idle
-  ready --> qrOpen : SHOW_QR
-  qrOpen --> ready : HIDE
-  ready : Ready
-  copied : Copied
-  qrOpen : QR open
+  direction TB
+  [*] --> browsing
+
+  state "Always on screen" as chrome {
+    root : Root identity
+    brc169 : BRC-169 handle
+  }
+
+  browsing --> composing : COMPOSE
+  composing --> confirming : REVIEW
+  confirming --> publishing : CONFIRM
+  publishing --> published : SUCCESS
+  publishing --> failure : FAIL
+  published --> browsing : DONE
+  confirming --> composing : BACK
+  composing --> browsing : CANCEL
+
+  browsing --> revokeConfirm : REVOKE
+  revokeConfirm --> revoking : CONFIRM
+  revoking --> browsing : SUCCESS
+  revoking --> failure : FAIL
+  revokeConfirm --> browsing : BACK
+  failure --> composing : BACK after create
+  failure --> revokeConfirm : BACK after revoke
+
+  note right of browsing
+    Root key and BRC-169 handle
+    are not Sigma states.
+    A persona revoke spends
+    the control output only.
+  end note
 `
 
 const SETTINGS = `stateDiagram-v2
@@ -1153,7 +1175,7 @@ export const APP_STATECHART_PAGES: AppStatechartPage[] = [
   {
     id: 'identityPanel',
     label: 'Identity',
-    caption: 'identity — keys, copy, QR',
+    caption: 'identity — root + BRC-169 on screen; Sigma persona create/revoke is the chart',
     source: IDENTITY,
   },
   {

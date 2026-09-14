@@ -11,6 +11,7 @@ import { buildMergedInputBeef, rememberBeefBinary, hydrateInputBeef } from '../b
 import { normalizeTokenId } from './types'
 import { fetchRawTxHex } from '../oneSatImport'
 import { parseOrdEnvelope } from '../ordinalOwnership'
+import { outputRequestsSigmaIdentity } from '../sigmaIdentity/request'
 import type { ActiveWallet } from '../session'
 
 const PUBKEY_RE = /^(02|03)[0-9a-f]{64}$/i
@@ -514,6 +515,7 @@ export async function enrichCreateActionForBsv21Issuer(
       for (const i of deployIdxs) {
         const out = nextOutputs[i]!
         if (!out.lockingScript) continue
+        if (outputRequestsSigmaIdentity(out)) continue
         try {
           nextOutputs[i] = {
             ...out,

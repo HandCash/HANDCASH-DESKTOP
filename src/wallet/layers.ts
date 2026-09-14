@@ -11,7 +11,7 @@
  *              + write-once on-device archive under userData/brc39-archive (never overwritten)
  * balanceView    what UI shows: owned cash = spendable managed change
  *                + unconfirmed change of live local sends (never payment outs,
- *                never 1sat / bsv21). See `balanceView.ts`.
+ *                never 1sat / bsv21 / sigma-*). See `balanceView.ts`.
  * health         chain ingest health ⊕ history replica health ⊕ bridge
  * coordinator    walletCoordinatorMachine — legal overlaps between layers (UTXO safety)
  * ```
