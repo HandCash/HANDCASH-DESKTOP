@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.139] - 2026-09-14
+
+### Fixed
+
+- Sigma identity TypeScript errors that blocked macOS/Linux/Windows release builds (duplicate `v`, missing `fundVout`, invalid payment phase).
+
 ## [1.3.138] - 2026-09-14
 
 ### Added
