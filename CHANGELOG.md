@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.153] - 2026-09-14
+
+### Fixed
+
+- CI typecheck: strip unused vault sibling credit implementation (disabled stub only).
+
 ## [1.3.152] - 2026-09-14
 
 ### Fixed
