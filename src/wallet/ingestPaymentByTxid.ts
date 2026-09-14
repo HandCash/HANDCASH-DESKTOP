@@ -13,7 +13,7 @@ import {
 import { importLegacyUtxos, type LegacyUtxo } from './legacyScan'
 import { isSweepableFunding } from './legacySweepPath'
 import { scriptPaysAddress } from './ordinalOwnership'
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceSats, getActiveWallet, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { setSyncHealth } from './walletHealth'
 import { toastSuccess } from './toast'
@@ -118,7 +118,17 @@ export async function ingestPaymentByTxid(
       })
     }
 
-    const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    invalidateBalanceReads(active.wallet)
+    let balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    if (
+      balanceBefore != null &&
+      balanceSats != null &&
+      satoshis > 0 &&
+      balanceSats <= balanceBefore
+    ) {
+      invalidateBalanceReads(active.wallet)
+      balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    }
     if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
     const gained =
       balanceBefore != null && balanceSats != null

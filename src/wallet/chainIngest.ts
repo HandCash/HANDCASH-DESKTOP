@@ -16,7 +16,7 @@
  * do that, via `releaseStaleSpendableOutputs`.
  */
 import { runChainIngest, runChainIngestDuringSpend, shouldYieldChainIngestToSpend } from './walletCoordinator'
-import { getActiveWallet, fetchBalanceSats } from './session'
+import { getActiveWallet, fetchBalanceSats, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import { reconcilePendingSends } from './pendingSend'
 import { playWalletSound } from './soundService'
@@ -594,6 +594,9 @@ export async function refreshFromChainExclusive(
   }
 
   try {
+    // Fresh read — do not reuse a pre-sweep coalesced flight while activity
+    // already shows the newly ingested receives.
+    invalidateBalanceReads(active.wallet)
     const balanceAfter = await fetchBalanceSats(active.wallet)
     publishBalance(balanceAfter)
     if (addressUnspentAfterIngest > 0 && fundingSkippedKnownAfterIngest > 0) {
@@ -697,6 +700,7 @@ async function finishEarlyForSpend(
   console.info('[chain-ingest] yielding to send')
   let balanceSats: number | null = null
   try {
+    invalidateBalanceReads(active.wallet)
     balanceSats = await fetchBalanceSats(active.wallet)
     const cur = getActiveWallet()
     if (

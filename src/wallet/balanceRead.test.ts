@@ -136,4 +136,30 @@ describe('fetchBalanceRead', () => {
     await expect(Promise.all([first, second])).resolves.toEqual([12_345, 12_345])
     expect(reads).toBe(1)
   })
+
+  it('invalidates coalesced flights so a post-credit read is fresh', async () => {
+    const { fetchBalanceSats, invalidateBalanceReads } = await import('./session')
+    let reads = 0
+    let release!: (sats: number) => void
+    const pending = new Promise<number>((resolve) => {
+      release = resolve
+    })
+    const wallet = {
+      balance: async () => {
+        reads += 1
+        if (reads === 1) return pending
+        return 99_000
+      },
+      listOutputs: async () => ({ outputs: [] }),
+    }
+
+    const stale = fetchBalanceSats(wallet as never)
+    invalidateBalanceReads(wallet)
+    const fresh = fetchBalanceSats(wallet as never)
+    release(12_345)
+
+    await expect(stale).resolves.toBe(12_345)
+    await expect(fresh).resolves.toBe(99_000)
+    expect(reads).toBe(2)
+  })
 })

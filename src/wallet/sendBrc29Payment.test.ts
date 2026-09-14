@@ -69,6 +69,7 @@ vi.mock('./session', () => ({
     },
   }),
   fetchBalanceSats: async () => 90_000,
+  invalidateBalanceReads: () => {},
   bumpBalanceAfterHeal: () => {},
 }))
 
@@ -346,6 +347,7 @@ describe('internalizeBrc29Payment', () => {
         wallet: { internalizeAction },
       }),
       fetchBalanceSats: async () => 91_000,
+      invalidateBalanceReads: () => {},
     }))
     vi.doMock('./beefCache', () => ({
       getBeefForTxidCached: async () => ({ toBinaryAtomic }),

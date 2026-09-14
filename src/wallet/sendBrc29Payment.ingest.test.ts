@@ -32,6 +32,7 @@ vi.mock('./session', () => ({
     wallet: { internalizeAction },
   }),
   fetchBalanceSats: () => fetchBalanceSats(),
+  invalidateBalanceReads: () => {},
 }))
 
 vi.mock('./legacyScan', () => ({

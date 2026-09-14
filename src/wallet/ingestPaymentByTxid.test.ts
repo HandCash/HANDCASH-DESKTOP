@@ -74,6 +74,7 @@ describe('ingestPaymentByTxid', () => {
         services: {},
       }),
       fetchBalanceSats: async () => 5_000,
+      invalidateBalanceReads: () => {},
     }))
 
     const { ingestPaymentByTxid } = await import('./ingestPaymentByTxid')

@@ -35,6 +35,7 @@ const mockShouldYieldChainIngestToSpend = vi.fn(() => false)
 vi.mock('./session', () => ({
   getActiveWallet: () => mockGetActiveWallet(),
   fetchBalanceSats: (...args: unknown[]) => mockFetchBalanceSats(...args),
+  invalidateBalanceReads: () => {},
 }))
 
 vi.mock('./legacyScan', () => ({

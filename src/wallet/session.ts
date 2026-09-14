@@ -526,11 +526,8 @@ let lastBalanceBreakdown = ''
 
 /** Drop cached balance breakdown so the next read re-logs after a heal promoted rows. */
 export function bumpBalanceAfterHeal(): void {
-  lastBalanceBreakdown = ''
   const session = getActiveWallet()
-  if (session?.wallet && typeof session.wallet === 'object') {
-    spendableBalanceCache.delete(session.wallet)
-  }
+  invalidateBalanceReads(session?.wallet)
   // Heal used to only clear caches — the hero stayed on a poisoned high figure
   // because nothing re-published. Force a full display read + UI refresh.
   if (!session?.wallet) return
@@ -584,6 +581,29 @@ const balanceReadFlights = new WeakMap<
   object,
   Partial<Record<'display' | 'confirmed', Promise<BalanceRead>>>
 >()
+
+/**
+ * Drop in-flight and cached balance reads so the next fetch cannot reuse a
+ * pre-mutation total (e.g. Dashboard sync started before BRC-29 internalize).
+ * Settled activity + stuck hero was this race: complete painted while the
+ * coalesced read still returned the old figure.
+ */
+export function invalidateBalanceReads(
+  wallet?: Wallet | WalletInterface | object | null,
+): void {
+  lastBalanceBreakdown = ''
+  const session = getActiveWallet()
+  const target =
+    wallet && typeof wallet === 'object'
+      ? wallet
+      : session?.wallet && typeof session.wallet === 'object'
+        ? session.wallet
+        : null
+  if (!target) return
+  spendableBalanceCache.delete(target)
+  balanceReadFlights.delete(target)
+}
+
 
 export function lastKnownBalance(): number | null {
   return lastKnownBalanceSats

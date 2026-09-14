@@ -27,7 +27,7 @@ import {
   clearPendingSend,
   completePendingSend,
 } from './pendingSend'
-import { fetchBalanceSats, getActiveWallet } from './session'
+import { fetchBalanceSats, getActiveWallet, invalidateBalanceReads } from './session'
 import { publishDisplayBalanceRefresh } from './displayBalanceRefresh'
 import {
   describeInsufficientFunds,
@@ -832,7 +832,19 @@ async function internalizeBrc29PaymentOnce(opts: {
 
     scheduleHistoryBackupPush('internalizeAction')
     const balanceStarted = Date.now()
-    const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    // Do not join a pre-internalize coalesced read — that left activity
+    // "Received" while the hero stayed on the old total.
+    invalidateBalanceReads(active.wallet)
+    let balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    if (
+      balanceBefore != null &&
+      balanceSats != null &&
+      satoshis > 0 &&
+      balanceSats <= balanceBefore
+    ) {
+      invalidateBalanceReads(active.wallet)
+      balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
+    }
     markIngest(`balance ${Date.now() - balanceStarted}ms`)
     if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
 
@@ -868,6 +880,7 @@ async function internalizeBrc29PaymentOnce(opts: {
       if (satoshis > 0 || hasActivityTxid(id, 'earned')) {
         noteInboundReceiveComplete({ txid: id, sats: satoshis })
       }
+      invalidateBalanceReads(active.wallet)
       const balanceSats = await fetchBalanceSats(active.wallet).catch(() => null)
       if (balanceSats != null) publishDisplayBalanceRefresh(balanceSats, startedIk)
       markInboundPaymentStatus(id, 'Received')
