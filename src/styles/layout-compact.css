@@ -67,8 +67,8 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   padding-right: max(12px, env(safe-area-inset-right, 0px));
 }
 
-/* Mobile titlebar: mark only on the left; scan/lock never leave the viewport;
-   sync pill shrinks/ellipsizes into the remaining space. */
+/* Mobile titlebar: keep HandCash wordmark + version labels; scan/lock never
+   leave the viewport; sync pill is what shrinks first. */
 html:is(.platform-mobile, .layout-compact) .titlebar {
   gap: 6px;
   min-width: 0;
@@ -78,14 +78,24 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar .brand {
-  flex: 0 1 auto;
-  min-width: 34px;
-  max-width: 40%;
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: none;
   overflow: hidden;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar .brand-wordmark {
-  display: none;
+  display: flex;
+  min-width: 0;
+  overflow: hidden;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-name,
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-sub {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 100%;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end {
@@ -93,10 +103,9 @@ html:is(.platform-mobile, .layout-compact) .titlebar-end {
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: none;
-  flex-shrink: 1;
+  max-width: min(58%, 13.5rem);
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-actions {
