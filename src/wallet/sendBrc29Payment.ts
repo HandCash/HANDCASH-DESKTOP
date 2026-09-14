@@ -488,84 +488,6 @@ export async function sendBrc29ToIdentityKey(opts: {
               chart.send({ type: 'FAIL', error: 'peerNotify expected' })
               throw new Error('brc29SendMachine peerNotify without settle path')
             }
-            // Same-device vault sibling (BRC-146): credit their toolbox IDB now so
-            // switching accounts paints local UTXOs — do not wait on chain ingest.
-            let vaultSiblingCredited = false
-            try {
-              const { PrivateKey } = await import('@bsv/sdk')
-              const {
-                ensureVaultAccounts,
-                findVaultAccountByIdentityKey,
-              } = await import('./vaultAccounts')
-              const masterIk = PrivateKey.fromHex(active.masterRootKeyHex)
-                .toPublicKey()
-                .toString()
-              ensureVaultAccounts(active.masterRootKeyHex, masterIk)
-              const sibling = findVaultAccountByIdentityKey(
-                masterIk,
-                settlePath.recipientIdentityKey,
-              )
-              if (
-                sibling &&
-                sibling.index !== active.accountIndex &&
-                atomicBeef?.length
-              ) {
-                setPaymentProgress(
-                  'finishing',
-                  'Crediting payment to vault wallet',
-                )
-                const { creditVaultSiblingBrc29Payment } = await import(
-                  './vaultSiblingCredit'
-                )
-                const credited = await creditVaultSiblingBrc29Payment({
-                  active,
-                  account: sibling,
-                  txid,
-                  remittance,
-                  senderIdentityKey: active.identityKey,
-                  atomicBeef,
-                  satoshis,
-                })
-                if (credited.accepted) {
-                  vaultSiblingCredited = true
-                  selfReceived = true
-                  peerDelivered = true
-                  chart.send({ type: 'REMIT_IN_BOX' })
-                  recordTransactionStage('peer_delivered', {
-                    flow: 'brc29',
-                    txid,
-                  })
-                  recordTransactionStage('completed', { flow: 'brc29', txid })
-                  console.info(
-                    `[brc29] vault sibling account ${sibling.index} credited locally`,
-                  )
-                  // Temp SetupClient must not leave the sender with reserved
-                  // batches / a hanging finishing phase.
-                  try {
-                    const { abortReservedActionBatches } = await import(
-                      './actionReview'
-                    )
-                    await abortReservedActionBatches(active, { budgetMs: 800 })
-                  } catch {
-                    /* optional */
-                  }
-                  // Re-read sender spendable after sibling temp session closes.
-                  balanceSats = Math.max(
-                    0,
-                    (await fetchBalanceSats(active.wallet).catch(() => balanceSats)) ||
-                      0,
-                  )
-                }
-              }
-            } catch (err) {
-              console.warn(
-                '[brc29] vault sibling local credit skipped',
-                err instanceof Error ? err.message : String(err),
-              )
-            }
-            if (vaultSiblingCredited) {
-              // Local IDB already has the UTXO — skip messagebox / outbox for this device.
-            } else {
             setPaymentProgress('finishing', 'Notifying recipient')
             const { listFriends } = await import('./friends')
             const friend =
@@ -629,7 +551,6 @@ export async function sendBrc29ToIdentityKey(opts: {
                 blockerCode: 'peer_delivery_error',
               })
             }
-            } // end !vaultSiblingCredited
 
           }
 

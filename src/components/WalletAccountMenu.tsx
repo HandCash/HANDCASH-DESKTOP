@@ -109,35 +109,32 @@ export function WalletAccountMenu({
         address: next.address,
         chain: next.chain,
       }
-      // Instant paint from per-identity trusted snapshot — do not block the
-      // hero on fetchBalance / sibling SetupClient / chain ingest.
-      const trusted = readTrustedBalance(next.identityKey, next.chain) ?? 0
+      // Local toolbox UTXOs only (confirmed spendable) — never a stale/poisoned
+      // trusted snapshot that sibling-credit may have doubled.
+      let balanceSats =
+        readTrustedBalance(next.identityKey, next.chain) ?? 0
+      try {
+        balanceSats = await fetchBalanceSats(next.wallet, {
+          creditUnconfirmed: false,
+        })
+        writeTrustedBalance(next.identityKey, next.chain, balanceSats)
+      } catch (err) {
+        console.warn(
+          '[vault-account] local balance read failed — using trusted fallback',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
       playWalletSound('soft')
-      onAccountSwitched(profile, trusted)
+      onAccountSwitched(profile, balanceSats)
       setOpen(false)
       setBusy(false)
-      // Background: local toolbox balance, then optional chain ingest.
-      void (async () => {
-        try {
-          const balanceSats = await fetchBalanceSats(next.wallet)
-          writeTrustedBalance(next.identityKey, next.chain, balanceSats)
-          if (getActiveWallet()?.identityKey === next.identityKey) {
-            onAccountSwitched(profile, balanceSats)
-          }
-        } catch (err) {
-          console.warn(
-            '[vault-account] local balance read failed — keeping trusted',
-            err instanceof Error ? err.message : String(err),
-          )
-        }
-        if (getActiveWallet()?.identityKey !== next.identityKey) return
-        void refreshFromChain({ announceReceive: true }).catch((err) => {
-          console.warn(
-            '[vault-account] post-switch chain ingest failed',
-            err instanceof Error ? err.message : String(err),
-          )
-        })
-      })()
+      // Soft background ingest only — do not gate the hero on network.
+      void refreshFromChain({ announceReceive: true }).catch((err) => {
+        console.warn(
+          '[vault-account] post-switch chain ingest failed',
+          err instanceof Error ? err.message : String(err),
+        )
+      })
     } catch (err) {
       toastError('Switch wallet', err instanceof Error ? err.message : String(err))
       setBusy(false)
