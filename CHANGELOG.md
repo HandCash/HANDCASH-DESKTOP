@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.158] - 2026-09-14
+
+### Changed
+
+- Hero identity: full \$handle, clearer caret/copy spacing on mobile.
+- Tip ingest: Arcade is validity truth (no ghost on explorer 404).
+- Balance: invalidate stale coalesced reads after ingest; promote live change onto spendable UTXOs once.
+- Sync: stop 30s full UTXO rescans driven by collectables-awaiting-origin.
+
 ## [1.3.157] - 2026-09-14
 
 ### Changed
