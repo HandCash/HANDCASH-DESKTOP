@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.154] - 2026-09-14
+
+### Fixed
+
+- Mobile sync pill no longer too wide / off-screen; capped and shrinkable with ellipsis.
+
 ## [1.3.153] - 2026-09-14
 
 ### Fixed
