@@ -217,7 +217,10 @@ async function processTxidBatch(
         // failUnsent refuses live unmined/sending rows; keep their change.
         if (local) {
           const markedFailed = await failUnsentLocalTx(txid)
-          if (!markedFailed) changeKept += await keepChangeOfSignedTx(txid)
+          if (!markedFailed) {
+            await sealSpentInputsOfSignedTx(txid, undefined)
+            changeKept += await keepChangeOfSignedTx(txid)
+          }
         }
         continue
       }

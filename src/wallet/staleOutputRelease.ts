@@ -498,8 +498,10 @@ export async function restoreOnChainLocalTx(txid: string): Promise<boolean> {
     console.info(
       `[stale-output] restored on-chain local tx ${id.slice(0, 12)} ${looked.status} → unproven`,
     )
-    await keepChangeOfSignedTx(id)
+    // Seal spent inputs first — keep-then-seal left inputs spendable while
+    // change was already counted (same ~2× class as sibling abort).
     await sealSpentInputsOfSignedTx(id, undefined)
+    await keepChangeOfSignedTx(id)
     return true
   } catch (err) {
     console.warn('[stale-output] restore skipped', id.slice(0, 12), err)
@@ -1086,6 +1088,7 @@ export async function promotePendingLocalChangeOutputs(opts?: {
 
   const chain = localOnly ? undefined : active?.chain
   let promoted = 0
+  let sealedTotal = 0
   for (const txid of txids) {
     if (!forSpendChain && shouldYieldChainIngestToSpend()) break
     // Arcade already accepted this spend — Bitails/WoC 404 is lag, not a
@@ -1108,14 +1111,21 @@ export async function promotePendingLocalChangeOutputs(opts?: {
         )
       }
     }
+    // Same order as utxoHealFromHistory: seal spent inputs FIRST, then keep
+    // change. Promoting change while inputs are still spendable is the classic
+    // ~2× balance (sibling-abort / Arcade-pin promote without reseal).
+    // sealSpentInputsOfSignedTx also keepChange's when it finds inputs; the
+    // second keep is a no-op once change is already spendable.
+    const sealed = await sealSpentInputsOfSignedTx(txid, undefined)
+    sealedTotal += sealed
     promoted += await keepChangeOfSignedTx(txid)
   }
-  if (promoted > 0) {
+  if (promoted > 0 || sealedTotal > 0) {
     console.info(
-      `[stale-output] promoted ${promoted} pending local change output(s) from ${txids.size} live tx(s)`,
+      `[stale-output] promoted ${promoted} pending local change output(s), sealed ${sealedTotal} input(s) from ${txids.size} live tx(s)`,
     )
-    // Foundation: hero = spendable UTXOs. We just flipped change to spendable —
-    // force a fresh Wallet.balance() publish, do not reuse a coalesced read.
+    // Foundation: hero = spendable UTXOs. Toolbox just changed — force a
+    // fresh Wallet.balance() publish, do not reuse a coalesced read.
     try {
       const { bumpBalanceAfterHeal } = await import('./session')
       bumpBalanceAfterHeal()
