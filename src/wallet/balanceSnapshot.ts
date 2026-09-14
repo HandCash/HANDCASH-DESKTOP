@@ -95,12 +95,21 @@ export function shouldKeepTrustedBalance(
 
 /**
  * Confirmed-only toolbox reads omit pending change from live local sends. They
- * must not downgrade the hero or trusted snapshot when a higher display figure
- * is already showing.
+ * must not downgrade the hero while a payment is in flight and the display
+ * still includes that change.
+ *
+ * Without the in-flight gate, a poisoned high trusted/display figure (e.g.
+ * after a same-vault sibling credit bug) permanently blocked heal and refresh
+ * from painting the correct lower total.
  */
 export function shouldKeepDisplayBalanceOnConfirmedRead(
   displayedSats: number,
   confirmedSats: number,
+  paymentInFlight = false,
 ): boolean {
-  return displayedSats > 0 && confirmedSats < displayedSats
+  return (
+    paymentInFlight &&
+    displayedSats > 0 &&
+    confirmedSats < displayedSats
+  )
 }

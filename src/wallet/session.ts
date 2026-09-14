@@ -531,6 +531,22 @@ export function bumpBalanceAfterHeal(): void {
   if (session?.wallet && typeof session.wallet === 'object') {
     spendableBalanceCache.delete(session.wallet)
   }
+  // Heal used to only clear caches — the hero stayed on a poisoned high figure
+  // because nothing re-published. Force a full display read + UI refresh.
+  if (!session?.wallet) return
+  const wallet = session.wallet
+  const identityKey = session.identityKey
+  const chain = session.chain
+  void (async () => {
+    try {
+      const sats = await fetchBalanceSats(wallet)
+      writeTrustedBalance(identityKey, chain, sats)
+      const { publishDisplayBalanceRefresh } = await import('./displayBalanceRefresh')
+      publishDisplayBalanceRefresh(sats, identityKey)
+    } catch (err) {
+      console.warn('[balance] post-heal display refresh skipped', err)
+    }
+  })()
 }
 
 /** Promote pending local change so the next spend can use it. Does not run UTXO heal. */

@@ -48,6 +48,7 @@ import {
 } from './wallet/balanceSnapshot'
 import { DISPLAY_BALANCE_REFRESH_EVENT, publishDisplayBalanceRefresh } from './wallet/displayBalanceRefresh'
 import { shouldAutoUnlock } from './wallet/deviceLockPrefs'
+import { getPaymentProgress } from './wallet/paymentProgress'
 
 const AUTO_LOCK_IDLE_MS = 15 * 60 * 1000
 
@@ -289,12 +290,14 @@ export function App() {
         console.info('[balance] kept trusted balance during recompose')
         return
       }
-      // Confirmed-only reads omit pending change from live local sends. They must
-      // not paint a lower hero while the display total still includes that change.
+      // Confirmed-only reads omit pending change from live local sends. Only
+      // hold the higher display while a payment is actually in flight — otherwise
+      // a poisoned high figure blocks heal/refresh forever.
       if (
         shouldKeepDisplayBalanceOnConfirmedRead(
           snapshot.context.balanceSats,
           balanceSats,
+          getPaymentProgress().phase !== 'idle',
         )
       ) {
         console.info('[balance] kept display total — confirmed read omitted pending change')

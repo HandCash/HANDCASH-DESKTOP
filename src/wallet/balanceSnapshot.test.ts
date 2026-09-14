@@ -72,10 +72,12 @@ describe('cold-start trusted balance', () => {
     expect(shouldKeepTrustedBalance(0, 0, true)).toBe(false)
   })
 
-  it('blocks confirmed-only reads from downgrading a higher display balance', () => {
-    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 3_000)).toBe(true)
-    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 15_000)).toBe(false)
-    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 20_000)).toBe(false)
-    expect(shouldKeepDisplayBalanceOnConfirmedRead(0, 0)).toBe(false)
+  it('blocks confirmed-only reads from downgrading display only while a payment is in flight', () => {
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 3_000, true)).toBe(true)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 3_000, false)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 3_000)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 15_000, true)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(15_000, 20_000, true)).toBe(false)
+    expect(shouldKeepDisplayBalanceOnConfirmedRead(0, 0, true)).toBe(false)
   })
 })
