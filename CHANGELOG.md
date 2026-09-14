@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.152] - 2026-09-14
+
+### Fixed
+
+- Doubled balance after v1.3.146 sibling credit: heal reseals spent inputs before promoting change; sibling credit hard-disabled.
+
 ## [1.3.151] - 2026-09-14
 
 ### Fixed
