@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.148] - 2026-09-14
+
+### Fixed
+
+- Revert titlebar to prior layout; sync status pill capped so it cannot squish chrome.
+
 ## [1.3.147] - 2026-09-14
 
 ### Fixed
