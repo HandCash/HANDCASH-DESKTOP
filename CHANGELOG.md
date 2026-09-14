@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.149] - 2026-09-14
+
+### Fixed
+
+- Remove same-vault sibling-credit from BRC-29 send (was failing txs / doubling balance).
+- Account switch paints from local toolbox spendable, not poisoned trusted snapshot.
+
 ## [1.3.148] - 2026-09-14
 
 ### Fixed
