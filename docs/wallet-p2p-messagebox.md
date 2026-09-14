@@ -103,7 +103,7 @@ Standard idea: **BRC-33 PeerServ** (send / list / ack), addressed via **BRC-169*
 - Requiring messagebox for BSV or collectable **custody**.  
 - Treating BRC-CLOUD as the only legal messagebox.  
 - Calling BRC-150 remittance “what peers receive” in UI or docs.  
-- Direct stranger device↔device sockets (NAT); BRC-33 exists because of that.
+- Replacing BRC-33 with a raw socket. A signed IPv6 session (draft BRC-246) may upgrade a live pair after the box has exchanged a short-lived offer. The box stays the rendezvous and the offline inbox. Custody stays on the chain.
 
 ---
 

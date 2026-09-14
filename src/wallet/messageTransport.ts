@@ -11,7 +11,7 @@
  * Bodies remain plaintext / `handcash-message:` app payloads (BRC-169 §7
  * encrypted envelopes deferred). `/files` is a HandCash extension.
  */
-import { Hash, Utils } from '@bsv/sdk'
+import { Hash, PrivateKey, Utils } from '@bsv/sdk'
 import {
   DEFAULT_BRC_CLOUD_BASE_URL,
   DEFAULT_METANET_HANDLES_BASE_URL,
@@ -36,6 +36,16 @@ import type {
   MarketSettlementReceipt,
 } from './marketListing'
 import { bytesToBase64 } from './base64Binary'
+import { installElectronDirectSession } from './directSession/bridge'
+import {
+  ensureDirectListener,
+  ingestSessionOfferBody,
+  sessionOfferMessage,
+  setDirectInboundHandler,
+  setDirectSessionIdentity,
+  tryDirectDeliver,
+  warmDirectSession,
+} from './directSession/session'
 
 export { bytesToBase64 }
 
@@ -210,7 +220,7 @@ export async function deliverMarketSettlementWire(args: {
     body,
     peerId: args.recipientIdentityKey,
   })
-  return sent.delivered === 'cloud'
+  return deliveryReachedPeer(sent.delivered)
 }
 
 function normalizeBase(url: string): string {
@@ -264,6 +274,10 @@ export function isMessageboxFileUrl(url: string): boolean {
   } catch {
     return false
   }
+}
+
+export function deliveryReachedPeer(delivered: 'local' | 'cloud' | 'direct'): boolean {
+  return delivered === 'cloud' || delivered === 'direct'
 }
 
 export type OutboundEnvelope = {
@@ -546,7 +560,7 @@ export function decodeMessageBody(body: string): {
 }
 
 export type PeerBeefNotifyResult = {
-  delivered: 'local' | 'cloud'
+  delivered: 'local' | 'cloud' | 'direct'
   /** True when Atomic BEEF rode along in sendMessage (payee can broadcast). */
   beefInBox: boolean
 }
@@ -636,11 +650,30 @@ export async function uploadChatFile(args: {
   })
 }
 
-/** Deliver outbound text to the recipient's messagebox; always returns local-ok. */
+function armDirectSession(env: { rootKeyHex: string; senderIdentityKey: string }): void {
+  installElectronDirectSession()
+  setDirectSessionIdentity({
+    rootKeyHex: env.rootKeyHex,
+    identityKey: env.senderIdentityKey,
+  })
+  setDirectInboundHandler((sender, body) => {
+    void acceptDirectBody(sender, body)
+  })
+}
+
+/** Deliver outbound text. A live session skips the box; otherwise the box is the path. */
 export async function deliverOutbound(
   env: OutboundEnvelope,
-): Promise<{ delivered: 'local' | 'cloud'; messagebox: string }> {
+): Promise<{ delivered: 'local' | 'cloud' | 'direct'; messagebox: string }> {
   const box = normalizeMessageboxBase(env.messagebox)
+  armDirectSession(env)
+  if (env.body) {
+    const direct = await tryDirectDeliver({
+      recipientIdentityKey: env.recipientIdentityKey,
+      body: env.body,
+    })
+    if (direct === 'direct') return { delivered: 'direct', messagebox: box }
+  }
   const url = `${box}/sendMessage`
   try {
     const res = await fetch(url, {
@@ -659,7 +692,10 @@ export async function deliverOutbound(
         },
       }),
     })
-    if (res.ok) return { delivered: 'cloud', messagebox: box }
+    if (res.ok) {
+      void postSessionOffer(env, box)
+      return { delivered: 'cloud', messagebox: box }
+    }
     const detail = await res.text().catch(() => '')
     console.warn(
       '[messagebox] sendMessage failed',
@@ -675,6 +711,93 @@ export async function deliverOutbound(
     )
   }
   return { delivered: 'local', messagebox: box }
+}
+
+async function postSessionOffer(env: OutboundEnvelope, box: string): Promise<void> {
+  await ensureDirectListener()
+  const offer = sessionOfferMessage(env.recipientIdentityKey)
+  if (!offer) return
+  try {
+    await fetch(`${box}/sendMessage`, {
+      method: 'POST',
+      headers: signedMessageboxHeaders(env.rootKeyHex, 'sendMessage', {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+      }),
+      body: JSON.stringify({
+        message: {
+          recipient: env.recipientIdentityKey,
+          messageBox: 'inbox',
+          body: offer,
+        },
+      }),
+    })
+  } catch {
+    /* the payload already landed; the offer can ride the next box send */
+  }
+}
+
+function acceptDirectBody(sender: string, body: string): void {
+  if (ingestSessionOfferBody(body)) {
+    warmDirectSession(sender)
+    return
+  }
+  const decoded = decodeMessageBody(body)
+  const senderKey = sender.trim().toLowerCase()
+  const inlineBeef = decodeBeefB64(decoded.meta?.beefB64)
+  if (inlineBeef && typeof decoded.meta?.txid === 'string') {
+    rememberBeefBinary(decoded.meta.txid.trim().toLowerCase(), inlineBeef)
+  }
+  appendMessage(senderKey, {
+    direction: 'in',
+    kind: decoded.kind,
+    text: decoded.text,
+    createdAt: Date.now(),
+    meta: {
+      ...(decoded.meta ?? {}),
+      identityKey: senderKey,
+      origin: 'direct',
+    },
+  })
+  const txid = decoded.meta?.txid?.trim().toLowerCase()
+  if (
+    txid &&
+    /^[0-9a-f]{64}$/.test(txid) &&
+    (decoded.kind === 'tip' || decoded.kind === 'pay-sent') &&
+    !isGhostTxSuppressed(txid)
+  ) {
+    noteInboundReceivePending({
+      txid,
+      sats: decoded.meta?.sats,
+      item: decoded.meta?.item === true || undefined,
+      itemName: decoded.meta?.memo?.trim() || undefined,
+      token: decoded.meta?.asset?.kind === 'fungible' ? decoded.meta.asset : undefined,
+    })
+    if (typeof document !== 'undefined') {
+      document.dispatchEvent(
+        new CustomEvent('handcash:payment-hint', {
+          detail: {
+            txids: [txid],
+            hints: [
+              {
+                txid,
+                senderIdentityKey: senderKey,
+                satoshis: decoded.meta?.sats,
+                brc29: decoded.meta?.brc29,
+                beefUrl: decoded.meta?.attachment?.url,
+                tx: decodeBeefB64(decoded.meta?.beefB64),
+                item: decoded.meta?.item === true || undefined,
+                itemName: decoded.meta?.memo?.trim() || undefined,
+                itemOrigin: decoded.meta?.itemOrigin,
+                itemCollectionId: decoded.meta?.itemCollectionId,
+                asset: decoded.meta?.asset,
+              },
+            ],
+          },
+        }),
+      )
+    }
+  }
 }
 
 /** Poll own messagebox for inbound; append when the sender maps to a friend. */
@@ -753,8 +876,24 @@ export async function pollInboundTipHints(args: {
     let tipHints = 0
     const paymentTxids: string[] = []
     const paymentHints: InboundPaymentHint[] = []
+    try {
+      armDirectSession({
+        rootKeyHex: args.rootKeyHex,
+        senderIdentityKey: PrivateKey.fromHex(args.rootKeyHex.trim())
+          .toPublicKey()
+          .toString(),
+      })
+    } catch {
+      /* locked or unreadable key — inbox parse still runs */
+    }
+    void ensureDirectListener()
     for (const m of list) {
       const senderKey = listedSender(m)
+      if (ingestSessionOfferBody(m.body)) {
+        warmDirectSession(senderKey)
+        if (m.messageId) ackIds.push(String(m.messageId))
+        continue
+      }
       const encodedMarketWire = decodeMarketSettlementWire(m.body)
       if (encodedMarketWire) {
         try {
@@ -939,8 +1078,8 @@ export async function notifyPeerItemIncoming(args: {
       body: packed.body,
       peerId: recipient,
     })
-    if (delivered.delivered === 'cloud') {
-      return { delivered: 'cloud', beefInBox: packed.beefInBox }
+    if (deliveryReachedPeer(delivered.delivered)) {
+      return { delivered: delivered.delivered, beefInBox: packed.beefInBox }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }
@@ -1013,8 +1152,8 @@ export async function notifyPeerBrc29Payment(args: {
       body: packed.body,
       peerId: recipient,
     })
-    if (delivered.delivered === 'cloud') {
-      return { delivered: 'cloud', beefInBox: packed.beefInBox }
+    if (deliveryReachedPeer(delivered.delivered)) {
+      return { delivered: delivered.delivered, beefInBox: packed.beefInBox }
     }
     await new Promise((r) => setTimeout(r, 400 * 2 ** attempt))
   }

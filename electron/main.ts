@@ -25,6 +25,7 @@ import {
   listLanIpv4Addresses,
   startDevicePeerServer,
 } from './devicePeerServer.js'
+import { registerDirectSessionIpc } from './directSessionServer.js'
 import {
   deviceAuthClear,
   deviceAuthEnroll,
@@ -521,6 +522,7 @@ async function ensureBridge(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  registerDirectSessionIpc(() => mainWindow)
   // Init updater before the window so the first getUpdateStatus() has the real version
   // (not the default 0.0.0) when Settings mounts.
   initAutoUpdater({

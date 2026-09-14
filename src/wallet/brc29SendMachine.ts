@@ -22,6 +22,7 @@ export type Brc29SendEvent =
   | { type: 'BROADCASTED'; txid: string }
   | { type: 'BEEF_IN_BOX' }
   | { type: 'REMIT_IN_BOX' }
+  | { type: 'DIRECT' }
   | { type: 'BOX_UNREACHABLE' }
   | { type: 'SETTLED' }
   | { type: 'FAIL'; error: string }
@@ -103,6 +104,7 @@ export const brc29SendMachine = setup({
       on: {
         BEEF_IN_BOX: 'done',
         REMIT_IN_BOX: 'done',
+        DIRECT: 'done',
         BOX_UNREACHABLE: 'done',
         FAIL: { target: 'failed', actions: 'setError' },
       },

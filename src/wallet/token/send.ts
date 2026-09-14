@@ -757,7 +757,7 @@ export async function sendColourCoins(args: {
             asset,
             atomicBeef: atomic,
           })
-          if (delivered.delivered === 'cloud') {
+          if (delivered.delivered === 'cloud' || delivered.delivered === 'direct') {
             recordTransactionStage('peer_delivered', {
               flow: 'token_transfer',
               txid,

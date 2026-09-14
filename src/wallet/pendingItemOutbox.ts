@@ -105,7 +105,7 @@ export async function flushPendingItemOutbox(args: {
         asset: row.asset,
         atomicBeef,
       })
-      if (result.delivered === 'cloud') {
+      if (result.delivered === 'cloud' || result.delivered === 'direct') {
         recordTransactionStage('peer_delivered', {
           flow: row.flow ?? 'item_transfer',
           traceId: row.traceId,

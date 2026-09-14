@@ -15,7 +15,7 @@ Full plan: [`docs/wallet-p2p-messagebox.md`](../../docs/wallet-p2p-messagebox.md
   - **C** convenience (GorillaPool content, handle resolve)
 - **BRC-150 remittance** (`customInstructions.provenance`) is **local** — does not travel on P2PKH. It is the **only** item authenticity/identity model; **BRC-156 (soft-latch) was cancelled and fully removed** — there is no on-chain latch companion.
 - Item tips are plain P2PKH; item identity/authenticity is the BRC-150 offline tip→origin proof, not on-chain state.
-- **Messagebox** = BRC-33 store-and-forward. **BRC-CLOUD is a convenience host**, not required for custody. Prefer resolved `messagebox` URL from handle resolve; do not hardcode our cloud as the only box forever.
+- **Messagebox** = BRC-33 store-and-forward. **BRC-CLOUD is a convenience host**, not required for custody. Prefer resolved `messagebox` URL from handle resolve; do not hardcode our cloud as the only box forever. A live pair may upgrade to a signed IPv6 socket (draft BRC-246, `directSession/`). The box stays the rendezvous and the offline inbox. Never put the endpoint in a handle record.
 - Device peer / BRC-39 = same-identity sync, not counterparty P2P.
 
 ## When changing send / receive / chat

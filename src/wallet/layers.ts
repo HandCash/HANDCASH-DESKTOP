@@ -41,7 +41,9 @@
  *     (`confirmBroadcast`) so the tx is on-chain even if the payee never
  *     broadcasts. A user retry re-enters `confirmBroadcast` with the same signed
  *     BEEF only when the original tip remains unspent; it never creates a
- *     competing spend. Remittance ± inline BEEF on `sendMessage`.
+ *     competing spend. Remittance ± inline BEEF on `sendMessage`. A live pair
+ *     may skip the box for that session after a signed IPv6 offer (draft
+ *     BRC-246, `directSession/`). The box stays the rendezvous and the offline inbox.
  *   - **1Sat market** (`marketListing.ts` + `marketSettlement.ts`): listing
  *     spends the tip into a re-tipped item + BRC-48 offer. Settlement is one
  *     atomic tx (item0 + offer1). Abort is forbidden after `signAction`; a later

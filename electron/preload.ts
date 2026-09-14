@@ -203,6 +203,33 @@ const handcash = {
   installUpdate: () => ipcRenderer.invoke('updater:install') as Promise<void>,
   onUpdateStatus: (handler: (status: UpdateStatus) => void) =>
     subscribe('updater:status', handler),
+  directSessionListen: () =>
+    ipcRenderer.invoke('direct-session:listen') as Promise<{ host: string; port: number } | null>,
+  directSessionConnect: (args: {
+    host: string
+    port: number
+    timeoutMs: number
+    hello: string
+  }) =>
+    ipcRenderer.invoke('direct-session:connect', args) as Promise<
+      | { ok: true; remoteHello: string; socketId: string }
+      | { ok: false; immediate: boolean }
+    >,
+  directSessionSend: (args: { socketId: string; body: string; timeoutMs: number }) =>
+    ipcRenderer.invoke('direct-session:send', args) as Promise<boolean>,
+  directSessionClose: (socketId: string) =>
+    ipcRenderer.invoke('direct-session:close', socketId) as Promise<void>,
+  directSessionAccept: (args: { socketId: string; welcome: string }) =>
+    ipcRenderer.invoke('direct-session:accept', args) as Promise<void>,
+  directSessionReject: (socketId: string) =>
+    ipcRenderer.invoke('direct-session:reject', socketId) as Promise<void>,
+  onDirectSessionHello: (handler: (event: { socketId: string; hello: string }) => void) =>
+    subscribe('direct-session-hello', handler),
+  onDirectSessionMessage: (
+    handler: (event: { socketId: string; sender: string; body: string }) => void,
+  ) => subscribe('direct-session-message', handler),
+  onDirectSessionClosed: (handler: (event: { socketId: string }) => void) =>
+    subscribe('direct-session-closed', handler),
   getOmarchyTheme: () => ipcRenderer.invoke('theme:get-omarchy'),
   onOmarchyTheme: (handler: (payload: unknown) => void) =>
     subscribe('omarchy:theme', handler),
