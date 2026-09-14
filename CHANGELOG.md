@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.156] - 2026-09-14
+
+### Changed
+
+- Tip ingest treats Arcade as validity truth — Bitails/WoC 404 no longer ghosts inbound tips or restores Arcade-accepted spends.
+
 ## [1.3.155] - 2026-09-14
 
 ### Fixed
