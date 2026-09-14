@@ -3693,13 +3693,14 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-hero-identity {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  max-width: min(70%, 420px);
-  /* Never compress below the label+caret — clipping hid $cryptokang as $cryptoka */
-  flex-shrink: 0;
-  min-width: auto;
+  gap: 4px;
+  /* Content-sized: max-width here made the caret overflow onto the copy control
+     once the full $handle was shown. Long keys are mid-truncated in JS. */
+  width: max-content;
+  max-width: none;
+  flex: 0 0 auto;
   margin: 0;
-  padding: 0 2px 0 8px;
+  padding: 0 0 0 8px;
   border: 0;
   background: transparent;
   color: var(--hc-text);
@@ -3712,12 +3713,8 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-identity span {
-  /* Handles and mid-truncated IDs are short — size to content. Do not
-     flex-grow + overflow-clip: that ate the last 2–3 glyphs of $handles
-     (looked like caret overlap). Long keys are mid-truncated in JS. */
+  /* Size to the label. JS mid-truncates long identity keys; $handles stay full. */
   flex: 0 0 auto;
-  min-width: auto;
-  overflow: visible;
   white-space: nowrap;
 }
 
@@ -3731,9 +3728,9 @@ li[data-aeon-state='failed'] .history-progress-range {
   /* Static so the dropdown positions against .wallet-hero-identity-row */
   position: static;
   display: inline-flex;
-  max-width: min(70%, 420px);
-  flex-shrink: 0;
-  min-width: auto;
+  flex: 0 0 auto;
+  width: max-content;
+  max-width: none;
 }
 
 .wallet-account-caret {
@@ -3747,11 +3744,13 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-account-dropdown {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  /* Anchor to the chip's right edge; keep a usable menu width even when
+     the trigger is only as wide as $handle + caret + copy. */
+  left: auto;
   right: 0;
   z-index: 40;
-  width: auto;
-  min-width: 0;
+  width: max(100%, 260px);
+  min-width: 260px;
   padding: 10px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
@@ -13972,19 +13971,20 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 
 .wallet-hero-identity-row {
   position: relative;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 2px;
-  flex: 0 1 auto;
+  gap: 6px;
+  flex: 0 0 auto;
+  width: max-content;
   max-width: none;
-  min-width: auto;
 }
 
 .wallet-hero-identity-copy {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex: 0 0 auto;
   margin: 0;
   padding: 4px;
   border: 0;
