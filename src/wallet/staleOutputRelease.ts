@@ -1456,6 +1456,12 @@ export async function restoreLiveSpendableOutputs(opts?: {
             lock?.spentBy && /^[0-9a-f]{64}$/.test(lock.spentBy) ? lock.spentBy : null
           let deadSealer = false
           if (sealer && active?.chain) {
+            const { txHadArcadeSubmitContact } = await import('./arcadeSubmitGuard')
+            if (txHadArcadeSubmitContact(sealer)) {
+              // Arcade already accepted this spend — explorer lag is not a restore signal.
+              keptSpent += 1
+              continue
+            }
             const { txExistsOnChain, spentStatusOfOutpoint } = await import('./legacyScan')
             const onChain = await txExistsOnChain(sealer, active.chain).catch(() => null)
             if (onChain === false) {

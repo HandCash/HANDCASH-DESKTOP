@@ -18,11 +18,10 @@ import {
   noteOutboundSendComplete,
   noteOutboundSendPending,
   failOutboundSendPending,
-  clearInboundReceivePending,
 } from './appActivity'
 import { getBeefForTxidCached } from './beefCache'
 import { withVisibleOnChainBeef } from './legacyBeef'
-import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
+import { forgetGhostTx, isGhostTxSuppressed } from './ghostTxSuppress'
 import {
   beginPendingSend,
   clearPendingSend,
@@ -974,7 +973,8 @@ export function pendingBrc29HintsFromChat(): PaymentTipHint[] {
 
 /**
  * Chase tip/pay hints: BRC-29 remittance first, legacy address-P2PKH SPV second.
- * Ghost txids (confirmed 404 with no BEEF left) are returned so the inbox can ACK.
+ * Ghost txids (Arcade hard-reject only) are returned so the inbox can ACK.
+ * Explorer 404 alone never ghosts — Arcade is the validity source of truth.
  *
  * Independent tips run with bounded concurrency — wall-clock ≈ batches, not N×RTT.
  */
@@ -1013,6 +1013,11 @@ export async function ingestPaymentsFromTipHints(
 
   const unique = new Map<string, PaymentTipHint>()
   for (const h of normalized) {
+    // A tip that still carries remittance / BEEF must not stay suppressed from an
+    // earlier explorer-404 ghost — Arcade is the validity gate, not Bitails.
+    if (h.brc29 || h.beefUrl || (h.tx && h.tx.length > 0) || h.item) {
+      forgetGhostTx(h.txid)
+    }
     if (isGhostTxSuppressed(h.txid)) continue
     const prev = unique.get(h.txid)
     if (
@@ -1051,25 +1056,14 @@ export async function ingestPaymentsFromTipHints(
     txid: string,
     hadLocalBeef: boolean,
   ): Promise<void> => {
-    // peerDeliver soft-latch may be off-chain until payee broadcasts — only
-    // ghost when there is nothing left to internalize.
-    if (hadLocalBeef) return
-    try {
-      const { txExistsOnChain } = await import('./legacyScan')
-      const { getActiveWallet } = await import('./session')
-      const active = getActiveWallet()
-      if (!active) return
-      const onChain = await txExistsOnChain(txid, active.chain)
-      if (onChain !== false) return
-      rememberGhostTx(txid)
-      clearInboundReceivePending(txid)
-      if (!ghostTxids.includes(txid)) ghostTxids.push(txid)
-      console.info(
-        `[tip-ingest] ghost tip ${txid.slice(0, 12)}… — 404 on-chain, no BEEF`,
-      )
-    } catch {
-      // inconclusive
-    }
+    // Explorers (Bitails / WoC) are not the source of truth. A 404 there must
+    // not ACK-away the tip. Validity is Arcade: if we had BEEF and Arcade did
+    // not hard-reject, keep retrying; if we have no BEEF yet, wait for it.
+    // Only hard Arcade rejects (handled elsewhere via rememberGhostTx) ghost.
+    void hadLocalBeef
+    console.info(
+      `[tip-ingest] tip ${txid.slice(0, 12)}… still pending — explorer lag ignored; Arcade is source of truth`,
+    )
   }
 
   const { mapPool } = await import('./asyncPool')

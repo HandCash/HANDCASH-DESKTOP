@@ -56,6 +56,7 @@ vi.mock('./beefCache', () => ({
 vi.mock('./ghostTxSuppress', () => ({
   isGhostTxSuppressed: () => false,
   rememberGhostTx: () => {},
+  forgetGhostTx: () => {},
 }))
 
 vi.mock('./appActivity', () => ({
@@ -346,17 +347,17 @@ describe('ingestPaymentsFromTipHints', () => {
     }
   }
 
-  it('ghosts a tip only when the chain confirms it is absent', async () => {
+  it('does not ghost a tip on explorer 404 — Arcade is the validity gate', async () => {
     internalizeAction.mockImplementation(async () => {
       throw new Error('no such output')
     })
     txExistsOnChain.mockResolvedValue(false)
 
-    // No inline BEEF: nothing left to internalize, so a 404 is decisive.
+    // No inline BEEF + Bitails 404 must leave the tip pending for retry.
     const result = await ingestSkippingRetryDelay([{ ...hint(1), tx: undefined }])
 
     expect(result.imported).toBe(0)
-    expect(result.ghostTxids).toEqual([hint(1).txid])
+    expect(result.ghostTxids).toEqual([])
   })
 
   it('does not ghost a tip while the chain answer is inconclusive', async () => {
