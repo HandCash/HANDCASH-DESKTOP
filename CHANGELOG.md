@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.3.143] - 2026-09-14
+
+### Fixed
+
+- Collectables and tokens no longer spill across vault accounts after switch (in-flight list race).
+- Mobile titlebar keeps scan/lock + sync on-screen; update toast sits above the bottom nav.
+- Identity chip no longer stacks ellipsis dots.
+- Account menu: Root tag, icon rename control, dropdown padding.
+
 ## [1.3.142] - 2026-09-14
 
 ### Fixed
