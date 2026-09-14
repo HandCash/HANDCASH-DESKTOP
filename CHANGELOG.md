@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.155] - 2026-09-14
+
+### Fixed
+
+- Hero identity label no longer covered by the dropdown arrow.
+
 ## [1.3.154] - 2026-09-14
 
 ### Fixed
