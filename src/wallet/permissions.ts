@@ -41,7 +41,6 @@ import {
   bsv21IdentityMintHints,
   isBsv21IdentityMintArgs,
 } from './token'
-import { sigmaIdentityRequestFromOutput } from './sigmaIdentity/request'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
@@ -348,8 +347,8 @@ export function isActionMethod(method: string): boolean {
 /** Identity / ownership proofs that often follow a Connect authorize. */
 export function isIdentityProofMethod(method: string): boolean {
   // Generic signatures are not automatically identity proofs and must never
-  // inherit a method-wide grant. A BRC-138 proof still gets an explicit
-  // approval; it is not a method-wide session grant.
+  // inherit a method-wide grant. The advertised identity recipe gets an
+  // explicit, purpose-bearing approval for every challenge.
   return method === 'proveCertificate'
 }
 
@@ -856,23 +855,7 @@ export function summarizeAction(method: string, args: unknown): {
       typeof body.description === 'string' && body.description.trim()
         ? body.description.trim()
         : 'Mint a BSV-21 token'
-    details.push('Backed by your wallet identity (Sigma on the deploy)')
-    const persona = Array.isArray(body.outputs)
-      ? body.outputs
-          .map((raw) =>
-            raw && typeof raw === 'object'
-              ? sigmaIdentityRequestFromOutput(raw as { tags?: string[]; customInstructions?: string })
-              : null,
-          )
-          .find(Boolean)
-      : null
-    if (persona) {
-      details.push(
-        persona.personaId
-          ? `Sigma identity: ${persona.personaId} (not the root key or BRC-169 handle)`
-          : 'Sigma identity persona (not the root key or BRC-169 handle)',
-      )
-    }
+    details.push('Backed by your HandCash identity (Sigma issuer)')
     if (hints.sym) details.push(`Token: ${hints.sym}`)
     if (hints.amt) details.push(`Supply: ${hints.amt}`)
     details.push('Not covered by Pay or Auto-pay')
@@ -1160,7 +1143,7 @@ export function summarizeAction(method: string, args: unknown): {
         title: 'Prove wallet identity',
         summary: purpose,
         details: [
-          'Signs a BRC-138 proof for the app verifier',
+          'Signs a short-lived challenge bound to this app',
           'Does not authorize a payment or reveal private keys',
         ],
       }

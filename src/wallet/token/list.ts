@@ -38,8 +38,6 @@ import { yieldToUi } from '../yieldToUi'
 import { stampBrc164Id } from '../itemAccess'
 import { isItemSent, markItemsConsumed } from '../sentItemGuard'
 import { attachMarketListingToToken } from './marketView'
-import { linkSigmaIssuer } from '../sigmaIdentity/link'
-import { listSigmaIdentities } from '../sigmaIdentity/catalog'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { restoreUnspentAssetOutpoint } from '../staleOutputRelease'
 
@@ -107,7 +105,6 @@ function persistDurableList(items: FungibleToken[]): void {
           ...(t.issuer ? { issuer: t.issuer } : {}),
           ...(t.issuerHandle ? { issuerHandle: t.issuerHandle } : {}),
           ...(t.issuerAttested != null ? { issuerAttested: t.issuerAttested } : {}),
-          ...(t.issuerContext ? { issuerContext: t.issuerContext } : {}),
           ...(t.tokenIds ? { tokenIds: t.tokenIds } : {}),
           ...(t.colourSupply ? { colourSupply: t.colourSupply } : {}),
           ...(t.colourMaxSupply != null ? { colourMaxSupply: t.colourMaxSupply } : {}),
@@ -545,25 +542,6 @@ function parseListedOutput(
   } else if (issuer && sigma.address) {
     issuerAttested = true
   }
-  const linked = linkSigmaIssuer({
-    lockingScript: raw.lockingScript,
-    customInstructions: raw.customInstructions,
-    selfIdentityKey,
-    personas: selfIdentityKey
-      ? listSigmaIdentities(selfIdentityKey).map((row) => ({
-          id: row.id,
-          generation: row.generation,
-          identityKey: row.identityKey,
-          name: row.name,
-          origin: row.origin,
-          publicKey: row.publicKey,
-        }))
-      : [],
-  })
-  if (linked?.linked && linked.context) {
-    issuer = linked.context.publicKey
-    issuerAttested = true
-  }
   return {
     outpoint,
     tokenId,
@@ -577,7 +555,6 @@ function parseListedOutput(
     ...(cosign ? { cosign } : {}),
     ...(issuer ? { issuer } : {}),
     ...(issuerAttested ? { issuerAttested: true } : {}),
-    ...(linked?.linked && linked.context ? { issuerContext: linked.context } : {}),
   }
 }
 

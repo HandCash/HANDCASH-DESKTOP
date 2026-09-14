@@ -433,6 +433,9 @@ export function App() {
               onSent={onSent}
               onRefreshBalance={handleBalanceRefresh}
               onFail={onWalletFail}
+              onAccountSwitched={(profile, balanceSats) =>
+                send({ type: 'ACCOUNT_SWITCHED', profile, balanceSats })
+              }
             />
           )}
         </main>

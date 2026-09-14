@@ -1,5 +1,16 @@
 # Changelog
 
+## [1.3.141] - 2026-09-14
+
+### Added
+
+- Vault sub-accounts (BRC-146): named wallets under one unlock; hero identity dropdown to switch / create / rename.
+- In-app BAP compose on Identity: publish ID + ALIAS profile (name / about / image) for the active account.
+
+### Removed
+
+- Parallel Sigma identity personas (`sigmaIdentity`). Keep BRC-246 IPv6 session upgrade. Issuer stamps stay BAP-backed (BRC-247).
+
 ## [1.3.140] - 2026-09-14
 
 ### Fixed

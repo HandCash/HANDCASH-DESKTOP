@@ -2,41 +2,47 @@ import { describe, expect, it } from 'vitest'
 import { extractSatsFromArgs } from './appActivity'
 import { humanActionCopy } from './appIdentity'
 import { isIdentityProofMethod, summarizeAction } from './permissions'
-import { BRC138_AUTH_PROOF_PROTOCOL, encodeBrc138Proof } from './walletIdentityProof'
+import {
+  serializeWalletIdentityChallenge,
+  WALLET_IDENTITY_PROOF_DOMAIN,
+  WALLET_IDENTITY_PROOF_PROTOCOL,
+} from './walletIdentityProof'
 
-const IDENTITY = `02${'ab'.repeat(32)}`
-const VERIFIER = `03${'cd'.repeat(32)}`
-const NONCE = btoa(String.fromCharCode(...new Uint8Array(32).fill(1)))
-
-function proofArgs(action: string) {
-  const data = encodeBrc138Proof({
-    action,
-    identityKey: IDENTITY,
+function proofArgs(purpose: string) {
+  const data = serializeWalletIdentityChallenge({
+    domain: WALLET_IDENTITY_PROOF_DOMAIN,
+    version: 1,
+    origin: 'app.example.com',
+    nonce: 'AQEBAQEBAQEBAQEBAQEBAQ',
+    issuedAt: 1_780_000_000_000,
     expiresAt: 1_780_000_060_000,
-    nonce: NONCE,
+    purpose,
   })
   return {
     data: Array.from(new TextEncoder().encode(data)),
-    protocolID: [...BRC138_AUTH_PROOF_PROTOCOL],
-    keyID: NONCE,
-    counterparty: VERIFIER,
+    protocolID: [...WALLET_IDENTITY_PROOF_PROTOCOL],
+    keyID: 'identity-proof:app.example.com',
+    counterparty: 'anyone',
   }
 }
 
-describe('BRC-138 identity proof permission copy', () => {
-  it('shows the proof action and that signing cannot spend', () => {
-    const action = summarizeAction('createSignature', proofArgs('login'))
+describe('wallet identity proof permission copy', () => {
+  it('shows the canonical challenge purpose and limits', () => {
+    const action = summarizeAction(
+      'createSignature',
+      proofArgs('Sign in and restore my Example session'),
+    )
     expect(action).toEqual({
       title: 'Prove wallet identity',
-      summary: 'login',
+      summary: 'Sign in and restore my Example session',
       details: [
-        'Signs a BRC-138 proof for the app verifier',
+        'Signs a short-lived challenge bound to this app',
         'Does not authorize a payment or reveal private keys',
       ],
     })
     expect(humanActionCopy('createSignature', action.title)).toEqual({
       eyebrow: 'Identity proof',
-      verb: 'wants a BRC-138 proof that this wallet holds its identity key',
+      verb: 'wants proof that this wallet approved its challenge',
     })
   })
 
@@ -65,13 +71,18 @@ describe('BRC-138 identity proof permission copy', () => {
     expect(isIdentityProofMethod('proveCertificate')).toBe(true)
   })
 
-  it('does not display an action from a non-canonical statement', () => {
-    const args = proofArgs('login')
+  it('does not display purpose from non-canonical bytes', () => {
+    const args = proofArgs('Misleading purpose')
+    const pretty = JSON.stringify(
+      JSON.parse(new TextDecoder().decode(new Uint8Array(args.data))),
+      null,
+      2,
+    )
     const action = summarizeAction('createSignature', {
       ...args,
-      data: Array.from(new TextEncoder().encode('login extra')),
+      data: Array.from(new TextEncoder().encode(pretty)),
     })
     expect(action.title).toBe('Sign with wallet')
-    expect(action.summary).not.toContain('login')
+    expect(action.summary).not.toContain('Misleading purpose')
   })
 })

@@ -19,7 +19,7 @@ import {
   SendIcon,
   ReceiveIcon,
 } from './icons'
-import { copyText } from '../wallet/clipboard'
+import { WalletAccountMenu } from './WalletAccountMenu'
 import {
   claimedHandleForIdentity,
   subscribeClaimedCloudHandle,
@@ -116,6 +116,7 @@ type Props = {
   onSent: (balanceSats: number) => void
   onRefreshBalance: (balanceSats: number) => void
   onFail: (error: string) => void
+  onAccountSwitched: (profile: WalletProfile, balanceSats: number) => void
 }
 
 function shortIdentityLabel(key: string): string {
@@ -145,13 +146,14 @@ function walletIdentityChip(
   }
 }
 
-/** One identity / one pot (BRC-75). */
+/** Vault master can host multiple account wallets (BRC-146). */
 export function Dashboard({
   profile,
   balanceSats,
   onSent,
   onRefreshBalance,
   onFail,
+  onAccountSwitched,
 }: Props) {
   const [connectedApps, setConnectedApps] = useState<ConnectedApp[]>(() => listConnectedApps())
   const [contentFullscreen, setContentFullscreen] = useState(() => {
@@ -657,17 +659,12 @@ export function Dashboard({
               const identity = walletIdentityChip(profile, claimedHandle)
               if (!identity) return null
               return (
-                <button
-                  type="button"
-                  className="wallet-hero-identity"
-                  title={`Click to copy ${identity.copy}`}
-                  onClick={() => {
-                    playWalletSound('soft')
-                    void copyText(identity.copy, { label: 'identity' })
-                  }}
-                >
-                  <span>{identity.label}</span>
-                </button>
+                <WalletAccountMenu
+                  profile={profile}
+                  identityLabel={identity.label}
+                  identityCopy={identity.copy}
+                  onAccountSwitched={onAccountSwitched}
+                />
               )
             })()}
           </div>

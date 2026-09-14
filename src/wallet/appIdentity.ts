@@ -254,7 +254,7 @@ export function humanActionCopy(
       if (title === 'Prove wallet identity') {
         return {
           eyebrow: 'Identity proof',
-          verb: 'wants a BRC-138 proof that this wallet holds its identity key',
+          verb: 'wants proof that this wallet approved its challenge',
         }
       }
       return { eyebrow: 'Signature', verb: 'wants a signature from your wallet' }

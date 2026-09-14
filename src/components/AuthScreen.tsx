@@ -12,6 +12,7 @@ import {
   type Chain,
   type UnlockedVault,
 } from '../wallet/vault'
+import { resolveActiveRootKeyHex, ensureVaultAccounts } from '../wallet/vaultAccounts'
 import { deviceAuthStatus, type DeviceAuthStatus } from '../wallet/deviceAuth'
 import {
   bootWallet,
@@ -253,6 +254,22 @@ export function AuthScreen({
     (mode === 'locked' && offerRestoreOnLock) ||
     recoveryOnly
 
+
+  const bootFromUnlocked = async (unlocked: UnlockedVault) => {
+    const masterRootKeyHex = unlocked.rootKeyHex
+    const masterIdentityKey = unlocked.record.identityKey
+    ensureVaultAccounts(masterRootKeyHex, masterIdentityKey)
+    const resolved = resolveActiveRootKeyHex(masterRootKeyHex, masterIdentityKey)
+    return bootWallet({
+      rootKeyHex: resolved.rootKeyHex,
+      handle: unlocked.record.handle,
+      chain: unlocked.record.chain,
+      mnemonic: unlocked.mnemonic,
+      masterRootKeyHex,
+      accountIndex: resolved.accountIndex,
+    })
+  }
+
   const finishCreated = async (
     unlocked: UnlockedVault,
     password: string | null,
@@ -262,12 +279,7 @@ export function AuthScreen({
       title: 'Almost ready',
       lede: 'Opening your wallet on this device.',
     })
-    const active = await bootWallet({
-      rootKeyHex: unlocked.rootKeyHex,
-      handle: unlocked.record.handle,
-      chain: unlocked.record.chain,
-      mnemonic: unlocked.mnemonic,
-    })
+    const active = await bootFromUnlocked(unlocked)
     // Never block create/restore on chain/cloud or the expensive unconfirmed-
     // change scan. A confirmed localState read gets a short head start;
     // Dashboard/recompose heals the full displayed balance in the background.
@@ -336,12 +348,7 @@ export function AuthScreen({
       title: 'Almost ready',
       lede: 'Opening your wallet on this device.',
     })
-    const active = await bootWallet({
-      rootKeyHex: unlocked.rootKeyHex,
-      handle: unlocked.record.handle,
-      chain: unlocked.record.chain,
-      mnemonic: unlocked.mnemonic,
-    })
+    const active = await bootFromUnlocked(unlocked)
     const cachedBalance = lastKnownBalance()
     const confirmedBalance = fetchBalanceRead(active.wallet, {
       creditUnconfirmed: false,
@@ -394,8 +401,8 @@ export function AuthScreen({
     onUnlocked(
       {
         handle: unlocked.record.handle,
-        identityKey: unlocked.record.identityKey,
-        address: unlocked.record.address,
+        identityKey: active.identityKey,
+        address: active.address,
         chain: unlocked.record.chain,
       },
       balanceSats,

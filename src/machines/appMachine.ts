@@ -31,6 +31,7 @@ export type AppEvent =
   | { type: 'OPEN_SEND' }
   | { type: 'CLOSE_SEND' }
   | { type: 'SENT'; balanceSats: number }
+  | { type: 'ACCOUNT_SWITCHED'; profile: WalletProfile; balanceSats: number }
 
 /**
  * Chart: appSession
@@ -154,6 +155,13 @@ export const appMachine = setup({
         REFRESHED: {
           actions: assign({ balanceSats: ({ event }) => event.balanceSats }),
         },
+        ACCOUNT_SWITCHED: {
+          actions: assign({
+            profile: ({ event }) => event.profile,
+            balanceSats: ({ event }) => event.balanceSats,
+            error: null,
+          }),
+        },
         FAIL: {
           actions: assign({ error: ({ event }) => event.error }),
         },
@@ -174,6 +182,13 @@ export const appMachine = setup({
         },
         REFRESHED: {
           actions: assign({ balanceSats: ({ event }) => event.balanceSats }),
+        },
+        ACCOUNT_SWITCHED: {
+          actions: assign({
+            profile: ({ event }) => event.profile,
+            balanceSats: ({ event }) => event.balanceSats,
+            error: null,
+          }),
         },
         BRIDGE: {
           actions: assign({ bridgeOnline: ({ event }) => event.online }),

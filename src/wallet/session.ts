@@ -30,6 +30,10 @@ export type ActiveWallet = {
   address: string
   handle: string
   chain: Chain
+  /** Vault master root (BRC-75). Same as rootKeyHex when accountIndex is 0. */
+  masterRootKeyHex: string
+  /** BRC-146 account index. 0 = primary / vault master. */
+  accountIndex: number
 }
 
 let active: ActiveWallet | null = null
@@ -384,7 +388,14 @@ export async function bootWallet(args: {
   chain: Chain
   /** Present when the vault was unlocked/created with a BIP39 phrase. */
   mnemonic?: string | null
+  /** Vault master root. Defaults to rootKeyHex (primary account). */
+  masterRootKeyHex?: string
+  /** BRC-146 account index. Defaults to 0 (primary). */
+  accountIndex?: number
 }): Promise<ActiveWallet> {
+  const { toolboxDatabaseName } = await import('./vaultAccounts')
+  const accountIndex = args.accountIndex ?? 0
+  const masterRootKeyHex = args.masterRootKeyHex ?? args.rootKeyHex
   const root = PrivateKey.fromHex(args.rootKeyHex)
   const identityKey = root.toPublicKey().toString()
   const address = root.toAddress()
@@ -392,7 +403,11 @@ export async function bootWallet(args: {
   const setup = await SetupClient.createWalletIdb({
     chain: args.chain,
     rootKeyHex: args.rootKeyHex,
-    databaseName: `handcash-brc100-${args.chain}-${args.handle}`,
+    databaseName: toolboxDatabaseName({
+      chain: args.chain,
+      handle: args.handle,
+      accountIndex,
+    }),
   })
 
   installFallbackChainTracker(setup.services as Services, args.chain)
@@ -456,6 +471,8 @@ export async function bootWallet(args: {
     address,
     handle: args.handle,
     chain: args.chain,
+    masterRootKeyHex,
+    accountIndex,
   }
   // Cold start begins with the last balance actually read for this identity,
   // never another wallet's figure and never a fabricated address balance.
@@ -786,4 +803,39 @@ export function formatBsvSignificant(sats: number, maxSignificant = 5): string {
 export function formatSats(sats: number): string {
   const safe = Number.isFinite(sats) ? Math.max(0, Math.trunc(sats)) : 0
   return safe.toLocaleString('en-US')
+}
+
+/**
+ * Stop the current toolbox session and boot another vault account root.
+ * Same unlock / mnemonic; different on-chain identity and balance.
+ */
+export async function switchVaultAccount(args: {
+  masterRootKeyHex: string
+  masterIdentityKey: string
+  handle: string
+  chain: Chain
+  mnemonic?: string | null
+  accountIndex: number
+}): Promise<ActiveWallet> {
+  const {
+    rootKeyHexForAccount,
+    setActiveVaultAccountIndex,
+  } = await import('./vaultAccounts')
+  setActiveVaultAccountIndex(args.masterIdentityKey, args.accountIndex)
+  const prev = active
+  try {
+    prev?.monitor?.stopTasks?.()
+  } catch {
+    // optional
+  }
+  active = null
+  const rootKeyHex = rootKeyHexForAccount(args.masterRootKeyHex, args.accountIndex)
+  return bootWallet({
+    rootKeyHex,
+    handle: args.handle,
+    chain: args.chain,
+    mnemonic: args.mnemonic,
+    masterRootKeyHex: args.masterRootKeyHex,
+    accountIndex: args.accountIndex,
+  })
 }

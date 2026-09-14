@@ -1,108 +1,102 @@
 import { describe, expect, it } from 'vitest'
 import {
-  BRC138_AUTH_PROOF_PROTOCOL,
-  encodeBrc138Proof,
+  serializeWalletIdentityChallenge,
   validateWalletIdentityProofRequest,
-  type Brc138ProofData,
+  WALLET_IDENTITY_PROOF_DOMAIN,
+  WALLET_IDENTITY_PROOF_PROTOCOL,
+  walletIdentityProofKeyID,
+  type WalletIdentityChallenge,
 } from './walletIdentityProof'
 
-const IDENTITY = `02${'ab'.repeat(32)}`
-const VERIFIER = `03${'cd'.repeat(32)}`
+const ORIGIN = 'app.example.com'
 const NOW = 1_780_000_000_000
-const NONCE = btoa(String.fromCharCode(...new Uint8Array(32).fill(1)))
 
-function proof(patch: Partial<Brc138ProofData> = {}, requestPatch: Record<string, unknown> = {}) {
-  const data: Brc138ProofData = {
-    action: 'login',
-    identityKey: IDENTITY,
+function request(
+  patch: Partial<WalletIdentityChallenge> = {},
+  requestPatch: Record<string, unknown> = {},
+) {
+  const challenge: WalletIdentityChallenge = {
+    domain: WALLET_IDENTITY_PROOF_DOMAIN,
+    version: 1,
+    origin: ORIGIN,
+    nonce: 'AQEBAQEBAQEBAQEBAQEBAQ',
+    issuedAt: NOW - 1_000,
     expiresAt: NOW + 60_000,
-    nonce: NONCE,
+    purpose: 'Sign in to Example',
     ...patch,
   }
   return {
-    data: Array.from(new TextEncoder().encode(encodeBrc138Proof(data))),
-    protocolID: [...BRC138_AUTH_PROOF_PROTOCOL],
-    keyID: data.nonce,
-    counterparty: VERIFIER,
+    data: Array.from(new TextEncoder().encode(serializeWalletIdentityChallenge(challenge))),
+    protocolID: [...WALLET_IDENTITY_PROOF_PROTOCOL],
+    keyID: walletIdentityProofKeyID(ORIGIN),
+    counterparty: 'anyone',
     ...requestPatch,
   }
 }
 
-describe('BRC-138 identity proof validation', () => {
-  it('accepts a canonical proof addressed to a verifier', () => {
-    expect(validateWalletIdentityProofRequest(proof(), IDENTITY, NOW)).toEqual({
+describe('wallet identity proof validation', () => {
+  it('accepts the canonical origin-bound BRC-100 signing recipe', () => {
+    expect(validateWalletIdentityProofRequest(request(), ORIGIN, NOW)).toEqual({
       kind: 'valid',
-      proof: {
-        action: 'login',
-        identityKey: IDENTITY,
-        expiresAt: NOW + 60_000,
-        nonce: NONCE,
-      },
+      challenge: expect.objectContaining({
+        origin: ORIGIN,
+        purpose: 'Sign in to Example',
+      }),
     })
   })
 
-  it('rejects expired, over-long, and non-canonical statements', () => {
+  it('rejects cross-origin, expired, and non-canonical challenges', () => {
     expect(
-      validateWalletIdentityProofRequest(proof({ expiresAt: NOW - 1 }), IDENTITY, NOW),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/expired/i) })
+      validateWalletIdentityProofRequest(request({ origin: 'evil.example' }), ORIGIN, NOW),
+    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/origin/i) })
     expect(
       validateWalletIdentityProofRequest(
-        proof({ expiresAt: NOW + 200_000 }),
-        IDENTITY,
+        request({ issuedAt: NOW - 100_000, expiresAt: NOW - 90_000 }),
+        ORIGIN,
         NOW,
       ),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/window/i) })
-    const canonical = encodeBrc138Proof({
-      action: 'login',
-      identityKey: IDENTITY,
+    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/expired/i) })
+
+    const canonical = serializeWalletIdentityChallenge({
+      domain: WALLET_IDENTITY_PROOF_DOMAIN,
+      version: 1,
+      origin: ORIGIN,
+      nonce: 'AQEBAQEBAQEBAQEBAQEBAQ',
+      issuedAt: NOW - 1_000,
       expiresAt: NOW + 60_000,
-      nonce: NONCE,
+      purpose: 'Sign in to Example',
     })
+    const pretty = JSON.stringify(JSON.parse(canonical), null, 2)
     expect(
       validateWalletIdentityProofRequest(
-        proof({}, { data: Array.from(new TextEncoder().encode(`${canonical}\n`)) }),
-        IDENTITY,
+        request({}, { data: Array.from(new TextEncoder().encode(pretty)) }),
+        ORIGIN,
         NOW,
       ),
     ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/canonical/i) })
   })
 
-  it('rejects anyone-counterparty, wrong subject, and nonce/keyID mismatch', () => {
+  it('rejects weak nonces and recipe parameter substitution', () => {
     expect(
-      validateWalletIdentityProofRequest(proof({}, { counterparty: 'anyone' }), IDENTITY, NOW),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/verifier/i) })
+      validateWalletIdentityProofRequest(request({ nonce: 'short' }), ORIGIN, NOW),
+    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/128 bits/i) })
     expect(
       validateWalletIdentityProofRequest(
-        proof({ identityKey: VERIFIER }, { keyID: NONCE }),
-        IDENTITY,
+        request({}, { keyID: 'identity-proof:other.example' }),
+        ORIGIN,
         NOW,
       ),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/identityKey/i) })
-    expect(
-      validateWalletIdentityProofRequest(proof({}, { keyID: 'other-nonce' }), IDENTITY, NOW),
     ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/keyID/i) })
-  })
-
-  it('refuses the withdrawn HandCash challenge recipe', () => {
     expect(
-      validateWalletIdentityProofRequest(
-        {
-          protocolID: [2, 'wallet identity proof'],
-          keyID: 'identity-proof:app.example.com',
-          counterparty: 'anyone',
-          data: [1, 2, 3],
-        },
-        IDENTITY,
-        NOW,
-      ),
-    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/withdrawn/i) })
+      validateWalletIdentityProofRequest(request({}, { counterparty: 'self' }), ORIGIN, NOW),
+    ).toMatchObject({ kind: 'invalid', reason: expect.stringMatching(/anyone/i) })
   })
 
   it('leaves unrelated BRC-100 signatures untouched', () => {
     expect(
       validateWalletIdentityProofRequest(
         { protocolID: [2, 'document signing'] },
-        IDENTITY,
+        ORIGIN,
         NOW,
       ),
     ).toEqual({ kind: 'not-identity-proof' })

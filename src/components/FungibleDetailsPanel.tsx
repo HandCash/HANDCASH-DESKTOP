@@ -547,27 +547,10 @@ export function FungibleDetailsPanel({ tokenId }: Props) {
           {token.icon ? (
             <MetaRow label="Icon" value={token.icon} copyLabel="icon inscription" />
           ) : null}
-          {token.issuerContext ? (
-            <MetaRow
-              label="Sigma identity"
-              value={
-                token.issuerContext.name
-                  ? `${token.issuerContext.name} · ${token.issuerContext.personaId}`
-                  : token.issuerContext.personaId
-              }
-              copyLabel="Sigma identity"
-            />
-          ) : null}
           {token.issuer ? (
             <MetaRow
-              label={token.issuerContext ? 'Issuer key' : 'Issuer'}
-              value={
-                token.issuerContext
-                  ? token.issuer
-                  : token.issuerHandle
-                    ? `${token.issuerHandle} · ${token.issuer}`
-                    : token.issuer
-              }
+              label="Issuer"
+              value={token.issuerHandle ? `${token.issuerHandle} · ${token.issuer}` : token.issuer}
               copyLabel="issuer identity key"
             />
           ) : null}

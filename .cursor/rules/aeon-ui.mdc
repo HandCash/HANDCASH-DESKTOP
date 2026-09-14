@@ -1,32 +1,30 @@
 ---
-description: Aeon UI gate — write the chart before any screen JSX. Always apply.
+description: Aeon UI is the single source of truth for Desktop UI — machines first, no parallel stacks
+globs: ["**/*.{tsx,ts,css}"]
 alwaysApply: true
 ---
 
-# Aeon UI gate
+# Aeon UI (Desktop SSoT)
 
-Desktop UI is Aeon only. **A screen is a projection of a chart.** Do not sketch the panel in `useState` and plan to “add a machine later.”
+HandCash Desktop UI is built **only** through **Aeon** (`aeon-ui-engine` / `@aeon-ui/*`). Do not introduce a second UI system.
 
-## Stop
+## Must
 
-If the screen has more than one step — compose, review, confirm, publishing, failure, revoke, busy — **stop**. Do not add `busy`, `phase`, `mode`, `confirming`, or `step` in `useState`. That is a second UI system.
-
-`useState` is only for data the chart does not own (a QR blob, a subscribed catalog, a text field draft that would re-render the whole tree on every key).
-
-## Order
-
-1. Chart in `src/machines/<name>Machine.ts` (states, events, guards). Test it with `createActor`.
-2. Register the diagram in `src/wallet/appStatecharts.ts` so the Statecharts page stays the map.
-3. Panel calls `useMachine` and sends events. Async work runs in the handler, then `SUCCESS` / `FAIL`. Do not mirror that with a flag.
-4. Project with `stateToAttr`: `data-aeon-scope`, `data-aeon-part`, `data-aeon-state`.
-5. Compose Aeon parts (`ListRow`, `StatusBanner`, `Prompt`, `Accordion`). Chrome in `src/styles/handcash.css` keys off `data-aeon-*`.
-
-Copy `sendMachine`, `assetBurnUiMachine`, `identityMachine`. Identity is the reference for “always-on facts” (root key, BRC-169) beside a charted action (create / revoke a persona).
+1. **Machines first** — define XState charts (states + events) in `src/machines/`, then project UI. **UI = f(state)**.
+2. Project machine/status onto `data-aeon-scope`, `data-aeon-part`, `data-aeon-state` (via `@aeon-ui/core` helpers when available).
+3. Prefer Aeon compounds: `Prompt`, `StatusBanner`, `Accordion`, Field/Button/Dialog patterns from `@aeon-ui/react`.
+4. Brand once: `applyBrandPalette` in `src/main.tsx`. Product chrome lives in `src/styles/handcash.css` keyed off `data-aeon-*`.
+5. Vite: keep `aeonUiViteAliases()` + `aeonUiOptimizeDeps()` from `aeon-ui-engine/vite` (or `aeonUiVitePlugin()`).
+6. Need a missing primitive? Prefer composing Aeon parts. If the shell belongs in the engine, change **AeonUI** (`~/AeonUI`) and bump `aeon-ui-engine` — do not fork a Desktop-only dialog kit.
 
 ## Do not
 
-- Tailwind, shadcn, Chakra, MUI, or a second token sheet.
-- Rebuild Prompt / StatusBanner / AppNav.
-- Fork a wallet-only dialog kit. Missing shell goes in AeonUI (`~/AeonUI`), then bump `aeon-ui-engine`.
+- Add Tailwind, shadcn, Chakra, MUI, Bootstrap, or a second design-token sheet.
+- Duplicate machine concerns with ad-hoc `useState` / boolean flags (`isOpen`, `isLoading` parallel to a chart).
+- Rebuild Prompt / StatusBanner / AppNav / Electron chrome when Aeon already ships them.
+- Invent niche Aeon primitives for wallet-only flows — compose universal parts.
+- Copy items-market Tailwind/shadcn patterns into this repo.
 
-`src/machines/aeonAdherence.test.ts` fails if a new component owns a screen step without `useMachine`. Shrink that allowlist; do not add to it.
+## Engine source
+
+Canonical Aeon authoring rules: `~/AeonUI/AGENTS.md`. Desktop **consumes** Aeon; it does not re-implement it.

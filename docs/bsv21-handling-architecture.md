@@ -81,7 +81,7 @@ Machines: **`bsv21SendMachine.ts`**, **`bsv21TipKind.ts`** (`chooseBsv21SendPath
 5. **Legacy send retired** — JSON inscription send removed; burn-only for old rows.
 6. **1sat-ft basket deprecated** — tokens are BRC-162 / `bsv21` only; inbound `1sat-ft` settle accepted only if 162-decodable.
 7. **No global supply-cap proofs** — issuers trusted for mint policy (`bsv21.ts` header).
-8. **Root-key Sigma verify is address-match only** — full vin binding marked `verified: false` in the legacy issuer path. Sigma identities (`sigmaIdentity/`) refuse unbound VIN and can verify the bound input when the transaction is in hand.
+8. **Sigma verify is address-match only** — full vin binding marked `verified: false` in issuer path.
 
 ### Edge cases
 9. **Incomplete inputBEEF during mint** — `bsv21Issuer.ts` warns; identity mint can fail if genesis unmined.

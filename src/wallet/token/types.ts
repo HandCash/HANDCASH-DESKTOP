@@ -17,7 +17,6 @@ import {
   type Bsv21Cosign,
 } from './tipKind'
 import { normalizeIssuerPubKey } from './issuer'
-import type { SigmaIssuerContext } from '../sigmaIdentity/link'
 
 export type { Bsv21Cosign }
 export {
@@ -81,8 +80,6 @@ export type Bsv21Utxo = {
   issuer?: string
   /** True when Sigma address matched issuer (full vin verify optional). */
   issuerAttested?: boolean
-  /** Persona context when the Sigma address matches a BKDS identity path. */
-  issuerContext?: SigmaIssuerContext
   /** Locking script hex when listed with `include: locking scripts`. */
   lockingScript?: string
   /** Set on BRC-162 tips — Collect treats these as live (Send), not JSON legacy. */
@@ -126,12 +123,10 @@ export type FungibleToken = {
   cosign?: Bsv21Cosign
   /** Issuer identity pubkey when known (from remittance / Sigma). */
   issuer?: string
-  /** Display handle when resolved (e.g. this wallet's $handle or a Sigma persona name). */
+  /** Display handle when resolved (e.g. this wallet's $handle). */
   issuerHandle?: string
   /** Issuer claimed and Sigma address matched (not full vin proof). */
   issuerAttested?: boolean
-  /** Linked Sigma persona. Distinct from the wallet root and from a BRC-169 handle. */
-  issuerContext?: SigmaIssuerContext
   /**
    * When several deploy ids share the same issuer + ticker, all member token
    * ids (representative `tokenId` is also listed here).
@@ -417,7 +412,6 @@ function mergeFungibleRows(
   if (into.dec === 0 && from.dec > 0) into.dec = from.dec
   if (!into.issuer && from.issuer) into.issuer = from.issuer
   if (from.issuerAttested) into.issuerAttested = true
-  if (!into.issuerContext && from.issuerContext) into.issuerContext = from.issuerContext
   if (!into.icon && from.icon) into.icon = from.icon
   if (!into.iconUrl && from.iconUrl) into.iconUrl = from.iconUrl
   if (!into.colourSupply && from.colourSupply) into.colourSupply = from.colourSupply
@@ -464,8 +458,6 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
         ...(u.cosign ? { cosign: u.cosign } : {}),
         ...(u.issuer ? { issuer: u.issuer } : {}),
         ...(u.issuerAttested ? { issuerAttested: true } : {}),
-        ...(u.issuerContext ? { issuerContext: u.issuerContext } : {}),
-        ...(u.issuerContext?.name ? { issuerHandle: u.issuerContext.name } : {}),
         ...(u.icon ? { icon: u.icon } : {}),
         ...(u.colourSupply ? { colourSupply: u.colourSupply } : {}),
         ...(u.colourMaxSupply != null ? { colourMaxSupply: u.colourMaxSupply } : {}),
@@ -484,10 +476,6 @@ export function aggregateFungibles(utxos: Bsv21Utxo[]): FungibleToken[] {
     if (existing.dec === 0 && u.dec > 0) existing.dec = u.dec
     if (!existing.issuer && u.issuer) existing.issuer = u.issuer
     if (u.issuerAttested) existing.issuerAttested = true
-    if (!existing.issuerContext && u.issuerContext) existing.issuerContext = u.issuerContext
-    if (!existing.issuerHandle && u.issuerContext?.name) {
-      existing.issuerHandle = u.issuerContext.name
-    }
     if (!existing.icon && u.icon) existing.icon = u.icon
     if (!existing.colourSupply && u.colourSupply) existing.colourSupply = u.colourSupply
     if (existing.colourMaxSupply == null && u.colourMaxSupply != null) {

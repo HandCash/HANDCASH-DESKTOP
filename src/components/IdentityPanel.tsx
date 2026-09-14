@@ -1,9 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useMachine } from '@xstate/react'
-import { ListRow, StatusBanner } from '@aeon-ui/react'
-import { stateToAttr } from '@aeon-ui/core'
 import type { WalletProfile } from '../machines/appMachine'
-import { identityMachine } from '../machines/identityMachine'
 import { copyText } from '../wallet/clipboard'
 import {
   claimedHandleForIdentity,
@@ -12,17 +8,14 @@ import {
 } from '../wallet/handleClaim'
 import { formatHandCashHandle } from '../wallet/handleFormat'
 import { identityQrDataUrl, peekIdentityQrDataUrl } from '../wallet/identityQr'
+import { playWalletSound } from '../wallet/soundService'
+import { toastError, toastSuccess } from '../wallet/toast'
 import {
-  listSigmaIdentities,
-  personaIdFromName,
-  publishSigmaIdentity,
-  revokeSigmaIdentity,
-  selectSigningSigmaIdentity,
-  signingSigmaIdentity,
-  subscribeSigmaIdentities,
-  type SigmaPersonaRecord,
-} from '../wallet/sigmaIdentity'
-import { toastError } from '../wallet/toast'
+  composeBapIdentity,
+  getBapProfile,
+  previewBapId,
+  type BapProfile,
+} from '../wallet/bapIdentity'
 import { CLAIM_HANDLE_URL } from '../wallet/walletConfig'
 import { SkeletonQr } from './Skeleton'
 import { CopyIcon } from './icons'
@@ -37,25 +30,18 @@ function shortIdentityKey(key: string): string {
   return `${k.slice(0, 10)}…${k.slice(-8)}`
 }
 
-function personaStatus(persona: SigmaPersonaRecord): string {
-  if (persona.status === 'funding') return 'Funding'
-  if (persona.status === 'revoked') return 'Revoked'
-  return 'Active'
-}
-
 export function IdentityPanel({ profile }: Props) {
-  const [snapshot, send] = useMachine(identityMachine)
-  const screen = stateToAttr(snapshot.value)
   const [dataUrl, setDataUrl] = useState(() => peekIdentityQrDataUrl(profile.identityKey))
   const [claimed, setClaimed] = useState<ClaimedHandleState | null>(() =>
     claimedHandleForIdentity(profile.identityKey),
   )
-  const [personas, setPersonas] = useState<SigmaPersonaRecord[]>(() =>
-    listSigmaIdentities(profile.identityKey),
-  )
-  const [signingId, setSigningId] = useState(
-    () => signingSigmaIdentity(profile.identityKey)?.id ?? '',
-  )
+  const [bapId, setBapId] = useState<string | null>(null)
+  const [published, setPublished] = useState(false)
+  const [name, setName] = useState('')
+  const [description, setDescription] = useState('')
+  const [image, setImage] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [status, setStatus] = useState<string | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -90,18 +76,40 @@ export function IdentityPanel({ profile }: Props) {
   }, [profile.identityKey])
 
   useEffect(() => {
-    const refresh = () => {
-      setPersonas(listSigmaIdentities(profile.identityKey))
-      setSigningId(signingSigmaIdentity(profile.identityKey)?.id ?? '')
+    let cancelled = false
+    void (async () => {
+      try {
+        const state = await getBapProfile()
+        if (cancelled) return
+        setPublished(state.published)
+        setBapId(state.bapId)
+        const p = state.profile
+        if (p) {
+          setName(typeof p.name === 'string' ? p.name : '')
+          setDescription(typeof p.description === 'string' ? p.description : '')
+          setImage(typeof p.image === 'string' ? p.image : '')
+        } else {
+          const preview = await previewBapId()
+          if (!cancelled) setBapId(preview)
+        }
+      } catch (err) {
+        if (!cancelled) {
+          try {
+            const preview = await previewBapId()
+            setBapId(preview)
+          } catch {
+            /* locked */
+          }
+          setStatus(err instanceof Error ? err.message : String(err))
+        }
+      }
+    })()
+    return () => {
+      cancelled = true
     }
-    refresh()
-    return subscribeSigmaIdentities(refresh)
   }, [profile.identityKey])
 
   const handleLabel = claimed ? formatHandCashHandle(claimed.handle, null) : null
-  const draftId = personaIdFromName(snapshot.context.name)
-  const revoking = personas.find((row) => row.id === snapshot.context.personaId) ?? null
-  const brc169State = claimed ? 'claimed' : 'unclaimed'
 
   const copyIdentity = async () => {
     await copyText(profile.identityKey, { label: 'identity key' })
@@ -112,73 +120,58 @@ export function IdentityPanel({ profile }: Props) {
     await copyText(handleLabel || claimed.display, { label: 'handle' })
   }
 
-  const publish = async () => {
-    send({ type: 'CONFIRM' })
-    try {
-      await publishSigmaIdentity({
-        name: snapshot.context.name,
-        about: snapshot.context.about,
-      })
-      send({ type: 'SUCCESS' })
-    } catch (err) {
-      send({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
-    }
+  const openClaim = () => {
+    void window.handcash?.openExternal?.(CLAIM_HANDLE_URL)
   }
 
-  const revoke = async () => {
-    const id = snapshot.context.personaId
-    if (!id) return
-    send({ type: 'CONFIRM' })
-    try {
-      await revokeSigmaIdentity(id)
-      send({ type: 'SUCCESS' })
-    } catch (err) {
-      send({
-        type: 'FAIL',
-        error: err instanceof Error ? err.message : String(err),
-      })
+  const onCompose = async () => {
+    const trimmed = name.trim()
+    if (!trimmed) {
+      toastError('Identity', 'Add a display name first.')
+      return
     }
+    setBusy(true)
+    setStatus(null)
+    playWalletSound('soft')
+    const profilePayload: BapProfile = {
+      '@type': 'Person',
+      name: trimmed,
+    }
+    if (description.trim()) profilePayload.description = description.trim()
+    if (image.trim()) profilePayload.image = image.trim()
+
+    const result = await composeBapIdentity(profilePayload)
+    setBusy(false)
+    if (!result.ok) {
+      toastError('Compose identity', result.error)
+      setStatus(result.error)
+      return
+    }
+    setPublished(true)
+    setBapId(result.bapId)
+    setStatus(
+      result.createdIdentity
+        ? `Published BAP + profile · ${result.txid.slice(0, 10)}…`
+        : `Updated profile · ${result.txid.slice(0, 10)}…`,
+    )
+    toastSuccess(
+      result.createdIdentity ? 'Identity published' : 'Profile updated',
+      result.bapId,
+    )
   }
 
   return (
-    <div
-      className="nav-section-body identity-nav nav-section-with-scroll"
-      data-aeon-scope="identity"
-      data-aeon-state={screen}
-    >
-      <div className="connected-panel-head">
-        <h2>Identity</h2>
-      </div>
+    <div className="nav-section-body identity-nav nav-section-with-scroll" data-aeon-scope="identity">
       <div className="identity-scroll nav-section-scroll-body">
         <div className="identity-body">
-          <section
-            className="identity-card"
-            data-aeon-part="root"
-            data-aeon-state="ready"
-            aria-label="Root identity"
-          >
-            <div className="identity-kind">
-              <span className="identity-kind-label">Root identity</span>
-              <p className="identity-kind-note">
-                BRC-100 wallet key. Apps prove this key. It is not a Sigma persona.
-              </p>
-            </div>
+          <section className="identity-card" aria-label="Wallet identity">
             <div className="identity-hero">
               <div className="identity-qr">
                 <div className="identity-qr-frame">
                   {dataUrl ? (
-                    <img
-                      src={dataUrl}
-                      alt="Root identity key QR code"
-                      width={140}
-                      height={140}
-                      decoding="async"
-                    />
+                    <img src={dataUrl} alt="Identity QR" width={160} height={160} />
                   ) : (
-                    <SkeletonQr size={140} />
+                    <SkeletonQr />
                   )}
                 </div>
                 <button
@@ -186,27 +179,49 @@ export function IdentityPanel({ profile }: Props) {
                   className="btn btn-ghost identity-copy-btn"
                   onClick={() => void copyIdentity()}
                 >
-                  <CopyIcon size={16} />
-                  Copy root key
+                  <CopyIcon size={14} />
+                  Copy identity key
                 </button>
               </div>
               <div className="identity-hero-meta">
+                <div className="identity-field">
+                  <span className="identity-field-label">Handle</span>
+                  {handleLabel ? (
+                    <button
+                      type="button"
+                      className="identity-handle"
+                      title={`Click to copy ${handleLabel}`}
+                      onClick={() => void copyHandle()}
+                    >
+                      {handleLabel}
+                    </button>
+                  ) : (
+                    <div className="identity-handle-empty">
+                      <p className="identity-handle-missing">No handle claimed yet</p>
+                      <button type="button" className="btn btn-ghost identity-claim-btn" onClick={openClaim}>
+                        Claim handle
+                      </button>
+                    </div>
+                  )}
+                </div>
                 <p className="identity-qr-hint">
-                  Scan this to share the wallet key, not a Sigma signing key.
+                  Scan to pay or add as a friend. Identity is per active wallet account.
                 </p>
               </div>
             </div>
+
             <ul className="identity-list">
               <li className="identity-field identity-key-row">
-                <span className="identity-field-label">Root identity key</span>
+                <span className="identity-field-label">Identity key</span>
                 <button
                   type="button"
                   className="mono identity-key"
-                  title={`Click to copy identity key\n${profile.identityKey}`}
+                  title={`Click to copy identity key
+${profile.identityKey}`}
                   onClick={() => void copyIdentity()}
                 >
                   <span>{shortIdentityKey(profile.identityKey)}</span>
-                  <CopyIcon size={15} />
+                  <CopyIcon size={14} />
                 </button>
               </li>
               <li className="identity-field">
@@ -215,265 +230,61 @@ export function IdentityPanel({ profile }: Props) {
                   {profile.chain === 'main' ? 'Bitcoin SV Mainnet' : 'Bitcoin SV Testnet'}
                 </strong>
               </li>
+              <li className="identity-field">
+                <span className="identity-field-label">BAP ID</span>
+                <strong className="mono identity-bap-id">
+                  {bapId ? shortIdentityKey(bapId) : '—'}
+                  {published ? '' : ' (not published yet)'}
+                </strong>
+              </li>
             </ul>
           </section>
 
-          <section
-            className="identity-card identity-part"
-            data-aeon-part="brc169"
-            data-aeon-state={brc169State}
-            aria-label="BRC-169 handle"
-          >
-            <div className="identity-kind">
-              <span className="identity-kind-label">BRC-169 handle</span>
-              <p className="identity-kind-note">
-                A $handle claimed on the root key. Claiming it does not create a Sigma identity.
-              </p>
-            </div>
-            <div className="identity-field">
-              {handleLabel ? (
-                <button
-                  type="button"
-                  className="identity-handle"
-                  title={`Click to copy ${handleLabel}`}
-                  onClick={() => void copyHandle()}
-                >
-                  {handleLabel}
-                </button>
-              ) : (
-                <div className="identity-handle-empty">
-                  <p className="identity-handle-missing">No handle claimed yet</p>
-                  <button
-                    type="button"
-                    className="btn btn-ghost identity-claim-btn"
-                    onClick={() => void window.handcash?.openExternal?.(CLAIM_HANDLE_URL)}
-                  >
-                    Claim your $handle
-                  </button>
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section
-            className="identity-card identity-part"
-            data-aeon-part="sigma"
-            data-aeon-state={screen}
-            aria-label="Sigma identities"
-          >
-            <div className="identity-kind">
-              <span className="identity-kind-label">Sigma identities</span>
-              <p className="identity-kind-note">
-                On-chain personas that sign 1Sat and BSV-21 issuances. Each lives in its own
-                basket. Revoking spends that control output. The root key and the handle stay.
-              </p>
-            </div>
-
-            {snapshot.matches('failure') && snapshot.context.error ? (
-              <StatusBanner.Root tone="danger" status="failed">
-                <StatusBanner.Copy>
-                  <StatusBanner.Title>Could not update the Sigma identity</StatusBanner.Title>
-                  <StatusBanner.Body>{snapshot.context.error}</StatusBanner.Body>
-                </StatusBanner.Copy>
-              </StatusBanner.Root>
-            ) : null}
-
-            {snapshot.matches('published') ? (
-              <StatusBanner.Root tone="success" status="published">
-                <StatusBanner.Copy>
-                  <StatusBanner.Title>Sigma identity created</StatusBanner.Title>
-                  <StatusBanner.Body>
-                    The persona is inscribed and isolated from cash and collectables.
-                  </StatusBanner.Body>
-                </StatusBanner.Copy>
-              </StatusBanner.Root>
-            ) : null}
-
-            {snapshot.matches('browsing') || snapshot.matches('published') || snapshot.matches('failure') ? (
-              personas.length ? (
-                <div className="identity-persona-list" data-aeon-part="list">
-                  {personas.map((persona) => (
-                    <ListRow.Root
-                      key={persona.id}
-                      className="identity-persona"
-                      data-aeon-state={persona.status}
-                    >
-                      <span className="identity-persona-copy">
-                        <ListRow.Label>{persona.name}</ListRow.Label>
-                        <ListRow.Description>
-                          {persona.id}
-                          {persona.id === signingId && persona.status === 'active'
-                            ? ' · Signing'
-                            : ''}
-                          {persona.about ? ` · ${persona.about}` : ''}
-                        </ListRow.Description>
-                      </span>
-                      <ListRow.Trailing>{personaStatus(persona)}</ListRow.Trailing>
-                    </ListRow.Root>
-                  ))}
-                </div>
-              ) : snapshot.matches('browsing') ? (
-                <p className="identity-kind-note">No Sigma identities yet.</p>
-              ) : null
-            ) : null}
-
-            {snapshot.matches('browsing') ? (
-              <div className="identity-persona-actions">
-                {personas
-                  .filter((persona) => persona.status === 'active')
-                  .map((persona) => (
-                    <span key={persona.id} className="identity-persona-actions">
-                      {persona.id !== signingId ? (
-                        <button
-                          type="button"
-                          className="btn btn-ghost"
-                          onClick={() =>
-                            selectSigningSigmaIdentity(profile.identityKey, persona.id)
-                          }
-                        >
-                          Sign as {persona.name}
-                        </button>
-                      ) : null}
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() =>
-                          void copyText(persona.publicKey, { label: 'Sigma identity key' })
-                        }
-                      >
-                        Copy {persona.name}
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-ghost"
-                        onClick={() => send({ type: 'REVOKE', personaId: persona.id })}
-                      >
-                        Revoke {persona.name}
-                      </button>
-                    </span>
-                  ))}
-                <button type="button" className="btn btn-primary" onClick={() => send({ type: 'COMPOSE' })}>
-                  Create Sigma identity
-                </button>
-              </div>
-            ) : null}
-
-            {snapshot.matches('composing') || snapshot.matches('confirming') ? (
-              <form
-                className="identity-sigma-form"
-                data-aeon-part="form"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  if (snapshot.matches('composing')) send({ type: 'REVIEW' })
-                  else void publish()
-                }}
-              >
-                {snapshot.matches('composing') ? (
-                  <>
-                    <div className="field">
-                      <label htmlFor="sigma-identity-name">Name</label>
-                      <input
-                        id="sigma-identity-name"
-                        value={snapshot.context.name}
-                        maxLength={40}
-                        autoComplete="off"
-                        placeholder="Name people should see"
-                        onChange={(event) => send({ type: 'EDIT', name: event.target.value })}
-                      />
-                    </div>
-                    <div className="field">
-                      <label htmlFor="sigma-identity-about">Context</label>
-                      <input
-                        id="sigma-identity-about"
-                        value={snapshot.context.about}
-                        maxLength={80}
-                        autoComplete="off"
-                        placeholder="Short description, not a URL"
-                        onChange={(event) => send({ type: 'EDIT', about: event.target.value })}
-                      />
-                    </div>
-                    {draftId ? (
-                      <p className="identity-kind-note">
-                        On-chain id {draftId}. Basket sigma-{draftId}.
-                      </p>
-                    ) : snapshot.context.name.trim() ? (
-                      <p className="identity-kind-note">That name cannot become an id.</p>
-                    ) : null}
-                  </>
-                ) : (
-                  <p className="identity-kind-note">
-                    Inscribe {snapshot.context.name}
-                    {draftId ? ` as ${draftId}` : ''}. This spends a little BSV and does not change
-                    the root key or the BRC-169 handle.
-                  </p>
-                )}
-                <div className="identity-persona-actions">
-                  <button
-                    type="button"
-                    className="btn btn-ghost"
-                    onClick={() => send({ type: snapshot.matches('confirming') ? 'BACK' : 'CANCEL' })}
-                  >
-                    {snapshot.matches('confirming') ? 'Back' : 'Cancel'}
-                  </button>
-                  <button
-                    type="submit"
-                    className="btn btn-primary"
-                    disabled={snapshot.matches('composing') && !draftId}
-                  >
-                    {snapshot.matches('confirming') ? 'Inscribe' : 'Review'}
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
-            {snapshot.matches('publishing') || snapshot.matches('revoking') ? (
-              <p className="identity-kind-note" data-aeon-state={screen}>
-                {snapshot.matches('publishing')
-                  ? 'Inscribing the Sigma identity…'
-                  : 'Spending the control output…'}
-              </p>
-            ) : null}
-
-            {snapshot.matches('revokeConfirm') ? (
-              <form
-                className="identity-sigma-form"
-                data-aeon-part="revoke"
-                onSubmit={(event) => {
-                  event.preventDefault()
-                  void revoke()
-                }}
-              >
-                <p className="identity-kind-note">
-                  Revoke {revoking?.name ?? snapshot.context.personaId}. The control output is
-                  spent. The root key and the BRC-169 handle are not.
-                </p>
-                <div className="identity-persona-actions">
-                  <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-                    Back
-                  </button>
-                  <button type="submit" className="btn btn-danger">
-                    Revoke
-                  </button>
-                </div>
-              </form>
-            ) : null}
-
-            {snapshot.matches('published') || snapshot.matches('failure') ? (
-              <div className="identity-persona-actions">
-                {snapshot.matches('failure') ? (
-                  <button type="button" className="btn btn-ghost" onClick={() => send({ type: 'BACK' })}>
-                    Back
-                  </button>
-                ) : null}
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  onClick={() => send({ type: snapshot.matches('published') ? 'DONE' : 'CANCEL' })}
-                >
-                  Done
-                </button>
-              </div>
-            ) : null}
+          <section className="identity-card identity-compose" aria-label="Compose BAP identity">
+            <h3 className="identity-compose-title">Compose identity</h3>
+            <p className="identity-compose-lede">
+              Publishes your BAP ID (first time) and ALIAS profile on-chain for this wallet
+              account. Needs a little spendable balance for fees.
+            </p>
+            <label className="identity-compose-field">
+              <span>Display name</span>
+              <input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="Name"
+                autoComplete="nickname"
+                disabled={busy}
+              />
+            </label>
+            <label className="identity-compose-field">
+              <span>About</span>
+              <textarea
+                value={description}
+                onChange={(e) => setDescription(e.target.value)}
+                placeholder="Short bio"
+                rows={3}
+                disabled={busy}
+              />
+            </label>
+            <label className="identity-compose-field">
+              <span>Image URL</span>
+              <input
+                value={image}
+                onChange={(e) => setImage(e.target.value)}
+                placeholder="https://…"
+                inputMode="url"
+                disabled={busy}
+              />
+            </label>
+            <button
+              type="button"
+              className="btn btn-primary identity-compose-submit"
+              disabled={busy}
+              onClick={() => void onCompose()}
+            >
+              {busy ? 'Publishing…' : published ? 'Update profile' : 'Publish identity'}
+            </button>
+            {status ? <p className="identity-compose-status">{status}</p> : null}
           </section>
         </div>
       </div>
