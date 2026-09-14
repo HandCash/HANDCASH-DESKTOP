@@ -1,26 +1,32 @@
 /**
- * Sigma identity — portable personas on BRC-100, not the wallet root.
+ * Issuer attestation helpers (BRC-247 direction: BAP-backed).
  *
- * Root identity is the BRC-100 identity key. A BRC-169 handle is a claim on
- * that key. A Sigma identity is a separate BKDS child used to attest 1Sat and
- * BSV-21 issuances. Spending its control output revokes it. It never replaces
- * the root key or the handle.
+ * Product rule: one identity hierarchy only.
+ *   BAP protocolID = [1, "sigma"], keyID = identity-{N}, basket = bap
+ * Issuer stamps are VIN-bound SIGMA tails signed by the current BAP key —
+ * not a competing parallel root.
  *
- * Derivation is BRC-42 public (security level 0, counterparty `anyone`) so any
- * indexer with the wallet identity key and the persona id can reconstruct the
- * signing key. The root private key is not required to verify, and is never
- * placed in an inscription.
+ * Runtime constants below still use the withdrawn parallel-persona path until
+ * the wallet migration lands (paths, publish/revoke, Identity UI → BAP).
+ * Do not add new callers of the withdrawn [0, "sigma identity"] tree.
  */
 
-/** BRC-42 / BRC-43 protocol. Security level 0 = publicly derivable. */
+/** @deprecated Withdrawn parallel persona protocol — migrate to [1, "sigma"]. */
 export const SIGMA_IDENTITY_PROTOCOL_ID = [0, 'sigma identity'] as const
 
+/** @deprecated Withdrawn — BAP uses wallet/self defaults under [1, "sigma"]. */
 export const SIGMA_IDENTITY_COUNTERPARTY = 'anyone' as const
+
+/** Target BAP protocol (1sat-sdk / Yours). Use this for new work. */
+export const BAP_PROTOCOL_ID = [1, 'sigma'] as const
+export const BAP_KEY_PREFIX = 'identity' as const
+export const BAP_BASKET = 'bap' as const
 
 export const SIGMA_IDENTITY_MIME = 'application/sigma-identity+json'
 
 export const SIGMA_IDENTITY_VERSION = 1
 
+/** @deprecated Parallel persona baskets withdrawn — legacy reads only. */
 export const SIGMA_IDENTITY_BASKET_PREFIX = 'sigma-'
 
 /** ASCII "SIGMA" push — present on a Sigma tail. */
