@@ -15,6 +15,8 @@ import {
 } from './types'
 import { decodeBsv21Binary, iconOutpointFromPayload } from './decode162'
 import { tipFromBsv21Script } from './sendPlan'
+import { linkSigmaIssuer } from '../sigmaIdentity/link'
+import { listSigmaIdentities } from '../sigmaIdentity/catalog'
 import { durableGetItem, durableSetItem } from '../durableStorage'
 import { isItemSent } from '../sentItemGuard'
 import {
@@ -187,7 +189,22 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     scriptHex,
     [remittanceIssuer, identityKey].filter(Boolean) as string[],
   )
-  const issuer = sigma.issuer ?? remittanceIssuer
+  const linked = linkSigmaIssuer({
+    lockingScript: scriptHex,
+    customInstructions: raw.customInstructions,
+    selfIdentityKey: identityKey,
+    personas: identityKey
+      ? listSigmaIdentities(identityKey).map((row) => ({
+          id: row.id,
+          generation: row.generation,
+          identityKey: row.identityKey,
+          name: row.name,
+          origin: row.origin,
+          publicKey: row.publicKey,
+        }))
+      : [],
+  })
+  const issuer = linked?.context?.publicKey ?? sigma.issuer ?? remittanceIssuer
   return {
     outpoint: outpointUnderscore(outpointRaw).toLowerCase(),
     tokenId,
@@ -201,7 +218,8 @@ export function decodeListedBsv21Tip(raw: ListedOutput, identityKey?: string): B
     ...(colourMaxSupply != null ? { colourMaxSupply } : {}),
     ...(scriptHex ? { lockingScript: scriptHex } : {}),
     ...(issuer ? { issuer } : {}),
-    ...(sigma.issuer ? { issuerAttested: true } : {}),
+    ...(sigma.issuer || linked?.linked ? { issuerAttested: true } : {}),
+    ...(linked?.linked && linked.context ? { issuerContext: linked.context } : {}),
   }
 }
 

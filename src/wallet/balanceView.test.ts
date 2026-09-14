@@ -101,6 +101,13 @@ describe('classifyOwnedCash', () => {
         'none',
       ),
     ).toEqual({ kind: 'exclude', reason: 'bsv21' })
+    expect(
+      classifyOwnedCash(
+        { satoshis: 1, spendable: true, basket: 'sigma-studio' },
+        'pending',
+        'none',
+      ),
+    ).toEqual({ kind: 'exclude', reason: 'sigma' })
   })
 
   it('does not credit written-off change of a failed send', () => {

@@ -40,7 +40,7 @@ export type OwnedCashFate =
   | { kind: 'count'; as: 'spendable' | 'unconfirmedChange'; satoshis: number }
   | {
       kind: 'exclude'
-      reason: 'noValue' | 'item' | 'bsv21' | 'spentLive' | 'notOurs'
+      reason: 'noValue' | 'item' | 'bsv21' | 'sigma' | 'spentLive' | 'notOurs'
     }
 
 const PAGE = 200
@@ -70,6 +70,7 @@ export function classifyOwnedCash(
   const basket = String(row.basket ?? '').toLowerCase()
   if (basket === '1sat') return { kind: 'exclude', reason: 'item' }
   if (basket === 'bsv21') return { kind: 'exclude', reason: 'bsv21' }
+  if (basket.startsWith('sigma-')) return { kind: 'exclude', reason: 'sigma' }
 
   if (spender === 'pending' || spender === 'settled') {
     return { kind: 'exclude', reason: 'spentLive' }

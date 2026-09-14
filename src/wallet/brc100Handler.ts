@@ -119,6 +119,7 @@ import {
   setPaymentProgress,
 } from './paymentProgress'
 import { validateWalletIdentityProofRequest } from './walletIdentityProof'
+import { enrichCreateActionForSigmaIdentity } from './sigmaIdentity/enrich'
 import { appendAppLog } from './appLog'
 import { logBrc100Response, shouldLogBrc100Method } from './diagnosticLog'
 import {
@@ -779,7 +780,7 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
   if (method === 'createSignature') {
     const proof = validateWalletIdentityProofRequest(
       args,
-      normalizeOrigin(originator),
+      active.identityKey,
     )
     if (proof.kind === 'invalid') {
       return {
@@ -989,6 +990,14 @@ async function handleBrc100RequestInner(event: HttpRequestEvent): Promise<{ stat
                 // Identity mints with tip spends need inputBEEF — do not fall
                 // through to createAction or the toolbox error is opaque.
                 if (isBsv21IdentityMintArgs('createAction', args)) throw err
+              }
+              try {
+                actionArgs = await enrichCreateActionForSigmaIdentity(
+                  active,
+                  actionArgs as Parameters<typeof enrichCreateActionForSigmaIdentity>[1],
+                )
+              } catch (err) {
+                console.warn('[sigma-identity] enrich createAction failed', err)
               }
               // Return once signed + handed to miners. Do not wait for merkle /
               // seen-on-chain callback (Plinko on lilb.it sat 2–3 min per bet).

@@ -23,6 +23,9 @@ import {
   type VerificationProgress,
 } from '../wallet/verificationProgress'
 import { getGenesisFailure, getProvenVerdict } from '../wallet/provenCache'
+import { getActiveWallet } from '../wallet/session'
+import { linkSigmaIssuer } from '../wallet/sigmaIdentity/link'
+import { listSigmaIdentities } from '../wallet/sigmaIdentity/catalog'
 import {
   collectableSendReadyMessage,
   inspectCollectableSendReady,
@@ -254,7 +257,36 @@ export function CollectableDetailsPanel({ outpoint }: Props) {
   const sendTitle = sendBlocked
     ? collectableSendReadyMessage(sendReady.reason)
     : 'Send item'
+  const sigmaIssuer = item.lockingScript
+    ? linkSigmaIssuer({
+        lockingScript: item.lockingScript,
+        selfIdentityKey: getActiveWallet()?.identityKey,
+        personas: (getActiveWallet()?.identityKey
+          ? listSigmaIdentities(getActiveWallet()!.identityKey)
+          : []
+        ).map((row) => ({
+          id: row.id,
+          generation: row.generation,
+          identityKey: row.identityKey,
+          name: row.name,
+          origin: row.origin,
+          publicKey: row.publicKey,
+        })),
+      })
+    : null
   const detailRows: CollectableTrait[] = [
+    ...(sigmaIssuer?.linked && sigmaIssuer.context
+      ? [
+          {
+            name: 'Sigma identity',
+            value: sigmaIssuer.context.name
+              ? `${sigmaIssuer.context.name} · ${sigmaIssuer.context.personaId}`
+              : sigmaIssuer.context.personaId,
+          },
+        ]
+      : sigmaIssuer
+        ? [{ name: 'Sigma signer', value: sigmaIssuer.address }]
+        : []),
     ...(item.app ? [{ name: 'App', value: item.app }] : []),
     ...(item.type ? [{ name: 'Type', value: item.type }] : []),
     ...(item.subType ? [{ name: 'Subtype', value: item.subType }] : []),

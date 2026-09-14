@@ -125,9 +125,9 @@ Product page: `https://handcash.io/migrate` (items-market).
 
 ### Wallet-to-app identity proof
 
-Connected apps can request an origin-bound, short-lived identity proof using
-the standard BRC-100 `getPublicKey` and `createSignature` methods. The canonical
-challenge format, replay rules, and TypeScript examples are documented in
+Connected apps identify a user with a [BRC-138](https://bsv.brc.dev/peer-to-peer/0138.md)
+proof produced through `getPublicKey` and `createSignature`. The proof is not
+spend authority. Parameters and verification are documented in
 [`docs/wallet-to-app-identity-proof.md`](docs/wallet-to-app-identity-proof.md).
 
 ## Notes

@@ -9,7 +9,7 @@
 
 ## North stars
 
-1. **UI = Aeon** — single source of truth. Machines first, then projection. See `.cursor/rules/aeon-ui.mdc`.
+1. **UI = Aeon** — chart before JSX. Screen steps are XState events, not `useState` flags. Gate: `.cursor/rules/aeon-ui.mdc`. Ratchet: `src/machines/aeonAdherence.test.ts` (do not grow the allowlist).
 2. **Protocol = BRC-100 / BSVA** — local HTTP bridge, origin permissions, mirrored migrate contract. See `.cursor/rules/brc100-bsva.mdc`.
 3. **Wallet layers** — do not conflate chain ingest with BRC-39 history. See `src/wallet/layers.ts`.
 
