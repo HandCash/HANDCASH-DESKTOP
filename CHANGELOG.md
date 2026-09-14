@@ -2,9 +2,11 @@
 
 ## [1.3.142] - 2026-09-14
 
-### Changed
+### Fixed
 
-- Patch release (every push must ship a new version).
+- Scope activity, inventory, connected apps, friends, and messages to the active vault sub-account.
+- Titlebar status pill no longer stretches the window or squeezes the logo.
+- Account menu dropdown spans the hero head edge-to-edge.
 
 ## [1.3.141] - 2026-09-14
 
