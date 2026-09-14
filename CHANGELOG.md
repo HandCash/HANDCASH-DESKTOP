@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.145] - 2026-09-14
+
+### Fixed
+
+- Restore mobile titlebar HandCash / Mobile / version labels; sync pill shrinks first.
+
 ## [1.3.144] - 2026-09-14
 
 ### Fixed
