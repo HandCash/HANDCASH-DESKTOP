@@ -347,10 +347,29 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: inherit;
   text-transform: inherit;
   line-height: inherit;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+/* Titlebar sync chip: fixed width so Synced → Catching up does not grow the bar. */
+.titlebar-end > .status-pill {
+  width: min(11rem, 42vw);
+  max-width: min(11rem, 42vw);
+  flex: 0 0 auto;
+  flex-shrink: 0;
+  justify-content: flex-start;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
+  /* Tighter on phones — still room for Synced / Syncing / Catching up + ellipsis. */
+  width: min(9.5rem, 36vw);
+  max-width: min(9.5rem, 36vw);
+  padding-left: 10px;
+  padding-right: 10px;
+  gap: 6px;
 }
 
 
@@ -8512,7 +8531,10 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-  flex-shrink: 0;
+  /* Allow the end cluster to yield before brand/actions get squished; the
+     sync pill itself is fixed-width above. */
+  flex-shrink: 1;
+  min-width: 0;
 }
 
 .titlebar-actions {
