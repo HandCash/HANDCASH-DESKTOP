@@ -336,7 +336,7 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   white-space: nowrap;
   /* Cap growth so long sync labels never widen the titlebar or squish brand/actions. */
   box-sizing: border-box;
-  max-width: min(11rem, 42vw);
+  max-width: min(8.5rem, 32vw);
   min-width: 0;
   overflow: hidden;
   flex-shrink: 1;
@@ -354,22 +354,24 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   white-space: nowrap;
 }
 
-/* Titlebar sync chip: fixed width so Synced → Catching up does not grow the bar. */
+/* Titlebar sync chip: capped + shrinkable so labels ellipsize without growing
+   the bar or shoving brand/actions off-screen. */
 .titlebar-end > .status-pill {
-  width: min(11rem, 42vw);
-  max-width: min(11rem, 42vw);
-  flex: 0 0 auto;
-  flex-shrink: 0;
+  width: auto;
+  max-width: min(8.5rem, 32vw);
+  min-width: 0;
+  flex: 0 1 auto;
+  flex-shrink: 1;
   justify-content: flex-start;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end > .status-pill {
-  /* Tighter on phones — still room for Synced / Syncing / Catching up + ellipsis. */
-  width: min(9.5rem, 36vw);
-  max-width: min(9.5rem, 36vw);
-  padding-left: 10px;
-  padding-right: 10px;
-  gap: 6px;
+  /* Leave room for wordmark + scan/lock; long labels ellipsize inside. */
+  max-width: min(6.5rem, calc(100vw - 11.5rem));
+  padding-left: 8px;
+  padding-right: 8px;
+  gap: 5px;
+  font-size: 0.75rem;
 }
 
 
