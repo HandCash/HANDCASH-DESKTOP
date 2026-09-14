@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.159] - 2026-09-14
+
+### Fixed
+
+- Double balance after promote: seal spent inputs before keeping change (Arcade-pin / heal / restore).
+
 ## [1.3.158] - 2026-09-14
 
 ### Changed
