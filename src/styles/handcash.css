@@ -3695,7 +3695,9 @@ li[data-aeon-state='failed'] .history-progress-range {
   align-items: center;
   gap: 6px;
   max-width: min(70%, 420px);
-  min-width: 0;
+  /* Never compress below the label+caret — clipping hid $cryptokang as $cryptoka */
+  flex-shrink: 0;
+  min-width: auto;
   margin: 0;
   padding: 0 2px 0 8px;
   border: 0;
@@ -3710,14 +3712,12 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-identity span {
-  /* Label is already mid-truncated in JS (e.g. 8…6). CSS ellipsis stacked a
-     second "…" and looked like six dots on compact/mobile.
-     min-width:0 so the flex item yields to the caret instead of painting
-     under it when the row is tight. */
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: clip;
+  /* Handles and mid-truncated IDs are short — size to content. Do not
+     flex-grow + overflow-clip: that ate the last 2–3 glyphs of $handles
+     (looked like caret overlap). Long keys are mid-truncated in JS. */
+  flex: 0 0 auto;
+  min-width: auto;
+  overflow: visible;
   white-space: nowrap;
 }
 
@@ -3732,7 +3732,8 @@ li[data-aeon-state='failed'] .history-progress-range {
   position: static;
   display: inline-flex;
   max-width: min(70%, 420px);
-  min-width: 0;
+  flex-shrink: 0;
+  min-width: auto;
 }
 
 .wallet-account-caret {
@@ -13975,9 +13976,9 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
   align-items: center;
   justify-content: flex-end;
   gap: 2px;
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   max-width: none;
-  min-width: 0;
+  min-width: auto;
 }
 
 .wallet-hero-identity-copy {
