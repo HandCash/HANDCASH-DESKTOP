@@ -11,10 +11,15 @@
  * minted from the clock per write, so a restored or re-recorded row looked
  * brand new and flashed again.
  */
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 
 /** v2 keys rows by event identity; v1 ids can never match again. */
-const KEY = 'handcash.activitySeen.v2'
+const KEY_BASE = 'handcash.activitySeen.v2'
+
+function activitySeenKey(): string {
+  return accountLocalKey(KEY_BASE)
+}
 /** Newest keys kept; older ones can never flash again anyway. */
 const MAX_SEEN = 500
 /**
@@ -43,7 +48,7 @@ function load(): Map<string, true> {
   if (seen) return seen
   seen = new Map()
   try {
-    const raw = durableGetItem(KEY)
+    const raw = durableGetItem(activitySeenKey())
     if (raw) {
       const parsed = JSON.parse(raw) as unknown
       if (Array.isArray(parsed)) {
@@ -61,7 +66,7 @@ function load(): Map<string, true> {
 
 function persist(map: Map<string, true>): void {
   try {
-    durableSetItem(KEY, JSON.stringify([...map.keys()]))
+    durableSetItem(activitySeenKey(), JSON.stringify([...map.keys()]))
     ready = true
   } catch {
     // Best effort; the in-memory set still suppresses repeat flashes.
@@ -127,6 +132,12 @@ export function markActivitySeen(ids: readonly string[]): void {
     }
   }
   persist(map)
+}
+
+export function rebindActivitySeenForAccount(): void {
+  seen = null
+  ready = false
+  announcedThisSession.clear()
 }
 
 export function resetActivitySeenForTests(): void {

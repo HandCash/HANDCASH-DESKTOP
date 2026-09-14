@@ -1,11 +1,16 @@
 import { P2PKH, PublicKey } from '@bsv/sdk'
 import type { Chain } from './vault'
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { formatHandCashHandle } from './handleFormat'
 import { tryParsePeerPayUri } from './peerPayUri'
 import { parseHandleInput, resolveHandle } from './handleResolve'
 
-const STORAGE_KEY = 'handcash.brc100.friends'
+const STORAGE_KEY_BASE = 'handcash.brc100.friends'
+
+function friendsStorageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
 
 export type Friend = {
   id: string
@@ -53,7 +58,7 @@ function notify(friends: Friend[]) {
 
 function readRaw(): Friend[] {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(friendsStorageKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as Friend[]
     if (!Array.isArray(parsed)) return []
@@ -84,8 +89,12 @@ function readRaw(): Friend[] {
 }
 
 function writeAll(friends: Friend[]) {
-  durableSetItem(STORAGE_KEY, JSON.stringify(friends))
+  durableSetItem(friendsStorageKey(), JSON.stringify(friends))
   notify(friends)
+}
+
+export function rebindFriendsForAccount(): void {
+  notify(listFriends())
 }
 
 export function listFriends(): Friend[] {

@@ -41,6 +41,7 @@ import {
   bsv21IdentityMintHints,
   isBsv21IdentityMintArgs,
 } from './token'
+import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys.js'
 import { durableGetItem, durableSetItem } from './durableStorage.js'
 import { walletIdentityProofPurpose } from './walletIdentityProof'
 import { marketListingPreviewFromArgs } from './marketListing'
@@ -55,7 +56,11 @@ import {
 import { validateIndexExpansionManifest, fetchIndexExpansionManifest } from './indexExpansionManifest'
 import { getStoredIndexPack } from './indexExpansionStore'
 
-const STORAGE_KEY = 'handcash.brc100.connectedApps'
+const STORAGE_KEY_BASE = 'handcash.brc100.connectedApps'
+
+function connectedAppsStorageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
 
 export type PermissionDecision = 'allow' | 'deny'
 
@@ -214,14 +219,16 @@ function migrateRaw(raw: string | null): ConnectedApp[] {
 }
 
 function readConnected(): ConnectedApp[] {
-  // Prefer durable / new key; fall back to legacy allowlist key.
-  const next = durableGetItem(STORAGE_KEY)
+  // Prefer durable / new key; fall back to legacy allowlist key (primary only).
+  const next = durableGetItem(connectedAppsStorageKey())
   if (next) return migrateRaw(next)
-  const legacy = durableGetItem('handcash.brc100.allowedOrigins')
-  if (legacy) {
-    const apps = migrateRaw(legacy)
-    writeConnected(apps)
-    return apps
+  if (peekAccountLocalKeyScope().accountIndex === 0) {
+    const legacy = durableGetItem('handcash.brc100.allowedOrigins')
+    if (legacy) {
+      const apps = migrateRaw(legacy)
+      writeConnected(apps)
+      return apps
+    }
   }
   return []
 }
@@ -237,7 +244,7 @@ function writeConnected(apps: ConnectedApp[]): void {
     dedup.set(app.origin, app)
   }
   durableSetItem(
-    STORAGE_KEY,
+    connectedAppsStorageKey(),
     JSON.stringify([...dedup.values()]),
   )
   emitConnected()
@@ -403,6 +410,12 @@ export function isOriginAllowed(origin: string | undefined): boolean {
   return readConnected().some(
     (a) => aliases.has(a.origin) || aliases.has(normalizeAppHost(a.origin)),
   )
+}
+
+
+/** Reload Connected apps for the active vault account. */
+export function rebindConnectedAppsForAccount(): void {
+  emitConnected()
 }
 
 export function listConnectedApps(): ConnectedApp[] {

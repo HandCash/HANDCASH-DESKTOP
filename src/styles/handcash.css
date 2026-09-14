@@ -334,6 +334,11 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
+  /* Never force the titlebar / window wider than the logo allows. */
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 .status-pill-label {
@@ -341,6 +346,34 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: inherit;
   text-transform: inherit;
   line-height: inherit;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* Shrink label type when the titlebar end is tight — keep pill height (pad + line-height). */
+@container titlebar-end (max-width: 220px) {
+  .status-pill {
+    font-size: 0.72rem;
+    gap: 6px;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+}
+
+@container titlebar-end (max-width: 160px) {
+  .status-pill {
+    font-size: 0.65rem;
+    gap: 4px;
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+}
+
+.titlebar > .brand,
+.titlebar .brand {
+  flex-shrink: 0;
 }
 
 .status-pill[data-tone='ok'],
@@ -3689,7 +3722,8 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-account-menu {
-  position: relative;
+  /* Static so the dropdown positions against .wallet-hero-identity-row */
+  position: static;
   display: inline-flex;
   max-width: min(70%, 420px);
   min-width: 0;
@@ -3706,9 +3740,11 @@ li[data-aeon-state='failed'] .history-progress-range {
 .wallet-account-dropdown {
   position: absolute;
   top: calc(100% + 6px);
+  left: 0;
   right: 0;
   z-index: 40;
-  min-width: min(280px, 80vw);
+  width: auto;
+  min-width: 0;
   padding: 6px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
@@ -8476,7 +8512,11 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-  flex-shrink: 0;
+  min-width: 0;
+  flex-shrink: 1;
+  max-width: calc(100% - 7.5rem);
+  container-type: inline-size;
+  container-name: titlebar-end;
 }
 
 .titlebar-actions {
@@ -13905,10 +13945,13 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 
 
 .wallet-hero-identity-row {
-  display: inline-flex;
+  position: relative;
+  display: flex;
   align-items: center;
+  justify-content: flex-end;
   gap: 2px;
-  max-width: min(70%, 420px);
+  flex: 1 1 auto;
+  max-width: none;
   min-width: 0;
 }
 

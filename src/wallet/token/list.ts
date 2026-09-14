@@ -26,6 +26,7 @@ import {
 } from './types'
 import { tipFromBsv21Script } from './sendPlan'
 import { durableGetItem, durableRemoveItem, durableSetItem } from '../durableStorage'
+import { accountLocalKey } from '../accountLocalKeys'
 import {
   beginOneSatImport,
   markOneSatImportFailed,
@@ -46,7 +47,11 @@ export { formatFungibleAmount, BSV21_BASKET }
 
 type Listener = (tokens: FungibleToken[]) => void
 
-const LIST_CACHE_KEY = 'handcash.tokens.list.v1'
+const LIST_CACHE_KEY_BASE = 'handcash.tokens.list.v1'
+
+function listCacheKey(): string {
+  return accountLocalKey(LIST_CACHE_KEY_BASE)
+}
 
 let cached: FungibleToken[] = []
 let hydrated = false
@@ -67,7 +72,7 @@ function isFungibleShape(x: unknown): x is FungibleToken {
 
 function loadDurableList(): FungibleToken[] {
   try {
-    const raw = durableGetItem(LIST_CACHE_KEY)
+    const raw = durableGetItem(listCacheKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as { items?: unknown }
     if (!Array.isArray(parsed?.items)) return []
@@ -88,7 +93,7 @@ function loadDurableList(): FungibleToken[] {
 function persistDurableList(items: FungibleToken[]): void {
   try {
     durableSetItem(
-      LIST_CACHE_KEY,
+      listCacheKey(),
       JSON.stringify({
         at: Date.now(),
         items: items.map((t) => ({
@@ -471,8 +476,22 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
   cached = []
   hydrated = false
   listInFlight = null
-  durableRemoveItem(LIST_CACHE_KEY)
+  durableRemoveItem(listCacheKey())
   if (options?.notify !== false) notify()
+}
+
+/** Swap Tokens inventory to the active vault account. */
+export function rebindFungiblesForAccount(): void {
+  cached = []
+  hydrated = false
+  listInFlight = null
+  const durable = loadDurableList()
+  if (durable.length > 0) {
+    cached = durable
+    hydrated = true
+  }
+  notify()
+  void listFungibles().catch(() => {})
 }
 
 export function getCachedFungibles(): FungibleToken[] {

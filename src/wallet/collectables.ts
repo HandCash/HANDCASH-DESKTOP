@@ -177,6 +177,7 @@ import {
   durableRemoveItem,
   durableSetItem,
 } from './durableStorage'
+import { accountLocalKey } from './accountLocalKeys'
 import {
   isAlreadySpentInputError,
   hideSpentOutpoints,
@@ -217,8 +218,16 @@ export type Collectable = {
 
 type CollectablesListener = (items: Collectable[]) => void
 
-const LIST_CACHE_KEY = 'handcash.collectables.list.v1'
-const SEEDED_ITEMS_KEY = 'handcash.collectables.seeded.v1'
+const LIST_CACHE_KEY_BASE = 'handcash.collectables.list.v1'
+const SEEDED_ITEMS_KEY_BASE = 'handcash.collectables.seeded.v1'
+
+function listCacheKey(): string {
+  return accountLocalKey(LIST_CACHE_KEY_BASE)
+}
+
+function seededItemsKey(): string {
+  return accountLocalKey(SEEDED_ITEMS_KEY_BASE)
+}
 /** Keep startup JSON bounded; the live basket is paged from IndexedDB. */
 const DURABLE_LIST_LIMIT = 1_000
 /** One page is small enough to paint without retaining an 800k-row wallet. */
@@ -292,7 +301,7 @@ function isCollectableShape(value: unknown): value is Collectable {
 /** Identity the cached list was written for, when the payload records one. */
 function durableListIdentity(): string | null {
   try {
-    const raw = durableGetItem(LIST_CACHE_KEY)
+    const raw = durableGetItem(listCacheKey())
     if (!raw) return null
     const parsed = JSON.parse(raw) as { identityKey?: unknown }
     return typeof parsed?.identityKey === 'string' ? parsed.identityKey : null
@@ -303,7 +312,7 @@ function durableListIdentity(): string | null {
 
 function loadDurableList(): Collectable[] {
   try {
-    const raw = durableGetItem(LIST_CACHE_KEY)
+    const raw = durableGetItem(listCacheKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as { items?: unknown }
     if (!Array.isArray(parsed?.items)) return []
@@ -334,7 +343,7 @@ function persistDurableList(items: Collectable[]): void {
   try {
     const bounded = items.slice(0, DURABLE_LIST_LIMIT)
     durableSetItem(
-      LIST_CACHE_KEY,
+      listCacheKey(),
       JSON.stringify({
         at: Date.now(),
         identityKey: getActiveWallet()?.identityKey ?? null,
@@ -491,11 +500,41 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
   firstSeenAt.clear()
   seededItems.clear()
   loadedSeedIdentity = null
-  durableRemoveItem(LIST_CACHE_KEY)
-  durableRemoveItem(SEEDED_ITEMS_KEY)
+  durableRemoveItem(listCacheKey())
+  durableRemoveItem(seededItemsKey())
   // Skip the empty notify when a re-read is about to replace the list —
   // notifying [] is what flashed Collect empty on sync / unlock / pull.
   if (options?.notify !== false) notifyCollectables([])
+}
+
+/**
+ * Swap Collect inventory to the active vault account without wiping other
+ * accounts' durable list caches.
+ */
+export function rebindCollectablesForAccount(): void {
+  cachedCollectables = []
+  collectablesHydrated = false
+  listedOutputCursor = 0
+  listedOutputTotal = 0
+  cachedLiveOneSats = null
+  cachedLiveAllOutpoints = null
+  firstSeenAt.clear()
+  seededItems.clear()
+  loadedSeedIdentity = null
+  listInFlight = null
+  listMoreInFlight = null
+  const durable = loadDurableList().filter(
+    (item) =>
+      !isItemSent(item.outpoint) &&
+      !collectableIsOnesatFt(item) &&
+      !isBareOriginCollectable(item),
+  )
+  if (durable.length > 0) {
+    cachedCollectables = durable
+    collectablesHydrated = true
+  }
+  notifyCollectables(cachedCollectables)
+  void listCollectables().catch(() => {})
 }
 
 /**
@@ -1101,7 +1140,7 @@ function persistSeededItems(identityKey: string): void {
       seenAt: firstSeenAt.get(key) ?? Date.now(),
     })
   }
-  durableSetItem(SEEDED_ITEMS_KEY, JSON.stringify({ identityKey, items }))
+  durableSetItem(seededItemsKey(), JSON.stringify({ identityKey, items }))
 }
 
 /** Restore only seeds created by this identity; another wallet's tips are never ours. */
@@ -1110,7 +1149,7 @@ function hydrateSeededItems(identityKey: string): void {
   seededItems.clear()
   loadedSeedIdentity = identityKey
   try {
-    const raw = durableGetItem(SEEDED_ITEMS_KEY)
+    const raw = durableGetItem(seededItemsKey())
     if (!raw) return
     const parsed = JSON.parse(raw) as {
       identityKey?: unknown
@@ -1154,7 +1193,7 @@ function hydrateSeededItems(identityKey: string): void {
     }
     persistSeededItems(identityKey)
   } catch {
-    durableRemoveItem(SEEDED_ITEMS_KEY)
+    durableRemoveItem(seededItemsKey())
   }
 }
 

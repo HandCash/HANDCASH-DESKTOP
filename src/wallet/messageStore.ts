@@ -2,11 +2,16 @@
  * Local-first Messages store (BRC-169 delivery + BRC-218 cards).
  * Persists across sessions; cloud sync is additive via messageTransport.
  */
+import { accountLocalKey, peekAccountLocalKeyScope } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { listFriends, type Friend } from './friends'
 
-const STORAGE_KEY = 'handcash.messages.v1'
+const STORAGE_KEY_BASE = 'handcash.messages.v1'
 const LEGACY_KEY = 'handcash.brc100.chat.v1'
+
+function messagesStorageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
 
 export type MessagePayStatus =
   | 'pending'
@@ -160,12 +165,14 @@ function notify() {
 }
 
 function migrateLegacy(): ChatState | null {
+  // Legacy chat blob belongs to the primary account only.
+  if (peekAccountLocalKeyScope().accountIndex !== 0) return null
   try {
     const raw = durableGetItem(LEGACY_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw) as ChatState
     if (!parsed || !Array.isArray(parsed.messages)) return null
-    durableSetItem(STORAGE_KEY, JSON.stringify(parsed))
+    durableSetItem(messagesStorageKey(), JSON.stringify(parsed))
     return parsed
   } catch {
     return null
@@ -174,7 +181,7 @@ function migrateLegacy(): ChatState | null {
 
 function readState(): ChatState {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(messagesStorageKey())
     if (!raw) {
       const legacy = migrateLegacy()
       if (legacy) return legacy
@@ -189,7 +196,11 @@ function readState(): ChatState {
 }
 
 function writeState(state: ChatState) {
-  durableSetItem(STORAGE_KEY, JSON.stringify(state))
+  durableSetItem(messagesStorageKey(), JSON.stringify(state))
+  notify()
+}
+
+export function rebindMessagesForAccount(): void {
   notify()
 }
 

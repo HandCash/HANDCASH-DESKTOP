@@ -479,6 +479,9 @@ export async function bootWallet(args: {
   lastKnownBalanceSats = readTrustedBalance(active.identityKey, active.chain)
   lastBalanceBreakdown = ''
   startDurablePropagationRecovery()
+  // Isolate friends / activity / apps / inventory to this vault account.
+  const { rebindAccountLocalStores } = await import('./accountLocalStores')
+  rebindAccountLocalStores(active)
   return active
 }
 
@@ -808,6 +811,8 @@ export function formatSats(sats: number): string {
 /**
  * Stop the current toolbox session and boot another vault account root.
  * Same unlock / mnemonic; different on-chain identity and balance.
+ * bootWallet rebinds account-local stores so Activity / Inventory / Apps /
+ * Friends do not spill across subwallets.
  */
 export async function switchVaultAccount(args: {
   masterRootKeyHex: string

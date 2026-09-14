@@ -1,11 +1,16 @@
 import { errorText } from './errorText'
 import { appDisplayName, normalizeAppHost } from './appIdentity'
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import { isGhostTxSuppressed, rememberGhostTx } from './ghostTxSuppress'
 import { txHadArcadeSubmitContact } from './arcadeSubmitGuard'
 import { shouldYieldChainIngestToSpend } from './walletCoordinator'
 
-const STORAGE_KEY = 'handcash.brc100.appActivity'
+const STORAGE_KEY_BASE = 'handcash.brc100.appActivity'
+
+function activityStorageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
 
 /** Money moves plus non-tx wallet actions (connect, deny, add friend, …). */
 export type ActivityKind = 'spent' | 'earned' | 'event'
@@ -131,7 +136,7 @@ let parsedEntries: ActivityEntry[] = []
 
 function readAll(): ActivityEntry[] {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(activityStorageKey())
     if (!raw) return []
     if (raw === parsedRaw) return parsedEntries
     const parsed = JSON.parse(raw) as unknown
@@ -248,6 +253,15 @@ function normalizeActivityRetry(value: unknown): ActivityRetry | undefined {
 let writeGeneration = 0
 
 /** Monotonic generation for feed cache invalidation (remount-safe). */
+
+/** Drop parse cache and notify so Activity reloads the active account store. */
+export function rebindAppActivityForAccount(): void {
+  parsedRaw = null
+  parsedEntries = []
+  writeGeneration += 1
+  for (const cb of listeners) cb()
+}
+
 export function getActivityWriteGeneration(): number {
   return writeGeneration
 }
@@ -256,7 +270,7 @@ function writeAll(entries: ActivityEntry[]): void {
   // Cap history so storage stays small.
   const trimmed = entries.slice(-2000)
   writeGeneration += 1
-  durableSetItem(STORAGE_KEY, JSON.stringify(trimmed))
+  durableSetItem(activityStorageKey(), JSON.stringify(trimmed))
   for (const cb of listeners) cb()
 }
 
