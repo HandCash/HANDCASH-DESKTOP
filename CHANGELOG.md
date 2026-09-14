@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.146] - 2026-09-14
+
+### Fixed
+
+- Per-account sync health; local UTXO balance on vault switch (no 800ms→0).
+- Same-vault root→child BRC-29 credits the child’s toolbox on-device.
+
 ## [1.3.145] - 2026-09-14
 
 ### Fixed
