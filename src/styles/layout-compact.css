@@ -53,8 +53,10 @@ html:is(.platform-mobile, .layout-compact) .nav-child-body:has(.send-panel) .sen
   min-height: 0;
 }
 
-html:is(.platform-mobile, .layout-compact) .aeonToast__viewport {
-  bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
+html:is(.platform-mobile, .layout-compact) .aeonToast__viewport,
+html:is(.platform-mobile, .layout-compact) .update-toast-viewport {
+  /* Sit above the in-flow wallet nav / action bar + home indicator. */
+  bottom: calc(5rem + env(safe-area-inset-bottom, 0px));
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar {
@@ -63,6 +65,24 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   padding-bottom: 12px;
   padding-left: max(12px, env(safe-area-inset-left, 0px));
   padding-right: max(12px, env(safe-area-inset-right, 0px));
+}
+
+/* Desktop titlebar-end uses max-width: calc(100% - 7.5rem) which shoved
+   scan/lock + sync pill off-screen on phones. Keep actions fully visible;
+   the status pill may shrink via container queries. */
+html:is(.platform-mobile, .layout-compact) .titlebar-end {
+  max-width: none;
+  flex-shrink: 0;
+  min-width: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-actions {
+  flex-shrink: 0;
+}
+
+html:is(.platform-mobile, .layout-compact) .titlebar-end .status-pill {
+  min-width: 0;
+  flex-shrink: 1;
 }
 
 /* Light sheet on phone: status-bar inset and chrome must match paper, not the

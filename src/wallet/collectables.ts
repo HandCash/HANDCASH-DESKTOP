@@ -255,6 +255,8 @@ export function inferCollectableOutputTotal(args: {
 let cachedCollectables: Collectable[] = []
 /** True after at least one successful list (even if empty), or a durable hit. */
 let collectablesHydrated = false
+/** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
+let collectablesAccountEpoch = 0
 const collectablesListeners = new Set<CollectablesListener>()
 let listedOutputCursor = 0
 let listedOutputTotal = 0
@@ -424,8 +426,14 @@ function isProtectedFromGhostDrop(outpoint: string): boolean {
 
 function setCollectablesCache(
   items: Collectable[],
-  options: { announceArrivals?: boolean } = {}
+  options: { announceArrivals?: boolean; forEpoch?: number } = {}
 ) {
+  if (
+    options.forEpoch !== undefined &&
+    options.forEpoch !== collectablesAccountEpoch
+  ) {
+    return
+  }
   const prev = new Set(
     cachedCollectables.map((i) => normalizeOutpoint(i.outpoint))
   )
@@ -512,6 +520,7 @@ export function clearCollectablesCache(options?: { notify?: boolean }): void {
  * accounts' durable list caches.
  */
 export function rebindCollectablesForAccount(): void {
+  collectablesAccountEpoch += 1
   cachedCollectables = []
   collectablesHydrated = false
   listedOutputCursor = 0
@@ -534,7 +543,14 @@ export function rebindCollectablesForAccount(): void {
     collectablesHydrated = true
   }
   notifyCollectables(cachedCollectables)
-  void listCollectables().catch(() => {})
+  // Authoritative list so short-page "keep cached" cannot retain the prior wallet.
+  const run = listCollectablesNow(undefined, false, true)
+  listInFlight = run
+  void run
+    .catch(() => {})
+    .then(() => {
+      if (listInFlight === run) listInFlight = null
+    })
 }
 
 /**
@@ -2321,6 +2337,7 @@ async function listCollectablesNow(
   append = false,
   authoritativeAfterReplace = false
 ): Promise<Collectable[]> {
+  const epoch = collectablesAccountEpoch
   const wallet = active ?? getActiveWallet()
   if (!wallet) return getCachedCollectables()
 
@@ -2386,6 +2403,10 @@ async function listCollectablesNow(
         lockingScript: lockingScript || undefined,
       }
     })
+    // Account switched while this listOutputs was in flight — discard.
+    if (epoch !== collectablesAccountEpoch) {
+      return getCachedCollectables()
+    }
     // Recompose / BRC-39 / mobile sync can return 0 or a short page from a
     // temporary or partially restored database. That is not proof of an empty
     // inventory. On a real cold launch this painted 777 durable cards, replaced
@@ -2415,7 +2436,7 @@ async function listCollectablesNow(
         lastItemOutputs = [...byOp.values()]
         lastItemChain = wallet.chain
       }
-      setCollectablesCache(merged, { announceArrivals: true })
+      setCollectablesCache(merged, { announceArrivals: true, forEpoch: epoch })
       return getCachedCollectables()
     }
     listedOutputTotal = inferCollectableOutputTotal({
@@ -2559,13 +2580,17 @@ async function listCollectablesNow(
     outputs = kept
   }
 
+  if (epoch !== collectablesAccountEpoch) {
+    return getCachedCollectables()
+  }
+
   lastItemOutputs = outputs
   lastItemChain = wallet.chain
 
   // Everything the list renders (name, app, image) comes from the output itself
   // or the resolution cache, so paint now and let authenticity + indexer catch up.
   const deduped = buildItems(outputs, wallet.chain)
-  setCollectablesCache(deduped, { announceArrivals: !append })
+  setCollectablesCache(deduped, { announceArrivals: !append, forEpoch: epoch })
   // Identity first, then authenticity — a lineage walk is the expensive one and
   // must never delay getting a name and an image onto the card.
   const ownRead = listInFlight
@@ -2590,6 +2615,7 @@ async function enrichCollectableFromIndexer(
   item: Collectable,
   wallet: ActiveWallet,
 ): Promise<void> {
+  const epoch = collectablesAccountEpoch
   try {
     const [txid, voutStr] = item.outpoint.split('.')
     const vout = Number(voutStr)
@@ -2640,7 +2666,8 @@ async function enrichCollectableFromIndexer(
       imageUrl: contentUrlForOrigin(mediaOrigin, wallet.chain),
     })
     setCollectablesCache(
-      cachedCollectables.map((c) => (c.outpoint === target ? enriched : c))
+      cachedCollectables.map((c) => (c.outpoint === target ? enriched : c)),
+      { forEpoch: epoch },
     )
   } catch (err) {
     console.warn('[collectables] detail enrich failed', err)

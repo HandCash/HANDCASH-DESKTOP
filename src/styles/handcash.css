@@ -3711,8 +3711,10 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-hero-identity span {
+  /* Label is already mid-truncated in JS (e.g. 8…6). CSS ellipsis stacked a
+     second "…" and looked like six dots on compact/mobile. */
   overflow: hidden;
-  text-overflow: ellipsis;
+  text-overflow: clip;
   white-space: nowrap;
 }
 
@@ -3745,7 +3747,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   z-index: 40;
   width: auto;
   min-width: 0;
-  padding: 6px;
+  padding: 10px;
   border-radius: 12px;
   border: 1px solid color-mix(in srgb, var(--hc-text) 12%, transparent);
   background: var(--hc-panel, var(--hc-bg, #111));
@@ -3756,6 +3758,9 @@ li[data-aeon-state='failed'] .history-progress-range {
   list-style: none;
   margin: 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   max-height: 240px;
   overflow: auto;
 }
@@ -3783,8 +3788,25 @@ li[data-aeon-state='failed'] .history-progress-range {
 }
 
 .wallet-account-option-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   font-size: 0.85rem;
   font-weight: 600;
+}
+
+.wallet-account-option-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, var(--hc-text) 16%, transparent);
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  opacity: 0.85;
 }
 
 .wallet-account-option-key {
@@ -3797,7 +3819,7 @@ li[data-aeon-state='failed'] .history-progress-range {
   align-items: center;
   gap: 8px;
   width: 100%;
-  margin-top: 4px;
+  margin-top: 8px;
   padding: 10px;
   border: 0;
   border-top: 1px solid color-mix(in srgb, var(--hc-text) 10%, transparent);
@@ -13976,7 +13998,7 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 
 .wallet-account-row {
   display: flex;
-  align-items: stretch;
+  align-items: center;
   gap: 4px;
 }
 
@@ -13986,9 +14008,31 @@ html[data-aeon-mode='light']:not(.platform-mobile):not(.layout-compact)
 }
 
 .wallet-account-rename-btn {
+  appearance: none;
   flex-shrink: 0;
-  font-size: 0.72rem;
-  padding: 4px 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  margin: auto 0;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--hc-text);
+  cursor: pointer;
+  opacity: 0.7;
+}
+
+.wallet-account-rename-btn:hover:not(:disabled) {
+  opacity: 1;
+  background: color-mix(in srgb, var(--hc-text) 8%, transparent);
+}
+
+.wallet-account-rename-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .wallet-account-rename {

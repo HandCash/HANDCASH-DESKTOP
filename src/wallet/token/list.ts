@@ -56,6 +56,8 @@ function listCacheKey(): string {
 let cached: FungibleToken[] = []
 let hydrated = false
 let listInFlight: Promise<FungibleToken[]> | null = null
+/** Bumped on vault-account rebind so in-flight lists cannot rewrite the new account. */
+let fungiblesAccountEpoch = 0
 const listeners = new Set<Listener>()
 
 function isFungibleShape(x: unknown): x is FungibleToken {
@@ -140,7 +142,16 @@ function cacheExtraLooksLikeFungible(t: FungibleToken): boolean {
   return Number.isFinite(amt) && amt > 0
 }
 
-function setFungiblesCache(items: FungibleToken[]): void {
+function setFungiblesCache(
+  items: FungibleToken[],
+  options: { forEpoch?: number } = {},
+): void {
+  if (
+    options.forEpoch !== undefined &&
+    options.forEpoch !== fungiblesAccountEpoch
+  ) {
+    return
+  }
   cached = items.filter(cacheExtraLooksLikeFungible).map(attachMarketListingToToken)
   hydrated = true
   persistDurableList(cached)
@@ -347,18 +358,22 @@ export function leftoverFloorWouldClobber(
     hydrated = true
   }
   const activityRepairBase = cached
+  const bootEpoch = fungiblesAccountEpoch
   void recoverReceivedTokensFromActivity(activityRepairBase)
     .then((repaired) => {
+      if (bootEpoch !== fungiblesAccountEpoch) return
       if (cached === activityRepairBase) {
         if (fungibleProjectionChanged(repaired, cached)) {
-          setFungiblesCache(repaired)
+          setFungiblesCache(repaired, { forEpoch: bootEpoch })
         }
         return
       }
       const currentIds = new Set(cached.map(tokenKey))
       const additions = repaired.filter((token) => !currentIds.has(tokenKey(token)))
       if (additions.length > 0) {
-        setFungiblesCache(mergeLiveFungibles(additions, cached))
+        setFungiblesCache(mergeLiveFungibles(additions, cached), {
+          forEpoch: bootEpoch,
+        })
       }
     })
     .catch(() => {})
@@ -482,6 +497,7 @@ export function clearFungiblesCache(options?: { notify?: boolean }): void {
 
 /** Swap Tokens inventory to the active vault account. */
 export function rebindFungiblesForAccount(): void {
+  fungiblesAccountEpoch += 1
   cached = []
   hydrated = false
   listInFlight = null
@@ -491,7 +507,13 @@ export function rebindFungiblesForAccount(): void {
     hydrated = true
   }
   notify()
-  void listFungibles().catch(() => {})
+  const run = listFungiblesNow(undefined)
+  listInFlight = run
+  void run
+    .catch(() => {})
+    .then(() => {
+      if (listInFlight === run) listInFlight = null
+    })
 }
 
 export function getCachedFungibles(): FungibleToken[] {
@@ -599,13 +621,15 @@ export function listFungibles(active?: ActiveWallet | null): Promise<FungibleTok
 async function listFungiblesNow(
   active?: ActiveWallet | null,
 ): Promise<FungibleToken[]> {
+  const epoch = fungiblesAccountEpoch
   const wallet = active ?? getActiveWallet()
   // Locked / no session: keep last durable paint (mirrors collectables).
   if (!wallet) return getCachedFungibles()
   const beforeRepair = getCachedFungibles()
   const repaired = await recoverReceivedTokensFromActivity(beforeRepair)
+  if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
   if (fungibleProjectionChanged(repaired, beforeRepair)) {
-    setFungiblesCache(repaired)
+    setFungiblesCache(repaired, { forEpoch: epoch })
     if (repaired.length > beforeRepair.length) {
       void import('../healMisfiledBsv21').then(({ healMisfiledBsv21 }) =>
         healMisfiledBsv21(wallet),
@@ -642,11 +666,12 @@ async function listFungiblesNow(
     } catch (err) {
       console.warn('[bsv21] list failed', err)
     }
+    if (epoch !== fungiblesAccountEpoch) return getCachedFungibles()
     // Do not paint 1sat-ft leftovers as tokens.
     // Live 162 (colourSupply set) wins over stale JSON BSV-21 rows.
     const prior = cached.filter((t) => !leftoverCollectableSym(t.sym))
     const merged = mergeLiveFungibles(liveRows, prior)
-    setFungiblesCache(merged)
+    setFungiblesCache(merged, { forEpoch: epoch })
     // Fill missing icons from local/session BEEF (no HTTP content indexer).
     void hydrateMissingTokenIcons(wallet, merged)
     return merged

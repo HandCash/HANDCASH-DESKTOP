@@ -12,7 +12,7 @@ import {
   renameVaultAccount,
   type VaultAccount,
 } from '../wallet/vaultAccounts'
-import { AddIcon, CopyIcon, ExpandMoreIcon } from './icons'
+import { AddIcon, CopyIcon, EditIcon, ExpandMoreIcon } from './icons'
 
 type Props = {
   profile: WalletProfile
@@ -199,8 +199,9 @@ export function WalletAccountMenu({
           <ul className="wallet-account-list">
             {accounts.map((acct) => {
               const selected = acct.index === activeIndex
+              const isRoot = acct.index === 0
               const label =
-                acct.index === 0 ? acct.name || 'Primary' : acct.name || `Wallet ${acct.index}`
+                acct.name || (isRoot ? 'Primary' : `Wallet ${acct.index}`)
               return (
                 <li key={acct.index}>
                   {renamingIndex === acct.index ? (
@@ -236,23 +237,29 @@ export function WalletAccountMenu({
                         disabled={busy}
                         onClick={() => void runSwitch(acct.index)}
                       >
-                        <span className="wallet-account-option-name">{label}</span>
+                        <span className="wallet-account-option-name">
+                          {label}
+                          {isRoot ? (
+                            <span className="wallet-account-option-tag">Root</span>
+                          ) : null}
+                        </span>
                         <span className="wallet-account-option-key mono">
                           {acct.identityKey.slice(0, 8)}…{acct.identityKey.slice(-6)}
                         </span>
                       </button>
                       <button
                         type="button"
-                        className="wallet-account-rename-btn btn btn-ghost"
+                        className="wallet-account-rename-btn"
                         disabled={busy}
                         title="Rename"
+                        aria-label="Rename wallet"
                         onClick={(e) => {
                           e.stopPropagation()
                           setRenamingIndex(acct.index)
                           setRenameValue(label)
                         }}
                       >
-                        Rename
+                        <EditIcon size={16} />
                       </button>
                     </div>
                   )}
