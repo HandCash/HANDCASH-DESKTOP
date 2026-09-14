@@ -103,40 +103,43 @@ export function WalletAccountMenu({
         mnemonic: active.mnemonic,
         accountIndex: index,
       })
-      // Local-first: spendable UTXOs live in this account's toolbox IDB.
-      // Never race a timeout to 0 — await the local read (trusted only if IDB fails).
-      let balanceSats =
-        readTrustedBalance(next.identityKey, next.chain) ?? 0
-      try {
-        balanceSats = await fetchBalanceSats(next.wallet)
-        writeTrustedBalance(next.identityKey, next.chain, balanceSats)
-      } catch (err) {
-        console.warn(
-          '[vault-account] local balance read failed — keeping trusted',
-          err instanceof Error ? err.message : String(err),
-        )
+      const profile = {
+        handle: next.handle,
+        identityKey: next.identityKey,
+        address: next.address,
+        chain: next.chain,
       }
+      // Instant paint from per-identity trusted snapshot — do not block the
+      // hero on fetchBalance / sibling SetupClient / chain ingest.
+      const trusted = readTrustedBalance(next.identityKey, next.chain) ?? 0
       playWalletSound('soft')
-      onAccountSwitched(
-        {
-          handle: next.handle,
-          identityKey: next.identityKey,
-          address: next.address,
-          chain: next.chain,
-        },
-        balanceSats,
-      )
+      onAccountSwitched(profile, trusted)
       setOpen(false)
-      // Background chain ingest for the active account only — must not blank the hero.
-      void refreshFromChain({ announceReceive: true }).catch((err) => {
-        console.warn(
-          '[vault-account] post-switch chain ingest failed',
-          err instanceof Error ? err.message : String(err),
-        )
-      })
+      setBusy(false)
+      // Background: local toolbox balance, then optional chain ingest.
+      void (async () => {
+        try {
+          const balanceSats = await fetchBalanceSats(next.wallet)
+          writeTrustedBalance(next.identityKey, next.chain, balanceSats)
+          if (getActiveWallet()?.identityKey === next.identityKey) {
+            onAccountSwitched(profile, balanceSats)
+          }
+        } catch (err) {
+          console.warn(
+            '[vault-account] local balance read failed — keeping trusted',
+            err instanceof Error ? err.message : String(err),
+          )
+        }
+        if (getActiveWallet()?.identityKey !== next.identityKey) return
+        void refreshFromChain({ announceReceive: true }).catch((err) => {
+          console.warn(
+            '[vault-account] post-switch chain ingest failed',
+            err instanceof Error ? err.message : String(err),
+          )
+        })
+      })()
     } catch (err) {
       toastError('Switch wallet', err instanceof Error ? err.message : String(err))
-    } finally {
       setBusy(false)
     }
   }

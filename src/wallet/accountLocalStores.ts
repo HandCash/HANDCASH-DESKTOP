@@ -10,6 +10,7 @@ import { rebindFriendsForAccount } from './friends'
 import { rebindConnectedAppsForAccount } from './permissions'
 import { rebindFungiblesForAccount } from './token/list'
 import { rebindMessagesForAccount } from './messageStore'
+import { clearPaymentProgress } from './paymentProgress'
 
 export function rebindAccountLocalStores(wallet: {
   accountIndex: number
@@ -26,4 +27,7 @@ export function rebindAccountLocalStores(wallet: {
   rebindMessagesForAccount()
   rebindCollectablesForAccount()
   rebindFungiblesForAccount()
+  // Live "Sending…" row is global — drop it so Activity cannot paint another
+  // account's in-flight send after vault switch.
+  clearPaymentProgress()
 }

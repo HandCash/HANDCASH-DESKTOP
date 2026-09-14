@@ -4,11 +4,15 @@
  *
  * Mirrors selfReceive local-first internalization — do not wait on network sync
  * for the destination account to see the payment.
+ *
+ * Balance reads must touch ONLY the sibling toolbox. Never call session
+ * `fetchBalanceRead` here — that credits the *active* wallet's unconfirmed
+ * change and overwrites `lastKnownBalanceSats`.
  */
 import { SetupClient } from '@bsv/wallet-toolbox-client'
 import { writeTrustedBalance } from './balanceSnapshot'
 import { withVisibleOnChainBeef } from './legacyBeef'
-import { fetchBalanceRead, type ActiveWallet } from './session'
+import type { ActiveWallet } from './session'
 import type { Chain } from './vault'
 import {
   rootKeyHexForAccount,
@@ -25,9 +29,82 @@ export type VaultSiblingCreditResult = {
   reason?: string
 }
 
+/** txid-keyed so repeat credit / ingest never double-counts the same UTXO. */
+const creditedTxids = new Set<string>()
+const inflightCredits = new Map<string, Promise<VaultSiblingCreditResult>>()
+
+function creditKey(accountIndex: number, txid: string): string {
+  return `${accountIndex}:${txid.trim().toLowerCase()}`
+}
+
+async function readToolboxSpendableSats(wallet: {
+  balance?: () => Promise<number>
+  listOutputs?: (args: {
+    basket: string
+    limit: number
+  }) => Promise<{ totalOutputs?: number; outputs?: Array<{ satoshis?: number }> }>
+}): Promise<number | null> {
+  if (typeof wallet.balance === 'function') {
+    try {
+      const sats = await wallet.balance()
+      if (Number.isFinite(sats)) return Math.max(0, Math.trunc(sats))
+    } catch {
+      /* fall through */
+    }
+  }
+  if (typeof wallet.listOutputs === 'function') {
+    try {
+      const result = await wallet.listOutputs({ basket: 'default', limit: 1000 })
+      const rows = result.outputs ?? []
+      if (rows.length > 0) {
+        return rows.reduce((s, o) => s + (o.satoshis ?? 0), 0)
+      }
+      if (Number.isFinite(result.totalOutputs)) {
+        return Math.max(0, Math.trunc(result.totalOutputs!))
+      }
+    } catch {
+      /* fall through */
+    }
+  }
+  return null
+}
+
+async function destroyTempSetup(setup: {
+  monitor?: { stopTasks?: () => void }
+  wallet?: { destroy?: () => Promise<void>; actionBatch?: { abort?: () => Promise<boolean> } }
+  storage?: { destroy?: () => Promise<void> }
+  activeStorage?: { destroy?: () => Promise<void> }
+}): Promise<void> {
+  try {
+    setup.monitor?.stopTasks?.()
+  } catch {
+    /* optional */
+  }
+  try {
+    await setup.wallet?.actionBatch?.abort?.()
+  } catch {
+    /* optional — clear reserved batches on the temp session */
+  }
+  try {
+    await setup.wallet?.destroy?.()
+  } catch {
+    /* optional */
+  }
+  try {
+    await setup.storage?.destroy?.()
+  } catch {
+    /* optional */
+  }
+  try {
+    await setup.activeStorage?.destroy?.()
+  } catch {
+    /* optional */
+  }
+}
+
 /**
  * Open the destination account toolbox (separate IDB), internalize the BRC-29
- * payment, persist trusted balance for that identity, and close the temp session.
+ * payment, persist trusted balance for that identity, and destroy the temp session.
  * Does not change the active UI wallet.
  */
 export async function creditVaultSiblingBrc29Payment(args: {
@@ -40,6 +117,9 @@ export async function creditVaultSiblingBrc29Payment(args: {
   satoshis: number
 }): Promise<VaultSiblingCreditResult> {
   const { active, account } = args
+  const txid = args.txid.trim().toLowerCase()
+  const key = creditKey(account.index, txid)
+
   if (account.index === active.accountIndex) {
     return {
       accepted: false,
@@ -56,6 +136,52 @@ export async function creditVaultSiblingBrc29Payment(args: {
       accountIndex: account.index,
       identityKey: account.identityKey,
       reason: 'no-master',
+    }
+  }
+  if (!/^[0-9a-f]{64}$/.test(txid)) {
+    return {
+      accepted: false,
+      balanceSats: null,
+      accountIndex: account.index,
+      identityKey: account.identityKey,
+      reason: 'invalid-txid',
+    }
+  }
+
+  const inflight = inflightCredits.get(key)
+  if (inflight) return inflight
+
+  const work = creditVaultSiblingBrc29PaymentOnce(args, key)
+  inflightCredits.set(key, work)
+  try {
+    return await work
+  } finally {
+    inflightCredits.delete(key)
+  }
+}
+
+async function creditVaultSiblingBrc29PaymentOnce(
+  args: {
+    active: ActiveWallet
+    account: VaultAccount
+    txid: string
+    remittance: Brc29Remittance
+    senderIdentityKey: string
+    atomicBeef: number[]
+    satoshis: number
+  },
+  key: string,
+): Promise<VaultSiblingCreditResult> {
+  const { active, account } = args
+  const txid = args.txid.trim().toLowerCase()
+
+  if (creditedTxids.has(key)) {
+    return {
+      accepted: true,
+      balanceSats: null,
+      accountIndex: account.index,
+      identityKey: account.identityKey,
+      reason: 'already-credited',
     }
   }
 
@@ -79,8 +205,19 @@ export async function creditVaultSiblingBrc29Payment(args: {
       ? outputIndexRaw
       : 0
 
+  const atomic = args.atomicBeef
+  if (!atomic.length) {
+    return {
+      accepted: false,
+      balanceSats: null,
+      accountIndex: account.index,
+      identityKey: account.identityKey,
+      reason: 'missing-beef',
+    }
+  }
+
   const rootKeyHex = rootKeyHexForAccount(
-    active.masterRootKeyHex,
+    active.masterRootKeyHex!,
     account.index,
   )
   const chain: Chain = active.chain
@@ -93,56 +230,99 @@ export async function creditVaultSiblingBrc29Payment(args: {
       accountIndex: account.index,
     }),
   })
+
   try {
     try {
       setup.monitor?.stopTasks?.()
     } catch {
-      /* optional */
+      /* optional — never leave monitor racing the active wallet */
     }
 
-    const atomic = args.atomicBeef
-    if (!atomic.length) {
-      return {
-        accepted: false,
-        balanceSats: null,
-        accountIndex: account.index,
-        identityKey: account.identityKey,
-        reason: 'missing-beef',
-      }
-    }
+    const {
+      alreadyInternalizedError,
+      withRestoredInternalizeStatus,
+    } = await import('./peerIngestHelpers')
 
-    const { withRestoredInternalizeStatus } = await import('./peerIngestHelpers')
-    await withRestoredInternalizeStatus(args.txid, () =>
-      withVisibleOnChainBeef(() =>
-        setup.wallet.internalizeAction({
-          tx: atomic,
-          description: 'BRC-29 vault transfer received',
-          labels: ['brc29', 'vault-sibling'],
-          outputs: [
-            {
-              outputIndex,
-              protocol: 'wallet payment',
-              paymentRemittance: {
-                derivationPrefix: prefix,
-                derivationSuffix: suffix,
-                senderIdentityKey: args.senderIdentityKey,
+    let internalized = false
+    try {
+      await withRestoredInternalizeStatus(txid, () =>
+        withVisibleOnChainBeef(() =>
+          setup.wallet.internalizeAction({
+            tx: atomic,
+            description: 'BRC-29 vault transfer received',
+            labels: ['brc29', 'vault-sibling'],
+            outputs: [
+              {
+                outputIndex,
+                protocol: 'wallet payment',
+                paymentRemittance: {
+                  derivationPrefix: prefix,
+                  derivationSuffix: suffix,
+                  senderIdentityKey: args.senderIdentityKey,
+                },
               },
-            },
-          ],
-          seekPermission: false,
-        }),
-      ),
-    )
+            ],
+            seekPermission: false,
+          }),
+        ),
+      )
+      internalized = true
+    } catch (err) {
+      if (!alreadyInternalizedError(err)) throw err
+      // Idempotent: toolbox already holds this outpoint — do not re-credit.
+      internalized = true
+    }
 
-    // Read this toolbox only — never fall back to the active account's
-    // lastKnownBalanceSats (session.fetchBalanceSats does that on error).
-    const read = await fetchBalanceRead(setup.wallet)
-    const balanceSats = read.kind === 'ok' ? read.sats : null
+    // Sibling toolbox only — never active-wallet unconfirmed change.
+    const balanceSats = await readToolboxSpendableSats(setup.wallet)
     if (balanceSats != null) {
       writeTrustedBalance(account.identityKey, chain, balanceSats)
     }
+
+    if (internalized) {
+      creditedTxids.add(key)
+      // Bound receive activity to the *destination* account store only.
+      try {
+        const { bindAccountLocalKeyScope, peekAccountLocalKeyScope } =
+          await import('./accountLocalKeys')
+        const prev = peekAccountLocalKeyScope()
+        bindAccountLocalKeyScope({
+          accountIndex: account.index,
+          identityKey: account.identityKey,
+        })
+        try {
+          const { noteInboundReceiveComplete, rebindAppActivityForAccount } =
+            await import('./appActivity')
+          const sats =
+            typeof args.satoshis === 'number' && args.satoshis > 0
+              ? Math.floor(args.satoshis)
+              : 0
+          if (sats > 0) {
+            noteInboundReceiveComplete({ txid, sats })
+          }
+          // Restore sender scope and reload its activity cache (listeners
+          // may have briefly seen the sibling store during the write).
+          bindAccountLocalKeyScope({
+            accountIndex: prev.accountIndex,
+            identityKey: prev.identityKey ?? active.identityKey,
+          })
+          rebindAppActivityForAccount()
+        } catch {
+          bindAccountLocalKeyScope({
+            accountIndex: prev.accountIndex,
+            identityKey: prev.identityKey ?? active.identityKey,
+          })
+        }
+      } catch (err) {
+        console.warn(
+          '[vault-sibling] activity record skipped',
+          err instanceof Error ? err.message : String(err),
+        )
+      }
+    }
+
     console.info(
-      `[vault-sibling] credited account ${account.index} tx=${args.txid.slice(0, 12)}… balance=${balanceSats ?? 'n/a'}`,
+      `[vault-sibling] credited account ${account.index} tx=${txid.slice(0, 12)}… balance=${balanceSats ?? 'n/a'}`,
     )
     return {
       accepted: true,
@@ -161,10 +341,12 @@ export async function creditVaultSiblingBrc29Payment(args: {
       reason: msg,
     }
   } finally {
-    try {
-      setup.monitor?.stopTasks?.()
-    } catch {
-      /* optional */
-    }
+    await destroyTempSetup(setup)
   }
+}
+
+/** Test helper — drop in-memory credit gates. */
+export function resetVaultSiblingCreditForTests(): void {
+  creditedTxids.clear()
+  inflightCredits.clear()
 }

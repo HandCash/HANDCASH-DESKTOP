@@ -649,7 +649,20 @@ export async function fetchBalanceRead(
     return { kind: 'unavailable', reason: 'storageUnreadable' }
   }
 
-  if (opts?.creditUnconfirmed === false) return { kind: 'ok', sats: spendable }
+  // Foreign toolbox while another wallet is unlocked (vault sibling credit):
+  // never pull the *active* wallet's unconfirmed change or overwrite
+  // lastKnownBalanceSats — that doubled sibling balances after root→child.
+  if (session && w !== session.wallet) {
+    if (typeof w === 'object' && w != null) {
+      spendableBalanceCache.set(w, spendable)
+    }
+    return { kind: 'ok', sats: spendable }
+  }
+  // Confirmed-only: return toolbox spendable without downgrading the display
+  // cache / lastKnown (pending change is still owned cash).
+  if (opts?.creditUnconfirmed === false) {
+    return { kind: 'ok', sats: spendable }
+  }
 
   let pendingChange = 0
   try {

@@ -539,6 +539,22 @@ export async function sendBrc29ToIdentityKey(opts: {
                   console.info(
                     `[brc29] vault sibling account ${sibling.index} credited locally`,
                   )
+                  // Temp SetupClient must not leave the sender with reserved
+                  // batches / a hanging finishing phase.
+                  try {
+                    const { abortReservedActionBatches } = await import(
+                      './actionReview'
+                    )
+                    await abortReservedActionBatches(active, { budgetMs: 800 })
+                  } catch {
+                    /* optional */
+                  }
+                  // Re-read sender spendable after sibling temp session closes.
+                  balanceSats = Math.max(
+                    0,
+                    (await fetchBalanceSats(active.wallet).catch(() => balanceSats)) ||
+                      0,
+                  )
                 }
               }
             } catch (err) {

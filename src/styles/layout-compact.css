@@ -67,9 +67,14 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
   padding-right: max(12px, env(safe-area-inset-right, 0px));
 }
 
-/* Mobile titlebar: keep HandCash wordmark + version labels; scan/lock never
-   leave the viewport; sync pill is what shrinks first. */
+/* Mobile titlebar (~390px): aeon-titlebar keeps wordmark + version; scan/lock
+   stay fully on-screen. Brand takes leftover and ellipsizes — never
+   flex-shrink:0 (base handcash.css). Right cluster is content-sized and
+   cannot overflow; sync pill is what shrinks first. */
+html:is(.platform-mobile, .layout-compact) .titlebar.aeon-titlebar,
 html:is(.platform-mobile, .layout-compact) .titlebar {
+  display: flex;
+  align-items: center;
   gap: 6px;
   min-width: 0;
   width: 100%;
@@ -78,15 +83,23 @@ html:is(.platform-mobile, .layout-compact) .titlebar {
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar .brand {
-  flex: 1 1 auto;
+  flex: 1 1 0;
+  flex-shrink: 1; /* override handcash.css .titlebar .brand { flex-shrink: 0 } */
   min-width: 0;
   max-width: none;
   overflow: hidden;
 }
 
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-logo-mark,
+html:is(.platform-mobile, .layout-compact) .titlebar .brand-logo-skeleton {
+  flex-shrink: 0;
+}
+
 html:is(.platform-mobile, .layout-compact) .titlebar .brand-wordmark {
   display: flex;
+  flex-direction: column;
   min-width: 0;
+  flex: 1 1 auto;
   overflow: hidden;
 }
 
@@ -98,29 +111,33 @@ html:is(.platform-mobile, .layout-compact) .titlebar .brand-sub {
   max-width: 100%;
 }
 
+/* Right cluster: actions + pill. Size to content; never push off-screen. */
 html:is(.platform-mobile, .layout-compact) .titlebar-end {
   display: flex;
   align-items: center;
   gap: 4px;
   margin-left: auto;
-  flex: 0 1 auto;
+  flex: 0 0 auto;
   min-width: 0;
-  max-width: min(58%, 13.5rem);
+  max-width: none;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-actions {
+  display: inline-flex;
+  align-items: center;
   flex-shrink: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-action-btn {
   width: 32px;
   height: 32px;
+  flex-shrink: 0;
 }
 
 html:is(.platform-mobile, .layout-compact) .titlebar-end .status-pill {
-  flex: 1 1 auto;
+  flex: 0 1 auto;
   min-width: 0;
-  max-width: 100%;
+  max-width: 5.75rem; /* ~390px: leave room for wordmark; pill shrinks first */
   font-size: 0.62rem;
   padding: 5px 8px;
   gap: 5px;

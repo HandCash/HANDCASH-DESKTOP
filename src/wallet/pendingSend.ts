@@ -1,3 +1,4 @@
+import { accountLocalKey } from './accountLocalKeys'
 import { durableGetItem, durableSetItem } from './durableStorage'
 import {
   listRecentActivity,
@@ -6,7 +7,11 @@ import {
   WALLET_ACTIVITY_ORIGIN,
 } from './appActivity'
 
-const STORAGE_KEY = 'handcash.brc100.pendingSend'
+const STORAGE_KEY_BASE = 'handcash.brc100.pendingSend'
+
+function pendingStorageKey(): string {
+  return accountLocalKey(STORAGE_KEY_BASE)
+}
 
 export type PendingSend = {
   id: string
@@ -19,7 +24,7 @@ export type PendingSend = {
 
 function readPending(): PendingSend[] {
   try {
-    const raw = durableGetItem(STORAGE_KEY)
+    const raw = durableGetItem(pendingStorageKey())
     if (!raw) return []
     const parsed = JSON.parse(raw) as unknown
     if (!Array.isArray(parsed)) return []
@@ -38,7 +43,7 @@ function readPending(): PendingSend[] {
 }
 
 function writePending(entries: PendingSend[]): void {
-  durableSetItem(STORAGE_KEY, JSON.stringify(entries))
+  durableSetItem(pendingStorageKey(), JSON.stringify(entries))
 }
 
 /** Call immediately before createAction so a crash mid-broadcast is recoverable. */

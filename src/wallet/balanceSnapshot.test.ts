@@ -33,6 +33,27 @@ describe('cold-start trusted balance', () => {
     expect(readTrustedBalance('identity-a', 'test')).toBeNull()
   })
 
+  it('keeps independent trusted balances per vault identity', () => {
+    writeTrustedBalance('identity-a', 'main', 100_000)
+    writeTrustedBalance('identity-b', 'main', 25_000)
+
+    expect(readTrustedBalance('identity-a', 'main')).toBe(100_000)
+    expect(readTrustedBalance('identity-b', 'main')).toBe(25_000)
+  })
+
+  it('still reads a legacy single-slot snapshot when scoped key is absent', () => {
+    durable.set(
+      'handcash.balance.lastTrusted',
+      JSON.stringify({
+        identityKey: 'identity-legacy',
+        chain: 'main',
+        sats: 42_000,
+        readAt: Date.now(),
+      }),
+    )
+    expect(readTrustedBalance('identity-legacy', 'main')).toBe(42_000)
+  })
+
   it('rejects malformed or unsafe cached values', () => {
     writeTrustedBalance('identity-a', 'main', -1)
     expect(readTrustedBalance('identity-a', 'main')).toBeNull()
