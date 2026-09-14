@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.157] - 2026-09-14
+
+### Changed
+
+- Hero identity chip shows the full $handle / mid-truncated id — no more clipping the last letters under the caret.
+
 ## [1.3.156] - 2026-09-14
 
 ### Changed
