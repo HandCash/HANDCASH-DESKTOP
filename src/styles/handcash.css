@@ -334,11 +334,12 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   letter-spacing: 0.04em;
   text-transform: uppercase;
   white-space: nowrap;
-  /* Never force the titlebar / window wider than the logo allows. */
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
+  /* Cap growth so long sync labels never widen the titlebar or squish brand/actions. */
   box-sizing: border-box;
+  max-width: min(11rem, 42vw);
+  min-width: 0;
+  overflow: hidden;
+  flex-shrink: 1;
 }
 
 .status-pill-label {
@@ -352,29 +353,6 @@ html[data-aeon-mode='light'] .brand-logo-mark {
   white-space: nowrap;
 }
 
-/* Shrink label type when the titlebar end is tight — keep pill height (pad + line-height). */
-@container titlebar-end (max-width: 220px) {
-  .status-pill {
-    font-size: 0.72rem;
-    gap: 6px;
-    padding-left: 10px;
-    padding-right: 10px;
-  }
-}
-
-@container titlebar-end (max-width: 160px) {
-  .status-pill {
-    font-size: 0.65rem;
-    gap: 4px;
-    padding-left: 8px;
-    padding-right: 8px;
-  }
-}
-
-.titlebar > .brand,
-.titlebar .brand {
-  flex-shrink: 0;
-}
 
 .status-pill[data-tone='ok'],
 .status-pill[data-tone='busy'] {
@@ -8534,11 +8512,7 @@ html[data-aeon-mode='dark'] .receive-layout-premium .receive-qr-frame.qr-frame {
   align-items: center;
   gap: 8px;
   margin-left: auto;
-  min-width: 0;
-  flex-shrink: 1;
-  max-width: calc(100% - 7.5rem);
-  container-type: inline-size;
-  container-name: titlebar-end;
+  flex-shrink: 0;
 }
 
 .titlebar-actions {
