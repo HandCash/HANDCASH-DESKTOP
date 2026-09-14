@@ -3711,13 +3711,18 @@ li[data-aeon-state='failed'] .history-progress-range {
 
 .wallet-hero-identity span {
   /* Label is already mid-truncated in JS (e.g. 8…6). CSS ellipsis stacked a
-     second "…" and looked like six dots on compact/mobile. */
+     second "…" and looked like six dots on compact/mobile.
+     min-width:0 so the flex item yields to the caret instead of painting
+     under it when the row is tight. */
+  flex: 1 1 auto;
+  min-width: 0;
   overflow: hidden;
   text-overflow: clip;
   white-space: nowrap;
 }
 
-.wallet-hero-identity svg {
+.wallet-hero-identity svg,
+.wallet-hero-identity .wallet-account-caret {
   flex-shrink: 0;
   opacity: 0.85;
 }
