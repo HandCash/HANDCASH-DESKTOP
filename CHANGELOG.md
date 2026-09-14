@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.3.138] - 2026-09-14
+
+### Added
+
+- BRC-246 session upgrade: signed IPv6 wallet-to-wallet delivery over a short-lived authenticated socket (messagebox remains rendezvous / offline inbox).
+- BRC-247 Sigma identity: VIN-bound issuer personas on BRC-100, with Identity panel publish / rotate / revoke.
+
 ## [1.3.137] - 2026-09-09
 
 ### Added
