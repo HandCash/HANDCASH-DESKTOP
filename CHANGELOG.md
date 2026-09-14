@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.3.147] - 2026-09-14
+
+### Fixed
+
+- Vault sibling credit no longer doubles balance or hangs the send.
+- Activity / pending-send / payment progress scoped per vault account.
+- Faster switch paint from trusted local balance; mobile titlebar actions on-screen.
+
 ## [1.3.146] - 2026-09-14
 
 ### Fixed
