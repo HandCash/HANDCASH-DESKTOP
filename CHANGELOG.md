@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.3.151] - 2026-09-14
+
+### Fixed
+
+- Titlebar sync pill keeps a fixed width on mobile so Catching up cannot grow the bar.
+
 ## [1.3.150] - 2026-09-14
 
 ### Fixed
