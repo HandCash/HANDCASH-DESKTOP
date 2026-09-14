@@ -16,11 +16,16 @@
  *
  * VIN is a non-negative input index. `-1` is refused — it does not bind a
  * specific outpoint, so the signature can be replayed onto another spend.
+ *
+ * Note: @bsv/sdk Script.fromHex/toBinary folds everything after OP_RETURN into
+ * the OP_RETURN payload. We therefore sign the inscription-only prefix (the
+ * same bytes getDataHash uses for OP_RETURN-embedded SIGMA) and append the
+ * OP_RETURN tail as raw hex so parseOrdEnvelope / verify stay consistent.
  */
 
-import { PrivateKey, Script, Transaction } from '@bsv/sdk'
+import { BSM, BigNumber, PrivateKey, Script, Signature, Transaction } from '@bsv/sdk'
 import { Algorithm, Sigma } from 'sigma-protocol'
-import { ordEnvelopeHex } from '../ordScriptPush'
+import { ordEnvelopeHex, pushData, pushText } from '../ordScriptPush'
 import { parseOrdEnvelope } from '../ordinalOwnership'
 import { p2pkhScriptHex } from '../ordinalOwnership'
 import { SIGMA_IDENTITY_MIME, SIGMA_MARKER_HEX } from './constants'
@@ -41,24 +46,18 @@ function assertVin(vin: number): number {
   return vin
 }
 
-function scriptHasOpReturn(hex: string): boolean {
-  const bytes = hex.trim().toLowerCase()
-  // OP_RETURN is 0x6a. Avoid matching it inside push data by scanning opcodes
-  // only well enough for "already has a tail" — Sigma itself adds one.
-  return bytes.includes('6a')
-}
-
-function appendOpReturnJson(lockingScriptHex: string, json: string): string {
-  const script = Script.fromHex(lockingScriptHex.trim().toLowerCase())
-  script.writeOpCode(0x6a)
-  script.writeBin(Array.from(new TextEncoder().encode(json)))
-  return script.toHex().toLowerCase()
+function compactHexToBytes(compactHex: string): number[] {
+  const out: number[] = []
+  for (let i = 0; i < compactHex.length; i += 2) {
+    out.push(Number.parseInt(compactHex.slice(i, i + 2), 16))
+  }
+  return out
 }
 
 /**
  * Append a BSM Sigma tail bound to `vin` (default 0).
- * Existing OP_RETURN data is signed in place. If there is none and `metadataJson`
- * is set, that JSON is pushed first so the library inserts the `|` separator.
+ * Signs the locking script prefix (before any OP_RETURN). Optional
+ * `metadataJson` is placed in the OP_RETURN ahead of `|` / SIGMA.
  */
 export function appendSigmaAttestation(args: {
   lockingScriptHex: string
@@ -73,14 +72,34 @@ export function appendSigmaAttestation(args: {
   if (!/^[0-9a-f]{64}$/.test(txid) || !Number.isInteger(args.fundVout) || args.fundVout < 0) {
     throw new Error('Sigma identity needs the funding outpoint before it can sign.')
   }
-  let locking = args.lockingScriptHex.trim().toLowerCase()
-  if (!locking) throw new Error('Nothing to sign.')
-  if (locking.includes(SIGMA_MARKER_HEX)) {
+  let prefix = args.lockingScriptHex.trim().toLowerCase()
+  if (!prefix) throw new Error('Nothing to sign.')
+  if (prefix.includes(SIGMA_MARKER_HEX)) {
     throw new Error('Output already has a Sigma signature.')
   }
-  if (args.metadataJson && !scriptHasOpReturn(locking)) {
-    locking = appendOpReturnJson(locking, args.metadataJson)
+  // Strip a trailing OP_RETURN payload if the caller already attached one —
+  // we re-append metadata ourselves so the signed prefix stays inscription-only.
+  const opReturnAt = (() => {
+    try {
+      const script = Script.fromHex(prefix)
+      const idx = script.chunks.findIndex((c) => c.op === 0x6a)
+      if (idx < 0) return -1
+      // Rebuild hex of chunks before OP_RETURN
+      const head = new Script()
+      for (let i = 0; i < idx; i++) {
+        const c = script.chunks[i]!
+        if (c.data) head.writeBin(Array.from(c.data))
+        else if (c.op !== undefined) head.writeOpCode(c.op)
+      }
+      return head.toHex().toLowerCase()
+    } catch {
+      return -1
+    }
+  })()
+  if (typeof opReturnAt === 'string' && opReturnAt.length > 0) {
+    prefix = opReturnAt
   }
+
   const tx = new Transaction()
   tx.addInput({
     sourceTXID: txid,
@@ -88,13 +107,33 @@ export function appendSigmaAttestation(args: {
   })
   tx.addOutput({
     satoshis: 1,
-    lockingScript: Script.fromHex(locking),
+    lockingScript: Script.fromHex(prefix),
   })
   const sigma = new Sigma(tx, 0, 0, vin)
-  const { signedTx } = sigma.sign(args.signer, Algorithm.BSM)
-  const hex = signedTx.outputs[0]?.lockingScript?.toHex()
-  if (!hex) throw new Error('Sigma sign produced no locking script')
-  return hex.toLowerCase()
+  const message = sigma.getMessageHash()
+  const signature = BSM.sign(message, args.signer, 'raw') as Signature
+  const address = args.signer.toAddress()
+  const recovery = signature.CalculateRecoveryFactor(
+    args.signer.toPublicKey(),
+    new BigNumber(BSM.magicHash(message)),
+  )
+  const compactHex = signature.toCompact(recovery, true, 'hex') as string
+  const utf8 = new TextEncoder()
+  const metaPush = args.metadataJson
+    ? pushData(utf8.encode(args.metadataJson))
+    : ''
+  // OP_RETURN <meta?> | SIGMA BSM <address> <sig> <vin>
+  return (
+    prefix +
+    '6a' +
+    metaPush +
+    '017c' +
+    pushText('SIGMA') +
+    pushText(Algorithm.BSM) +
+    pushText(address) +
+    pushData(Uint8Array.from(compactHexToBytes(compactHex))) +
+    pushText(String(vin))
+  ).toLowerCase()
 }
 
 /** Persona document: P2PKH ‖ ord envelope ‖ signed meta ‖ Sigma bound to VIN. */
