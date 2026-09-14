@@ -67,6 +67,7 @@ describe('runChangeHeal', () => {
       pendingPromoted: 3,
       reclaimed: 0,
     })
+    expect(rehideInputsOfLiveLocalTxs).toHaveBeenCalledOnce()
     expect(reclaimSealedInputsNeverSpent).toHaveBeenCalled()
     expect(reclaimSealedInputsNeverSpent.mock.calls[0]?.[0]).toBeUndefined()
     expect(promotePendingLocalChangeOutputs).toHaveBeenCalled()

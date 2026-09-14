@@ -23,6 +23,8 @@ import {
   listFailedLocalTxids,
   listPendingLocalChangeTxids,
   restoreOnChainLocalTx,
+  sealSpentInputsOfSignedTx,
+  rehideInputsOfLiveLocalTxs,
 } from './staleOutputRelease'
 import {
   appendHealCheckpointBatch,
@@ -173,6 +175,14 @@ async function runPendingChangeHeal(
   }
   if (await healShouldYieldToSpend(opts)) return empty
 
+  // Rehide before spendGate reclaim — abort-reserved sibling sends left inputs
+  // spendable; reclaim without rehide re-inflates Pay.
+  try {
+    await rehideInputsOfLiveLocalTxs()
+  } catch (err) {
+    console.warn('[utxo-heal] rehide before spendGate skipped', err)
+  }
+
   let heal = await runChangeHeal({ path: 'spendGate' })
   if (await healShouldYieldToSpend(opts)) return heal
 
@@ -220,6 +230,10 @@ async function processTxidBatch(
     } else if (!local) {
       continue
     }
+    // v1.3.146 sibling credit aborted the sender's reserved batch after a live
+    // root→child send — inputs flipped spendable again while change stayed.
+    // Heal used to only promote change → permanent ~2×. Seal inputs first.
+    await sealSpentInputsOfSignedTx(txid, undefined)
     changeKept += await keepChangeOfSignedTx(txid)
   }
   return { changeKept, txidsOnChain, processed }

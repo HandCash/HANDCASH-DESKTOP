@@ -12,6 +12,8 @@ const mocks = vi.hoisted(() => {
     shouldYieldChainIngestToSpend: vi.fn(() => false),
   releaseSpendAttemptFunds: vi.fn(),
   keepChangeOfSignedTx: vi.fn(),
+  sealSpentInputsOfSignedTx: vi.fn(async () => 0),
+  rehideInputsOfLiveLocalTxs: vi.fn(async () => 0),
   durableGetItem: vi.fn((key: string) => durableStore[key] ?? ''),
   durableSetItem: vi.fn((key: string, value: string) => {
     if (value) durableStore[key] = value
@@ -57,6 +59,10 @@ vi.mock('./spendAttempt', () => ({
 
 vi.mock('./staleOutputRelease', () => ({
   keepChangeOfSignedTx: mocks.keepChangeOfSignedTx,
+  sealSpentInputsOfSignedTx: (...args: unknown[]) =>
+    mocks.sealSpentInputsOfSignedTx(...args),
+  rehideInputsOfLiveLocalTxs: (...args: unknown[]) =>
+    mocks.rehideInputsOfLiveLocalTxs(...args),
   listPendingLocalChangeTxids: (...args: unknown[]) =>
     mocks.listPendingLocalChangeTxids(...args),
   listFailedLocalTxids: (...args: unknown[]) =>

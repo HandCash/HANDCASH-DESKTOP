@@ -116,49 +116,24 @@ export async function creditVaultSiblingBrc29Payment(args: {
   atomicBeef: number[]
   satoshis: number
 }): Promise<VaultSiblingCreditResult> {
-  const { active, account } = args
-  const txid = args.txid.trim().toLowerCase()
-  const key = creditKey(account.index, txid)
-
-  if (account.index === active.accountIndex) {
-    return {
-      accepted: false,
-      balanceSats: null,
-      accountIndex: account.index,
-      identityKey: account.identityKey,
-      reason: 'same-account',
-    }
-  }
-  if (!active.masterRootKeyHex) {
-    return {
-      accepted: false,
-      balanceSats: null,
-      accountIndex: account.index,
-      identityKey: account.identityKey,
-      reason: 'no-master',
-    }
-  }
-  if (!/^[0-9a-f]{64}$/.test(txid)) {
-    return {
-      accepted: false,
-      balanceSats: null,
-      accountIndex: account.index,
-      identityKey: account.identityKey,
-      reason: 'invalid-txid',
-    }
-  }
-
-  const inflight = inflightCredits.get(key)
-  if (inflight) return inflight
-
-  const work = creditVaultSiblingBrc29PaymentOnce(args, key)
-  inflightCredits.set(key, work)
-  try {
-    return await work
-  } finally {
-    inflightCredits.delete(key)
+  // Disabled: v1.3.146 sibling credit + abortReserved on the sender doubled
+  // balances and hung sends. Root→child uses normal peer notify / chain ingest.
+  void args.active
+  void args.txid
+  void args.remittance
+  void args.senderIdentityKey
+  void args.atomicBeef
+  void args.satoshis
+  console.warn('[vault-sibling] credit disabled — use peer notify / chain ingest')
+  return {
+    accepted: false,
+    balanceSats: null,
+    accountIndex: args.account.index,
+    identityKey: args.account.identityKey,
+    reason: 'disabled',
   }
 }
+
 
 async function creditVaultSiblingBrc29PaymentOnce(
   args: {

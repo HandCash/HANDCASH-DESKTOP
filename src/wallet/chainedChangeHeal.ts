@@ -120,6 +120,9 @@ export async function runChangeHeal(path: ChangeHealPath): Promise<ChangeHealSta
       try {
         // Auto heal + post-cleanup hold chainIngest; must yield so burns can acquire.
         // Spend-path promote uses spendGuard.promoteSpendableChange (forSpendChain).
+        // Rehide FIRST — vault sibling abortReserved (v1.3.146) left spent inputs
+        // spendable; reclaim/promote without rehide doubles the hero.
+        await rehideInputsOfLiveLocalTxs()
         stats.reclaimed = await reclaimSealedInputsNeverSpent()
         stats.pendingPromoted = await promotePendingLocalChangeOutputs()
         stats.restored = (await restoreLiveSpendableOutputs()).restored
