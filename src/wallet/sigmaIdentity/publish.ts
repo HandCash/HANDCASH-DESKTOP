@@ -299,7 +299,7 @@ export async function publishSigmaIdentity(args: {
         controlOutpoint,
       }
       rememberSigmaIdentity(record)
-      setPaymentProgress('complete', 'Sigma identity created')
+      setPaymentProgress('finishing', 'Sigma identity created')
       return record
     } catch (err) {
       clearPaymentProgress()
@@ -354,7 +354,7 @@ export async function revokeSigmaIdentity(personaId: string): Promise<void> {
         controlOutpoint: undefined,
         fundOutpoint: undefined,
       })
-      setPaymentProgress('complete', 'Sigma identity revoked')
+      setPaymentProgress('finishing', 'Sigma identity revoked')
     } finally {
       setTimeout(() => clearPaymentProgress(), 1200)
     }

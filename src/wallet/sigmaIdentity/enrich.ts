@@ -117,7 +117,7 @@ export async function enrichCreateActionForSigmaIdentity(
       out.lockingScript = appendSigmaAttestation({
         lockingScriptHex: locking,
         fundTxid: bindTxid,
-        fundVout,
+        fundVout: bindVout,
         signer,
         vin: 0,
         metadataJson: stamp.metadataJson,

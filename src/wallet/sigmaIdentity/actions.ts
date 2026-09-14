@@ -133,9 +133,8 @@ export function buildSigmaDocumentOutput(args: {
       `id:${args.personaId}`,
     ],
     customInstructions: JSON.stringify({
-      v: 1,
-      role: args.op === 'publish' ? 'document' : args.op,
       ...doc,
+      role: args.op === 'publish' ? 'document' : args.op,
       ...(args.origin ? { origin: args.origin } : {}),
     }),
   }
